@@ -375,5 +375,5 @@ These are npm scripts in `package.json`, not `aionima` CLI commands:
 | `pnpm check` | typecheck + lint |
 | `pnpm test` | Run Vitest |
 | `pnpm test:e2e` | Run Playwright e2e tests |
-| `pnpm tm status` | Show BOTS job status |
-| `pnpm tm jobs` | List BOTS jobs |
+| `pnpm tm status` | Show Taskmaster job status |
+| `pnpm tm jobs` | List Taskmaster jobs |

@@ -8,32 +8,30 @@ Contributing Mode (formerly Dev Mode) lets you switch Aionima between production
 |------|----------------------|----------------|
 | AGI | `Civicognita/agi` | `wishborn/agi` |
 | PRIME | `Civicognita/aionima` | `wishborn/aionima` |
-| BOTS | `Civicognita/bots` | `wishborn/bots` |
 
 ## How It Works
 
 Contributing mode uses **separate directories** for each repo rather than switching git remotes. This means:
 
-| Mode | PRIME Directory | BOTS Directory |
-|------|----------------|----------------|
-| Production | `/opt/aionima-prime` | `/opt/aionima-bots` |
-| Contributing | `/opt/aionima-prime_dev` | `/opt/aionima-bots_dev` |
+| Mode | PRIME Directory |
+|------|----------------|
+| Production | `/opt/aionima-prime` |
+| Contributing | `/opt/aionima-prime_dev` |
 
-When you toggle contributing mode, Aionima changes which directory it reads PRIME and BOTS from. The production directories are never modified while in contributing mode.
+When you toggle contributing mode, Aionima changes which directory it reads PRIME from. The production directory is never modified while in contributing mode.
 
 ## Setup
 
 ### 1. Clone Contributing Repositories
 
 ```bash
-# Clone your personal forks
+# Clone your personal fork
 git clone git@github.com:wishborn/aionima.git /opt/aionima-prime_dev
-git clone git@github.com:wishborn/bots.git /opt/aionima-bots_dev
 ```
 
 ### 2. Configure Custom Paths (Optional)
 
-If your contributing directories are in non-default locations, add them to `aionima.json`:
+If your contributing directory is in a non-default location, add it to `aionima.json`:
 
 ```json
 {
@@ -41,9 +39,7 @@ If your contributing directories are in non-default locations, add them to `aion
     "enabled": false,
     "agiRepo": "git@github.com:your-user/agi.git",
     "primeRepo": "git@github.com:your-user/aionima.git",
-    "botsRepo": "git@github.com:your-user/bots.git",
-    "primeDir": "/opt/aionima-prime_dev",
-    "botsDir": "/opt/aionima-bots_dev"
+    "primeDir": "/opt/aionima-prime_dev"
   }
 }
 ```
@@ -56,14 +52,14 @@ Navigate to **Settings > Gateway > Contributing** tab in the dashboard.
 
 The Contributing Mode toggle switches which directories Aionima reads from:
 
-- **ON**: Reads PRIME from `dev.primeDir`, BOTS from `dev.botsDir`
-- **OFF**: Reads PRIME from `prime.dir`, BOTS from `bots.dir`
+- **ON**: Reads PRIME from `dev.primeDir`
+- **OFF**: Reads PRIME from `prime.dir`
 
 After toggling, the config file is updated and a **restart is required** for path changes to take effect.
 
 ### Sacred Projects
 
-When Contributing mode is on, the Projects page shows a **Sacred Projects** section at the top (AGI, PRIME, BOTS, ID). These cards use a gold star + indigo card and are immutable (no rename/delete). If a repo is missing, the card shows **Not provisioned** until it’s created.
+When Contributing mode is on, the Projects page shows a **Sacred Projects** section at the top (AGI, PRIME, ID). These cards use a gold star + indigo card and are immutable (no rename/delete). If a repo is missing, the card shows **Not provisioned** until it’s created.
 
 ### Repo Status Cards
 
@@ -94,7 +90,6 @@ Response includes the directories that will be active after restart:
   "ok": true,
   "enabled": true,
   "primeDir": "/opt/aionima-prime_dev",
-  "botsDir": "/opt/aionima-bots_dev",
   "note": "Restart required for path changes to take effect"
 }
 ```

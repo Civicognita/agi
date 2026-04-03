@@ -64,6 +64,14 @@ When `activate(api)` is called, the `api` parameter is an `AionimaPluginAPI` ins
 
 Use the `defineScan()` builder from `@aionima/sdk` to create `ScanProviderDefinition` objects. See [Builder Reference](../sdk/builders.md#definescanid-name) for details.
 
+### Workers
+
+| Method | Parameter Type | Description |
+|--------|---------------|-------------|
+| `registerWorker(def)` | `WorkerDefinition` | Register a background task worker for Taskmaster dispatch |
+
+Use the `defineWorker()` builder from `@aionima/sdk` to create `WorkerDefinition` objects. See [Builder Reference](../sdk/builders.md#defineworkerid-name) for details.
+
 ### Lifecycle
 
 | Method | Parameter Type | Description |

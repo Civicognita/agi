@@ -190,7 +190,7 @@ The discovery chain at startup is: `discoverPlugins()` (user-installed) → `dis
 
 ## Step 6: Deploy
 
-The marketplace repo is deployed to `/opt/aionima-marketplace/`. When `deploy.sh` runs, it pulls the marketplace repo alongside AGI, PRIME, and BOTS. New plugins added to the marketplace repo are automatically available after the next deploy.
+The marketplace repo is deployed to `/opt/aionima-marketplace/`. When `deploy.sh` runs, it pulls the marketplace repo alongside AGI and PRIME. New plugins added to the marketplace repo are automatically available after the next deploy.
 
 ## Files to Modify
 

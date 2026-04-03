@@ -1,6 +1,6 @@
 # Builder Reference
 
-All 15 `define*()` builders follow the same pattern: construct with required identifiers, chain configuration methods, and call `.build()` to produce a definition object. Calling `.build()` validates required fields and throws if any are missing.
+All 16 `define*()` builders follow the same pattern: construct with required identifiers, chain configuration methods, and call `.build()` to produce a definition object. Calling `.build()` validates required fields and throws if any are missing.
 
 ---
 
@@ -496,3 +496,41 @@ api.registerScanProvider(phpScanner);
 | `.icon(icon)` | `string` | Icon identifier for the dashboard |
 
 The handler receives a `ScanConfig` (with `targetPath`, `scanTypes`, `excludePaths`, etc.) and a `ScanProviderContext` (with `logger`, `workspaceRoot`, `abortSignal`). Return an array of `SecurityFinding` objects — the scan runner handles ID stamping, persistence, and severity filtering.
+
+---
+
+## defineWorker(id, name)
+
+Defines a background task worker that Taskmaster can dispatch.
+
+**Required:** `domain`, `role`, `description`, `prompt`
+
+```typescript
+import { defineWorker } from "@aionima/sdk";
+
+const hacker = defineWorker("code.hacker", "Code Hacker")
+  .domain("code")
+  .role("hacker")
+  .description("Implementation worker for code tasks")
+  .prompt(hackerPromptMarkdown)
+  .modelTier("capable")
+  .allowedTools(["Read", "Write", "Edit", "Bash", "Glob", "Grep"])
+  .chainTarget("code.tester")
+  .requiredTier("verified")
+  .keywords(["implement", "build", "code", "fix"])
+  .build();
+
+api.registerWorker(hacker);
+```
+
+| Method | Parameter | Description |
+|--------|-----------|-------------|
+| `.domain(d)` | `WorkerDomain` | Domain: "code", "k", "ux", "strat", "comm", "ops", "gov", "data" |
+| `.role(r)` | `string` | Role identifier within the domain |
+| `.description(desc)` | `string` | Human-readable description |
+| `.prompt(p)` | `string` | Full system prompt (markdown) |
+| `.modelTier(tier)` | `"fast" \| "balanced" \| "capable"` | Model preference |
+| `.allowedTools(tools)` | `string[]` | Tools this worker can use |
+| `.chainTarget(target)` | `string` | Worker that must follow (enforced chain) |
+| `.requiredTier(tier)` | `"verified" \| "sealed"` | Minimum entity verification tier |
+| `.keywords(kw)` | `string[]` | Keywords for auto-routing dispatch |

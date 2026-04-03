@@ -124,7 +124,7 @@ The Gateway section covers the technical internals of the running gateway.
 | Page | Purpose |
 |------|---------|
 | Plugins | List loaded plugins, their status, registered hooks, and registered routes |
-| Workflows | View and manage active BOTS jobs (plans, task queues) |
+| Workflows | View and manage active Taskmaster jobs (plans, task queues) |
 | Logs | Live log stream from the gateway process with level filtering |
 | Settings | Plugin-provided settings pages (database versions, credentials, services) plus gateway config |
 | Onboarding | Re-run the guided setup wizard to update API keys, OAuth, or 0ME interviews |

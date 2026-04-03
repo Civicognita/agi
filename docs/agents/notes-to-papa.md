@@ -27,7 +27,7 @@ Your workspace root is `/mnt/projects`. This maps to `~/temp_core` on the host.
 |------|---------------|--------|---------|
 | **AGI** | `/mnt/projects/agi` | `Civicognita/agi` | Main monorepo — gateway, dashboard, channels |
 | **PRIME** | `/mnt/projects/aionima-prime` | `Civicognita/aionima` | Knowledge corpus, Mycelium Protocol spec, persona, 0TERMS |
-| **BOTS** | `/mnt/projects/aionima-bots` | `Civicognita/bots` | Bolt-On Taskmaster System — background worker dispatch |
+| **Workers** | (built into gateway-core) | — | Taskmaster worker engine — background worker dispatch |
 | **MARKETPLACE** | `/mnt/projects/aionima-marketplace` | `Civicognita/aionima-marketplace` | All plugins (21+), catalog in `marketplace.json` |
 | **OpenClaw** | `/mnt/projects/openclaw` | `openclaw/openclaw` | OpenClaw source repo (for plugin development) |
 
@@ -54,7 +54,7 @@ All runtime data lives in `~/.agi/` on the host — NOT in the repo or service d
 |------|---------|
 | `/opt/aionima/` | Production AGI — git clone, code only, no runtime data |
 | `/opt/aionima-prime/` | Production PRIME corpus (read-only for runtime) |
-| `/opt/aionima-bots/` | Production BOTS task system |
+| `~/.agi/jobs/` | Taskmaster job state files |
 | `/opt/aionima-marketplace/` | Production MARKETPLACE — all plugins |
 
 **Start with `/mnt/projects/agi/CLAUDE.md`** (symlinked to `AGENTS.md`). That is the single source of truth for any AI agent working on this project. Read it fully before doing anything else.
@@ -187,17 +187,17 @@ When adding or changing a feature, update the corresponding doc in BOTH `docs/ag
 
 ## Multi-Repo Architecture
 
-AGI, PRIME, BOTS, and MARKETPLACE are **four independent repos** — not submodules. AGI resolves their paths at runtime from config (`prime.dir`, `bots.dir`, `marketplace.dir`).
+AGI, PRIME, and MARKETPLACE are **independent repos** — not submodules. AGI resolves their paths at runtime from config (`prime.dir`, `marketplace.dir`).
 
-- Production: `/opt/aionima` (AGI), `/opt/aionima-prime` (PRIME), `/opt/aionima-bots` (BOTS), `/opt/aionima-marketplace` (MARKETPLACE)
-- Contributing mode: switches to dev fork paths via `dev.primeDir` / `dev.botsDir` / `dev.marketplaceDir` in runtime config
+- Production: `/opt/aionima` (AGI), `/opt/aionima-prime` (PRIME), `/opt/aionima-marketplace` (MARKETPLACE)
+- Contributing mode: switches to dev fork path via `dev.primeDir` / `dev.marketplaceDir` in runtime config
 - Each repo has a `protocol.json` — AGI checks semver compatibility at boot
 - Contributing mode is toggled via the dashboard Contributing page — not by editing config files
 - `deploy.sh` pulls all 4 repos with structured JSON logging per phase
 
 ## Contributing UX (Sacred Projects)
 
-- Sacred projects (AGI, PRIME, BOTS, ID) are only visible in Contributing mode.
+- Sacred projects (AGI, PRIME, ID) are only visible in Contributing mode.
 - Sacred projects are pinned at the top of the Projects list with a gold star + indigo card.
 - Sacred projects are immutable: no rename/delete (UI + backend guardrails).
 - Missing sacred repos show **Not provisioned** instead of erroring.
@@ -275,7 +275,7 @@ Read these in `docs/agents/` to understand specific subsystems:
 | `system-prompt-assembly.md` | How the agent system prompt is built |
 | `testing-and-shipping.md` | Testing strategy, CI, VM tests |
 | `federation-identity.md` | Federation & identity system |
-| `bots-workers.md` | BOTS taskmaster worker system |
+| `bots-workers.md` | Workers & Taskmaster system |
 
 ## Autonomy & Collaboration
 

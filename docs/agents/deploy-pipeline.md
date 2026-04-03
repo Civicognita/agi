@@ -24,17 +24,16 @@ Service restarts (if backend changed)
 
 ## Multi-Repo Architecture
 
-Five independent git repos are pulled during deployment:
+Four independent git repos are pulled during deployment:
 
 | Repo | Production Path | Config Key | Env Override |
 |------|----------------|------------|--------------|
 | AGI | `/opt/aionima` | (implicit -- always cwd) | -- |
 | PRIME | `/opt/aionima-prime` | `prime.dir` | `AIONIMA_PRIME_DIR` |
-| BOTS | `/opt/aionima-bots` | `bots.dir` | `AIONIMA_BOTS_DIR` |
 | MARKETPLACE | `/opt/aionima-marketplace` | `marketplace.dir` | `AIONIMA_MARKETPLACE_DIR` |
 | ID | `/opt/aionima-id` | `idService.dir` | `AIONIMA_ID_DIR` |
 
-PRIME, BOTS, MARKETPLACE, and ID are optional — if their directory doesn't exist, the pull phase is skipped silently.
+PRIME, MARKETPLACE, and ID are optional — if their directory doesn't exist, the pull phase is skipped silently.
 
 ## The deploy.sh Script
 
@@ -53,7 +52,6 @@ The script emits structured JSON to stdout for each phase:
 |-------|-------------|--------|
 | `pull-agi` | `git pull --ff-only` in `/opt/aionima` | Yes |
 | `pull-prime` | `git pull --ff-only` in PRIME dir | No (degraded mode) |
-| `pull-bots` | `git pull --ff-only` in BOTS dir | No (degraded mode) |
 | `pull-marketplace` | `git pull --ff-only` in MARKETPLACE dir | No (plugins still cached) |
 | `pull-id` | `git pull --ff-only` in ID dir | No (degraded mode) |
 | `build-id` | `npm install && npm run build` in ID dir (if local ID enabled) | No |
@@ -112,8 +110,7 @@ Each repo has a `protocol.json`:
   "version": "0.5.0",
   "protocol": "1.0.0",
   "requires": {
-    "aionima-prime": ">=1.0.0",
-    "aionima-bots": ">=1.0.0"
+    "aionima-prime": ">=1.0.0"
   }
 }
 ```
@@ -122,15 +119,6 @@ Each repo has a `protocol.json`:
 ```json
 {
   "name": "aionima-prime",
-  "version": "1.0.0",
-  "protocol": "1.0.0"
-}
-```
-
-**BOTS** (`protocol.json`):
-```json
-{
-  "name": "aionima-bots",
   "version": "1.0.0",
   "protocol": "1.0.0"
 }
@@ -145,9 +133,9 @@ Each repo has a `protocol.json`:
 }
 ```
 
-At boot, `packages/gateway-core/src/protocol-check.ts` reads all four and does semver range checking. Incompatible versions result in degraded mode warnings, not hard failures.
+At boot, `packages/gateway-core/src/protocol-check.ts` reads all deployed repos and does semver range checking. Incompatible versions result in degraded mode warnings, not hard failures.
 
-**Missing repos are silently skipped.** The protocol checker only reports a missing `protocol.json` as an error when the repo's directory actually exists on disk. If the directory doesn't exist (repo not deployed), it's skipped — this prevents noisy false errors for optional repos like PRIME, BOTS, and ID.
+**Missing repos are silently skipped.** The protocol checker only reports a missing `protocol.json` as an error when the repo's directory actually exists on disk. If the directory doesn't exist (repo not deployed), it's skipped — this prevents noisy false errors for optional repos like PRIME and ID.
 
 ## Dashboard Upgrade Trigger
 
@@ -181,13 +169,8 @@ Non-JSON lines (raw git/pnpm output) are passed through as plain text.
 `packages/gateway-core/src/resolve-paths.ts` provides:
 
 - `resolvePrimeDir(config)` -- returns `dev.primeDir` when `dev.enabled`, else `prime.dir`
-- `resolveBotsDir(config)` -- returns `dev.botsDir` when `dev.enabled`, else `bots.dir`
 
-All BOTS references in the codebase use `resolveBotsDir()` or the `botsDir` dependency:
-- `server-runtime-state.ts` -- BOTS job listing, approve/reject endpoints, dev status
-- `tools/taskmaster-dispatch.ts` -- job file writing
-- `tools/taskmaster-status.ts` -- job file reading
-- `tools/index.ts` -- passes `botsDir` through to tool configs
+Taskmaster job state is stored in `.ai/jobs/` within the workspace root. Workers write handoff files to `.ai/handoff/`.
 
 ## Files to Modify
 

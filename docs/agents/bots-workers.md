@@ -1,26 +1,23 @@
-# BOTS Workers: Writing Prompts and Chains
+# Workers & Taskmaster: Writing Prompts and Chains
 
-BOTS (Bolt-On Taskmaster System) is the autonomous work queue built into Aionima. It routes background tasks to specialized worker agents, enforces chains between them, and manages gate-controlled phase transitions. This document covers how to write worker prompts, understand chains, and work with the orchestrator.
+**Taskmaster** is the built-in job orchestration engine in Aionima. It discovers registered workers (provided by plugins), routes background tasks to them, enforces chains between workers, and manages gate-controlled phase transitions. This document covers how to write worker prompts, understand chains, and work with the Taskmaster engine.
 
-> **Note:** BOTS is an independent repository, not a subdirectory of AGI. In production it lives at `/opt/aionima-bots` (configurable via `bots.dir`). All `.bots/` paths below are relative to the BOTS repo root.
+> **Note:** Workers are defined by plugins via `api.registerWorker()` using the `defineWorker()` SDK builder. The Taskmaster engine lives inside `packages/gateway-core/`. There is no external BOTS repo.
 
 ## Architecture
 
 ```
-.bots/
-  lib/
-    orchestrator.ts    # Main entry — processes pending jobs, spawns workers
+gateway-core/
+  taskmaster/
+    orchestrator.ts    # Main entry — processes pending jobs, dispatches workers
     job-manager.ts     # Job lifecycle: status, phases, chains
     executor.ts        # Phase execution, dispatch file creation
     gates.ts           # Gate evaluation (auto/checkpoint/terminal)
     worktree.ts        # Isolated git worktrees per job
     router.ts          # Task routing to worker domains
     model-config.ts    # Per-worker model assignment
-    team-orchestrator.ts  # Team mode coordination
-  schemas/
-    dispatch-v1.json   # Worker dispatch JSON schema
-    handoff-v1.json    # Worker handoff JSON schema
-    workers-v1.json    # Active workers registry schema
+.ai/
+  handoff/             # Worker handoff files (one JSON per worker invocation)
   jobs/                # Job state files (one JSON per job)
 ```
 
@@ -45,13 +42,13 @@ Certain workers always trigger a follow-up worker. These chains are enforced by 
 
 | Source Worker | Chained Worker | Reason |
 |---------------|----------------|--------|
-| `$W.code.hacker` | `$W.code.tester` | Security work must be tested |
+| `$W.code.hacker` | `$W.code.tester` | Implementation work must be tested |
 | `$W.comm.writer.tech` | `$W.comm.editor` | Technical writing must be edited |
 | `$W.comm.writer.policy` | `$W.comm.editor` | Policy writing must be edited |
 | `$W.data.modeler` | `$W.k.linguist` | Data models need linguistic review |
 | `$W.gov.auditor` | `$W.gov.archivist` | Audit findings must be archived |
 
-When a chained source worker completes, the orchestrator automatically dispatches the chained worker in the next phase. You do not need to specify the chain target in the job definition — it is resolved by `getChainedWorker()` in `job-manager.ts`.
+When a chained source worker completes, Taskmaster automatically dispatches the chained worker in the next phase. You do not need to specify the chain target in the job definition — it is resolved by `getChainedWorker()` in `job-manager.ts`.
 
 ## Gate Types
 
@@ -60,22 +57,14 @@ Each phase ends with a gate that controls transition to the next phase:
 | Gate | Behavior |
 |------|----------|
 | `auto` | Proceed immediately to the next phase — no human review |
-| `checkpoint` | Pause the job; notify the operator via CLI; resume with `npm run tm approve <jobId>` |
-| `terminal` | Job is complete; offer merge/archive; finalize with `npm run tm complete <jobId>` |
+| `checkpoint` | Pause the job; notify the operator; resume with `taskmaster approve <jobId>` |
+| `terminal` | Job is complete; offer merge/archive; finalize with `taskmaster complete <jobId>` |
 
-Define the gate in the job definition JSON or via the queue syntax:
-
-```
-w:> Implement the authentication module    # auto gate by default
-```
-
-The orchestrator maps task descriptions to worker domains via `router.ts`. Simple tasks use `auto` gates throughout. Tasks involving security changes (hacker worker), policy changes (writer.policy worker), or production deployments (deployer worker) typically use `checkpoint` before the terminal phase.
+The Taskmaster router maps task descriptions to worker domains via `router.ts`. Simple tasks use `auto` gates throughout. Tasks involving security changes (hacker worker), policy changes (writer.policy worker), or production deployments (deployer worker) typically use `checkpoint` before the terminal phase.
 
 ## Dispatch and Handoff Schemas
 
-### Dispatch (what the orchestrator sends to a worker)
-
-Schema: `.bots/schemas/dispatch-v1.json`
+### Dispatch (what Taskmaster sends to a worker)
 
 ```json
 {
@@ -98,8 +87,6 @@ The worker reads this from the dispatch file at the path specified in `dispatchP
 
 ### Handoff (what a worker sends back)
 
-Schema: `.bots/schemas/handoff-v1.json`
-
 ```json
 {
   "handoff": {
@@ -116,13 +103,13 @@ Schema: `.bots/schemas/handoff-v1.json`
 }
 ```
 
-Workers write their handoff JSON to `handoffPath` (also specified in the dispatch). The orchestrator detects this file and advances the job.
+Workers write their handoff JSON to `.ai/handoff/<worker-tid>.json`. Taskmaster detects this file and advances the job.
 
-`chain_next` is optional — it specifies the next worker in an enforced chain. For chain-enforced workers (hacker, writer.*), the orchestrator validates that `chain_next` matches the expected chain target.
+`chain_next` is optional — it specifies the next worker in an enforced chain. For chain-enforced workers (hacker, writer.*), Taskmaster validates that `chain_next` matches the expected chain target.
 
 ## Writing a Worker Prompt
 
-Worker prompts are the system prompt for each agent type. They live in `.bots/` as agent configuration (not as files directly — the prompts are embedded in the orchestrator or registry).
+Worker prompts are the system prompt for each agent type. They are embedded in the `WorkerDefinition` (via `defineWorker().prompt(...)`) when a plugin registers a worker.
 
 A well-written worker prompt has these sections:
 
@@ -206,84 +193,41 @@ verifies the result.
 [handoff JSON example]
 ```
 
-## Subagent Mode vs Team Mode
+## Registering a Worker via Plugin
 
-### Subagent Mode (default)
+Workers are provided by plugins, not hardcoded in the engine. To add a new worker:
 
-Each worker is spawned as an ephemeral Claude Code instance via the `Task` tool. Workers are isolated — they communicate only through dispatch and handoff files. The orchestrator polls for handoff completion.
+```typescript
+import { defineWorker } from "@aionima/sdk";
 
-```bash
-npm run tm mode subagent   # ensure subagent mode
-npx tsx .bots/lib/orchestrator.ts run   # process pending jobs
+const migrator = defineWorker("data.migrator", "Data Migrator")
+  .domain("data")
+  .role("migrator")
+  .description("Executes database schema migrations in a controlled, reversible way")
+  .prompt(migratorPromptMarkdown)
+  .modelTier("balanced")
+  .allowedTools(["Read", "Write", "Edit", "Bash"])
+  .keywords(["migrate", "schema", "database", "migration"])
+  .build();
+
+api.registerWorker(migrator);
 ```
 
-### Team Mode
-
-Workers become teammates in a coordinated Claude Code agent team. They share a task list and can see each other's status. Phase sequencing uses task `blockedBy` dependencies rather than the poll loop.
-
-```bash
-# Enable team mode
-npm run tm mode team
-CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 npx tsx .bots/lib/orchestrator.ts run
-```
-
-In team mode, the orchestrator calls `orchestrateTeam()` from `team-orchestrator.ts` which:
-1. Generates a team lead instruction set via `generateTeamLeadInstructions()`
-2. Creates teammates for each worker
-3. Wires tasks with `blockedBy` dependencies
-4. Returns a `TeamOrchestratorResult` with teammate IDs and task mappings
-
-### When to use team mode
-
-Use team mode when:
-- Workers need to share intermediate artifacts (not just dispatch/handoff files)
-- Phase ordering is complex and would benefit from task dependency tracking
-- The job has more than 4 phases with multiple workers per phase
-
-Use subagent mode (default) for:
-- Single-phase jobs
-- Simple chains (writer → editor)
-- Jobs that fit well in isolated worktrees
+See `docs/sdk/builders.md` for the full `defineWorker()` builder reference.
 
 ## CLI Commands
 
 ```bash
-npm run tm status              # Show active jobs and their current phases
-npm run tm jobs                # List all jobs (active + complete)
-npm run tm approve <jobId>     # Approve a checkpoint gate, resume job
-npm run tm reject <jobId>      # Reject a checkpoint gate, stop job
-npm run tm complete <jobId>    # Mark a terminal-gated job as complete
-npm run tm mode                # Show current execution mode
-npm run tm mode team           # Switch to team mode
-npm run tm mode subagent       # Switch to subagent mode
+taskmaster status              # Show active jobs and their current phases
+taskmaster jobs                # List all jobs (active + complete)
+taskmaster approve <jobId>     # Approve a checkpoint gate, resume job
+taskmaster reject <jobId>      # Reject a checkpoint gate, stop job
+taskmaster complete <jobId>    # Mark a terminal-gated job as complete
 ```
-
-## Queuing Work (w:> Syntax)
-
-In the Claude Code terminal session (with BOTS hooks active), queue work using:
-
-```
-w:> Document all tRPC procedures in the codebase
-```
-
-The `w:>` prefix triggers the hook which:
-1. Creates a new job with a unique ID
-2. Routes the task description to the appropriate worker domain
-3. Emits `<bots-auto-spawn jobs="job-001"/>` signal
-4. The orchestrator reads the signal, prepares the phase, and spawns workers
-
-Multiple tasks can be queued:
-
-```
-w:> Implement rate limiting on the auth endpoints
-w:> Write tests for the rate limiter
-```
-
-These become separate jobs. If the tasks are related, the router may detect the dependency and link them.
 
 ## Job State Files
 
-Each job has a state file in `.bots/jobs/<job-id>.json`:
+Each job has a state file in `.ai/jobs/<job-id>.json`:
 
 ```json
 {
@@ -291,8 +235,8 @@ Each job has a state file in `.bots/jobs/<job-id>.json`:
   "queueText": "Document the authentication API endpoints",
   "route": "$W.comm.writer.tech",
   "entryWorker": "$W.comm.writer.tech",
-  "worktree": ".claude/worktrees/job-001",
-  "branch": "bots/job-001",
+  "worktree": ".ai/worktrees/job-001",
+  "branch": "taskmaster/job-001",
   "phases": [
     {
       "id": "phase-0",
@@ -318,19 +262,17 @@ Each job has a state file in `.bots/jobs/<job-id>.json`:
 
 | File | Change |
 |------|--------|
-| `.bots/lib/router.ts` | Add routing rules for new worker types |
-| `.bots/lib/model-config.ts` | Assign model to new worker domain |
-| `.bots/lib/job-manager.ts` | Add enforced chain mapping for new worker if needed |
-| `.bots/schemas/dispatch-v1.json` | Extend dispatch schema if new fields are needed |
-| `.bots/schemas/handoff-v1.json` | Extend handoff schema if new output fields are needed |
+| `packages/gateway-core/src/taskmaster/router.ts` | Add routing rules for new worker types |
+| `packages/gateway-core/src/taskmaster/model-config.ts` | Assign model to new worker domain |
+| `packages/gateway-core/src/taskmaster/job-manager.ts` | Add enforced chain mapping for new worker if needed |
 
 ## Verification Checklist
 
 - [ ] Worker prompt follows the standard structure (Class, Purpose, Constraints, Capabilities, Approach, Input, Output)
 - [ ] If the worker is chain-enforced, `chain_next` matches the declared chain target
-- [ ] Dispatch and handoff JSON matches the respective schema in `.bots/schemas/`
+- [ ] Worker is registered via `api.registerWorker()` in the plugin's `activate()` function
 - [ ] Worker terminates after writing handoff — no interactive loops
-- [ ] `npm run tm jobs` shows the job in expected state after completion
-- [ ] `npm run tm status` shows correct phase and gate after each phase
-- [ ] For `checkpoint` gates: `npm run tm approve` advances the job
-- [ ] For `terminal` gates: `npm run tm complete` finalizes the job
+- [ ] `taskmaster jobs` shows the job in expected state after completion
+- [ ] `taskmaster status` shows correct phase and gate after each phase
+- [ ] For `checkpoint` gates: `taskmaster approve` advances the job
+- [ ] For `terminal` gates: `taskmaster complete` finalizes the job

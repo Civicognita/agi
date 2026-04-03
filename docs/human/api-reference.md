@@ -106,9 +106,9 @@ Replace with your configured `gateway.host` and `gateway.port`.
 | POST | `/api/prime/switch` | [PRIME](#post-apiprimeswitch) | Private network |
 | GET | `/api/dev/status` | [Contributing Mode](#get-apidevstatus) | Private network |
 | POST | `/api/dev/switch` | [Contributing Mode](#post-apidevswitch) | Private network |
-| GET | `/api/bots/jobs` | [BOTS](#get-apibotsjobs) | Private network |
-| POST | `/api/bots/approve/:jobId` | [BOTS](#post-apibotsapprovejobid) | Private network |
-| POST | `/api/bots/reject/:jobId` | [BOTS](#post-apibotsrejectjobid) | Private network |
+| GET | `/api/workers/jobs` | [Workers](#get-apiworkersjobs) | Private network |
+| POST | `/api/workers/approve/:jobId` | [Workers](#post-apiworkersapprovejobid) | Private network |
+| POST | `/api/workers/reject/:jobId` | [Workers](#post-apiworkersrejectjobid) | Private network |
 | GET | `/api/plans` | [Plans](#get-apiplans) | Private network |
 | GET | `/api/plans/:planId` | [Plans](#get-apiplansplanid) | Private network |
 | POST | `/api/plans` | [Plans](#post-apiplans) | Private network |
@@ -1472,7 +1472,7 @@ Response:
 
 ### Contributing Mode
 
-Toggle development mode, which switches PRIME, BOTS, and MARKETPLACE to their dev directories.
+Toggle development mode, which switches PRIME and MARKETPLACE to their dev directories.
 
 #### GET /api/dev/status
 
@@ -1486,7 +1486,7 @@ Response:
   "githubAuthenticated": true,
   "agi": { "branch": "main", "commit": "abc1234" },
   "prime": { "branch": "main", "commit": "def5678" },
-  "bots": { "branch": "main", "commit": "ghi9012" }
+  "id": { "branch": "main", "commit": "ghi9012" }
 }
 ```
 
@@ -1507,20 +1507,19 @@ Response:
   "ok": true,
   "enabled": true,
   "primeDir": "/opt/aionima-prime_dev",
-  "botsDir": "/opt/aionima-bots_dev",
   "note": "Restart required for changes to take effect"
 }
 ```
 
 ---
 
-### BOTS
+### Workers
 
-Manage the BOTS (Bolt-On Taskmaster System) job queue. All require private network access.
+Manage the Taskmaster job queue. All require private network access.
 
-#### GET /api/bots/jobs
+#### GET /api/workers/jobs
 
-List all BOTS jobs.
+List all Taskmaster jobs.
 
 Response:
 
@@ -1538,17 +1537,17 @@ Response:
 ]
 ```
 
-#### POST /api/bots/approve/:jobId
+#### POST /api/workers/approve/:jobId
 
-Approve a BOTS checkpoint, allowing the job to proceed to the next phase.
+Approve a Taskmaster checkpoint, allowing the job to proceed to the next phase.
 
 - **`:jobId`** — Job identifier
 
 Response: `{ "ok": true }`
 
-#### POST /api/bots/reject/:jobId
+#### POST /api/workers/reject/:jobId
 
-Reject a BOTS checkpoint, stopping the job.
+Reject a Taskmaster checkpoint, stopping the job.
 
 - **`:jobId`** — Job identifier
 
@@ -2507,7 +2506,7 @@ The editor plugin mounts these routes for reading and writing files from the das
 
 #### Config File Endpoints
 
-Used for `.claude/`, `.bots/`, `docs/` subtrees (relative to workspace root) and external PRIME/BOTS directories (absolute paths).
+Used for `.claude/`, `.ai/`, `docs/` subtrees (relative to workspace root) and the external PRIME directory (absolute paths).
 
 #### POST /api/files/read
 
@@ -2519,7 +2518,7 @@ Request body:
 { "path": ".claude/settings.json" }
 ```
 
-Paths can be relative (within workspace root) or absolute (must be inside an allowed external directory like PRIME or BOTS).
+Paths can be relative (within workspace root) or absolute (must be inside an allowed external directory like PRIME).
 
 Response: File contents (string).
 
@@ -2839,7 +2838,7 @@ All messages are JSON objects with `type` and `payload` fields:
 | `system:upgrade` | `{ phase, message, timestamp }` | Upgrade pipeline progress |
 | `system:update_available` | `{ updateAvailable, behindCount, ... }` | New update detected |
 | `hosting:status` | Hosting status data | Hosting infrastructure status change |
-| `bots:job_update` | `{ jobId, status, phase, ... }` | BOTS job status change |
+| `workers:job_update` | `{ jobId, status, phase, ... }` | Taskmaster job status change |
 | `notification:new` | Notification data | Real-time notification |
 | `channel_event` | `{ channelId, event, data }` | Channel status change |
 | `message_received` | `{ channelId, entityAlias, content, timestamp }` | Inbound message from channel |

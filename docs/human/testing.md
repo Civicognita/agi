@@ -41,7 +41,7 @@ The VM mounts all workspace repos so tests can access the full system:
 |-----------|----------|---------|
 | AGI repo | `/mnt/agi` | Core monorepo |
 | PRIME repo | `/mnt/aionima-prime` | Knowledge corpus |
-| BOTS repo | `/mnt/aionima-bots` | Taskmaster system |
+| ID repo | `/mnt/aionima-id` | Identity service |
 | ID repo | `/mnt/aionima-id` | Identity service |
 
 A test config fixture at `test/fixtures/aionima-test.json` points to these VM mount paths so tests resolve repos correctly.

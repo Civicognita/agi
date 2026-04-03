@@ -6,17 +6,16 @@ This document covers how Aionima is deployed to production, how the upgrade proc
 
 ## Overview
 
-Aionima uses a **multi-repo architecture** with five independent git repositories:
+Aionima uses a **multi-repo architecture** with independent git repositories:
 
 | Repo | Production Path | Purpose |
 |------|----------------|---------|
 | **AGI** | `/opt/aionima` | Gateway server, dashboard, plugins |
 | **PRIME** | `/opt/aionima-prime` | Knowledge corpus (Mycelium Protocol) |
-| **BOTS** | `/opt/aionima-bots` | Background task system |
 | **MARKETPLACE** | `/opt/aionima-marketplace` | Plugin marketplace |
 | **ID** | `/opt/aionima-id` | OAuth credential broker and identity service |
 
-Each repo is a standalone git clone on the server. There are no submodules. PRIME, BOTS, MARKETPLACE, and ID are optional -- if a repo's directory doesn't exist, it's silently skipped during deployment.
+Each repo is a standalone git clone on the server. There are no submodules. PRIME, MARKETPLACE, and ID are optional -- if a repo's directory doesn't exist, it's silently skipped during deployment.
 
 The upgrade flow is:
 
@@ -42,9 +41,6 @@ git clone git@github.com:Civicognita/agi.git /opt/aionima
 
 # PRIME (knowledge corpus — optional)
 git clone git@github.com:Civicognita/aionima.git /opt/aionima-prime
-
-# BOTS (task system — optional)
-git clone git@github.com:Civicognita/bots.git /opt/aionima-bots
 
 # MARKETPLACE (plugin marketplace — optional)
 git clone git@github.com:Civicognita/aionima-marketplace.git /opt/aionima-marketplace
@@ -88,9 +84,6 @@ Add repo paths to `~/.agi/aionima.json`:
 {
   "prime": {
     "dir": "/opt/aionima-prime"
-  },
-  "bots": {
-    "dir": "/opt/aionima-bots"
   },
   "marketplace": {
     "dir": "/opt/aionima-marketplace"
@@ -144,15 +137,7 @@ cd /opt/aionima-prime && git pull --ff-only
 
 Non-fatal -- if PRIME pull fails, deployment continues in degraded mode.
 
-### Phase 3 -- Pull BOTS
-
-```bash
-cd /opt/aionima-bots && git pull --ff-only
-```
-
-Non-fatal -- if BOTS pull fails, deployment continues in degraded mode.
-
-### Phase 3b -- Pull MARKETPLACE
+### Phase 3 -- Pull MARKETPLACE
 
 ```bash
 cd /opt/aionima-marketplace && git pull --ff-only
@@ -187,8 +172,7 @@ Each repo has a `protocol.json` at its root:
   "version": "0.5.0",
   "protocol": "1.0.0",
   "requires": {
-    "aionima-prime": ">=1.0.0",
-    "aionima-bots": ">=1.0.0"
+    "aionima-prime": ">=1.0.0"
   }
 }
 ```
@@ -292,7 +276,7 @@ sudo journalctl -u aionima -n 100
 3. If they differ, the dashboard shows an "Upgrade available" badge.
 4. Clicking "Upgrade" sends `POST /api/system/upgrade`.
 5. The gateway spawns `scripts/deploy.sh` and streams structured JSON logs via WebSocket.
-6. Each phase (pull-agi, pull-prime, pull-bots, build, etc.) is shown in real time.
+6. Each phase (pull-agi, pull-prime, build, etc.) is shown in real time.
 7. When deploy.sh exits, the dashboard shows "Upgrade complete" (or an error).
 8. If the backend changed and the service restarted, the WebSocket connection drops briefly. The dashboard reconnects automatically within 3 seconds.
 
@@ -300,7 +284,7 @@ sudo journalctl -u aionima -n 100
 
 ## Protocol Versioning
 
-Each repository has a `protocol.json` that declares its name, version, and protocol version. The AGI repo additionally declares minimum required protocol versions for PRIME, BOTS, and ID.
+Each repository has a `protocol.json` that declares its name, version, and protocol version. The AGI repo additionally declares minimum required protocol versions for PRIME and ID.
 
 At boot, the gateway reads `protocol.json` from all deployed repos and checks semver compatibility. If a repo's directory doesn't exist (not deployed), it's silently skipped. If a directory exists but `protocol.json` is missing, or versions are incompatible, a warning is logged and the system runs in degraded mode.
 

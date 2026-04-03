@@ -481,7 +481,7 @@ Run `aionima doctor` to check your compliance posture. The doctor command verifi
 
 - Core infrastructure (config, database, systemd, deploy directory)
 - Authentication and secrets management
-- Multi-repo integrity (PRIME, BOTS, Marketplace, ID service)
+- Multi-repo integrity (PRIME, Marketplace, ID service)
 - Plugin system health
 - Hosting infrastructure (if enabled)
 - Gateway reachability and dashboard build status

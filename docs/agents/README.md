@@ -23,8 +23,8 @@ The documentation system has three layers: the editor plugin registers HTTP rout
 
 ```ts
 // packages/plugin-editor/src/index.ts
-const ALLOWED_SUBTREES = [".aionima/", ".claude/", ".bots/", "docs/"];
-// Also allows absolute paths inside external PRIME/BOTS directories (resolved from config)
+const ALLOWED_SUBTREES = [".aionima/", ".claude/", ".ai/", "docs/"];
+// Also allows absolute paths inside the external PRIME directory (resolved from config)
 ```
 
 `docs/` was added to this list to enable documentation browsing. Any path under `docs/` relative to the workspace root is readable via:
@@ -122,10 +122,10 @@ No code changes needed.
 If you need a different top-level directory to be browsable, add its name (with trailing slash) to `ALLOWED_SUBTREES` in `packages/plugin-editor/src/index.ts`:
 
 ```ts
-const ALLOWED_SUBTREES = [".aionima/", ".claude/", ".bots/", "docs/", "your-dir/"];
+const ALLOWED_SUBTREES = [".aionima/", ".claude/", ".ai/", "docs/", "your-dir/"];
 ```
 
-Note: The editor plugin also allows absolute paths inside external PRIME and BOTS directories (resolved from config at plugin activation). No subtree entry is needed for those.
+Note: The editor plugin also allows absolute paths inside the external PRIME directory (resolved from `prime.dir` config at plugin activation). No subtree entry is needed for those.
 
 ## Index of Agent Docs
 
@@ -142,7 +142,7 @@ Note: The editor plugin also allows absolute paths inside external PRIME and BOT
 | [deploy-pipeline.md](deploy-pipeline.md) | How deployment works |
 | [entity-model-extensions.md](entity-model-extensions.md) | How to extend the entity model |
 | [system-prompt-assembly.md](system-prompt-assembly.md) | How the agent system prompt is built |
-| [bots-workers.md](bots-workers.md) | BOTS taskmaster worker system |
+| [bots-workers.md](bots-workers.md) | Workers & Taskmaster system |
 | [notes-to-papa.md](notes-to-papa.md) | Living reference for Papa (OpenClaw agent) — project overview, conventions, current state |
 
 ### SDK Documentation (`docs/sdk/`)

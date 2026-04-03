@@ -259,13 +259,12 @@ api.registerHook("config:changed", async (key, value) => {
 
 ## `dev` Config Section
 
-The `dev` section controls Contributing Mode — toggling between production and development directories for PRIME and BOTS.
+The `dev` section controls Contributing Mode — toggling between the production and development directory for PRIME.
 
 ```ts
 const DevConfigSchema = z.object({
   enabled: z.boolean().default(false),
   primeDir: z.string().default("/opt/aionima-prime_dev"),
-  botsDir: z.string().default("/opt/aionima-bots_dev"),
 }).strict();
 ```
 
@@ -277,9 +276,8 @@ Added to `AionimaConfigSchema` as `dev: DevConfigSchema.optional()`.
 |-------|------|---------|-------------|
 | `enabled` | `boolean` | `false` | Toggle contributing mode on/off |
 | `primeDir` | `string` | `"/opt/aionima-prime_dev"` | Path to dev PRIME corpus directory |
-| `botsDir` | `string` | `"/opt/aionima-bots_dev"` | Path to dev BOTS task system directory |
 
-When `dev.enabled` is `true`, `resolvePrimeDir()` and `resolveBotsDir()` (in `packages/gateway-core/src/resolve-paths.ts`) return the dev paths instead of the production paths. COA audit records include a `fork_id` for traceability.
+When `dev.enabled` is `true`, `resolvePrimeDir()` (in `packages/gateway-core/src/resolve-paths.ts`) returns the dev path instead of the production path. COA audit records include a `fork_id` for traceability.
 
 ### Migration: `agent.devMode` -> `dev.enabled`
 
@@ -294,7 +292,7 @@ The `POST /api/dev/switch` endpoint updates `dev.enabled` in `aionima.json` and 
 
 ### API Endpoints
 
-- `GET /api/dev/status` — returns `{ enabled, primeDir, botsDir }`
+- `GET /api/dev/status` — returns `{ enabled, primeDir }`
 - `POST /api/dev/switch` — body `{ enabled: boolean }` — toggles `dev.enabled` in config. Requires a service restart to apply
 
 ## Files to Modify

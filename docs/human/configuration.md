@@ -418,18 +418,18 @@ PRIME knowledge corpus location. Defaults to the system-level repo at `/opt/aion
 }
 ```
 
-### bots
+### workers
 
-BOTS task system location and worker model overrides. Defaults to the system-level repo at `/opt/aionima-bots`.
+Taskmaster engine settings. Workers are registered by plugins and discovered at boot.
 
 ```json
 {
-  "bots": {
-    "dir": "/opt/aionima-bots",
-    "source": "git@github.com:Civicognita/bots.git",
-    "branch": "main",
-    "workerModels": {
-      "code.engineer": {
+  "workers": {
+    "autoApprove": false,
+    "maxConcurrentJobs": 3,
+    "workerTimeoutMs": 300000,
+    "modelOverrides": {
+      "code.hacker": {
         "provider": "anthropic",
         "model": "claude-opus-4-6"
       }

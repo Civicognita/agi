@@ -237,7 +237,7 @@ The editor plugin provides the file editing API used by the dashboard Settings p
 - Config files: `GET/POST /api/files/read`, `/api/files/write`, `/api/files/tree`
 - Project files: `GET/POST /api/files/project-read`, `/api/files/project-write`, `/api/files/project-tree`
 
-The editor API enforces path restrictions: config endpoints allow access to `.aionima/`, `.claude/`, `.bots/`, and `docs/` subtrees (relative to workspace root), plus absolute paths inside the external PRIME and BOTS directories (resolved from `prime.dir` and `bots.dir` config). Project endpoints only allow access to paths under `workspace.projects`.
+The editor API enforces path restrictions: config endpoints allow access to `.aionima/`, `.claude/`, `.ai/`, and `docs/` subtrees (relative to workspace root), plus absolute paths inside the external PRIME directory (resolved from `prime.dir` config). Project endpoints only allow access to paths under `workspace.projects`.
 
 ### plugin-mysql
 
