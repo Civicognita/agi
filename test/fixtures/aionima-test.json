@@ -1,0 +1,6 @@
+{
+  "prime": { "dir": "/mnt/aionima-prime" },
+  "bots": { "dir": "/mnt/aionima-bots" },
+  "idService": { "dir": "/mnt/aionima-id" },
+  "gateway": { "port": 3100 }
+}

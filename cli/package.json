@@ -1,0 +1,16 @@
+{
+  "name": "@aionima/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "aionima": "./src/index.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@aionima/config": "workspace:*",
+    "commander": "^13.1.0"
+  }
+}

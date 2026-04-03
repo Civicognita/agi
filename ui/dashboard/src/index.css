@@ -1,0 +1,269 @@
+@import "tailwindcss";
+
+/* Scan react-fancy's compiled output so Tailwind generates its dark: variants */
+@source "../node_modules/@particle-academy/react-fancy/dist/**/*.js";
+
+/*
+ * Aionima theme system — semantic CSS custom properties.
+ * Default values are "Aionima Dark". The ThemeProvider overrides these
+ * at runtime by setting properties on document.documentElement.
+ */
+
+@theme {
+  /* Semantic tokens — defaults to Aionima Dark */
+  --color-background: #0f1117;
+  --color-foreground: #e1e4ea;
+  --color-card: #181b23;
+  --color-card-foreground: #e1e4ea;
+  --color-popover: #181b23;
+  --color-popover-foreground: #e1e4ea;
+  --color-primary: #5b8def;
+  --color-primary-foreground: #0f1117;
+  --color-secondary: #262a35;
+  --color-secondary-foreground: #e1e4ea;
+  --color-muted: #262a35;
+  --color-muted-foreground: #8b8fa3;
+  --color-accent: #262a35;
+  --color-accent-foreground: #e1e4ea;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #0f1117;
+  --color-border: #262a35;
+  --color-input: #262a35;
+  --color-ring: #5b8def;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+
+  /* Accent palette — fixed utility colors for badges, charts, status indicators.
+   * These do NOT change with themes — they're constant accent hues.
+   * Use semantic tokens (--color-primary, --color-destructive, --color-success)
+   * for theme-aware elements instead. */
+  --color-blue: #5b8def;
+  --color-green: #22c55e;
+  --color-red: #ef4444;
+  --color-yellow: #eab308;
+  --color-purple: #a855f7;
+  --color-mauve: #c084fc;
+  --color-peach: #fb923c;
+  --color-teal: #2dd4bf;
+  --color-sky: #38bdf8;
+  --color-lavender: #818cf8;
+  --color-flamingo: #fb7185;
+  --color-rosewater: #fda4af;
+  --color-pink: #f472b6;
+  --color-sapphire: #60a5fa;
+  --color-indigo: #6366f1;
+
+  /* Structural color aliases — map legacy names to semantic tokens.
+   * These let existing Tailwind utilities (bg-surface0, bg-mantle, etc.)
+   * resolve without requiring all consumer files to be updated at once.
+   * ThemeProvider overrides the semantic tokens; these follow. */
+  --color-surface0: var(--color-secondary);
+  --color-surface1: var(--color-muted);
+  --color-surface2: var(--color-muted-foreground);
+  --color-mantle: var(--color-card);
+  --color-overlay0: var(--color-muted-foreground);
+  --color-subtext0: var(--color-muted-foreground);
+  --color-text: var(--color-foreground);
+
+  /* Structural tokens (constant across themes) */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * react-fancy theme overrides
+ *
+ * react-fancy components use hardcoded Tailwind colors (bg-white, dark:bg-zinc-900,
+ * border-zinc-200, etc.). We override them with our semantic CSS custom properties
+ * using the data-react-fancy-* attribute selectors that every component renders.
+ * This is the recommended approach per react-fancy's README — avoids !important.
+ * --------------------------------------------------------------------------- */
+
+/* Cards */
+[data-react-fancy-card] {
+  background-color: var(--color-card) !important;
+  color: var(--color-card-foreground);
+  border-color: var(--color-border);
+}
+
+/* Modals */
+[data-react-fancy-modal] {
+  background-color: var(--color-popover) !important;
+  color: var(--color-popover-foreground);
+  border-color: var(--color-border);
+}
+
+[data-react-fancy-modal-header] {
+  border-color: var(--color-border);
+}
+
+[data-react-fancy-modal-footer] {
+  border-color: var(--color-border);
+}
+
+/* Dropdowns & Popovers */
+[data-react-fancy-dropdown],
+[data-react-fancy-popover-content],
+[data-react-fancy-popover] {
+  background-color: var(--color-popover) !important;
+  color: var(--color-popover-foreground);
+  border-color: var(--color-border);
+}
+
+[data-react-fancy-dropdown-item]:hover {
+  background-color: var(--color-accent);
+}
+
+/* Inputs */
+[data-react-fancy-input] {
+  background-color: var(--color-input);
+  color: var(--color-foreground);
+  border-color: var(--color-border);
+}
+
+[data-react-fancy-input]:focus {
+  border-color: var(--color-ring);
+}
+
+/* Select */
+[data-react-fancy-select] {
+  border-color: var(--color-border);
+}
+
+/* Tooltips */
+[data-react-fancy-tooltip] {
+  background-color: var(--color-popover);
+  color: var(--color-popover-foreground);
+  border-color: var(--color-border);
+}
+
+/* Command palette */
+[data-react-fancy-command] {
+  background-color: var(--color-popover) !important;
+  color: var(--color-popover-foreground);
+  border-color: var(--color-border);
+}
+
+/* Toast */
+[data-react-fancy-toast] {
+  background-color: var(--color-card);
+  color: var(--color-card-foreground);
+  border-color: var(--color-border);
+}
+
+/* Callout */
+[data-react-fancy-callout] {
+  border-color: var(--color-border);
+}
+
+/* Context menu */
+[data-react-fancy-context-menu] {
+  background-color: var(--color-popover) !important;
+  color: var(--color-popover-foreground);
+  border-color: var(--color-border);
+}
+
+/* Base styles */
+* {
+  border-color: var(--color-border);
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  color-scheme: dark;
+}
+
+/* Native select elements */
+select {
+  background-color: var(--color-card);
+  color: var(--color-foreground);
+}
+
+select option {
+  background-color: var(--color-card);
+  color: var(--color-foreground);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-muted-foreground); border-radius: 3px; }
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-muted-foreground) transparent;
+}
+
+/* Animations */
+@keyframes blink {
+  0%, 80%, 100% { opacity: 0; }
+  40% { opacity: 1; }
+}
+
+@keyframes pulse-green {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.2); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* Onboarding transitions */
+@keyframes onboard-fade-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes onboard-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes onboard-scale-in {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes onboard-glow-pulse {
+  0%, 100% { filter: drop-shadow(0 0 20px rgba(218, 165, 32, 0.2)); }
+  50% { filter: drop-shadow(0 0 40px rgba(218, 165, 32, 0.45)); }
+}
+
+.onboard-animate-in {
+  animation: onboard-fade-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.onboard-animate-fade {
+  animation: onboard-fade-in 0.5s ease both;
+}
+
+.onboard-animate-scale {
+  animation: onboard-scale-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.onboard-logo-glow {
+  animation: onboard-glow-pulse 4s ease-in-out infinite;
+}
+
+.onboard-stagger-1 { animation-delay: 0.1s; }
+.onboard-stagger-2 { animation-delay: 0.2s; }
+.onboard-stagger-3 { animation-delay: 0.35s; }
+.onboard-stagger-4 { animation-delay: 0.5s; }
+.onboard-stagger-5 { animation-delay: 0.65s; }
+
+/* Safe-area insets for notched devices (iPhone X+) */
+@supports (padding: env(safe-area-inset-top)) {
+  :root {
+    padding-top: env(safe-area-inset-top);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+  }
+}

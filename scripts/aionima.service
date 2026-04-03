@@ -1,0 +1,28 @@
+[Unit]
+Description=Aionima Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%AIONIMA_USER%
+Group=%AIONIMA_USER%
+WorkingDirectory=/opt/aionima
+
+# TPM2-sealed credentials — decrypted by systemd at startup.
+# Managed by SecretsManager; do not edit manually.
+# --- BEGIN CREDENTIALS ---
+# --- END CREDENTIALS ---
+
+# Legacy fallback (optional, will be removed once fully migrated)
+EnvironmentFile=-/opt/aionima/.env
+
+ExecStart=/usr/bin/node /opt/aionima/cli/dist/index.js run
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aionima
+
+[Install]
+WantedBy=multi-user.target

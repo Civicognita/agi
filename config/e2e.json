@@ -1,0 +1,14 @@
+{
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 3100,
+    "state": "ONLINE"
+  },
+  "entities": {
+    "path": "./data/entities.db"
+  },
+  "channels": [],
+  "dashboard": {
+    "enabled": false
+  }
+}

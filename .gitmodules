@@ -1,0 +1,3 @@
+[submodule "ui/dashboard/vendor/react-fancy"]
+	path = ui/dashboard/vendor/react-fancy
+	url = git@github.com:Particle-Academy/react-fancy.git

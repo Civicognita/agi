@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "Aionima Companion",
+    "slug": "aionima-companion-android",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#1e1e2e"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#1e1e2e"
+      },
+      "package": "com.civicognita.aionima",
+      "permissions": [
+        "RECORD_AUDIO",
+        "CAMERA",
+        "RECEIVE_BOOT_COMPLETED",
+        "FOREGROUND_SERVICE",
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
+      ],
+      "googleServicesFile": "./google-services.json"
+    },
+    "plugins": [
+      "expo-notifications",
+      [
+        "expo-camera",
+        { "cameraPermission": "Aionima uses the camera to relay visual input to the agent." }
+      ],
+      [
+        "expo-av",
+        { "microphonePermission": "Aionima uses the microphone for voice input to the agent." }
+      ],
+      "expo-task-manager",
+      "expo-background-fetch"
+    ]
+  }
+}

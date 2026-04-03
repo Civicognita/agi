@@ -1,0 +1,17 @@
+{
+  "name": "@aionima/plugins",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@aionima/gateway-core": "workspace:*",
+    "@aionima/channel-sdk": "workspace:*",
+    "@aionima/security": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

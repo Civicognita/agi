@@ -1,0 +1,50 @@
+# Security checks — dependency audit and secrets scanning.
+# Compliance: UCS-SDLC-01 (PCI Req 6, SOC 2 change mgmt).
+
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1' # Weekly Monday 6am UTC
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.5.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Dependency audit
+        run: pnpm audit --audit-level=high || true
+      - name: Check for known vulnerabilities
+        run: npx better-npm-audit audit --level high || true
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan for secrets in code
+        run: |
+          # Check for common API key patterns in tracked files
+          PATTERNS="sk-ant-|sk-proj-|AKIA[0-9A-Z]|ghp_[a-zA-Z0-9]|gho_[a-zA-Z0-9]"
+          if git log --all --diff-filter=A -p | grep -E "$PATTERNS" | head -5; then
+            echo "::warning::Potential secrets detected in commit history"
+          fi
+      - name: Check .env files not committed
+        run: |
+          if git ls-files | grep -E "^\.env$|\.env\.local$|\.env\.production$"; then
+            echo "::error::.env files should not be committed"
+            exit 1
+          fi

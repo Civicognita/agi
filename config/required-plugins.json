@@ -1,0 +1,17 @@
+{
+  "plugins": [
+    { "id": "provider-anthropic", "disableable": true },
+    { "id": "provider-openai", "disableable": true },
+    { "id": "provider-ollama", "disableable": true },
+    { "id": "project-webapp", "disableable": false },
+    { "id": "project-api", "disableable": false },
+    { "id": "project-staticsite", "disableable": false },
+    { "id": "project-writing", "disableable": false },
+    { "id": "project-monorepo", "disableable": false },
+    { "id": "project-ops", "disableable": false },
+    { "id": "project-art", "disableable": true },
+    { "id": "aionima-screensaver", "disableable": true },
+    { "id": "aionima-openclaw", "disableable": true },
+    { "id": "aionima-xrdp", "disableable": true }
+  ]
+}

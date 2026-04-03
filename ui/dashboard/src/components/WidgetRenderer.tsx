@@ -1,0 +1,563 @@
+/**
+ * WidgetRenderer — renders plugin-provided PanelWidget[] arrays.
+ *
+ * All plugin UI is declarative data structures rendered by this generic renderer.
+ * Plugins cannot inject React components directly (static Vite build).
+ */
+
+import { useCallback, useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import { markdownComponents } from "@/lib/markdown";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Chart,
+  Timeline,
+  Kanban,
+  Editor,
+  Diagram,
+  DatePicker,
+  ColorPicker,
+  Autocomplete,
+  Slider,
+  OtpInput,
+  FileUpload,
+  Switch,
+  Select,
+} from "@particle-academy/react-fancy";
+import { executeAction } from "../api.js";
+import type { PanelWidget, PluginAction, UIField } from "../types.js";
+
+// ---------------------------------------------------------------------------
+// Sub-renderers
+// ---------------------------------------------------------------------------
+
+function FieldGroupWidget({ widget }: { widget: Extract<PanelWidget, { type: "field-group" }> }) {
+  return (
+    <div className="space-y-2">
+      {widget.title && (
+        <h4 className="text-[12px] font-semibold text-foreground">{widget.title}</h4>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        {widget.fields.map((f) => (
+          <FieldInput key={f.id} field={f} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FieldInput({ field }: { field: UIField }) {
+  const [value, setValue] = useState<string | number | boolean>(field.defaultValue ?? "");
+
+  if (field.type === "readonly") {
+    return (
+      <div>
+        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">{field.label}</label>
+        <div className="h-9 flex items-center text-[12px] text-foreground">{String(value)}</div>
+      </div>
+    );
+  }
+
+  if (field.type === "toggle") {
+    return (
+      <div className="flex items-center gap-2">
+        <label className="text-[11px] font-semibold text-muted-foreground">{field.label}</label>
+        <Switch checked={!!value} onCheckedChange={(v) => setValue(v)} />
+      </div>
+    );
+  }
+
+  if (field.type === "select" && field.options) {
+    return (
+      <div>
+        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">{field.label}</label>
+        <Select
+          list={field.options.map((o) => ({ value: o.value, label: o.label }))}
+          value={String(value)}
+          onValueChange={(v) => setValue(v)}
+          placeholder={field.placeholder}
+        />
+      </div>
+    );
+  }
+
+  if (field.type === "date") {
+    return (
+      <div>
+        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">{field.label}</label>
+        <DatePicker value={String(value)} onChange={(v) => setValue(v)} />
+      </div>
+    );
+  }
+
+  if (field.type === "color") {
+    return (
+      <div>
+        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">{field.label}</label>
+        <ColorPicker value={String(value)} onChange={(v) => setValue(v)} />
+      </div>
+    );
+  }
+
+  if (field.type === "autocomplete") {
+    return (
+      <div>
+        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">{field.label}</label>
+        <Autocomplete
+          value={String(value)}
+          onChange={(v) => setValue(v)}
+          endpoint={field.autocompleteEndpoint}
+          multiple={field.multiple}
+          placeholder={field.placeholder}
+        />
+      </div>
+    );
+  }
+
+  if (field.type === "slider") {
+    return (
+      <div>
+        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+          {field.label} <span className="text-foreground font-normal">{value}</span>
+        </label>
+        <Slider
+          value={Number(value) || 0}
+          onChange={(v) => setValue(v)}
+          min={field.min ?? 0}
+          max={field.max ?? 100}
+          step={field.step ?? 1}
+        />
+      </div>
+    );
+  }
+
+  if (field.type === "otp") {
+    return (
+      <div>
+        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">{field.label}</label>
+        <OtpInput value={String(value)} onChange={(v) => setValue(v)} />
+      </div>
+    );
+  }
+
+  if (field.type === "file") {
+    return (
+      <div>
+        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">{field.label}</label>
+        <FileUpload accept={field.accept} multiple={field.multiple}>
+          <FileUpload.Dropzone />
+        </FileUpload>
+      </div>
+    );
+  }
+
+  if (field.type === "textarea") {
+    return (
+      <div className="col-span-2">
+        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">{field.label}</label>
+        <textarea
+          value={String(value)}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={field.placeholder}
+          rows={4}
+          className="w-full px-3 py-2 rounded-md border border-border bg-background text-foreground text-[13px] resize-y"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <label className="block text-[11px] font-semibold text-muted-foreground mb-1">{field.label}</label>
+      <Input
+        type={field.type === "password" ? "password" : field.type === "number" ? "number" : "text"}
+        value={String(value)}
+        onChange={(e) => setValue(field.type === "number" ? Number(e.target.value) : e.target.value)}
+        placeholder={field.placeholder}
+      />
+    </div>
+  );
+}
+
+function ActionBarWidget({ widget, actions, projectPath }: {
+  widget: Extract<PanelWidget, { type: "action-bar" }>;
+  actions: PluginAction[];
+  projectPath?: string;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<{ id: string; ok: boolean; message?: string } | null>(null);
+
+  const handleExecute = useCallback(async (action: PluginAction) => {
+    if (action.confirm && !window.confirm(action.confirm)) return;
+    setBusy(action.id);
+    setResult(null);
+    try {
+      const ctx: Record<string, string> = {};
+      if (projectPath) ctx.projectPath = projectPath;
+      const r = await executeAction(action.id, ctx);
+      setResult({ id: action.id, ok: r.ok, message: r.output ?? r.error });
+    } catch (err) {
+      setResult({ id: action.id, ok: false, message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy(null);
+    }
+  }, [projectPath]);
+
+  const barActions = widget.actionIds
+    .map((id) => actions.find((a) => a.id === id))
+    .filter((a): a is PluginAction => a != null);
+
+  if (barActions.length === 0) return null;
+
+  // Group by action.group
+  const groups = new Map<string, PluginAction[]>();
+  for (const a of barActions) {
+    const g = a.group ?? "";
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g)!.push(a);
+  }
+
+  return (
+    <div className="space-y-2">
+      {[...groups.entries()].map(([group, groupActions]) => (
+        <div key={group}>
+          {group && <div className="text-[11px] font-semibold text-muted-foreground mb-1">{group}</div>}
+          <div className="flex flex-wrap gap-1.5">
+            {groupActions.map((a) => (
+              <Button
+                key={a.id}
+                size="sm"
+                variant={a.destructive ? "destructive" : "outline"}
+                disabled={busy !== null}
+                onClick={() => void handleExecute(a)}
+              >
+                {busy === a.id ? "Running..." : a.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      ))}
+      {result && (
+        <div className={`text-[11px] mt-1 ${result.ok ? "text-green" : "text-red"}`}>
+          {result.message ?? (result.ok ? "Done" : "Failed")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatusDisplayWidget({ widget }: { widget: Extract<PanelWidget, { type: "status-display" }> }) {
+  const [data, setData] = useState<Record<string, unknown> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(widget.statusEndpoint)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<Record<string, unknown>>; })
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [widget.statusEndpoint]);
+
+  if (error) return <div className="text-[11px] text-red">{error}</div>;
+  if (!data) return <div className="text-[11px] text-muted-foreground">Loading...</div>;
+
+  return (
+    <div>
+      {widget.title && <h4 className="text-[12px] font-semibold text-foreground mb-2">{widget.title}</h4>}
+      <div className="grid grid-cols-3 gap-2">
+        {Object.entries(data).map(([k, v]) => (
+          <div key={k} className="p-2 rounded-lg bg-surface0 border border-border">
+            <div className="text-[10px] text-muted-foreground">{k}</div>
+            <div className="text-[13px] font-semibold text-foreground">{String(v)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LogStreamWidget({ widget }: { widget: Extract<PanelWidget, { type: "log-stream" }> }) {
+  const [lines, setLines] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch(widget.logSource)
+      .then((r) => r.text())
+      .then((text) => setLines(text.split("\n").slice(-(widget.lines ?? 50))))
+      .catch(() => setLines(["Failed to load log"]));
+  }, [widget.logSource, widget.lines]);
+
+  return (
+    <div>
+      {widget.title && <h4 className="text-[12px] font-semibold text-foreground mb-2">{widget.title}</h4>}
+      <pre className="bg-mantle border border-surface0 rounded-md p-3 text-[11px] font-mono text-foreground overflow-auto max-h-60">
+        {lines.join("\n")}
+      </pre>
+    </div>
+  );
+}
+
+function MarkdownWidget({ widget }: { widget: Extract<PanelWidget, { type: "markdown" }> }) {
+  return (
+    <div className="prose-sm">
+      <ReactMarkdown components={markdownComponents()}>
+        {widget.content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function TableWidget({ widget }: { widget: Extract<PanelWidget, { type: "table" }> }) {
+  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(widget.dataEndpoint)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<{ rows: Record<string, unknown>[] }>; })
+      .then((d) => setRows(d.rows ?? []))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [widget.dataEndpoint]);
+
+  if (error) return <div className="text-[11px] text-red">{error}</div>;
+
+  return (
+    <div className="overflow-auto">
+      <table className="w-full text-[12px]">
+        <thead>
+          <tr>
+            {widget.columns.map((c) => (
+              <th key={c.key} className="text-left text-[11px] font-semibold text-muted-foreground p-2 border-b border-border" style={c.width ? { width: c.width } : undefined}>
+                {c.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={i}>
+              {widget.columns.map((c) => (
+                <td key={c.key} className="p-2 border-b border-border text-foreground">
+                  {String(row[c.key] ?? "")}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MetricWidget({ widget }: { widget: Extract<PanelWidget, { type: "metric" }> }) {
+  const [value, setValue] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(widget.valueEndpoint)
+      .then((r) => r.json() as Promise<{ value: unknown }>)
+      .then((d) => setValue(String(d.value ?? "—")))
+      .catch(() => setValue("—"));
+  }, [widget.valueEndpoint]);
+
+  return (
+    <div className="p-3 rounded-lg bg-surface0 border border-border text-center">
+      <div className="text-[10px] text-muted-foreground">{widget.label}</div>
+      <div className="text-xl font-bold text-foreground">
+        {value ?? "..."}
+        {widget.unit && <span className="text-[11px] font-normal text-muted-foreground ml-1">{widget.unit}</span>}
+      </div>
+    </div>
+  );
+}
+
+function IframeWidget({ widget }: { widget: Extract<PanelWidget, { type: "iframe" }> }) {
+  return (
+    <div>
+      {widget.title && <h4 className="text-[12px] font-semibold text-foreground mb-2">{widget.title}</h4>}
+      <iframe
+        src={widget.src}
+        title={widget.title ?? "Plugin content"}
+        className="w-full border border-border rounded-md"
+        style={{ height: widget.height ?? "500px" }}
+        sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// New widget sub-renderers (chart, timeline, kanban, editor, diagram)
+// ---------------------------------------------------------------------------
+
+function ChartWidget({ widget }: { widget: Extract<PanelWidget, { type: "chart" }> }) {
+  const [data, setData] = useState<unknown[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(widget.dataEndpoint)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<{ data: unknown[] }>; })
+      .then((d) => setData(d.data ?? []))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [widget.dataEndpoint]);
+
+  if (error) return <div className="text-[11px] text-red">{error}</div>;
+
+  const ChartComponent = {
+    bar: Chart.Bar,
+    line: Chart.Line,
+    area: Chart.Area,
+    pie: Chart.Pie,
+    donut: Chart.Donut,
+    sparkline: Chart.Sparkline,
+  }[widget.chartType];
+
+  return (
+    <div>
+      {widget.title && <h4 className="text-[12px] font-semibold text-foreground mb-2">{widget.title}</h4>}
+      <div style={{ height: widget.height ?? 300 }}>
+        {ChartComponent && <ChartComponent data={data} />}
+      </div>
+    </div>
+  );
+}
+
+function TimelineWidget({ widget }: { widget: Extract<PanelWidget, { type: "timeline" }> }) {
+  const [items, setItems] = useState<Array<{ id: string; title: string; date: string; description?: string }>>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(widget.dataEndpoint)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<{ items: typeof items }>; })
+      .then((d) => setItems(d.items ?? []))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [widget.dataEndpoint]);
+
+  if (error) return <div className="text-[11px] text-red">{error}</div>;
+
+  return (
+    <div>
+      {widget.title && <h4 className="text-[12px] font-semibold text-foreground mb-2">{widget.title}</h4>}
+      <Timeline>
+        {items.map((item) => (
+          <Timeline.Item key={item.id} title={item.title} date={item.date}>
+            {item.description}
+          </Timeline.Item>
+        ))}
+      </Timeline>
+    </div>
+  );
+}
+
+function KanbanWidget({ widget }: { widget: Extract<PanelWidget, { type: "kanban" }> }) {
+  const [cards, setCards] = useState<Array<{ id: string; column: string; title: string; description?: string }>>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(widget.dataEndpoint)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<{ cards: typeof cards }>; })
+      .then((d) => setCards(d.cards ?? []))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [widget.dataEndpoint]);
+
+  if (error) return <div className="text-[11px] text-red">{error}</div>;
+
+  return (
+    <div>
+      {widget.title && <h4 className="text-[12px] font-semibold text-foreground mb-2">{widget.title}</h4>}
+      <Kanban>
+        {widget.columns.map((col) => (
+          <Kanban.Column key={col.id} title={col.title}>
+            {cards
+              .filter((c) => c.column === col.id)
+              .map((card) => (
+                <Kanban.Card key={card.id} title={card.title}>
+                  {card.description}
+                </Kanban.Card>
+              ))}
+          </Kanban.Column>
+        ))}
+      </Kanban>
+    </div>
+  );
+}
+
+function EditorWidget({ widget }: { widget: Extract<PanelWidget, { type: "editor" }> }) {
+  return (
+    <div>
+      {widget.title && <h4 className="text-[12px] font-semibold text-foreground mb-2">{widget.title}</h4>}
+      <Editor defaultValue={widget.defaultValue} outputFormat={widget.outputFormat ?? "markdown"}>
+        <Editor.Toolbar />
+        <Editor.Content />
+      </Editor>
+    </div>
+  );
+}
+
+function DiagramWidget({ widget }: { widget: Extract<PanelWidget, { type: "diagram" }> }) {
+  const [schema, setSchema] = useState<unknown>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(widget.dataEndpoint)
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<unknown>; })
+      .then(setSchema)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [widget.dataEndpoint]);
+
+  if (error) return <div className="text-[11px] text-red">{error}</div>;
+  if (!schema) return <div className="text-[11px] text-muted-foreground">Loading diagram...</div>;
+
+  return (
+    <div>
+      {widget.title && <h4 className="text-[12px] font-semibold text-foreground mb-2">{widget.title}</h4>}
+      <Diagram schema={schema} type={widget.diagramType ?? "flowchart"} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main renderer
+// ---------------------------------------------------------------------------
+
+export interface WidgetRendererProps {
+  widgets: PanelWidget[];
+  actions?: PluginAction[];
+  projectPath?: string;
+}
+
+export function WidgetRenderer({ widgets, actions = [], projectPath }: WidgetRendererProps) {
+  return (
+    <div className="space-y-4">
+      {widgets.map((widget, i) => {
+        switch (widget.type) {
+          case "field-group":
+            return <FieldGroupWidget key={i} widget={widget} />;
+          case "action-bar":
+            return <ActionBarWidget key={i} widget={widget} actions={actions} projectPath={projectPath} />;
+          case "status-display":
+            return <StatusDisplayWidget key={i} widget={widget} />;
+          case "log-stream":
+            return <LogStreamWidget key={i} widget={widget} />;
+          case "markdown":
+            return <MarkdownWidget key={i} widget={widget} />;
+          case "table":
+            return <TableWidget key={i} widget={widget} />;
+          case "metric":
+            return <MetricWidget key={i} widget={widget} />;
+          case "iframe":
+            return <IframeWidget key={i} widget={widget} />;
+          case "chart":
+            return <ChartWidget key={i} widget={widget} />;
+          case "timeline":
+            return <TimelineWidget key={i} widget={widget} />;
+          case "kanban":
+            return <KanbanWidget key={i} widget={widget} />;
+          case "editor":
+            return <EditorWidget key={i} widget={widget} />;
+          case "diagram":
+            return <DiagramWidget key={i} widget={widget} />;
+          default:
+            return null;
+        }
+      })}
+    </div>
+  );
+}

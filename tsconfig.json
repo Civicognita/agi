@@ -1,0 +1,46 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmit": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": false,
+    "noUncheckedIndexedAccess": true,
+    "types": ["node"],
+    "paths": {
+      "@aionima/channel-sdk": ["./packages/channel-sdk/src/index.ts"],
+      "@aionima/entity-model": ["./packages/entity-model/src/index.ts"],
+      "@aionima/coa-chain": ["./packages/coa-chain/src/index.ts"],
+      "@aionima/gateway-core": ["./packages/gateway-core/src/index.ts"],
+      "@aionima/agent-bridge": ["./packages/agent-bridge/src/index.ts"],
+      "@aionima/config": ["./config/src/index.ts"],
+      "@aionima/memory": ["./packages/memory/src/index.ts"],
+      "@aionima/skills": ["./packages/skills/src/index.ts"],
+      "@aionima/voice": ["./packages/voice/src/index.ts"],
+      "@aionima/plugins": ["./packages/plugins/src/index.ts"],
+      "@aionima/sdk": ["./packages/aion-sdk/src/index.ts"],
+      "@aionima/marketplace": ["./packages/marketplace/src/index.ts"]
+    }
+  },
+  "include": [
+    "packages/*/src/**/*.ts",
+    "channels/*/src/**/*.ts",
+    "ui/web/src/**/*.ts",
+    "config/src/**/*.ts",
+    "cli/src/**/*.ts",
+    "test/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist", "ui/dashboard"]
+}

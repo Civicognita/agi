@@ -1,0 +1,16 @@
+{
+  "name": "@aionima/coa-chain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0"
+  },
+  "devDependencies": {
+    "@aionima/entity-model": "workspace:*",
+    "@types/better-sqlite3": "^7.6.0"
+  }
+}

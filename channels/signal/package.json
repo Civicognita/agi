@@ -1,0 +1,20 @@
+{
+  "name": "@aionima/channel-signal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "aionima": {
+    "id": "channel-signal",
+    "name": "Signal Channel",
+    "description": "Signal messaging channel adapter",
+    "category": "integration",
+    "entry": "./src/index.ts"
+  },
+  "dependencies": {
+    "@aionima/channel-sdk": "workspace:*",
+    "@aionima/plugins": "workspace:*"
+  }
+}

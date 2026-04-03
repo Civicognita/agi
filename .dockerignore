@@ -1,0 +1,10 @@
+node_modules
+.git
+.github
+.ai
+.bots
+.claude
+*.md
+!README.md
+data/
+.env

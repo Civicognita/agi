@@ -1,0 +1,11 @@
+{
+"mcpServers": {
+	"tynn": {
+        "type": "http",
+        "url": "https://tynn.ai/mcp/tynn",
+        "headers": {
+            "Authorization": "Bearer rpk_01KJ62YHCKYKHF096QVXE83W7T.52a39645dfa9424128e11df2a45b3a2483e2879ac110774f891041ec80a39102"
+        }
+    }
+}
+}

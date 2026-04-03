@@ -1,0 +1,35 @@
+{
+  "name": "@aionima/gateway-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@fastify/static": "^9.0.0",
+    "@aionima/channel-sdk": "workspace:*",
+    "@aionima/sdk": "workspace:*",
+    "@aionima/security": "workspace:*",
+    "@aionima/coa-chain": "workspace:*",
+    "@aionima/entity-model": "workspace:*",
+    "@aionima/marketplace": "workspace:*",
+    "@aionima/memory": "workspace:*",
+    "@aionima/plugins": "workspace:*",
+    "@aionima/skills": "workspace:*",
+    "@aionima/trpc-api": "workspace:*",
+    "@aionima/voice": "workspace:*",
+    "@trpc/server": "^11.0.0",
+    "fastify": "^5.7.4",
+    "node-pty": "^1.1.0",
+    "ulid": "^2.3.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0"
+  }
+}

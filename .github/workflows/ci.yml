@@ -1,0 +1,31 @@
+# CI checks run locally via pre-push hook (scripts/pre-push-check.sh).
+# GitHub Actions disabled to avoid per-minute charges.
+#
+# To run manually: bash scripts/pre-push-check.sh
+# Checks: lockfile sync, typecheck, lint
+
+name: CI (disabled)
+
+on:
+  workflow_dispatch: # manual trigger only — never runs automatically
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.5.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint

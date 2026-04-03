@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Aionima Companion",
+    "slug": "aionima-companion",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#1e1e2e"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.civicognita.aionima-companion",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Aionima uses the camera to relay visual input to the agent.",
+        "NSMicrophoneUsageDescription": "Aionima uses the microphone for voice input to the agent."
+      }
+    },
+    "plugins": [
+      "expo-notifications",
+      [
+        "expo-camera",
+        { "cameraPermission": "Aionima uses the camera to relay visual input to the agent." }
+      ],
+      [
+        "expo-av",
+        { "microphonePermission": "Aionima uses the microphone for voice input to the agent." }
+      ]
+    ]
+  }
+}

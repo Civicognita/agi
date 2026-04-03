@@ -1,0 +1,21 @@
+{
+  "name": "@aionima/channel-telegram",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "aionima": {
+    "id": "channel-telegram",
+    "name": "Telegram Channel",
+    "description": "Telegram messaging channel adapter",
+    "category": "integration",
+    "entry": "./src/index.ts"
+  },
+  "dependencies": {
+    "@aionima/channel-sdk": "workspace:*",
+    "@aionima/plugins": "workspace:*",
+    "grammy": "^1.35.0"
+  }
+}

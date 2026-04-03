@@ -1,0 +1,55 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicedoc/tauri-schema/v2/schema.json",
+  "productName": "Aionima Desktop",
+  "version": "0.1.0",
+  "identifier": "com.civicognita.aionima-desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Aionima Desktop",
+        "width": 1024,
+        "height": 768,
+        "minWidth": 400,
+        "minHeight": 600,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/tray-icon.png",
+      "tooltip": "Aionima Desktop — Disconnected"
+    },
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ws://localhost:*"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app"],
+    "icon": [
+      "icons/icon.icns",
+      "icons/icon.png"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  },
+  "plugins": {
+    "notification": {
+      "enabled": true
+    },
+    "global-shortcut": {
+      "enabled": true
+    },
+    "autostart": {
+      "enabled": true
+    }
+  }
+}

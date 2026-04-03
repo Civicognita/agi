@@ -1,0 +1,57 @@
+{
+  "name": "aionima",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.5.2",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "pnpm --filter @aionima/dashboard build && tsdown",
+    "build:marketplace": "tsx scripts/build-marketplace.ts",
+    "build:dashboard": "pnpm --filter @aionima/dashboard build",
+    "start": "tsx cli/src/index.ts run",
+    "cli": "tsx cli/src/index.ts",
+    "dev": "tsx watch cli/src/index.ts run",
+    "dev:dashboard": "pnpm --filter @aionima/dashboard dev",
+    "test": "bash scripts/test-vm-run.sh unit",
+    "test:e2e": "bash scripts/test-vm-run.sh e2e",
+    "test:e2e:ui": "bash scripts/test-vm-run.sh e2e:ui",
+    "test:all": "bash scripts/test-vm-run.sh all",
+    "test:vm:create": "bash scripts/test-vm.sh create",
+    "test:vm:destroy": "bash scripts/test-vm.sh destroy",
+    "test:vm:ssh": "bash scripts/test-vm.sh ssh",
+    "test:vm:setup": "bash scripts/test-vm.sh setup",
+    "lint": "oxlint --tsconfig tsconfig.json",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "check": "tsc --noEmit && pnpm lint",
+    "typecheck": "tsc --noEmit",
+    "tm": "npx tsx .bots/lib/cli.ts",
+    "tm:status": "npx tsx .bots/lib/cli.ts status",
+    "tm:jobs": "npx tsx .bots/lib/cli.ts jobs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.25.0",
+    "oxlint": "^0.16.0",
+    "tsdown": "^0.12.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "electron",
+      "esbuild",
+      "node-pty"
+    ]
+  }
+}

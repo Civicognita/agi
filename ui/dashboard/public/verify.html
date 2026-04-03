@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>0R Seal Verification Portal</title>
+  <style>
+    :root {
+      --bg: #1e1e2e;
+      --surface: #313244;
+      --overlay: #45475a;
+      --text: #cdd6f4;
+      --subtext: #a6adc8;
+      --green: #a6e3a1;
+      --red: #f38ba8;
+      --yellow: #f9e2af;
+      --blue: #89b4fa;
+      --mauve: #cba6f7;
+      --teal: #94e2d5;
+      --border: #585b70;
+      --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      --mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    header {
+      width: 100%;
+      padding: 2rem;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+    }
+
+    header h1 { font-size: 1.5rem; color: var(--mauve); }
+    header p { color: var(--subtext); margin-top: 0.5rem; font-size: 0.9rem; }
+
+    main {
+      width: 100%;
+      max-width: 640px;
+      padding: 2rem;
+    }
+
+    .input-section {
+      margin-bottom: 2rem;
+    }
+
+    .input-section label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--subtext);
+      margin-bottom: 0.5rem;
+    }
+
+    textarea {
+      width: 100%;
+      height: 180px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      padding: 1rem;
+      resize: vertical;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: var(--blue);
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 0.75rem 2rem;
+      background: var(--blue);
+      color: var(--bg);
+      border: none;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 1rem;
+      width: 100%;
+    }
+
+    .btn:hover { opacity: 0.9; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    #result {
+      margin-top: 2rem;
+      display: none;
+    }
+
+    .result-card {
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 1.5rem;
+      border-left: 4px solid var(--border);
+    }
+
+    .result-card.valid { border-left-color: var(--green); }
+    .result-card.invalid { border-left-color: var(--red); }
+    .result-card.revoked { border-left-color: var(--yellow); }
+
+    .result-status {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+    }
+
+    .result-status.valid { color: var(--green); }
+    .result-status.invalid { color: var(--red); }
+    .result-status.revoked { color: var(--yellow); }
+
+    .result-message {
+      color: var(--subtext);
+      font-size: 0.85rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+    }
+
+    .detail-item {
+      background: var(--overlay);
+      border-radius: 6px;
+      padding: 0.75rem;
+    }
+
+    .detail-item .label {
+      font-size: 0.7rem;
+      color: var(--subtext);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .detail-item .value {
+      font-size: 0.85rem;
+      margin-top: 0.25rem;
+      font-family: var(--mono);
+      word-break: break-all;
+    }
+
+    .alignment-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    .alignment-bar .bar-label {
+      font-size: 0.75rem;
+      color: var(--subtext);
+      width: 2.5rem;
+    }
+
+    .alignment-bar .bar-track {
+      flex: 1;
+      height: 6px;
+      background: var(--overlay);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .alignment-bar .bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.3s ease;
+    }
+
+    .alignment-bar .bar-value {
+      font-size: 0.75rem;
+      font-family: var(--mono);
+      width: 3rem;
+      text-align: right;
+    }
+
+    .checks {
+      margin-top: 1.5rem;
+      display: flex;
+      gap: 1rem;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.8rem;
+    }
+
+    .check .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .check .dot.pass { background: var(--green); }
+    .check .dot.fail { background: var(--red); }
+
+    .error-msg {
+      background: var(--surface);
+      border-left: 4px solid var(--red);
+      border-radius: 8px;
+      padding: 1rem 1.5rem;
+      color: var(--red);
+      font-size: 0.85rem;
+    }
+
+    footer {
+      margin-top: auto;
+      padding: 2rem;
+      text-align: center;
+      color: var(--subtext);
+      font-size: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>0R Seal Verification Portal</h1>
+    <p>Verify entity seals using client-side Ed25519 cryptographic verification. No data is sent to any server.</p>
+  </header>
+
+  <main>
+    <div class="input-section">
+      <label for="bundle-input">Paste seal bundle JSON</label>
+      <textarea id="bundle-input" placeholder='{"payload":{"sealId":"...","entityId":"...","entityType":"#E",...},"signature":"...","publicKey":"...","status":"active"}'></textarea>
+      <button class="btn" id="verify-btn" onclick="verifySeal()">Verify Seal</button>
+    </div>
+
+    <div id="result"></div>
+  </main>
+
+  <footer>
+    Civicognita &middot; 0REALTALK Verification &middot; All verification is performed entirely in your browser.
+  </footer>
+
+  <script type="module">
+    // -----------------------------------------------------------------------
+    // Encoding helpers
+    // -----------------------------------------------------------------------
+
+    function base64ToArrayBuffer(base64) {
+      const binaryString = atob(base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return bytes.buffer;
+    }
+
+    function hexToArrayBuffer(hex) {
+      const bytes = new Uint8Array(hex.length / 2);
+      for (let i = 0; i < hex.length; i += 2) {
+        bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+      }
+      return bytes.buffer;
+    }
+
+    function arrayBufferToHex(buffer) {
+      const bytes = new Uint8Array(buffer);
+      let hex = "";
+      for (const byte of bytes) {
+        hex += byte.toString(16).padStart(2, "0");
+      }
+      return hex;
+    }
+
+    // -----------------------------------------------------------------------
+    // Canonical serialization (must match seal-signer.ts)
+    // -----------------------------------------------------------------------
+
+    function canonicalize(payload) {
+      return JSON.stringify(payload, Object.keys(payload).sort());
+    }
+
+    // -----------------------------------------------------------------------
+    // Verification
+    // -----------------------------------------------------------------------
+
+    async function verifyChecksum(payload) {
+      const checksumInput = JSON.stringify({
+        sealId: payload.sealId,
+        entityId: payload.entityId,
+        entityType: payload.entityType,
+        issuedAt: payload.issuedAt,
+        issuedBy: payload.issuedBy,
+        coa: payload.coa,
+        alignment: payload.alignment,
+      });
+
+      const messageBytes = new TextEncoder().encode(checksumInput);
+      const hashBuffer = await crypto.subtle.digest("SHA-256", messageBytes);
+      const computed = arrayBufferToHex(hashBuffer);
+      return computed === payload.checksum;
+    }
+
+    async function verifySealBundle(bundle) {
+      try {
+        // Import public key from SPKI DER
+        const pubKeyBytes = base64ToArrayBuffer(bundle.publicKey);
+        const cryptoKey = await crypto.subtle.importKey(
+          "spki",
+          pubKeyBytes,
+          { name: "Ed25519" },
+          false,
+          ["verify"],
+        );
+
+        // Verify Ed25519 signature
+        const canonical = canonicalize(bundle.payload);
+        const messageBytes = new TextEncoder().encode(canonical);
+        const signatureBytes = hexToArrayBuffer(bundle.signature);
+
+        const signatureValid = await crypto.subtle.verify(
+          "Ed25519",
+          cryptoKey,
+          signatureBytes,
+          messageBytes,
+        );
+
+        // Verify checksum
+        const checksumValid = await verifyChecksum(bundle.payload);
+
+        const revoked = bundle.status === "revoked";
+        const valid = signatureValid && checksumValid && !revoked;
+
+        let message;
+        if (!signatureValid) {
+          message = "Ed25519 signature does not match payload. Seal may be tampered.";
+        } else if (!checksumValid) {
+          message = "Checksum mismatch. Seal content may be altered.";
+        } else if (revoked) {
+          message = "This seal has been revoked by the issuing authority.";
+        } else {
+          message = "Seal signature verified. Entity is 0R sealed.";
+        }
+
+        return { valid, signatureValid, checksumValid, revoked, message, payload: bundle.payload };
+      } catch (err) {
+        return {
+          valid: false,
+          signatureValid: false,
+          checksumValid: false,
+          revoked: false,
+          message: "Verification error: " + (err.message || String(err)),
+          payload: bundle.payload || null,
+        };
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // UI
+    // -----------------------------------------------------------------------
+
+    function parseSealBundle(json) {
+      try {
+        const parsed = JSON.parse(json);
+        if (typeof parsed !== "object" || parsed === null) return null;
+        if (
+          typeof parsed.payload !== "object" || parsed.payload === null ||
+          typeof parsed.signature !== "string" ||
+          typeof parsed.publicKey !== "string" ||
+          (parsed.status !== "active" && parsed.status !== "revoked")
+        ) return null;
+
+        const p = parsed.payload;
+        if (
+          typeof p.sealId !== "string" ||
+          typeof p.entityId !== "string" ||
+          typeof p.entityType !== "string" ||
+          typeof p.issuedAt !== "string" ||
+          typeof p.issuedBy !== "string" ||
+          typeof p.coa !== "string" ||
+          typeof p.checksum !== "string" ||
+          typeof p.alignment !== "object" || p.alignment === null
+        ) return null;
+
+        return parsed;
+      } catch { return null; }
+    }
+
+    function formatDate(iso) {
+      try {
+        return new Date(iso).toLocaleDateString("en-US", {
+          year: "numeric", month: "short", day: "numeric",
+          hour: "2-digit", minute: "2-digit",
+        });
+      } catch { return iso; }
+    }
+
+    function alignmentColor(value) {
+      if (value >= 0.9) return "var(--green)";
+      if (value >= 0.7) return "var(--teal)";
+      if (value >= 0.55) return "var(--yellow)";
+      return "var(--red)";
+    }
+
+    function esc(str) {
+      const div = document.createElement("div");
+      div.textContent = String(str ?? "");
+      return div.innerHTML;
+    }
+
+    function renderResult(result) {
+      const el = document.getElementById("result");
+      el.style.display = "block";
+
+      if (!result.payload) {
+        el.innerHTML = `<div class="error-msg">${esc(result.message)}</div>`;
+        return;
+      }
+
+      const statusClass = result.revoked ? "revoked" : (result.valid ? "valid" : "invalid");
+      const statusLabel = result.revoked ? "REVOKED" : (result.valid ? "VALID" : "INVALID");
+      const p = result.payload;
+
+      el.innerHTML = `
+        <div class="result-card ${statusClass}">
+          <div class="result-status ${statusClass}">${statusLabel}</div>
+          <div class="result-message">${esc(result.message)}</div>
+
+          <div class="detail-grid">
+            <div class="detail-item">
+              <div class="label">Seal ID</div>
+              <div class="value">${esc(p.sealId)}</div>
+            </div>
+            <div class="detail-item">
+              <div class="label">Entity</div>
+              <div class="value">${esc(p.entityType)} ${esc(p.entityId)}</div>
+            </div>
+            <div class="detail-item">
+              <div class="label">Issued</div>
+              <div class="value">${formatDate(p.issuedAt)}</div>
+            </div>
+            <div class="detail-item">
+              <div class="label">Issuer</div>
+              <div class="value">${esc(p.issuedBy)}</div>
+            </div>
+          </div>
+
+          <div class="detail-item" style="margin-top: 0.75rem;">
+            <div class="label">COA Fingerprint</div>
+            <div class="value">${esc(p.coa)}</div>
+          </div>
+
+          <div class="detail-item" style="margin-top: 0.75rem;">
+            <div class="label">Alignment</div>
+            <div class="alignment-bar">
+              <span class="bar-label">A:A</span>
+              <div class="bar-track"><div class="bar-fill" style="width:${p.alignment.a_a * 100}%;background:${alignmentColor(p.alignment.a_a)}"></div></div>
+              <span class="bar-value">${(p.alignment.a_a * 100).toFixed(0)}%</span>
+            </div>
+            <div class="alignment-bar">
+              <span class="bar-label">U:U</span>
+              <div class="bar-track"><div class="bar-fill" style="width:${p.alignment.u_u * 100}%;background:${alignmentColor(p.alignment.u_u)}"></div></div>
+              <span class="bar-value">${(p.alignment.u_u * 100).toFixed(0)}%</span>
+            </div>
+            <div class="alignment-bar">
+              <span class="bar-label">C:C</span>
+              <div class="bar-track"><div class="bar-fill" style="width:${p.alignment.c_c * 100}%;background:${alignmentColor(p.alignment.c_c)}"></div></div>
+              <span class="bar-value">${(p.alignment.c_c * 100).toFixed(0)}%</span>
+            </div>
+          </div>
+
+          <div class="checks">
+            <div class="check">
+              <span class="dot ${result.signatureValid ? 'pass' : 'fail'}"></span>
+              Ed25519 Signature
+            </div>
+            <div class="check">
+              <span class="dot ${result.checksumValid ? 'pass' : 'fail'}"></span>
+              SHA-256 Checksum
+            </div>
+            <div class="check">
+              <span class="dot ${!result.revoked ? 'pass' : 'fail'}"></span>
+              Not Revoked
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // -----------------------------------------------------------------------
+    // Global handler
+    // -----------------------------------------------------------------------
+
+    window.verifySeal = async function () {
+      const input = document.getElementById("bundle-input").value.trim();
+      const resultEl = document.getElementById("result");
+
+      if (!input) {
+        resultEl.style.display = "block";
+        resultEl.innerHTML = `<div class="error-msg">Please paste a seal bundle JSON.</div>`;
+        return;
+      }
+
+      const bundle = parseSealBundle(input);
+      if (!bundle) {
+        resultEl.style.display = "block";
+        resultEl.innerHTML = `<div class="error-msg">Invalid seal bundle format. Expected JSON with payload, signature, publicKey, and status fields.</div>`;
+        return;
+      }
+
+      const btn = document.getElementById("verify-btn");
+      btn.disabled = true;
+      btn.textContent = "Verifying...";
+
+      try {
+        const result = await verifySealBundle(bundle);
+        renderResult(result);
+      } catch (err) {
+        resultEl.style.display = "block";
+        resultEl.innerHTML = `<div class="error-msg">Verification failed: ${err.message || err}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Verify Seal";
+      }
+    };
+  </script>
+</body>
+</html>

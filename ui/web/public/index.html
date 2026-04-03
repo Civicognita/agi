@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aionima WebChat</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="header">
+      <div class="header-left">
+        <span class="logo">aionima</span>
+        <span id="gateway-state" class="state-badge state-unknown">UNKNOWN</span>
+      </div>
+      <div class="header-right">
+        <span id="connection-status" class="conn-status disconnected">disconnected</span>
+      </div>
+    </header>
+
+    <!-- Main layout -->
+    <div id="main">
+      <!-- Message list -->
+      <div id="message-list">
+        <div id="messages"></div>
+      </div>
+
+      <!-- Detail panel (shown when a message is clicked) -->
+      <aside id="detail-panel" class="hidden">
+        <div class="detail-header">
+          <span>Message Detail</span>
+          <button id="close-detail" title="Close">&times;</button>
+        </div>
+        <div id="detail-content"></div>
+      </aside>
+    </div>
+
+    <!-- Reply bar -->
+    <div id="reply-bar" class="hidden">
+      <div id="reply-context"></div>
+      <div class="reply-input-row">
+        <input type="text" id="reply-input" placeholder="Type a reply..." autocomplete="off">
+        <button id="reply-send">Send</button>
+        <button id="reply-cancel" title="Cancel">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Reconnecting overlay -->
+    <div id="reconnect-overlay" class="hidden">
+      <div class="reconnect-content">
+        <span class="spinner"></span>
+        <span>Reconnecting...</span>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

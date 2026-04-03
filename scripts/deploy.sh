@@ -1,0 +1,317 @@
+#!/usr/bin/env bash
+set -uo pipefail
+# NOTE: no `set -e` — we handle errors explicitly per step so deploy.sh
+# always emits a structured error before exiting, making failures visible
+# in the dashboard upgrade log.
+
+DEPLOY_DIR="/opt/aionima"
+PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
+BOTS_DIR="${AIONIMA_BOTS_DIR:-/opt/aionima-bots}"
+MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
+ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-id}"
+SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
+
+# Backend dist dirs — changes here require a service restart.
+# Channel adapters are marketplace plugins (not bundled in core).
+BACKEND_DIRS=(
+  "cli/dist"
+  "packages/gateway-core/dist"
+)
+
+# Structured JSON log emitter
+emit() {
+  local phase="$1" status="$2" details="${3:-}"
+  printf '{"phase":"%s","status":"%s","details":"%s"}\n' "$phase" "$status" "$details"
+}
+
+# Fatal error — emit and exit
+die() {
+  local phase="$1" details="${2:-}"
+  emit "$phase" "error" "$details"
+  exit 1
+}
+
+cd "$DEPLOY_DIR"
+
+# ---------------------------------------------------------------------------
+# 0. Abort if production tree is dirty (nothing should be modified here)
+# ---------------------------------------------------------------------------
+if [ -n "$(git diff --name-only 2>/dev/null)" ]; then
+  DIRTY_FILES="$(git diff --name-only | tr '\n' ', ')"
+  emit "preflight" "error" "Production tree is dirty: ${DIRTY_FILES}— stashing"
+  git stash --quiet
+fi
+
+# ---------------------------------------------------------------------------
+# 1. Pull AGI repo
+# ---------------------------------------------------------------------------
+emit "pull-agi" "start"
+if git pull --ff-only origin main 2>&1; then
+  emit "pull-agi" "done" "AGI repo updated"
+else
+  emit "pull-agi" "error" "AGI pull failed"
+  exit 1
+fi
+
+# Initialize/update git submodules (e.g. vendor libraries)
+if [ -f "$DEPLOY_DIR/.gitmodules" ]; then
+  emit "submodules" "start"
+  if git submodule update --init --depth 1 2>&1; then
+    emit "submodules" "done" "Submodules initialized"
+  else
+    die "submodules" "git submodule update failed"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Pull PRIME repo
+# ---------------------------------------------------------------------------
+if [ -d "$PRIME_DIR/.git" ]; then
+  emit "pull-prime" "start"
+  if (cd "$PRIME_DIR" && git pull --ff-only origin main 2>&1); then
+    emit "pull-prime" "done" "PRIME repo updated"
+  else
+    emit "pull-prime" "error" "PRIME pull failed"
+    # Non-fatal — continue in degraded mode
+  fi
+else
+  emit "pull-prime" "skip" "PRIME directory not found at $PRIME_DIR"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Pull BOTS repo
+# ---------------------------------------------------------------------------
+if [ -d "$BOTS_DIR/.git" ]; then
+  emit "pull-bots" "start"
+  if (cd "$BOTS_DIR" && git pull --ff-only origin main 2>&1); then
+    emit "pull-bots" "done" "BOTS repo updated"
+  else
+    emit "pull-bots" "error" "BOTS pull failed"
+    # Non-fatal — continue in degraded mode
+  fi
+else
+  emit "pull-bots" "skip" "BOTS directory not found at $BOTS_DIR"
+fi
+
+# ---------------------------------------------------------------------------
+# 3b. Pull MARKETPLACE repo
+# ---------------------------------------------------------------------------
+if [ -d "$MARKETPLACE_DIR/.git" ]; then
+  emit "pull-marketplace" "start"
+  if (cd "$MARKETPLACE_DIR" && git pull --ff-only origin main 2>&1); then
+    emit "pull-marketplace" "done" "Marketplace repo updated"
+  else
+    emit "pull-marketplace" "error" "Marketplace pull failed"
+    # Non-fatal — plugins still work from cache
+  fi
+else
+  emit "pull-marketplace" "skip" "Marketplace directory not found at $MARKETPLACE_DIR"
+fi
+
+# ---------------------------------------------------------------------------
+# 3c. Pull ID service repo
+# ---------------------------------------------------------------------------
+if [ -d "$ID_DIR/.git" ]; then
+  emit "pull-id" "start"
+  if (cd "$ID_DIR" && git pull --ff-only origin main 2>&1); then
+    emit "pull-id" "done" "ID service repo updated"
+  else
+    emit "pull-id" "error" "ID pull failed"
+    # Non-fatal — continue in degraded mode
+  fi
+else
+  emit "pull-id" "skip" "ID directory not found at $ID_DIR"
+fi
+
+# ---------------------------------------------------------------------------
+# 3d. Build local ID service (if enabled in config)
+# ---------------------------------------------------------------------------
+# Check if local ID service is enabled by reading the AGI config.
+# The config lives at ~/.agi/aionima.json and we check idService.local.enabled.
+ID_LOCAL_ENABLED=$(node -e "
+  try {
+    const c = JSON.parse(require('fs').readFileSync(
+      require('path').join(require('os').homedir(), '.agi/aionima.json'), 'utf-8'));
+    console.log(c.idService?.local?.enabled ? '1' : '0');
+  } catch { console.log('0'); }
+" 2>/dev/null || echo "0")
+
+if [ "$ID_LOCAL_ENABLED" = "1" ] && [ -d "$ID_DIR" ]; then
+  emit "build-id" "start"
+
+  # Install dependencies
+  if (cd "$ID_DIR" && npm install 2>&1); then
+    # Build TypeScript
+    if (cd "$ID_DIR" && npm run build 2>&1); then
+      # Run migrations (requires .env to be sourced)
+      if [ -f "$ID_DIR/.env" ]; then
+        (cd "$ID_DIR" && set -a && source .env && set +a && npx drizzle-kit migrate 2>&1) || \
+          emit "build-id" "warn" "ID migration failed (non-fatal)"
+      fi
+      emit "build-id" "done" "Local ID service built and migrated"
+
+      # Restart ID service if running
+      if systemctl is-active --quiet aionima-id 2>/dev/null; then
+        emit "restart-id" "start"
+        sudo systemctl restart aionima-id
+        emit "restart-id" "done" "Local ID service restarted"
+      fi
+    else
+      emit "build-id" "error" "ID service build failed"
+    fi
+  else
+    emit "build-id" "error" "ID service npm install failed"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Protocol compatibility check
+# ---------------------------------------------------------------------------
+emit "protocol-check" "start"
+COMPAT_OK=true
+for repo_label_dir in "agi:$DEPLOY_DIR" "prime:$PRIME_DIR" "bots:$BOTS_DIR" "id:$ID_DIR"; do
+  label="${repo_label_dir%%:*}"
+  dir="${repo_label_dir#*:}"
+  if [ ! -f "$dir/protocol.json" ]; then
+    emit "protocol-check" "warn" "Missing protocol.json in $label ($dir)"
+    COMPAT_OK=false
+  fi
+done
+if [ "$COMPAT_OK" = true ]; then
+  emit "protocol-check" "done" "All protocol.json files present"
+else
+  emit "protocol-check" "done" "Protocol check completed with warnings"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Install dependencies
+# ---------------------------------------------------------------------------
+emit "install" "start"
+if pnpm install --frozen-lockfile 2>&1; then
+  emit "install" "done" "Dependencies installed"
+else
+  die "install" "pnpm install failed"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Snapshot backend checksums before build
+# ---------------------------------------------------------------------------
+backend_hash_before=""
+for dir in "${BACKEND_DIRS[@]}"; do
+  if [ -d "$DEPLOY_DIR/$dir" ]; then
+    backend_hash_before+="$(find "$DEPLOY_DIR/$dir" -type f -exec md5sum {} + 2>/dev/null | sort | md5sum)"
+  fi
+done
+# ---------------------------------------------------------------------------
+# 7. Build
+# ---------------------------------------------------------------------------
+emit "build" "start"
+if pnpm build 2>&1; then
+  emit "build" "done" "Build complete"
+else
+  die "build" "pnpm build failed"
+fi
+
+# Marketplace plugins are built at install time (not deploy time).
+# The marketplace repo is a catalog source — plugins are pulled from it
+# on demand and installed into ~/.agi/plugins/cache/.
+
+# ---------------------------------------------------------------------------
+# 7c. Reconcile required plugins against marketplace
+# ---------------------------------------------------------------------------
+REQUIRED_PLUGINS_FILE="$DEPLOY_DIR/config/required-plugins.json"
+if [ -f "$REQUIRED_PLUGINS_FILE" ] && [ -d "$MARKETPLACE_DIR/plugins" ]; then
+  emit "required-check" "start"
+  MISSING=""
+  for pid in $(node -e "
+    const r = JSON.parse(require('fs').readFileSync('$REQUIRED_PLUGINS_FILE','utf-8'));
+    r.plugins.forEach(p => console.log(p.id));
+  " 2>/dev/null); do
+    # Check if any plugin directory contains this ID in its package.json
+    FOUND=false
+    for pdir in "$MARKETPLACE_DIR"/plugins/plugin-*/; do
+      if [ -f "$pdir/package.json" ]; then
+        MANIFEST_ID=$(node -e "
+          const p = JSON.parse(require('fs').readFileSync('${pdir}package.json','utf-8'));
+          console.log((p.aionima||p.nexus||{}).id||'');
+        " 2>/dev/null)
+        if [ "$MANIFEST_ID" = "$pid" ]; then
+          FOUND=true
+          break
+        fi
+      fi
+    done
+    if [ "$FOUND" = false ]; then
+      MISSING="$MISSING $pid"
+    fi
+  done
+  if [ -n "$MISSING" ]; then
+    emit "required-check" "error" "Missing required plugins:$MISSING"
+  else
+    emit "required-check" "done" "All required plugins present"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 8. Ensure data/logs dirs exist
+# ---------------------------------------------------------------------------
+mkdir -p "$DEPLOY_DIR/data"
+mkdir -p "$DEPLOY_DIR/logs"
+
+# ---------------------------------------------------------------------------
+# 9. Install systemd unit (if changed) — preserve TPM2 credential lines
+# ---------------------------------------------------------------------------
+RENDERED_SERVICE="$(sed "s/%AIONIMA_USER%/$SERVICE_USER/g" "$DEPLOY_DIR/scripts/aionima.service")"
+
+# Preserve existing LoadCredentialEncrypted lines from the live service unit.
+# SecretsManager inserts these between the BEGIN/END markers; deploy must not
+# wipe them or the API keys won't be available after restart.
+LIVE_UNIT="/etc/systemd/system/aionima.service"
+if [ -f "$LIVE_UNIT" ]; then
+  LIVE_CREDS="$(sed -n '/^# --- BEGIN CREDENTIALS ---$/,/^# --- END CREDENTIALS ---$/{ //!p }' "$LIVE_UNIT")"
+  if [ -n "$LIVE_CREDS" ]; then
+    # Inject live credential lines into the rendered template
+    RENDERED_SERVICE="$(echo "$RENDERED_SERVICE" | sed "/^# --- BEGIN CREDENTIALS ---$/a\\
+$LIVE_CREDS")"
+  fi
+fi
+
+if ! echo "$RENDERED_SERVICE" | diff - "$LIVE_UNIT" &>/dev/null; then
+  emit "systemd" "start" "Updating systemd service"
+  echo "$RENDERED_SERVICE" | sudo tee "$LIVE_UNIT" >/dev/null
+  sudo systemctl daemon-reload
+  emit "systemd" "done"
+fi
+sudo systemctl enable aionima &>/dev/null
+
+# ---------------------------------------------------------------------------
+# 10. Check if backend changed
+# ---------------------------------------------------------------------------
+backend_hash_after=""
+for dir in "${BACKEND_DIRS[@]}"; do
+  if [ -d "$DEPLOY_DIR/$dir" ]; then
+    backend_hash_after+="$(find "$DEPLOY_DIR/$dir" -type f -exec md5sum {} + 2>/dev/null | sort | md5sum)"
+  fi
+done
+# ---------------------------------------------------------------------------
+# 11. Record deployed commit
+# ---------------------------------------------------------------------------
+git rev-parse HEAD > "$DEPLOY_DIR/.deployed-commit"
+
+# ---------------------------------------------------------------------------
+# 12. Restart if backend changed
+# ---------------------------------------------------------------------------
+if [ "$backend_hash_before" != "$backend_hash_after" ]; then
+  emit "restart" "start" "Backend changed"
+  # Sentinel file tells the new server it booted after an upgrade.
+  # The new server removes it on startup and appends "restart complete" to the upgrade log.
+  touch "$DEPLOY_DIR/.upgrade-pending"
+  sudo systemctl restart aionima
+  # deploy.sh typically dies here (SIGPIPE when parent Node process exits).
+  # If it survives (e.g. stdout redirected), clean up:
+  rm -f "$DEPLOY_DIR/.upgrade-pending"
+  emit "restart" "done"
+  emit "complete" "done" "Deploy complete — service restarted"
+else
+  emit "complete" "done" "Deploy complete — frontend only (no restart)"
+fi

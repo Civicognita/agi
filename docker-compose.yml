@@ -1,0 +1,15 @@
+services:
+  gateway:
+    build: .
+    ports:
+      - "3100:3100"
+    volumes:
+      - aionima-data:/app/data
+      - ./aionima.json:/app/aionima.json:ro
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - NODE_ENV=production
+    restart: unless-stopped
+
+volumes:
+  aionima-data:

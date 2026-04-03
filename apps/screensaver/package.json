@@ -1,0 +1,16 @@
+{
+  "name": "@aionima/screensaver",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc && cp -r src/renderer dist/ && cp src/preload.cjs dist/",
+    "dev": "tsc && cp -r src/renderer dist/ && cp src/preload.cjs dist/ && electron dist/main.js",
+    "start": "electron dist/main.js"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "typescript": "^5.7.0"
+  }
+}

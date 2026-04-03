@@ -1,0 +1,30 @@
+{
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 3100,
+    "state": "ONLINE"
+  },
+  "auth": {
+    "tokens": ["$ENV{AUTH_TOKEN}"]
+  },
+  "agent": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "replyMode": "autonomous"
+  },
+  "owner": {
+    "displayName": "Owner",
+    "dmPolicy": "pairing",
+    "channels": {}
+  },
+  "channels": [],
+  "entities": {
+    "path": "./data/entities.db"
+  },
+  "workspace": {
+    "root": "."
+  },
+  "logging": {
+    "level": "info"
+  }
+}

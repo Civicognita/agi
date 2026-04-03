@@ -1,0 +1,16 @@
+{
+  "name": "@aionima/trpc-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@trpc/server": "^11.10.0",
+    "zod": "^3.25.76"
+  },
+  "peerDependencies": {
+    "@aionima/gateway-core": "workspace:*"
+  }
+}
