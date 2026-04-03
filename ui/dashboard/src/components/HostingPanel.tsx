@@ -234,7 +234,7 @@ export function HostingPanel({
               className="w-full h-8 px-2 rounded-md border border-border bg-background text-foreground text-[12px] disabled:opacity-50"
             >
               <option value="">Default</option>
-              {runtimes.map((r) => (
+              {runtimes.filter((r) => r.installed).map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.label}
                 </option>

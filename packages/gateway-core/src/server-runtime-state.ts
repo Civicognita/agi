@@ -3272,13 +3272,27 @@ export async function createGatewayRuntimeState(
   // GET /api/runtimes/:projectType — runtimes for a specific project type
   // -----------------------------------------------------------------------
 
+  // Helper: enrich runtimes with actual installation status from RuntimeInstallers
+  async function enrichRuntimes(runtimes: RuntimeDefinition[]): Promise<RuntimeDefinition[]> {
+    const installers = deps.pluginRegistry?.getRuntimeInstallers() ?? [];
+    const installed: Record<string, string[]> = {};
+    for (const installer of installers) {
+      try { installed[installer.language] = await installer.listInstalled(); }
+      catch { installed[installer.language] = []; }
+    }
+    return runtimes.map(rt => ({
+      ...rt,
+      installed: installed[rt.language]?.includes(rt.version) ?? false,
+    }));
+  }
+
   fastify.get("/api/runtimes", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) {
       return reply.code(403).send({ error: "Runtimes API only allowed from private network" });
     }
     const runtimes = deps.pluginRegistry?.getRuntimes() ?? [];
-    return reply.send({ runtimes });
+    return reply.send({ runtimes: await enrichRuntimes(runtimes) });
   });
 
   fastify.get<{ Params: { projectType: string } }>("/api/runtimes/:projectType", async (request, reply) => {
@@ -3287,7 +3301,7 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Runtimes API only allowed from private network" });
     }
     const runtimes = deps.pluginRegistry?.getRuntimesForType(request.params.projectType) ?? [];
-    return reply.send({ runtimes });
+    return reply.send({ runtimes: await enrichRuntimes(runtimes) });
   });
 
   // -----------------------------------------------------------------------
