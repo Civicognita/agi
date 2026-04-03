@@ -643,7 +643,7 @@ export default function RootLayout() {
                       {initial}
                     </div>
                   </PopoverTrigger>
-                  <PopoverContent className="p-0 w-auto border-0 bg-transparent shadow-none">
+                  <PopoverContent className="p-0 w-auto border-0 bg-transparent shadow-none z-[200]">
                     <ProfileCard
                       displayName={ownerName}
                       channels={configHook.data?.owner?.channels}
