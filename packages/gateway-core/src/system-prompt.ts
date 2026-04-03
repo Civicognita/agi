@@ -44,7 +44,7 @@ export interface ToolManifestEntry {
 /** Tier-based autonomy capabilities. */
 export interface TierCapabilities {
   canUseTool: boolean;
-  canEmitTaskmaster: boolean;
+  canDispatchWorker: boolean;
   canRequestSensitiveData: boolean;
   responseDetailLevel: "minimal" | "standard" | "full";
 }
@@ -139,19 +139,19 @@ export interface SystemPromptContext {
 const TIER_CAPABILITIES: Record<VerificationTier, TierCapabilities> = {
   unverified: {
     canUseTool: false,
-    canEmitTaskmaster: false,
+    canDispatchWorker: false,
     canRequestSensitiveData: false,
     responseDetailLevel: "minimal",
   },
   verified: {
     canUseTool: true,
-    canEmitTaskmaster: true,
+    canDispatchWorker: true,
     canRequestSensitiveData: false,
     responseDetailLevel: "standard",
   },
   sealed: {
     canUseTool: true,
-    canEmitTaskmaster: true,
+    canDispatchWorker: true,
     canRequestSensitiveData: true,
     responseDetailLevel: "full",
   },
@@ -205,8 +205,8 @@ function describeAutonomy(caps: TierCapabilities): string {
   }
   if (caps.canUseTool) parts.push("tool access");
   else parts.push("no tool use");
-  if (caps.canEmitTaskmaster) parts.push("TASKMASTER q:> permitted");
-  else parts.push("no TASKMASTER emission");
+  if (caps.canDispatchWorker) parts.push("worker dispatch q:> permitted");
+  else parts.push("no worker dispatch");
   return parts.join(", ");
 }
 
@@ -272,9 +272,9 @@ function buildResponseFormatSection(): string {
 - Do not expose internal identifiers (entity IDs, COA fingerprints, TIDs) in responses unless the entity explicitly requests system information.
 - Do not fabricate tool results. If a tool is unavailable, state it plainly.
 
-## TASKMASTER — Background Worker Dispatch
+## WORKERS — Background Worker Dispatch
 
-The \`taskmaster_dispatch\` tool creates background worker jobs. When you use it, workers execute autonomously using their own tool loops and produce reports.
+The \`worker_dispatch\` tool creates background worker jobs. When you use it, workers execute autonomously using their own tool loops and produce reports.
 
 Available worker domains:
 - **code** — engineer (architecture), hacker (implementation), reviewer (code review), tester (validation)
@@ -287,7 +287,7 @@ Available worker domains:
 - **data** — modeler (schema design), migrator (data transforms)
 
 Guidelines:
-- Use \`taskmaster_dispatch\` for tasks that benefit from focused, autonomous execution
+- Use \`worker_dispatch\` for tasks that benefit from focused, autonomous execution
 - Choose the appropriate domain and worker for the task
 - Workers run in isolated git worktrees and produce reports at completion
 - Reports are viewable in the dashboard under Impactinomics > Reports

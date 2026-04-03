@@ -51,6 +51,8 @@ export type {
   LLMProviderFactory,
   CleanupResource,
   CleanupManifest,
+  WorkerDomain,
+  WorkerDefinition,
 } from "./types.js";
 export { categoryToProvides } from "./types.js";
 

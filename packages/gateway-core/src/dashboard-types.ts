@@ -424,7 +424,7 @@ export type DashboardEvent =
   | { type: "system:update_available"; data: UpdateCheckData }
   | { type: "hosting:status"; data: HostingStatusData }
   | { type: "bots:job_update"; data: BotsJobUpdateData }
-  | { type: "bots:worker_done"; data: BotsWorkerDoneData }
+  | { type: "worker:done"; data: BotsWorkerDoneData }
   | { type: "bots:phase_done"; data: BotsPhaseDoneData }
   | { type: "bots:checkpoint"; data: BotsCheckpointData }
   | { type: "bots:report_ready"; data: BotsReportReadyData }

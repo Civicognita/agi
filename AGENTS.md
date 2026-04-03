@@ -91,6 +91,7 @@ export default createPlugin({
 | `defineChannel()` | `api.registerChannel()` | Messaging channel adapters |
 | `defineProvider()` | `api.registerProvider()` | LLM provider integrations |
 | `defineScan()` | `api.registerScanProvider()` | Security scan providers |
+| `defineWorker()` | `api.registerWorker()` | Worker task specialists |
 
 **Testing:** `import { testActivate } from "@aionima/sdk/testing"` provides a mock `AionimaPluginAPI` for unit tests.
 
@@ -157,7 +158,7 @@ pnpm test:e2e:ui       # Playwright UI tests (host browser → VM)
 pnpm test:all          # All tiers
 ```
 
-The VM mounts all workspace repos: AGI → `/mnt/agi`, PRIME → `/mnt/aionima-prime`, BOTS → `/mnt/aionima-bots`, ID → `/mnt/aionima-id`. A test config fixture at `test/fixtures/aionima-test.json` points to these mount paths.
+The VM mounts all workspace repos: AGI → `/mnt/agi`, PRIME → `/mnt/aionima-prime`, ID → `/mnt/aionima-id`. A test config fixture at `test/fixtures/aionima-test.json` points to these mount paths.
 
 CI (GitHub Actions) sets `AIONIMA_TEST_VM=1` to bypass the host guard — it runs vitest directly since GitHub Actions is already isolated.
 
@@ -175,17 +176,16 @@ Deployment is automated through the dashboard — **never run deploy.sh manually
 
 ### Multi-Repo Architecture
 
-The system is built from **independent git repos** — not submodules. The **core four** (AGI, PRIME, BOTS, ID) are required; MARKETPLACE is optional and will be promoted to core later with the Doers Market.
+The system is built from **independent git repos** — not submodules. The **core three** (AGI, PRIME, ID) are required; MARKETPLACE is optional and will be promoted to core later with the Doers Market.
 
 | Repo | Production Path | Dev Path | Source |
 |------|----------------|----------|--------|
 | AGI | `/opt/aionima` | (dev workspace) | `@Civicognita/agi` |
 | PRIME | `/opt/aionima-prime` | `/opt/aionima-prime_dev` | `@Civicognita/aionima` |
-| BOTS | `/opt/aionima-bots` | `/opt/aionima-bots_dev` | `@Civicognita/bots` |
 | ID | `/opt/aionima-id` | `/opt/aionima-id_dev` | `@Civicognita/aionima-id` |
 | MARKETPLACE | `/opt/aionima-marketplace` | `/opt/aionima-marketplace_dev` | `@Civicognita/aionima-marketplace` |
 
-AGI resolves repo paths at runtime from config (`prime.dir`, `bots.dir`, `idService.dir`, `marketplace.dir`). Dev mode (`dev.enabled: true`) switches to dev directories automatically.
+AGI resolves repo paths at runtime from config (`prime.dir`, `idService.dir`, `marketplace.dir`). Dev mode (`dev.enabled: true`) switches to dev directories automatically.
 
 **Plugin architecture:** ALL plugins live in the MARKETPLACE repo and are discovered at boot via `discoverMarketplacePlugins()`. "Built-in" plugins are pre-installed during onboarding but still come from the marketplace. The marketplace also supports third-party plugins installed from external sources via the `manage_marketplace` agent tool or dashboard UI.
 
@@ -198,7 +198,7 @@ Each repo has a `protocol.json` at its root. AGI checks semver compatibility at 
 1. **Push to `main`** — GitHub webhook notifies the server; dashboard also polls every 60s
 2. **User clicks "Upgrade"** in the dashboard UI
 3. **`POST /api/system/upgrade`** triggers `scripts/deploy.sh`, which:
-   - Pulls AGI, PRIME, BOTS, ID, and MARKETPLACE repos (structured JSON logging per phase)
+   - Pulls AGI, PRIME, ID, and MARKETPLACE repos (structured JSON logging per phase)
    - Checks protocol compatibility across repos
    - `pnpm install --frozen-lockfile && pnpm build`
    - Snapshots backend checksums **before/after** build
@@ -211,7 +211,6 @@ Key paths: service runs from `/opt/aionima`, systemd unit at `/etc/systemd/syste
 
 Toggle via dashboard (`POST /api/dev/switch`) or config file. Dev mode:
 - Reads PRIME from `dev.primeDir` (default: `/opt/aionima-prime_dev`)
-- Reads BOTS from `dev.botsDir` (default: `/opt/aionima-bots_dev`)
 - Adds `fork_id` to COA audit records for traceability
 - Requires restart after toggle
 
@@ -220,7 +219,6 @@ Toggle via dashboard (`POST /api/dev/switch`) or config file. Dev mode:
 | Path | Purpose |
 |------|---------|
 | `/opt/aionima-prime/` | **PRIME knowledge corpus (production) — NEVER write runtime data here** |
-| `/opt/aionima-bots/` | BOTS task system (production) |
 | `~/.agi/` | Runtime data root (config, db, secrets, chat history) |
 | `~/.agi/aionima.json` | Runtime config (single source — NOT in repo or service dir) |
 | `~/.agi/entities.db` | SQLite entity database |
@@ -252,48 +250,9 @@ Docs are served through the editor plugin (now in the marketplace repo). The das
 
 ---
 
-## BOTS — Bolt-On Taskmaster System
+## Workers & Taskmaster
 
-**Autonomous Work Queue:** Type `w:>` followed by a task description to queue background work. Workers execute in parallel while you continue interactive work.
-
-### Shortcode Syntax
-
-```
-w:> <task description>    Queue work (creates WORK{JOB})
-n:> <frame topic>         Set next frame after current work
-```
-
-### Auto-Processing
-
-When hook output contains `<bots-auto-spawn jobs="..."/>`:
-1. Parse job IDs from the signal
-2. Run orchestrator: `npx tsx .bots/lib/orchestrator.ts run`
-3. For each worker in `spawned[]`, use Task tool to spawn:
-   ```
-   Task(
-     subagent_type: "general-purpose",
-     model: <worker.model>,
-     prompt: <worker.prompt>,
-     run_in_background: true,
-     description: <worker.worker>
-   )
-   ```
-4. Display checkpoints if any require approval
-
-### Gate Types
-
-- `auto` — Proceed automatically to next phase
-- `checkpoint` — Pause for user review (show options: approve/reject/diff)
-- `terminal` — Job complete (offer merge/archive)
-
-### CLI Commands
-
-```
-npm run tm status          Show active jobs
-npm run tm jobs            List all jobs
-npm run tm approve <id>    Approve checkpoint
-npm run tm reject <id>     Reject and stop job
-```
+**Workers** are plugin-provided task specialists. **Taskmaster** is the built-in job orchestration engine that discovers registered workers and dispatches them for background tasks. The agent dispatches work via the `taskmaster_dispatch` tool. Workers are registered by plugins via `api.registerWorker()`.
 
 ### Worker Domains
 
@@ -317,56 +276,30 @@ npm run tm reject <id>     Reject and stop job
 | modeler | linguist    |
 | auditor | archivist   |
 
-### Team Mode
+### Gate Types
 
-BOTS can dispatch worker teams using agent teams. Instead of spawning isolated subagents, each worker becomes a teammate in a coordinated team with a shared task list.
+- `auto` — Proceed automatically to next phase
+- `checkpoint` — Pause for user review (approve/reject)
+- `terminal` — Job complete (offer merge/archive)
 
-**Switching modes:**
+### Adding Custom Workers
+
+Plugins register workers via `api.registerWorker()` with the `defineWorker()` SDK builder. See `docs/sdk/builders.md` for the full builder reference.
+
+### Configuration
+
+```json
+{
+  "workers": {
+    "autoApprove": false,
+    "maxConcurrentJobs": 3,
+    "workerTimeoutMs": 300000,
+    "modelOverrides": {
+      "code.hacker": { "model": "claude-opus-4-6" }
+    }
+  }
+}
 ```
-npm run tm mode team       # Enable team mode
-npm run tm mode subagent   # Switch back to default
-npm run tm mode            # Show current mode
-```
-
-**How team mode differs from subagent mode:**
-
-| Aspect | Subagent (default) | Team |
-|--------|-------------------|------|
-| Workers | Ephemeral Task tool agents | Persistent teammates in an agent team |
-| Communication | JSON handoff files only | Shared task list + direct messaging + handoff files |
-| Phase sequencing | Orchestrator poll loop | Task `blockedBy` dependencies |
-| Gate: auto | `evaluateGate()` proceeds | Next-phase tasks unblock automatically |
-| Gate: checkpoint | CLI `approve` command | `TaskCompleted` hook blocks (exit 2) until approved |
-| Gate: terminal | Job complete, merge offered | `TaskCompleted` hook blocks until `npm run tm complete` |
-
-**When hook output contains `<bots-team-orchestrate jobs="..."/>`:**
-
-1. Get the orchestration plan: `npx tsx .bots/lib/cli.ts orchestrate --instructions`
-2. **Create an agent team** with the teammates listed in the plan
-3. **Spawn each teammate** with their BOTS worker prompt from the plan
-4. **Create tasks** in the shared task list via `TaskCreate` for each worker
-5. **Wire dependencies** via `TaskUpdate` — phase N+1 tasks are `blockedBy` phase N tasks; chain targets are `blockedBy` their source worker
-6. Teammates pick up tasks, execute in the worktree, and write handoff JSON
-7. The `TaskCompleted` hook reconciles BOTS state and enforces gates automatically
-8. The `TeammateIdle` hook keeps teammates working until they write their handoff
-9. When all jobs are done: shut down teammates, then clean up the team
-
-**Gate enforcement (automatic via hooks):**
-- `auto` gate: task completes normally → next-phase tasks unblock via dependencies
-- `checkpoint` gate: when all phase workers finish, hook blocks the last task (exit 2) → run `npm run tm approve <jobId>` to continue
-- `terminal` gate: when all phase workers finish, hook blocks for merge → run `npm run tm complete <jobId>`
-
-**Team mode CLI:**
-```
-npm run tm team-status                     Show team mode status
-npm run tm orchestrate --instructions      Full orchestration plan for team lead
-npm run tm orchestrate --tasks             Task payloads only
-npm run tm mode                            Show current execution mode
-```
-
-**Requirements:**
-- `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` must be set in env
-- `TaskCompleted` and `TeammateIdle` hooks must be registered in `.claude/settings.local.json`
 
 ---
 
@@ -417,4 +350,4 @@ Each AI coding tool stores its own config in its standard directory:
 - **Cursor:** `.cursor/` (if present)
 - **Other agents:** Use your tool's standard config directory
 
-Worker definitions for BOTS live in `.claude/agents/workers/` (Claude Code-specific). Other providers would define equivalent workers in their own config dirs.
+Worker definitions for Claude Code live in `.claude/agents/workers/`. Other providers would define equivalent workers in their own config dirs.

@@ -52,7 +52,7 @@ export interface ToolExecutionContext {
   nodeId: string;
 }
 
-/** TASKMASTER emission extracted from response text. */
+/** Worker emission extracted from response text. */
 export interface TaskmasterEmission {
   description: string;
   lineNumber: number;
@@ -64,7 +64,7 @@ export interface TaskmasterEmission {
 
 const DEFAULT_SIZE_CAP = 16_384; // 16 KB
 
-const TASKMASTER_PATTERN = /^q:>\s+(.+)$/gm;
+const WORKER_EMISSION_PATTERN = /^q:>\s+(.+)$/gm;
 
 // ---------------------------------------------------------------------------
 // ToolRegistry
@@ -231,11 +231,11 @@ export class ToolRegistry {
   }
 
   // ---------------------------------------------------------------------------
-  // TASKMASTER emission detection
+  // Worker emission detection
   // ---------------------------------------------------------------------------
 
   /**
-   * Extract TASKMASTER emissions (q:> lines) from agent response text.
+   * Extract worker emissions (q:> lines) from agent response text.
    *
    * @see docs/governance/agent-invocation-spec.md §6.4
    */
@@ -258,7 +258,7 @@ export class ToolRegistry {
   }
 
   /**
-   * Strip TASKMASTER emission lines from response text.
+   * Strip worker emission lines from response text.
    *
    * Per spec: emissions are stripped before delivering to entity,
    * unless entity tier is "sealed" (in which case they are shown).
@@ -272,7 +272,7 @@ export class ToolRegistry {
     }
 
     let strippedCount = 0;
-    const cleaned = responseText.replace(TASKMASTER_PATTERN, () => {
+    const cleaned = responseText.replace(WORKER_EMISSION_PATTERN, () => {
       strippedCount++;
       return "";
     });

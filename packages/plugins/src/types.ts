@@ -35,7 +35,7 @@ export type ProvidesLabel =
   | "project-types" | "stacks" | "services" | "runtimes"
   | "system-services" | "ux" | "agent-tools" | "skills"
   | "knowledge" | "themes" | "workflows" | "channels"
-  | "providers" | "security";
+  | "providers" | "security" | "workers";
 
 /**
  * Map a legacy category string to provides labels for backward compatibility.
@@ -599,6 +599,32 @@ export interface SubdomainRouteDefinition {
 }
 
 // ---------------------------------------------------------------------------
+// Worker definitions — background task dispatch workers
+// ---------------------------------------------------------------------------
+
+export type WorkerDomain = "code" | "k" | "ux" | "strat" | "comm" | "ops" | "gov" | "data";
+
+export interface WorkerDefinition {
+  id: string;
+  name: string;
+  domain: WorkerDomain;
+  role: string;
+  description: string;
+  /** Full system prompt for this worker (markdown). */
+  prompt: string;
+  /** Model preference: "fast" for simple, "balanced" for medium, "capable" for complex tasks. */
+  modelTier?: "fast" | "balanced" | "capable";
+  /** Tools this worker is allowed to use. */
+  allowedTools?: string[];
+  /** Worker that must follow this one (enforced chain). */
+  chainTarget?: string;
+  /** Minimum entity verification tier required to dispatch this worker. */
+  requiredTier?: "verified" | "sealed";
+  /** Keywords for auto-routing dispatch requests to this worker. */
+  keywords?: string[];
+}
+
+// ---------------------------------------------------------------------------
 // Plugin API — what plugins receive on activation
 // ---------------------------------------------------------------------------
 
@@ -632,6 +658,7 @@ export interface AionimaPluginAPI {
   registerSubdomainRoute(def: SubdomainRouteDefinition): void;
   registerProvider(def: LLMProviderDefinition): void;
   registerScanProvider(def: ScanProviderDefinition): void;
+  registerWorker(def: WorkerDefinition): void;
   getChannelConfig(channelId: string): { enabled: boolean; config: Record<string, unknown> } | undefined;
   getConfig(): Record<string, unknown>;
   getLogger(): ComponentLogger;

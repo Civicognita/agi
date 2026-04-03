@@ -28,6 +28,7 @@ import type {
 import type { ProjectTypeDefinition, ProjectTypeTool, StackDefinition } from "@aionima/gateway-core";
 import type { AionimaChannelPlugin } from "@aionima/channel-sdk";
 import type { ScanProviderDefinition } from "@aionima/security";
+import type { WorkerDefinition } from "@aionima/plugins";
 
 export interface MockRegistrations {
   actions: ActionDefinition[];
@@ -51,6 +52,7 @@ export interface MockRegistrations {
   channels: string[];
   providers: LLMProviderDefinition[];
   scanProviders: ScanProviderDefinition[];
+  workers: WorkerDefinition[];
   hooks: { hook: string; handler: unknown }[];
 }
 
@@ -83,6 +85,7 @@ export function createMockAPI(options: MockAPIOptions = {}): { api: AionimaPlugi
     channels: [],
     providers: [],
     scanProviders: [],
+    workers: [],
     hooks: [],
   };
 
@@ -119,6 +122,7 @@ export function createMockAPI(options: MockAPIOptions = {}): { api: AionimaPlugi
     registerDashboardDomain(def: DashboardInterfaceDomainDefinition): void { registrations.dashboardDomains.push(def); },
     registerSubdomainRoute(): void {},
     registerScanProvider(def: ScanProviderDefinition): void { registrations.scanProviders.push(def); },
+    registerWorker(def: WorkerDefinition): void { registrations.workers.push(def); },
     getChannelConfig(): undefined { return undefined; },
     getConfig(): Record<string, unknown> { return { ...options.config }; },
     getLogger() { return { debug() {}, info() {}, warn() {}, error() {} }; },

@@ -325,8 +325,6 @@ const DevConfigSchema = z
     botsRepo: z.string().default("git@github.com:wishborn/bots.git"),
     /** Dev directory for PRIME fork. */
     primeDir: z.string().default("/opt/aionima-prime_dev"),
-    /** Dev directory for BOTS fork. */
-    botsDir: z.string().default("/opt/aionima-bots_dev"),
     /** Dev directory for marketplace fork. */
     marketplaceDir: z.string().default("/opt/aionima-marketplace_dev"),
     /** Git remote URL for ID service fork. */
@@ -354,19 +352,13 @@ const AgentCredentialsConfigSchema = z
   })
   .strict();
 
-const BotsConfigSchema = z
+const WorkersConfigSchema = z
   .object({
-    /** Path to the BOTS system directory. */
-    dir: z.string().default("/opt/aionima-bots"),
-    /** Git remote URL for the BOTS system source. */
-    source: z.string().default("git@github.com:Civicognita/bots.git"),
-    /** Branch to track. */
-    branch: z.string().default("main"),
     /** Key format: "domain.worker" e.g. "code.hacker", "k.linguist" */
-    workerModels: z.record(z.string(), WorkerModelOverrideSchema).optional(),
+    modelOverrides: z.record(z.string(), WorkerModelOverrideSchema).optional(),
     /** Auto-approve checkpoint gates (skip human review). */
     autoApprove: z.boolean().default(false),
-    /** Maximum concurrent BOTS jobs running at once. */
+    /** Maximum concurrent worker jobs running at once. */
     maxConcurrentJobs: z.number().int().positive().default(3),
     /** Per-worker timeout in milliseconds. */
     workerTimeoutMs: z.number().int().positive().default(300_000),
@@ -498,7 +490,7 @@ export const AionimaConfigSchema = z
     logging: LoggingConfigSchema.optional(),
     /** System-level LLM provider credentials keyed by provider name. */
     providers: z.record(z.string(), ProviderCredentialSchema).optional(),
-    bots: BotsConfigSchema.optional(),
+    workers: WorkersConfigSchema.optional(),
     marketplace: MarketplaceConfigSchema.optional(),
     idService: IdServiceConfigSchema.optional(),
     dev: DevConfigSchema.optional(),
@@ -538,7 +530,7 @@ export type ProviderCredential = z.infer<typeof ProviderCredentialSchema>;
 export type PluginPreference = z.infer<typeof PluginPreferenceSchema>;
 export type ServiceOverride = z.infer<typeof ServiceOverrideSchema>;
 export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;
-export type BotsConfig = z.infer<typeof BotsConfigSchema>;
+export type WorkersConfig = z.infer<typeof WorkersConfigSchema>;
 export type MarketplaceConfig = z.infer<typeof MarketplaceConfigSchema>;
 export type DevConfig = z.infer<typeof DevConfigSchema>;
 export type DashboardAuthConfig = z.infer<typeof DashboardAuthConfigSchema>;

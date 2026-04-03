@@ -30,6 +30,7 @@ The plugin schema version is tracked in `protocol.json` under `pluginSchema`. Th
 | `packages/aion-sdk/src/define-channel.ts` | Channel builder |
 | `packages/aion-sdk/src/define-provider.ts` | LLM provider builder |
 | `packages/aion-sdk/src/define-scan.ts` | Security scan provider builder |
+| `packages/aion-sdk/src/define-worker.ts` | Worker task specialist builder |
 | `packages/security/src/types.ts` | Security type definitions (findings, scans, providers) |
 | `packages/plugins/src/registry.ts` | Plugin registry (stores registrations) |
 | `packages/plugins/src/loader.ts` | Plugin loader (wires `register*` to registry) |
@@ -67,6 +68,7 @@ The `AionimaPluginAPI` interface (`packages/plugins/src/types.ts:517`) exposes t
 | `registerTool()` | `ProjectTypeTool` | — |
 | `registerDashboardTab()` | `DashboardTabDef` | — |
 | `registerScanProvider()` | `ScanProviderDefinition` | `defineScan()` |
+| `registerWorker()` | `WorkerDefinition` | `defineWorker()` |
 
 ## Adding a New Registration Type
 

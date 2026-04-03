@@ -67,7 +67,7 @@ import { startGatewaySidecars } from "./server-startup.js";
 import { UserContextStore } from "./user-context-store.js";
 import { HeartbeatScheduler } from "./heartbeat.js";
 import { PrimeLoader } from "./prime-loader.js";
-import { resolvePrimeDir, resolveBotsDir, resolveIdDir } from "./resolve-paths.js";
+import { resolvePrimeDir, resolveIdDir } from "./resolve-paths.js";
 import { checkProtocolCompatibility } from "./protocol-check.js";
 import { PlanStore } from "./plan-store.js";
 import { ChatPersistence } from "./chat-persistence.js";
@@ -89,10 +89,10 @@ import { OAuthHandler } from "./oauth-handler.js";
 import { VisitorAuthManager } from "./visitor-auth.js";
 import { StackRegistry } from "./stack-registry.js";
 import { SharedContainerManager } from "./shared-container-manager.js";
-import { BotsRuntime } from "./bots-runtime.js";
+import { WorkerRuntime } from "./worker-runtime.js";
 import { ReportsStore } from "./reports-store.js";
 import { registerReportsApi } from "./reports-api.js";
-import { registerBotsApi } from "./bots-api.js";
+import { registerWorkerApi } from "./worker-api.js";
 import { appendUpgradeLog } from "./upgrade-log.js";
 
 // ---------------------------------------------------------------------------
@@ -262,7 +262,6 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const primeDir = resolvePrimeDir(config);
-  const botsDir = resolveBotsDir(config);
   const idDir = resolveIdDir(config);
   const primeLoader = new PrimeLoader(primeDir);
   const primeEntryCount = primeLoader.index();
@@ -270,7 +269,7 @@ export async function startGatewayServer(
 
   // Protocol compatibility check — selfRepo is the AGI repo path (used by upgrade system)
   const agiRoot = config.workspace?.selfRepo ?? config.workspace?.root ?? process.cwd();
-  const protocolResult = checkProtocolCompatibility(agiRoot, primeDir, botsDir, idDir);
+  const protocolResult = checkProtocolCompatibility(agiRoot, primeDir, null, idDir);
   if (!protocolResult.compatible) {
     for (const err of protocolResult.errors) {
       log.warn(`Protocol compatibility: ${err}`);
@@ -472,10 +471,10 @@ export async function startGatewayServer(
   // In-flight session data for persistence — maps sessionId → PersistedChatSession
   const chatSessionData = new Map<string, PersistedChatSession>();
   const canvasDocuments: CanvasDocument[] = [];
-  // Late-bound BOTS runtime ref — populated after botsRuntime is created below.
+  // Late-bound worker runtime ref — populated after workerRuntime is created below.
   // The onJobCreated callback is only invoked during agent tool execution (after boot),
-  // so botsRuntimeRef.current is always set by the time it is first called.
-  const botsRuntimeRef: { current: BotsRuntime | null } = { current: null };
+  // so workerRuntimeRef.current is always set by the time it is first called.
+  const workerRuntimeRef: { current: WorkerRuntime | null } = { current: null };
 
   const toolCount = registerAllTools(toolRegistry, {
     workspaceRoot,
@@ -487,10 +486,10 @@ export async function startGatewayServer(
     userContextStore,
     primeLoader,
     projectDirs: projectPaths,
-    botsDir,
+    botsDir: undefined, // BOTS repo removed — workers are now plugins
     onJobCreated: (jobId: string, coaReqId: string) => {
-      botsRuntimeRef.current?.executeJob(jobId, coaReqId).catch((err: unknown) => {
-        log.error(`botsRuntime.executeJob error: ${err instanceof Error ? err.message : String(err)}`);
+      workerRuntimeRef.current?.executeJob(jobId, coaReqId).catch((err: unknown) => {
+        log.error(`workerRuntime.executeJob error: ${err instanceof Error ? err.message : String(err)}`);
       });
     },
   });
@@ -544,14 +543,14 @@ export async function startGatewayServer(
   });
 
   // -------------------------------------------------------------------------
-  // Step 5b-bots: BOTS Runtime + Reports Store
+  // Step 5b-workers: Worker Runtime + Reports Store
   // -------------------------------------------------------------------------
 
-  const botsRuntime = new BotsRuntime(
+  const workerRuntime = new WorkerRuntime(
     {
-      autoApprove: (config.bots as { autoApprove?: boolean } | undefined)?.autoApprove ?? false,
-      maxConcurrentJobs: (config.bots as { maxConcurrentJobs?: number } | undefined)?.maxConcurrentJobs ?? 3,
-      workerTimeoutMs: (config.bots as { workerTimeoutMs?: number } | undefined)?.workerTimeoutMs ?? 300_000,
+      autoApprove: (config.workers as { autoApprove?: boolean } | undefined)?.autoApprove ?? false,
+      maxConcurrentJobs: (config.workers as { maxConcurrentJobs?: number } | undefined)?.maxConcurrentJobs ?? 3,
+      workerTimeoutMs: (config.workers as { workerTimeoutMs?: number } | undefined)?.workerTimeoutMs ?? 300_000,
       reportsDir: join(homedir(), ".agi", "reports"),
       modelMap: {
         haiku: "claude-haiku-4-5-20251001",
@@ -564,7 +563,7 @@ export async function startGatewayServer(
   );
 
   // Wire the late-bound ref so onJobCreated callbacks reach the runtime.
-  botsRuntimeRef.current = botsRuntime;
+  workerRuntimeRef.current = workerRuntime;
 
   const reportsStore = new ReportsStore(join(homedir(), ".agi", "reports"));
   reportsStore.watch();
@@ -1176,7 +1175,7 @@ export async function startGatewayServer(
       pluginPrefs,
       primeLoader,
       primeDir,
-      botsDir,
+      botsDir: undefined, // BOTS repo removed — workers are now plugins
       marketplaceManager,
       onPluginInstalled: async (installPath: string) => {
         try {
@@ -1234,7 +1233,7 @@ export async function startGatewayServer(
       },
       preListenHooks: [
         (f) => registerReportsApi(f, reportsStore),
-        (f) => registerBotsApi(f, botsRuntime),
+        (f) => registerWorkerApi(f, workerRuntime),
         (f) => registerComplianceRoutes(f, { incidentStore, vendorStore, sessionStore: complianceSessionStore, backupManager }),
         (f) => registerSecurityRoutes(f, { scanRunner, scanStore }),
       ],
@@ -2306,9 +2305,9 @@ export async function startGatewayServer(
   // Populate the late-bound ref so the chat:send handler can emit project activity.
   dashboardBroadcasterRef = dashboardBroadcaster;
 
-  // Wire BOTS runtime events to the dashboard broadcaster.
+  // Wire worker runtime events to the dashboard broadcaster.
   if (dashboardBroadcaster !== null) {
-    botsRuntime.on("runtime:event", (event: { type: string; jobId: string; [key: string]: unknown }) => {
+    workerRuntime.on("runtime:event", (event: { type: string; jobId: string; [key: string]: unknown }) => {
       if (event.type === "job_started") {
         dashboardBroadcaster.emitBotsJobUpdate({
           jobId: event.jobId,
@@ -2326,7 +2325,7 @@ export async function startGatewayServer(
           workers: [],
         });
       }
-      // worker_done, phase_done, checkpoint, report_ready handled by botsRuntime
+      // worker_done, phase_done, checkpoint, report_ready handled by workerRuntime
       // internal tracking; no dedicated broadcaster method for these yet.
     });
   }
@@ -2514,11 +2513,11 @@ export async function startGatewayServer(
     }
     await hostingManager.shutdown();
 
-    // Step 5e-bots: Shut down BOTS runtime (drain in-flight jobs)
+    // Step 5e-workers: Shut down worker runtime (drain in-flight jobs)
     try {
-      await botsRuntime.shutdown();
+      await workerRuntime.shutdown();
     } catch (err) {
-      log.error(`error shutting down bots runtime: ${err instanceof Error ? err.message : String(err)}`);
+      log.error(`error shutting down worker runtime: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // Step 5f: Close terminal sessions

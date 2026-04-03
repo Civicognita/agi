@@ -32,17 +32,17 @@ import {
 } from "../canvas-tool.js";
 import type { CanvasEmitHandler } from "../canvas-tool.js";
 
-// BOTS tools
+// Worker tools
 import {
-  createTaskmasterDispatchHandler,
-  TASKMASTER_DISPATCH_MANIFEST,
-  TASKMASTER_DISPATCH_INPUT_SCHEMA,
-} from "./taskmaster-dispatch.js";
+  createWorkerDispatchHandler,
+  WORKER_DISPATCH_MANIFEST,
+  WORKER_DISPATCH_INPUT_SCHEMA,
+} from "./worker-dispatch.js";
 import {
-  createTaskmasterStatusHandler,
-  TASKMASTER_STATUS_MANIFEST,
-  TASKMASTER_STATUS_INPUT_SCHEMA,
-} from "./taskmaster-status.js";
+  createWorkerStatusHandler,
+  WORKER_STATUS_MANIFEST,
+  WORKER_STATUS_INPUT_SCHEMA,
+} from "./worker-status.js";
 
 // GitHub CLI tool
 import {
@@ -135,7 +135,7 @@ export interface ToolRegistrationConfig {
   projectDirs?: string[];
   /** Resolved BOTS directory path. */
   botsDir?: string;
-  /** Callback fired when taskmaster_dispatch creates a job. */
+  /** Callback fired when worker_dispatch creates a job. */
   onJobCreated?: (jobId: string, coaReqId: string) => void;
   /** COA request ID for the current invocation context. */
   coaReqId?: string;
@@ -200,20 +200,20 @@ export function registerAllTools(
     CANVAS_TOOL_INPUT_SCHEMA,
   );
 
-  // BOTS tools
+  // Worker tools
   register(
-    TASKMASTER_DISPATCH_MANIFEST as ToolManifestEntry,
-    createTaskmasterDispatchHandler({
+    WORKER_DISPATCH_MANIFEST as ToolManifestEntry,
+    createWorkerDispatchHandler({
       ...toolConfig,
       onJobCreated: config.onJobCreated,
       coaReqId: config.coaReqId,
     }),
-    TASKMASTER_DISPATCH_INPUT_SCHEMA,
+    WORKER_DISPATCH_INPUT_SCHEMA,
   );
   register(
-    TASKMASTER_STATUS_MANIFEST as ToolManifestEntry,
-    createTaskmasterStatusHandler(toolConfig),
-    TASKMASTER_STATUS_INPUT_SCHEMA,
+    WORKER_STATUS_MANIFEST as ToolManifestEntry,
+    createWorkerStatusHandler(toolConfig),
+    WORKER_STATUS_INPUT_SCHEMA,
   );
 
   // GitHub CLI tool

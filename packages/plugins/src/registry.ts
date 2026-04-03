@@ -10,7 +10,7 @@ import type {
   ThemeDefinition, AgentToolDefinition, SidebarSectionDefinition,
   ScheduledTaskDefinition, WorkflowDefinition,
   SettingsPageDefinition, DashboardInterfacePageDefinition, DashboardInterfaceDomainDefinition,
-  SubdomainRouteDefinition, LLMProviderDefinition, ProvidesLabel,
+  SubdomainRouteDefinition, LLMProviderDefinition, ProvidesLabel, WorkerDefinition,
 } from "./types.js";
 import type { StackDefinition } from "@aionima/gateway-core";
 import type { ScanProviderDefinition } from "@aionima/security";
@@ -129,6 +129,11 @@ export interface RegisteredScanProvider {
   scanProvider: ScanProviderDefinition;
 }
 
+export interface RegisteredWorker {
+  pluginId: string;
+  worker: WorkerDefinition;
+}
+
 export interface RegisteredRuntime {
   pluginId: string;
   runtime: RuntimeDefinition;
@@ -172,6 +177,7 @@ export class PluginRegistry {
   private readonly channels: RegisteredChannel[] = [];
   private readonly providers: RegisteredProvider[] = [];
   private readonly scanProviders: RegisteredScanProvider[] = [];
+  private readonly workers: RegisteredWorker[] = [];
 
   add(loaded: LoadedPlugin): void {
     this.plugins.set(loaded.manifest.id, loaded);
@@ -541,6 +547,27 @@ export class PluginRegistry {
   }
 
   // -------------------------------------------------------------------------
+  // Workers
+  // -------------------------------------------------------------------------
+
+  addWorker(pluginId: string, worker: WorkerDefinition): void {
+    if (this.workers.some(w => w.worker.id === worker.id)) return;
+    this.workers.push({ pluginId, worker });
+  }
+
+  getWorkers(): RegisteredWorker[] {
+    return [...this.workers];
+  }
+
+  getWorkersByDomain(domain: string): RegisteredWorker[] {
+    return this.workers.filter(w => w.worker.domain === domain);
+  }
+
+  getWorker(id: string): WorkerDefinition | undefined {
+    return this.workers.find(w => w.worker.id === id)?.worker;
+  }
+
+  // -------------------------------------------------------------------------
   // Provides introspection — derive capability labels from registrations
   // -------------------------------------------------------------------------
 
@@ -571,6 +598,7 @@ export class PluginRegistry {
     for (const c of this.channels) { if (c.pluginId === pluginId) labels.add("channels"); }
     for (const p of this.providers) { if (p.pluginId === pluginId) labels.add("providers"); }
     for (const sp of this.scanProviders) { if (sp.pluginId === pluginId) labels.add("security"); }
+    for (const w of this.workers) { if (w.pluginId === pluginId) labels.add("workers"); }
 
     return [...labels];
   }
@@ -618,5 +646,6 @@ export class PluginRegistry {
     this.channels.length = 0;
     this.providers.length = 0;
     this.scanProviders.length = 0;
+    this.workers.length = 0;
   }
 }

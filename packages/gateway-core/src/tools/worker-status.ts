@@ -1,5 +1,5 @@
 /**
- * taskmaster_status tool — read BOTS job status from .bots/jobs/ directory.
+ * worker_status tool — read worker job status from .bots/jobs/ directory.
  *
  * Requires state ONLINE, tier unverified (read-only).
  */
@@ -7,13 +7,13 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
 
-export interface TaskmasterStatusConfig {
+export interface WorkerStatusConfig {
   workspaceRoot: string;
   botsDir?: string;
 }
 
-export function createTaskmasterStatusHandler(
-  config: TaskmasterStatusConfig,
+export function createWorkerStatusHandler(
+  config: WorkerStatusConfig,
 ): ToolHandler {
   return async (input: Record<string, unknown>): Promise<string> => {
     const jobId = input.jobId !== undefined ? String(input.jobId).trim() : undefined;
@@ -70,17 +70,17 @@ export function createTaskmasterStatusHandler(
   };
 }
 
-export const TASKMASTER_STATUS_MANIFEST = {
-  name: "taskmaster_status",
+export const WORKER_STATUS_MANIFEST = {
+  name: "worker_status",
   description:
-    "Read BOTS job status from .bots/jobs/. " +
+    "Check worker job status from .bots/jobs/. " +
     "If jobId is provided, returns details for that job. " +
     "Otherwise lists all jobs and their statuses.",
   requiresState: ["ONLINE" as const],
   requiresTier: ["unverified" as const, "verified" as const, "sealed" as const],
 };
 
-export const TASKMASTER_STATUS_INPUT_SCHEMA = {
+export const WORKER_STATUS_INPUT_SCHEMA = {
   type: "object",
   properties: {
     jobId: {

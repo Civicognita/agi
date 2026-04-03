@@ -210,7 +210,6 @@ function repoChecks(config: AionimaConfig): CheckGroup {
 
   const repos = [
     { name: "PRIME corpus", path: config.prime?.dir ?? "/opt/aionima-prime" },
-    { name: "BOTS system", path: config.bots?.dir ?? "/opt/aionima-bots" },
     { name: "Marketplace", path: config.marketplace?.dir ?? "/opt/aionima-marketplace" },
     { name: "ID service", path: config.idService?.dir ?? "/opt/aionima-id" },
   ];
@@ -333,7 +332,6 @@ function devChecks(config: AionimaConfig): CheckGroup | null {
   const checks: Check[] = [];
   const dirs = [
     { name: "Dev PRIME", path: config.dev.primeDir ?? "/opt/aionima-prime_dev" },
-    { name: "Dev BOTS", path: config.dev.botsDir ?? "/opt/aionima-bots_dev" },
     { name: "Dev Marketplace", path: config.dev.marketplaceDir ?? "/opt/aionima-marketplace_dev" },
   ];
 

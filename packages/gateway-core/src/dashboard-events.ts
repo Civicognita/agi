@@ -283,7 +283,7 @@ function extractEntityId(event: DashboardEvent): string | null {
     case "system:update_available":
     case "hosting:status":
     case "bots:job_update":
-    case "bots:worker_done":
+    case "worker:done":
     case "bots:phase_done":
     case "bots:checkpoint":
     case "bots:report_ready":

@@ -18,7 +18,7 @@ import type {
   ThemeDefinition, AgentToolDefinition, SidebarSectionDefinition,
   ScheduledTaskDefinition, WorkflowDefinition,
   SettingsPageDefinition, DashboardInterfacePageDefinition, DashboardInterfaceDomainDefinition,
-  SubdomainRouteDefinition, LLMProviderDefinition,
+  SubdomainRouteDefinition, LLMProviderDefinition, WorkerDefinition,
 } from "./types.js";
 import type { StackDefinition } from "@aionima/gateway-core";
 import type { ScanProviderDefinition } from "@aionima/security";
@@ -243,6 +243,10 @@ function createPluginAPI(
 
     registerScanProvider(def: ScanProviderDefinition): void {
       deps.pluginRegistry.addScanProvider(pluginId, def);
+    },
+
+    registerWorker(def: WorkerDefinition): void {
+      deps.pluginRegistry.addWorker(pluginId, def);
     },
 
     getChannelConfig(channelId: string): { enabled: boolean; config: Record<string, unknown> } | undefined {

@@ -1,5 +1,5 @@
 /**
- * Path resolution for PRIME and BOTS directories.
+ * Path resolution for PRIME and service directories.
  *
  * Dev mode switches to personal fork directories; production uses system paths.
  */
@@ -11,13 +11,6 @@ export function resolvePrimeDir(config: AionimaConfig): string {
     return config.dev.primeDir ?? "/opt/aionima-prime_dev";
   }
   return config.prime?.dir ?? "/opt/aionima-prime";
-}
-
-export function resolveBotsDir(config: AionimaConfig): string {
-  if (config.dev?.enabled) {
-    return config.dev.botsDir ?? "/opt/aionima-bots_dev";
-  }
-  return config.bots?.dir ?? "/opt/aionima-bots";
 }
 
 export function resolveMarketplaceDir(config: AionimaConfig): string {

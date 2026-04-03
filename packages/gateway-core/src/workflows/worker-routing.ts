@@ -1,7 +1,7 @@
 /**
- * BOTS Integration Workflow
+ * Worker Routing Workflow
  *
- * Parses BOTS taskmaster emissions, validates task permissions against
+ * Parses worker emissions, validates task permissions against
  * entity tiers, suggests workers based on keyword heuristics, and
  * formats dispatch reports.
  *
@@ -17,7 +17,7 @@ import type { VerificationTier } from "@aionima/entity-model";
 export interface BOTSTask {
   /** Human-readable description of the task. */
   description: string;
-  /** BOTS worker domain (e.g., "code", "k", "ux", "strat"). */
+  /** Worker domain (e.g., "code", "k", "ux", "strat"). */
   domain: string;
   /** Specific worker within the domain (e.g., "engineer", "hacker"). */
   worker: string;
@@ -34,6 +34,7 @@ export interface BOTSDispatchResult {
 
 // ---------------------------------------------------------------------------
 // Worker domain mapping
+// Worker → domain/worker name mapping registry (keyword heuristic driven)
 // ---------------------------------------------------------------------------
 
 interface WorkerMapping {
@@ -88,6 +89,7 @@ const WORKER_MAPPINGS: readonly WorkerMapping[] = [
 
 /**
  * Domains accessible at each verification tier.
+ * Controls which worker domains an entity can dispatch to.
  *
  * - unverified: only knowledge lookups (analyst, librarian)
  * - verified: code, knowledge, ux, communication, data
@@ -104,11 +106,11 @@ const TIER_ALLOWED_DOMAINS: Record<VerificationTier, ReadonlySet<string>> = {
 // ---------------------------------------------------------------------------
 
 /**
- * Parse a BOTS taskmaster emission line (e.g., `q:> implement auth module`).
+ * Parse a worker emission line (e.g., `q:> implement auth module`).
  *
  * Returns null if the emission does not match the expected pattern.
  */
-export function parseTaskmasterEmission(emission: string): BOTSTask | null {
+export function parseWorkerEmission(emission: string): BOTSTask | null {
   const match = /^q:>\s+(.+)$/.exec(emission.trim());
   if (match?.[1] === undefined) return null;
 
@@ -140,7 +142,7 @@ function extractPriority(text: string): BOTSTask["priority"] {
 
 /**
  * Check whether an entity at the given verification tier is permitted
- * to dispatch a task to the specified domain.
+ * to dispatch a worker task to the specified domain.
  */
 export function validateTaskPermissions(
   task: BOTSTask,
@@ -155,7 +157,7 @@ export function validateTaskPermissions(
 // ---------------------------------------------------------------------------
 
 /**
- * Suggest a BOTS worker domain and worker name based on keyword
+ * Suggest a worker domain and worker name based on keyword
  * heuristic analysis of the task description.
  *
  * Falls back to `code/engineer` if no keywords match.
@@ -176,12 +178,12 @@ export function suggestWorker(description: string): { domain: string; worker: st
 // ---------------------------------------------------------------------------
 
 /**
- * Format a dispatch result into a human-readable report.
+ * Format a worker dispatch result into a human-readable report.
  */
 export function formatDispatchReport(result: BOTSDispatchResult): string {
   const lines: string[] = [];
 
-  lines.push("## BOTS Dispatch Report");
+  lines.push("## Worker Dispatch Report");
   lines.push("");
 
   if (result.dispatched.length > 0) {

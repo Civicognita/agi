@@ -1,5 +1,5 @@
 /**
- * BOTS Runtime — gateway adapter that wires LLMProvider to the runtime engine.
+ * Worker Runtime — gateway adapter that wires LLMProvider to the runtime engine.
  *
  * Creates RuntimeInvoker from the gateway's LLMProvider, manages concurrent
  * job execution, and bridges runtime events to the DashboardEventBroadcaster.
@@ -83,10 +83,10 @@ interface RuntimeEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Taskmaster state types (mirrors .bots/lib/job-manager.ts — read-only)
+// Worker state types (mirrors .bots/lib/job-manager.ts — read-only)
 // ---------------------------------------------------------------------------
 
-export interface TaskmasterJobPhase {
+export interface WorkerJobPhase {
   id: string;
   name: string;
   workers: string[];
@@ -94,14 +94,14 @@ export interface TaskmasterJobPhase {
   status: "pending" | "running" | "complete" | "failed";
 }
 
-export interface TaskmasterJob {
+export interface WorkerJob {
   id: string;
   queueText: string;
   route: string | null;
   entryWorker: string;
   worktree: string;
   branch: string;
-  phases: TaskmasterJobPhase[];
+  phases: WorkerJobPhase[];
   currentPhase: string | null;
   status: "pending" | "running" | "checkpoint" | "complete" | "failed";
   createdAt: string;
@@ -114,7 +114,7 @@ export interface TaskmasterJob {
 // Config
 // ---------------------------------------------------------------------------
 
-export interface BotsRuntimeConfig {
+export interface WorkerRuntimeConfig {
   autoApprove: boolean;
   maxConcurrentJobs: number;
   workerTimeoutMs: number;
@@ -122,7 +122,7 @@ export interface BotsRuntimeConfig {
   modelMap: Record<string, string>;
 }
 
-export interface BotsRuntimeDeps {
+export interface WorkerRuntimeDeps {
   llmProvider: LLMProvider;
 }
 
@@ -155,7 +155,7 @@ export function createRuntimeInvoker(
           description: t.description,
           input_schema: t.input_schema,
         })),
-        entityId: params.entityId ?? "bots-worker",
+        entityId: params.entityId ?? "worker",
         model: resolveModel(params.model, modelMap),
         maxTokens: params.maxTokens,
       };
@@ -189,7 +189,7 @@ export function createRuntimeInvoker(
             description: t.description,
             input_schema: t.input_schema,
           })),
-          entityId: params.original.entityId ?? "bots-worker",
+          entityId: params.original.entityId ?? "worker",
           model: resolveModel(params.original.model, modelMap),
           maxTokens: params.original.maxTokens,
         },
@@ -278,22 +278,22 @@ export interface ActiveJobStatus {
 }
 
 // ---------------------------------------------------------------------------
-// BotsRuntime
+// WorkerRuntime
 // ---------------------------------------------------------------------------
 
-export class BotsRuntime extends EventEmitter {
+export class WorkerRuntime extends EventEmitter {
   private activeJobs = new Map<string, ActiveJob>();
-  private config: BotsRuntimeConfig;
+  private config: WorkerRuntimeConfig;
   private invoker: RuntimeInvoker;
 
-  constructor(config: BotsRuntimeConfig, deps: BotsRuntimeDeps) {
+  constructor(config: WorkerRuntimeConfig, deps: WorkerRuntimeDeps) {
     super();
     this.config = config;
     this.invoker = createRuntimeInvoker(deps.llmProvider, config.modelMap);
   }
 
   /**
-   * Execute a BOTS job. Fire-and-forget — called after agentInvoker.process().
+   * Execute a worker job. Fire-and-forget — called after agentInvoker.process().
    */
   async executeJob(
     jobId: string,
@@ -377,16 +377,16 @@ export class BotsRuntime extends EventEmitter {
   }
 
   /**
-   * Read all jobs from the taskmaster state file.
+   * Read all jobs from the worker state file.
    * Returns the full Job objects from `.bots/state/taskmaster.json`.
    * Falls back to empty array if the state file doesn't exist yet.
    */
-  async listAllJobs(): Promise<TaskmasterJob[]> {
+  async listAllJobs(): Promise<WorkerJob[]> {
     try {
       const statePath = resolve(BOTS_LIB, "..", "state", "taskmaster.json");
       const { readFileSync } = await import("node:fs");
       const content = readFileSync(statePath, "utf-8");
-      const state = JSON.parse(content) as { wip?: { jobs?: Record<string, TaskmasterJob> } };
+      const state = JSON.parse(content) as { wip?: { jobs?: Record<string, WorkerJob> } };
       if (!state.wip?.jobs) return [];
       return Object.values(state.wip.jobs);
     } catch {
@@ -395,9 +395,9 @@ export class BotsRuntime extends EventEmitter {
   }
 
   /**
-   * Get a single job from the taskmaster state file by ID.
+   * Get a single job from the worker state file by ID.
    */
-  async getJob(jobId: string): Promise<TaskmasterJob | null> {
+  async getJob(jobId: string): Promise<WorkerJob | null> {
     const jobs = await this.listAllJobs();
     return jobs.find((j) => j.id === jobId) ?? null;
   }

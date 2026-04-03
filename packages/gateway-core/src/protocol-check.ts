@@ -77,14 +77,14 @@ function satisfiesRange(version: string, range: string): boolean {
 export function checkProtocolCompatibility(
   agiDir: string,
   primeDir: string,
-  botsDir: string,
+  botsDir: string | null,
   idDir: string,
 ): ProtocolCheckResult {
   const errors: string[] = [];
 
   const agi = readManifest(agiDir);
   const prime = readManifest(primeDir);
-  const bots = readManifest(botsDir);
+  const bots = botsDir !== null ? readManifest(botsDir) : null;
   const id = readManifest(idDir);
 
   if (!agi) {
@@ -93,7 +93,7 @@ export function checkProtocolCompatibility(
   if (!prime && existsSync(primeDir)) {
     errors.push(`PRIME protocol.json not found at ${primeDir}`);
   }
-  if (!bots && existsSync(botsDir)) {
+  if (botsDir !== null && !bots && existsSync(botsDir)) {
     errors.push(`BOTS protocol.json not found at ${botsDir}`);
   }
   if (!id && existsSync(idDir)) {

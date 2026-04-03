@@ -35,6 +35,7 @@
  * | `defineDashboardPage` | `api.registerDashboardPage()` | `DashboardInterfacePageDefinition`  |
  * | `defineDashboardDomain` | `api.registerDashboardDomain()` | `DashboardInterfaceDomainDefinition` |
  * | `defineScan`            | `api.registerScanProvider()`    | `ScanProviderDefinition`              |
+ * | `defineWorker`          | `api.registerWorker()`          | `WorkerDefinition`                    |
  *
  * ### Plugin lifecycle
  *
@@ -98,6 +99,7 @@ export { defineSettingsPage } from "./define-settings-page.js";
 export { defineDashboardPage } from "./define-dashboard-page.js";
 export { defineDashboardDomain } from "./define-dashboard-domain.js";
 export { defineScan } from "./define-scan.js";
+export { defineWorker } from "./define-worker.js";
 
 // Testing utilities (separate entry point: @aionima/sdk/testing)
 // import { testActivate, createMockAPI } from "@aionima/sdk/testing";

@@ -1,5 +1,5 @@
 /**
- * taskmaster_dispatch tool — write a BOTS job file to the .bots/jobs/ directory.
+ * worker_dispatch tool — write a worker job file to the .bots/jobs/ directory.
  *
  * Requires state ONLINE, tier verified/sealed.
  */
@@ -7,17 +7,17 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
 
-export interface TaskmasterDispatchConfig {
+export interface WorkerDispatchConfig {
   workspaceRoot: string;
   botsDir?: string;
-  /** Callback fired after a job file is written. Used by BotsRuntime to pick up jobs. */
+  /** Callback fired after a job file is written. Used by WorkerRuntime to pick up jobs. */
   onJobCreated?: (jobId: string, coaReqId: string) => void;
   /** COA request ID from the invocation context. */
   coaReqId?: string;
 }
 
-export function createTaskmasterDispatchHandler(
-  config: TaskmasterDispatchConfig,
+export function createWorkerDispatchHandler(
+  config: WorkerDispatchConfig,
 ): ToolHandler {
   return async (input: Record<string, unknown>): Promise<string> => {
     const description = String(input.description ?? "").trim();
@@ -92,16 +92,16 @@ export function createTaskmasterDispatchHandler(
   };
 }
 
-export const TASKMASTER_DISPATCH_MANIFEST = {
-  name: "taskmaster_dispatch",
+export const WORKER_DISPATCH_MANIFEST = {
+  name: "worker_dispatch",
   description:
-    "Dispatch a BOTS background task by writing a job file to .bots/jobs/. " +
+    "Dispatch a background worker task by writing a job file to .bots/jobs/. " +
     "Accepts description, domain, worker, and priority. Returns the job ID.",
   requiresState: ["ONLINE" as const],
   requiresTier: ["verified" as const, "sealed" as const],
 };
 
-export const TASKMASTER_DISPATCH_INPUT_SCHEMA = {
+export const WORKER_DISPATCH_INPUT_SCHEMA = {
   type: "object",
   properties: {
     description: {
@@ -110,7 +110,7 @@ export const TASKMASTER_DISPATCH_INPUT_SCHEMA = {
     },
     domain: {
       type: "string",
-      description: 'BOTS worker domain (e.g. "code", "k", "ux", "strat", "comm", "ops", "gov", "data")',
+      description: 'Worker domain (e.g. "code", "k", "ux", "strat", "comm", "ops", "gov", "data")',
     },
     worker: {
       type: "string",

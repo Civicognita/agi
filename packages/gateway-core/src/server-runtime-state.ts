@@ -1506,7 +1506,7 @@ export async function createGatewayRuntimeState(
     }
   });
 
-  // BOTS routes moved to bots-api.ts — registered via preListenHooks in server.ts
+  // Worker routes moved to worker-api.ts — registered via preListenHooks in server.ts
 
   // -----------------------------------------------------------------------
   // POST /api/reload — hot-reload PRIME index, skills, etc. (private network only)

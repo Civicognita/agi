@@ -1,8 +1,8 @@
 /**
- * BOTS Integration Workflow Tests — Story 17
+ * Worker Routing Workflow Tests — Story 17
  *
  * Covers:
- * - Taskmaster emission parsing
+ * - Worker emission parsing
  * - Task permission validation by verification tier
  * - Worker suggestion via keyword heuristics
  * - Dispatch report formatting
@@ -10,59 +10,59 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  parseTaskmasterEmission,
+  parseWorkerEmission,
   validateTaskPermissions,
   suggestWorker,
   formatDispatchReport,
-} from "./bots-integration.js";
-import type { BOTSTask } from "./bots-integration.js";
+} from "./worker-routing.js";
+import type { BOTSTask } from "./worker-routing.js";
 
-describe("parseTaskmasterEmission", () => {
+describe("parseWorkerEmission", () => {
   it("parses a standard emission", () => {
-    const result = parseTaskmasterEmission("q:> implement user authentication module");
+    const result = parseWorkerEmission("q:> implement user authentication module");
     expect(result).not.toBeNull();
     expect(result!.description).toBe("implement user authentication module");
   });
 
   it("returns null for non-emission text", () => {
-    const result = parseTaskmasterEmission("just a regular message");
+    const result = parseWorkerEmission("just a regular message");
     expect(result).toBeNull();
   });
 
   it("returns null for empty emission", () => {
-    const result = parseTaskmasterEmission("q:> ");
+    const result = parseWorkerEmission("q:> ");
     expect(result).toBeNull();
   });
 
   it("assigns worker based on keywords", () => {
-    const result = parseTaskmasterEmission("q:> test the authentication flow");
+    const result = parseWorkerEmission("q:> test the authentication flow");
     expect(result).not.toBeNull();
     expect(result!.domain).toBe("code");
     expect(result!.worker).toBe("tester");
   });
 
   it("assigns code engineer for implementation tasks", () => {
-    const result = parseTaskmasterEmission("q:> implement new API endpoint for users");
+    const result = parseWorkerEmission("q:> implement new API endpoint for users");
     expect(result).not.toBeNull();
     expect(result!.domain).toBe("code");
     expect(result!.worker).toBe("engineer");
   });
 
   it("assigns analyst for research tasks", () => {
-    const result = parseTaskmasterEmission("q:> analyse the performance bottleneck");
+    const result = parseWorkerEmission("q:> analyse the performance bottleneck");
     expect(result).not.toBeNull();
     expect(result!.domain).toBe("k");
     expect(result!.worker).toBe("analyst");
   });
 
   it("extracts critical priority", () => {
-    const result = parseTaskmasterEmission("q:> critical fix for auth bypass");
+    const result = parseWorkerEmission("q:> critical fix for auth bypass");
     expect(result).not.toBeNull();
     expect(result!.priority).toBe("critical");
   });
 
   it("defaults to normal priority", () => {
-    const result = parseTaskmasterEmission("q:> implement feature X");
+    const result = parseWorkerEmission("q:> implement feature X");
     expect(result).not.toBeNull();
     expect(result!.priority).toBe("normal");
   });

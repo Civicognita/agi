@@ -353,8 +353,8 @@ describe("system-prompt.ts", () => {
       expect(caps.canUseTool).toBe(false);
     });
 
-    it("unverified: canEmitTaskmaster=false", () => {
-      expect(getTierCapabilities("unverified").canEmitTaskmaster).toBe(false);
+    it("unverified: canDispatchWorker=false", () => {
+      expect(getTierCapabilities("unverified").canDispatchWorker).toBe(false);
     });
 
     it("unverified: canRequestSensitiveData=false", () => {
@@ -369,8 +369,8 @@ describe("system-prompt.ts", () => {
       expect(getTierCapabilities("verified").canUseTool).toBe(true);
     });
 
-    it("verified: canEmitTaskmaster=true", () => {
-      expect(getTierCapabilities("verified").canEmitTaskmaster).toBe(true);
+    it("verified: canDispatchWorker=true", () => {
+      expect(getTierCapabilities("verified").canDispatchWorker).toBe(true);
     });
 
     it("verified: canRequestSensitiveData=false", () => {
@@ -385,8 +385,8 @@ describe("system-prompt.ts", () => {
       expect(getTierCapabilities("sealed").canUseTool).toBe(true);
     });
 
-    it("sealed: canEmitTaskmaster=true", () => {
-      expect(getTierCapabilities("sealed").canEmitTaskmaster).toBe(true);
+    it("sealed: canDispatchWorker=true", () => {
+      expect(getTierCapabilities("sealed").canDispatchWorker).toBe(true);
     });
 
     it("sealed: canRequestSensitiveData=true", () => {
