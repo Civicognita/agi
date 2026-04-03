@@ -1,11 +1,9 @@
 /**
  * Plugin discovery — scan directories for plugin manifests.
- * Adapted from OpenClaw's discovery.ts.
  *
  * Supports manifest formats:
  *   1. package.json with an `aionima` field (preferred)
- *   2. package.json with a `nexus` field (legacy)
- *   3. aionima-plugin.json or nexus-plugin.json (backwards compat)
+ *   2. aionima-plugin.json (standalone manifest)
  */
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -24,20 +22,20 @@ export interface DiscoveryResult {
   errors: { path: string; error: string }[];
 }
 
-const MANIFEST_FILENAMES = ["aionima-plugin.json", "nexus-plugin.json"];
+const MANIFEST_FILENAMES = ["aionima-plugin.json"];
 const PACKAGE_JSON = "package.json";
 
 /**
- * Try loading manifest from package.json `aionima` or `nexus` field first,
- * then fall back to aionima-plugin.json / nexus-plugin.json for backwards compat.
+ * Try loading manifest from package.json `aionima` field first,
+ * then fall back to aionima-plugin.json.
  */
 function tryLoadManifest(dir: string): DiscoveredPlugin | { error: string } {
-  // 1. Try package.json with aionima field (preferred) or nexus field (legacy)
+  // 1. Try package.json with aionima field
   const pkgPath = join(dir, PACKAGE_JSON);
   if (existsSync(pkgPath)) {
     try {
       const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as Record<string, unknown>;
-      const pluginField = (pkg.aionima ?? pkg.nexus) as Record<string, unknown> | undefined;
+      const pluginField = pkg.aionima as Record<string, unknown> | undefined;
 
       if (pluginField && typeof pluginField === "object" && pluginField.id) {
         const manifest: AionimaPluginManifest = {
@@ -81,7 +79,7 @@ function tryLoadManifest(dir: string): DiscoveredPlugin | { error: string } {
     }
   }
 
-  // 2. Fall back to aionima-plugin.json or nexus-plugin.json
+  // 2. Fall back to aionima-plugin.json
   let manifestPath: string | undefined;
   for (const filename of MANIFEST_FILENAMES) {
     const candidate = join(dir, filename);
@@ -91,7 +89,7 @@ function tryLoadManifest(dir: string): DiscoveredPlugin | { error: string } {
     }
   }
   if (!manifestPath) {
-    return { error: `No ${PACKAGE_JSON} aionima/nexus field or manifest JSON found` };
+    return { error: `No ${PACKAGE_JSON} aionima field or aionima-plugin.json found` };
   }
 
   let raw: unknown;

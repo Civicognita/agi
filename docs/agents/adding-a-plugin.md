@@ -179,7 +179,7 @@ Add an entry to `marketplace.json` in the marketplace repo root:
 `discoverMarketplacePlugins(marketplaceDir)` in `packages/plugins/src/discovery.ts`:
 
 1. Scans `marketplaceDir/plugins/` for subdirectories starting with `plugin-`
-2. For each, attempts to load a manifest from `package.json`'s `"aionima"` field (falls back to `"nexus"` field for legacy compat, then to `aionima-plugin.json`)
+2. For each, attempts to load a manifest from `package.json`'s `"aionima"` field (falls back to `aionima-plugin.json`)
 3. Validates the manifest with `validateManifest()`
 4. Checks that the `entry` file exists
 5. Returns a `DiscoveryResult` with `plugins[]` and `errors[]`

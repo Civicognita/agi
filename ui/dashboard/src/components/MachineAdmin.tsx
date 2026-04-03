@@ -427,7 +427,7 @@ export function MachineAdmin() {
         ) : (
           <div className="grid gap-3">
             {sambaShares.map((share) => {
-              const hn = machine.data?.hostname ?? "nexus";
+              const hn = machine.data?.hostname ?? "localhost";
               const uncPath = `\\\\${hn}\\${share.name}`;
               const smbUrl = `smb://${hn}/${share.name}`;
               const toggling = sambaToggling === share.name;

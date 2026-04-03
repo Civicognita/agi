@@ -18,9 +18,6 @@ const DEFAULT_PATHS = [
   "./aionima.json",
   "./aionima.yaml",
   "./config/aionima.json",
-  "./nexus-claw.json",
-  "./nexus-claw.yaml",
-  "./config/nexus-claw.json",
 ];
 
 export interface ConfigResult {
