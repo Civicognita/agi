@@ -12,6 +12,14 @@
     { "id": "project-art", "disableable": true },
     { "id": "aionima-screensaver", "disableable": true },
     { "id": "aionima-openclaw", "disableable": true },
-    { "id": "aionima-xrdp", "disableable": true }
+    { "id": "aionima-xrdp", "disableable": true },
+    { "id": "worker-code", "disableable": false },
+    { "id": "worker-k", "disableable": false },
+    { "id": "worker-ux", "disableable": true },
+    { "id": "worker-strat", "disableable": false },
+    { "id": "worker-comm", "disableable": true },
+    { "id": "worker-ops", "disableable": true },
+    { "id": "worker-gov", "disableable": true },
+    { "id": "worker-data", "disableable": true }
   ]
 }
