@@ -2,7 +2,7 @@
  * Plan Types — data model for the plan workflow.
  *
  * Plans are stored as markdown files with YAML frontmatter
- * at {projectPath}/.ai/plans/{planId}.md
+ * at ~/.ai/plans/{projectSlug}/{planId}.md
  */
 
 export type PlanStatus = "draft" | "reviewing" | "approved" | "executing" | "testing" | "complete" | "failed";

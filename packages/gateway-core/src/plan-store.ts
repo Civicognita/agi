@@ -1,13 +1,18 @@
 /**
- * Plan Store — file-based CRUD for .ai/plans/{planId}.md
+ * Plan Store — file-based CRUD for ~/.ai/plans/{projectSlug}/{planId}.md
  *
  * Each plan is stored as a markdown file with YAML frontmatter.
  * The frontmatter contains the plan metadata, and the body is the
  * full markdown plan content.
+ *
+ * Plans are stored centrally in the owner's home directory, NOT inside
+ * project directories. This prevents writing runtime data into deployed
+ * codebases or user repos.
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { ulid } from "ulid";
 import type { Plan, PlanStep, CreatePlanInput, UpdatePlanInput, PlanStatus, PlanStepStatus, PlanTynnRefs } from "./plan-types.js";
 
@@ -63,8 +68,13 @@ function metaToPlan(meta: Record<string, unknown>, body: string): Plan {
 // ---------------------------------------------------------------------------
 
 export class PlanStore {
+  /** Convert a project path to a filesystem-safe slug for directory naming. */
+  private projectSlug(projectPath: string): string {
+    return projectPath.replace(/^\//, "").replace(/\//g, "-").replace(/[^a-zA-Z0-9._-]/g, "_") || "general";
+  }
+
   private plansDir(projectPath: string): string {
-    return join(projectPath, ".ai", "plans");
+    return join(homedir(), ".ai", "plans", this.projectSlug(projectPath));
   }
 
   private planPath(projectPath: string, planId: string): string {

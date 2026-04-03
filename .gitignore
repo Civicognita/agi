@@ -30,3 +30,5 @@ test-results/
 .deployed-commit
 ui/dashboard/vendor/
 nexus-claw*
+.ai/
+.aionima-project.json
