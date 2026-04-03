@@ -11,7 +11,7 @@ interface NotificationItemProps {
 }
 
 function getTypeLabel(type: string): string {
-  if (type.startsWith("bots:")) return "BOTS";
+  if (type.startsWith("bots:")) return "Worker";
   if (type.startsWith("comms:")) return "Comms";
   if (type.startsWith("system:")) return "System";
   return "Info";

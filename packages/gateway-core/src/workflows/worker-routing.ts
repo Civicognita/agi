@@ -14,7 +14,7 @@ import type { VerificationTier } from "@aionima/entity-model";
 // Types
 // ---------------------------------------------------------------------------
 
-export interface BOTSTask {
+export interface WorkerTask {
   /** Human-readable description of the task. */
   description: string;
   /** Worker domain (e.g., "code", "k", "ux", "strat"). */
@@ -25,11 +25,11 @@ export interface BOTSTask {
   priority: "low" | "normal" | "high" | "critical";
 }
 
-export interface BOTSDispatchResult {
+export interface WorkerDispatchResult {
   /** Tasks that were successfully dispatched. */
-  dispatched: BOTSTask[];
+  dispatched: WorkerTask[];
   /** Tasks that were rejected (with reasons). */
-  rejected: Array<{ task: BOTSTask; reason: string }>;
+  rejected: Array<{ task: WorkerTask; reason: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,7 +110,7 @@ const TIER_ALLOWED_DOMAINS: Record<VerificationTier, ReadonlySet<string>> = {
  *
  * Returns null if the emission does not match the expected pattern.
  */
-export function parseWorkerEmission(emission: string): BOTSTask | null {
+export function parseWorkerEmission(emission: string): WorkerTask | null {
   const match = /^q:>\s+(.+)$/.exec(emission.trim());
   if (match?.[1] === undefined) return null;
 
@@ -129,7 +129,7 @@ export function parseWorkerEmission(emission: string): BOTSTask | null {
 // Priority extraction
 // ---------------------------------------------------------------------------
 
-function extractPriority(text: string): BOTSTask["priority"] {
+function extractPriority(text: string): WorkerTask["priority"] {
   if (/\b(critical|urgent|emergency|p0)\b/i.test(text)) return "critical";
   if (/\b(high|important|p1)\b/i.test(text)) return "high";
   if (/\b(low|minor|p3)\b/i.test(text)) return "low";
@@ -145,7 +145,7 @@ function extractPriority(text: string): BOTSTask["priority"] {
  * to dispatch a worker task to the specified domain.
  */
 export function validateTaskPermissions(
-  task: BOTSTask,
+  task: WorkerTask,
   entityTier: VerificationTier,
 ): boolean {
   const allowed = TIER_ALLOWED_DOMAINS[entityTier];
@@ -180,7 +180,7 @@ export function suggestWorker(description: string): { domain: string; worker: st
 /**
  * Format a worker dispatch result into a human-readable report.
  */
-export function formatDispatchReport(result: BOTSDispatchResult): string {
+export function formatDispatchReport(result: WorkerDispatchResult): string {
   const lines: string[] = [];
 
   lines.push("## Worker Dispatch Report");

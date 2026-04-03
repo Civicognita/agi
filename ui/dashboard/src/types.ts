@@ -148,7 +148,7 @@ export interface CommsLogEntry {
   createdAt: string;
 }
 
-export interface BotsJobUpdate {
+export interface WorkerJobUpdate {
   jobId: string;
   status: "pending" | "running" | "checkpoint" | "complete" | "failed";
   description: string;
@@ -156,7 +156,7 @@ export interface BotsJobUpdate {
   workers: string[];
 }
 
-export interface BotsReportReady {
+export interface WorkerReportReady {
   jobId: string;
   coaReqId: string;
   fileCount: number;
@@ -222,8 +222,8 @@ export type DashboardEvent =
   | { type: "system:upgrade"; data: SystemUpgradeEvent }
   | { type: "system:update_available"; data: UpdateCheck }
   | { type: "hosting:status"; data: HostingStatusData }
-  | { type: "bots:job_update"; data: BotsJobUpdate }
-  | { type: "bots:report_ready"; data: BotsReportReady }
+  | { type: "bots:job_update"; data: WorkerJobUpdate }
+  | { type: "bots:report_ready"; data: WorkerReportReady }
   | { type: "notification:new"; data: Notification };
 
 /** Structured log entry streamed from the gateway. */
@@ -419,7 +419,7 @@ export interface ProviderCredential {
   baseUrl?: string;
 }
 
-export interface BotsConfig {
+export interface WorkerConfig {
   workerModels?: Record<string, WorkerModelOverride>;
 }
 
@@ -438,8 +438,8 @@ export interface AionimaConfig {
     devMode?: boolean;
   };
   providers?: Record<string, ProviderCredential>;
-  bots?: BotsConfig;
-  dev?: { enabled?: boolean; agiRepo?: string; primeRepo?: string; botsRepo?: string };
+  bots?: WorkerConfig;
+  dev?: { enabled?: boolean; agiRepo?: string; primeRepo?: string };
   [key: string]: unknown;
 }
 
@@ -605,8 +605,8 @@ export interface HostingExtensionField {
   defaultValue?: string;
 }
 
-/** BOTS work queue job summary. */
-export interface BotsJobSummary {
+/** Work queue job summary. */
+export interface WorkerJobSummary {
   id: string;
   description: string;
   status: "pending" | "running" | "checkpoint" | "complete" | "failed";

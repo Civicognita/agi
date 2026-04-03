@@ -1,5 +1,5 @@
 /**
- * Static metadata for all BOTS workers.
+ * Static metadata for all registered workers.
  * Keyed by "domain.worker" identifier (e.g. "code.hacker", "k.linguist").
  */
 

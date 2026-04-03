@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Aionima VM lifecycle management for testing.
 # Uses Multipass to create/destroy ephemeral Ubuntu VMs.
-# Mounts all workspace repos (AGI, PRIME, BOTS, ID) for full test coverage.
+# Mounts all workspace repos (AGI, PRIME, ID) for full test coverage.
 #
 # Usage:
 #   ./scripts/test-vm.sh create    # Launch fresh Ubuntu 24.04 VM with all repo mounts
@@ -121,7 +121,6 @@ cmd_create() {
   echo "==> Mounting workspace repos..."
   mount_repo "$REPO_DIR"                          "/mnt/agi"           "AGI"
   mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/aionima-prime" "PRIME"
-  mount_repo "$WORKSPACE_DIR/aionima-bots"         "/mnt/aionima-bots"  "BOTS"
   mount_repo "$WORKSPACE_DIR/aionima-id"           "/mnt/aionima-id"    "ID"
 
   echo "==> Waiting for cloud-init to finish..."
@@ -215,12 +214,10 @@ cmd_remount() {
   # Unmount any stale mounts first (ignore errors if not mounted)
   multipass umount "$VM_NAME":/mnt/agi 2>/dev/null || true
   multipass umount "$VM_NAME":/mnt/aionima-prime 2>/dev/null || true
-  multipass umount "$VM_NAME":/mnt/aionima-bots 2>/dev/null || true
   multipass umount "$VM_NAME":/mnt/aionima-id 2>/dev/null || true
 
   mount_repo "$REPO_DIR"                          "/mnt/agi"           "AGI"
   mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/aionima-prime" "PRIME"
-  mount_repo "$WORKSPACE_DIR/aionima-bots"         "/mnt/aionima-bots"  "BOTS"
   mount_repo "$WORKSPACE_DIR/aionima-id"           "/mnt/aionima-id"    "ID"
 
   echo "Done."

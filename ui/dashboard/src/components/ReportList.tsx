@@ -47,7 +47,7 @@ export function ReportList() {
       {!loading && reports.length === 0 && (
         <div className="text-center py-12">
           <p className="text-[13px] text-muted-foreground">
-            No reports yet. Reports are generated when BOTS workers complete tasks.
+            No reports yet. Reports are generated when workers complete tasks.
           </p>
         </div>
       )}

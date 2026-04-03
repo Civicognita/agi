@@ -637,15 +637,13 @@ export default function RootLayout() {
               if (!ownerName) return null;
               const initial = ownerName.charAt(0).toUpperCase();
               return (
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button className="pl-2 border-l border-border flex items-center gap-2 hover:opacity-80 transition-opacity" title="Profile">
-                      <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
-                        {initial}
-                      </div>
-                    </button>
+                <Popover placement="bottom-end" offset={8}>
+                  <PopoverTrigger className="pl-2 border-l border-border flex items-center gap-2 hover:opacity-80 transition-opacity">
+                    <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold cursor-pointer">
+                      {initial}
+                    </div>
                   </PopoverTrigger>
-                  <PopoverContent align="end" sideOffset={8} className="p-0 w-auto border-0 bg-transparent shadow-none">
+                  <PopoverContent className="p-0 w-auto border-0 bg-transparent shadow-none">
                     <ProfileCard
                       displayName={ownerName}
                       channels={configHook.data?.owner?.channels}

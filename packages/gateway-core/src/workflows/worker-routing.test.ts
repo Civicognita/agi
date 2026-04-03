@@ -15,7 +15,7 @@ import {
   suggestWorker,
   formatDispatchReport,
 } from "./worker-routing.js";
-import type { BOTSTask } from "./worker-routing.js";
+import type { WorkerTask } from "./worker-routing.js";
 
 describe("parseWorkerEmission", () => {
   it("parses a standard emission", () => {
@@ -69,21 +69,21 @@ describe("parseWorkerEmission", () => {
 });
 
 describe("validateTaskPermissions", () => {
-  const codeDomainTask: BOTSTask = {
+  const codeDomainTask: WorkerTask = {
     description: "Build feature X",
     domain: "code",
     worker: "engineer",
     priority: "normal",
   };
 
-  const knowledgeTask: BOTSTask = {
+  const knowledgeTask: WorkerTask = {
     description: "Analyze data",
     domain: "k",
     worker: "analyst",
     priority: "normal",
   };
 
-  const opsTask: BOTSTask = {
+  const opsTask: WorkerTask = {
     description: "Deploy to production",
     domain: "ops",
     worker: "deployer",

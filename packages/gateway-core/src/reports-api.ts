@@ -1,5 +1,5 @@
 /**
- * Reports API — REST endpoints for browsing BOTS worker reports.
+ * Reports API — REST endpoints for browsing worker reports.
  *
  * Endpoints:
  *   GET /api/dashboard/reports            — paginated list with filters

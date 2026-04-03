@@ -1,5 +1,5 @@
 /**
- * Reports route — lists all BOTS worker reports.
+ * Reports route — lists all worker reports.
  */
 
 import { ReportList } from "@/components/ReportList.js";

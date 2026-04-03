@@ -293,7 +293,7 @@ export interface HostedProjectStatus {
   error?: string;
 }
 
-/** BOTS job update event payload. */
+/** Worker job update event payload. */
 export interface BotsJobUpdateData {
   jobId: string;
   status: "pending" | "running" | "checkpoint" | "complete" | "failed";
@@ -302,7 +302,7 @@ export interface BotsJobUpdateData {
   workers: string[];
 }
 
-/** BOTS worker completion event payload. */
+/** Worker completion event payload. */
 export interface BotsWorkerDoneData {
   jobId: string;
   workerTid: string;
@@ -311,21 +311,21 @@ export interface BotsWorkerDoneData {
   summary: string;
 }
 
-/** BOTS phase completion event payload. */
+/** Worker phase completion event payload. */
 export interface BotsPhaseDoneData {
   jobId: string;
   phaseId: string;
   gate: string;
 }
 
-/** BOTS checkpoint event payload. */
+/** Worker checkpoint event payload. */
 export interface BotsCheckpointData {
   jobId: string;
   phaseId: string;
   gate: string;
 }
 
-/** BOTS report ready event payload. */
+/** Worker report ready event payload. */
 export interface BotsReportReadyData {
   jobId: string;
   coaReqId: string;
@@ -333,7 +333,7 @@ export interface BotsReportReadyData {
   gist: string;
 }
 
-/** BOTS job failure event payload. */
+/** Worker job failure event payload. */
 export interface BotsJobFailedData {
   jobId: string;
   error: string;

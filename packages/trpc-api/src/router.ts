@@ -7,7 +7,7 @@
  *   config.*     — aionima.json read/write
  *   system.*     — update check + upgrade trigger
  *   plans.*      — plan CRUD
- *   bots.*       — BOTS work queue
+ *   bots.*       — work queue
  */
 
 import { z } from "zod";

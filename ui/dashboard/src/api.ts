@@ -3,7 +3,7 @@
  */
 
 import type {
-  BotsJobSummary,
+  WorkerJobSummary,
   BreakdownDimension,
   BreakdownSlice,
   COAExplorerEntry,
@@ -470,16 +470,16 @@ export async function fetchModels(provider: string): Promise<ModelEntry[]> {
 }
 
 // ---------------------------------------------------------------------------
-// BOTS Work Queue API — /api/bots
+// Work Queue API — /api/bots
 // ---------------------------------------------------------------------------
 
-export async function fetchBotsJobs(): Promise<BotsJobSummary[]> {
+export async function fetchBotsJobs(): Promise<WorkerJobSummary[]> {
   const res = await fetch("/api/bots/jobs");
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
-  return res.json() as Promise<BotsJobSummary[]>;
+  return res.json() as Promise<WorkerJobSummary[]>;
 }
 
 export async function approveBotsJob(jobId: string): Promise<{ ok: boolean }> {

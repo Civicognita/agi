@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { markdownComponents } from "@/lib/markdown.js";
-import type { BotsJobSummary, Plan, PlanStatus, PlanStep, ProjectInfo } from "../types.js";
+import type { WorkerJobSummary, Plan, PlanStatus, PlanStep, ProjectInfo } from "../types.js";
 import { approveBotsJob, fetchBotsJobs, rejectBotsJob } from "../api.js";
 import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
 import type { ToolCard } from "./ToolCards.js";
@@ -1190,7 +1190,7 @@ const DRAWER_TABS: { key: DrawerTab; label: string }[] = [
 ];
 
 function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: DrawerSystemProps) {
-  const [botsJobs, setBotsJobs] = useState<BotsJobSummary[]>([]);
+  const [botsJobs, setBotsJobs] = useState<WorkerJobSummary[]>([]);
   const [botsError, setBotsError] = useState<string | null>(null);
   const [botsLoading, setBotsLoading] = useState(false);
   const [actionPending, setActionPending] = useState<string | null>(null);
@@ -1237,7 +1237,7 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: 
     }
   }, [loadJobs]);
 
-  function statusColorClass(status: BotsJobSummary["status"]): string {
+  function statusColorClass(status: WorkerJobSummary["status"]): string {
     if (status === "complete") return "text-green";
     if (status === "failed") return "text-red";
     if (status === "checkpoint") return "text-yellow";

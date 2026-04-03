@@ -6,7 +6,6 @@ set -uo pipefail
 
 DEPLOY_DIR="/opt/aionima"
 PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
-BOTS_DIR="${AIONIMA_BOTS_DIR:-/opt/aionima-bots}"
 MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
 ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-id}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
@@ -79,22 +78,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Pull BOTS repo
-# ---------------------------------------------------------------------------
-if [ -d "$BOTS_DIR/.git" ]; then
-  emit "pull-bots" "start"
-  if (cd "$BOTS_DIR" && git pull --ff-only origin main 2>&1); then
-    emit "pull-bots" "done" "BOTS repo updated"
-  else
-    emit "pull-bots" "error" "BOTS pull failed"
-    # Non-fatal — continue in degraded mode
-  fi
-else
-  emit "pull-bots" "skip" "BOTS directory not found at $BOTS_DIR"
-fi
-
-# ---------------------------------------------------------------------------
-# 3b. Pull MARKETPLACE repo
+# 3. Pull MARKETPLACE repo
 # ---------------------------------------------------------------------------
 if [ -d "$MARKETPLACE_DIR/.git" ]; then
   emit "pull-marketplace" "start"
@@ -169,7 +153,7 @@ fi
 # ---------------------------------------------------------------------------
 emit "protocol-check" "start"
 COMPAT_OK=true
-for repo_label_dir in "agi:$DEPLOY_DIR" "prime:$PRIME_DIR" "bots:$BOTS_DIR" "id:$ID_DIR"; do
+for repo_label_dir in "agi:$DEPLOY_DIR" "prime:$PRIME_DIR" "id:$ID_DIR"; do
   label="${repo_label_dir%%:*}"
   dir="${repo_label_dir#*:}"
   if [ ! -f "$dir/protocol.json" ]; then

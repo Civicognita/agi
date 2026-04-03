@@ -2246,7 +2246,6 @@ export async function createGatewayRuntimeState(
     const phaseToUiPhase: Record<string, string> = {
       "pull-agi": "pulling",
       "pull-prime": "pulling",
-      "pull-bots": "pulling",
       "pull-marketplace": "pulling",
       "pull-id": "pulling",
       "preflight": "pulling",

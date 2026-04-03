@@ -321,8 +321,6 @@ const DevConfigSchema = z
     agiRepo: z.string().default("git@github.com:wishborn/agi.git"),
     /** Git remote URL for PRIME repo fork. */
     primeRepo: z.string().default("git@github.com:wishborn/aionima.git"),
-    /** Git remote URL for BOTS repo fork. */
-    botsRepo: z.string().default("git@github.com:wishborn/bots.git"),
     /** Dev directory for PRIME fork. */
     primeDir: z.string().default("/opt/aionima-prime_dev"),
     /** Dev directory for marketplace fork. */
