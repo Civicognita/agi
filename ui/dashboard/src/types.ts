@@ -392,6 +392,7 @@ export interface OwnerChannels {
   discord?: string;
   signal?: string;
   whatsapp?: string;
+  email?: string;
 }
 
 export interface OwnerConfig {

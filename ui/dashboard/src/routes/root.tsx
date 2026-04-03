@@ -18,6 +18,8 @@ import { DnsSetupBanner } from "@/components/DnsSetupBanner.js";
 import { ActivityDot } from "@/components/ActivityDot.js";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator.js";
 import { NotificationBell } from "@/components/NotificationBell.js";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover.js";
+import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
 import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard } from "@/api.js";
@@ -629,25 +631,31 @@ export default function RootLayout() {
                 {theme === "dark" ? "Light" : "Dark"}
               </Button>
             )}
-            {currentUser && (
-              <div className="flex items-center gap-2 pl-2 border-l border-border">
-                <div className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-[11px] font-bold">
-                  {currentUser.displayName.charAt(0).toUpperCase()}
-                </div>
-                {!isMobile && <span className="text-[12px] text-subtext0">{currentUser.displayName}</span>}
-                <button
-                  onClick={handleLogout}
-                  className="p-1 rounded hover:bg-surface0 text-subtext1 hover:text-text transition-colors"
-                  title="Logout"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                    <polyline points="16 17 21 12 16 7" />
-                    <line x1="21" y1="12" x2="9" y2="12" />
-                  </svg>
-                </button>
-              </div>
-            )}
+            {/* User profile popover */}
+            {(() => {
+              const ownerName = configHook.data?.owner?.displayName ?? currentUser?.displayName;
+              if (!ownerName) return null;
+              const initial = ownerName.charAt(0).toUpperCase();
+              return (
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button className="pl-2 border-l border-border flex items-center gap-2 hover:opacity-80 transition-opacity" title="Profile">
+                      <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
+                        {initial}
+                      </div>
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" sideOffset={8} className="p-0 w-auto border-0 bg-transparent shadow-none">
+                    <ProfileCard
+                      displayName={ownerName}
+                      channels={configHook.data?.owner?.channels}
+                      dmPolicy={configHook.data?.owner?.dmPolicy}
+                      showChannelIds
+                    />
+                  </PopoverContent>
+                </Popover>
+              );
+            })()}
           </div>
         </header>
 
