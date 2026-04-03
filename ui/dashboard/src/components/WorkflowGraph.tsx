@@ -1,5 +1,5 @@
 /**
- * WorkflowGraph — React Flow canvas rendering the BOTS worker topology.
+ * WorkflowGraph — React Flow canvas rendering the worker topology.
  * Shows domain groups with worker nodes and enforced chain edges.
  * Click a worker node to open the WorkerFlyout with metadata and model config.
  */

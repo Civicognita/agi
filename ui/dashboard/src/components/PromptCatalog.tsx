@@ -7,6 +7,9 @@
 
 import { useState } from "react";
 import type { PromptEntry, SystemPromptSection } from "./prompt-catalog.js";
+import { Card } from "@/components/ui/card.js";
+import { Badge } from "@/components/ui/badge.js";
+import { Separator } from "@/components/ui/separator.js";
 
 // ---------------------------------------------------------------------------
 // SystemPromptPipeline
@@ -88,15 +91,11 @@ export function SystemPromptPipeline({
           </div>
 
           {/* Right: content card */}
-          <div
+          <Card
             style={{
               flex: 1,
-              border: "1px solid var(--color-border)",
-              borderRadius: 8,
               padding: "10px 14px",
-              marginBottom: idx < entries.length - 1 ? 0 : 0,
               marginLeft: 8,
-              background: "var(--color-card)",
             }}
           >
             <div
@@ -150,7 +149,7 @@ export function SystemPromptPipeline({
             >
               {section.source}
             </div>
-          </div>
+          </Card>
         </div>
       ))}
     </div>
@@ -161,29 +160,18 @@ export function SystemPromptPipeline({
 // PromptEntryList
 // ---------------------------------------------------------------------------
 
-function ModelBadge({ model }: { model: string }) {
-  const colors: Record<string, string> = {
-    opus: "var(--color-mauve)",
-    sonnet: "var(--color-blue)",
-    haiku: "var(--color-green)",
-  };
-  const bg = colors[model] ?? "var(--color-muted-foreground)";
+const MODEL_CLASSES: Record<string, string> = {
+  opus: "bg-mauve/20 text-mauve",
+  sonnet: "bg-blue/20 text-blue",
+  haiku: "bg-green/20 text-green",
+};
 
+function ModelBadge({ model }: { model: string }) {
+  const cls = MODEL_CLASSES[model] ?? "bg-overlay0/20 text-muted-foreground";
   return (
-    <span
-      style={{
-        fontSize: 10,
-        fontWeight: 600,
-        textTransform: "uppercase",
-        letterSpacing: "0.05em",
-        padding: "1px 6px",
-        borderRadius: 4,
-        background: bg,
-        color: "var(--color-crust)",
-      }}
-    >
+    <Badge className={cls}>
       {model}
-    </span>
+    </Badge>
   );
 }
 
@@ -219,18 +207,9 @@ function Tags({ tags }: { tags: string[] }) {
   return (
     <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 6 }}>
       {tags.map((tag) => (
-        <span
-          key={tag}
-          style={{
-            fontSize: 10,
-            padding: "1px 6px",
-            borderRadius: 4,
-            border: "1px solid var(--color-border)",
-            color: "var(--color-muted-foreground)",
-          }}
-        >
+        <Badge key={tag} variant="outline">
           {tag}
-        </span>
+        </Badge>
       ))}
     </div>
   );
@@ -248,13 +227,10 @@ function EntryCard({
   onFileOpen?: (path: string) => void;
 }) {
   return (
-    <div
+    <Card
       onClick={onToggle}
       style={{
-        border: "1px solid var(--color-border)",
-        borderRadius: 8,
         padding: "10px 14px",
-        background: "var(--color-card)",
         cursor: "pointer",
         transition: "border-color 0.15s",
         borderColor: expanded
@@ -315,22 +291,25 @@ function EntryCard({
 
       {/* Expanded content */}
       {expanded && (
-        <div style={{ marginTop: 8, paddingLeft: 20 }}>
-          <p
-            style={{
-              fontSize: 12,
-              color: "var(--color-muted-foreground)",
-              margin: 0,
-              lineHeight: 1.5,
-            }}
-          >
-            {entry.description}
-          </p>
-          {entry.chain && <ChainInfo chain={entry.chain} />}
-          {entry.tags && entry.tags.length > 0 && <Tags tags={entry.tags} />}
-        </div>
+        <>
+          <Separator style={{ margin: "8px 0" }} />
+          <div style={{ paddingLeft: 20 }}>
+            <p
+              style={{
+                fontSize: 12,
+                color: "var(--color-muted-foreground)",
+                margin: 0,
+                lineHeight: 1.5,
+              }}
+            >
+              {entry.description}
+            </p>
+            {entry.chain && <ChainInfo chain={entry.chain} />}
+            {entry.tags && entry.tags.length > 0 && <Tags tags={entry.tags} />}
+          </div>
+        </>
       )}
-    </div>
+    </Card>
   );
 }
 

@@ -19,7 +19,6 @@ dist/
 .DS_Store
 .env
 .env.*
-!.env.example
 logs/
 node_modules/
 .pnpm-store/

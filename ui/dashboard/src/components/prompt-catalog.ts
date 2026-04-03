@@ -108,7 +108,7 @@ export const SYSTEM_PROMPT_SECTIONS: SystemPromptSection[] = [
     order: 10,
     title: "Workspace Context",
     description:
-      "Reads package.json and CLAUDE.md from the workspace root. Gives the agent awareness of project structure, scripts, and conventions.",
+      "Reads package.json and project README from the workspace root. Gives the agent awareness of project structure, scripts, and conventions.",
     condition: "Contributing mode + workspaceRoot set",
     source: "buildWorkspaceContextSection()",
   },
@@ -156,7 +156,7 @@ export const SYSTEM_PROMPT_SECTIONS: SystemPromptSection[] = [
     order: 16,
     title: "Response Format",
     description:
-      "Final instructions: language matching, internal ID suppression, TASKMASTER shortcode format, tool result honesty.",
+      "Final instructions: language matching, internal ID suppression, worker dispatch format, tool result honesty.",
     condition: "Always",
     source: "buildResponseFormatSection()",
   },
@@ -242,8 +242,8 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     id: "worker-base",
     title: "Worker Base Protocol",
     description:
-      "Universal WORKER prompt template injected by /dispatch with type-specific overlay appended. Contains TASKMASTER context table, identity placeholders for worker_type, job_id, phase_id, worktree_path, branch.",
-    filePath: ".claude/agents/workers/base.md",
+      "Universal worker prompt template. Contains identity placeholders and execution protocol.",
+    filePath: "packages/workers/src/prompts/base.ts",
     category: "worker",
     tags: ["protocol", "template"],
   },
@@ -254,7 +254,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "strat.planner",
     description:
       "Universal entry point for all shortcode-triggered work (w:>, w<:, !:>). Transforms raw intent into WORK.CHUNK execution plan with phases, assignments, gates, and dependencies.",
-    filePath: ".claude/agents/workers/strat/planner.md",
+    filePath: "packages/workers/src/prompts/strat/planner.ts",
     category: "worker",
     model: "sonnet",
     tags: ["strat"],
@@ -264,7 +264,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "strat.prioritizer",
     description:
       "Impact vs effort analysis. Ranks work items by priority criteria, urgency assessment, and dependency analysis.",
-    filePath: ".claude/agents/workers/strat/prioritizer.md",
+    filePath: "packages/workers/src/prompts/strat/prioritizer.ts",
     category: "worker",
     model: "haiku",
     tags: ["strat"],
@@ -276,7 +276,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "code.engineer",
     description:
       "Architecture worker. Analyzes requirements and produces implementation specs with phase definitions. Does NOT write code.",
-    filePath: ".claude/agents/workers/code/engineer.md",
+    filePath: "packages/workers/src/prompts/code/engineer.ts",
     category: "worker",
     model: "sonnet",
     tags: ["code"],
@@ -286,7 +286,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "code.hacker",
     description:
       "Implementation worker. Writes production code following specs from engineer or planner.",
-    filePath: ".claude/agents/workers/code/hacker.md",
+    filePath: "packages/workers/src/prompts/code/hacker.ts",
     category: "worker",
     model: "sonnet",
     chain: { to: ["code.tester"] },
@@ -297,7 +297,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "code.reviewer",
     description:
       "Code review worker. Quality, security, and pattern analysis. Produces structured feedback only — no changes.",
-    filePath: ".claude/agents/workers/code/reviewer.md",
+    filePath: "packages/workers/src/prompts/code/reviewer.ts",
     category: "worker",
     model: "sonnet",
     tags: ["code"],
@@ -307,7 +307,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "code.tester",
     description:
       "Test worker. Writes and runs tests for hacker output. Follows existing test patterns. Computes error hashes for STUMPED escalation.",
-    filePath: ".claude/agents/workers/code/tester.md",
+    filePath: "packages/workers/src/prompts/code/tester.ts",
     category: "worker",
     model: "sonnet",
     chain: { from: ["code.hacker"] },
@@ -320,7 +320,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "comm.writer.tech",
     description:
       "Technical writing worker for documentation, API docs, READMEs, and code comments.",
-    filePath: ".claude/agents/workers/comm/writer.tech.md",
+    filePath: "packages/workers/src/prompts/comm/writer.tech.ts",
     category: "worker",
     model: "sonnet",
     chain: { to: ["comm.editor"] },
@@ -331,7 +331,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "comm.writer.policy",
     description:
       "Policy writing worker for governance documents, procedures, and compliance documentation.",
-    filePath: ".claude/agents/workers/comm/writer.policy.md",
+    filePath: "packages/workers/src/prompts/comm/writer.policy.ts",
     category: "worker",
     model: "sonnet",
     chain: { to: ["comm.editor"] },
@@ -342,7 +342,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "comm.editor",
     description:
       "Style and consistency editor. Refines writer output for clarity, consistency, and correctness without changing meaning.",
-    filePath: ".claude/agents/workers/comm/editor.md",
+    filePath: "packages/workers/src/prompts/comm/editor.ts",
     category: "worker",
     model: "haiku",
     chain: { from: ["comm.writer.tech", "comm.writer.policy"] },
@@ -355,7 +355,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "data.modeler",
     description:
       "Schema design and entity relationship worker. Entry point for 'schema' route.",
-    filePath: ".claude/agents/workers/data/modeler.md",
+    filePath: "packages/workers/src/prompts/data/modeler.ts",
     category: "worker",
     model: "sonnet",
     chain: { to: ["k.linguist"] },
@@ -366,7 +366,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "data.migrator",
     description:
       "Data transformation, format conversion, and migration script generation.",
-    filePath: ".claude/agents/workers/data/migrator.md",
+    filePath: "packages/workers/src/prompts/data/migrator.ts",
     category: "worker",
     model: "sonnet",
     tags: ["data"],
@@ -378,7 +378,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "k.analyst",
     description:
       "Pattern recognition and connection analysis. Entry point for 'analyze' route.",
-    filePath: ".claude/agents/workers/k/analyst.md",
+    filePath: "packages/workers/src/prompts/k/analyst.ts",
     category: "worker",
     model: "sonnet",
     tags: ["k"],
@@ -388,7 +388,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "k.cryptologist",
     description:
       "Packs/unpacks 0R (Zero-R) compressed knowledge format. Serialization and integrity.",
-    filePath: ".claude/agents/workers/k/cryptologist.md",
+    filePath: "packages/workers/src/prompts/k/cryptologist.ts",
     category: "worker",
     model: "haiku",
     tags: ["k"],
@@ -398,7 +398,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "k.librarian",
     description:
       "Knowledge cataloging, indexing, and information retrieval optimization.",
-    filePath: ".claude/agents/workers/k/librarian.md",
+    filePath: "packages/workers/src/prompts/k/librarian.ts",
     category: "worker",
     model: "haiku",
     tags: ["k"],
@@ -408,7 +408,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "k.linguist",
     description:
       "Terminology validation, naming conventions, and lexicon consistency. Ensures language patterns are uniform.",
-    filePath: ".claude/agents/workers/k/linguist.md",
+    filePath: "packages/workers/src/prompts/k/linguist.ts",
     category: "worker",
     model: "sonnet",
     chain: { from: ["data.modeler"] },
@@ -421,7 +421,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "gov.auditor",
     description:
       "Compliance checking, COA chain verification, seal validation, and governance auditing.",
-    filePath: ".claude/agents/workers/gov/auditor.md",
+    filePath: "packages/workers/src/prompts/gov/auditor.ts",
     category: "worker",
     model: "sonnet",
     chain: { to: ["gov.archivist"] },
@@ -432,7 +432,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "gov.archivist",
     description:
       "Seal management and record keeping. Creates governance seals and archives audit results.",
-    filePath: ".claude/agents/workers/gov/archivist.md",
+    filePath: "packages/workers/src/prompts/gov/archivist.ts",
     category: "worker",
     model: "haiku",
     chain: { from: ["gov.auditor"] },
@@ -445,7 +445,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "ops.deployer",
     description:
       "CI/CD worker for deployments, version bumps, release notes, and pipeline configuration.",
-    filePath: ".claude/agents/workers/ops/deployer.md",
+    filePath: "packages/workers/src/prompts/ops/deployer.ts",
     category: "worker",
     model: "sonnet",
     tags: ["ops"],
@@ -455,7 +455,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "ops.custodian",
     description:
       "Cleanup and maintenance worker. Archival, pruning, cache clearing, and housekeeping.",
-    filePath: ".claude/agents/workers/ops/custodian.md",
+    filePath: "packages/workers/src/prompts/ops/custodian.ts",
     category: "worker",
     model: "haiku",
     tags: ["ops"],
@@ -465,7 +465,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "ops.syncer",
     description:
       "Cross-repo synchronization. Upstream merges, fork syncing, state reconciliation.",
-    filePath: ".claude/agents/workers/ops/syncer.md",
+    filePath: "packages/workers/src/prompts/ops/syncer.ts",
     category: "worker",
     model: "sonnet",
     tags: ["ops"],
@@ -477,7 +477,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "ux.designer.web",
     description:
       "UI component design, responsive layouts, and web interface patterns following the existing design system.",
-    filePath: ".claude/agents/workers/ux/designer.web.md",
+    filePath: "packages/workers/src/prompts/ux/designer.web.ts",
     category: "worker",
     model: "sonnet",
     tags: ["ux"],
@@ -487,7 +487,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "ux.designer.cli",
     description:
       "Terminal UI: CLI interfaces, box-drawing layouts, and console output formatting.",
-    filePath: ".claude/agents/workers/ux/designer.cli.md",
+    filePath: "packages/workers/src/prompts/ux/designer.cli.ts",
     category: "worker",
     model: "sonnet",
     tags: ["ux"],
@@ -590,17 +590,17 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     id: "cmd-dispatch",
     title: "/dispatch",
     description:
-      "Multi-agent orchestration. Covers BOTS shortcode mode (w:>) and direct dispatch mode. Full orchestrator reference.",
-    filePath: ".aionima/.claude/commands/dispatch.md",
+      "Worker dispatch orchestration. Routes tasks to appropriate workers via Taskmaster.",
+    filePath: ".aionima/commands/dispatch.md",
     category: "command",
-    tags: ["orchestration", "bots"],
+    tags: ["orchestration", "taskmaster"],
   },
   {
     id: "cmd-restart",
     title: "/restart",
     description:
       "Session save and resume. Soft/hard variants, context window management, and chain protocol.",
-    filePath: ".aionima/.claude/commands/restart.md",
+    filePath: ".aionima/commands/restart.md",
     category: "command",
     tags: ["session"],
   },
@@ -609,7 +609,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/puzzle",
     description:
       "0REALTALK Human+ Testing v2. Subcommands: list, run, score, results, design. Dispatches puzzle worker chain.",
-    filePath: ".aionima/.claude/commands/puzzle.md",
+    filePath: ".aionima/commands/puzzle.md",
     category: "command",
     tags: ["testing", "realtalk"],
   },
@@ -618,7 +618,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/custodian",
     description:
       "Maintenance ROLE command with authority check, subcommands, and scope rules for system caretaking.",
-    filePath: ".aionima/.claude/commands/custodian.md",
+    filePath: ".aionima/commands/custodian.md",
     category: "command",
     tags: ["maintenance", "role"],
   },
@@ -627,7 +627,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/shutdown",
     description:
       "Session, agenda, or plan close. Worktree path resolution, commit protocol, and cleanup.",
-    filePath: ".aionima/.claude/commands/shutdown.md",
+    filePath: ".aionima/commands/shutdown.md",
     category: "command",
     tags: ["session"],
   },
@@ -636,7 +636,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/frame",
     description:
       "Context preservation lifecycle. Actions: create, putdown, pickup, close. Manages work frames.",
-    filePath: ".aionima/.claude/commands/frame.md",
+    filePath: ".aionima/commands/frame.md",
     category: "command",
     tags: ["context"],
   },
@@ -645,7 +645,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/mem",
     description:
       "Memory management. STATE-gated remote vs local operations for cross-session recall.",
-    filePath: ".aionima/.claude/commands/mem.md",
+    filePath: ".aionima/commands/mem.md",
     category: "command",
     tags: ["memory"],
   },
@@ -654,7 +654,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/test",
     description:
       "Test framework. FOCUS-gated. Subcommands: create, run, report for validation workflows.",
-    filePath: ".aionima/.claude/commands/test.md",
+    filePath: ".aionima/commands/test.md",
     category: "command",
     tags: ["testing"],
   },
@@ -663,7 +663,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/validate",
     description:
       "Learning validation and MINT generation. Accepts 0RAW mode input for knowledge verification.",
-    filePath: ".aionima/.claude/commands/validate.md",
+    filePath: ".aionima/commands/validate.md",
     category: "command",
     tags: ["validation"],
   },
@@ -672,7 +672,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/prep",
     description:
       "WORKER branch deployment for ephemeral focused work sessions in isolated worktrees.",
-    filePath: ".aionima/.claude/commands/prep.md",
+    filePath: ".aionima/commands/prep.md",
     category: "command",
     tags: ["session", "worktree"],
   },
@@ -681,7 +681,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/hoot",
     description:
       "Activates Hooty research role. Modes: research, teach, story, verify.",
-    filePath: ".aionima/.claude/commands/hoot.md",
+    filePath: ".aionima/commands/hoot.md",
     category: "command",
     tags: ["agent-switch"],
   },
@@ -690,7 +690,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/spark",
     description:
       "Activates Sparky alignment role. Generates 0SPARK alignment checks with A:A/U:U/C:C metrics.",
-    filePath: ".aionima/.claude/commands/spark.md",
+    filePath: ".aionima/commands/spark.md",
     category: "command",
     tags: ["agent-switch"],
   },
@@ -699,7 +699,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/init",
     description:
       "SPORE initialization. First-boot protocol for new Aionima instances. Types: worker, ops, dev.",
-    filePath: ".aionima/.claude/commands/init.md",
+    filePath: ".aionima/commands/init.md",
     category: "command",
     tags: ["bootstrap"],
   },

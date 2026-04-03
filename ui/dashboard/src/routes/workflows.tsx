@@ -1,5 +1,5 @@
 /**
- * Workflows route — BOTS worker topology, system prompts, and agentic workflow docs.
+ * Workflows route — Worker topology, system prompts, and workflow documentation.
  */
 
 import { useState } from "react";
