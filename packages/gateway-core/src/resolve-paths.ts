@@ -22,7 +22,7 @@ export function resolveMarketplaceDir(config: AionimaConfig): string {
 
 export function resolveIdDir(config: AionimaConfig): string {
   if (config.dev?.enabled) {
-    return config.dev.idDir ?? "/opt/aionima-id_dev";
+    return config.dev.idDir ?? "/opt/aionima-local-id_dev";
   }
-  return config.idService?.dir ?? "/opt/aionima-id";
+  return config.idService?.dir ?? "/opt/aionima-local-id";
 }

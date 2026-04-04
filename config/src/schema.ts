@@ -326,9 +326,9 @@ const DevConfigSchema = z
     /** Dev directory for marketplace fork. */
     marketplaceDir: z.string().default("/opt/aionima-marketplace_dev"),
     /** Git remote URL for ID service fork. */
-    idRepo: z.string().default("git@github.com:wishborn/aionima-id.git"),
+    idRepo: z.string().default("git@github.com:wishborn/aionima-local-id.git"),
     /** Dev directory for ID service fork. */
-    idDir: z.string().default("/opt/aionima-id_dev"),
+    idDir: z.string().default("/opt/aionima-local-id_dev"),
   })
   .strict();
 
@@ -417,9 +417,9 @@ const IdServiceLocalSchema = z
 const IdServiceConfigSchema = z
   .object({
     /** Path to the ID service directory. */
-    dir: z.string().default("/opt/aionima-id"),
+    dir: z.string().default("/opt/aionima-local-id"),
     /** Git remote URL for the ID service source. */
-    source: z.string().default("git@github.com:Civicognita/aionima-id.git"),
+    source: z.string().default("git@github.com:Civicognita/aionima-local-id.git"),
     /** Branch to track. */
     branch: z.string().default("main"),
     /** Local self-hosting configuration. */

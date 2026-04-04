@@ -13,7 +13,7 @@ Aionima uses a **multi-repo architecture** with independent git repositories:
 | **AGI** | `/opt/aionima` | Gateway server, dashboard, plugins |
 | **PRIME** | `/opt/aionima-prime` | Knowledge corpus (Mycelium Protocol) |
 | **MARKETPLACE** | `/opt/aionima-marketplace` | Plugin marketplace |
-| **ID** | `/opt/aionima-id` | OAuth credential broker and identity service |
+| **ID** | `/opt/aionima-local-id` | OAuth credential broker and identity service |
 
 Each repo is a standalone git clone on the server. There are no submodules. PRIME, MARKETPLACE, and ID are optional -- if a repo's directory doesn't exist, it's silently skipped during deployment.
 
@@ -46,7 +46,7 @@ git clone git@github.com:Civicognita/aionima.git /opt/aionima-prime
 git clone git@github.com:Civicognita/aionima-marketplace.git /opt/aionima-marketplace
 
 # ID (identity service — optional)
-git clone git@github.com:Civicognita/aionima-id.git /opt/aionima-id
+git clone git@github.com:Civicognita/aionima-local-id.git /opt/aionima-local-id
 ```
 
 ### Step 2 -- Install Node.js and pnpm
@@ -94,7 +94,7 @@ Add repo paths to `~/.agi/aionima.json`:
       "port": 3200,
       "subdomain": "id"
     },
-    "dir": "/opt/aionima-id"
+    "dir": "/opt/aionima-local-id"
   }
 }
 ```
@@ -148,7 +148,7 @@ Non-fatal -- plugins still work from the previous build cache.
 ### Phase 3c -- Pull ID
 
 ```bash
-cd /opt/aionima-id && git pull --ff-only
+cd /opt/aionima-local-id && git pull --ff-only
 ```
 
 Non-fatal -- if ID pull fails, the identity service continues running from its last good state.
@@ -160,7 +160,7 @@ When `idService.local.enabled` is `true` in the config, the ID service is built 
 1. `npm install` — installs all dependencies (including devDependencies like `typescript`)
 2. `npm run build` — compiles TypeScript
 3. `npx drizzle-kit migrate` — runs database migrations (non-fatal if it fails)
-4. `sudo systemctl restart aionima-id` — restarts the service
+4. `sudo systemctl restart aionima-local-id` — restarts the service
 
 ### Phase 4 -- Protocol Compatibility Check
 

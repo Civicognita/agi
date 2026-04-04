@@ -158,7 +158,7 @@ pnpm test:e2e:ui       # Playwright UI tests (host browser → VM)
 pnpm test:all          # All tiers
 ```
 
-The VM mounts all workspace repos: AGI → `/mnt/agi`, PRIME → `/mnt/aionima-prime`, ID → `/mnt/aionima-id`. A test config fixture at `test/fixtures/aionima-test.json` points to these mount paths.
+The VM mounts all workspace repos: AGI → `/mnt/agi`, PRIME → `/mnt/aionima-prime`, ID → `/mnt/aionima-local-id`. A test config fixture at `test/fixtures/aionima-test.json` points to these mount paths.
 
 CI (GitHub Actions) sets `AIONIMA_TEST_VM=1` to bypass the host guard — it runs vitest directly since GitHub Actions is already isolated.
 
@@ -182,7 +182,7 @@ The system is built from **independent git repos** — not submodules. The **cor
 |------|----------------|----------|--------|
 | AGI | `/opt/aionima` | (dev workspace) | `@Civicognita/agi` |
 | PRIME | `/opt/aionima-prime` | `/opt/aionima-prime_dev` | `@Civicognita/aionima` |
-| ID | `/opt/aionima-id` | `/opt/aionima-id_dev` | `@Civicognita/aionima-id` |
+| ID | `/opt/aionima-local-id` | `/opt/aionima-local-id_dev` | `@Civicognita/aionima-local-id` |
 | MARKETPLACE | `/opt/aionima-marketplace` | `/opt/aionima-marketplace_dev` | `@Civicognita/aionima-marketplace` |
 
 AGI resolves repo paths at runtime from config (`prime.dir`, `idService.dir`, `marketplace.dir`). Dev mode (`dev.enabled: true`) switches to dev directories automatically.

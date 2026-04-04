@@ -6,6 +6,6 @@
   "requires": {
     "aionima-prime": ">=1.0.0",
     "aionima-bots": ">=1.0.0",
-    "aionima-id": ">=1.0.0"
+    "aionima-local-id": ">=1.0.0"
   }
 }

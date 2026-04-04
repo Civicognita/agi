@@ -7,7 +7,7 @@ set -uo pipefail
 DEPLOY_DIR="/opt/aionima"
 PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
 MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
-ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-id}"
+ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
 
 # Backend dist dirs — changes here require a service restart.
@@ -135,9 +135,9 @@ if [ "$ID_LOCAL_ENABLED" = "1" ] && [ -d "$ID_DIR" ]; then
       emit "build-id" "done" "Local ID service built and migrated"
 
       # Restart ID service if running
-      if systemctl is-active --quiet aionima-id 2>/dev/null; then
+      if systemctl is-active --quiet aionima-local-id 2>/dev/null; then
         emit "restart-id" "start"
-        sudo systemctl restart aionima-id
+        sudo systemctl restart aionima-local-id
         emit "restart-id" "done" "Local ID service restarted"
       fi
     else

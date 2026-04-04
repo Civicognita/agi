@@ -31,7 +31,7 @@ Four independent git repos are pulled during deployment:
 | AGI | `/opt/aionima` | (implicit -- always cwd) | -- |
 | PRIME | `/opt/aionima-prime` | `prime.dir` | `AIONIMA_PRIME_DIR` |
 | MARKETPLACE | `/opt/aionima-marketplace` | `marketplace.dir` | `AIONIMA_MARKETPLACE_DIR` |
-| ID | `/opt/aionima-id` | `idService.dir` | `AIONIMA_ID_DIR` |
+| ID | `/opt/aionima-local-id` | `idService.dir` | `AIONIMA_ID_DIR` |
 
 PRIME, MARKETPLACE, and ID are optional — if their directory doesn't exist, the pull phase is skipped silently.
 
@@ -71,9 +71,9 @@ When `idService.local.enabled` is `true` in `~/.agi/aionima.json`, deploy.sh bui
 1. `npm install` — installs **all** dependencies (not `--omit=dev`) because `tsc` is a devDependency
 2. `npm run build` — compiles TypeScript to `dist/`
 3. `npx drizzle-kit migrate` — runs database migrations (non-fatal)
-4. `sudo systemctl restart aionima-id` — restarts the service if running
+4. `sudo systemctl restart aionima-local-id` — restarts the service if running
 
-**Important:** The ID service's HTML view templates live in `src/views/` and are resolved at runtime from `process.cwd()`, not from `dist/`. This is because `tsc` only compiles `.ts` files — it does not copy `.html` files. The systemd unit sets `WorkingDirectory=/opt/aionima-id`, so `process.cwd()` always points to the project root.
+**Important:** The ID service's HTML view templates live in `src/views/` and are resolved at runtime from `process.cwd()`, not from `dist/`. This is because `tsc` only compiles `.ts` files — it does not copy `.html` files. The systemd unit sets `WorkingDirectory=/opt/aionima-local-id`, so `process.cwd()` always points to the project root.
 
 #### Marketplace Plugin Symlink
 
@@ -127,7 +127,7 @@ Each repo has a `protocol.json`:
 **ID** (`protocol.json`):
 ```json
 {
-  "name": "aionima-id",
+  "name": "aionima-local-id",
   "version": "1.0.0",
   "protocol": "1.0.0"
 }

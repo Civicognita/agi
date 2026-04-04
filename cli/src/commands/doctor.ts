@@ -211,7 +211,7 @@ function repoChecks(config: AionimaConfig): CheckGroup {
   const repos = [
     { name: "PRIME corpus", path: config.prime?.dir ?? "/opt/aionima-prime" },
     { name: "Marketplace", path: config.marketplace?.dir ?? "/opt/aionima-marketplace" },
-    { name: "ID service", path: config.idService?.dir ?? "/opt/aionima-id" },
+    { name: "ID service", path: config.idService?.dir ?? "/opt/aionima-local-id" },
   ];
 
   for (const repo of repos) {

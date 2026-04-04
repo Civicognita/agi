@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Aionima VM lifecycle management for testing.
 # Uses Multipass to create/destroy ephemeral Ubuntu VMs.
-# Mounts all workspace repos (AGI, PRIME, ID) for full test coverage.
+# Mounts all workspace repos (AGI, PRIME, local-ID) for full test coverage.
 #
 # Usage:
 #   ./scripts/test-vm.sh create           # Launch fresh Ubuntu 24.04 VM with all repo mounts
@@ -126,9 +126,9 @@ cmd_create() {
   rm -f "$cloud_init_file"
 
   echo "==> Mounting workspace repos..."
-  mount_repo "$REPO_DIR"                          "/mnt/agi"           "AGI"
-  mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/aionima-prime" "PRIME"
-  mount_repo "$WORKSPACE_DIR/aionima-id"           "/mnt/aionima-id"    "ID"
+  mount_repo "$REPO_DIR"                          "/mnt/agi"                 "AGI"
+  mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/aionima-prime"       "PRIME"
+  mount_repo "$WORKSPACE_DIR/aionima-local-id"     "/mnt/aionima-local-id"    "ID"
 
   echo "==> Waiting for cloud-init to finish..."
   multipass exec "$VM_NAME" -- cloud-init status --wait 2>/dev/null || true
@@ -221,11 +221,11 @@ cmd_remount() {
   # Unmount any stale mounts first (ignore errors if not mounted)
   multipass umount "$VM_NAME":/mnt/agi 2>/dev/null || true
   multipass umount "$VM_NAME":/mnt/aionima-prime 2>/dev/null || true
-  multipass umount "$VM_NAME":/mnt/aionima-id 2>/dev/null || true
+  multipass umount "$VM_NAME":/mnt/aionima-local-id 2>/dev/null || true
 
-  mount_repo "$REPO_DIR"                          "/mnt/agi"           "AGI"
-  mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/aionima-prime" "PRIME"
-  mount_repo "$WORKSPACE_DIR/aionima-id"           "/mnt/aionima-id"    "ID"
+  mount_repo "$REPO_DIR"                          "/mnt/agi"                 "AGI"
+  mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/aionima-prime"       "PRIME"
+  mount_repo "$WORKSPACE_DIR/aionima-local-id"     "/mnt/aionima-local-id"    "ID"
 
   echo "Done."
 }
@@ -301,7 +301,7 @@ systemctl restart caddy'
 
   echo "==> Building ID service..."
   multipass exec "$VM_NAME" -- bash -c '
-    cd /mnt/aionima-id
+    cd /mnt/aionima-local-id
     npm install
     npm run build
 
@@ -356,12 +356,12 @@ cmd_services_start() {
 
   echo "==> Starting ID service..."
   multipass exec "$VM_NAME" -- bash -c '
-    cd /mnt/aionima-id
+    cd /mnt/aionima-local-id
     set -a && source .env && set +a
-    nohup node dist/index.js > /tmp/aionima-id.log 2>&1 &
-    echo $! > /tmp/aionima-id.pid
+    nohup node dist/index.js > /tmp/aionima-local-id.log 2>&1 &
+    echo $! > /tmp/aionima-local-id.pid
     sleep 2
-    echo "  ID service PID: $(cat /tmp/aionima-id.pid)"
+    echo "  ID service PID: $(cat /tmp/aionima-local-id.pid)"
   '
 
   echo "==> Starting AGI gateway..."
@@ -385,7 +385,7 @@ cmd_services_stop() {
   ensure_vm_running
   multipass exec "$VM_NAME" -- bash -c '
     [ -f /tmp/aionima.pid ] && kill $(cat /tmp/aionima.pid) 2>/dev/null && rm /tmp/aionima.pid && echo "AGI stopped"
-    [ -f /tmp/aionima-id.pid ] && kill $(cat /tmp/aionima-id.pid) 2>/dev/null && rm /tmp/aionima-id.pid && echo "ID stopped"
+    [ -f /tmp/aionima-local-id.pid ] && kill $(cat /tmp/aionima-local-id.pid) 2>/dev/null && rm /tmp/aionima-local-id.pid && echo "ID stopped"
   '
 }
 
@@ -395,7 +395,7 @@ cmd_services_status() {
     echo "PostgreSQL: $(systemctl is-active postgresql)"
     echo "Caddy:      $(systemctl is-active caddy)"
     echo "AGI:        $([ -f /tmp/aionima.pid ] && kill -0 $(cat /tmp/aionima.pid) 2>/dev/null && echo "running (PID $(cat /tmp/aionima.pid))" || echo "stopped")"
-    echo "ID:         $([ -f /tmp/aionima-id.pid ] && kill -0 $(cat /tmp/aionima-id.pid) 2>/dev/null && echo "running (PID $(cat /tmp/aionima-id.pid))" || echo "stopped")"
+    echo "ID:         $([ -f /tmp/aionima-local-id.pid ] && kill -0 $(cat /tmp/aionima-local-id.pid) 2>/dev/null && echo "running (PID $(cat /tmp/aionima-local-id.pid))" || echo "stopped")"
     echo ""
     echo "Health checks:"
     echo "  AGI:  $(curl -sk https://ai.on/health 2>/dev/null || echo "unreachable")"

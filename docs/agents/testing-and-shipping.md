@@ -213,7 +213,7 @@ pnpm test:vm:destroy   # Tear down the VM
 pnpm test:vm:ssh       # SSH into the VM
 ```
 
-The VM mounts all workspace repos: AGI → `/mnt/agi`, PRIME → `/mnt/aionima-prime`, ID → `/mnt/aionima-id`. A test config fixture at `test/fixtures/aionima-test.json` points to these mount paths.
+The VM mounts all workspace repos: AGI → `/mnt/agi`, PRIME → `/mnt/aionima-prime`, ID → `/mnt/aionima-local-id`. A test config fixture at `test/fixtures/aionima-test.json` points to these mount paths.
 
 ### Running All VM Tests
 

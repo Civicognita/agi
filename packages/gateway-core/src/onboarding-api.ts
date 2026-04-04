@@ -878,7 +878,7 @@ export function registerOnboardingRoutes(
     if (err) return reply.code(403).send({ error: err });
 
     const cfg = readConfig();
-    const idDir = ((cfg.idService as Record<string, unknown>)?.dir as string) ?? "/opt/aionima-id";
+    const idDir = ((cfg.idService as Record<string, unknown>)?.dir as string) ?? "/opt/aionima-local-id";
 
     // Check if setup script exists
     const setupScript = join(idDir, "scripts/setup-local.sh");

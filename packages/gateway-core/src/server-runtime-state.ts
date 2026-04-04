@@ -2200,7 +2200,7 @@ export async function createGatewayRuntimeState(
     // Check service repos (ID, PRIME, marketplace) for pending updates
     const serviceRepoPaths = [
       deps.primeDir,
-      deps.config ? (deps.config as Record<string, unknown>).idService ? ((deps.config as Record<string, unknown>).idService as Record<string, string>).dir ?? "/opt/aionima-id" : "/opt/aionima-id" : undefined,
+      deps.config ? (deps.config as Record<string, unknown>).idService ? ((deps.config as Record<string, unknown>).idService as Record<string, string>).dir ?? "/opt/aionima-local-id" : "/opt/aionima-local-id" : undefined,
       deps.config ? (deps.config as Record<string, unknown>).marketplace ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string>).dir ?? "/opt/aionima-marketplace" : "/opt/aionima-marketplace" : undefined,
     ].filter(Boolean) as string[];
 
