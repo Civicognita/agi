@@ -1,14 +1,29 @@
 /**
- * System Identity page — embeds the ID service UI (id.ai.on) in an iframe.
+ * System Identity page — embeds the ID service UI in an iframe.
  * Provides access to OAuth connections, channel wizard, entity management,
  * and federated identity from within the AGI dashboard.
  */
 
-import { useRootContext } from "./root.js";
+import { useEffect, useState } from "react";
+import { fetchSystemConnections } from "@/api.js";
+import type { SystemConnectionStatus } from "@/types.js";
 
 export default function IdentityServicePage() {
-  const { overview } = useRootContext();
-  const idService = overview.data?.idService;
+  const [connections, setConnections] = useState<SystemConnectionStatus | null>(null);
+
+  useEffect(() => {
+    fetchSystemConnections().then(setConnections).catch(() => {});
+  }, []);
+
+  const idService = connections?.idService;
+
+  if (connections === null) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
+        <div className="text-subtext0">Loading...</div>
+      </div>
+    );
+  }
 
   if (!idService || idService.status === "missing" || idService.status === "error") {
     return (
@@ -19,9 +34,6 @@ export default function IdentityServicePage() {
             ? "Identity service is not responding. Check that aionima-id is running."
             : "Identity service is not configured. Set up the ID service in Settings \u2192 Identity."}
         </p>
-        {idService?.url && (
-          <p className="text-xs text-subtext1">Expected at: {idService.url}</p>
-        )}
       </div>
     );
   }
