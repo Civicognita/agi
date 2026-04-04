@@ -2111,7 +2111,27 @@ export async function createGatewayRuntimeState(
   }
 
   /**
+   * Check if a service repo has updates available.
+   * Returns behind count or 0 if up-to-date/missing.
+   */
+  async function checkServiceRepo(dir: string): Promise<{ behind: number; name: string }> {
+    const name = dir.split("/").pop() ?? dir;
+    try {
+      if (!existsSync(join(dir, ".git"))) return { behind: 0, name };
+      await execGitDashboard(["fetch", "origin", "--quiet"], dir);
+      const local = (await execGitDashboard(["rev-parse", "HEAD"], dir)).stdout.trim();
+      const remote = (await execGitDashboard(["rev-parse", "origin/main"], dir)).stdout.trim();
+      if (local === remote) return { behind: 0, name };
+      const count = (await execGitDashboard(["rev-list", `${local}..origin/main`, "--count"], dir)).stdout.trim();
+      return { behind: parseInt(count, 10) || 0, name };
+    } catch {
+      return { behind: 0, name };
+    }
+  }
+
+  /**
    * Build an UpdateCheck result by comparing deployedCommit vs origin/main.
+   * Also checks ID, PRIME, and marketplace repos for pending updates.
    * Shared between the poll endpoint and the webhook handler.
    */
   async function buildUpdateCheck(repoPath: string): Promise<{
@@ -2120,6 +2140,7 @@ export async function createGatewayRuntimeState(
     remoteCommit: string;
     behindCount: number;
     commits: { hash: string; message: string }[];
+    serviceUpdates?: Array<{ name: string; behind: number }>;
   }> {
     // Read the deployed commit marker (written by deploy.sh into the deploy dir)
     let deployedCommit = "";
@@ -2172,12 +2193,24 @@ export async function createGatewayRuntimeState(
       });
     }
 
+    // Check service repos (ID, PRIME, marketplace) for pending updates
+    const serviceRepoPaths = [
+      deps.primeDir,
+      deps.config ? (deps.config as Record<string, unknown>).idService ? ((deps.config as Record<string, unknown>).idService as Record<string, string>).dir ?? "/opt/aionima-id" : "/opt/aionima-id" : undefined,
+      deps.config ? (deps.config as Record<string, unknown>).marketplace ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string>).dir ?? "/opt/aionima-marketplace" : "/opt/aionima-marketplace" : undefined,
+    ].filter(Boolean) as string[];
+
+    const serviceChecks = await Promise.all(serviceRepoPaths.map(checkServiceRepo));
+    const serviceUpdates = serviceChecks.filter(s => s.behind > 0);
+    const totalServiceBehind = serviceUpdates.reduce((sum, s) => sum + s.behind, 0);
+
     return {
-      updateAvailable: behindCount > 0,
+      updateAvailable: behindCount > 0 || totalServiceBehind > 0,
       localCommit: deployedCommit,
       remoteCommit,
       behindCount,
       commits,
+      serviceUpdates: serviceUpdates.length > 0 ? serviceUpdates : undefined,
     };
   }
 
