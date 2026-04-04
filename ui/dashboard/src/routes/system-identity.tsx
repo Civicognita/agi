@@ -5,14 +5,14 @@
  */
 
 import { useEffect, useState } from "react";
-import { fetchSystemConnections } from "@/api.js";
-import type { SystemConnectionStatus } from "@/types.js";
+import { fetchConnectionStatus } from "@/api.js";
+import type { ConnectionStatus } from "@/types.js";
 
 export default function IdentityServicePage() {
-  const [connections, setConnections] = useState<SystemConnectionStatus | null>(null);
+  const [connections, setConnections] = useState<ConnectionStatus | null>(null);
 
   useEffect(() => {
-    fetchSystemConnections().then(setConnections).catch(() => {});
+    fetchConnectionStatus().then(setConnections).catch(() => {});
   }, []);
 
   const idService = connections?.idService;
