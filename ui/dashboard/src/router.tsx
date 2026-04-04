@@ -27,6 +27,7 @@ import SettingsGatewayPage from "./routes/settings-gateway.js";
 import SettingsDynamicPage from "./routes/settings-dynamic.js";
 import { PluginPageResolver } from "./components/PluginPageResolver.js";
 import MarketplacePage from "./routes/marketplace.js";
+import ChannelSetupPage from "./routes/channel-setup.js";
 import { OnboardingPage } from "./routes/onboarding.js";
 import { GatewayOnboardingPage } from "./routes/gateway-onboarding.js";
 import ReportsPage from "./routes/reports.js";
@@ -61,6 +62,7 @@ export const router = createBrowserRouter([
       // Gateway
       { path: "gateway/plugins", element: <Navigate to="/gateway/marketplace" replace /> },
       { path: "gateway/workflows", element: <WorkflowsPage /> },
+      { path: "gateway/channels", element: <ChannelSetupPage /> },
       { path: "gateway/logs", element: <LogsPage /> },
       { path: "gateway/marketplace", element: <MarketplacePage /> },
       { path: "gateway/onboarding", element: <GatewayOnboardingPage /> },

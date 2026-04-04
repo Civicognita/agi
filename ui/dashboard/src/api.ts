@@ -2094,3 +2094,42 @@ export async function fetchSecuritySummary(projectPath?: string): Promise<Securi
   if (!res.ok) throw new Error("Failed to fetch security summary");
   return res.json() as Promise<SecuritySummary>;
 }
+
+// ---------------------------------------------------------------------------
+// Channel Setup API
+// ---------------------------------------------------------------------------
+
+export async function startChannelSetup(channelId: string): Promise<{ handoffId: string; popupUrl: string }> {
+  const res = await fetch("/api/channels/setup/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channelId }),
+  });
+  if (!res.ok) throw new Error("Failed to start channel setup");
+  return res.json() as Promise<{ handoffId: string; popupUrl: string }>;
+}
+
+export async function pollChannelSetup(handoffId: string): Promise<{ status: string; tokens?: Record<string, string>; accountLabel?: string }> {
+  const res = await fetch(`/api/channels/setup/poll?handoffId=${encodeURIComponent(handoffId)}`);
+  if (!res.ok) throw new Error("Failed to poll channel setup");
+  return res.json() as Promise<{ status: string; tokens?: Record<string, string>; accountLabel?: string }>;
+}
+
+export async function testChannelCredentials(channelId: string, config: Record<string, string>): Promise<{ ok: boolean; error?: string; details?: string }> {
+  const res = await fetch("/api/channels/setup/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channelId, config }),
+  });
+  if (!res.ok) throw new Error("Failed to test channel");
+  return res.json() as Promise<{ ok: boolean; error?: string; details?: string }>;
+}
+
+export async function saveChannelConfig(channelId: string, config: Record<string, string>, ownerChannelId: string): Promise<void> {
+  const res = await fetch("/api/channels/setup/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channelId, config, ownerChannelId, enabled: true }),
+  });
+  if (!res.ok) throw new Error("Failed to save channel config");
+}

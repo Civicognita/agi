@@ -1,5 +1,5 @@
 /**
- * Protocol compatibility checker — validates that AGI, PRIME, BOTS, and ID repos
+ * Protocol compatibility checker — validates that AGI, PRIME, and ID repos
  * are running compatible protocol versions at boot time.
  */
 
@@ -71,7 +71,7 @@ function satisfiesRange(version: string, range: string): boolean {
  *
  * @param agiDir - Path to AGI repo root
  * @param primeDir - Path to PRIME corpus directory
- * @param botsDir - Path to BOTS system directory
+ * @param botsDir - Path to legacy BOTS system directory (pass null when unused)
  * @param idDir - Path to ID service directory
  */
 export function checkProtocolCompatibility(
@@ -94,7 +94,7 @@ export function checkProtocolCompatibility(
     errors.push(`PRIME protocol.json not found at ${primeDir}`);
   }
   if (botsDir !== null && !bots && existsSync(botsDir)) {
-    errors.push(`BOTS protocol.json not found at ${botsDir}`);
+    errors.push(`Legacy BOTS protocol.json not found at ${botsDir}`);
   }
   if (!id && existsSync(idDir)) {
     errors.push(`ID protocol.json not found at ${idDir}`);

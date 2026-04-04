@@ -35,6 +35,7 @@
  * - `StackDefinition` — composable project stacks (runtime, database, tooling)
  * - `SystemServiceDefinition` — host-level systemd/service management
  * - `ThemeDefinition` — dashboard themes
+ * - `WorkerDefinition` — worker task specialists (registered via `api.registerWorker()`)
  * - `WorkflowDefinition` — multi-step automated workflows
  *
  * ### Stack types (MPx 1.0 — composable project infrastructure)
@@ -92,6 +93,8 @@ export type {
   LLMProviderDefinition,
   LLMProviderFactory,
   ProvidesLabel,
+  WorkerDefinition,
+  WorkerDomain,
 } from "@aionima/plugins";
 
 export type { AionimaChannelPlugin } from "@aionima/channel-sdk";
