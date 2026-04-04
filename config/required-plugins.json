@@ -1,5 +1,6 @@
 {
   "plugins": [
+    { "id": "aionima-postgres", "disableable": false },
     { "id": "provider-anthropic", "disableable": true },
     { "id": "provider-openai", "disableable": true },
     { "id": "provider-ollama", "disableable": true },
