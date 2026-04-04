@@ -33,6 +33,7 @@ import {
   AlertTriangle,
   Building2,
   HardDrive,
+  Fingerprint,
 } from "lucide-react";
 
 interface NavItem {
@@ -117,6 +118,7 @@ const builtinSections: NavSectionWithPerspective[] = [
       { to: "/system/vendors", label: "Vendors", icon: Building2 },
       { to: "/system/backups", label: "Backups", icon: HardDrive },
       { to: "/system/security", label: "Security", icon: ShieldCheck },
+      { to: "/system/identity", label: "Identity", icon: Fingerprint },
     ],
   },
 ];

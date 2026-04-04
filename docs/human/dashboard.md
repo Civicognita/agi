@@ -167,6 +167,12 @@ The System section covers infrastructure and administration.
 | Resources | CPU, memory, disk usage of the host machine |
 | Services | Status of the `aionima` systemd service; start/stop/restart |
 | Admin | Upgrade via dashboard (triggers `deploy.sh`), view `.deployed-commit` status |
+| Security | Security scanning — run SAST/SCA/secrets/config scans, manage findings |
+| Identity | Embedded ID service — OAuth connections, channel wizard, entity management |
+| Changelog | Version history and release notes |
+| Incidents | Security incident tracking and breach management |
+| Vendors | Third-party service provider compliance tracking |
+| Backups | Automated backup management |
 
 #### Upgrading via Dashboard
 

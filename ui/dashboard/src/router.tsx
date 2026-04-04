@@ -37,6 +37,7 @@ import VendorsPage from "./routes/system-vendors.js";
 import BackupsPage from "./routes/system-backups.js";
 import SecuritySettingsPage from "./routes/settings-security.js";
 import SystemSecurityPage from "./routes/system-security.js";
+import IdentityServicePage from "./routes/system-identity.js";
 
 export const router = createBrowserRouter([
   {
@@ -87,6 +88,7 @@ export const router = createBrowserRouter([
       { path: "system/vendors", element: <VendorsPage /> },
       { path: "system/backups", element: <BackupsPage /> },
       { path: "system/security", element: <SystemSecurityPage /> },
+      { path: "system/identity", element: <IdentityServicePage /> },
       // Redirects: old system/* paths → new locations
       { path: "system/plugins", element: <Navigate to="/gateway/marketplace" replace /> },
       { path: "system/workflows", element: <Navigate to="/gateway/workflows" replace /> },
