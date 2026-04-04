@@ -397,6 +397,9 @@ export { PlanStore } from "./plan-store.js";
 export { buildTynnSyncPrompt, determineMappingStrategy } from "./plan-tynn-mapper.js";
 export type { TynnMappingStrategy, TynnMappingResult, PlanForMapping } from "./plan-tynn-mapper.js";
 
+// Project config path utilities
+export { projectSlug, projectConfigPath } from "./project-config-path.js";
+
 // Project Types
 export { ProjectTypeRegistry, createProjectTypeRegistry, PROJECT_CATEGORIES } from "./project-types.js";
 export type { ProjectTypeDefinition, ProjectTypeTool, ContainerConfig, ProjectCategory, LogSourceDefinition } from "./project-types.js";

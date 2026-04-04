@@ -1,7 +1,7 @@
 /**
  * create_plan tool — create a structured plan with steps for a multi-step task.
  *
- * The plan is saved to ~/.ai/plans/{projectSlug}/ and presented to the user
+ * The plan is saved to ~/.agi/{projectSlug}/plans/ and presented to the user
  * for review before execution begins.
  */
 import type { ToolHandler } from "../tool-registry.js";

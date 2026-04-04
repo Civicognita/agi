@@ -9,7 +9,7 @@
  */
 
 import { readFileSync, writeFileSync, appendFileSync, existsSync, statSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { basename, join, resolve as resolvePath } from "node:path";
+import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { homedir } from "node:os";
 import { execSync, execFile, execFileSync, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -58,6 +58,7 @@ import type { COAChainLogger } from "@aionima/coa-chain";
 import type { DashboardSession } from "./dashboard-user-store.js";
 import type { FederationRouter as FedRouter } from "./federation-router.js";
 import { appendUpgradeLog, clearUpgradeLog, getUpgradeLog } from "./upgrade-log.js";
+import { projectConfigPath } from "./project-config-path.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -862,7 +863,7 @@ export async function createGatewayRuntimeState(
           let metaType: string | null = null;
           let metaCategory: string | null = null;
           let metaDescription: string | undefined;
-          const metaPath = join(fullPath, ".aionima-project.json");
+          const metaPath = projectConfigPath(fullPath);
           if (existsSync(metaPath)) {
             try {
               const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string };
@@ -957,7 +958,9 @@ export async function createGatewayRuntimeState(
     if (body.type && typeof body.type === "string") {
       meta.type = body.type;
     }
-    writeFileSync(join(targetDir, ".aionima-project.json"), JSON.stringify(meta, null, 2) + "\n", "utf-8");
+    const createMetaPath = projectConfigPath(targetDir);
+    mkdirSync(dirname(createMetaPath), { recursive: true });
+    writeFileSync(createMetaPath, JSON.stringify(meta, null, 2) + "\n", "utf-8");
 
     // Auto-install selected stacks
     const installedStacks: string[] = [];
@@ -1011,11 +1014,11 @@ export async function createGatewayRuntimeState(
     }
 
     // Read existing metadata or start fresh
-    const metaPath = join(targetPath, ".aionima-project.json");
+    const updateMetaPath = projectConfigPath(targetPath);
     let projectMeta: Record<string, unknown> = {};
-    if (existsSync(metaPath)) {
+    if (existsSync(updateMetaPath)) {
       try {
-        projectMeta = JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
+        projectMeta = JSON.parse(readFileSync(updateMetaPath, "utf-8")) as Record<string, unknown>;
       } catch { /* start fresh if malformed */ }
     }
 
@@ -1037,7 +1040,8 @@ export async function createGatewayRuntimeState(
       }
     }
 
-    writeFileSync(metaPath, JSON.stringify(projectMeta, null, 2) + "\n", "utf-8");
+    mkdirSync(dirname(updateMetaPath), { recursive: true });
+    writeFileSync(updateMetaPath, JSON.stringify(projectMeta, null, 2) + "\n", "utf-8");
     log.info(`project updated: ${targetPath}`);
     return reply.send({ ok: true });
   });

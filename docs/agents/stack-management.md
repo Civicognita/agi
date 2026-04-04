@@ -5,7 +5,7 @@ Stacks are composable, plugin-driven bundles that provide runtime, database, too
 ## Key Concepts
 
 - **StackDefinition**: Registered by plugins via `api.registerStack()`. Contains metadata, container config, database config, guides, tools, and scaffolding.
-- **ProjectStackInstance**: Persisted per-project in `.aionima-project.json` under `hosting.stacks[]`. Records stackId, DB credentials, and add timestamp.
+- **ProjectStackInstance**: Persisted per-project in `~/.agi/{projectSlug}/project.json` under `hosting.stacks[]`. Records stackId, DB credentials, and add timestamp.
 - **SharedContainerManager**: Database stacks share containers across projects. One PostgreSQL 17 container serves all projects that add the `stack-postgres-17` stack.
 - **StackRegistry**: Central store for all registered stack definitions. Supports filtering by project category and stack category.
 

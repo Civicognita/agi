@@ -1,7 +1,7 @@
 /**
  * update_plan tool — update the status of a plan or its individual steps.
  *
- * Loads the plan from ~/.ai/plans/{projectSlug}/, applies updates, and persists.
+ * Loads the plan from ~/.agi/{projectSlug}/plans/, applies updates, and persists.
  */
 import type { ToolHandler } from "../tool-registry.js";
 import { PlanStore } from "../plan-store.js";

@@ -1,5 +1,5 @@
 /**
- * Plan Store — file-based CRUD for ~/.ai/plans/{projectSlug}/{planId}.md
+ * Plan Store — file-based CRUD for ~/.agi/{projectSlug}/plans/{planId}.md
  *
  * Each plan is stored as a markdown file with YAML frontmatter.
  * The frontmatter contains the plan metadata, and the body is the
@@ -74,7 +74,7 @@ export class PlanStore {
   }
 
   private plansDir(projectPath: string): string {
-    return join(homedir(), ".ai", "plans", this.projectSlug(projectPath));
+    return join(homedir(), ".agi", this.projectSlug(projectPath), "plans");
   }
 
   private planPath(projectPath: string, planId: string): string {

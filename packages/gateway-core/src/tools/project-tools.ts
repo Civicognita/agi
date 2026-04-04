@@ -6,8 +6,9 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { basename, join, resolve as resolvePath } from "node:path";
+import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
+import { projectConfigPath } from "../project-config-path.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -67,7 +68,7 @@ function handleList(config: ProjectToolConfig): string {
         const fullPath = resolvePath(dir, entry.name);
         const hasGit = existsSync(join(fullPath, ".git"));
         let tynnToken: string | null = null;
-        const metaPath = join(fullPath, ".aionima-project.json");
+        const metaPath = projectConfigPath(fullPath);
         if (existsSync(metaPath)) {
           try {
             const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; name?: string };
@@ -128,7 +129,9 @@ function handleCreate(config: ProjectToolConfig, input: Record<string, unknown>)
   if (tynnToken.length > 0) {
     meta.tynnToken = tynnToken;
   }
-  writeFileSync(join(targetDir, ".aionima-project.json"), JSON.stringify(meta, null, 2) + "\n", "utf-8");
+  const createMetaPath = projectConfigPath(targetDir);
+  mkdirSync(dirname(createMetaPath), { recursive: true });
+  writeFileSync(createMetaPath, JSON.stringify(meta, null, 2) + "\n", "utf-8");
 
   const hasGit = cloned || existsSync(join(targetDir, ".git"));
   return JSON.stringify({ ok: true, name, slug, path: targetDir, cloned, hasGit });
@@ -153,11 +156,11 @@ function handleUpdate(config: ProjectToolConfig, input: Record<string, unknown>)
   }
 
   // Read existing metadata or start fresh
-  const metaPath = join(targetPath, ".aionima-project.json");
+  const updateMetaPath = projectConfigPath(targetPath);
   let meta: Record<string, unknown> = {};
-  if (existsSync(metaPath)) {
+  if (existsSync(updateMetaPath)) {
     try {
-      meta = JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
+      meta = JSON.parse(readFileSync(updateMetaPath, "utf-8")) as Record<string, unknown>;
     } catch { /* start fresh if malformed */ }
   }
 
@@ -173,7 +176,8 @@ function handleUpdate(config: ProjectToolConfig, input: Record<string, unknown>)
     meta.tynnToken = input.tynnToken.trim();
   }
 
-  writeFileSync(metaPath, JSON.stringify(meta, null, 2) + "\n", "utf-8");
+  mkdirSync(dirname(updateMetaPath), { recursive: true });
+  writeFileSync(updateMetaPath, JSON.stringify(meta, null, 2) + "\n", "utf-8");
   return JSON.stringify({ ok: true });
 }
 

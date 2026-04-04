@@ -114,9 +114,9 @@ Additional project types can be added by runtime plugins (see the [Plugins](./pl
 
 ### Adding a Project
 
-Projects are added via the dashboard (Projects section) or by placing an `.aionima-project.json` file in the project directory.
+Projects are added via the dashboard (Projects section). The AGI stores all project configuration in `~/.agi/{projectSlug}/project.json` — nothing is written inside the project directory itself.
 
-Example `.aionima-project.json`:
+For example, a project at `/home/user/myproject` stores its config at `~/.agi/home-user-myproject/project.json`:
 
 ```json
 {
@@ -269,7 +269,7 @@ The gateway dashboard itself is served at the base domain (`ai.on`) and any conf
 
 - Check the container logs: `podman logs aionima-{project-name}`.
 - Verify the container image is available: `podman images`.
-- Ensure the `startCommand` in `.aionima-project.json` is correct.
+- Ensure the `startCommand` in `~/.agi/{projectSlug}/project.json` is correct.
 
 ### Hostname Not Resolving
 

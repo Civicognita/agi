@@ -73,6 +73,7 @@ import { PlanStore } from "./plan-store.js";
 import { ChatPersistence } from "./chat-persistence.js";
 import type { PersistedChatSession } from "./chat-persistence.js";
 import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
+import { projectConfigPath } from "./project-config-path.js";
 import { HostingManager } from "./hosting-manager.js";
 import { createProjectTypeRegistry } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
@@ -1999,7 +2000,7 @@ export async function startGatewayServer(
         // Check if the project has a Tynn token
         let tynnToken: string | null = null;
         try {
-          const metaPath = join(effectiveProjectPath, ".aionima-project.json");
+          const metaPath = projectConfigPath(effectiveProjectPath);
           const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string };
           tynnToken = meta.tynnToken ?? null;
         } catch {

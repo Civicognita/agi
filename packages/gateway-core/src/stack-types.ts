@@ -149,7 +149,7 @@ export interface StackDefinition {
 }
 
 // ---------------------------------------------------------------------------
-// Per-project stack instance — persisted in .aionima-project.json
+// Per-project stack instance — persisted in ~/.agi/{slug}/project.json
 // ---------------------------------------------------------------------------
 
 export interface ProjectStackInstance {

@@ -7,14 +7,15 @@
  *   - Podman container lifecycle (rootless containers per project type)
  *   - Port pool allocation (configurable range, default 4000-4099)
  *   - Status polling for container health
- *   - On startup: load all .aionima-project.json with hosting.enabled, start containers
+ *   - On startup: load all ~/.agi/{slug}/project.json with hosting.enabled, start containers
  *   - On shutdown: stop all containers, clear polling
  */
 
-import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
-import { join, resolve as resolvePath } from "node:path";
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
+import { join, resolve as resolvePath, dirname } from "node:path";
 import { execSync, execFileSync, spawnSync, spawn, type ChildProcess } from "node:child_process";
 import { createComponentLogger } from "./logger.js";
+import { projectConfigPath } from "./project-config-path.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 import type { ProjectTypeRegistry } from "./project-types.js";
 import type { PluginRegistry } from "@aionima/plugins";
@@ -378,7 +379,7 @@ export class HostingManager {
   // -------------------------------------------------------------------------
 
   readHostingMeta(projectPath: string): ProjectHostingMeta | null {
-    const metaPath = join(projectPath, ".aionima-project.json");
+    const metaPath = projectConfigPath(projectPath);
     const legacyPath = join(projectPath, ".nexus-project.json");
     if (!existsSync(metaPath) && !existsSync(legacyPath)) return null;
     const actualPath = existsSync(metaPath) ? metaPath : legacyPath;
@@ -406,7 +407,7 @@ export class HostingManager {
   }
 
   private writeHostingMeta(projectPath: string, meta: ProjectHostingMeta): void {
-    const metaPath = join(projectPath, ".aionima-project.json");
+    const metaPath = projectConfigPath(projectPath);
     let existing: Record<string, unknown> = {};
     if (existsSync(metaPath)) {
       try {
@@ -430,6 +431,7 @@ export class HostingManager {
       ...(meta.tunnelUrl ? { tunnelUrl: meta.tunnelUrl } : {}),
     };
 
+    mkdirSync(dirname(metaPath), { recursive: true });
     writeFileSync(metaPath, JSON.stringify(existing, null, 2) + "\n", "utf-8");
   }
 
@@ -444,7 +446,7 @@ export class HostingManager {
    * corresponding stack if not already present.
    */
   private migrateProjectType(projectPath: string): void {
-    const metaPath = join(projectPath, ".aionima-project.json");
+    const metaPath = projectConfigPath(projectPath);
     if (!existsSync(metaPath)) return;
 
     let raw: Record<string, unknown>;
@@ -477,6 +479,7 @@ export class HostingManager {
     }
 
     raw.hosting = hosting;
+    mkdirSync(dirname(metaPath), { recursive: true });
     writeFileSync(metaPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
     this.log.info(`[${this.slugFromPath(projectPath)}] migrated type "${currentType}" → "${migration.newType}" + stack "${migration.autoStack}"`);
   }
@@ -1568,7 +1571,7 @@ export class HostingManager {
       addedAt: new Date().toISOString(),
     };
 
-    // Persist to .aionima-project.json
+    // Persist to ~/.agi/{slug}/project.json
     this.writeStackInstance(resolved, instance);
 
     // Auto-run install actions sequentially
@@ -1688,7 +1691,7 @@ export class HostingManager {
       );
     }
 
-    // Remove from .aionima-project.json
+    // Remove from ~/.agi/{slug}/project.json
     this.removeStackInstance(resolved, stackId);
     this.notifyStatusChange();
   }
@@ -1696,7 +1699,7 @@ export class HostingManager {
   /** Get all stack instances for a project. */
   getProjectStacks(projectPath: string): ProjectStackInstance[] {
     const resolved = resolvePath(projectPath);
-    const metaPath = join(resolved, ".aionima-project.json");
+    const metaPath = projectConfigPath(resolved);
     if (!existsSync(metaPath)) return [];
     try {
       const raw = JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
@@ -1709,7 +1712,7 @@ export class HostingManager {
   }
 
   private writeStackInstance(projectPath: string, instance: ProjectStackInstance): void {
-    const metaPath = join(projectPath, ".aionima-project.json");
+    const metaPath = projectConfigPath(projectPath);
     let existing: Record<string, unknown> = {};
     if (existsSync(metaPath)) {
       try {
@@ -1722,11 +1725,12 @@ export class HostingManager {
     stacks.push(instance);
     hosting.stacks = stacks;
     existing.hosting = hosting;
+    mkdirSync(dirname(metaPath), { recursive: true });
     writeFileSync(metaPath, JSON.stringify(existing, null, 2) + "\n", "utf-8");
   }
 
   private removeStackInstance(projectPath: string, stackId: string): void {
-    const metaPath = join(projectPath, ".aionima-project.json");
+    const metaPath = projectConfigPath(projectPath);
     if (!existsSync(metaPath)) return;
     try {
       const existing = JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
@@ -1734,6 +1738,7 @@ export class HostingManager {
       const stacks = (hosting.stacks ?? []) as ProjectStackInstance[];
       hosting.stacks = stacks.filter((s) => s.stackId !== stackId);
       existing.hosting = hosting;
+      mkdirSync(dirname(metaPath), { recursive: true });
       writeFileSync(metaPath, JSON.stringify(existing, null, 2) + "\n", "utf-8");
     } catch { /* ignore */ }
   }

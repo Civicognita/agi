@@ -1,0 +1,12 @@
+{
+  "hosting": {
+    "enabled": false,
+    "type": "node",
+    "hostname": "aionima",
+    "docRoot": ".",
+    "startCommand": "npm start",
+    "port": 4003,
+    "mode": "production",
+    "internalPort": null
+  }
+}
