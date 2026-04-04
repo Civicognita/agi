@@ -251,9 +251,22 @@ cmd_services_setup() {
   echo "==> Installing PostgreSQL..."
   multipass exec "$VM_NAME" -- sudo apt-get install -y postgresql postgresql-client
 
+  echo "==> Configuring PostgreSQL for password auth..."
+  multipass exec "$VM_NAME" -- sudo bash -c '
+    # Enable md5 auth for local TCP connections (default is peer which blocks password login)
+    PG_HBA=$(find /etc/postgresql -name pg_hba.conf 2>/dev/null | head -1)
+    if [ -n "$PG_HBA" ]; then
+      sed -i "s/^host.*all.*all.*127.0.0.1\/32.*scram-sha-256/host all all 127.0.0.1\/32 md5/" "$PG_HBA"
+      sed -i "s/^host.*all.*all.*127.0.0.1\/32.*peer/host all all 127.0.0.1\/32 md5/" "$PG_HBA"
+      # Also ensure there IS a host line for 127.0.0.1
+      grep -q "^host.*all.*all.*127.0.0.1" "$PG_HBA" || echo "host all all 127.0.0.1/32 md5" >> "$PG_HBA"
+      systemctl restart postgresql
+    fi
+  '
+
   echo "==> Creating ID service database..."
-  multipass exec "$VM_NAME" -- sudo -u postgres psql -c "CREATE USER aionima_id WITH PASSWORD 'testpass';" 2>/dev/null || true
-  multipass exec "$VM_NAME" -- sudo -u postgres psql -c "CREATE DATABASE aionima_id OWNER aionima_id;" 2>/dev/null || true
+  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE USER aionima_id WITH PASSWORD 'testpass';\"" 2>/dev/null || true
+  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE DATABASE aionima_id OWNER aionima_id;\"" 2>/dev/null || true
 
   echo "==> Installing Caddy..."
   multipass exec "$VM_NAME" -- bash -c '
@@ -299,7 +312,7 @@ systemctl restart caddy'
 ID_SERVICE_MODE=local
 AIONIMA_ID_BASE_URL=https://id.ai.on
 PORT=4100
-DATABASE_URL=postgres://aionima_id:testpass@localhost:5432/aionima_id
+DATABASE_URL=postgres://aionima_id:testpass@localhost/aionima_id
 ENCRYPTION_KEY=$ENC_KEY
 OWNER_NODE_URL=http://localhost:3100
 ENVEOF
