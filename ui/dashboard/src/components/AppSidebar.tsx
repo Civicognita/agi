@@ -33,7 +33,6 @@ import {
   AlertTriangle,
   Building2,
   HardDrive,
-  Radio,
 } from "lucide-react";
 
 interface NavItem {
@@ -94,7 +93,6 @@ const builtinSections: NavSectionWithPerspective[] = [
     title: "Gateway",
     items: [
       { to: "/gateway/workflows", label: "Workflows", icon: GitBranch },
-      { to: "/gateway/channels", label: "Channels", icon: Radio },
       { to: "/gateway/marketplace", label: "Marketplace", icon: Store },
       { to: "/gateway/logs", label: "Logs", icon: ScrollText },
       { to: "/gateway/onboarding", label: "Onboarding", icon: Rocket },

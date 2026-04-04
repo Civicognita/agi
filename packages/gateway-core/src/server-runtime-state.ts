@@ -45,7 +45,6 @@ import type { ChatPersistence } from "./chat-persistence.js";
 import { registerChatHistoryRoutes } from "./chat-history-api.js";
 import { registerMachineAdminRoutes } from "./machine-admin-api.js";
 import { registerOnboardingRoutes } from "./onboarding-api.js";
-import { registerChannelSetupRoutes } from "./channel-setup-api.js";
 import type { SecretsManager } from "./secrets.js";
 import { DashboardUserStore, hasRole } from "./dashboard-user-store.js";
 import { LocalIdAuthProvider } from "./local-id-auth-provider.js";
@@ -119,7 +118,7 @@ export interface RuntimeStateDeps {
   staticDir?: string;
   /** Workspace project directories (from config.workspace.projects). */
   workspaceProjects?: string[];
-  /** Workspace root path — used for worker CLI invocations. */
+  /** Workspace root path — used for BOTS CLI invocations. */
   workspaceRoot?: string;
   /** Path to the aionima source repo (enables update detection + upgrade). */
   selfRepoPath?: string;
@@ -3066,19 +3065,6 @@ export async function createGatewayRuntimeState(
     config: deps.config as Record<string, unknown>,
     configPath: deps.configPath,
   });
-
-  // -----------------------------------------------------------------------
-  // Channel Setup API routes (private network only)
-  // -----------------------------------------------------------------------
-
-  if (deps.configPath) {
-    registerChannelSetupRoutes(fastify, {
-      isPrivateNetwork,
-      getClientIp: (req) => req.ip ?? req.raw.socket.remoteAddress ?? "unknown",
-      idServiceBaseUrl: localIdBaseUrl ?? null,
-      configPath: deps.configPath,
-    });
-  }
 
   registerMachineAdminRoutes(fastify, { logger: deps.logger, dashboardUserStore, localIdAuthProvider, idBaseUrl: localIdBaseUrl });
 

@@ -133,7 +133,7 @@ export interface ToolRegistrationConfig {
   projectPath?: string;
   /** Workspace project directories — enables manage_project tool. */
   projectDirs?: string[];
-  /** Resolved .bots/ job storage directory path. */
+  /** Resolved BOTS directory path. */
   botsDir?: string;
   /** Callback fired when worker_dispatch creates a job. */
   onJobCreated?: (jobId: string, coaReqId: string) => void;
