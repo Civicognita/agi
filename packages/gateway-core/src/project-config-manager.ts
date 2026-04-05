@@ -112,12 +112,15 @@ export class ProjectConfigManager extends EventEmitter {
     const resolved = resolvePath(projectPath);
 
     return this.withLock(resolved, () => {
-      const existing = this.read(resolved) ?? { name: "unknown" } as ProjectConfig;
-      const merged = this.deepMerge(existing, patch);
+      const raw = this.readRaw(resolved);
+      this.ensureRequiredFields(raw, resolved);
+      const existing = ProjectConfigSchema.safeParse(raw).data ?? { name: raw.name as string } as ProjectConfig;
+      const merged = this.deepMerge(existing as Record<string, unknown>, patch as Record<string, unknown>);
+      this.ensureRequiredFields(merged, resolved);
 
       // Determine which top-level keys changed
       const changedKeys = Object.keys(patch).filter(
-        (key) => JSON.stringify((existing as Record<string, unknown>)[key]) !== JSON.stringify((merged as Record<string, unknown>)[key]),
+        (key) => JSON.stringify((existing as Record<string, unknown>)[key]) !== JSON.stringify(merged[key]),
       );
 
       const validated = ProjectConfigSchema.parse(merged);
@@ -183,6 +186,7 @@ export class ProjectConfigManager extends EventEmitter {
       }
 
       existing.hosting = hosting;
+      this.ensureRequiredFields(existing, resolved);
 
       const validated = ProjectConfigSchema.parse(existing);
       const metaPath = this.resolveConfigPath(resolved);
@@ -214,6 +218,7 @@ export class ProjectConfigManager extends EventEmitter {
       stacks.push(instance);
       hosting.stacks = stacks;
       existing.hosting = hosting;
+      this.ensureRequiredFields(existing, resolved);
 
       const validated = ProjectConfigSchema.parse(existing);
       const metaPath = this.resolveConfigPath(resolved);
@@ -234,6 +239,7 @@ export class ProjectConfigManager extends EventEmitter {
       const stacks = (hosting.stacks ?? []) as ProjectStackInstance[];
       hosting.stacks = stacks.filter((s) => s.stackId !== stackId);
       existing.hosting = hosting;
+      this.ensureRequiredFields(existing, resolved);
 
       const validated = ProjectConfigSchema.parse(existing);
       const metaPath = this.resolveConfigPath(resolved);
@@ -270,6 +276,22 @@ export class ProjectConfigManager extends EventEmitter {
       return JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
     } catch {
       return {};
+    }
+  }
+
+  /**
+   * Ensure required fields exist on a raw config object.
+   * Legacy project.json files (from old HostingManager) may only have a
+   * hosting section with no name/createdAt. This backfills them from the
+   * project path so Zod validation doesn't throw.
+   */
+  private ensureRequiredFields(raw: Record<string, unknown>, resolvedPath: string): void {
+    if (!raw.name) {
+      const parts = resolvedPath.split("/");
+      raw.name = parts[parts.length - 1] ?? "project";
+    }
+    if (!raw.createdAt) {
+      raw.createdAt = new Date().toISOString();
     }
   }
 
