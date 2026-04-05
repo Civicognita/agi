@@ -38,6 +38,8 @@ const EXPECTED_TYPES: Record<string, string> = {
   "sample-static": "static-site",
   "sample-python-django": "api-service",
   "sample-vite-only": "static-site",
+  "sample-literature": "writing",
+  "sample-media": "art",
   "sample-production": "static-site",
 };
 

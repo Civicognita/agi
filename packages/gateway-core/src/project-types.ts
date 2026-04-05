@@ -128,7 +128,7 @@ export function createProjectTypeRegistry(): ProjectTypeRegistry {
     id: "production",
     label: "General Production",
     category: "administration",
-    hostable: false,
+    hostable: true,
     hasCode: false,
     defaultMeta: {
       type: "production",

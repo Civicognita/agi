@@ -36,13 +36,11 @@ export default function ProjectDetailPage() {
       theme={theme}
       projectActivity={projectActivity}
       hostingStatus={hostingHook.status}
-      onHostingEnable={hostingHook.enable}
-      onHostingDisable={hostingHook.disable}
       onHostingConfigure={hostingHook.configure}
       onHostingRestart={hostingHook.restart}
       onTunnelEnable={hostingHook.enableTunnel}
       onTunnelDisable={hostingHook.disableTunnel}
-      hostingBusy={hostingHook.enabling || hostingHook.disabling || hostingHook.configuring || hostingHook.restarting}
+      hostingBusy={hostingHook.configuring || hostingHook.restarting}
       onToolExecute={onToolExecute}
       onOpenTerminal={onOpenTerminal}
       contributingEnabled={contributingEnabled}

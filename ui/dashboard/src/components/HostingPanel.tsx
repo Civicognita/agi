@@ -25,17 +25,6 @@ export interface HostingPanelProps {
     startCommand: string | null;
   };
   infraReady: boolean;
-  onEnable: (params: {
-    path: string;
-    type?: string;
-    hostname?: string;
-    docRoot?: string;
-    startCommand?: string;
-    mode?: "production" | "development";
-    internalPort?: number;
-    runtimeId?: string;
-  }) => Promise<unknown>;
-  onDisable: (path: string) => Promise<unknown>;
   onConfigure: (params: {
     path: string;
     type?: string;
@@ -54,6 +43,10 @@ export interface HostingPanelProps {
   tools?: ProjectTypeTool[];
   onToolExecute?: (projectPath: string, toolId: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
   projectCategory?: string;
+  /** Category-specific tab label (e.g., "Development", "Reader", "Gallery"). */
+  tabLabel?: string;
+  /** Available project types for the type dropdown. */
+  availableTypes?: Array<{ id: string; label: string }>;
 }
 
 export function HostingPanel({
@@ -61,8 +54,6 @@ export function HostingPanel({
   hosting,
   detectedHosting,
   infraReady,
-  onEnable,
-  onDisable,
   onConfigure,
   onRestart,
   onTunnelEnable,
@@ -72,17 +63,13 @@ export function HostingPanel({
   tools,
   onToolExecute,
   projectCategory,
+  tabLabel = "Development",
+  availableTypes,
 }: HostingPanelProps) {
-  const [type, setType] = useState<string>(
-    hosting.enabled ? hosting.type : (detectedHosting?.projectType ?? hosting.type),
-  );
+  const [type, setType] = useState<string>(hosting.type ?? detectedHosting?.projectType ?? "static-site");
   const [hostname, setHostname] = useState(hosting.hostname);
-  const [docRoot, setDocRoot] = useState(
-    hosting.enabled ? (hosting.docRoot ?? "") : (detectedHosting?.docRoot ?? hosting.docRoot ?? ""),
-  );
-  const [startCommand, setStartCommand] = useState(
-    hosting.enabled ? (hosting.startCommand ?? "") : (detectedHosting?.startCommand ?? hosting.startCommand ?? ""),
-  );
+  const [docRoot, setDocRoot] = useState(hosting.docRoot ?? detectedHosting?.docRoot ?? "");
+  const [startCommand, setStartCommand] = useState(hosting.startCommand ?? detectedHosting?.startCommand ?? "");
   const [mode, setMode] = useState<"production" | "development">(hosting.mode ?? "production");
   const [internalPort, setInternalPort] = useState(
     hosting.internalPort !== null ? String(hosting.internalPort) : "",
@@ -96,10 +83,10 @@ export function HostingPanel({
 
   // Sync state when hosting prop changes
   useEffect(() => {
-    setType(hosting.enabled ? hosting.type : (detectedHosting?.projectType ?? hosting.type));
+    setType(hosting.type ?? detectedHosting?.projectType ?? "static-site");
     setHostname(hosting.hostname);
-    setDocRoot(hosting.enabled ? (hosting.docRoot ?? "") : (detectedHosting?.docRoot ?? hosting.docRoot ?? ""));
-    setStartCommand(hosting.enabled ? (hosting.startCommand ?? "") : (detectedHosting?.startCommand ?? hosting.startCommand ?? ""));
+    setDocRoot(hosting.docRoot ?? detectedHosting?.docRoot ?? "");
+    setStartCommand(hosting.startCommand ?? detectedHosting?.startCommand ?? "");
     setMode(hosting.mode ?? "production");
     setInternalPort(hosting.internalPort !== null ? String(hosting.internalPort) : "");
   }, [hosting, detectedHosting]);
@@ -122,27 +109,6 @@ export function HostingPanel({
   useEffect(() => {
     fetchRuntimes().then(setRuntimes).catch(() => setRuntimes([]));
   }, []);
-
-  const handleToggle = useCallback(async () => {
-    try {
-      if (hosting.enabled) {
-        await onDisable(projectPath);
-      } else {
-        const portNum = internalPort ? Number(internalPort) : undefined;
-        await onEnable({
-          path: projectPath,
-          type,
-          hostname: hostname || undefined,
-          docRoot: docRoot || undefined,
-          startCommand: startCommand || undefined,
-          mode,
-          internalPort: portNum && !isNaN(portNum) ? portNum : undefined,
-        });
-      }
-    } catch (err) {
-      setStickyError(err instanceof Error ? err.message : String(err));
-    }
-  }, [hosting.enabled, projectPath, type, hostname, docRoot, startCommand, mode, internalPort, onEnable, onDisable]);
 
   const handleSaveConfig = useCallback(async () => {
     setSaving(true);
@@ -180,27 +146,11 @@ export function HostingPanel({
     <div className="p-3 rounded-lg border border-border bg-mantle">
       <div className="flex items-center justify-between mb-3">
         <div className="text-[12px] font-semibold text-card-foreground">
-          Development
+          {tabLabel}
         </div>
-        <button
-          onClick={() => void handleToggle()}
-          disabled={busy || !infraReady}
-          className={cn(
-            "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
-            hosting.enabled ? "bg-green" : "bg-surface1",
-            (busy || !infraReady) && "opacity-50 cursor-not-allowed",
-          )}
-        >
-          <span
-            className={cn(
-              "inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform",
-              hosting.enabled ? "translate-x-4" : "translate-x-0.5",
-            )}
-          />
-        </button>
       </div>
 
-      {!infraReady && !hosting.enabled && (
+      {!infraReady && (
         <div className="text-[11px] text-yellow mb-2">
           Hosting infrastructure not configured. Run setup first.
         </div>
@@ -212,9 +162,18 @@ export function HostingPanel({
           <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
             Project Type
           </label>
-          <div className="w-full h-8 px-2 rounded-md border border-border bg-surface0/50 text-foreground text-[12px] flex items-center capitalize">
-            {type.replace(/-/g, " ")}
-          </div>
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="w-full h-8 px-2 rounded-md border border-border bg-background text-foreground text-[12px]"
+          >
+            {availableTypes && availableTypes.length > 0
+              ? availableTypes.map((pt) => (
+                  <option key={pt.id} value={pt.id}>{pt.label}</option>
+                ))
+              : <option value={type}>{type.replace(/-/g, " ")}</option>
+            }
+          </select>
         </div>
         {runtimes.length > 0 && (
           <div>
@@ -365,8 +324,7 @@ export function HostingPanel({
         </div>
       )}
 
-      {/* Status + actions — only when hosting is enabled */}
-      {hosting.enabled && (
+      {/* Status + actions — always visible (all projects are auto-hosted) */}
         <div className="mt-3 pt-2 border-t border-border">
           {/* Error banner — sticky until status becomes running or dismissed */}
           {stickyError && (
@@ -501,7 +459,6 @@ export function HostingPanel({
             <TerminalArea projectPath={projectPath} />
           </div>
         </div>
-      )}
     </div>
   );
 }

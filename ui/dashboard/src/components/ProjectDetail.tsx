@@ -24,6 +24,17 @@ import { WidgetRenderer } from "./WidgetRenderer.js";
 import { isSacredProject } from "@/lib/sacred-projects.js";
 import { SecurityTab } from "./SecurityTab.js";
 
+/** Map project category to hosting tab label. */
+function getHostingTabLabel(category?: string): string {
+  switch (category) {
+    case "literature": return "Reader";
+    case "media": return "Gallery";
+    case "administration": return "Management";
+    case "web": case "app": case "monorepo": case "ops": return "Development";
+    default: return "Hosting";
+  }
+}
+
 export interface ProjectDetailProps {
   projects: ProjectInfo[];
   onUpdate: (params: { path: string; name?: string; tynnToken?: string | null; category?: string; type?: string }) => Promise<void>;
@@ -35,8 +46,6 @@ export interface ProjectDetailProps {
   theme?: "light" | "dark";
   projectActivity?: Record<string, ProjectActivity | null>;
   hostingStatus?: HostingStatus | null;
-  onHostingEnable?: (params: { path: string; type?: string; hostname?: string; docRoot?: string; startCommand?: string }) => Promise<unknown>;
-  onHostingDisable?: (path: string) => Promise<unknown>;
   onHostingConfigure?: (params: { path: string; type?: string; hostname?: string; docRoot?: string; startCommand?: string }) => Promise<unknown>;
   onHostingRestart?: (path: string) => Promise<unknown>;
   onTunnelEnable?: (path: string) => Promise<unknown>;
@@ -51,7 +60,7 @@ export interface ProjectDetailProps {
 
 export function ProjectDetail({
   projects, onUpdate, updating, onDelete, deleting, onRefresh, onOpenChat, theme,
-  hostingStatus, onHostingEnable, onHostingDisable, onHostingConfigure, onHostingRestart,
+  hostingStatus, onHostingConfigure, onHostingRestart,
   onTunnelEnable, onTunnelDisable, hostingBusy,
   onOpenEditor, onToolExecute, onOpenTerminal, contributingEnabled, onFixFinding,
 }: ProjectDetailProps) {
@@ -156,12 +165,16 @@ export function ProjectDetail({
       if (category && category !== (project.category ?? project.projectType?.category ?? "")) {
         params.category = category;
       }
-      // Include project type change
+      // Include project type change — also trigger hosting reconfigure
       const selectedType = editProjectType;
       if (selectedType && selectedType !== (project.projectType?.id ?? "")) {
         params.type = selectedType;
       }
       await onUpdate(params);
+      // If type changed, reconfigure hosting so container uses the new type
+      if (params.type && onHostingConfigure) {
+        await onHostingConfigure({ path: project.path, type: params.type });
+      }
     } catch { /* error shown via hook */ } finally {
       setSaving(false);
     }
@@ -268,13 +281,10 @@ export function ProjectDetail({
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="files">Files</TabsTrigger>
           <TabsTrigger value="repository">Repository</TabsTrigger>
-          {onHostingEnable && onHostingDisable && onHostingConfigure && onHostingRestart && (
-            project.projectType?.hostable !== false ? (
-              <TabsTrigger value="hosting">Development</TabsTrigger>
-            ) : null
-          )}
-          {project.projectType && !project.projectType.hostable && (
-            <TabsTrigger value="management">Management</TabsTrigger>
+          {onHostingConfigure && onHostingRestart && (
+            <TabsTrigger value="hosting">
+              {getHostingTabLabel(project.category ?? project.projectType?.category)}
+            </TabsTrigger>
           )}
           {pluginPanels.map((p) => (
             <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
@@ -613,20 +623,7 @@ export function ProjectDetail({
           </div>
         </TabsContent>
 
-        {project.projectType && !project.projectType.hostable && (
-          <TabsContent value="management" className="mt-4">
-            <div className="rounded-xl bg-card border border-border p-4">
-              <ProjectManagement
-                projectPath={project.path}
-                projectType={project.projectType}
-                description={project.description}
-                onToolExecute={onToolExecute}
-              />
-            </div>
-          </TabsContent>
-        )}
-
-        {onHostingEnable && onHostingDisable && onHostingConfigure && onHostingRestart && (
+        {onHostingConfigure && onHostingRestart && (
           <TabsContent value="hosting" className="mt-4">
             <div className="rounded-xl bg-card border border-border p-4">
               <HostingPanel
@@ -634,8 +631,6 @@ export function ProjectDetail({
                 hosting={project.hosting}
                 detectedHosting={project.detectedHosting}
                 infraReady={hostingStatus?.ready ?? false}
-                onEnable={onHostingEnable}
-                onDisable={onHostingDisable}
                 onConfigure={onHostingConfigure}
                 onRestart={onHostingRestart}
                 onTunnelEnable={onTunnelEnable}
@@ -645,6 +640,8 @@ export function ProjectDetail({
                 tools={project.projectType?.tools}
                 onToolExecute={onToolExecute}
                 projectCategory={project.category}
+                tabLabel={getHostingTabLabel(project.category ?? project.projectType?.category)}
+                availableTypes={projectTypes}
               />
             </div>
           </TabsContent>

@@ -33,6 +33,8 @@ const cases: Array<[string, { projectType: string; suggestedStacks: string[] }]>
   ["sample-static", { projectType: "static-site", suggestedStacks: ["stack-static-hosting"] }],
   ["sample-python-django", { projectType: "api-service", suggestedStacks: [] }],
   ["sample-vite-only", { projectType: "static-site", suggestedStacks: ["stack-static-hosting"] }],
+  ["sample-literature", { projectType: "writing", suggestedStacks: ["stack-literature-reader"] }],
+  ["sample-media", { projectType: "art", suggestedStacks: ["stack-media-gallery"] }],
   ["sample-production", { projectType: "static-site", suggestedStacks: ["stack-static-hosting"] }],
 ];
 

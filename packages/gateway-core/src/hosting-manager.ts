@@ -346,7 +346,8 @@ export class HostingManager {
       }
     } catch { /* podman not available */ }
 
-    // Scan all workspace project dirs — migrate old types and re-enable hosted projects.
+    // Scan all workspace project dirs — auto-enable ALL projects on *.ai.on.
+    // Every project directory gets a virtual host, regardless of type or prior state.
     for (const dir of this.workspaceProjects) {
       try {
         const entries = readdirSync(dir, { withFileTypes: true });
@@ -357,9 +358,42 @@ export class HostingManager {
           // Auto-migrate old framework types → broad type + stack
           this.migrateProjectType(fullPath);
 
-          const meta = this.readHostingMeta(fullPath);
-          if (meta !== null && meta.enabled) {
-            await this.enableProject(fullPath, meta);
+          let meta = this.readHostingMeta(fullPath);
+
+          if (meta !== null) {
+            // Existing config — force-enable if disabled
+            if (!meta.enabled) {
+              meta.enabled = true;
+            }
+          } else {
+            // No hosting config on disk — detect and create one
+            const detected = this.detectProjectDefaults(fullPath);
+            const slug = this.slugFromPath(fullPath);
+            meta = {
+              enabled: true,
+              type: detected.projectType,
+              hostname: slug,
+              docRoot: detected.docRoot,
+              startCommand: detected.startCommand,
+              port: null,
+              mode: "production" as const,
+              internalPort: null,
+            };
+          }
+
+          await this.enableProject(fullPath, meta);
+
+          // Auto-assign suggested stack if project has none
+          const stacks = this.getProjectStacks(fullPath);
+          if (stacks.length === 0) {
+            const detected = this.detectProjectDefaults(fullPath);
+            if (detected.suggestedStacks.length > 0 && this.stackReg?.has(detected.suggestedStacks[0]!)) {
+              this.writeStackInstance(fullPath, {
+                stackId: detected.suggestedStacks[0]!,
+                addedAt: new Date().toISOString(),
+              });
+              this.log.info(`[${this.slugFromPath(fullPath)}] auto-assigned stack "${detected.suggestedStacks[0]}"`);
+            }
           }
         }
       } catch {
@@ -479,6 +513,23 @@ export class HostingManager {
   private slugFromPath(projectPath: string): string {
     const parts = projectPath.split("/");
     return (parts[parts.length - 1] ?? "project").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  }
+
+  /** List filenames (not dirs) in a directory, non-recursive. */
+  private listShallowFiles(dirPath: string): string[] {
+    try {
+      return readdirSync(dirPath, { withFileTypes: true })
+        .filter((e) => e.isFile() && !e.name.startsWith("."))
+        .map((e) => e.name);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Get lowercase file extension including the dot. */
+  private extOf(filename: string): string {
+    const dot = filename.lastIndexOf(".");
+    return dot >= 0 ? filename.slice(dot).toLowerCase() : "";
   }
 
   /**
@@ -1448,7 +1499,27 @@ export class HostingManager {
       return { projectType: "static-site", suggestedStacks: ["stack-static-hosting"], docRoot: ".", startCommand: null };
     }
 
-    // 12. Fallback
+    // 12. Literature (mostly markdown/text files)
+    {
+      const LITERATURE_EXTS = new Set([".md", ".txt", ".rst", ".tex", ".adoc", ".org"]);
+      const files = this.listShallowFiles(projectPath);
+      const litCount = files.filter((f) => LITERATURE_EXTS.has(this.extOf(f))).length;
+      if (files.length > 0 && litCount / files.length > 0.5) {
+        return { projectType: "writing", suggestedStacks: ["stack-literature-reader"], docRoot: ".", startCommand: null };
+      }
+    }
+
+    // 13. Media (mostly image/video files)
+    {
+      const MEDIA_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".mp4", ".webm", ".mov", ".avi", ".psd", ".ai", ".bmp", ".tiff"]);
+      const files = this.listShallowFiles(projectPath);
+      const mediaCount = files.filter((f) => MEDIA_EXTS.has(this.extOf(f))).length;
+      if (files.length > 0 && mediaCount / files.length > 0.5) {
+        return { projectType: "art", suggestedStacks: ["stack-media-gallery"], docRoot: ".", startCommand: null };
+      }
+    }
+
+    // 14. Fallback
     return { projectType: "static-site", suggestedStacks: ["stack-static-hosting"], docRoot: "dist", startCommand: null };
   }
 
