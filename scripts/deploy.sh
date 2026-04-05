@@ -237,6 +237,18 @@ if [ -f "$REQUIRED_PLUGINS_FILE" ] && [ -d "$MARKETPLACE_DIR/plugins" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 7d. Migrate project configs to current schema
+# ---------------------------------------------------------------------------
+emit "migrate" "start"
+MIGRATE_SCRIPT="$DEPLOY_DIR/scripts/migrate-project-configs.sh"
+if [ -x "$MIGRATE_SCRIPT" ]; then
+  bash "$MIGRATE_SCRIPT" 2>&1 | sed 's/\x1b\[[0-9;]*m//g'
+  emit "migrate" "done" "Project configs migrated"
+else
+  emit "migrate" "done" "No migration script"
+fi
+
+# ---------------------------------------------------------------------------
 # 8. Ensure data/logs dirs exist
 # ---------------------------------------------------------------------------
 mkdir -p "$DEPLOY_DIR/data"
