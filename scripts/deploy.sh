@@ -171,7 +171,7 @@ fi
 # 5. Install dependencies
 # ---------------------------------------------------------------------------
 emit "install" "start"
-if pnpm install --frozen-lockfile 2>&1; then
+if NO_COLOR=1 FORCE_COLOR=0 pnpm install --frozen-lockfile 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
   emit "install" "done" "Dependencies installed"
 else
   die "install" "pnpm install failed"
@@ -190,7 +190,7 @@ done
 # 7. Build
 # ---------------------------------------------------------------------------
 emit "build" "start"
-if pnpm build 2>&1; then
+if NO_COLOR=1 FORCE_COLOR=0 pnpm build 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
   emit "build" "done" "Build complete"
 else
   die "build" "pnpm build failed"
