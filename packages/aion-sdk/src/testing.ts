@@ -128,6 +128,8 @@ export function createMockAPI(options: MockAPIOptions = {}): { api: AionimaPlugi
     getLogger() { return { debug() {}, info() {}, warn() {}, error() {} }; },
     getWorkspaceRoot(): string { return options.workspaceRoot ?? "/tmp/test"; },
     getProjectDirs(): string[] { return [...(options.projectDirs ?? [])]; },
+    getProjectConfig(): null { return null; },
+    getProjectStacks(): Array<{ stackId: string; addedAt: string }> { return []; },
   };
 
   return { api, registrations };

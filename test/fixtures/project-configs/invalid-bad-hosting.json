@@ -1,0 +1,10 @@
+{
+  "name": "bad-hosting",
+  "createdAt": "2026-04-01T00:00:00.000Z",
+  "hosting": {
+    "enabled": true,
+    "type": "web-app",
+    "hostname": "bad",
+    "mode": "invalid-mode"
+  }
+}

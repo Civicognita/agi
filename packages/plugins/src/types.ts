@@ -664,6 +664,10 @@ export interface AionimaPluginAPI {
   getLogger(): ComponentLogger;
   getWorkspaceRoot(): string;
   getProjectDirs(): string[];
+  /** Read a project's config (returns null if not found). */
+  getProjectConfig(projectPath: string): Record<string, unknown> | null;
+  /** Get installed stacks for a project. */
+  getProjectStacks(projectPath: string): Array<{ stackId: string; addedAt: string }>;
 }
 
 // ---------------------------------------------------------------------------

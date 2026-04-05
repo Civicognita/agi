@@ -31,30 +31,9 @@ export function bridgePluginCapabilities(deps: PluginBridgeDeps): PluginBridgeRe
   let toolsBridged = 0;
   let skillsBridged = 0;
 
-  // Bridge agent tools → ToolRegistry
-  for (const { pluginId, tool } of deps.pluginRegistry.getAgentTools()) {
-    try {
-      deps.toolRegistry.register(
-        {
-          name: `plugin_${pluginId}_${tool.name}`,
-          description: tool.description,
-          requiresState: ["ONLINE"],
-          requiresTier: ["unverified", "verified", "sealed"],
-        },
-        async (input, ctx) => {
-          const result = await tool.handler(input, {
-            sessionId: ctx?.coaChainBase ?? "unknown",
-            entityId: ctx?.entityId ?? "unknown",
-          });
-          return typeof result === "string" ? result : JSON.stringify(result);
-        },
-        tool.inputSchema,
-      );
-      toolsBridged++;
-    } catch (err) {
-      log.warn(`failed to bridge agent tool "${tool.name}" from plugin "${pluginId}": ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+  // Plugin agent tools are now routed through the unified `invoke_plugin_tool`
+  // registered in tools/index.ts. Count them for the log message.
+  toolsBridged = deps.pluginRegistry.getAgentTools().length;
 
   // Bridge skills → SkillRegistry (add programmatic skills to the registry's internal map)
   for (const { pluginId, skill } of deps.pluginRegistry.getSkills()) {

@@ -996,6 +996,7 @@ export async function createGatewayRuntimeState(
       name?: string;
       tynnToken?: string | null;
       category?: string;
+      type?: string;
     };
 
     if (!body.path || typeof body.path !== "string") {
@@ -1032,11 +1033,19 @@ export async function createGatewayRuntimeState(
       projectMeta.tynnToken = body.tynnToken.trim();
     }
     if (body.category !== undefined && typeof body.category === "string") {
-      const validCategories = ["literature", "app", "web", "media", "administration"];
+      const validCategories = ["literature", "app", "web", "media", "administration", "ops", "monorepo"];
       if (validCategories.includes(body.category)) {
         projectMeta.category = body.category;
       } else {
         return reply.code(400).send({ error: `Invalid category. Must be one of: ${validCategories.join(", ")}` });
+      }
+    }
+    if (body.type !== undefined && typeof body.type === "string" && body.type.trim().length > 0) {
+      projectMeta.type = body.type.trim();
+      // Also update hosting type if hosting is configured
+      const hosting = projectMeta.hosting as Record<string, unknown> | undefined;
+      if (hosting) {
+        hosting.type = body.type.trim();
       }
     }
 

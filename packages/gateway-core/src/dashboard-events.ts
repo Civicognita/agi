@@ -12,11 +12,13 @@ import type {
   ActivityEntry,
   BotsJobUpdateData,
   COAExplorerEntry,
+  ContainerStatusChangedData,
   DashboardEvent,
   DashboardOverview,
   DashboardSubscription,
   NotificationData,
   ProjectActivityData,
+  ProjectConfigChangedData,
   SystemUpgradeData,
   HostingStatusData,
   UpdateCheckData,
@@ -187,6 +189,22 @@ export class DashboardEventBroadcaster {
     });
   }
 
+  /** Emit a project:config_changed event when project.json is modified. */
+  emitProjectConfigChanged(data: ProjectConfigChangedData): void {
+    this.broadcastToSubscribers({
+      type: "project:config_changed",
+      data,
+    });
+  }
+
+  /** Emit a project:container_status event for per-project status changes. */
+  emitContainerStatusChanged(data: ContainerStatusChangedData): void {
+    this.broadcastToSubscribers({
+      type: "project:container_status",
+      data,
+    });
+  }
+
   /**
    * Emit an overview:updated event (debounced).
    * Multiple rapid calls collapse into one broadcast.
@@ -282,6 +300,8 @@ function extractEntityId(event: DashboardEvent): string | null {
     case "system:upgrade":
     case "system:update_available":
     case "hosting:status":
+    case "project:config_changed":
+    case "project:container_status":
     case "bots:job_update":
     case "worker:done":
     case "bots:phase_done":
@@ -302,6 +322,8 @@ function extractChannel(event: DashboardEvent): string | null {
     case "system:upgrade":
     case "system:update_available":
     case "hosting:status":
+    case "project:config_changed":
+    case "project:container_status":
     case "bots:job_update":
     case "notification:new":
       return null;

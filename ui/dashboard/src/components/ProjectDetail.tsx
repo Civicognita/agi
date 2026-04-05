@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, fetchPluginPanels, fetchPluginActions } from "../api.js";
+import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes } from "../api.js";
 import type { FileNode } from "../api.js";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
@@ -26,7 +26,7 @@ import { SecurityTab } from "./SecurityTab.js";
 
 export interface ProjectDetailProps {
   projects: ProjectInfo[];
-  onUpdate: (params: { path: string; name?: string; tynnToken?: string | null; category?: string }) => Promise<void>;
+  onUpdate: (params: { path: string; name?: string; tynnToken?: string | null; category?: string; type?: string }) => Promise<void>;
   updating: boolean;
   onDelete: (params: { path: string; confirm: boolean }) => Promise<void>;
   deleting: boolean;
@@ -63,6 +63,8 @@ export function ProjectDetail({
   const [editName, setEditName] = useState<string | null>(null);
   const [editTynnToken, setEditTynnToken] = useState<string | null>(null);
   const [editCategory, setEditCategory] = useState<string | null>(null);
+  const [editProjectType, setEditProjectType] = useState<string | null>(null);
+  const [projectTypes, setProjectTypes] = useState<Array<{ id: string; label: string }>>([]);
   const [saving, setSaving] = useState(false);
   const [cloneUrl, setCloneUrl] = useState("");
   const [repoSetupBusy, setRepoSetupBusy] = useState(false);
@@ -96,6 +98,13 @@ export function ProjectDetail({
     fetchPluginPanels(pt).then(setPluginPanels).catch(() => {});
     fetchPluginActions("project", pt).then(setPluginActions).catch(() => {});
   }, [project?.projectType?.id]);
+
+  // Fetch available project types for the type selector
+  useEffect(() => {
+    fetchProjectTypes()
+      .then((data) => setProjectTypes(data.types.map((t) => ({ id: t.id, label: t.label }))))
+      .catch(() => {});
+  }, []);
 
   // Fetch file tree when Files tab is selected (or refresh triggered)
   useEffect(() => {
@@ -137,7 +146,7 @@ export function ProjectDetail({
     if (!project) return;
     setSaving(true);
     try {
-      const params: { path: string; name?: string; tynnToken?: string | null; category?: string } = { path: project.path };
+      const params: { path: string; name?: string; tynnToken?: string | null; category?: string; type?: string } = { path: project.path };
       const trimmedName = name.trim();
       if (trimmedName && trimmedName !== project.name) params.name = trimmedName;
       const trimmedToken = tynnToken.trim();
@@ -147,11 +156,16 @@ export function ProjectDetail({
       if (category && category !== (project.category ?? project.projectType?.category ?? "")) {
         params.category = category;
       }
+      // Include project type change
+      const selectedType = editProjectType;
+      if (selectedType && selectedType !== (project.projectType?.id ?? "")) {
+        params.type = selectedType;
+      }
       await onUpdate(params);
     } catch { /* error shown via hook */ } finally {
       setSaving(false);
     }
-  }, [project, name, tynnToken, category, onUpdate]);
+  }, [project, name, tynnToken, category, editProjectType, onUpdate]);
 
   const handleFileSave = useCallback(async () => {
     if (!openFilePath || !fileDirty) return;
@@ -313,16 +327,22 @@ export function ProjectDetail({
                 </select>
               </div>
               <div>
-                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Detected Stack</label>
-                <div className="h-9 flex items-center">
-                  {project.projectType ? (
-                    <span className="text-[11px] px-2 py-1 rounded bg-surface1 text-foreground font-semibold">
-                      {project.projectType.label}
-                    </span>
-                  ) : (
-                    <span className="text-[11px] text-muted-foreground">Unknown</span>
+                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Project Type</label>
+                <select
+                  value={editProjectType ?? project.projectType?.id ?? ""}
+                  onChange={(e) => setEditProjectType(e.target.value || null)}
+                  disabled={isSacred}
+                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-foreground text-[13px]"
+                >
+                  {project.projectType && !projectTypes.some((t) => t.id === project.projectType?.id) && (
+                    <option value={project.projectType.id}>{project.projectType.label} (detected)</option>
                   )}
-                </div>
+                  {projectTypes.map((pt) => (
+                    <option key={pt.id} value={pt.id}>
+                      {pt.label}{pt.id === project.projectType?.id ? " (detected)" : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
             <div className="text-[11px] text-muted-foreground font-mono mb-3">{project.path}</div>

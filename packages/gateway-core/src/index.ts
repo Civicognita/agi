@@ -175,6 +175,8 @@ export type {
   DashboardSubscription,
   BotsJobUpdateData,
   NotificationData,
+  ProjectConfigChangedData,
+  ContainerStatusChangedData,
 } from "./dashboard-types.js";
 
 // Phase 3 — 0R Seal Issuance (Ed25519)
@@ -417,6 +419,14 @@ export { SharedContainerManager } from "./shared-container-manager.js";
 export type { SharedContainerManagerDeps } from "./shared-container-manager.js";
 export { registerStackRoutes } from "./stack-api.js";
 export type { StackApiDeps } from "./stack-api.js";
+
+// Project Config Manager
+export { ProjectConfigManager } from "./project-config-manager.js";
+export type { ProjectConfigManagerDeps, ProjectConfigChangeEvent, ProjectConfigCreateOpts } from "./project-config-manager.js";
+
+// System Config Service
+export { SystemConfigService } from "./system-config-service.js";
+export type { SystemConfigServiceDeps, SystemConfigChangeEvent } from "./system-config-service.js";
 
 // Hosting
 export { HostingManager } from "./hosting-manager.js";

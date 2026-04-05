@@ -115,6 +115,33 @@ export function useDashboardWS(
 }
 
 // ---------------------------------------------------------------------------
+// useProjectConfigWS — Bridges WS events to TanStack Query cache invalidation.
+// Call once at the dashboard layout level.
+// ---------------------------------------------------------------------------
+
+export function useProjectConfigWS() {
+  const queryClient = useQueryClient();
+
+  useDashboardWS(
+    useCallback((event: DashboardEvent) => {
+      switch (event.type) {
+        case "project:config_changed":
+          void queryClient.invalidateQueries({ queryKey: ["projects"] });
+          void queryClient.invalidateQueries({ queryKey: ["hosting", "status"] });
+          break;
+        case "project:container_status":
+          void queryClient.invalidateQueries({ queryKey: ["hosting", "status"] });
+          break;
+        case "hosting:status":
+          void queryClient.invalidateQueries({ queryKey: ["hosting"] });
+          void queryClient.invalidateQueries({ queryKey: ["projects"] });
+          break;
+      }
+    }, [queryClient]),
+  );
+}
+
+// ---------------------------------------------------------------------------
 // useConfig — TanStack Query + mutation
 // ---------------------------------------------------------------------------
 
@@ -421,7 +448,7 @@ export function useHosting() {
   const statusQuery = useQuery({
     queryKey: ["hosting", "status"],
     queryFn: fetchHostingStatus,
-    refetchInterval: 30_000,
+    refetchInterval: 120_000, // WS events are primary; polling is fallback only
   });
 
   const enableMutation = useMutation({

@@ -9,6 +9,7 @@ import { execSync } from "node:child_process";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
 import { projectConfigPath } from "../project-config-path.js";
+import type { ProjectConfigManager } from "../project-config-manager.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -22,6 +23,8 @@ function isSacredProjectPath(pathStr: string): boolean {
 
 export interface ProjectToolConfig {
   projectDirs: string[];
+  /** ProjectConfigManager for validated config operations. */
+  projectConfigManager?: ProjectConfigManager;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +61,7 @@ export function createManageProjectHandler(config: ProjectToolConfig): ToolHandl
 
 function handleList(config: ProjectToolConfig): string {
   const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null }[] = [];
+  const mgr = config.projectConfigManager;
 
   for (const dir of config.projectDirs) {
     try {
@@ -68,12 +72,18 @@ function handleList(config: ProjectToolConfig): string {
         const fullPath = resolvePath(dir, entry.name);
         const hasGit = existsSync(join(fullPath, ".git"));
         let tynnToken: string | null = null;
-        const metaPath = projectConfigPath(fullPath);
-        if (existsSync(metaPath)) {
-          try {
-            const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; name?: string };
-            tynnToken = meta.tynnToken ?? null;
-          } catch { /* ignore malformed metadata */ }
+
+        if (mgr) {
+          const cfg = mgr.read(fullPath);
+          tynnToken = cfg?.tynnToken ?? null;
+        } else {
+          const metaPath = projectConfigPath(fullPath);
+          if (existsSync(metaPath)) {
+            try {
+              const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; name?: string };
+              tynnToken = meta.tynnToken ?? null;
+            } catch { /* ignore malformed metadata */ }
+          }
         }
         projects.push({ name: entry.name, path: fullPath, hasGit, tynnToken });
       }
@@ -123,15 +133,21 @@ function handleCreate(config: ProjectToolConfig, input: Record<string, unknown>)
     }
   }
 
-  // Write metadata
-  const meta: Record<string, unknown> = { name, createdAt: new Date().toISOString() };
+  // Write metadata via ProjectConfigManager or legacy fallback
   const tynnToken = input.tynnToken ? String(input.tynnToken).trim() : "";
-  if (tynnToken.length > 0) {
-    meta.tynnToken = tynnToken;
+  const mgr = config.projectConfigManager;
+
+  if (mgr) {
+    mgr.create(targetDir, name, tynnToken.length > 0 ? { tynnToken } : undefined);
+  } else {
+    const meta: Record<string, unknown> = { name, createdAt: new Date().toISOString() };
+    if (tynnToken.length > 0) {
+      meta.tynnToken = tynnToken;
+    }
+    const createMetaPath = projectConfigPath(targetDir);
+    mkdirSync(dirname(createMetaPath), { recursive: true });
+    writeFileSync(createMetaPath, JSON.stringify(meta, null, 2) + "\n", "utf-8");
   }
-  const createMetaPath = projectConfigPath(targetDir);
-  mkdirSync(dirname(createMetaPath), { recursive: true });
-  writeFileSync(createMetaPath, JSON.stringify(meta, null, 2) + "\n", "utf-8");
 
   const hasGit = cloned || existsSync(join(targetDir, ".git"));
   return JSON.stringify({ ok: true, name, slug, path: targetDir, cloned, hasGit });
@@ -155,7 +171,25 @@ function handleUpdate(config: ProjectToolConfig, input: Record<string, unknown>)
     return JSON.stringify({ error: "Sacred projects cannot be modified" });
   }
 
-  // Read existing metadata or start fresh
+  const mgr = config.projectConfigManager;
+
+  if (mgr) {
+    // Build patch from input
+    const patch: Record<string, unknown> = {};
+    const name = input.name !== undefined ? String(input.name).trim() : "";
+    if (name.length > 0) patch.name = name;
+
+    if (input.tynnToken === null || input.tynnToken === "null" || input.tynnToken === "") {
+      patch.tynnToken = undefined; // Will be stripped on merge
+    } else if (input.tynnToken !== undefined && typeof input.tynnToken === "string") {
+      patch.tynnToken = input.tynnToken.trim();
+    }
+
+    void mgr.update(targetPath, patch);
+    return JSON.stringify({ ok: true });
+  }
+
+  // Legacy fallback
   const updateMetaPath = projectConfigPath(targetPath);
   let meta: Record<string, unknown> = {};
   if (existsSync(updateMetaPath)) {
@@ -164,7 +198,6 @@ function handleUpdate(config: ProjectToolConfig, input: Record<string, unknown>)
     } catch { /* start fresh if malformed */ }
   }
 
-  // Merge updates
   const name = input.name !== undefined ? String(input.name).trim() : "";
   if (name.length > 0) {
     meta.name = name;

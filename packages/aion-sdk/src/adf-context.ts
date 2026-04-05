@@ -15,6 +15,24 @@ export interface ADFContext {
   projectDirs: string[];
   /** Security scanning context — available when @aionima/security is loaded. */
   security?: ADFSecurityContext;
+  /** Project config manager — available when ProjectConfigManager is initialized. */
+  projectConfig?: ADFProjectConfigContext;
+  /** System config service — available when SystemConfigService is initialized. */
+  systemConfig?: ADFSystemConfigContext;
+}
+
+/** ADF project config facade — read-only access to per-project config files. */
+export interface ADFProjectConfigContext {
+  read(projectPath: string): Record<string, unknown> | null;
+  readHosting(projectPath: string): Record<string, unknown> | null;
+  getStacks(projectPath: string): Array<{ stackId: string; addedAt: string }>;
+}
+
+/** ADF system config facade — read/write access to aionima.json. */
+export interface ADFSystemConfigContext {
+  read(): Record<string, unknown>;
+  readKey(dotPath: string): unknown;
+  patch(dotPath: string, value: unknown): void;
 }
 
 /** ADF security facade context — provides scan execution and finding queries. */

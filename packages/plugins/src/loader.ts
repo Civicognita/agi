@@ -35,6 +35,10 @@ export interface PluginLoaderDeps {
   pluginPriorities?: Record<string, number>;
   channelRegistry?: { register(plugin: AionimaChannelPlugin): void };
   channelConfigs?: Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>;
+  /** Read a project config (for plugin getProjectConfig API). */
+  projectConfigReader?: (projectPath: string) => Record<string, unknown> | null;
+  /** Read project stacks (for plugin getProjectStacks API). */
+  projectStacksReader?: (projectPath: string) => Array<{ stackId: string; addedAt: string }>;
 }
 
 export interface LoadResult {
@@ -269,6 +273,14 @@ function createPluginAPI(
 
     getProjectDirs(): string[] {
       return [...(deps.projectDirs ?? [])];
+    },
+
+    getProjectConfig(projectPath: string): Record<string, unknown> | null {
+      return deps.projectConfigReader?.(projectPath) ?? null;
+    },
+
+    getProjectStacks(projectPath: string): Array<{ stackId: string; addedAt: string }> {
+      return deps.projectStacksReader?.(projectPath) ?? [];
     },
   };
 }

@@ -91,28 +91,38 @@ import {
   MANAGE_PROJECT_INPUT_SCHEMA,
 } from "./project-tools.js";
 
-// Agent tools (marketplace, plugins, config, stacks, system, hosting)
+// Agent tools (marketplace, system — kept from original)
 import {
   createManageMarketplaceHandler,
   MANAGE_MARKETPLACE_MANIFEST,
   MANAGE_MARKETPLACE_INPUT_SCHEMA,
-  createManagePluginsHandler,
-  MANAGE_PLUGINS_MANIFEST,
-  MANAGE_PLUGINS_INPUT_SCHEMA,
-  createManageConfigHandler,
-  MANAGE_CONFIG_MANIFEST,
-  MANAGE_CONFIG_INPUT_SCHEMA,
-  createManageStacksHandler,
-  MANAGE_STACKS_MANIFEST,
-  MANAGE_STACKS_INPUT_SCHEMA,
   createManageSystemHandler,
   MANAGE_SYSTEM_MANIFEST,
   MANAGE_SYSTEM_INPUT_SCHEMA,
-  createManageHostingHandler,
-  MANAGE_HOSTING_MANIFEST,
-  MANAGE_HOSTING_INPUT_SCHEMA,
 } from "./agent-tools.js";
 export type { AgentToolsConfig } from "./agent-tools.js";
+
+// Consolidated tools (replacing manage_config + manage_plugins)
+import {
+  createManageSettingsHandler,
+  MANAGE_SETTINGS_MANIFEST,
+  MANAGE_SETTINGS_INPUT_SCHEMA,
+} from "./settings-tools.js";
+
+// Plugin tool proxy (replacing N individual plugin_* tool registrations)
+import {
+  createInvokePluginToolHandler,
+  INVOKE_PLUGIN_TOOL_MANIFEST,
+  INVOKE_PLUGIN_TOOL_INPUT_SCHEMA,
+  buildPluginToolDescription,
+} from "./plugin-tool-proxy.js";
+
+// Plugin resource discovery
+import {
+  createQueryPluginResourcesHandler,
+  QUERY_PLUGIN_RESOURCES_MANIFEST,
+  QUERY_PLUGIN_RESOURCES_INPUT_SCHEMA,
+} from "./plugin-resource-tools.js";
 
 
 // ---------------------------------------------------------------------------
@@ -133,6 +143,8 @@ export interface ToolRegistrationConfig {
   projectPath?: string;
   /** Workspace project directories — enables manage_project tool. */
   projectDirs?: string[];
+  /** ProjectConfigManager for validated project config I/O. */
+  projectConfigManager?: import("../project-config-manager.js").ProjectConfigManager;
   /** Resolved BOTS directory path. */
   botsDir?: string;
   /** Callback fired when worker_dispatch creates a job. */
@@ -265,7 +277,7 @@ export function registerAllTools(
   if (config.projectDirs !== undefined && config.projectDirs.length > 0) {
     register(
       MANAGE_PROJECT_MANIFEST as ToolManifestEntry,
-      createManageProjectHandler({ projectDirs: config.projectDirs }),
+      createManageProjectHandler({ projectDirs: config.projectDirs, projectConfigManager: config.projectConfigManager }),
       MANAGE_PROJECT_INPUT_SCHEMA,
     );
   }
@@ -311,28 +323,17 @@ export function registerAgentTools(
     );
   }
 
-  // Plugin management tools
-  register(
-    MANAGE_PLUGINS_MANIFEST as ToolManifestEntry,
-    createManagePluginsHandler(config),
-    MANAGE_PLUGINS_INPUT_SCHEMA,
-  );
-
-  // Config tools (only if configPath is available)
-  if (config.configPath !== undefined) {
+  // Settings tools (consolidated config + plugins — replaces manage_config + manage_plugins)
+  if (config.systemConfigService !== undefined) {
     register(
-      MANAGE_CONFIG_MANIFEST as ToolManifestEntry,
-      createManageConfigHandler(config),
-      MANAGE_CONFIG_INPUT_SCHEMA,
-    );
-  }
-
-  // Stack tools (only if stack registry is available)
-  if (config.stackRegistry !== undefined) {
-    register(
-      MANAGE_STACKS_MANIFEST as ToolManifestEntry,
-      createManageStacksHandler(config),
-      MANAGE_STACKS_INPUT_SCHEMA,
+      MANAGE_SETTINGS_MANIFEST as ToolManifestEntry,
+      createManageSettingsHandler({
+        systemConfigService: config.systemConfigService,
+        pluginRegistry: config.pluginRegistry,
+        pluginPrefs: config.pluginPrefs,
+        discoveredPlugins: config.discoveredPlugins,
+      }),
+      MANAGE_SETTINGS_INPUT_SCHEMA,
     );
   }
 
@@ -343,12 +344,27 @@ export function registerAgentTools(
     MANAGE_SYSTEM_INPUT_SCHEMA,
   );
 
-  // Hosting tools (only if hosting manager is available)
-  if (config.hostingManager !== undefined) {
+  // Plugin tool proxy (single tool routes to any plugin-provided agent tool)
+  if (config.pluginRegistry !== undefined) {
+    const proxyManifest = {
+      ...INVOKE_PLUGIN_TOOL_MANIFEST,
+      description: buildPluginToolDescription(config.pluginRegistry),
+    };
     register(
-      MANAGE_HOSTING_MANIFEST as ToolManifestEntry,
-      createManageHostingHandler(config),
-      MANAGE_HOSTING_INPUT_SCHEMA,
+      proxyManifest as ToolManifestEntry,
+      createInvokePluginToolHandler({ pluginRegistry: config.pluginRegistry }),
+      INVOKE_PLUGIN_TOOL_INPUT_SCHEMA,
+    );
+
+    // Plugin resource discovery (read-only catalog queries)
+    register(
+      QUERY_PLUGIN_RESOURCES_MANIFEST as ToolManifestEntry,
+      createQueryPluginResourcesHandler({
+        pluginRegistry: config.pluginRegistry,
+        stackRegistry: config.stackRegistry,
+        projectTypeRegistry: config.hostingManager?.getProjectTypeRegistry() ?? undefined,
+      }),
+      QUERY_PLUGIN_RESOURCES_INPUT_SCHEMA,
     );
   }
 

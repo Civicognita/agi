@@ -76,8 +76,8 @@ export { createPlugin } from "./create-plugin.js";
 
 // ADF context + facades
 export { initADF, resetADF } from "./adf-context.js";
-export type { ADFContext, ADFLogger, ADFSecurityContext } from "./adf-context.js";
-export { Log, Config, Workspace, Security } from "./facades.js";
+export type { ADFContext, ADFLogger, ADFSecurityContext, ADFProjectConfigContext, ADFSystemConfigContext } from "./adf-context.js";
+export { Log, Config, Workspace, Security, ProjectConfig, SystemConfig } from "./facades.js";
 
 // Builder helpers + utilities
 export { actionId } from "./helpers.js";

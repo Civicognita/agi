@@ -71,3 +71,23 @@ export function Security(): ADFSecurityContext {
   if (!ctx.security) throw new Error("Security module not initialized — is @aionima/security loaded?");
   return ctx.security;
 }
+
+// ---------------------------------------------------------------------------
+// Project & System Config facades
+// ---------------------------------------------------------------------------
+
+import type { ADFProjectConfigContext, ADFSystemConfigContext } from "./adf-context.js";
+
+/** Read-only access to per-project config files (~/.agi/{slug}/project.json). */
+export function ProjectConfig(): ADFProjectConfigContext {
+  const ctx = getADFContext();
+  if (!ctx.projectConfig) throw new Error("ProjectConfigManager not initialized");
+  return ctx.projectConfig;
+}
+
+/** Read/write access to the system config (aionima.json). */
+export function SystemConfig(): ADFSystemConfigContext {
+  const ctx = getADFContext();
+  if (!ctx.systemConfig) throw new Error("SystemConfigService not initialized");
+  return ctx.systemConfig;
+}

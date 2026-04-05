@@ -26,5 +26,16 @@ export {
   type IdentityConfig,
 } from "./schema.js";
 
+export {
+  ProjectConfigSchema,
+  ProjectHostingSchema,
+  ProjectStackInstanceSchema,
+  ProjectCategorySchema,
+  type ProjectConfig,
+  type ProjectHosting,
+  type ProjectStackInstance,
+  type ProjectCategory,
+} from "./project-schema.js";
+
 export { ConfigWatcher } from "./hot-reload.js";
 export type { ConfigWatcherOptions, ConfigReloadEvent } from "./hot-reload.js";

@@ -1,0 +1,33 @@
+{
+  "name": "full-project",
+  "createdAt": "2026-04-01T00:00:00.000Z",
+  "tynnToken": "test-token-123",
+  "type": "web-app",
+  "category": "web",
+  "description": "A test project with all fields",
+  "hosting": {
+    "enabled": true,
+    "type": "web-app",
+    "hostname": "full-project",
+    "docRoot": "dist",
+    "startCommand": "npm start",
+    "port": 4001,
+    "mode": "production",
+    "internalPort": 3000,
+    "runtimeId": null,
+    "tunnelUrl": null,
+    "stacks": [
+      {
+        "stackId": "stack-node-app",
+        "addedAt": "2026-04-01T00:00:00.000Z"
+      },
+      {
+        "stackId": "stack-postgres-17",
+        "databaseName": "fulldb",
+        "databaseUser": "fulluser",
+        "databasePassword": "secret",
+        "addedAt": "2026-04-02T00:00:00.000Z"
+      }
+    ]
+  }
+}

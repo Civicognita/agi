@@ -20,7 +20,7 @@ import { ConnectionIndicator } from "@/components/ConnectionIndicator.js";
 import { NotificationBell } from "@/components/NotificationBell.js";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover.js";
 import { ProfileCard } from "@/components/ProfileCard.js";
-import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjects } from "@/hooks.js";
+import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
 import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard } from "@/api.js";
 import { LoginPage } from "@/components/LoginPage.js";
@@ -381,6 +381,7 @@ export default function RootLayout() {
   }, [overviewHook.refresh, hostingHook.refresh, projectsHook.refresh, queryClient]);
 
   useDashboardWS(handleEvent);
+  useProjectConfigWS(); // Live cache invalidation for project config/container changes
 
   // Upgrade with log-based completion detection (replaces commit-based polling)
   const doUpgrade = useCallback(() => {

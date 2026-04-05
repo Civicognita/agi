@@ -413,6 +413,21 @@ export interface UpdateCheckData {
   commits: { hash: string; message: string }[];
 }
 
+/** Project config change event — fired when any field in project.json changes. */
+export interface ProjectConfigChangedData {
+  projectPath: string;
+  changedKeys: string[];
+}
+
+/** Container status change event — individual project level. */
+export interface ContainerStatusChangedData {
+  projectPath: string;
+  hostname: string;
+  status: "running" | "stopped" | "error" | "unconfigured";
+  containerName?: string;
+  error?: string;
+}
+
 /** Events broadcast to dashboard WebSocket subscribers. */
 export type DashboardEvent =
   | { type: "impact:recorded"; data: ActivityEntry }
@@ -423,6 +438,8 @@ export type DashboardEvent =
   | { type: "system:upgrade"; data: SystemUpgradeData }
   | { type: "system:update_available"; data: UpdateCheckData }
   | { type: "hosting:status"; data: HostingStatusData }
+  | { type: "project:config_changed"; data: ProjectConfigChangedData }
+  | { type: "project:container_status"; data: ContainerStatusChangedData }
   | { type: "bots:job_update"; data: BotsJobUpdateData }
   | { type: "worker:done"; data: BotsWorkerDoneData }
   | { type: "bots:phase_done"; data: BotsPhaseDoneData }

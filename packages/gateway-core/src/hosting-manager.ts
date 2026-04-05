@@ -22,6 +22,7 @@ import type { PluginRegistry } from "@aionima/plugins";
 import type { StackRegistry } from "./stack-registry.js";
 import type { SharedContainerManager } from "./shared-container-manager.js";
 import type { ProjectStackInstance, StackContainerContext, StackDefinition, StackContainerConfig } from "./stack-types.js";
+import type { ProjectConfigManager } from "./project-config-manager.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -97,6 +98,7 @@ export interface HostingManagerDeps {
   pluginRegistry?: PluginRegistry;
   stackRegistry?: StackRegistry;
   sharedContainerManager?: SharedContainerManager;
+  projectConfigManager?: ProjectConfigManager;
   logger?: Logger;
 }
 
@@ -159,6 +161,7 @@ export class HostingManager {
   private readonly pluginReg: PluginRegistry | null;
   private readonly stackReg: StackRegistry | null;
   private readonly sharedContainers: SharedContainerManager | null;
+  private readonly configMgr: ProjectConfigManager | null;
   private readonly tunnelProcesses = new Map<string, ChildProcess>();
   private onStatusChange: (() => void) | null = null;
   private statusPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -170,6 +173,7 @@ export class HostingManager {
     this.pluginReg = deps.pluginRegistry ?? null;
     this.stackReg = deps.stackRegistry ?? null;
     this.sharedContainers = deps.sharedContainerManager ?? null;
+    this.configMgr = deps.projectConfigManager ?? null;
     this.log = createComponentLogger(deps.logger, "hosting");
   }
 
@@ -379,6 +383,25 @@ export class HostingManager {
   // -------------------------------------------------------------------------
 
   readHostingMeta(projectPath: string): ProjectHostingMeta | null {
+    // Delegate to ProjectConfigManager when available
+    if (this.configMgr) {
+      const hosting = this.configMgr.readHosting(projectPath);
+      if (!hosting) return null;
+      return {
+        enabled: hosting.enabled,
+        type: hosting.type ?? "static",
+        hostname: hosting.hostname ?? this.slugFromPath(projectPath),
+        docRoot: hosting.docRoot ?? null,
+        startCommand: hosting.startCommand ?? null,
+        port: hosting.port ?? null,
+        mode: hosting.mode ?? "production",
+        internalPort: hosting.internalPort ?? null,
+        runtimeId: hosting.runtimeId ?? null,
+        tunnelUrl: hosting.tunnelUrl ?? null,
+      };
+    }
+
+    // Legacy fallback (no config manager)
     const metaPath = projectConfigPath(projectPath);
     const legacyPath = join(projectPath, ".nexus-project.json");
     if (!existsSync(metaPath) && !existsSync(legacyPath)) return null;
@@ -407,6 +430,24 @@ export class HostingManager {
   }
 
   private writeHostingMeta(projectPath: string, meta: ProjectHostingMeta): void {
+    // Delegate to ProjectConfigManager when available
+    if (this.configMgr) {
+      void this.configMgr.updateHosting(projectPath, {
+        enabled: meta.enabled,
+        type: meta.type,
+        hostname: meta.hostname,
+        docRoot: meta.docRoot,
+        startCommand: meta.startCommand,
+        port: meta.port,
+        mode: meta.mode,
+        internalPort: meta.internalPort,
+        ...(meta.runtimeId != null ? { runtimeId: meta.runtimeId } : {}),
+        ...(meta.tunnelUrl != null ? { tunnelUrl: meta.tunnelUrl } : {}),
+      });
+      return;
+    }
+
+    // Legacy fallback (no config manager)
     const metaPath = projectConfigPath(projectPath);
     let existing: Record<string, unknown> = {};
     if (existsSync(metaPath)) {
@@ -446,6 +487,32 @@ export class HostingManager {
    * corresponding stack if not already present.
    */
   private migrateProjectType(projectPath: string): void {
+    // When using config manager, read via the validated service
+    if (this.configMgr) {
+      const config = this.configMgr.read(projectPath);
+      if (!config?.hosting) return;
+
+      const currentType = config.hosting.type;
+      if (!currentType) return;
+
+      const migration = MIGRATION_MAP[currentType];
+      if (!migration) return;
+
+      const stacks = config.hosting.stacks ?? [];
+      const newStacks = stacks.some((s) => s.stackId === migration.autoStack)
+        ? stacks
+        : [...stacks, { stackId: migration.autoStack, addedAt: new Date().toISOString() }];
+
+      void this.configMgr.updateHosting(projectPath, {
+        type: migration.newType,
+        stacks: newStacks,
+      });
+
+      this.log.info(`[${this.slugFromPath(projectPath)}] migrated type "${currentType}" → "${migration.newType}" + stack "${migration.autoStack}"`);
+      return;
+    }
+
+    // Legacy fallback
     const metaPath = projectConfigPath(projectPath);
     if (!existsSync(metaPath)) return;
 
@@ -1698,6 +1765,12 @@ export class HostingManager {
 
   /** Get all stack instances for a project. */
   getProjectStacks(projectPath: string): ProjectStackInstance[] {
+    // Delegate to ProjectConfigManager when available
+    if (this.configMgr) {
+      return this.configMgr.getStacks(projectPath);
+    }
+
+    // Legacy fallback
     const resolved = resolvePath(projectPath);
     const metaPath = projectConfigPath(resolved);
     if (!existsSync(metaPath)) return [];
@@ -1712,6 +1785,13 @@ export class HostingManager {
   }
 
   private writeStackInstance(projectPath: string, instance: ProjectStackInstance): void {
+    // Delegate to ProjectConfigManager when available
+    if (this.configMgr) {
+      void this.configMgr.addStack(projectPath, instance);
+      return;
+    }
+
+    // Legacy fallback
     const metaPath = projectConfigPath(projectPath);
     let existing: Record<string, unknown> = {};
     if (existsSync(metaPath)) {
@@ -1730,6 +1810,13 @@ export class HostingManager {
   }
 
   private removeStackInstance(projectPath: string, stackId: string): void {
+    // Delegate to ProjectConfigManager when available
+    if (this.configMgr) {
+      void this.configMgr.removeStack(projectPath, stackId);
+      return;
+    }
+
+    // Legacy fallback
     const metaPath = projectConfigPath(projectPath);
     if (!existsSync(metaPath)) return;
     try {

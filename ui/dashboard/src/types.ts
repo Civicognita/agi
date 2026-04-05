@@ -213,6 +213,21 @@ export interface ReportDetail {
   burn: BurnData;
 }
 
+/** Project config change event — fired when any field in project.json changes. */
+export interface ProjectConfigChangedData {
+  projectPath: string;
+  changedKeys: string[];
+}
+
+/** Container status change event — individual project level. */
+export interface ContainerStatusChangedData {
+  projectPath: string;
+  hostname: string;
+  status: "running" | "stopped" | "error" | "unconfigured";
+  containerName?: string;
+  error?: string;
+}
+
 export type DashboardEvent =
   | { type: "impact:recorded"; data: ActivityEntry }
   | { type: "entity:verified"; data: { entityId: string; tier: string } }
@@ -222,6 +237,8 @@ export type DashboardEvent =
   | { type: "system:upgrade"; data: SystemUpgradeEvent }
   | { type: "system:update_available"; data: UpdateCheck }
   | { type: "hosting:status"; data: HostingStatusData }
+  | { type: "project:config_changed"; data: ProjectConfigChangedData }
+  | { type: "project:container_status"; data: ContainerStatusChangedData }
   | { type: "bots:job_update"; data: WorkerJobUpdate }
   | { type: "bots:report_ready"; data: WorkerReportReady }
   | { type: "notification:new"; data: Notification };

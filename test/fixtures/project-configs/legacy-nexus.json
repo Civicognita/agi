@@ -1,0 +1,12 @@
+{
+  "hosting": {
+    "enabled": true,
+    "type": "static",
+    "hostname": "legacy-site",
+    "docRoot": ".",
+    "startCommand": null,
+    "port": 4050,
+    "mode": "production",
+    "internalPort": 80
+  }
+}

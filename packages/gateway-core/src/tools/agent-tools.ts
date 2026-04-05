@@ -22,6 +22,7 @@ import type { MarketplaceManager } from "@aionima/marketplace";
 import type { PluginRegistry } from "@aionima/plugins";
 import type { StackRegistry } from "../stack-registry.js";
 import type { HostingManager, ProjectHostingMeta } from "../hosting-manager.js";
+import type { SystemConfigService } from "../system-config-service.js";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -57,6 +58,8 @@ export interface AgentToolsConfig {
   projectDirs?: string[];
   /** Path to the AGI repo (for system upgrade). */
   selfRepoPath?: string;
+  /** SystemConfigService for validated config operations. */
+  systemConfigService?: SystemConfigService;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +220,9 @@ export function createManagePluginsHandler(config: AgentToolsConfig): ToolHandle
       if (!pluginId) {
         return JSON.stringify({ error: "pluginId is required" });
       }
-      if (!config.configPath) {
+
+      const svc = config.systemConfigService;
+      if (!svc && !config.configPath) {
         return JSON.stringify({ error: "Config path not available" });
       }
 
@@ -232,12 +237,18 @@ export function createManagePluginsHandler(config: AgentToolsConfig): ToolHandle
       }
 
       try {
-        const raw = JSON.parse(readFileSync(config.configPath, "utf-8")) as Record<string, unknown>;
+        if (svc) {
+          svc.patch(`plugins.${pluginId}.enabled`, enabled);
+          return JSON.stringify({ ok: true, pluginId, enabled, requiresRestart: true });
+        }
+
+        // Legacy fallback
+        const raw = JSON.parse(readFileSync(config.configPath!, "utf-8")) as Record<string, unknown>;
         const plugins = (raw.plugins ?? {}) as Record<string, { enabled?: boolean; priority?: number }>;
         if (!plugins[pluginId]) plugins[pluginId] = {};
         plugins[pluginId].enabled = enabled;
         raw.plugins = plugins;
-        writeFileSync(config.configPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
+        writeFileSync(config.configPath!, JSON.stringify(raw, null, 2) + "\n", "utf-8");
         return JSON.stringify({ ok: true, pluginId, enabled, requiresRestart: true });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
@@ -281,7 +292,8 @@ export const MANAGE_PLUGINS_INPUT_SCHEMA = {
 
 export function createManageConfigHandler(config: AgentToolsConfig): ToolHandler {
   return async (input: Record<string, unknown>): Promise<string> => {
-    if (!config.configPath) {
+    const svc = config.systemConfigService;
+    if (!svc && !config.configPath) {
       return JSON.stringify({ error: "Config path not available" });
     }
 
@@ -289,10 +301,18 @@ export function createManageConfigHandler(config: AgentToolsConfig): ToolHandler
 
     if (action === "read") {
       try {
-        const raw = readFileSync(config.configPath, "utf-8");
+        if (svc) {
+          if (input.key && typeof input.key === "string") {
+            const value = svc.readKey(input.key);
+            return JSON.stringify({ key: input.key, value });
+          }
+          return JSON.stringify(svc.read());
+        }
+
+        // Legacy fallback
+        const raw = readFileSync(config.configPath!, "utf-8");
         const parsed: unknown = JSON.parse(raw);
 
-        // If a key is specified, return just that nested value
         if (input.key && typeof input.key === "string") {
           const parts = input.key.split(".");
           let current: unknown = parsed;
@@ -316,7 +336,11 @@ export function createManageConfigHandler(config: AgentToolsConfig): ToolHandler
         return JSON.stringify({ error: "config (object) is required for write" });
       }
       try {
-        writeFileSync(config.configPath, JSON.stringify(input.config, null, 2) + "\n", "utf-8");
+        if (svc) {
+          svc.write(input.config as Record<string, unknown>);
+          return JSON.stringify({ ok: true, message: "Config saved." });
+        }
+        writeFileSync(config.configPath!, JSON.stringify(input.config, null, 2) + "\n", "utf-8");
         return JSON.stringify({ ok: true, message: "Config saved." });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
@@ -328,7 +352,13 @@ export function createManageConfigHandler(config: AgentToolsConfig): ToolHandler
         return JSON.stringify({ error: "key (string) is required for patch" });
       }
       try {
-        const raw = readFileSync(config.configPath, "utf-8");
+        if (svc) {
+          svc.patch(input.key, input.value);
+          return JSON.stringify({ ok: true, message: `Config key "${input.key}" updated.` });
+        }
+
+        // Legacy fallback
+        const raw = readFileSync(config.configPath!, "utf-8");
         const cfg = JSON.parse(raw) as Record<string, unknown>;
 
         const parts = input.key.split(".");
@@ -342,7 +372,7 @@ export function createManageConfigHandler(config: AgentToolsConfig): ToolHandler
         }
         target[parts[parts.length - 1]!] = input.value;
 
-        writeFileSync(config.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
+        writeFileSync(config.configPath!, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
         return JSON.stringify({ ok: true, message: `Config key "${input.key}" updated.` });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });

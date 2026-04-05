@@ -75,6 +75,8 @@ import type { PersistedChatSession } from "./chat-persistence.js";
 import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
 import { projectConfigPath } from "./project-config-path.js";
 import { HostingManager } from "./hosting-manager.js";
+import { ProjectConfigManager } from "./project-config-manager.js";
+import { SystemConfigService } from "./system-config-service.js";
 import { createProjectTypeRegistry } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { discoverPlugins, getDefaultSearchPaths, loadPlugins, PluginRegistry, HookBus } from "@aionima/plugins";
@@ -477,6 +479,12 @@ export async function startGatewayServer(
   // so workerRuntimeRef.current is always set by the time it is first called.
   const workerRuntimeRef: { current: WorkerRuntime | null } = { current: null };
 
+  // Config services — created early (no heavy dependencies) so tools can use them.
+  const projectConfigManager = new ProjectConfigManager({ logger });
+  const systemConfigService = opts?.configPath
+    ? new SystemConfigService({ configPath: opts.configPath, logger })
+    : null;
+
   const toolCount = registerAllTools(toolRegistry, {
     workspaceRoot,
     resourceEntityId: resourceId,
@@ -487,6 +495,7 @@ export async function startGatewayServer(
     userContextStore,
     primeLoader,
     projectDirs: projectPaths,
+    projectConfigManager,
     botsDir: undefined, // BOTS repo removed — workers are now plugins
     onJobCreated: (jobId: string, coaReqId: string) => {
       workerRuntimeRef.current?.executeJob(jobId, coaReqId).catch((err: unknown) => {
@@ -785,6 +794,16 @@ export async function startGatewayServer(
         getScanHistory: (projectPath, limit) => scanStore.listScanRuns({ projectPath, limit }),
         getProviders: () => scanRunner.getProviders(),
       },
+      projectConfig: {
+        read: (p) => projectConfigManager.read(p) as Record<string, unknown> | null,
+        readHosting: (p) => projectConfigManager.readHosting(p) as Record<string, unknown> | null,
+        getStacks: (p) => projectConfigManager.getStacks(p),
+      },
+      systemConfig: systemConfigService ? {
+        read: () => systemConfigService.read() as Record<string, unknown>,
+        readKey: (k) => systemConfigService.readKey(k),
+        patch: (k, v) => systemConfigService.patch(k, v),
+      } : undefined,
     });
     Log().info("ADF initialized — facades available");
   }
@@ -1035,6 +1054,7 @@ export async function startGatewayServer(
     pluginRegistry,
     stackRegistry,
     sharedContainerManager,
+    projectConfigManager,
     logger,
   });
 
@@ -1120,6 +1140,7 @@ export async function startGatewayServer(
     hostingManager,
     projectDirs: projectPaths,
     selfRepoPath: config.workspace?.selfRepo,
+    systemConfigService: systemConfigService ?? undefined,
   });
   log.info(`registered ${String(agentToolCount)} agent tools`);
 
@@ -2377,6 +2398,16 @@ export async function startGatewayServer(
     // Wire hosting status changes to dashboard broadcaster
     if (dashboardBroadcaster !== null) {
       hostingManager.setOnStatusChange(() => {
+        dashboardBroadcaster.emitHostingStatus(hostingManager.getStatus());
+      });
+
+      // Wire project config changes → WS events for live dashboard
+      projectConfigManager.on("changed", (event: { projectPath: string; changedKeys: string[] }) => {
+        dashboardBroadcaster.emitProjectConfigChanged({
+          projectPath: event.projectPath,
+          changedKeys: event.changedKeys,
+        });
+        // Also push full hosting status so project list refreshes
         dashboardBroadcaster.emitHostingStatus(hostingManager.getStatus());
       });
     }

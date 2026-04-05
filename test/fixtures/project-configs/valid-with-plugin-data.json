@@ -1,0 +1,6 @@
+{
+  "name": "plugin-data-project",
+  "createdAt": "2026-04-01T00:00:00.000Z",
+  "customPluginKey": "some-value",
+  "anotherPlugin": { "nested": true }
+}
