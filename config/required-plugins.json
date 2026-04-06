@@ -11,6 +11,8 @@
     { "id": "project-monorepo", "disableable": false },
     { "id": "project-ops", "disableable": false },
     { "id": "project-art", "disableable": true },
+    { "id": "reader-literature", "disableable": false },
+    { "id": "reader-media", "disableable": false },
     { "id": "aionima-screensaver", "disableable": true },
     { "id": "aionima-openclaw", "disableable": true },
     { "id": "aionima-xrdp", "disableable": true },
