@@ -146,6 +146,8 @@ export interface InvocationRequest {
   sessionKey?: string;
   /** Optional project context path included in system prompt for scoped chat. */
   projectContext?: string;
+  /** BuilderChat mode — loads builder system prompt and designer tools. */
+  builderMode?: "create" | "update" | "review";
 }
 
 export type InvocationOutcome =
@@ -367,7 +369,28 @@ export class AgentInvoker extends EventEmitter {
       projectPath: request.projectContext,
     };
 
-    const systemPrompt = assembleSystemPrompt(promptCtx);
+    let systemPrompt = assembleSystemPrompt(promptCtx);
+
+    // BuilderChat mode: prepend the builder system prompt
+    if (request.builderMode) {
+      try {
+        const { readFileSync } = await import("node:fs");
+        const { resolve: resolvePath } = await import("node:path");
+        const builderPromptPath = resolvePath(process.cwd(), "packages/gateway-core/src/prompts/builder-chat.md");
+        const builderPrompt = readFileSync(builderPromptPath, "utf-8");
+        systemPrompt = builderPrompt + "\n\n---\n\n" + systemPrompt;
+      } catch {
+        // Builder prompt file not found in production — try dist-relative path
+        try {
+          const { readFileSync } = await import("node:fs");
+          const { resolve: resolvePath } = await import("node:path");
+          const altPath = resolvePath(process.cwd(), "prompts/builder-chat.md");
+          const builderPrompt = readFileSync(altPath, "utf-8");
+          systemPrompt = builderPrompt + "\n\n---\n\n" + systemPrompt;
+        } catch { /* proceed without builder prompt */ }
+      }
+    }
+
     const systemPromptTokens = estimateTokens(systemPrompt);
 
     // Assemble history

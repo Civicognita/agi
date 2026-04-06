@@ -4,11 +4,14 @@
  */
 
 import { useEffect, useState } from "react";
+import { useOutletContext } from "react-router";
 import { fetchMagicApps } from "@/api.js";
 import type { MagicAppInfo } from "@/types.js";
 import { Button } from "@/components/ui/button.js";
+import type { RootContext } from "./root.js";
 
 export default function MagicAppsAdminPage() {
+  const ctx = useOutletContext<RootContext>();
   const [apps, setApps] = useState<MagicAppInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -24,8 +27,10 @@ export default function MagicAppsAdminPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-foreground">MagicApps Admin</h1>
         <Button variant="default" onClick={() => {
-          // TODO: Open BuilderChat session
-          alert("BuilderChat coming in Phase 1E");
+          ctx.onOpenChatWithMessage(
+            "builder:create",
+            "I want to create a new MagicApp. Help me design it.",
+          );
         }}>
           Create New
         </Button>

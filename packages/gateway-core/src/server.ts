@@ -1582,8 +1582,11 @@ export async function startGatewayServer(
         });
 
         // Derive project path from context (non-"general" context is a project path).
-        // This is `let` because manage_project can upgrade a general session to project context.
-        let chatProjectPath = chatPayload?.context !== "general" ? chatPayload?.context : undefined;
+        // Special: "builder:create" / "builder:update" / "builder:review" activates BuilderChat mode.
+        const chatContextRaw = chatPayload?.context ?? "general";
+        const isBuilderMode = chatContextRaw.startsWith("builder:");
+        const builderMode = isBuilderMode ? chatContextRaw.split(":")[1] as "create" | "update" | "review" : undefined;
+        let chatProjectPath = (!isBuilderMode && chatContextRaw !== "general") ? chatContextRaw : undefined;
 
         // Emit invocation_start to project activity indicators.
         if (chatProjectPath !== undefined) {
@@ -1740,6 +1743,7 @@ export async function startGatewayServer(
             isOwner: true,
             sessionKey,
             projectContext: chatProjectPath,
+            builderMode,
           });
         }).then(async (outcome) => {
           removeProgressListeners();
