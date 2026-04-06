@@ -24,17 +24,6 @@ import { WidgetRenderer } from "./WidgetRenderer.js";
 import { isSacredProject } from "@/lib/sacred-projects.js";
 import { SecurityTab } from "./SecurityTab.js";
 
-/** Map project category to hosting tab label. */
-function getHostingTabLabel(category?: string): string {
-  switch (category) {
-    case "literature": return "Reader";
-    case "media": return "Gallery";
-    case "administration": return "Management";
-    case "web": case "app": case "monorepo": case "ops": return "Development";
-    default: return "Hosting";
-  }
-}
-
 export interface ProjectDetailProps {
   projects: ProjectInfo[];
   onUpdate: (params: { path: string; name?: string; tynnToken?: string | null; category?: string; type?: string }) => Promise<void>;
@@ -281,10 +270,8 @@ export function ProjectDetail({
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="files">Files</TabsTrigger>
           <TabsTrigger value="repository">Repository</TabsTrigger>
-          {onHostingConfigure && onHostingRestart && (
-            <TabsTrigger value="hosting">
-              {getHostingTabLabel(project.category ?? project.projectType?.category)}
-            </TabsTrigger>
+          {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
+            <TabsTrigger value="hosting">Development</TabsTrigger>
           )}
           {pluginPanels.map((p) => (
             <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
@@ -623,7 +610,7 @@ export function ProjectDetail({
           </div>
         </TabsContent>
 
-        {onHostingConfigure && onHostingRestart && (
+        {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
           <TabsContent value="hosting" className="mt-4">
             <div className="rounded-xl bg-card border border-border p-4">
               <HostingPanel
@@ -640,7 +627,7 @@ export function ProjectDetail({
                 tools={project.projectType?.tools}
                 onToolExecute={onToolExecute}
                 projectCategory={project.category}
-                tabLabel={getHostingTabLabel(project.category ?? project.projectType?.category)}
+                tabLabel="Development"
                 availableTypes={projectTypes}
               />
             </div>

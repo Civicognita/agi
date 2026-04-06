@@ -147,3 +147,43 @@ Defined in `config/src/project-schema.ts`:
 
 Types exported from `@aionima/config`:
 - `ProjectConfig`, `ProjectHosting`, `ProjectStackInstance`, `ProjectCategory`
+
+## Dashboard Tab Architecture
+
+The dashboard project detail page uses **different tabs for different project categories**:
+
+### Code projects (`hasCode: true`)
+Categories: `web`, `app`, `monorepo`, `ops`
+
+Show the **Development** tab with the built-in `HostingPanel` component — full container management, stack selection, environment variables, terminal, restart/configure controls.
+
+### Non-code projects (`hasCode: false`)
+Categories: `literature`, `media`, `administration`
+
+Do **NOT** show the Development tab. Instead, the project type's plugin provides its own tab via `registerProjectPanel()`:
+
+- **Literature** → "Reader" tab (provided by `plugin-reader-literature`)
+- **Media** → "Gallery" tab (provided by `plugin-reader-media`)
+
+These plugin-provided tabs use the declarative widget system (`WidgetRenderer`) with:
+- `status-display` — shows container status from plugin HTTP route
+- `iframe` — embeds the reader/gallery SPA at the project's `*.ai.on` URL
+- `action-bar` — restart/manage actions
+
+### Widget templates
+
+Widget endpoints support `{projectPath}` template substitution:
+```json
+{ "type": "status-display", "statusEndpoint": "/status?path={projectPath}" }
+{ "type": "iframe", "src": "/reader-frame?path={projectPath}", "height": "600px" }
+```
+
+The `{projectPath}` is replaced with the current project's path at render time.
+
+### Adding a reader for a new project type
+
+1. Create a marketplace plugin
+2. Register a stack with `containerConfig` (nginx + your reader SPA assets)
+3. Register a project panel with `registerProjectPanel()` targeting your project type
+4. Register HTTP routes for status and iframe redirect
+5. The plugin handles hosting transparently — no user interaction needed

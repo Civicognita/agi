@@ -247,16 +247,19 @@ function ActionBarWidget({ widget, actions, projectPath }: {
   );
 }
 
-function StatusDisplayWidget({ widget }: { widget: Extract<PanelWidget, { type: "status-display" }> }) {
+function StatusDisplayWidget({ widget, projectPath }: { widget: Extract<PanelWidget, { type: "status-display" }>; projectPath?: string }) {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Support {projectPath} template in endpoint URL
+  const endpoint = projectPath ? widget.statusEndpoint.replace(/\{projectPath\}/g, encodeURIComponent(projectPath)) : widget.statusEndpoint;
+
   useEffect(() => {
-    fetch(widget.statusEndpoint)
+    fetch(endpoint)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<Record<string, unknown>>; })
       .then(setData)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [widget.statusEndpoint]);
+  }, [endpoint]);
 
   if (error) return <div className="text-[11px] text-red">{error}</div>;
   if (!data) return <div className="text-[11px] text-muted-foreground">Loading...</div>;
@@ -368,12 +371,14 @@ function MetricWidget({ widget }: { widget: Extract<PanelWidget, { type: "metric
   );
 }
 
-function IframeWidget({ widget }: { widget: Extract<PanelWidget, { type: "iframe" }> }) {
+function IframeWidget({ widget, projectPath }: { widget: Extract<PanelWidget, { type: "iframe" }>; projectPath?: string }) {
+  // Support {projectPath} template in src URL
+  const src = projectPath ? widget.src.replace(/\{projectPath\}/g, encodeURIComponent(projectPath)) : widget.src;
   return (
     <div>
       {widget.title && <h4 className="text-[12px] font-semibold text-foreground mb-2">{widget.title}</h4>}
       <iframe
-        src={widget.src}
+        src={src}
         title={widget.title ?? "Plugin content"}
         className="w-full border border-border rounded-md"
         style={{ height: widget.height ?? "500px" }}
@@ -533,7 +538,7 @@ export function WidgetRenderer({ widgets, actions = [], projectPath }: WidgetRen
           case "action-bar":
             return <ActionBarWidget key={i} widget={widget} actions={actions} projectPath={projectPath} />;
           case "status-display":
-            return <StatusDisplayWidget key={i} widget={widget} />;
+            return <StatusDisplayWidget key={i} widget={widget} projectPath={projectPath} />;
           case "log-stream":
             return <LogStreamWidget key={i} widget={widget} />;
           case "markdown":
@@ -543,7 +548,7 @@ export function WidgetRenderer({ widgets, actions = [], projectPath }: WidgetRen
           case "metric":
             return <MetricWidget key={i} widget={widget} />;
           case "iframe":
-            return <IframeWidget key={i} widget={widget} />;
+            return <IframeWidget key={i} widget={widget} projectPath={projectPath} />;
           case "chart":
             return <ChartWidget key={i} widget={widget} />;
           case "timeline":
