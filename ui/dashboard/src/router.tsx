@@ -41,6 +41,7 @@ import IdentityServicePage from "./routes/system-identity.js";
 import MagicAppsPage from "./routes/magic-apps.js";
 import MagicAppDetailPage from "./routes/magic-app-detail.js";
 import MagicAppsAdminPage from "./routes/magic-apps-admin.js";
+import MAppEditorPage from "./routes/mapp-editor.js";
 
 export const router = createBrowserRouter([
   {
@@ -61,6 +62,8 @@ export const router = createBrowserRouter([
       // MagicApps
       { path: "magic-apps", element: <MagicAppsPage /> },
       { path: "magic-apps/admin", element: <MagicAppsAdminPage /> },
+      { path: "magic-apps/editor", element: <MAppEditorPage /> },
+      { path: "magic-apps/editor/:id", element: <MAppEditorPage /> },
       { path: "magic-apps/:id", element: <MagicAppDetailPage /> },
       // Knowledge
       { path: "knowledge", element: <KnowledgePage /> },

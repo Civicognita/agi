@@ -7,10 +7,11 @@
  *   minimized — hidden, shown in footer tray
  */
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button.js";
 import { WidgetRenderer } from "./WidgetRenderer.js";
+import { MAppFormRenderer } from "./MAppFormRenderer.js";
 import type { MagicAppInfo, MagicAppInstance } from "@/types.js";
 
 export interface MagicAppModalProps {
@@ -22,6 +23,8 @@ export interface MagicAppModalProps {
   onClose: () => void;
   onToolExecute?: (projectPath: string, toolId: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
   widgets?: Array<Record<string, unknown>>;
+  pages?: Array<Record<string, unknown>>;
+  constants?: Array<Record<string, unknown>>;
 }
 
 export function MagicAppModal({
@@ -33,7 +36,11 @@ export function MagicAppModal({
   onClose,
   onToolExecute,
   widgets,
+  pages,
+  constants,
 }: MagicAppModalProps) {
+  const [formResult, setFormResult] = useState<{ values: Record<string, unknown>; formulas: Record<string, unknown> } | null>(null);
+  const hasPages = pages && pages.length > 0;
   if (instance.mode === "minimized") return null;
 
   const isDocked = instance.mode === "docked";
@@ -77,14 +84,50 @@ export function MagicAppModal({
         </div>
       </div>
 
-      {/* Body — Canvas area for widgets */}
+      {/* Body */}
       <div className="flex-1 overflow-auto p-3">
-        {widgets && widgets.length > 0 ? (
+        {/* Form mode — MApp has pages */}
+        {hasPages && !formResult ? (
+          <MAppFormRenderer
+            pages={pages as import("./MAppFormRenderer.js").MAppFormRendererProps["pages"]}
+            constants={constants as import("./MAppFormRenderer.js").MAppFormRendererProps["constants"]}
+            projectPath={instance.projectPath}
+            onSubmit={(values, formulas) => setFormResult({ values, formulas })}
+          />
+        ) : formResult ? (
+          /* Form submitted — show results */
+          <div className="space-y-3">
+            <div className="text-[12px] font-semibold text-green mb-2">Form submitted</div>
+            <div className="p-3 rounded-lg bg-mantle border border-border">
+              <div className="text-[11px] font-semibold text-muted-foreground mb-2">Collected Values</div>
+              {Object.entries(formResult.values).filter(([, v]) => v !== "" && v !== undefined).map(([k, v]) => (
+                <div key={k} className="flex justify-between text-[12px] py-0.5">
+                  <span className="text-muted-foreground">{k}</span>
+                  <span className="text-foreground font-medium">{String(v)}</span>
+                </div>
+              ))}
+            </div>
+            {Object.keys(formResult.formulas).length > 0 && (
+              <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
+                <div className="text-[11px] font-semibold text-muted-foreground mb-2">Calculated Values</div>
+                {Object.entries(formResult.formulas).map(([k, v]) => (
+                  <div key={k} className="flex justify-between text-[12px] py-0.5">
+                    <span className="text-muted-foreground">{k}</span>
+                    <span className="text-primary font-bold">{String(v)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <Button size="sm" variant="outline" onClick={() => setFormResult(null)}>Run Again</Button>
+          </div>
+        ) : widgets && widgets.length > 0 ? (
+          /* Widget mode — viewer/dashboard MApps */
           <WidgetRenderer
             widgets={widgets as import("@/types.js").PanelWidget[]}
             projectPath={instance.projectPath}
           />
         ) : (
+          /* Empty state */
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             <div className="text-center">
               <div className="text-3xl mb-2">{app.icon ?? "\u2728"}</div>

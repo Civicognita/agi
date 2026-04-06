@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { useOutletContext } from "react-router";
+import { useNavigate, useOutletContext } from "react-router";
 import { fetchMagicApps } from "@/api.js";
 import type { MagicAppInfo } from "@/types.js";
 import { Button } from "@/components/ui/button.js";
@@ -12,6 +12,7 @@ import type { RootContext } from "./root.js";
 
 export default function MagicAppsAdminPage() {
   const ctx = useOutletContext<RootContext>();
+  const navigate = useNavigate();
   const [apps, setApps] = useState<MagicAppInfo[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -26,14 +27,19 @@ export default function MagicAppsAdminPage() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-foreground">MagicApps Admin</h1>
-        <Button variant="default" onClick={() => {
-          ctx.onOpenChatWithMessage(
-            "builder:create",
-            "I want to create a new MagicApp. Help me design it.",
-          );
-        }}>
-          Create New
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => navigate("/magic-apps/editor")}>
+            Create Visually
+          </Button>
+          <Button variant="default" onClick={() => {
+            ctx.onOpenChatWithMessage(
+              "builder:create",
+              "I want to create a new MagicApp. Help me design it.",
+            );
+          }}>
+            Create with AI
+          </Button>
+        </div>
       </div>
 
       {loading && <div className="text-muted-foreground text-sm">Loading...</div>}

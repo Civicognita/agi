@@ -3834,6 +3834,25 @@ export async function createGatewayRuntimeState(
     return reply.send({ ok: true, id: parsed.data.id, path: installPath, scan: scanResult });
   });
 
+  // POST /api/mapps/execute — execute a MApp form submission
+  fastify.post("/api/mapps/execute", async (request, reply) => {
+    const body = request.body as { mappId?: string; instanceId?: string; values?: Record<string, unknown>; projectPath?: string } | undefined;
+    if (!body?.mappId || !body?.values) return reply.code(400).send({ error: "mappId and values required" });
+
+    if (!deps.mappRegistry) return reply.code(500).send({ error: "MApp registry not available" });
+    const def = deps.mappRegistry.get(body.mappId);
+    if (!def) return reply.code(404).send({ error: `MApp "${body.mappId}" not found` });
+
+    const { executeMApp } = await import("./mapp-executor.js");
+    const result = await executeMApp(def, {
+      mappId: body.mappId,
+      instanceId: body.instanceId ?? "",
+      projectPath: body.projectPath ?? "",
+      values: body.values,
+    });
+    return reply.send(result);
+  });
+
   // MApp instance state persistence
   if (deps.magicAppStateStore) {
     const store = deps.magicAppStateStore;

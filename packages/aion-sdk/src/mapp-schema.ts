@@ -203,6 +203,128 @@ export interface MAppTool {
 }
 
 // ---------------------------------------------------------------------------
+// Form system — pages, fields, formulas, constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Field types supported in MApp forms.
+ *
+ * - Text: `text`, `textarea`
+ * - Numbers: `number`, `int`, `currency`, `percentage`, `number_range`
+ * - Date/Time: `date`, `date_range`, `time`, `duration`
+ * - Contact: `email`, `phone`, `url`
+ * - Boolean: `bool`
+ * - Selection: `select`, `multiselect`
+ * - Upload: `file`
+ * - Display: `info` (read-only text, not an input)
+ */
+export type MAppFieldType =
+  | "text" | "textarea" | "number" | "int" | "currency"
+  | "percentage" | "number_range" | "date" | "date_range"
+  | "time" | "duration" | "email" | "phone" | "url"
+  | "bool" | "select" | "multiselect" | "file" | "info";
+
+/** Condition for showing/hiding a field or page. */
+export interface MAppCondition {
+  showIf: {
+    source: "inputs" | "process_page" | "context";
+    field: string;
+    operator: "equals" | "not_equals" | "greater_than" | "less_than"
+            | "contains" | "in" | "not_in" | "not_empty" | "is_empty";
+    value?: unknown;
+    page?: string;
+  };
+}
+
+/**
+ * A field in a form page (A-column in the cell reference system).
+ * Cell refs are auto-assigned: A1, A2, A3...
+ */
+export interface MAppField {
+  key: string;
+  /** Cell reference (A1, A2...). Auto-assigned in order of appearance. */
+  cell: string;
+  type: MAppFieldType;
+  label: string;
+  required?: boolean;
+  placeholder?: string;
+  /** Options for select/multiselect fields. */
+  options?: string[];
+  min?: number;
+  max?: number;
+  /** Conditional visibility. */
+  conditions?: MAppCondition;
+}
+
+/**
+ * A calculated formula (B-column). Expressions MUST use cell refs, not field keys.
+ * Right: `A1 * C1`. Wrong: `amount * tax_rate`.
+ */
+export interface MAppFormula {
+  /** Cell reference (B1, B2...). */
+  cell: string;
+  label: string;
+  /** Expression using cell refs. Supports: +, -, *, /, ^, IF(), SUM(), etc. */
+  expression: string;
+  format: "number" | "currency" | "percent" | "text";
+  /** Whether to show the result to the user. Hidden formulas are for internal use. */
+  visible: boolean;
+}
+
+/**
+ * A constant value (C-column). Used in formulas. Auto-assigned: C1, C2...
+ */
+export interface MAppConstant {
+  key: string;
+  cell: string;
+  label: string;
+  value: number | string;
+  format: "number" | "currency" | "percent";
+  visibility: "always" | "hidden" | "conditional";
+}
+
+/**
+ * Page types:
+ * - `standard` — User fills predefined fields
+ * - `magic` — AI generates fields at runtime (can't be page 1, needs prior processPage)
+ * - `embedded` — Display-only iframe (YouTube, external tools)
+ * - `canvas` — Free-form widget layout (charts, diagrams, rich content) — unique to MApps
+ */
+export type MAppPageType = "standard" | "magic" | "embedded" | "canvas";
+
+/** A page in a multi-step MApp form. */
+export interface MAppPage {
+  key: string;
+  title: string;
+  pageType: MAppPageType;
+  visibility: "always" | "conditional" | "auto" | "hidden";
+  /** Fields for standard + magic pages (A-column). */
+  fields?: MAppField[];
+  /** Formulas for standard pages (B-column). */
+  formulas?: MAppFormula[];
+  /** Conditional visibility config. */
+  conditions?: MAppCondition;
+  /** AI prompt run after page completion — returns prepopulate/visibility/dynamicInputs. */
+  processPage?: string;
+  /** URL for embedded pages. */
+  url?: string;
+  /** Widgets for canvas pages — rendered via WidgetRenderer. */
+  widgets?: MAppWidget[];
+}
+
+/**
+ * Output configuration — what happens after all pages are collected.
+ */
+export interface MAppOutput {
+  /** Whether to generate a downloadable file. */
+  producesFile?: boolean;
+  /** File type if producesFile is true. */
+  fileType?: "text" | "doc" | "csv" | "spreadsheet";
+  /** AI instruction for generating the final output from collected data. */
+  processingPrompt?: string;
+}
+
+// ---------------------------------------------------------------------------
 // MApp Definition — the complete JSON file
 // ---------------------------------------------------------------------------
 
@@ -275,10 +397,18 @@ export interface MAppDefinition {
   container?: MAppContainerConfig;
 
   // --- UI ---
-  /** Dashboard panel definition. */
+  /** Dashboard panel definition (for viewer/dashboard MApps). */
   panel: MAppPanel;
   /** Visual theme overrides. */
   theme?: MAppTheme;
+
+  // --- Forms ---
+  /** Multi-step form pages (for tool/suite MApps). */
+  pages?: MAppPage[];
+  /** Constants used in formulas (C-column). */
+  constants?: MAppConstant[];
+  /** Output configuration (what happens after form submission). */
+  output?: MAppOutput;
 
   // --- Agent ---
   /** Agent prompts injected when this MApp is active on a project. */

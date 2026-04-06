@@ -108,7 +108,8 @@ export type {
   MAppDefinition, MAppInfo, MAppCategory, MAppPermission,
   MAppContainerConfig, MAppPanel, MAppWidget, MAppTheme,
   MAppAgentPrompt, MAppWorkflow, MAppWorkflowStep, MAppWorkflowStepType,
-  MAppTool,
+  MAppTool, MAppFieldType, MAppField, MAppFormula, MAppConstant,
+  MAppCondition, MAppPage, MAppPageType, MAppOutput,
 } from "./mapp-schema.js";
 
 // Testing utilities (separate entry point: @aionima/sdk/testing)

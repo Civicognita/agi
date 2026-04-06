@@ -70,6 +70,80 @@ export const MAppToolSchema = z.object({
   endpoint: z.string().optional(),
 }).strict();
 
+// ---------------------------------------------------------------------------
+// Form system schemas
+// ---------------------------------------------------------------------------
+
+const MAppFieldTypeSchema = z.enum([
+  "text", "textarea", "number", "int", "currency",
+  "percentage", "number_range", "date", "date_range",
+  "time", "duration", "email", "phone", "url",
+  "bool", "select", "multiselect", "file", "info",
+]);
+
+const MAppConditionSchema = z.object({
+  showIf: z.object({
+    source: z.enum(["inputs", "process_page", "context"]),
+    field: z.string(),
+    operator: z.enum(["equals", "not_equals", "greater_than", "less_than", "contains", "in", "not_in", "not_empty", "is_empty"]),
+    value: z.unknown().optional(),
+    page: z.string().optional(),
+  }).strict(),
+}).strict();
+
+export const MAppFieldSchema = z.object({
+  key: z.string(),
+  cell: z.string(),
+  type: MAppFieldTypeSchema,
+  label: z.string(),
+  required: z.boolean().optional(),
+  placeholder: z.string().optional(),
+  options: z.array(z.string()).optional(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  conditions: MAppConditionSchema.optional(),
+}).strict();
+
+export const MAppFormulaSchema = z.object({
+  cell: z.string(),
+  label: z.string(),
+  expression: z.string(),
+  format: z.enum(["number", "currency", "percent", "text"]),
+  visible: z.boolean(),
+}).strict();
+
+export const MAppConstantSchema = z.object({
+  key: z.string(),
+  cell: z.string(),
+  label: z.string(),
+  value: z.union([z.number(), z.string()]),
+  format: z.enum(["number", "currency", "percent"]),
+  visibility: z.enum(["always", "hidden", "conditional"]),
+}).strict();
+
+export const MAppPageSchema = z.object({
+  key: z.string(),
+  title: z.string(),
+  pageType: z.enum(["standard", "magic", "embedded", "canvas"]),
+  visibility: z.enum(["always", "conditional", "auto", "hidden"]),
+  fields: z.array(MAppFieldSchema).optional(),
+  formulas: z.array(MAppFormulaSchema).optional(),
+  conditions: MAppConditionSchema.optional(),
+  processPage: z.string().optional(),
+  url: z.string().optional(),
+  widgets: z.array(z.record(z.unknown())).optional(),
+}).strict();
+
+export const MAppOutputSchema = z.object({
+  producesFile: z.boolean().optional(),
+  fileType: z.enum(["text", "doc", "csv", "spreadsheet"]).optional(),
+  processingPrompt: z.string().optional(),
+}).strict();
+
+// ---------------------------------------------------------------------------
+// Full definition schema
+// ---------------------------------------------------------------------------
+
 /** Full MApp definition Zod schema. */
 export const MAppDefinitionSchema = z.object({
   $schema: z.literal("mapp/1.0"),
@@ -87,6 +161,9 @@ export const MAppDefinitionSchema = z.object({
   container: MAppContainerConfigSchema.optional(),
   panel: MAppPanelSchema,
   theme: MAppThemeSchema.optional(),
+  pages: z.array(MAppPageSchema).optional(),
+  constants: z.array(MAppConstantSchema).optional(),
+  output: MAppOutputSchema.optional(),
   prompts: z.array(MAppAgentPromptSchema).optional(),
   workflows: z.array(MAppWorkflowSchema).optional(),
   tools: z.array(MAppToolSchema).optional(),
