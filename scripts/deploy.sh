@@ -281,6 +281,14 @@ fi
 sudo systemctl enable aionima &>/dev/null
 
 # ---------------------------------------------------------------------------
+# 9b. Install agi CLI (idempotent symlink)
+# ---------------------------------------------------------------------------
+AGI_CLI="$DEPLOY_DIR/scripts/agi-cli.sh"
+if [ -x "$AGI_CLI" ]; then
+  sudo ln -sf "$AGI_CLI" /usr/local/bin/agi 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------------
 # 10. Check if backend changed
 # ---------------------------------------------------------------------------
 backend_hash_after=""
