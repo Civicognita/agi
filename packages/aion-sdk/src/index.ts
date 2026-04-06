@@ -102,6 +102,15 @@ export { defineScan } from "./define-scan.js";
 export { defineWorker } from "./define-worker.js";
 export { defineMagicApp } from "./define-magic-app.js";
 
+// MApp Schema (MPx 1.0)
+export { MAPP_SCHEMA_VERSION, serializeMApp } from "./mapp-schema.js";
+export type {
+  MAppDefinition, MAppInfo, MAppCategory, MAppPermission,
+  MAppContainerConfig, MAppPanel, MAppWidget, MAppTheme,
+  MAppAgentPrompt, MAppWorkflow, MAppWorkflowStep, MAppWorkflowStepType,
+  MAppTool,
+} from "./mapp-schema.js";
+
 // Testing utilities (separate entry point: @aionima/sdk/testing)
 // import { testActivate, createMockAPI } from "@aionima/sdk/testing";
 

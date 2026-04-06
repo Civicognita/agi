@@ -1038,6 +1038,14 @@ export async function startGatewayServer(
     releasePort: (p: number) => { hostingAllocatedPorts.delete(p); },
   });
 
+  // MApp discovery — load MApps from ~/.agi/mapps/ (independent of plugins)
+  const { MAppRegistry } = await import("./mapp-registry.js");
+  const { discoverMApps } = await import("./mapp-discovery.js");
+  const mappRegistry = new MAppRegistry();
+  const mappsDir = join(homedir(), ".agi", "mapps");
+  const mappDiscoveryResult = discoverMApps(mappsDir, mappRegistry, logger);
+  log.info(`MApps: ${String(mappDiscoveryResult.loaded)} loaded, ${String(mappDiscoveryResult.skipped)} skipped`);
+
   const hostingManager = new HostingManager({
     config: {
       enabled: hostingConfig?.enabled ?? false,
@@ -1055,6 +1063,7 @@ export async function startGatewayServer(
     stackRegistry,
     sharedContainerManager,
     projectConfigManager,
+    mappRegistry,
     logger,
   });
 
@@ -1245,6 +1254,7 @@ export async function startGatewayServer(
       },
       secrets,
       config: config as Record<string, unknown>,
+      mappRegistry,
       magicAppStateStore,
       identityProvider,
       oauthHandler,

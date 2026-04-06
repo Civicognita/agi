@@ -35,7 +35,7 @@ export type ProvidesLabel =
   | "project-types" | "stacks" | "services" | "runtimes"
   | "system-services" | "ux" | "agent-tools" | "skills"
   | "knowledge" | "themes" | "workflows" | "channels"
-  | "providers" | "security" | "workers" | "magic-apps";
+  | "providers" | "security" | "workers";
 
 /**
  * Map a legacy category string to provides labels for backward compatibility.
@@ -659,7 +659,6 @@ export interface AionimaPluginAPI {
   registerProvider(def: LLMProviderDefinition): void;
   registerScanProvider(def: ScanProviderDefinition): void;
   registerWorker(def: WorkerDefinition): void;
-  registerMagicApp(def: import("@aionima/gateway-core").MagicAppDefinition): void;
   getChannelConfig(channelId: string): { enabled: boolean; config: Record<string, unknown> } | undefined;
   getConfig(): Record<string, unknown>;
   getLogger(): ComponentLogger;

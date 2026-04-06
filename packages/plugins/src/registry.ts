@@ -134,11 +134,6 @@ export interface RegisteredWorker {
   worker: WorkerDefinition;
 }
 
-export interface RegisteredMagicApp {
-  pluginId: string;
-  magicApp: import("@aionima/gateway-core").MagicAppDefinition;
-}
-
 export interface RegisteredRuntime {
   pluginId: string;
   runtime: RuntimeDefinition;
@@ -183,7 +178,6 @@ export class PluginRegistry {
   private readonly providers: RegisteredProvider[] = [];
   private readonly scanProviders: RegisteredScanProvider[] = [];
   private readonly workers: RegisteredWorker[] = [];
-  private readonly magicApps: RegisteredMagicApp[] = [];
 
   add(loaded: LoadedPlugin): void {
     this.plugins.set(loaded.manifest.id, loaded);
@@ -574,27 +568,6 @@ export class PluginRegistry {
   }
 
   // -------------------------------------------------------------------------
-  // MagicApp registration
-  // -------------------------------------------------------------------------
-
-  addMagicApp(pluginId: string, magicApp: import("@aionima/gateway-core").MagicAppDefinition): void {
-    if (this.magicApps.some(m => m.magicApp.id === magicApp.id)) return;
-    this.magicApps.push({ pluginId, magicApp });
-  }
-
-  getMagicApps(): RegisteredMagicApp[] {
-    return [...this.magicApps];
-  }
-
-  getMagicApp(id: string): import("@aionima/gateway-core").MagicAppDefinition | undefined {
-    return this.magicApps.find(m => m.magicApp.id === id)?.magicApp;
-  }
-
-  getMagicAppsForType(projectType: string): RegisteredMagicApp[] {
-    return this.magicApps.filter(m => m.magicApp.projectTypes.includes(projectType));
-  }
-
-  // -------------------------------------------------------------------------
   // Provides introspection — derive capability labels from registrations
   // -------------------------------------------------------------------------
 
@@ -626,7 +599,6 @@ export class PluginRegistry {
     for (const p of this.providers) { if (p.pluginId === pluginId) labels.add("providers"); }
     for (const sp of this.scanProviders) { if (sp.pluginId === pluginId) labels.add("security"); }
     for (const w of this.workers) { if (w.pluginId === pluginId) labels.add("workers"); }
-    for (const m of this.magicApps) { if (m.pluginId === pluginId) labels.add("magic-apps"); }
 
     return [...labels];
   }

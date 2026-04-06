@@ -47,5 +47,13 @@ export {
   type MagicAppJson,
 } from "./magic-app-schema.js";
 
+export {
+  MAppDefinitionSchema,
+  MAppPermissionSchema,
+  MAppContainerConfigSchema,
+  MAppPanelSchema,
+  type MAppDefinitionJson,
+} from "./mapp-schema.js";
+
 export { ConfigWatcher } from "./hot-reload.js";
 export type { ConfigWatcherOptions, ConfigReloadEvent } from "./hot-reload.js";

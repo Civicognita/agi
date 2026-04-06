@@ -102,6 +102,7 @@ export interface HostingManagerDeps {
   stackRegistry?: StackRegistry;
   sharedContainerManager?: SharedContainerManager;
   projectConfigManager?: ProjectConfigManager;
+  mappRegistry?: import("./mapp-registry.js").MAppRegistry;
   logger?: Logger;
 }
 
@@ -165,6 +166,7 @@ export class HostingManager {
   private readonly stackReg: StackRegistry | null;
   private readonly sharedContainers: SharedContainerManager | null;
   private readonly configMgr: ProjectConfigManager | null;
+  private readonly mappReg: import("./mapp-registry.js").MAppRegistry | null;
   private readonly tunnelProcesses = new Map<string, ChildProcess>();
   private onStatusChange: (() => void) | null = null;
   private statusPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -177,6 +179,7 @@ export class HostingManager {
     this.stackReg = deps.stackRegistry ?? null;
     this.sharedContainers = deps.sharedContainerManager ?? null;
     this.configMgr = deps.projectConfigManager ?? null;
+    this.mappReg = deps.mappRegistry ?? null;
     this.log = createComponentLogger(deps.logger, "hosting");
   }
 
@@ -407,9 +410,9 @@ export class HostingManager {
             // Non-code projects: auto-set viewer to first matching MagicApp
             const hosting = this.readHostingMeta(fullPath);
             if (hosting && !hosting.viewer) {
-              const apps = this.pluginReg?.getMagicAppsForType(meta.type);
+              const apps = this.mappReg?.getForType(meta.type);
               if (apps && apps.length > 0) {
-                const viewerId = apps[0]!.magicApp.id;
+                const viewerId = apps[0]!.id;
                 if (this.configMgr) {
                   void this.configMgr.updateHosting(fullPath, { viewer: viewerId } as Record<string, unknown>);
                 }
@@ -773,23 +776,54 @@ export class HostingManager {
    * 1. Project-specific viewer (hosting.viewer) — exact MagicApp ID
    * 2. Type-based fallback — first MagicApp registered for this project type
    */
+  /**
+   * Resolve MApp container config from standalone MAppRegistry.
+   * Priority: viewer field → type-based fallback.
+   */
   private resolveMagicAppContainerConfig(hosted: HostedProject): MagicAppContainerConfig | null {
-    if (!this.pluginReg) return null;
+    if (!this.mappReg) return null;
 
-    // 1. Check viewer field (project-specific MagicApp selection)
+    // 1. Check viewer field (project-specific MApp selection)
     const viewerId = hosted.meta.viewer;
     if (viewerId) {
-      const reg = this.pluginReg as unknown as { getMagicApp(id: string): import("./magic-app-types.js").MagicAppDefinition | undefined };
-      if (typeof reg.getMagicApp === "function") {
-        const viewerApp = reg.getMagicApp(viewerId);
-        if (viewerApp) return viewerApp.containerConfig;
+      const viewerApp = this.mappReg.get(viewerId);
+      if (viewerApp?.container) {
+        // Convert MApp container template strings to functions
+        return this.mappContainerToConfig(viewerApp.container);
       }
     }
 
-    // 2. Fallback: first MagicApp registered for this project type
-    const apps = this.pluginReg.getMagicAppsForType(hosted.meta.type);
+    // 2. Fallback: first MApp registered for this project type
+    const apps = this.mappReg.getForType(hosted.meta.type);
     if (apps.length === 0) return null;
-    return apps[0]!.magicApp.containerConfig;
+    const first = apps[0]!;
+    if (!first.container) return null;
+    return this.mappContainerToConfig(first.container);
+  }
+
+  /**
+   * Convert MApp container config (template strings) to the function-based
+   * MagicAppContainerConfig used by startContainer().
+   */
+  private mappContainerToConfig(container: import("@aionima/sdk").MAppContainerConfig): MagicAppContainerConfig {
+    return {
+      image: container.image,
+      internalPort: container.internalPort,
+      volumeMounts: (ctx) => container.volumeMounts.map((v) =>
+        v.replace(/\{projectPath\}/g, ctx.projectPath)
+          .replace(/\{projectHostname\}/g, ctx.projectHostname),
+      ),
+      env: (ctx) => {
+        const env: Record<string, string> = {};
+        for (const [k, v] of Object.entries(container.env ?? {})) {
+          env[k] = v.replace(/\{projectPath\}/g, ctx.projectPath)
+            .replace(/\{projectHostname\}/g, ctx.projectHostname);
+        }
+        return env;
+      },
+      command: container.command ? () => container.command! : undefined,
+      healthCheck: container.healthCheck,
+    };
   }
 
   private resolveStackContainerConfig(hosted: HostedProject): StackContainerConfig | null {

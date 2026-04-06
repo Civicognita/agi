@@ -428,15 +428,19 @@ export type { ProjectConfigManagerDeps, ProjectConfigChangeEvent, ProjectConfigC
 export { SystemConfigService } from "./system-config-service.js";
 export type { SystemConfigServiceDeps, SystemConfigChangeEvent } from "./system-config-service.js";
 
-// MagicApps
+// MApps — standalone registry + discovery (NOT plugins)
+export { MAppRegistry } from "./mapp-registry.js";
+export { discoverMApps } from "./mapp-discovery.js";
+export type { MAppDiscoveryResult } from "./mapp-discovery.js";
+
+// MApp legacy types (from original MagicApp implementation — container context)
 export { serializeMagicApp } from "./magic-app-types.js";
 export type {
-  MagicAppCategory, MagicAppContainerContext, MagicAppContainerConfig,
-  MagicAppAgentPrompt, MagicAppWorkflow, MagicAppWorkflowStep, MagicAppWorkflowStepType,
-  MagicAppTheme, MagicAppDefinition, MagicAppInfo,
+  MagicAppContainerContext,
+  MagicAppDefinition as LegacyMagicAppDefinition,
 } from "./magic-app-types.js";
 
-// MagicApp State Store
+// MApp State Store
 export { MagicAppStateStore } from "./magic-app-state-store.js";
 export type { MagicAppInstanceRecord, CreateInstanceParams } from "./magic-app-state-store.js";
 

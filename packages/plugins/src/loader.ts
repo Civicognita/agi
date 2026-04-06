@@ -253,12 +253,6 @@ function createPluginAPI(
       deps.pluginRegistry.addWorker(pluginId, def);
     },
 
-    registerMagicApp(def: import("@aionima/gateway-core").MagicAppDefinition): void {
-      deps.pluginRegistry.addMagicApp(pluginId, def);
-      // MagicApps do NOT auto-register dashboard panels — they are managed
-      // via the MagicApps tab on each project and open in modal containers.
-    },
-
     getChannelConfig(channelId: string): { enabled: boolean; config: Record<string, unknown> } | undefined {
       const entry = deps.channelConfigs?.find(c => c.id === channelId);
       if (!entry) return undefined;

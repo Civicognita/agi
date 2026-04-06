@@ -195,7 +195,9 @@ export interface RuntimeStateDeps {
   /** UsageStore — LLM token usage and cost tracking. */
   usageStore?: { getSummary(days?: number): unknown; getByProject(days?: number): unknown; getHistory(days?: number, bucket?: string): unknown };
 
-  /** MagicAppStateStore — persistent MagicApp instance state. */
+  /** MAppRegistry — standalone MApp registry (NOT plugin-based). */
+  mappRegistry?: import("./mapp-registry.js").MAppRegistry;
+  /** MagicAppStateStore — persistent MApp instance state. */
   magicAppStateStore?: import("./magic-app-state-store.js").MagicAppStateStore;
 
   /** Parsed config object — passed to subsystems that need runtime config access. */
@@ -3772,36 +3774,67 @@ export async function createGatewayRuntimeState(
   // MagicApp API — list registered apps + instance state persistence
   // -----------------------------------------------------------------------
 
-  // GET /api/dashboard/magic-apps — list all registered MagicApps (serialized)
+  // GET /api/dashboard/magic-apps — list all registered MApps (from MAppRegistry)
   fastify.get("/api/dashboard/magic-apps", async (_request, reply) => {
-    const reg = deps.pluginRegistry;
-    if (!reg || !("getMagicApps" in reg)) {
-      return reply.send({ apps: [] });
-    }
-    const { serializeMagicApp } = await import("./magic-app-types.js");
-    const apps = (reg as { getMagicApps(): Array<{ pluginId: string; magicApp: import("./magic-app-types.js").MagicAppDefinition }> }).getMagicApps();
-    return reply.send({
-      apps: apps.map(({ pluginId, magicApp }) => ({
-        ...serializeMagicApp(magicApp),
-        pluginId,
-      })),
-    });
+    if (!deps.mappRegistry) return reply.send({ apps: [] });
+    const { serializeMApp } = await import("@aionima/sdk");
+    return reply.send({ apps: deps.mappRegistry.getAll().map(serializeMApp) });
   });
 
-  // GET /api/dashboard/magic-apps/:id — single app detail
+  // GET /api/dashboard/magic-apps/:id — single MApp detail
   fastify.get("/api/dashboard/magic-apps/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const reg = deps.pluginRegistry;
-    if (!reg || !("getMagicApp" in reg)) {
-      return reply.code(404).send({ error: "MagicApp not found" });
-    }
-    const def = (reg as { getMagicApp(id: string): import("./magic-app-types.js").MagicAppDefinition | undefined }).getMagicApp(id);
-    if (!def) return reply.code(404).send({ error: "MagicApp not found" });
-    const { serializeMagicApp } = await import("./magic-app-types.js");
-    return reply.send({ app: serializeMagicApp(def) });
+    if (!deps.mappRegistry) return reply.code(404).send({ error: "MApp not found" });
+    const def = deps.mappRegistry.get(id);
+    if (!def) return reply.code(404).send({ error: "MApp not found" });
+    const { serializeMApp } = await import("@aionima/sdk");
+    return reply.send({ app: serializeMApp(def) });
   });
 
-  // MagicApp instance state persistence
+  // MApp security scan + install
+  fastify.post("/api/mapps/scan", async (request, reply) => {
+    const body = request.body as { definition?: unknown } | undefined;
+    if (!body?.definition) return reply.code(400).send({ error: "definition required" });
+    const { scanMApp } = await import("./mapp-security-scanner.js");
+    return reply.send(scanMApp(body.definition));
+  });
+
+  fastify.post("/api/mapps/install", async (request, reply) => {
+    const body = request.body as { definition?: unknown; approved?: boolean } | undefined;
+    if (!body?.definition) return reply.code(400).send({ error: "definition required" });
+    if (!body.approved) return reply.code(400).send({ error: "Must approve permissions before installing" });
+
+    // Scan first
+    const { scanMApp } = await import("./mapp-security-scanner.js");
+    const scanResult = scanMApp(body.definition);
+    if (!scanResult.safe) {
+      return reply.code(400).send({ error: "MApp failed security scan", scan: scanResult });
+    }
+
+    // Parse and install
+    const { MAppDefinitionSchema } = await import("@aionima/config");
+    const parsed = MAppDefinitionSchema.safeParse(body.definition);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Invalid MApp definition", issues: parsed.error.issues });
+    }
+
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join: joinPath } = await import("node:path");
+    const { homedir: getHome } = await import("node:os");
+    const installDir = joinPath(getHome(), ".agi", "mapps", parsed.data.author);
+    mkdirSync(installDir, { recursive: true });
+    const installPath = joinPath(installDir, `${parsed.data.id}.json`);
+    writeFileSync(installPath, JSON.stringify(parsed.data, null, 2) + "\n", "utf-8");
+
+    // Register in live registry
+    if (deps.mappRegistry) {
+      deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+    }
+
+    return reply.send({ ok: true, id: parsed.data.id, path: installPath, scan: scanResult });
+  });
+
+  // MApp instance state persistence
   if (deps.magicAppStateStore) {
     const store = deps.magicAppStateStore;
 
