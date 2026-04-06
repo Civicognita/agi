@@ -199,24 +199,26 @@ export function Projects({
                       tynn
                     </span>
                   )}
-                  {p.hosting?.enabled && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">
-                      hosted
+                  {p.hosting && (
+                    <span className={cn(
+                      "text-[10px] px-1.5 py-0.5 rounded font-semibold",
+                      p.hosting.status === "running" ? "bg-green/15 text-green" :
+                      p.hosting.status === "error" ? "bg-red/15 text-red" :
+                      "bg-muted-foreground/15 text-muted-foreground",
+                    )}>
+                      {p.hosting.status}
                     </span>
                   )}
                 </div>
-                <div className="text-[11px] text-muted-foreground font-mono break-all">
-                  {p.path}
-                </div>
-                {p.hosting?.enabled && p.hosting.url && p.hosting.status === "running" && (
+                {p.hosting?.hostname && (
                   <a
-                    href={p.hosting.url}
+                    href={`https://${p.hosting.hostname}.${hostingStatus?.baseDomain ?? "ai.on"}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     onClick={(e) => e.stopPropagation()}
                     className="text-[11px] text-blue underline mt-0.5 inline-block"
                   >
-                    {p.hosting.url}
+                    {p.hosting.hostname}.{hostingStatus?.baseDomain ?? "ai.on"}
                   </a>
                 )}
                 {projectActivity?.[p.path] && (
