@@ -370,11 +370,11 @@ export function registerAgentTools(
       QUERY_PLUGIN_RESOURCES_INPUT_SCHEMA,
     );
 
-    // Builder tools (MagicApp creation/editing via BuilderChat)
+    // Builder tools (MApp creation/editing via BuilderChat)
     for (const tool of BUILDER_TOOLS) {
       register(
         tool.manifest as ToolManifestEntry,
-        tool.createHandler({ pluginRegistry: config.pluginRegistry }),
+        tool.createHandler({ mappRegistry: config.mappRegistry }),
         tool.schema,
       );
     }

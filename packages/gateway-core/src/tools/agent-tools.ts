@@ -60,6 +60,8 @@ export interface AgentToolsConfig {
   selfRepoPath?: string;
   /** SystemConfigService for validated config operations. */
   systemConfigService?: SystemConfigService;
+  /** MAppRegistry for MApp builder tools. */
+  mappRegistry?: import("../mapp-registry.js").MAppRegistry;
 }
 
 // ---------------------------------------------------------------------------
