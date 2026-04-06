@@ -13,7 +13,7 @@
 
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { dirname, resolve as resolvePath } from "node:path";
 import {
   ProjectConfigSchema,
   type ProjectConfig,
@@ -255,14 +255,12 @@ export class ProjectConfigManager extends EventEmitter {
   // -------------------------------------------------------------------------
 
   /**
-   * Resolve the config file path, checking for legacy .nexus-project.json first.
-   * If legacy exists but modern doesn't, returns legacy path.
+   * Resolve the config file path. All project configs live in ~/.agi/{slug}/project.json.
+   * Legacy .nexus-project.json / .aionima-project.json files inside project dirs
+   * are no longer supported — they were cleaned up by migrate-project-configs.sh.
    */
   private resolveConfigPath(resolvedProjectPath: string): string {
-    const modern = projectConfigPath(resolvedProjectPath);
-    const legacy = join(resolvedProjectPath, ".nexus-project.json");
-    if (!existsSync(modern) && existsSync(legacy)) return legacy;
-    return modern;
+    return projectConfigPath(resolvedProjectPath);
   }
 
   /**

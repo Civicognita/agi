@@ -461,14 +461,12 @@ export class HostingManager {
       };
     }
 
-    // Legacy fallback (no config manager)
+    // Legacy fallback (no config manager) — reads from ~/.agi/{slug}/project.json only
     const metaPath = projectConfigPath(projectPath);
-    const legacyPath = join(projectPath, ".nexus-project.json");
-    if (!existsSync(metaPath) && !existsSync(legacyPath)) return null;
-    const actualPath = existsSync(metaPath) ? metaPath : legacyPath;
+    if (!existsSync(metaPath)) return null;
 
     try {
-      const raw = JSON.parse(readFileSync(actualPath, "utf-8")) as Record<string, unknown>;
+      const raw = JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
       const hosting = raw.hosting as Record<string, unknown> | undefined;
       if (!hosting) return null;
 

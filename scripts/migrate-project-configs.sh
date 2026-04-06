@@ -69,4 +69,28 @@ for config_dir in "$AGI_DIR"/*/; do
   " "$config_file" && MIGRATED=$((MIGRATED + 1)) || SKIPPED=$((SKIPPED + 1))
 done
 
-echo "{\"phase\":\"migrate\",\"status\":\"done\",\"details\":\"${MIGRATED} config(s) checked, ${SKIPPED} skipped\"}"
+# ---------------------------------------------------------------------------
+# Clean up legacy in-project config files (should never exist inside project dirs)
+# ---------------------------------------------------------------------------
+CLEANED=0
+WORKSPACE_DIRS=$(node -e "
+  try {
+    const c = JSON.parse(require('fs').readFileSync('${AGI_DIR}/aionima.json', 'utf-8'));
+    (c.workspace?.projects ?? []).forEach(d => console.log(d));
+  } catch {}
+" 2>/dev/null)
+
+for ws_dir in $WORKSPACE_DIRS; do
+  [ -d "$ws_dir" ] || continue
+  for legacy_file in "$ws_dir"/*/.aionima-project.json "$ws_dir"/*/.nexus-project.json; do
+    [ -f "$legacy_file" ] || continue
+    rm -f "$legacy_file"
+    CLEANED=$((CLEANED + 1))
+  done
+done
+
+if [ "$CLEANED" -gt 0 ]; then
+  echo "cleaned $CLEANED legacy in-project config file(s)"
+fi
+
+echo "{\"phase\":\"migrate\",\"status\":\"done\",\"details\":\"${MIGRATED} config(s) checked, ${SKIPPED} skipped, ${CLEANED} legacy files cleaned\"}"
