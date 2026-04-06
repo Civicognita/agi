@@ -436,6 +436,10 @@ export type {
   MagicAppTheme, MagicAppDefinition, MagicAppInfo,
 } from "./magic-app-types.js";
 
+// MagicApp State Store
+export { MagicAppStateStore } from "./magic-app-state-store.js";
+export type { MagicAppInstanceRecord, CreateInstanceParams } from "./magic-app-state-store.js";
+
 // Hosting
 export { HostingManager } from "./hosting-manager.js";
 export type { HostingConfig, ProjectHostingMeta, HostedProject, InfraStatus, HostingManagerDeps, InstallActionResult, DetectedProjectConfig } from "./hosting-manager.js";

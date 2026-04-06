@@ -228,6 +228,38 @@ export interface ContainerStatusChangedData {
   error?: string;
 }
 
+// ---------------------------------------------------------------------------
+// MagicApps
+// ---------------------------------------------------------------------------
+
+export interface MagicAppInfo {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  icon?: string;
+  category: "reader" | "gallery" | "dashboard" | "viewer" | "editor" | "custom";
+  projectTypes: string[];
+  projectCategories: string[];
+  hasContainer: boolean;
+  panelLabel: string;
+  agentPromptCount: number;
+  workflowCount: number;
+  toolCount: number;
+  pluginId?: string;
+}
+
+export interface MagicAppInstance {
+  instanceId: string;
+  appId: string;
+  userEntityId: string;
+  mode: "floating" | "docked" | "minimized";
+  state: Record<string, unknown>;
+  position: { x: number; y: number; width: number; height: number } | null;
+  openedAt: string;
+  updatedAt: string;
+}
+
 export type DashboardEvent =
   | { type: "impact:recorded"; data: ActivityEntry }
   | { type: "entity:verified"; data: { entityId: string; tier: string } }

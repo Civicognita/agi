@@ -2094,3 +2094,64 @@ export async function fetchSecuritySummary(projectPath?: string): Promise<Securi
   if (!res.ok) throw new Error("Failed to fetch security summary");
   return res.json() as Promise<SecuritySummary>;
 }
+
+// ---------------------------------------------------------------------------
+// MagicApps API
+// ---------------------------------------------------------------------------
+
+export async function fetchMagicApps(): Promise<import("./types.js").MagicAppInfo[]> {
+  const res = await fetch("/api/dashboard/magic-apps");
+  if (!res.ok) throw new Error("Failed to fetch MagicApps");
+  const data = await res.json() as { apps: import("./types.js").MagicAppInfo[] };
+  return data.apps;
+}
+
+export async function fetchMagicApp(id: string): Promise<import("./types.js").MagicAppInfo> {
+  const res = await fetch(`/api/dashboard/magic-apps/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error("Failed to fetch MagicApp");
+  const data = await res.json() as { app: import("./types.js").MagicAppInfo };
+  return data.app;
+}
+
+export async function fetchMagicAppInstances(): Promise<import("./types.js").MagicAppInstance[]> {
+  const res = await fetch("/api/magic-apps/instances");
+  if (!res.ok) throw new Error("Failed to fetch instances");
+  const data = await res.json() as { instances: import("./types.js").MagicAppInstance[] };
+  return data.instances;
+}
+
+export async function openMagicAppInstance(appId: string, mode?: string): Promise<import("./types.js").MagicAppInstance> {
+  const res = await fetch("/api/magic-apps/instances", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ appId, mode }),
+  });
+  if (!res.ok) throw new Error("Failed to open instance");
+  const data = await res.json() as { instance: import("./types.js").MagicAppInstance };
+  return data.instance;
+}
+
+export async function saveMagicAppState(instanceId: string, state: Record<string, unknown>): Promise<void> {
+  const res = await fetch(`/api/magic-apps/instances/${encodeURIComponent(instanceId)}/state`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ state }),
+  });
+  if (!res.ok) throw new Error("Failed to save state");
+}
+
+export async function changeMagicAppMode(instanceId: string, mode: string): Promise<void> {
+  const res = await fetch(`/api/magic-apps/instances/${encodeURIComponent(instanceId)}/mode`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) throw new Error("Failed to change mode");
+}
+
+export async function closeMagicAppInstance(instanceId: string): Promise<void> {
+  const res = await fetch(`/api/magic-apps/instances/${encodeURIComponent(instanceId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to close instance");
+}

@@ -66,6 +66,13 @@ const builtinSections: NavSectionWithPerspective[] = [
   },
   {
     perspective: "frontend",
+    title: "MagicApps",
+    items: [
+      { to: "/magic-apps", label: "All Apps", icon: Folders },
+    ],
+  },
+  {
+    perspective: "frontend",
     title: "Communication",
     items: [
       { to: "/comms", label: "All Messages", exact: true, icon: Inbox },
@@ -95,6 +102,7 @@ const builtinSections: NavSectionWithPerspective[] = [
     items: [
       { to: "/gateway/workflows", label: "Workflows", icon: GitBranch },
       { to: "/gateway/marketplace", label: "Marketplace", icon: Store },
+      { to: "/magic-apps/admin", label: "MagicApps", icon: Folders },
       { to: "/gateway/logs", label: "Logs", icon: ScrollText },
       { to: "/gateway/onboarding", label: "Onboarding", icon: Rocket },
     ],

@@ -14,6 +14,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AppSidebar } from "@/components/AppSidebar.js";
 import { ChatFlyout } from "@/components/ChatFlyout.js";
+import { MagicAppModal } from "@/components/MagicAppModal.js";
+import { MagicAppTray } from "@/components/MagicAppTray.js";
+import { createInstanceManager } from "@/lib/magic-app-instances.js";
+import { fetchMagicApps } from "@/api.js";
+import type { MagicAppInfo, MagicAppInstance } from "@/types.js";
 import { DnsSetupBanner } from "@/components/DnsSetupBanner.js";
 import { ActivityDot } from "@/components/ActivityDot.js";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator.js";
@@ -49,6 +54,7 @@ export interface RootContext {
   onToggleWorkspace: () => void;
   onToolExecute: (projectPath: string, toolId: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
   onOpenTerminal: (projectPath: string) => void;
+  onRefreshMagicApps?: () => void;
 }
 
 /** Map pathname prefix to page title. */
@@ -291,6 +297,17 @@ export default function RootLayout() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalProjectPath, setTerminalProjectPath] = useState<string | null>(null);
 
+  // MagicApp instances — persistent floating/docked/minimized apps
+  const [magicAppInstances, setMagicAppInstances] = useState<MagicAppInstance[]>([]);
+  const [magicApps, setMagicApps] = useState<MagicAppInfo[]>([]);
+  const [instanceMgr] = useState(() => createInstanceManager(setMagicAppInstances));
+
+  // Load MagicApps + restore open instances on mount
+  useEffect(() => {
+    void fetchMagicApps().then(setMagicApps).catch(() => {});
+    void instanceMgr.refresh();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleOpenTerminal = useCallback((projectPath: string) => {
     setTerminalProjectPath(projectPath);
     setTerminalOpen(true);
@@ -483,6 +500,7 @@ export default function RootLayout() {
     onToggleWorkspace: handleToggleWorkspace,
     onToolExecute: handleToolExecute,
     onOpenTerminal: handleOpenTerminal,
+    onRefreshMagicApps: () => { void instanceMgr.refresh(); },
   };
 
   return (
@@ -722,6 +740,33 @@ export default function RootLayout() {
         onClose={() => { setTerminalOpen(false); setTerminalProjectPath(null); }}
         initialProjectPath={terminalProjectPath}
         projects={projectsHook.projects}
+      />
+
+      {/* MagicApp floating/docked modals */}
+      {magicAppInstances
+        .filter((inst) => inst.mode !== "minimized")
+        .map((inst) => {
+          const app = magicApps.find((a) => a.id === inst.appId);
+          if (!app) return null;
+          return (
+            <MagicAppModal
+              key={inst.instanceId}
+              app={app}
+              instance={inst}
+              onMinimize={() => void instanceMgr.minimizeApp(inst.instanceId)}
+              onDock={() => void instanceMgr.setMode(inst.instanceId, "docked")}
+              onFloat={() => void instanceMgr.setMode(inst.instanceId, "floating")}
+              onClose={() => void instanceMgr.closeApp(inst.instanceId)}
+            />
+          );
+        })}
+
+      {/* MagicApp minimized tray (footer taskbar) */}
+      <MagicAppTray
+        instances={magicAppInstances}
+        apps={magicApps}
+        onRestore={(id) => void instanceMgr.restoreApp(id)}
+        onClose={(id) => void instanceMgr.closeApp(id)}
       />
 
       {/* Full-page reload overlay — shown after upgrade completes */}

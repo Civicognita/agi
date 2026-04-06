@@ -195,6 +195,9 @@ export interface RuntimeStateDeps {
   /** UsageStore — LLM token usage and cost tracking. */
   usageStore?: { getSummary(days?: number): unknown; getByProject(days?: number): unknown; getHistory(days?: number, bucket?: string): unknown };
 
+  /** MagicAppStateStore — persistent MagicApp instance state. */
+  magicAppStateStore?: import("./magic-app-state-store.js").MagicAppStateStore;
+
   /** Parsed config object — passed to subsystems that need runtime config access. */
   config?: Record<string, unknown>;
   /** HMAC secret for GitHub webhook signature verification. */
@@ -3762,6 +3765,91 @@ export async function createGatewayRuntimeState(
     // No static dir — simple 404 for everything else
     fastify.setNotFoundHandler(async (_request, reply) => {
       return reply.code(404).send({ error: "Not Found" });
+    });
+  }
+
+  // -----------------------------------------------------------------------
+  // MagicApp API — list registered apps + instance state persistence
+  // -----------------------------------------------------------------------
+
+  // GET /api/dashboard/magic-apps — list all registered MagicApps (serialized)
+  fastify.get("/api/dashboard/magic-apps", async (_request, reply) => {
+    const reg = deps.pluginRegistry;
+    if (!reg || !("getMagicApps" in reg)) {
+      return reply.send({ apps: [] });
+    }
+    const { serializeMagicApp } = await import("./magic-app-types.js");
+    const apps = (reg as { getMagicApps(): Array<{ pluginId: string; magicApp: import("./magic-app-types.js").MagicAppDefinition }> }).getMagicApps();
+    return reply.send({
+      apps: apps.map(({ pluginId, magicApp }) => ({
+        ...serializeMagicApp(magicApp),
+        pluginId,
+      })),
+    });
+  });
+
+  // GET /api/dashboard/magic-apps/:id — single app detail
+  fastify.get("/api/dashboard/magic-apps/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const reg = deps.pluginRegistry;
+    if (!reg || !("getMagicApp" in reg)) {
+      return reply.code(404).send({ error: "MagicApp not found" });
+    }
+    const def = (reg as { getMagicApp(id: string): import("./magic-app-types.js").MagicAppDefinition | undefined }).getMagicApp(id);
+    if (!def) return reply.code(404).send({ error: "MagicApp not found" });
+    const { serializeMagicApp } = await import("./magic-app-types.js");
+    return reply.send({ app: serializeMagicApp(def) });
+  });
+
+  // MagicApp instance state persistence
+  if (deps.magicAppStateStore) {
+    const store = deps.magicAppStateStore;
+
+    // GET /api/magic-apps/instances — list open instances for current user
+    fastify.get("/api/magic-apps/instances", async (_request, reply) => {
+      // TODO: derive userEntityId from auth session; for now use owner
+      const userId = deps.ownerEntityId ?? "#E0";
+      return reply.send({ instances: store.listInstances(userId) });
+    });
+
+    // POST /api/magic-apps/instances — open a new instance
+    fastify.post("/api/magic-apps/instances", async (request, reply) => {
+      const body = request.body as { appId?: string; mode?: string } | undefined;
+      if (!body?.appId) return reply.code(400).send({ error: "appId required" });
+      const userId = deps.ownerEntityId ?? "#E0";
+      const instanceId = `${body.appId}-${Date.now().toString(36)}`;
+      const instance = store.createInstance({
+        instanceId,
+        appId: body.appId,
+        userEntityId: userId,
+        mode: (body.mode as "floating" | "docked" | "minimized") ?? "floating",
+      });
+      return reply.send({ instance });
+    });
+
+    // PUT /api/magic-apps/instances/:id/state — save instance state
+    fastify.put("/api/magic-apps/instances/:id/state", async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { state?: Record<string, unknown> } | undefined;
+      if (!body?.state) return reply.code(400).send({ error: "state required" });
+      store.updateState(id, body.state);
+      return reply.send({ ok: true });
+    });
+
+    // PUT /api/magic-apps/instances/:id/mode — change mode
+    fastify.put("/api/magic-apps/instances/:id/mode", async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = request.body as { mode?: string } | undefined;
+      if (!body?.mode) return reply.code(400).send({ error: "mode required" });
+      store.updateMode(id, body.mode as "floating" | "docked" | "minimized");
+      return reply.send({ ok: true });
+    });
+
+    // DELETE /api/magic-apps/instances/:id — close and destroy
+    fastify.delete("/api/magic-apps/instances/:id", async (request, reply) => {
+      const { id } = request.params as { id: string };
+      store.deleteInstance(id);
+      return reply.send({ ok: true });
     });
   }
 

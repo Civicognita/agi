@@ -1151,6 +1151,12 @@ export async function startGatewayServer(
   // the HTTP handler can close over them (channelRegistry, agentSessionManager).
   // -------------------------------------------------------------------------
 
+  // MagicApp state store — persistent app instance state across crashes/reloads
+  const { MagicAppStateStore } = await import("./magic-app-state-store.js");
+  const magicAppStateStore = new MagicAppStateStore(
+    join(homedir(), ".agi", "magic-app-state.db"),
+  );
+
   const { httpServer, wsServer } = await createGatewayRuntimeState(
     {
       auth,
@@ -1239,6 +1245,7 @@ export async function startGatewayServer(
       },
       secrets,
       config: config as Record<string, unknown>,
+      magicAppStateStore,
       identityProvider,
       oauthHandler,
       visitorAuth,

@@ -124,6 +124,9 @@ import {
   QUERY_PLUGIN_RESOURCES_INPUT_SCHEMA,
 } from "./plugin-resource-tools.js";
 
+// Builder tools (MagicApp creation/editing)
+import { BUILDER_TOOLS } from "./builder-tools.js";
+
 
 // ---------------------------------------------------------------------------
 // Config
@@ -366,6 +369,15 @@ export function registerAgentTools(
       }),
       QUERY_PLUGIN_RESOURCES_INPUT_SCHEMA,
     );
+
+    // Builder tools (MagicApp creation/editing via BuilderChat)
+    for (const tool of BUILDER_TOOLS) {
+      register(
+        tool.manifest as ToolManifestEntry,
+        tool.createHandler({ pluginRegistry: config.pluginRegistry }),
+        tool.schema,
+      );
+    }
   }
 
   return count;

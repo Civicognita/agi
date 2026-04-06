@@ -38,6 +38,9 @@ import BackupsPage from "./routes/system-backups.js";
 import SecuritySettingsPage from "./routes/settings-security.js";
 import SystemSecurityPage from "./routes/system-security.js";
 import IdentityServicePage from "./routes/system-identity.js";
+import MagicAppsPage from "./routes/magic-apps.js";
+import MagicAppDetailPage from "./routes/magic-app-detail.js";
+import MagicAppsAdminPage from "./routes/magic-apps-admin.js";
 
 export const router = createBrowserRouter([
   {
@@ -55,6 +58,10 @@ export const router = createBrowserRouter([
       { path: "entity/:id", element: <EntityPage /> },
       { path: "projects", element: <ProjectsPage /> },
 { path: "projects/:slug", element: <ProjectDetailPage /> },
+      // MagicApps
+      { path: "magic-apps", element: <MagicAppsPage /> },
+      { path: "magic-apps/admin", element: <MagicAppsAdminPage /> },
+      { path: "magic-apps/:id", element: <MagicAppDetailPage /> },
       // Knowledge
       { path: "knowledge", element: <KnowledgePage /> },
       // Documentation
