@@ -779,7 +779,17 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // Markdown rendering components (shared module, chat-size variant)
   // -------------------------------------------------------------------------
 
-  const mdComponents = useMemo(() => markdownComponents(), []);
+  const mdComponents = useMemo(() => markdownComponents({
+    onQuestionSubmit: (answers) => {
+      // Send answered questions as a formatted message
+      const lines = Object.entries(answers)
+        .filter(([, v]) => v.trim().length > 0)
+        .map(([k, v]) => `**${k}:** ${v}`);
+      if (lines.length > 0) {
+        sendMessage(lines.join("\n"));
+      }
+    },
+  }), [sendMessage]);
 
   // -------------------------------------------------------------------------
   // Derived send-button state
