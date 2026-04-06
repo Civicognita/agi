@@ -73,6 +73,8 @@ export const ProjectHostingSchema = z
     tunnelUrl: z.string().nullable().optional(),
     /** Installed stack instances. */
     stacks: z.array(ProjectStackInstanceSchema).default([]),
+    /** MagicApp ID used as the viewer for this project's *.ai.on URL. */
+    viewer: z.string().optional(),
   })
   .strict();
 
@@ -96,6 +98,8 @@ export const ProjectConfigSchema = z
     description: z.string().optional(),
     /** Hosting configuration (present when project has been configured for hosting). */
     hosting: ProjectHostingSchema.optional(),
+    /** Attached MagicApp IDs (apps available for this project). */
+    magicApps: z.array(z.string()).optional(),
   })
   .passthrough(); // Plugins can store custom keys at the root level
 

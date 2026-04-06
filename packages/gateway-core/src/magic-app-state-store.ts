@@ -17,6 +17,7 @@ export interface MagicAppInstanceRecord {
   instanceId: string;
   appId: string;
   userEntityId: string;
+  projectPath: string;
   mode: "floating" | "docked" | "minimized";
   state: Record<string, unknown>;
   position: { x: number; y: number; width: number; height: number } | null;
@@ -28,6 +29,7 @@ export interface CreateInstanceParams {
   instanceId: string;
   appId: string;
   userEntityId: string;
+  projectPath: string;
   mode?: "floating" | "docked" | "minimized";
   state?: Record<string, unknown>;
   position?: { x: number; y: number; width: number; height: number };
@@ -42,6 +44,7 @@ CREATE TABLE IF NOT EXISTS magic_app_instances (
   instance_id TEXT PRIMARY KEY,
   app_id TEXT NOT NULL,
   user_entity_id TEXT NOT NULL,
+  project_path TEXT NOT NULL DEFAULT '',
   mode TEXT NOT NULL DEFAULT 'floating',
   state TEXT NOT NULL DEFAULT '{}',
   position TEXT,
@@ -51,6 +54,13 @@ CREATE TABLE IF NOT EXISTS magic_app_instances (
 CREATE INDEX IF NOT EXISTS idx_magic_app_user ON magic_app_instances(user_entity_id);
 `;
 
+// Migrations run after DDL — add columns and indexes to existing tables
+const MIGRATIONS = [
+  `ALTER TABLE magic_app_instances ADD COLUMN project_path TEXT NOT NULL DEFAULT ''`,
+  `CREATE INDEX IF NOT EXISTS idx_magic_app_project ON magic_app_instances(project_path)`,
+];
+
+
 export class MagicAppStateStore {
   private readonly db: BetterSqlite3.Database;
 
@@ -59,6 +69,10 @@ export class MagicAppStateStore {
     this.db = new BetterSqlite3(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.exec(DDL);
+    // Run migrations (idempotent — ALTER TABLE fails silently if column exists)
+    for (const sql of MIGRATIONS) {
+      try { this.db.exec(sql); } catch { /* column already exists */ }
+    }
   }
 
   /** List all open instances for a user. */
@@ -82,13 +96,14 @@ export class MagicAppStateStore {
     const now = new Date().toISOString();
     this.db
       .prepare(
-        `INSERT INTO magic_app_instances (instance_id, app_id, user_entity_id, mode, state, position, opened_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO magic_app_instances (instance_id, app_id, user_entity_id, project_path, mode, state, position, opened_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         params.instanceId,
         params.appId,
         params.userEntityId,
+        params.projectPath,
         params.mode ?? "floating",
         JSON.stringify(params.state ?? {}),
         params.position ? JSON.stringify(params.position) : null,
@@ -141,6 +156,7 @@ function deserialize(row: Record<string, unknown>): MagicAppInstanceRecord {
     instanceId: row.instance_id as string,
     appId: row.app_id as string,
     userEntityId: row.user_entity_id as string,
+    projectPath: (row.project_path as string) ?? "",
     mode: row.mode as MagicAppInstanceRecord["mode"],
     state: parseJson(row.state as string),
     position: row.position ? parseJson(row.position as string) as { x: number; y: number; width: number; height: number } : null,

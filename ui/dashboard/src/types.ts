@@ -253,6 +253,7 @@ export interface MagicAppInstance {
   instanceId: string;
   appId: string;
   userEntityId: string;
+  projectPath: string;
   mode: "floating" | "docked" | "minimized";
   state: Record<string, unknown>;
   position: { x: number; y: number; width: number; height: number } | null;
@@ -300,6 +301,8 @@ export interface ProjectHostingInfo {
   image?: string;
   error?: string;
   url: string | null;
+  /** MagicApp ID used as the content viewer for this project's *.ai.on URL. */
+  viewer?: string;
 }
 
 /** Tool definition from project type registry. */
@@ -347,6 +350,7 @@ export interface ProjectInfo {
   projectType?: ProjectTypeInfo;
   category?: string;
   description?: string;
+  magicApps?: string[];
 }
 
 /** Git info for a workspace project, returned by GET /api/projects/info. */

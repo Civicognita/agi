@@ -3812,16 +3812,18 @@ export async function createGatewayRuntimeState(
       return reply.send({ instances: store.listInstances(userId) });
     });
 
-    // POST /api/magic-apps/instances — open a new instance
+    // POST /api/magic-apps/instances — open a new instance (requires projectPath)
     fastify.post("/api/magic-apps/instances", async (request, reply) => {
-      const body = request.body as { appId?: string; mode?: string } | undefined;
+      const body = request.body as { appId?: string; mode?: string; projectPath?: string } | undefined;
       if (!body?.appId) return reply.code(400).send({ error: "appId required" });
+      if (!body?.projectPath) return reply.code(400).send({ error: "projectPath required — MagicApps are project-anchored" });
       const userId = deps.ownerEntityId ?? "#E0";
       const instanceId = `${body.appId}-${Date.now().toString(36)}`;
       const instance = store.createInstance({
         instanceId,
         appId: body.appId,
         userEntityId: userId,
+        projectPath: body.projectPath,
         mode: (body.mode as "floating" | "docked" | "minimized") ?? "floating",
       });
       return reply.send({ instance });

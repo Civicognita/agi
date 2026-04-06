@@ -23,6 +23,7 @@ import { projectSlug } from "./Projects.js";
 import { WidgetRenderer } from "./WidgetRenderer.js";
 import { isSacredProject } from "@/lib/sacred-projects.js";
 import { SecurityTab } from "./SecurityTab.js";
+import { MagicAppPicker } from "./MagicAppPicker.js";
 
 export interface ProjectDetailProps {
   projects: ProjectInfo[];
@@ -273,6 +274,7 @@ export function ProjectDetail({
           {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
             <TabsTrigger value="hosting">Development</TabsTrigger>
           )}
+          <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>
           {pluginPanels.map((p) => (
             <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
           ))}
@@ -633,6 +635,23 @@ export function ProjectDetail({
             </div>
           </TabsContent>
         )}
+
+        <TabsContent value="magic-apps" className="mt-4">
+          <div className="rounded-xl bg-card border border-border p-4">
+            <MagicAppPicker
+              project={project}
+              onOpenApp={(appId, projectPath) => {
+                void (async () => {
+                  try {
+                    const rootCtx = (window as unknown as { __aionima_open_magic_app?: (a: string, p: string) => Promise<void> }).__aionima_open_magic_app;
+                    if (rootCtx) await rootCtx(appId, projectPath);
+                  } catch { /* handled in root */ }
+                })();
+              }}
+              onRefresh={onRefresh}
+            />
+          </div>
+        </TabsContent>
 
         {pluginPanels.map((panel) => (
           <TabsContent key={panel.id} value={`plugin-${panel.id}`} className="mt-4">

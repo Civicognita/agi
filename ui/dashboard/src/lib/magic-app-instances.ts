@@ -18,7 +18,7 @@ export type InstanceMode = "floating" | "docked" | "minimized";
 
 export interface MagicAppInstanceManager {
   instances: MagicAppInstance[];
-  openApp(appId: string): Promise<MagicAppInstance>;
+  openApp(appId: string, projectPath: string): Promise<MagicAppInstance>;
   closeApp(instanceId: string): Promise<void>;
   minimizeApp(instanceId: string): Promise<void>;
   restoreApp(instanceId: string): Promise<void>;
@@ -38,8 +38,8 @@ export function createInstanceManager(
   const mgr: MagicAppInstanceManager = {
     get instances() { return instances; },
 
-    async openApp(appId: string) {
-      const instance = await openMagicAppInstance(appId, "floating");
+    async openApp(appId: string, projectPath: string) {
+      const instance = await openMagicAppInstance(appId, projectPath, "floating");
       instances = [...instances, instance];
       notify();
       return instance;

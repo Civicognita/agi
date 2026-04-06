@@ -72,6 +72,8 @@ export interface ProjectHostingMeta {
   internalPort: number | null;
   runtimeId?: string | null;
   tunnelUrl?: string | null;
+  /** MagicApp ID used as the content viewer for this project's *.ai.on URL. */
+  viewer?: string | null;
 }
 
 export interface HostedProject {
@@ -384,16 +386,35 @@ export class HostingManager {
 
           await this.enableProject(fullPath, meta);
 
-          // Auto-assign suggested stack if project has none
-          const stacks = this.getProjectStacks(fullPath);
-          if (stacks.length === 0) {
-            const detected = this.detectProjectDefaults(fullPath);
-            if (detected.suggestedStacks.length > 0 && this.stackReg?.has(detected.suggestedStacks[0]!)) {
-              this.writeStackInstance(fullPath, {
-                stackId: detected.suggestedStacks[0]!,
-                addedAt: new Date().toISOString(),
-              });
-              this.log.info(`[${this.slugFromPath(fullPath)}] auto-assigned stack "${detected.suggestedStacks[0]}"`);
+          // Auto-assign: stacks for code projects, viewer for non-code projects
+          const typeDef = this.registry?.get(meta.type);
+          const isCodeType = typeDef?.hasCode ?? true; // default to code if unknown
+
+          if (isCodeType) {
+            // Code projects: auto-assign suggested stack if none
+            const stacks = this.getProjectStacks(fullPath);
+            if (stacks.length === 0) {
+              const detected = this.detectProjectDefaults(fullPath);
+              if (detected.suggestedStacks.length > 0 && this.stackReg?.has(detected.suggestedStacks[0]!)) {
+                this.writeStackInstance(fullPath, {
+                  stackId: detected.suggestedStacks[0]!,
+                  addedAt: new Date().toISOString(),
+                });
+                this.log.info(`[${this.slugFromPath(fullPath)}] auto-assigned stack "${detected.suggestedStacks[0]}"`);
+              }
+            }
+          } else {
+            // Non-code projects: auto-set viewer to first matching MagicApp
+            const hosting = this.readHostingMeta(fullPath);
+            if (hosting && !hosting.viewer) {
+              const apps = this.pluginReg?.getMagicAppsForType(meta.type);
+              if (apps && apps.length > 0) {
+                const viewerId = apps[0]!.magicApp.id;
+                if (this.configMgr) {
+                  void this.configMgr.updateHosting(fullPath, { viewer: viewerId } as Record<string, unknown>);
+                }
+                this.log.info(`[${this.slugFromPath(fullPath)}] auto-set viewer "${viewerId}"`);
+              }
             }
           }
         }
@@ -433,6 +454,7 @@ export class HostingManager {
         internalPort: hosting.internalPort ?? null,
         runtimeId: hosting.runtimeId ?? null,
         tunnelUrl: hosting.tunnelUrl ?? null,
+        viewer: hosting.viewer ?? null,
       };
     }
 
@@ -746,8 +768,25 @@ export class HostingManager {
    * Resolve container config from a registered MagicApp for this project type.
    * MagicApps serve non-dev project types (literature, media, etc.).
    */
+  /**
+   * Resolve MagicApp container config. Priority:
+   * 1. Project-specific viewer (hosting.viewer) — exact MagicApp ID
+   * 2. Type-based fallback — first MagicApp registered for this project type
+   */
   private resolveMagicAppContainerConfig(hosted: HostedProject): MagicAppContainerConfig | null {
     if (!this.pluginReg) return null;
+
+    // 1. Check viewer field (project-specific MagicApp selection)
+    const viewerId = hosted.meta.viewer;
+    if (viewerId) {
+      const reg = this.pluginReg as unknown as { getMagicApp(id: string): import("./magic-app-types.js").MagicAppDefinition | undefined };
+      if (typeof reg.getMagicApp === "function") {
+        const viewerApp = reg.getMagicApp(viewerId);
+        if (viewerApp) return viewerApp.containerConfig;
+      }
+    }
+
+    // 2. Fallback: first MagicApp registered for this project type
     const apps = this.pluginReg.getMagicAppsForType(hosted.meta.type);
     if (apps.length === 0) return null;
     return apps[0]!.magicApp.containerConfig;

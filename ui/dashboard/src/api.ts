@@ -2120,11 +2120,11 @@ export async function fetchMagicAppInstances(): Promise<import("./types.js").Mag
   return data.instances;
 }
 
-export async function openMagicAppInstance(appId: string, mode?: string): Promise<import("./types.js").MagicAppInstance> {
+export async function openMagicAppInstance(appId: string, projectPath: string, mode?: string): Promise<import("./types.js").MagicAppInstance> {
   const res = await fetch("/api/magic-apps/instances", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ appId, mode }),
+    body: JSON.stringify({ appId, projectPath, mode }),
   });
   if (!res.ok) throw new Error("Failed to open instance");
   const data = await res.json() as { instance: import("./types.js").MagicAppInstance };

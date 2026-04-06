@@ -55,6 +55,7 @@ export interface RootContext {
   onToolExecute: (projectPath: string, toolId: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
   onOpenTerminal: (projectPath: string) => void;
   onRefreshMagicApps?: () => void;
+  onOpenMagicApp?: (appId: string, projectPath: string) => Promise<void>;
 }
 
 /** Map pathname prefix to page title. */
@@ -501,6 +502,9 @@ export default function RootLayout() {
     onToolExecute: handleToolExecute,
     onOpenTerminal: handleOpenTerminal,
     onRefreshMagicApps: () => { void instanceMgr.refresh(); },
+    onOpenMagicApp: async (appId: string, projectPath: string) => {
+      await instanceMgr.openApp(appId, projectPath);
+    },
   };
 
   return (

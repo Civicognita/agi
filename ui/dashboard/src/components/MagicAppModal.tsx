@@ -82,7 +82,7 @@ export function MagicAppModal({
         {widgets && widgets.length > 0 ? (
           <WidgetRenderer
             widgets={widgets as import("@/types.js").PanelWidget[]}
-            projectPath={instance.state?.projectPath as string | undefined}
+            projectPath={instance.projectPath}
           />
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">

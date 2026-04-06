@@ -6,10 +6,11 @@
  */
 
 import { useEffect, useState } from "react";
-import { fetchMagicApps, openMagicAppInstance } from "@/api.js";
+import { fetchMagicApps } from "@/api.js";
 import type { MagicAppInfo } from "@/types.js";
 import { useOutletContext } from "react-router";
 import type { RootContext } from "./root.js";
+import { ProjectPickerDialog } from "@/components/ProjectPickerDialog.js";
 
 const CATEGORY_ICONS: Record<string, string> = {
   reader: "\uD83D\uDCD6",
@@ -25,6 +26,7 @@ export default function MagicAppsPage() {
   const [apps, setApps] = useState<MagicAppInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
+  const [pickerApp, setPickerApp] = useState<MagicAppInfo | null>(null); // app waiting for project selection
 
   useEffect(() => {
     fetchMagicApps()
@@ -44,9 +46,17 @@ export default function MagicAppsPage() {
     grouped.get(cat)!.push(app);
   }
 
-  const handleOpen = async (app: MagicAppInfo) => {
+  // Step 1: User clicks app icon → show project picker
+  const handleAppClick = (app: MagicAppInfo) => {
+    setPickerApp(app);
+  };
+
+  // Step 2: User selects project → open app instance anchored to that project
+  const handleProjectSelected = async (projectPath: string) => {
+    if (!pickerApp) return;
+    setPickerApp(null);
     try {
-      await openMagicAppInstance(app.id, "floating");
+      await ctx.onOpenMagicApp?.(pickerApp.id, projectPath);
       // Instance created — root layout will render the modal via instance list refresh
       // Trigger a re-fetch of instances in root
       ctx.onRefreshMagicApps?.();
@@ -89,7 +99,7 @@ export default function MagicAppsPage() {
             {categoryApps.map((app) => (
               <button
                 key={app.id}
-                onClick={() => void handleOpen(app)}
+                onClick={() => handleAppClick(app)}
                 className="flex flex-col items-center gap-2 p-4 rounded-xl border border-border bg-card hover:bg-accent/10 hover:border-primary/30 transition-all cursor-pointer group"
               >
                 <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">
@@ -104,6 +114,15 @@ export default function MagicAppsPage() {
           </div>
         </div>
       ))}
+
+      {/* Project picker dialog — shown when user clicks an app icon */}
+      <ProjectPickerDialog
+        open={pickerApp !== null}
+        onSelect={(path) => void handleProjectSelected(path)}
+        onClose={() => setPickerApp(null)}
+        projects={ctx.projectsHook.projects}
+        title={pickerApp ? `Open ${pickerApp.name} for...` : undefined}
+      />
     </div>
   );
 }
