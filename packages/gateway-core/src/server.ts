@@ -1593,11 +1593,14 @@ export async function startGatewayServer(
         });
 
         // Derive project path from context (non-"general" context is a project path).
-        // Special: "builder:create" / "builder:update" / "builder:review" activates BuilderChat mode.
+        // Special contexts:
+        // "builder:create/update/review" — BuilderChat mode
+        // "mapp:{id}" — MApp context (chat about a specific MApp)
         const chatContextRaw = chatPayload?.context ?? "general";
         const isBuilderMode = chatContextRaw.startsWith("builder:");
+        const isMappContext = chatContextRaw.startsWith("mapp:");
         const builderMode = isBuilderMode ? chatContextRaw.split(":")[1] as "create" | "update" | "review" : undefined;
-        let chatProjectPath = (!isBuilderMode && chatContextRaw !== "general") ? chatContextRaw : undefined;
+        let chatProjectPath = (!isBuilderMode && !isMappContext && chatContextRaw !== "general") ? chatContextRaw : undefined;
 
         // Emit invocation_start to project activity indicators.
         if (chatProjectPath !== undefined) {

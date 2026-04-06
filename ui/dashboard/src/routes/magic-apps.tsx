@@ -6,11 +6,15 @@
  */
 
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
+import { ContextMenu } from "@particle-academy/react-fancy";
 import { fetchMagicApps } from "@/api.js";
 import type { MagicAppInfo } from "@/types.js";
 import { useOutletContext } from "react-router";
 import type { RootContext } from "./root.js";
 import { ProjectPickerDialog } from "@/components/ProjectPickerDialog.js";
+
+const DEFAULT_AUTHOR = "civicognita";
 
 const CATEGORY_ICONS: Record<string, string> = {
   reader: "\uD83D\uDCD6",
@@ -23,6 +27,7 @@ const CATEGORY_ICONS: Record<string, string> = {
 
 export default function MagicAppsPage() {
   const ctx = useOutletContext<RootContext>();
+  const navigate = useNavigate();
   const [apps, setApps] = useState<MagicAppInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
@@ -96,21 +101,60 @@ export default function MagicAppsPage() {
             {category}
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-            {categoryApps.map((app) => (
-              <button
-                key={app.id}
-                onClick={() => handleAppClick(app)}
-                className="flex flex-col items-center gap-2 p-4 rounded-xl border border-border bg-card hover:bg-accent/10 hover:border-primary/30 transition-all cursor-pointer group"
-              >
-                <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">
-                  {CATEGORY_ICONS[app.category] ?? "\u2728"}
-                </div>
-                <span className="text-sm font-medium text-foreground text-center leading-tight">
-                  {app.name}
-                </span>
-                <span className="text-[10px] text-muted-foreground">v{app.version}</span>
-              </button>
-            ))}
+            {categoryApps.map((app) => {
+              const isEditable = app.author && app.author !== DEFAULT_AUTHOR;
+              return (
+                <ContextMenu key={app.id}>
+                  <ContextMenu.Trigger>
+                    <button
+                      onClick={() => handleAppClick(app)}
+                      className="flex flex-col items-center gap-2 p-4 rounded-xl border border-border bg-card hover:bg-accent/10 hover:border-primary/30 transition-all cursor-pointer group w-full"
+                    >
+                      <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">
+                        {CATEGORY_ICONS[app.category] ?? "\u2728"}
+                      </div>
+                      <span className="text-sm font-medium text-foreground text-center leading-tight">
+                        {app.name}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">v{app.version}</span>
+                    </button>
+                  </ContextMenu.Trigger>
+                  <ContextMenu.Content>
+                    <ContextMenu.Item onClick={() => handleAppClick(app)}>Open</ContextMenu.Item>
+                    <ContextMenu.Item onClick={() => navigate(`/magic-apps/${app.id}`)}>Details</ContextMenu.Item>
+                    {isEditable && (
+                      <>
+                        <ContextMenu.Separator />
+                        <ContextMenu.Item onClick={() => navigate(`/magic-apps/editor/${app.id}`)}>
+                          Edit in Editor
+                        </ContextMenu.Item>
+                        <ContextMenu.Item onClick={() => {
+                          ctx.onOpenChatWithMessage(
+                            `builder:update`,
+                            `I want to update the MApp "${app.name}" (${app.id}). Load it and help me make changes.`,
+                          );
+                        }}>
+                          Edit with Builder
+                        </ContextMenu.Item>
+                      </>
+                    )}
+                    {isEditable && (
+                      <>
+                        <ContextMenu.Separator />
+                        <ContextMenu.Item onClick={() => {
+                          ctx.onOpenChatWithMessage(
+                            `mapp:${app.id}`,
+                            `Tell me about the MApp "${app.name}".`,
+                          );
+                        }}>
+                          Talk about this MApp
+                        </ContextMenu.Item>
+                      </>
+                    )}
+                  </ContextMenu.Content>
+                </ContextMenu>
+              );
+            })}
           </div>
         </div>
       ))}
