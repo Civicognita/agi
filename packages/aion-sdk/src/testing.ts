@@ -53,6 +53,7 @@ export interface MockRegistrations {
   providers: LLMProviderDefinition[];
   scanProviders: ScanProviderDefinition[];
   workers: WorkerDefinition[];
+  magicApps: import("@aionima/gateway-core").MagicAppDefinition[];
   hooks: { hook: string; handler: unknown }[];
 }
 
@@ -86,6 +87,7 @@ export function createMockAPI(options: MockAPIOptions = {}): { api: AionimaPlugi
     providers: [],
     scanProviders: [],
     workers: [],
+    magicApps: [],
     hooks: [],
   };
 
@@ -123,6 +125,7 @@ export function createMockAPI(options: MockAPIOptions = {}): { api: AionimaPlugi
     registerSubdomainRoute(): void {},
     registerScanProvider(def: ScanProviderDefinition): void { registrations.scanProviders.push(def); },
     registerWorker(def: WorkerDefinition): void { registrations.workers.push(def); },
+    registerMagicApp(def: import("@aionima/gateway-core").MagicAppDefinition): void { registrations.magicApps.push(def); },
     getChannelConfig(): undefined { return undefined; },
     getConfig(): Record<string, unknown> { return { ...options.config }; },
     getLogger() { return { debug() {}, info() {}, warn() {}, error() {} }; },

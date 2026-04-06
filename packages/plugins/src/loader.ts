@@ -253,6 +253,18 @@ function createPluginAPI(
       deps.pluginRegistry.addWorker(pluginId, def);
     },
 
+    registerMagicApp(def: import("@aionima/gateway-core").MagicAppDefinition): void {
+      deps.pluginRegistry.addMagicApp(pluginId, def);
+      // Auto-register dashboard panel from MagicApp definition
+      deps.pluginRegistry.addPanel(pluginId, {
+        id: `magic-app-${def.id}`,
+        label: def.panel.label,
+        projectTypes: def.projectTypes,
+        widgets: def.panel.widgets as import("./types.js").PanelWidget[],
+        position: def.panel.position ?? 1,
+      });
+    },
+
     getChannelConfig(channelId: string): { enabled: boolean; config: Record<string, unknown> } | undefined {
       const entry = deps.channelConfigs?.find(c => c.id === channelId);
       if (!entry) return undefined;

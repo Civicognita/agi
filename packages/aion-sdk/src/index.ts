@@ -100,6 +100,7 @@ export { defineDashboardPage } from "./define-dashboard-page.js";
 export { defineDashboardDomain } from "./define-dashboard-domain.js";
 export { defineScan } from "./define-scan.js";
 export { defineWorker } from "./define-worker.js";
+export { defineMagicApp } from "./define-magic-app.js";
 
 // Testing utilities (separate entry point: @aionima/sdk/testing)
 // import { testActivate, createMockAPI } from "@aionima/sdk/testing";

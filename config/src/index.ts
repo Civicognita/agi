@@ -37,5 +37,15 @@ export {
   type ProjectCategory,
 } from "./project-schema.js";
 
+export {
+  MagicAppJsonSchema,
+  MagicAppCategorySchema,
+  MagicAppAgentPromptSchema,
+  MagicAppWorkflowSchema,
+  MagicAppPanelSchema,
+  MagicAppThemeSchema,
+  type MagicAppJson,
+} from "./magic-app-schema.js";
+
 export { ConfigWatcher } from "./hot-reload.js";
 export type { ConfigWatcherOptions, ConfigReloadEvent } from "./hot-reload.js";

@@ -428,6 +428,14 @@ export type { ProjectConfigManagerDeps, ProjectConfigChangeEvent, ProjectConfigC
 export { SystemConfigService } from "./system-config-service.js";
 export type { SystemConfigServiceDeps, SystemConfigChangeEvent } from "./system-config-service.js";
 
+// MagicApps
+export { serializeMagicApp } from "./magic-app-types.js";
+export type {
+  MagicAppCategory, MagicAppContainerContext, MagicAppContainerConfig,
+  MagicAppAgentPrompt, MagicAppWorkflow, MagicAppWorkflowStep, MagicAppWorkflowStepType,
+  MagicAppTheme, MagicAppDefinition, MagicAppInfo,
+} from "./magic-app-types.js";
+
 // Hosting
 export { HostingManager } from "./hosting-manager.js";
 export type { HostingConfig, ProjectHostingMeta, HostedProject, InfraStatus, HostingManagerDeps, InstallActionResult, DetectedProjectConfig } from "./hosting-manager.js";

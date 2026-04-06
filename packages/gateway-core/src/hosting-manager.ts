@@ -23,6 +23,7 @@ import type { StackRegistry } from "./stack-registry.js";
 import type { SharedContainerManager } from "./shared-container-manager.js";
 import type { ProjectStackInstance, StackContainerContext, StackDefinition, StackContainerConfig } from "./stack-types.js";
 import type { ProjectConfigManager } from "./project-config-manager.js";
+import type { MagicAppContainerConfig, MagicAppContainerContext } from "./magic-app-types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -741,6 +742,17 @@ export class HostingManager {
    * Returns the first per-project (shared === false) stack container config,
    * or null if no stack provides one.
    */
+  /**
+   * Resolve container config from a registered MagicApp for this project type.
+   * MagicApps serve non-dev project types (literature, media, etc.).
+   */
+  private resolveMagicAppContainerConfig(hosted: HostedProject): MagicAppContainerConfig | null {
+    if (!this.pluginReg) return null;
+    const apps = this.pluginReg.getMagicAppsForType(hosted.meta.type);
+    if (apps.length === 0) return null;
+    return apps[0]!.magicApp.containerConfig;
+  }
+
   private resolveStackContainerConfig(hosted: HostedProject): StackContainerConfig | null {
     if (!this.stackReg) return null;
 
@@ -774,7 +786,51 @@ export class HostingManager {
     }
 
     // -----------------------------------------------------------------------
-    // Primary path: resolve container config from installed stacks
+    // MagicApp path: resolve container config from registered MagicApps
+    // (non-dev project types like literature/media use MagicApps, not stacks)
+    // -----------------------------------------------------------------------
+
+    const magicAppConfig = this.resolveMagicAppContainerConfig(hosted);
+    if (magicAppConfig) {
+      const ctx: MagicAppContainerContext = {
+        projectPath: hosted.path,
+        projectHostname: hosted.meta.hostname,
+        allocatedPort: hosted.meta.port,
+        mode: hosted.meta.mode,
+      };
+
+      const internalPort = hosted.meta.internalPort ?? magicAppConfig.internalPort;
+
+      const args: string[] = [
+        "run", "-d",
+        "--name", containerName,
+        "--restart=on-failure:10",
+        "--label", "aionima.managed=true",
+        "--label", `aionima.hostname=${hosted.meta.hostname}`,
+        "--label", `aionima.project=${hosted.path}`,
+        "-p", `${String(hosted.meta.port)}:${String(internalPort)}`,
+      ];
+
+      for (const vol of magicAppConfig.volumeMounts(ctx)) {
+        args.push("-v", vol);
+      }
+      for (const [key, value] of Object.entries(magicAppConfig.env(ctx))) {
+        args.push("-e", `${key}=${value}`);
+      }
+
+      args.push(magicAppConfig.image);
+
+      const cmdTokens = magicAppConfig.command?.(ctx);
+      if (cmdTokens) {
+        args.push(...cmdTokens);
+      }
+
+      this.execContainerStart(hosted, containerName, args, "magic-app");
+      return;
+    }
+
+    // -----------------------------------------------------------------------
+    // Stack path: resolve container config from installed stacks
     // -----------------------------------------------------------------------
 
     const stackConfig = this.resolveStackContainerConfig(hosted);
@@ -936,7 +992,7 @@ export class HostingManager {
     hosted: HostedProject,
     containerName: string,
     args: string[],
-    source: "stack" | "legacy",
+    source: "stack" | "legacy" | "magic-app",
   ): void {
     try {
       const result = execFileSync("podman", args, {
