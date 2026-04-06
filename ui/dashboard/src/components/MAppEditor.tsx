@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
+import { EmojiSelect, Select, Tabs, Textarea } from "@particle-academy/react-fancy";
 import { MAppFormRenderer } from "./MAppFormRenderer.js";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +41,7 @@ interface EditorConstant {
 interface EditorPage {
   key: string; title: string; pageType: string; visibility: string;
   fields: EditorField[]; formulas: EditorFormula[];
+  processPage?: string;  // AI prompt run after page completion
 }
 
 interface EditorState {
@@ -196,8 +198,8 @@ function BasicsStep({ state, update }: { state: EditorState; update: <K extends 
           <Input value={state.version} onChange={(e) => update("version", e.target.value)} placeholder="1.0.0" />
         </div>
         <div>
-          <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Icon (emoji)</label>
-          <Input value={state.icon} onChange={(e) => update("icon", e.target.value)} placeholder="🧮" />
+          <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Icon</label>
+          <EmojiSelect value={state.icon || undefined} onChange={(emoji) => update("icon", emoji ?? "")} />
         </div>
       </div>
     </div>
@@ -301,12 +303,70 @@ function PagesStep({ state, update }: { state: EditorState; update: <K extends k
       <div className="grid grid-cols-3 gap-2 mb-3">
         <Input value={page.title} onChange={(e) => { const ps = [...state.pages]; ps[activePage] = { ...page, title: e.target.value }; update("pages", ps); }} placeholder="Page title" />
         <select value={page.pageType} onChange={(e) => { const ps = [...state.pages]; ps[activePage] = { ...page, pageType: e.target.value }; update("pages", ps); }} className="h-9 px-2 rounded-md border border-border bg-background text-[12px]">
-          <option value="standard">Standard</option><option value="magic">Magic</option><option value="embedded">Embedded</option><option value="canvas">Canvas</option>
+          <option value="standard">Standard</option>
+          <option value="magic">Magic (AI-generated fields)</option>
+          <option value="embedded">Embedded (iframe)</option>
+          <option value="canvas">Canvas (widgets)</option>
         </select>
-        <select value={page.visibility} onChange={(e) => { const ps = [...state.pages]; ps[activePage] = { ...page, visibility: e.target.value }; update("pages", ps); }} className="h-9 px-2 rounded-md border border-border bg-background text-[12px]">
-          <option value="always">Always</option><option value="conditional">Conditional</option><option value="hidden">Hidden</option>
-        </select>
+        {/* First page is always "always" — cannot be changed */}
+        {activePage === 0 ? (
+          <div className="h-9 px-2 rounded-md border border-border bg-surface0/50 text-foreground text-[12px] flex items-center text-muted-foreground">Always (first page)</div>
+        ) : (
+          <select value={page.visibility} onChange={(e) => { const ps = [...state.pages]; ps[activePage] = { ...page, visibility: e.target.value }; update("pages", ps); }} className="h-9 px-2 rounded-md border border-border bg-background text-[12px]">
+            <option value="always">Always</option>
+            <option value="conditional">Conditional</option>
+            <option value="auto">Auto (AI decides)</option>
+            <option value="hidden">Hidden (AI-prefilled)</option>
+          </select>
+        )}
       </div>
+
+      {/* Magic page validation warning */}
+      {page.pageType === "magic" && activePage === 0 && (
+        <div className="text-[11px] text-red bg-red/10 rounded-lg px-3 py-2 mb-3">Magic pages cannot be the first page — they need a prior page with a processing prompt.</div>
+      )}
+      {page.pageType === "magic" && activePage > 0 && !state.pages[activePage - 1]?.processPage && (
+        <div className="text-[11px] text-yellow bg-yellow/10 rounded-lg px-3 py-2 mb-3">Magic pages should follow a page with a processing prompt so AI can generate dynamic fields.</div>
+      )}
+
+      {/* Processing Prompt (per page — runs after user completes this page) */}
+      {(page.pageType === "standard" || page.pageType === "magic") && (
+        <div className="mb-3">
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-[11px] font-semibold text-purple-400">Processing Prompt (AI runs after this page)</label>
+            {!page.processPage && (
+              <button
+                onClick={() => { const ps = [...state.pages]; ps[activePage] = { ...page, processPage: "" }; update("pages", ps); }}
+                className="text-[10px] text-purple-400 hover:text-purple-300"
+              >
+                + Add
+              </button>
+            )}
+          </div>
+          {page.processPage !== undefined && (
+            <div className="relative">
+              <textarea
+                value={page.processPage}
+                onChange={(e) => { const ps = [...state.pages]; ps[activePage] = { ...page, processPage: e.target.value }; update("pages", ps); }}
+                rows={3}
+                placeholder="Analyze the inputs from this page and determine what to show next..."
+                className="w-full px-3 py-2 rounded-md border border-purple-400/30 bg-purple-400/5 text-foreground text-[12px] font-mono"
+              />
+              <button
+                onClick={() => { const ps = [...state.pages]; ps[activePage] = { ...page, processPage: undefined }; update("pages", ps); }}
+                className="absolute top-1 right-1 text-[10px] text-muted-foreground hover:text-red"
+              >
+                Remove
+              </button>
+            </div>
+          )}
+          {page.processPage !== undefined && (
+            <p className="text-[10px] text-muted-foreground mt-1">
+              AI processes collected inputs after this page. Returns: prepopulate, visibility overrides, dynamic fields for magic pages.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Fields */}
       {(page.pageType === "standard" || page.pageType === "magic") && (
