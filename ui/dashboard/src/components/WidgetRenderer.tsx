@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { ContentRenderer } from "@particle-academy/react-fancy";
 import { markdownComponents } from "@/lib/markdown";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -301,11 +302,7 @@ function LogStreamWidget({ widget }: { widget: Extract<PanelWidget, { type: "log
 
 function MarkdownWidget({ widget }: { widget: Extract<PanelWidget, { type: "markdown" }> }) {
   return (
-    <div className="prose-sm">
-      <ReactMarkdown components={markdownComponents()}>
-        {widget.content}
-      </ReactMarkdown>
-    </div>
+    <ContentRenderer value={widget.content} format="markdown" />
   );
 }
 

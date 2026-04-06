@@ -79,6 +79,18 @@ const CONTRACTS: PropContract[] = [
     valid: ["list", "value", "defaultValue", "onValueChange", "placeholder", "size", "label", "description", "required", "disabled", "searchable", "className"],
     invalid: ["options", "onChange", "items", "onSelect", "onInput"],
   },
+  {
+    component: "ContentRenderer",
+    required: ["value"],
+    valid: ["value", "format", "lineSpacing", "className", "extensions"],
+    invalid: ["content", "markdown", "html", "children", "source", "dangerouslySetInnerHTML"],
+  },
+  {
+    component: "EmojiSelect",
+    required: [],
+    valid: ["value", "defaultValue", "onChange", "placeholder", "className"],
+    invalid: ["onSelect", "onValueChange", "emoji", "selected"],
+  },
 ];
 
 // ---------------------------------------------------------------------------

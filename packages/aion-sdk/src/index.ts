@@ -112,6 +112,10 @@ export type {
   MAppCondition, MAppPage, MAppPageType, MAppOutput,
 } from "./mapp-schema.js";
 
+// ADF UI Component Catalog
+export { UI_COMPONENTS, WIDGET_COMPONENT_MAP } from "./ui-components.js";
+export type { ContentRendererConfig, MAppWidgetType } from "./ui-components.js";
+
 // Testing utilities (separate entry point: @aionima/sdk/testing)
 // import { testActivate, createMockAPI } from "@aionima/sdk/testing";
 
