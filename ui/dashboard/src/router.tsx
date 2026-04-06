@@ -42,6 +42,7 @@ import MagicAppsPage from "./routes/magic-apps.js";
 import MagicAppDetailPage from "./routes/magic-app-detail.js";
 import MagicAppsAdminPage from "./routes/magic-apps-admin.js";
 import MAppEditorPage from "./routes/mapp-editor.js";
+import { RouteErrorBoundary } from "./components/ErrorBoundary.js";
 
 export const router = createBrowserRouter([
   {
@@ -51,6 +52,7 @@ export const router = createBrowserRouter([
   {
     path: "/",
     element: <RootLayout />,
+    errorElement: <RouteErrorBoundary />,
     children: [
       { index: true, element: <OverviewPage /> },
       { path: "coa", element: <COAPage /> },

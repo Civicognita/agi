@@ -60,7 +60,7 @@ export function MagicAppPicker({ project, onOpenApp, onRefresh }: MagicAppPicker
           >
             <option value="">None (no viewer)</option>
             {allApps
-              .filter((a) => a.projectCategories.includes(project.category ?? project.projectType?.category ?? ""))
+              .filter((a) => !a.projectCategories || a.projectCategories.length === 0 || a.projectCategories.includes(project.category ?? project.projectType?.category ?? ""))
               .map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name} ({a.category})
