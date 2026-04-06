@@ -180,8 +180,8 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
     <div className="px-2 py-2">
       <MultiSwitch
         value={perspective}
-        onChange={(v) => setManualPerspective(v as Perspective)}
-        options={[
+        onValueChange={(v) => setManualPerspective(v as Perspective)}
+        list={[
           { value: "frontend", label: "Frontend" },
           { value: "backend", label: "Backend" },
         ]}
@@ -256,7 +256,6 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
             return (
               <Sidebar.Item
                 key={item.to}
-                href={item.to}
                 active={isActive}
                 icon={Icon ? <Icon className="w-4 h-4" /> : undefined}
                 onClick={() => navigate(item.to)}

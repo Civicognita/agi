@@ -761,6 +761,9 @@ export default function RootLayout() {
               onDock={() => void instanceMgr.setMode(inst.instanceId, "docked")}
               onFloat={() => void instanceMgr.setMode(inst.instanceId, "floating")}
               onClose={() => void instanceMgr.closeApp(inst.instanceId)}
+              widgets={app.panel?.widgets}
+              pages={app.pages}
+              constants={app.constants}
             />
           );
         })}

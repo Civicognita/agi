@@ -233,19 +233,31 @@ export interface ContainerStatusChangedData {
 // ---------------------------------------------------------------------------
 
 export interface MagicAppInfo {
+  $schema?: string;
   id: string;
   name: string;
+  author?: string;
   description: string;
   version: string;
   icon?: string;
-  category: "reader" | "gallery" | "dashboard" | "viewer" | "editor" | "custom";
-  projectTypes: string[];
-  projectCategories: string[];
-  hasContainer: boolean;
-  panelLabel: string;
-  agentPromptCount: number;
-  workflowCount: number;
-  toolCount: number;
+  category: string;
+  projectTypes?: string[];
+  projectCategories?: string[];
+  permissions?: Array<{ id: string; reason: string; required: boolean }>;
+  container?: Record<string, unknown>;
+  panel?: { label: string; widgets: Array<Record<string, unknown>>; position?: number };
+  pages?: Array<Record<string, unknown>>;
+  constants?: Array<Record<string, unknown>>;
+  output?: Record<string, unknown>;
+  prompts?: Array<Record<string, unknown>>;
+  workflows?: Array<Record<string, unknown>>;
+  tools?: Array<Record<string, unknown>>;
+  // Legacy serialized fields (backward compat)
+  hasContainer?: boolean;
+  panelLabel?: string;
+  agentPromptCount?: number;
+  workflowCount?: number;
+  toolCount?: number;
   pluginId?: string;
 }
 

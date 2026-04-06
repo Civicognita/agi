@@ -3774,11 +3774,11 @@ export async function createGatewayRuntimeState(
   // MagicApp API — list registered apps + instance state persistence
   // -----------------------------------------------------------------------
 
-  // GET /api/dashboard/magic-apps — list all registered MApps (from MAppRegistry)
+  // GET /api/dashboard/magic-apps — list all registered MApps with full definitions
   fastify.get("/api/dashboard/magic-apps", async (_request, reply) => {
     if (!deps.mappRegistry) return reply.send({ apps: [] });
-    const { serializeMApp } = await import("@aionima/sdk");
-    return reply.send({ apps: deps.mappRegistry.getAll().map(serializeMApp) });
+    // Return full definitions — MApps are JSON-safe (no functions in the schema)
+    return reply.send({ apps: deps.mappRegistry.getAll() });
   });
 
   // GET /api/dashboard/magic-apps/:id — single MApp detail
