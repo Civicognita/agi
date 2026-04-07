@@ -91,6 +91,10 @@ export function COAExplorer({ entityId }: COAExplorerProps) {
             { value: "artifact", label: "artifact" },
             { value: "commit", label: "commit" },
             { value: "action", label: "action" },
+            { value: "mapp_mint", label: "mapp_mint" },
+            { value: "mapp_install", label: "mapp_install" },
+            { value: "mapp_publish", label: "mapp_publish" },
+            { value: "mapp_execute", label: "mapp_execute" },
           ]}
           value={workTypeFilter || "__all__"}
           onValueChange={(v) => setWorkTypeFilter(v === "__all__" ? "" : v)}

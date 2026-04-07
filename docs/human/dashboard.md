@@ -66,9 +66,11 @@ The sidebar organizes the dashboard into sections. Each section groups related p
 | Page | Purpose |
 |------|---------|
 | Overview | Impact score summary, entity counts, activity timeline, leaderboard |
-| COA Explorer | Browse Chain of Accountability audit entries; filter by entity, channel, or date |
+| COA Explorer | Browse Chain of Accountability audit entries; filter by entity, work type, or fingerprint |
 
-The Impactinomics section shows the aggregate output of the entity model. Impact scores are computed from entity activity and verification tier. The COA Explorer lets you trace every agent invocation back to its accountability fingerprint.
+The Impactinomics section shows the aggregate output of the entity model. Impact scores are computed from entity activity and verification tier. The COA Explorer lets you trace every agent invocation back to its accountability fingerprint using the COA<>COI pattern (Chain of Accountability <> Chain of Impact).
+
+MApp lifecycle events (mint, install, publish, execute) are tracked in the COA chain and appear in the Explorer with their corresponding impact registrations.
 
 ### Projects
 

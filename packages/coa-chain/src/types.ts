@@ -18,7 +18,11 @@ export type COAWorkType =
   | "verification"
   | "artifact"
   | "commit"
-  | "action";
+  | "action"
+  | "mapp_mint"
+  | "mapp_install"
+  | "mapp_publish"
+  | "mapp_execute";
 
 /** Full COA record for persistence */
 export interface COARecord {

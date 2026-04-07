@@ -39,6 +39,10 @@ const WORK_TYPE_DOMAIN_MAP: Record<string, string> = {
   artifact: "knowledge",
   commit: "innovation",
   action: "operations",
+  mapp_mint: "innovation",
+  mapp_install: "operations",
+  mapp_publish: "innovation",
+  mapp_execute: "technology",
 };
 
 function workTypeToDomain(workType: string | null): string {
