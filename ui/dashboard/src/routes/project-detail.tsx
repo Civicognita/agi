@@ -10,7 +10,7 @@ import { formatSecurityFixPrompt } from "@/lib/security-fix-prompt.js";
 import type { SecurityFinding } from "@/types";
 
 export default function ProjectDetailPage() {
-  const { theme, projectsHook, hostingHook, onOpenChat, onOpenChatWithMessage, onOpenEditor, projectActivity, onToolExecute, onOpenTerminal, configHook } = useRootContext();
+  const { theme, projectsHook, hostingHook, onOpenChat, onOpenChatWithMessage, onOpenEditor, projectActivity, onToolExecute, onOpenTerminal, configHook, onOpenMagicApp } = useRootContext();
   const navigate = useNavigate();
   const contributingEnabled = Boolean(configHook.data?.dev?.enabled);
 
@@ -45,6 +45,7 @@ export default function ProjectDetailPage() {
       onOpenTerminal={onOpenTerminal}
       contributingEnabled={contributingEnabled}
       onFixFinding={handleFixFinding}
+      onOpenMagicApp={onOpenMagicApp}
     />
   );
 }

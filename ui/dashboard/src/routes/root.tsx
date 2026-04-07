@@ -503,6 +503,8 @@ export default function RootLayout() {
     onOpenTerminal: handleOpenTerminal,
     onRefreshMagicApps: () => { void instanceMgr.refresh(); },
     onOpenMagicApp: async (appId: string, projectPath: string) => {
+      // Refresh MApp list to ensure newly installed apps are available for modal rendering
+      await fetchMagicApps().then(setMagicApps).catch(() => {});
       await instanceMgr.openApp(appId, projectPath);
     },
   };

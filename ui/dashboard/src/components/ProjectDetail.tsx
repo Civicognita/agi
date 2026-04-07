@@ -46,6 +46,7 @@ export interface ProjectDetailProps {
   onOpenTerminal?: (path: string) => void;
   contributingEnabled?: boolean;
   onFixFinding?: (projectPath: string, finding: import("@/types").SecurityFinding) => void;
+  onOpenMagicApp?: (appId: string, projectPath: string) => Promise<void>;
 }
 
 export function ProjectDetail({
@@ -53,6 +54,7 @@ export function ProjectDetail({
   hostingStatus, onHostingConfigure, onHostingRestart,
   onTunnelEnable, onTunnelDisable, hostingBusy,
   onOpenEditor, onToolExecute, onOpenTerminal, contributingEnabled, onFixFinding,
+  onOpenMagicApp,
 }: ProjectDetailProps) {
   const { slug } = useParams<{ slug: string }>();
   const project = projects.find((p) => projectSlug(p.path) === slug);
@@ -641,12 +643,7 @@ export function ProjectDetail({
             <MagicAppPicker
               project={project}
               onOpenApp={(appId, projectPath) => {
-                void (async () => {
-                  try {
-                    const rootCtx = (window as unknown as { __aionima_open_magic_app?: (a: string, p: string) => Promise<void> }).__aionima_open_magic_app;
-                    if (rootCtx) await rootCtx(appId, projectPath);
-                  } catch { /* handled in root */ }
-                })();
+                if (onOpenMagicApp) void onOpenMagicApp(appId, projectPath);
               }}
               onRefresh={onRefresh}
             />
