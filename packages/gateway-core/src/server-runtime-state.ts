@@ -4029,8 +4029,35 @@ export async function createGatewayRuntimeState(
   // MApp Marketplace — browse and install MApps from the marketplace repo
   // -----------------------------------------------------------------------
 
-  const mappMarketplaceDir = deps.mappMarketplaceDir ?? "/opt/aionima-mapp-marketplace";
   const mappsInstallDir = join(homedir(), ".agi", "mapps");
+
+  /**
+   * Resolve all MApp marketplace directories to scan.
+   * Official path is hardcoded; workspace dirs are checked for dev copies.
+   */
+  function resolveMappMarketplaceDirs(): string[] {
+    const dirs: string[] = [];
+    // Official production path (always checked)
+    const officialDir = "/opt/aionima-mapp-marketplace";
+    if (existsSync(join(officialDir, "mapps"))) dirs.push(officialDir);
+    // Dev workspace copies — scan workspace project directories
+    for (const wsDir of deps.workspaceProjects ?? []) {
+      try {
+        const entries = readdirSync(wsDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && entry.name === "aionima-mapp-marketplace") {
+            const candidate = resolvePath(wsDir, entry.name);
+            if (existsSync(join(candidate, "mapps"))) dirs.push(candidate);
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    // Explicit override from config (if set)
+    if (deps.mappMarketplaceDir && !dirs.includes(deps.mappMarketplaceDir) && existsSync(join(deps.mappMarketplaceDir, "mapps"))) {
+      dirs.push(deps.mappMarketplaceDir);
+    }
+    return dirs;
+  }
 
   // GET /api/mapp-marketplace/catalog — list available MApps from marketplace
   fastify.get("/api/mapp-marketplace/catalog", async (request, reply) => {
@@ -4040,13 +4067,18 @@ export async function createGatewayRuntimeState(
     }
 
     const { scanMAppMarketplace } = await import("./mapp-discovery.js");
-    const entries = scanMAppMarketplace(mappMarketplaceDir, mappsInstallDir);
-    const serialized = entries.map((e) => ({
-      definition: e.definition,
-      sourcePath: e.sourcePath,
-      installed: e.installed,
-    }));
-    return reply.send({ apps: serialized });
+    const marketplaceDirs = resolveMappMarketplaceDirs();
+    const seen = new Set<string>();
+    const allEntries: { definition: unknown; sourcePath: string; installed: boolean }[] = [];
+    for (const dir of marketplaceDirs) {
+      const entries = scanMAppMarketplace(dir, mappsInstallDir);
+      for (const e of entries) {
+        if (seen.has(e.definition.id)) continue; // Dedupe across sources
+        seen.add(e.definition.id);
+        allEntries.push({ definition: e.definition, sourcePath: e.sourcePath, installed: e.installed });
+      }
+    }
+    return reply.send({ apps: allEntries });
   });
 
   // POST /api/mapp-marketplace/install — install a MApp from marketplace
@@ -4061,8 +4093,14 @@ export async function createGatewayRuntimeState(
       return reply.code(400).send({ error: "appId and author are required" });
     }
 
-    const srcPath = join(mappMarketplaceDir, "mapps", body.author, `${body.appId}.json`);
-    if (!existsSync(srcPath)) {
+    // Find the MApp in any marketplace directory
+    const marketplaceDirs = resolveMappMarketplaceDirs();
+    let srcPath: string | null = null;
+    for (const dir of marketplaceDirs) {
+      const candidate = join(dir, "mapps", body.author, `${body.appId}.json`);
+      if (existsSync(candidate)) { srcPath = candidate; break; }
+    }
+    if (!srcPath) {
       return reply.code(404).send({ error: `MApp "${body.appId}" not found in marketplace` });
     }
 

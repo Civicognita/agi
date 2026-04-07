@@ -133,8 +133,8 @@ export default function MagicAppsAdminPage() {
           {catalog.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <div className="text-3xl mb-3">📦</div>
-              <div className="text-sm font-medium mb-1">No marketplace configured</div>
-              <div className="text-xs">Set <code className="px-1 py-0.5 bg-muted rounded">mappMarketplace.dir</code> in your config to point to the MApp marketplace repo.</div>
+              <div className="text-sm font-medium mb-1">No MApps available</div>
+              <div className="text-xs">The official MApp marketplace is empty or not yet deployed. MApps will appear here once the marketplace repo is available.</div>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
