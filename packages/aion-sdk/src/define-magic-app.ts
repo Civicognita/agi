@@ -5,7 +5,7 @@
  *   defineMagicApp("reader", "Reader", "civicognita")
  *     .description("E-reader for literature projects")
  *     .version("1.0.0")
- *     .category("reader")
+ *     .category("viewer")
  *     .projectTypes(["writing"])
  *     .permission("container.run", "Serves content via nginx", true)
  *     .container({ image: "nginx:alpine", internalPort: 80, volumeMounts: [...] })

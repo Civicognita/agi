@@ -12,6 +12,15 @@ import type { MAppRegistry } from "./mapp-registry.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 
+/** Maps legacy MApp categories to the new consolidated set. */
+const CATEGORY_MIGRATION_MAP: Record<string, string> = {
+  reader: "viewer",
+  gallery: "viewer",
+  dashboard: "viewer",
+  editor: "production",
+  suite: "production",
+};
+
 export interface MAppDiscoveryResult {
   loaded: number;
   skipped: number;
@@ -62,6 +71,10 @@ export function discoverMApps(
       const filePath = join(authorPath, file);
       try {
         const raw = JSON.parse(readFileSync(filePath, "utf-8"));
+        // Migrate legacy category values before validation
+        if (typeof raw.category === "string" && raw.category in CATEGORY_MIGRATION_MAP) {
+          raw.category = CATEGORY_MIGRATION_MAP[raw.category];
+        }
         const parsed = MAppDefinitionSchema.safeParse(raw);
 
         if (!parsed.success) {

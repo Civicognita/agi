@@ -1,11 +1,14 @@
 /**
  * ProjectPickerDialog — modal for selecting a project before opening a MagicApp.
  * MagicApps are always project-anchored.
+ *
+ * When an `app` is provided, projects are filtered to only show those
+ * compatible with the MApp's declared projectTypes/projectCategories.
  */
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button.js";
-import type { ProjectInfo } from "@/types.js";
+import type { MagicAppInfo, ProjectInfo } from "@/types.js";
 
 export interface ProjectPickerDialogProps {
   open: boolean;
@@ -13,16 +16,28 @@ export interface ProjectPickerDialogProps {
   onClose: () => void;
   projects: ProjectInfo[];
   title?: string;
+  /** When provided, filters projects to those compatible with this MApp. */
+  app?: MagicAppInfo | null;
 }
 
-export function ProjectPickerDialog({ open, onSelect, onClose, projects, title }: ProjectPickerDialogProps) {
+export function ProjectPickerDialog({ open, onSelect, onClose, projects, title, app }: ProjectPickerDialogProps) {
   const [filter, setFilter] = useState("");
 
   if (!open) return null;
 
+  // Filter by MApp compatibility when an app is specified
+  let compatible = projects;
+  if (app) {
+    compatible = projects.filter((p) => {
+      if (app.projectTypes?.length && !app.projectTypes.includes(p.projectType?.id ?? "")) return false;
+      if (app.projectCategories?.length && !app.projectCategories.includes(p.category ?? p.projectType?.category ?? "")) return false;
+      return true;
+    });
+  }
+
   const filtered = filter
-    ? projects.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()) || p.path.toLowerCase().includes(filter.toLowerCase()))
-    : projects;
+    ? compatible.filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()) || p.path.toLowerCase().includes(filter.toLowerCase()))
+    : compatible;
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50" onClick={onClose}>
@@ -44,7 +59,11 @@ export function ProjectPickerDialog({ open, onSelect, onClose, projects, title }
         </div>
         <div className="flex-1 overflow-y-auto p-2">
           {filtered.length === 0 && (
-            <div className="text-center py-6 text-muted-foreground text-xs">No projects found</div>
+            <div className="text-center py-6 text-muted-foreground text-xs">
+              {app && compatible.length === 0
+                ? "No compatible projects for this app"
+                : "No projects found"}
+            </div>
           )}
           {filtered.map((p) => (
             <button

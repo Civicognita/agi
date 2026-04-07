@@ -17,7 +17,7 @@ import type { ProjectCategory, ProjectTypeTool } from "./project-types.js";
 // Categories
 // ---------------------------------------------------------------------------
 
-export type MagicAppCategory = "reader" | "gallery" | "dashboard" | "viewer" | "editor" | "custom";
+export type MagicAppCategory = "viewer" | "production" | "tool" | "game" | "custom";
 
 // ---------------------------------------------------------------------------
 // Container config — how the MagicApp serves content

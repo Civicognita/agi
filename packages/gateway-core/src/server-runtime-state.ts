@@ -855,7 +855,7 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Projects API only allowed from private network" });
     }
     const projectDirs = deps.workspaceProjects ?? [];
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; description?: string }[] = [];
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; description?: string; magicApps?: string[] }[] = [];
     for (const dir of projectDirs) {
       try {
         const entries = readdirSync(dir, { withFileTypes: true });
@@ -868,14 +868,16 @@ export async function createGatewayRuntimeState(
           let metaType: string | null = null;
           let metaCategory: string | null = null;
           let metaDescription: string | undefined;
+          let metaMagicApps: string[] | undefined;
           const metaPath = projectConfigPath(fullPath);
           if (existsSync(metaPath)) {
             try {
-              const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string };
+              const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string; magicApps?: string[] };
               tynnToken = meta.tynnToken ?? null;
               metaType = meta.type ?? null;
               metaCategory = meta.category ?? null;
               metaDescription = meta.description;
+              metaMagicApps = meta.magicApps;
             } catch { /* ignore malformed metadata */ }
           }
           const hosting = deps.hostingManager
@@ -889,7 +891,7 @@ export async function createGatewayRuntimeState(
           const typeDef = registry?.get(projectTypeId);
           const projectType = typeDef ? { id: typeDef.id, label: typeDef.label, category: typeDef.category, hostable: typeDef.hostable, hasCode: typeDef.hasCode, tools: typeDef.tools } : undefined;
           const category = metaCategory ?? projectType?.category ?? null;
-          projects.push({ name: entry.name, path: fullPath, hasGit, tynnToken, hosting, detectedHosting, projectType, category: category ?? undefined, description: metaDescription });
+          projects.push({ name: entry.name, path: fullPath, hasGit, tynnToken, hosting, detectedHosting, projectType, category: category ?? undefined, description: metaDescription, magicApps: metaMagicApps });
         }
       } catch { /* directory may not exist */ }
     }
@@ -3906,6 +3908,120 @@ export async function createGatewayRuntimeState(
       return reply.send({ ok: true });
     });
   }
+
+  // -----------------------------------------------------------------------
+  // PUT /api/projects/viewer — set the Content Viewer MApp for a project
+  // -----------------------------------------------------------------------
+
+  fastify.put("/api/projects/viewer", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+
+    const body = request.body as { path?: string; viewer?: string | null } | undefined;
+    if (!body?.path || typeof body.path !== "string") {
+      return reply.code(400).send({ error: "path is required" });
+    }
+
+    const resolved = resolvePath(body.path);
+    const metaPath = projectConfigPath(resolved);
+    if (!existsSync(metaPath)) {
+      return reply.code(404).send({ error: "Project config not found" });
+    }
+
+    try {
+      const raw = JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
+      const hosting = (raw.hosting ?? {}) as Record<string, unknown>;
+      if (body.viewer) {
+        hosting.viewer = body.viewer;
+      } else {
+        delete hosting.viewer;
+      }
+      raw.hosting = hosting;
+      writeFileSync(metaPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
+      return reply.send({ ok: true, viewer: body.viewer ?? null });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ error: msg });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // PUT /api/projects/magic-apps — attach a MApp to a project
+  // -----------------------------------------------------------------------
+
+  fastify.put("/api/projects/magic-apps", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+
+    const body = request.body as { path?: string; appId?: string } | undefined;
+    if (!body?.path || typeof body.path !== "string") {
+      return reply.code(400).send({ error: "path is required" });
+    }
+    if (!body.appId || typeof body.appId !== "string") {
+      return reply.code(400).send({ error: "appId is required" });
+    }
+
+    const resolved = resolvePath(body.path);
+    const metaPath = projectConfigPath(resolved);
+    if (!existsSync(metaPath)) {
+      return reply.code(404).send({ error: "Project config not found" });
+    }
+
+    try {
+      const raw = JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
+      const existing = Array.isArray(raw.magicApps) ? (raw.magicApps as string[]) : [];
+      if (!existing.includes(body.appId)) {
+        existing.push(body.appId);
+      }
+      raw.magicApps = existing;
+      writeFileSync(metaPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
+      return reply.send({ ok: true, magicApps: existing });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ error: msg });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // DELETE /api/projects/magic-apps — detach a MApp from a project
+  // -----------------------------------------------------------------------
+
+  fastify.delete("/api/projects/magic-apps", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+
+    const body = request.body as { path?: string; appId?: string } | undefined;
+    if (!body?.path || typeof body.path !== "string") {
+      return reply.code(400).send({ error: "path is required" });
+    }
+    if (!body.appId || typeof body.appId !== "string") {
+      return reply.code(400).send({ error: "appId is required" });
+    }
+
+    const resolved = resolvePath(body.path);
+    const metaPath = projectConfigPath(resolved);
+    if (!existsSync(metaPath)) {
+      return reply.code(404).send({ error: "Project config not found" });
+    }
+
+    try {
+      const raw = JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
+      const existing = Array.isArray(raw.magicApps) ? (raw.magicApps as string[]) : [];
+      const updated = existing.filter((id) => id !== body.appId);
+      raw.magicApps = updated;
+      writeFileSync(metaPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
+      return reply.send({ ok: true, magicApps: updated });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ error: msg });
+    }
+  });
 
   // -----------------------------------------------------------------------
   // Pre-listen hooks — register additional routes before the server starts

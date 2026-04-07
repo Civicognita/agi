@@ -26,7 +26,7 @@ const FIELD_TYPES = [
   "date", "email", "phone", "url", "bool", "select", "multiselect", "info",
 ] as const;
 
-const CATEGORIES = ["reader", "gallery", "tool", "suite", "editor", "viewer", "game", "custom"] as const;
+const CATEGORIES = ["viewer", "production", "tool", "game", "custom"] as const;
 
 interface EditorField {
   key: string; cell: string; type: string; label: string;

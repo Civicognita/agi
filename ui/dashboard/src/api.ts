@@ -599,6 +599,45 @@ export async function configureHosting(params: {
   return res.json() as Promise<{ ok: boolean; hosting: unknown }>;
 }
 
+export async function setProjectViewer(path: string, viewer: string | null): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/projects/viewer", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, viewer }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function attachMagicApp(path: string, appId: string): Promise<{ ok: boolean; magicApps: string[] }> {
+  const res = await fetch("/api/projects/magic-apps", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, appId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean; magicApps: string[] }>;
+}
+
+export async function detachMagicApp(path: string, appId: string): Promise<{ ok: boolean; magicApps: string[] }> {
+  const res = await fetch("/api/projects/magic-apps", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, appId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean; magicApps: string[] }>;
+}
+
 export async function restartHosting(path: string): Promise<{ ok: boolean; hosting: unknown }> {
   const res = await fetch("/api/hosting/restart", {
     method: "POST",

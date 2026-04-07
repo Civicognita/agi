@@ -11,7 +11,7 @@ import { z } from "zod";
 import { ProjectCategorySchema } from "./project-schema.js";
 
 export const MagicAppCategorySchema = z.enum([
-  "reader", "gallery", "dashboard", "viewer", "editor", "custom",
+  "viewer", "production", "tool", "game", "custom",
 ]);
 
 export const MagicAppAgentPromptSchema = z.object({

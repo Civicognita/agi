@@ -1460,6 +1460,7 @@ export class HostingManager {
     image?: string;
     error?: string;
     url: string | null;
+    viewer?: string;
   } {
     const resolved = resolvePath(projectPath);
     const hosted = this.projects.get(resolved);
@@ -1489,6 +1490,7 @@ export class HostingManager {
         ...(hosted.containerName ? { containerName: hosted.containerName } : {}),
         ...(resolvedImage ? { image: resolvedImage } : {}),
         ...(hosted.error !== undefined ? { error: hosted.error } : {}),
+        ...(hosted.meta.viewer ? { viewer: hosted.meta.viewer } : {}),
         url: hosted.status === "running"
           ? `https://${hosted.meta.hostname}.${this.config.baseDomain}`
           : null,
@@ -1508,6 +1510,7 @@ export class HostingManager {
         mode: meta.mode,
         internalPort: meta.internalPort,
         runtimeId: meta.runtimeId ?? null,
+        ...(meta.viewer ? { viewer: meta.viewer } : {}),
         status: "unconfigured",
         url: null,
       };

@@ -154,7 +154,7 @@ export const MAppDefinitionSchema = z.object({
   description: z.string(),
   icon: z.string().optional(),
   license: z.string().optional(),
-  category: z.enum(["reader", "gallery", "tool", "suite", "editor", "viewer", "game", "custom"]),
+  category: z.enum(["viewer", "production", "tool", "game", "custom"]),
   projectTypes: z.array(z.string()).optional(),
   projectCategories: z.array(z.string()).optional(),
   permissions: z.array(MAppPermissionSchema),

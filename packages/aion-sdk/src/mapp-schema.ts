@@ -34,22 +34,16 @@ export const MAPP_SCHEMA_VERSION = "mapp/1.0" as const;
 /**
  * MApp categories define the broad purpose of the application.
  *
- * - `reader` — Content viewers (e-readers, document viewers)
- * - `gallery` — Media viewers (image galleries, video players)
- * - `tool` — Input → processing → output (calculators, analyzers, converters)
- * - `suite` — Full-featured application suites (finance, project management)
- * - `editor` — Content creation and editing
- * - `viewer` — Data visualization and dashboards
+ * - `viewer` — Content consumption & display (e-readers, galleries, dashboards)
+ * - `production` — Asset creation & editing (IDE, mind-mapping, writing suites)
+ * - `tool` — Stateless input → output utilities (calculators, analyzers, generators)
  * - `game` — Interactive games and simulations
  * - `custom` — Anything that doesn't fit the above
  */
 export type MAppCategory =
-  | "reader"
-  | "gallery"
-  | "tool"
-  | "suite"
-  | "editor"
   | "viewer"
+  | "production"
+  | "tool"
   | "game"
   | "custom";
 
@@ -341,7 +335,7 @@ export interface MAppOutput {
  *   "author": "civicognita",
  *   "version": "1.0.0",
  *   "description": "E-reader for literature projects",
- *   "category": "reader",
+ *   "category": "viewer",
  *   "permissions": [
  *     { "id": "container.run", "reason": "Serves content via nginx", "required": true },
  *     { "id": "fs.read", "reason": "Reads project files", "required": true }
