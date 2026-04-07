@@ -263,7 +263,7 @@ export interface MagicAppInfo {
 
 export interface MAppCatalogEntry {
   definition: MagicAppInfo;
-  sourcePath: string;
+  source: string;
   installed: boolean;
 }
 

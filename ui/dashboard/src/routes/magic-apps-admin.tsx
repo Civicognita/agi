@@ -51,7 +51,7 @@ export default function MagicAppsAdminPage() {
   const handleInstall = async (entry: MAppCatalogEntry) => {
     setInstalling(entry.definition.id);
     try {
-      await installMApp(entry.definition.id, entry.definition.author ?? DEFAULT_AUTHOR);
+      await installMApp(entry.definition.id, entry.definition.author ?? DEFAULT_AUTHOR, entry.source);
       await load();
     } catch (err) {
       console.error("Install failed:", err);

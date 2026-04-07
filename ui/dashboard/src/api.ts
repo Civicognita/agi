@@ -644,11 +644,11 @@ export async function fetchMAppCatalog(): Promise<{ apps: import("./types.js").M
   return res.json() as Promise<{ apps: import("./types.js").MAppCatalogEntry[] }>;
 }
 
-export async function installMApp(appId: string, author: string): Promise<{ ok: boolean }> {
+export async function installMApp(appId: string, author: string, source?: string): Promise<{ ok: boolean }> {
   const res = await fetch("/api/mapp-marketplace/install", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ appId, author }),
+    body: JSON.stringify({ appId, author, source }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };

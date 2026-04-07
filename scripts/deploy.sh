@@ -7,7 +7,6 @@ set -uo pipefail
 DEPLOY_DIR="/opt/aionima"
 PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
 MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
-MAPP_MARKETPLACE_DIR="${AIONIMA_MAPP_MARKETPLACE_DIR:-/opt/aionima-mapp-marketplace}"
 ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
 
@@ -108,23 +107,11 @@ else
   emit "pull-id" "skip" "ID directory not found at $ID_DIR"
 fi
 
-# ---------------------------------------------------------------------------
-# 3d. Pull MApp Marketplace repo
-# ---------------------------------------------------------------------------
-if [ -d "$MAPP_MARKETPLACE_DIR/.git" ]; then
-  emit "pull-mapp-marketplace" "start"
-  if (cd "$MAPP_MARKETPLACE_DIR" && git pull --ff-only origin main 2>&1); then
-    emit "pull-mapp-marketplace" "done" "MApp marketplace repo updated"
-  else
-    emit "pull-mapp-marketplace" "error" "MApp marketplace pull failed"
-    # Non-fatal — installed MApps still work from ~/.agi/mapps/
-  fi
-else
-  emit "pull-mapp-marketplace" "skip" "MApp marketplace directory not found at $MAPP_MARKETPLACE_DIR"
-fi
+# MApp Marketplace is fetched remotely — no local pull needed.
+# MApps are installed on demand from GitHub via the dashboard.
 
 # ---------------------------------------------------------------------------
-# 3e. Build local ID service (if enabled in config)
+# 3d. Build local ID service (if enabled in config)
 # ---------------------------------------------------------------------------
 # Check if local ID service is enabled by reading the AGI config.
 # The config lives at ~/.agi/aionima.json and we check idService.local.enabled.
@@ -252,46 +239,11 @@ if [ -f "$REQUIRED_PLUGINS_FILE" ] && [ -d "$MARKETPLACE_DIR/plugins" ]; then
   fi
 fi
 
-# ---------------------------------------------------------------------------
-# 7d. Reconcile installed MApps against MApp marketplace
-# ---------------------------------------------------------------------------
-MAPPS_INSTALL_DIR="$HOME/.agi/mapps"
-if [ -d "$MAPP_MARKETPLACE_DIR/mapps" ] && [ -d "$MAPPS_INSTALL_DIR" ]; then
-  emit "mapp-reconcile" "start"
-  MAPP_UPDATED=0
-  MAPP_ERRORS=0
-  # Walk installed MApps and update from marketplace if source has changed
-  for author_dir in "$MAPPS_INSTALL_DIR"/*/; do
-    [ -d "$author_dir" ] || continue
-    author=$(basename "$author_dir")
-    marketplace_author="$MAPP_MARKETPLACE_DIR/mapps/$author"
-    [ -d "$marketplace_author" ] || continue
-    for mapp_file in "$author_dir"*.json; do
-      [ -f "$mapp_file" ] || continue
-      slug=$(basename "$mapp_file")
-      src="$marketplace_author/$slug"
-      [ -f "$src" ] || continue
-      # Compare checksums — update if marketplace version is different
-      if ! cmp -s "$src" "$mapp_file" 2>/dev/null; then
-        if cp "$src" "$mapp_file" 2>/dev/null; then
-          MAPP_UPDATED=$((MAPP_UPDATED + 1))
-        else
-          MAPP_ERRORS=$((MAPP_ERRORS + 1))
-        fi
-      fi
-    done
-  done
-  if [ "$MAPP_ERRORS" -gt 0 ]; then
-    emit "mapp-reconcile" "error" "$MAPP_UPDATED updated, $MAPP_ERRORS errors"
-  else
-    emit "mapp-reconcile" "done" "$MAPP_UPDATED MApps updated from marketplace"
-  fi
-else
-  emit "mapp-reconcile" "skip" "No MApp marketplace or install directory found"
-fi
+# MApp reconciliation is not needed — MApps are fetched from GitHub on demand.
+# Updates are handled via the dashboard MagicApps admin page.
 
 # ---------------------------------------------------------------------------
-# 7e. Migrate project configs to current schema
+# 7d. Migrate project configs to current schema
 # ---------------------------------------------------------------------------
 emit "migrate" "start"
 MIGRATE_SCRIPT="$DEPLOY_DIR/scripts/migrate-project-configs.sh"
