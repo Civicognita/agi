@@ -11,8 +11,6 @@
     { "id": "project-monorepo", "disableable": false },
     { "id": "project-ops", "disableable": false },
     { "id": "project-art", "disableable": true },
-    { "id": "reader-literature", "disableable": false },
-    { "id": "reader-media", "disableable": false },
     { "id": "stack-writing-novel", "disableable": true },
     { "id": "stack-writing-screenplay", "disableable": true },
     { "id": "stack-writing-research", "disableable": true },

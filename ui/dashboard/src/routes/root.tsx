@@ -508,7 +508,7 @@ export default function RootLayout() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground font-sans flex">
+    <div className="h-screen bg-background text-foreground font-sans flex overflow-hidden">
       {/* Sidebar */}
       <AppSidebar
         isMobile={isMobile}
@@ -710,7 +710,7 @@ export default function RootLayout() {
         ) : (
           // Normal mode: content area with flyout overlays
           <>
-            <main className="max-w-[1200px] w-full mx-auto p-3 md:p-6 flex-1">
+            <main className="max-w-[1200px] w-full mx-auto p-3 md:p-6 flex-1 overflow-y-auto">
               <Outlet context={ctx} />
             </main>
 

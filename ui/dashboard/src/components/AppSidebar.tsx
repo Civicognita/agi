@@ -60,10 +60,12 @@ const builtinSections: NavSectionWithPerspective[] = [
     { to: "/docs", label: "Documentation", icon: FileText },
   ]},
   // ── BACKEND ──
+  { perspective: "backend", title: "Marketplace", items: [
+    { to: "/gateway/marketplace", label: "Plugins", icon: Store },
+    { to: "/magic-apps/admin", label: "MagicApps", icon: Sparkles },
+  ]},
   { perspective: "backend", title: "Gateway", items: [
     { to: "/gateway/workflows", label: "Workflows", icon: GitBranch },
-    { to: "/gateway/marketplace", label: "Marketplace", icon: Store },
-    { to: "/magic-apps/admin", label: "MagicApps", icon: Sparkles },
     { to: "/gateway/logs", label: "Logs", icon: ScrollText },
     { to: "/gateway/onboarding", label: "Onboarding", icon: Rocket },
   ]},
