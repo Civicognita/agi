@@ -1,10 +1,11 @@
 /**
- * MagicAppModal — floating/docked window for running a MagicApp.
+ * MagicAppModal — floating/docked/maximized window for running a MagicApp.
  *
  * Modes:
- *   floating  — draggable window with resize
- *   docked    — left panel (like chat flyout)
- *   minimized — hidden, shown in footer tray
+ *   floating   — draggable window with resize
+ *   docked     — left panel (like chat flyout)
+ *   maximized  — fullscreen overlay
+ *   minimized  — hidden, shown in footer tray
  */
 
 import { useCallback, useState } from "react";
@@ -20,6 +21,7 @@ export interface MagicAppModalProps {
   onMinimize: () => void;
   onDock: () => void;
   onFloat: () => void;
+  onMaximize?: () => void;
   onClose: () => void;
   onToolExecute?: (projectPath: string, toolId: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
   widgets?: Array<Record<string, unknown>>;
@@ -33,6 +35,7 @@ export function MagicAppModal({
   onMinimize,
   onDock,
   onFloat,
+  onMaximize,
   onClose,
   onToolExecute,
   widgets,
@@ -44,19 +47,23 @@ export function MagicAppModal({
   if (instance.mode === "minimized") return null;
 
   const isDocked = instance.mode === "docked";
+  const isMaximized = instance.mode === "maximized";
 
   return (
     <div
+      data-testid="magic-app-modal"
       className={cn(
-        "flex flex-col bg-card border border-border rounded-xl shadow-2xl overflow-hidden",
-        isDocked
-          ? "fixed left-0 top-12 bottom-0 w-[400px] z-[140] rounded-none border-l-0 border-t-0 border-b-0"
-          : "fixed z-[160] w-[600px] h-[500px]",
+        "flex flex-col bg-card border border-border shadow-2xl overflow-hidden",
+        isMaximized
+          ? "fixed inset-0 z-[180] rounded-none"
+          : isDocked
+            ? "fixed left-0 top-12 bottom-0 w-[400px] z-[140] rounded-none border-l-0 border-t-0 border-b-0"
+            : "fixed z-[160] w-[600px] h-[500px] rounded-xl",
       )}
       style={
-        !isDocked && instance.position
+        !isDocked && !isMaximized && instance.position
           ? { left: instance.position.x, top: instance.position.y, width: instance.position.width, height: instance.position.height }
-          : !isDocked ? { left: "calc(50% - 300px)", top: "calc(50% - 250px)" } : undefined
+          : !isDocked && !isMaximized ? { left: "calc(50% - 300px)", top: "calc(50% - 250px)" } : undefined
       }
     >
       {/* Header */}
@@ -70,15 +77,29 @@ export function MagicAppModal({
             <button onClick={onFloat} className="text-[10px] px-1.5 py-0.5 rounded hover:bg-surface1 text-muted-foreground" title="Float">
               {"\u2197\uFE0F"}
             </button>
-          ) : (
-            <button onClick={onDock} className="text-[10px] px-1.5 py-0.5 rounded hover:bg-surface1 text-muted-foreground" title="Dock left">
-              {"\u2B05\uFE0F"}
+          ) : isMaximized ? (
+            <button onClick={onFloat} className="text-[10px] px-1.5 py-0.5 rounded hover:bg-surface1 text-muted-foreground" title="Restore">
+              {"\uD83D\uDDD7\uFE0F"}
             </button>
+          ) : (
+            <>
+              <button onClick={onDock} className="text-[10px] px-1.5 py-0.5 rounded hover:bg-surface1 text-muted-foreground" title="Dock left">
+                {"\u2B05\uFE0F"}
+              </button>
+              <button
+                data-testid="mapp-maximize-btn"
+                onClick={onMaximize}
+                className="text-[10px] px-1.5 py-0.5 rounded hover:bg-surface1 text-muted-foreground"
+                title="Maximize"
+              >
+                {"\u2B1C"}
+              </button>
+            </>
           )}
           <button onClick={onMinimize} className="text-[10px] px-1.5 py-0.5 rounded hover:bg-surface1 text-muted-foreground" title="Minimize">
             {"\u2796"}
           </button>
-          <button onClick={onClose} className="text-[10px] px-1.5 py-0.5 rounded hover:bg-red/20 text-red" title="Close">
+          <button data-testid="mapp-close-btn" onClick={onClose} className="text-[10px] px-1.5 py-0.5 rounded hover:bg-red/20 text-red" title="Close">
             {"\u2715"}
           </button>
         </div>

@@ -272,7 +272,7 @@ export interface MagicAppInstance {
   appId: string;
   userEntityId: string;
   projectPath: string;
-  mode: "floating" | "docked" | "minimized";
+  mode: "floating" | "docked" | "minimized" | "maximized";
   state: Record<string, unknown>;
   position: { x: number; y: number; width: number; height: number } | null;
   openedAt: string;
@@ -853,7 +853,8 @@ export type PanelWidget =
   | { type: "table"; dataEndpoint: string; columns: { key: string; label: string; width?: string }[] }
   | { type: "metric"; label: string; valueEndpoint: string; unit?: string; format?: string }
   | { type: "iframe"; src: string; title?: string; height?: string }
-  | { type: "code-editor"; language?: string; defaultValue?: string; readOnly?: boolean; height?: string; maxHeight?: string };
+  | { type: "code-editor"; language?: string; defaultValue?: string; readOnly?: boolean; height?: string; maxHeight?: string }
+  | { type: "tree-nav"; dataEndpoint?: string; title?: string };
 
 export interface PluginPanel {
   id: string;

@@ -180,6 +180,7 @@ export const WIDGET_COMPONENT_MAP = {
   "editor": "Editor",
   "diagram": "Diagram",
   "code-editor": "CodeEditor (@particle-academy/fancy-code)",
+  "tree-nav": "TreeNav (@particle-academy/react-fancy)",
 } as const;
 
 /**

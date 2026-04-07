@@ -29,7 +29,8 @@ import {
 } from "@particle-academy/react-fancy";
 import { CodeEditor } from "@particle-academy/fancy-code";
 import "@particle-academy/fancy-code/styles.css";
-import { executeAction } from "../api.js";
+import { executeAction, fetchProjectFileTree } from "../api.js";
+import type { FileNode } from "../api.js";
 import type { PanelWidget, PluginAction, UIField } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -518,6 +519,45 @@ function CodeEditorWidget({ widget }: { widget: Extract<PanelWidget, { type: "co
   );
 }
 
+/** Convert FileNode[] to the shape expected by TreeNav. */
+function toTreeNavNodes(nodes: FileNode[]): Array<Record<string, unknown>> {
+  return nodes.map((n) => ({
+    id: n.path,
+    label: n.name,
+    type: n.type === "dir" ? "folder" : "file",
+    ext: n.ext,
+    children: n.children ? toTreeNavNodes(n.children) : undefined,
+  }));
+}
+
+function TreeNavWidget({ projectPath }: { widget: Extract<PanelWidget, { type: "tree-nav" }>; projectPath?: string }) {
+  const [nodes, setNodes] = useState<Array<Record<string, unknown>>>([]);
+  const [selectedId, setSelectedId] = useState<string | undefined>();
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!projectPath) return;
+    fetchProjectFileTree(projectPath, false)
+      .then((tree) => setNodes(toTreeNavNodes(tree)))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [projectPath]);
+
+  if (error) return <div className="text-red text-xs">{error}</div>;
+  if (nodes.length === 0) return <div className="text-muted-foreground text-xs py-4 text-center">Loading file tree...</div>;
+
+  return (
+    <div className="border border-border rounded-lg overflow-auto max-h-[400px]">
+      <TreeNav
+        nodes={nodes as never}
+        selectedId={selectedId}
+        onSelect={(id: string) => setSelectedId(id)}
+        defaultExpandAll
+        className="text-xs"
+      />
+    </div>
+  );
+}
+
 function DiagramWidget({ widget }: { widget: Extract<PanelWidget, { type: "diagram" }> }) {
   const [schema, setSchema] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
@@ -583,6 +623,8 @@ export function WidgetRenderer({ widgets, actions = [], projectPath }: WidgetRen
             return <DiagramWidget key={i} widget={widget} />;
           case "code-editor":
             return <CodeEditorWidget key={i} widget={widget} />;
+          case "tree-nav":
+            return <TreeNavWidget key={i} widget={widget} projectPath={projectPath} />;
           default:
             return null;
         }

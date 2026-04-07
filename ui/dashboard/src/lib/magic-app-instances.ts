@@ -14,7 +14,7 @@ import {
 } from "@/api.js";
 import type { MagicAppInstance } from "@/types.js";
 
-export type InstanceMode = "floating" | "docked" | "minimized";
+export type InstanceMode = "floating" | "docked" | "minimized" | "maximized";
 
 export interface MagicAppInstanceManager {
   instances: MagicAppInstance[];

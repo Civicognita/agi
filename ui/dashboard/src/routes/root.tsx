@@ -762,6 +762,7 @@ export default function RootLayout() {
               onMinimize={() => void instanceMgr.minimizeApp(inst.instanceId)}
               onDock={() => void instanceMgr.setMode(inst.instanceId, "docked")}
               onFloat={() => void instanceMgr.setMode(inst.instanceId, "floating")}
+              onMaximize={() => void instanceMgr.setMode(inst.instanceId, "maximized")}
               onClose={() => void instanceMgr.closeApp(inst.instanceId)}
               widgets={app.panel?.widgets}
               pages={app.pages}
