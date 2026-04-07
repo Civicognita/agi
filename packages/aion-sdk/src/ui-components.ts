@@ -6,7 +6,7 @@
  *
  * - `@particle-academy/react-fancy` — UI component library (60+ components)
  * - `@particle-academy/react-echarts` — Chart library (20+ chart types)
- * - `@particle-academy/fancy-code` — Code editor built on CodeMirror 6
+ * - `@particle-academy/fancy-code` — Lightweight embedded code editor
  *
  * MApps use these via WidgetRenderer widget types.
  * Plugins use these via direct import in dashboard pages/panels.
@@ -73,9 +73,9 @@ export const UI_COMPONENTS = {
   /**
    * Code editing (from @particle-academy/fancy-code).
    *
-   * `CodeEditor` is a compound component built on CodeMirror 6.
-   * Supports syntax highlighting (JS, TS, HTML, PHP), custom themes,
-   * custom toolbar buttons, language/theme registries, and read-only mode.
+   * `CodeEditor` is a lightweight compound component for editing code.
+   * Supports syntax highlighting, custom themes, custom toolbar buttons,
+   * language/theme registries, and read-only mode.
    *
    * Usage: `<CodeEditor><CodeEditor.Toolbar /><CodeEditor.Panel /><CodeEditor.StatusBar /></CodeEditor>`
    *
@@ -172,7 +172,7 @@ export const WIDGET_COMPONENT_MAP = {
   "kanban": "Kanban",
   "editor": "Editor",
   "diagram": "Diagram",
-  "code-editor": "CodeEditor (fancy-code)",
+  "code-editor": "CodeEditor (@particle-academy/fancy-code)",
 } as const;
 
 /**
