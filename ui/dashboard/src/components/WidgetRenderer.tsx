@@ -17,6 +17,7 @@ import {
   Kanban,
   Editor,
   Diagram,
+  TreeNav,
   DatePicker,
   ColorPicker,
   Autocomplete,
@@ -497,20 +498,23 @@ function EditorWidget({ widget }: { widget: Extract<PanelWidget, { type: "editor
 
 function CodeEditorWidget({ widget }: { widget: Extract<PanelWidget, { type: "code-editor" }> }) {
   const [value, setValue] = useState(widget.defaultValue ?? "");
+  const minH = widget.height ? parseInt(widget.height, 10) || 300 : 300;
+  const maxH = widget.maxHeight ? parseInt(widget.maxHeight, 10) || undefined : undefined;
   return (
-    <div style={{ minHeight: widget.height ?? "300px" }}>
-      <CodeEditor
-        value={value}
-        onChange={setValue}
-        language={widget.language ?? "javascript"}
-        readOnly={widget.readOnly ?? false}
-        theme="auto"
-      >
-        <CodeEditor.Toolbar />
-        <CodeEditor.Panel />
-        <CodeEditor.StatusBar />
-      </CodeEditor>
-    </div>
+    <CodeEditor
+      value={value}
+      onChange={setValue}
+      language={widget.language ?? "javascript"}
+      readOnly={widget.readOnly ?? false}
+      theme="auto"
+      minHeight={minH}
+      maxHeight={maxH}
+      className="rounded-lg border border-border"
+    >
+      <CodeEditor.Toolbar />
+      <CodeEditor.Panel />
+      <CodeEditor.StatusBar />
+    </CodeEditor>
   );
 }
 

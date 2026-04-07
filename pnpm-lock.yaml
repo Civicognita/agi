@@ -461,8 +461,8 @@ importers:
         specifier: ^1.0.0
         version: 1.0.1(echarts@5.6.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@particle-academy/react-fancy':
-        specifier: ^1.7.4
-        version: 1.7.4(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
+        specifier: ^1.8.0
+        version: 1.8.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
       '@tailwindcss/vite':
         specifier: ^4.2.1
         version: 4.2.1(vite@6.4.1(@types/node@25.3.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.1)(tsx@4.21.0))
@@ -525,8 +525,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/gateway-core
       '@particle-academy/fancy-code':
-        specifier: ^0.1.1
-        version: 0.1.1(@particle-academy/react-fancy@1.7.4(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        specifier: ^0.3.1
+        version: 0.3.1(@particle-academy/react-fancy@1.8.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.14
@@ -1353,9 +1353,6 @@ packages:
   '@codemirror/lang-markdown@6.5.0':
     resolution: {integrity: sha512-0K40bZ35jpHya6FriukbgaleaqzBLZfOh7HuzqbMxBXkbYMJDxfF39c23xOgxFezR+3G+tR2/Mup+Xk865OMvw==}
 
-  '@codemirror/lang-php@6.0.2':
-    resolution: {integrity: sha512-ZKy2v1n8Fc8oEXj0Th0PUMXzQJ0AIR6TaZU+PbDHExFwdu+guzOA4jmCHS1Nz4vbFezwD7LyBdDnddSJeScMCA==}
-
   '@codemirror/language@6.12.2':
     resolution: {integrity: sha512-jEPmz2nGGDxhRTg3lTpzmIyGKxz3Gp3SJES4b0nAuE5SWQoKdT5GoQ69cwMmFd+wvFUhYirtDTr0/DRHpQAyWg==}
 
@@ -1929,9 +1926,6 @@ packages:
   '@lezer/markdown@1.6.3':
     resolution: {integrity: sha512-jpGm5Ps+XErS+xA4urw7ogEGkeZOahVQF21Z6oECF0sj+2liwZopd2+I8uH5I/vZsRuuze3OxBREIANLf6KKUw==}
 
-  '@lezer/php@1.0.5':
-    resolution: {integrity: sha512-W7asp9DhM6q0W6DYNwIkLSKOvxlXRrif+UXBMxzsJUuqmhE7oVU+gS3THO4S/Puh7Xzgm858UNaFi6dxTP8dJA==}
-
   '@lukeed/ms@2.0.2':
     resolution: {integrity: sha512-9I2Zn6+NJLfaGoz9jN3lpwDgAYvfGeNYdbAIjJOqzs4Tpc+VU3Jqq4IofSUBKajiDS8k9fZIg18/z13mpk1bsA==}
     engines: {node: '>=8'}
@@ -2001,8 +1995,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@particle-academy/fancy-code@0.1.1':
-    resolution: {integrity: sha512-lL65Sd2GRC+249BGbFBPxSiuROj7qbydNgC4L9ZVf6pA9pE3F8m/VcZbwTC3a8DBxZ52N8Rahv2x6LKrOrvzFw==}
+  '@particle-academy/fancy-code@0.3.1':
+    resolution: {integrity: sha512-BrRI/9dLBwCl9Sef6pk4V04dHSE6ZJh8aTYBfjU98q2PdY70/Av8ziaBnnqNZ+qiEJ+ncFKgWn8/W3EECq0W9w==}
     peerDependencies:
       '@particle-academy/react-fancy': ^1.5.0
       react: ^18.0.0 || ^19.0.0
@@ -2015,8 +2009,8 @@ packages:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@particle-academy/react-fancy@1.7.4':
-    resolution: {integrity: sha512-VdNYjx4GzAzPtxLVMiTwo9PJDIA/SzJMY672v9jCHCSKYXlDJO3b1k3PneIe61okfgRtliPi756WP0y6Up++8w==}
+  '@particle-academy/react-fancy@1.8.0':
+    resolution: {integrity: sha512-WS+2ODJyW1/LenfvRJpqRVPESSMbrbQiikA2ZMNJAk13tkY3NKM+AGbrdL21zYRPVrJ1M0affPD6muYSPwlR5Q==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
@@ -3808,8 +3802,8 @@ packages:
   error-stack-parser@2.1.4:
     resolution: {integrity: sha512-Sk5V6wVazPhq5MhpO+AUxJn5x7XSXGl1R93Vn7i+zS15KDVxQijejNCrz8340/2bgLBjR9GtEG8ZVKONDjcqGQ==}
 
-  es-abstract@1.24.1:
-    resolution: {integrity: sha512-zHXBLhP+QehSSbsS9Pt23Gg964240DPd6QCf8WpkqEXxQ7fhdZzYsocOr5u7apWonsS5EjZDmTF+/slGMyasvw==}
+  es-abstract@1.24.2:
+    resolution: {integrity: sha512-2FpH9Q5i2RRwyEP1AylXe6nYLR5OhaJTZwmlcP0dL/+JCbgg7yyEo/sEK6HeGZRf3dFpWwThaRHVApXSkW3xeg==}
     engines: {node: '>= 0.4'}
 
   es-define-property@1.0.1:
@@ -8226,14 +8220,6 @@ snapshots:
       '@lezer/common': 1.5.1
       '@lezer/markdown': 1.6.3
 
-  '@codemirror/lang-php@6.0.2':
-    dependencies:
-      '@codemirror/lang-html': 6.4.11
-      '@codemirror/language': 6.12.2
-      '@codemirror/state': 6.5.4
-      '@lezer/common': 1.5.1
-      '@lezer/php': 1.0.5
-
   '@codemirror/language@6.12.2':
     dependencies:
       '@codemirror/state': 6.5.4
@@ -8970,12 +8956,6 @@ snapshots:
       '@lezer/common': 1.5.1
       '@lezer/highlight': 1.2.3
 
-  '@lezer/php@1.0.5':
-    dependencies:
-      '@lezer/common': 1.5.1
-      '@lezer/highlight': 1.2.3
-      '@lezer/lr': 1.4.8
-
   '@lukeed/ms@2.0.2': {}
 
   '@marijn/find-cluster-break@1.0.2': {}
@@ -9029,19 +9009,9 @@ snapshots:
   '@oxlint/win32-x64@0.16.12':
     optional: true
 
-  '@particle-academy/fancy-code@0.1.1(@particle-academy/react-fancy@1.7.4(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@particle-academy/fancy-code@0.3.1(@particle-academy/react-fancy@1.8.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
-      '@codemirror/autocomplete': 6.20.0
-      '@codemirror/commands': 6.10.2
-      '@codemirror/lang-html': 6.4.11
-      '@codemirror/lang-javascript': 6.2.4
-      '@codemirror/lang-php': 6.0.2
-      '@codemirror/language': 6.12.2
-      '@codemirror/search': 6.6.0
-      '@codemirror/state': 6.5.4
-      '@codemirror/view': 6.39.15
-      '@lezer/highlight': 1.2.3
-      '@particle-academy/react-fancy': 1.7.4(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
+      '@particle-academy/react-fancy': 1.8.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
 
@@ -9053,7 +9023,7 @@ snapshots:
     optionalDependencies:
       echarts-gl: 2.0.9(echarts@5.6.0)
 
-  '@particle-academy/react-fancy@1.7.4(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)':
+  '@particle-academy/react-fancy@1.8.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)':
     dependencies:
       clsx: 2.1.1
       lucide-react: 0.511.0(react@19.2.4)
@@ -10087,7 +10057,7 @@ snapshots:
       array-buffer-byte-length: 1.0.2
       call-bind: 1.0.8
       define-properties: 1.2.1
-      es-abstract: 1.24.1
+      es-abstract: 1.24.2
       es-errors: 1.3.0
       get-intrinsic: 1.3.0
       is-array-buffer: 3.0.5
@@ -10954,7 +10924,7 @@ snapshots:
     dependencies:
       stackframe: 1.3.4
 
-  es-abstract@1.24.1:
+  es-abstract@1.24.2:
     dependencies:
       array-buffer-byte-length: 1.0.2
       arraybuffer.prototype.slice: 1.0.4
@@ -13715,7 +13685,7 @@ snapshots:
     dependencies:
       call-bind: 1.0.8
       define-properties: 1.2.1
-      es-abstract: 1.24.1
+      es-abstract: 1.24.2
       es-errors: 1.3.0
       es-object-atoms: 1.1.1
       get-intrinsic: 1.3.0
@@ -14207,7 +14177,7 @@ snapshots:
       call-bind: 1.0.8
       call-bound: 1.0.4
       define-properties: 1.2.1
-      es-abstract: 1.24.1
+      es-abstract: 1.24.2
       es-errors: 1.3.0
       es-object-atoms: 1.1.1
       get-intrinsic: 1.3.0
@@ -14224,7 +14194,7 @@ snapshots:
       call-bound: 1.0.4
       define-data-property: 1.1.4
       define-properties: 1.2.1
-      es-abstract: 1.24.1
+      es-abstract: 1.24.2
       es-object-atoms: 1.1.1
       has-property-descriptors: 1.0.2
 

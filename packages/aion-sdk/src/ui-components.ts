@@ -58,6 +58,7 @@ export const UI_COMPONENTS = {
   /** Navigation components */
   navigation: [
     "Navbar", "MobileMenu", "Breadcrumbs", "Pagination", "Menu", "ContextMenu",
+    "TreeNav",
   ],
 
   /** Overlay and popup components */
@@ -73,16 +74,22 @@ export const UI_COMPONENTS = {
   /**
    * Code editing (from @particle-academy/fancy-code).
    *
-   * `CodeEditor` is a lightweight compound component for editing code.
-   * Supports syntax highlighting, custom themes, custom toolbar buttons,
-   * language/theme registries, and read-only mode.
+   * `CodeEditor` is a lightweight embedded code editor with syntax
+   * highlighting and extensible language/theme registries. Only depends
+   * on `@particle-academy/react-fancy`.
+   *
+   * Pair with `TreeNav` (from react-fancy) for IDE-style file navigation.
    *
    * Usage: `<CodeEditor><CodeEditor.Toolbar /><CodeEditor.Panel /><CodeEditor.StatusBar /></CodeEditor>`
    *
    * Import styles: `import "@particle-academy/fancy-code/styles.css";`
+   *
+   * Built-in languages: JavaScript, TypeScript, HTML, PHP.
+   * Custom languages via `registerLanguage()`, custom themes via `registerTheme()`.
    */
   code: [
     "CodeEditor", "CodeEditor.Toolbar", "CodeEditor.Panel", "CodeEditor.StatusBar",
+    "useCodeEditor",
   ],
 
   /** Action buttons and triggers */
