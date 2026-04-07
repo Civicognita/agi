@@ -261,6 +261,12 @@ export interface MagicAppInfo {
   pluginId?: string;
 }
 
+export interface MAppCatalogEntry {
+  definition: MagicAppInfo;
+  sourcePath: string;
+  installed: boolean;
+}
+
 export interface MagicAppInstance {
   instanceId: string;
   appId: string;

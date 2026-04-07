@@ -638,6 +638,36 @@ export async function detachMagicApp(path: string, appId: string): Promise<{ ok:
   return res.json() as Promise<{ ok: boolean; magicApps: string[] }>;
 }
 
+export async function fetchMAppCatalog(): Promise<{ apps: import("./types.js").MAppCatalogEntry[] }> {
+  const res = await fetch("/api/mapp-marketplace/catalog");
+  if (!res.ok) return { apps: [] };
+  return res.json() as Promise<{ apps: import("./types.js").MAppCatalogEntry[] }>;
+}
+
+export async function installMApp(appId: string, author: string): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/mapp-marketplace/install", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ appId, author }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function uninstallMApp(appId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/mapp-marketplace/installed/${encodeURIComponent(appId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
 export async function restartHosting(path: string): Promise<{ ok: boolean; hosting: unknown }> {
   const res = await fetch("/api/hosting/restart", {
     method: "POST",

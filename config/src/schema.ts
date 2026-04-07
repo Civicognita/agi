@@ -376,6 +376,19 @@ const MarketplaceConfigSchema = z
   })
   .strict();
 
+const MAppMarketplaceConfigSchema = z
+  .object({
+    /** Path to the official MApp marketplace directory. */
+    dir: z.string().default("/opt/aionima-mapp-marketplace"),
+    /** Git remote URL for the MApp marketplace source. */
+    source: z
+      .string()
+      .default("git@github.com:Civicognita/aionima-mapp-marketplace.git"),
+    /** Branch to track. */
+    branch: z.string().default("main"),
+  })
+  .strict();
+
 const FederationConfigSchema = z
   .object({
     /** Enable federation protocol. */
@@ -490,6 +503,7 @@ export const AionimaConfigSchema = z
     providers: z.record(z.string(), ProviderCredentialSchema).optional(),
     workers: WorkersConfigSchema.optional(),
     marketplace: MarketplaceConfigSchema.optional(),
+    mappMarketplace: MAppMarketplaceConfigSchema.optional(),
     idService: IdServiceConfigSchema.optional(),
     dev: DevConfigSchema.optional(),
     dashboardAuth: DashboardAuthConfigSchema.optional(),

@@ -1256,6 +1256,9 @@ export async function startGatewayServer(
       secrets,
       config: config as Record<string, unknown>,
       mappRegistry,
+      mappMarketplaceDir: (config as Record<string, unknown>).mappMarketplace
+        ? ((config as Record<string, unknown>).mappMarketplace as Record<string, string>).dir
+        : undefined,
       magicAppStateStore,
       identityProvider,
       oauthHandler,

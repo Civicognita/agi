@@ -8,7 +8,7 @@
  * Uses Fastify v5 instead of raw http.createServer.
  */
 
-import { readFileSync, writeFileSync, appendFileSync, existsSync, statSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, statSync, mkdirSync, readdirSync, rmSync, copyFileSync } from "node:fs";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { homedir } from "node:os";
 import { execSync, execFile, execFileSync, spawn } from "node:child_process";
@@ -132,6 +132,8 @@ export interface RuntimeStateDeps {
   dashboardQueries?: DashboardQueries;
   /** HostingManager — manages Caddy + Node.js process lifecycle for hosted projects. */
   hostingManager?: HostingManager;
+  /** Path to the MApp marketplace directory (for catalog browsing). */
+  mappMarketplaceDir?: string;
   /** CommsLog — persistent message log for comms page. */
   commsLog?: CommsLog;
   /** NotificationStore — persistent notification storage. */
@@ -4021,6 +4023,96 @@ export async function createGatewayRuntimeState(
       const msg = err instanceof Error ? err.message : String(err);
       return reply.code(500).send({ error: msg });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // MApp Marketplace — browse and install MApps from the marketplace repo
+  // -----------------------------------------------------------------------
+
+  const mappMarketplaceDir = deps.mappMarketplaceDir ?? "/opt/aionima-mapp-marketplace";
+  const mappsInstallDir = join(homedir(), ".agi", "mapps");
+
+  // GET /api/mapp-marketplace/catalog — list available MApps from marketplace
+  fastify.get("/api/mapp-marketplace/catalog", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
+    }
+
+    const { scanMAppMarketplace } = await import("./mapp-discovery.js");
+    const entries = scanMAppMarketplace(mappMarketplaceDir, mappsInstallDir);
+    const serialized = entries.map((e) => ({
+      definition: e.definition,
+      sourcePath: e.sourcePath,
+      installed: e.installed,
+    }));
+    return reply.send({ apps: serialized });
+  });
+
+  // POST /api/mapp-marketplace/install — install a MApp from marketplace
+  fastify.post("/api/mapp-marketplace/install", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
+    }
+
+    const body = request.body as { appId?: string; author?: string } | undefined;
+    if (!body?.appId || !body?.author) {
+      return reply.code(400).send({ error: "appId and author are required" });
+    }
+
+    const srcPath = join(mappMarketplaceDir, "mapps", body.author, `${body.appId}.json`);
+    if (!existsSync(srcPath)) {
+      return reply.code(404).send({ error: `MApp "${body.appId}" not found in marketplace` });
+    }
+
+    try {
+      const destDir = join(mappsInstallDir, body.author);
+      mkdirSync(destDir, { recursive: true });
+      const destPath = join(destDir, `${body.appId}.json`);
+      copyFileSync(srcPath, destPath);
+
+      // Register in live registry
+      if (deps.mappRegistry) {
+        const { MAppDefinitionSchema } = await import("@aionima/config");
+        const raw = JSON.parse(readFileSync(destPath, "utf-8"));
+        const parsed = MAppDefinitionSchema.safeParse(raw);
+        if (parsed.success) {
+          deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+        }
+      }
+
+      return reply.send({ ok: true, id: body.appId });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ error: msg });
+    }
+  });
+
+  // DELETE /api/mapp-marketplace/installed/:id — uninstall a MApp
+  fastify.delete("/api/mapp-marketplace/installed/:id", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
+    }
+
+    const { id } = request.params as { id: string };
+
+    // Find the installed MApp to determine its author directory
+    const def = deps.mappRegistry?.get(id);
+    if (!def) {
+      return reply.code(404).send({ error: `MApp "${id}" is not installed` });
+    }
+
+    const filePath = join(mappsInstallDir, def.author, `${id}.json`);
+    if (existsSync(filePath)) {
+      rmSync(filePath);
+    }
+
+    // Unregister from live registry
+    deps.mappRegistry?.unregister(id);
+
+    return reply.send({ ok: true });
   });
 
   // -----------------------------------------------------------------------
