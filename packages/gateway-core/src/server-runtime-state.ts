@@ -4035,22 +4035,44 @@ export async function createGatewayRuntimeState(
   const OFFICIAL_MAPP_MARKETPLACE = "Civicognita/aionima-mapp-marketplace";
 
   /**
-   * Fetch the MApp marketplace catalog from GitHub.
-   * Checks marketplace.json at repo root.
+   * Fetch a file from the MApp marketplace GitHub repo.
+   * Uses the GitHub Contents API (works for public and private repos with token).
+   * Falls back to raw.githubusercontent.com for public repos.
    */
-  async function fetchMAppCatalog(): Promise<{ ok: boolean; mapps: Array<Record<string, unknown>>; error?: string }> {
-    const url = `https://raw.githubusercontent.com/${OFFICIAL_MAPP_MARKETPLACE}/main/marketplace.json`;
+  async function fetchFromMAppMarketplace(path: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+    // Try GitHub Contents API first (works with auth tokens for private repos)
+    const apiUrl = `https://api.github.com/repos/${OFFICIAL_MAPP_MARKETPLACE}/contents/${path}?ref=main`;
     try {
-      const res = await fetch(url, {
+      const headers: Record<string, string> = { Accept: "application/vnd.github.raw+json" };
+      // Use GITHUB_TOKEN if available (for private repos)
+      const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
+      if (token) headers.Authorization = `token ${token}`;
+
+      const res = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(15_000) });
+      if (res.ok) {
+        const data = await res.json() as unknown;
+        return { ok: true, data };
+      }
+
+      // Fallback to raw.githubusercontent.com (public repos only)
+      const rawUrl = `https://raw.githubusercontent.com/${OFFICIAL_MAPP_MARKETPLACE}/main/${path}`;
+      const rawRes = await fetch(rawUrl, {
         headers: { Accept: "application/json" },
         signal: AbortSignal.timeout(15_000),
       });
-      if (!res.ok) return { ok: false, mapps: [], error: `HTTP ${res.status}` };
-      const data = await res.json() as { mapps?: Array<Record<string, unknown>> };
-      return { ok: true, mapps: data.mapps ?? [] };
+      if (!rawRes.ok) return { ok: false, error: `HTTP ${rawRes.status}` };
+      const rawData = await rawRes.json() as unknown;
+      return { ok: true, data: rawData };
     } catch (err) {
-      return { ok: false, mapps: [], error: err instanceof Error ? err.message : String(err) };
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  }
+
+  async function fetchMAppCatalog(): Promise<{ ok: boolean; mapps: Array<Record<string, unknown>>; error?: string }> {
+    const result = await fetchFromMAppMarketplace("marketplace.json");
+    if (!result.ok) return { ok: false, mapps: [], error: result.error };
+    const data = result.data as { mapps?: Array<Record<string, unknown>> };
+    return { ok: true, mapps: data.mapps ?? [] };
   }
 
   // GET /api/mapp-marketplace/catalog — fetch catalog from GitHub + mark installed status
@@ -4086,21 +4108,16 @@ export async function createGatewayRuntimeState(
       return reply.code(400).send({ error: "appId and author are required" });
     }
 
-    // Determine the raw URL for the MApp JSON
     const sourcePath = body.source ?? `./mapps/${body.author}/${body.appId}.json`;
     const relativePath = sourcePath.replace(/^\.\//, "");
-    const rawUrl = `https://raw.githubusercontent.com/${OFFICIAL_MAPP_MARKETPLACE}/main/${relativePath}`;
 
     try {
       // Fetch the MApp JSON from GitHub
-      const res = await fetch(rawUrl, {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!res.ok) {
-        return reply.code(404).send({ error: `MApp "${body.appId}" not found in marketplace (HTTP ${res.status})` });
+      const result = await fetchFromMAppMarketplace(relativePath);
+      if (!result.ok) {
+        return reply.code(404).send({ error: `MApp "${body.appId}" not found in marketplace: ${result.error}` });
       }
-      const raw = await res.json() as Record<string, unknown>;
+      const raw = result.data as Record<string, unknown>;
 
       // Validate before writing
       const { MAppDefinitionSchema } = await import("@aionima/config");
