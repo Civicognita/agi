@@ -852,7 +852,8 @@ export type PanelWidget =
   | { type: "markdown"; content: string }
   | { type: "table"; dataEndpoint: string; columns: { key: string; label: string; width?: string }[] }
   | { type: "metric"; label: string; valueEndpoint: string; unit?: string; format?: string }
-  | { type: "iframe"; src: string; title?: string; height?: string };
+  | { type: "iframe"; src: string; title?: string; height?: string }
+  | { type: "code-editor"; language?: string; defaultValue?: string; readOnly?: boolean; height?: string };
 
 export interface PluginPanel {
   id: string;

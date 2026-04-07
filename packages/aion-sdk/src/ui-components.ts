@@ -2,10 +2,11 @@
  * ADF UI Component Catalog (MPx 1.0)
  *
  * Documents all UI components available to MApps and plugins in the
- * Aionima dashboard. Components come from two libraries:
+ * Aionima dashboard. Components come from three libraries:
  *
  * - `@particle-academy/react-fancy` — UI component library (60+ components)
  * - `@particle-academy/react-echarts` — Chart library (20+ chart types)
+ * - `@particle-academy/fancy-code` — Code editor built on CodeMirror 6
  *
  * MApps use these via WidgetRenderer widget types.
  * Plugins use these via direct import in dashboard pages/panels.
@@ -67,6 +68,21 @@ export const UI_COMPONENTS = {
   /** Media and rich content */
   media: [
     "Avatar", "Carousel", "Canvas", "Composer", "Editor",
+  ],
+
+  /**
+   * Code editing (from @particle-academy/fancy-code).
+   *
+   * `CodeEditor` is a compound component built on CodeMirror 6.
+   * Supports syntax highlighting (JS, TS, HTML, PHP), custom themes,
+   * custom toolbar buttons, language/theme registries, and read-only mode.
+   *
+   * Usage: `<CodeEditor><CodeEditor.Toolbar /><CodeEditor.Panel /><CodeEditor.StatusBar /></CodeEditor>`
+   *
+   * Import styles: `import "@particle-academy/fancy-code/styles.css";`
+   */
+  code: [
+    "CodeEditor", "CodeEditor.Toolbar", "CodeEditor.Panel", "CodeEditor.StatusBar",
   ],
 
   /** Action buttons and triggers */
@@ -156,6 +172,7 @@ export const WIDGET_COMPONENT_MAP = {
   "kanban": "Kanban",
   "editor": "Editor",
   "diagram": "Diagram",
+  "code-editor": "CodeEditor (fancy-code)",
 } as const;
 
 /**

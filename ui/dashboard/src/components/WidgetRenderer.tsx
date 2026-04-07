@@ -26,6 +26,8 @@ import {
   Switch,
   Select,
 } from "@particle-academy/react-fancy";
+import { CodeEditor } from "@particle-academy/fancy-code";
+import "@particle-academy/fancy-code/styles.css";
 import { executeAction } from "../api.js";
 import type { PanelWidget, PluginAction, UIField } from "../types.js";
 
@@ -493,6 +495,25 @@ function EditorWidget({ widget }: { widget: Extract<PanelWidget, { type: "editor
   );
 }
 
+function CodeEditorWidget({ widget }: { widget: Extract<PanelWidget, { type: "code-editor" }> }) {
+  const [value, setValue] = useState(widget.defaultValue ?? "");
+  return (
+    <div style={{ minHeight: widget.height ?? "300px" }}>
+      <CodeEditor
+        value={value}
+        onChange={setValue}
+        language={widget.language ?? "javascript"}
+        readOnly={widget.readOnly ?? false}
+        theme="auto"
+      >
+        <CodeEditor.Toolbar />
+        <CodeEditor.Panel />
+        <CodeEditor.StatusBar />
+      </CodeEditor>
+    </div>
+  );
+}
+
 function DiagramWidget({ widget }: { widget: Extract<PanelWidget, { type: "diagram" }> }) {
   const [schema, setSchema] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
@@ -556,6 +577,8 @@ export function WidgetRenderer({ widgets, actions = [], projectPath }: WidgetRen
             return <EditorWidget key={i} widget={widget} />;
           case "diagram":
             return <DiagramWidget key={i} widget={widget} />;
+          case "code-editor":
+            return <CodeEditorWidget key={i} widget={widget} />;
           default:
             return null;
         }
