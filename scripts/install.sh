@@ -231,7 +231,33 @@ systemctl enable aionima
 echo "  [OK] Service installed and enabled"
 
 # ---------------------------------------------------------------------------
-# 11. Install agi CLI (symlink)
+# 11. Set up hosting infrastructure (Caddy, dnsmasq, Podman)
+# ---------------------------------------------------------------------------
+HOSTING_SETUP="$INSTALL_DIR/scripts/hosting-setup.sh"
+if [ -f "$HOSTING_SETUP" ]; then
+  echo "==> Setting up hosting infrastructure (Caddy, dnsmasq, Podman)..."
+  LAN_IP="$(hostname -I | awk '{print $1}')" \
+    SUDO_USER="$AIONIMA_USER" \
+    bash "$HOSTING_SETUP"
+fi
+
+# Configure the host machine to use itself for DNS so *.ai.on resolves locally
+RESOLV_OVERRIDE="/etc/systemd/resolved.conf.d/aionima-self-dns.conf"
+if [ ! -f "$RESOLV_OVERRIDE" ]; then
+  LAN_IP="$(hostname -I | awk '{print $1}')"
+  echo "==> Configuring this machine to use local DNS ($LAN_IP)..."
+  mkdir -p /etc/systemd/resolved.conf.d
+  cat > "$RESOLV_OVERRIDE" <<EOF
+[Resolve]
+DNS=$LAN_IP
+Domains=~ai.on
+EOF
+  systemctl restart systemd-resolved 2>/dev/null || true
+  echo "  [OK] Local DNS configured"
+fi
+
+# ---------------------------------------------------------------------------
+# 13. Install agi CLI (symlink)
 # ---------------------------------------------------------------------------
 AGI_CLI="$INSTALL_DIR/scripts/agi-cli.sh"
 if [ -x "$AGI_CLI" ]; then
@@ -240,7 +266,19 @@ if [ -x "$AGI_CLI" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 12. Run hardening (unless skipped)
+# 14. Start the service
+# ---------------------------------------------------------------------------
+echo "==> Starting Aionima..."
+systemctl start aionima
+sleep 3
+if systemctl is-active --quiet aionima; then
+  echo "  [OK] Aionima is running"
+else
+  echo "  [WARN] Aionima failed to start — run 'agi logs' to investigate"
+fi
+
+# ---------------------------------------------------------------------------
+# 15. Run hardening (unless skipped)
 # ---------------------------------------------------------------------------
 if [ "${SKIP_HARDENING}" = "1" ]; then
   echo "==> Skipping hardening (AIONIMA_SKIP_HARDENING=1)"
@@ -256,19 +294,35 @@ fi
 # ---------------------------------------------------------------------------
 # Done
 # ---------------------------------------------------------------------------
+LAN_IP="$(hostname -I | awk '{print $1}')"
+
 echo ""
 echo "  ============================================"
 echo "    Aionima installed successfully!"
 echo "  ============================================"
 echo ""
-echo "  Next steps:"
-echo "    1. Configure:  sudo -u $AIONIMA_USER aionima setup"
-echo "    2. Start:      sudo systemctl start aionima"
-echo "    3. Check:      sudo systemctl status aionima"
-echo "    4. Diagnose:   sudo -u $AIONIMA_USER aionima doctor"
+echo "  Dashboard:  http://${LAN_IP}:3100"
+echo "              https://aionima.ai.on (after DNS setup below)"
 echo ""
-echo "  Dashboard:  http://$(hostname -I | awk '{print $1}'):3100"
-echo "  Config:     ~/.agi/aionima.json"
-echo "  Secrets:    $INSTALL_DIR/.env"
-echo "  Logs:       journalctl -u aionima -f"
+echo "  Next steps:"
+echo ""
+echo "    1. Open the dashboard and complete onboarding"
+echo "       http://${LAN_IP}:3100"
+echo ""
+echo "    2. Set up DNS on your network"
+echo "       Point other devices to use ${LAN_IP} as their DNS server"
+echo "       so *.ai.on domains resolve to this machine."
+echo ""
+echo "       macOS:    System Settings > Network > DNS > add ${LAN_IP}"
+echo "       Windows:  Settings > Network > DNS > ${LAN_IP}"
+echo "       Linux:    Set DNS=${LAN_IP} in /etc/systemd/resolved.conf"
+echo "       Router:   Set primary DNS to ${LAN_IP} (affects all devices)"
+echo ""
+echo "       This machine is already configured to use local DNS."
+echo ""
+echo "  Useful commands:"
+echo "    agi status     Check service health"
+echo "    agi upgrade    Pull updates and rebuild"
+echo "    agi logs       View gateway logs"
+echo "    agi doctor     Run diagnostics"
 echo ""
