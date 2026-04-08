@@ -78,7 +78,7 @@ if [ -d "$PRIME_DIR/.git" ]; then
   fi
 else
   emit "clone-prime" "start" "PRIME not found at $PRIME_DIR — cloning"
-  if git clone --branch main "$PRIME_REPO" "$PRIME_DIR" 2>&1; then
+  if sudo git clone --branch main "$PRIME_REPO" "$PRIME_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$PRIME_DIR"; then
     emit "clone-prime" "done" "PRIME repo cloned to $PRIME_DIR"
   else
     emit "clone-prime" "error" "PRIME clone failed from $PRIME_REPO"
@@ -99,7 +99,7 @@ if [ -d "$MARKETPLACE_DIR/.git" ]; then
   fi
 else
   emit "clone-marketplace" "start" "Marketplace not found at $MARKETPLACE_DIR — cloning"
-  if git clone --branch main "$MARKETPLACE_REPO" "$MARKETPLACE_DIR" 2>&1; then
+  if sudo git clone --branch main "$MARKETPLACE_REPO" "$MARKETPLACE_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$MARKETPLACE_DIR"; then
     emit "clone-marketplace" "done" "Marketplace repo cloned to $MARKETPLACE_DIR"
   else
     emit "clone-marketplace" "error" "Marketplace clone failed from $MARKETPLACE_REPO"
@@ -120,7 +120,7 @@ if [ -d "$ID_DIR/.git" ]; then
   fi
 else
   emit "clone-id" "start" "ID service not found at $ID_DIR — cloning"
-  if git clone --branch main "$ID_REPO" "$ID_DIR" 2>&1; then
+  if sudo git clone --branch main "$ID_REPO" "$ID_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$ID_DIR"; then
     emit "clone-id" "done" "ID service repo cloned to $ID_DIR"
   else
     emit "clone-id" "error" "ID clone failed from $ID_REPO"
