@@ -86,7 +86,7 @@ channels/
 ui/
   dashboard/                  React dashboard (Vite + Tailwind + TanStack Query)
 scripts/
-  deploy.sh                   Production deployment
+  upgrade.sh                   Production deployment
 docs/
   agents/                     Technical guides for AI agents (you're reading one)
   human/                      Human-readable guides
@@ -193,7 +193,7 @@ AGI, PRIME, and MARKETPLACE are **independent repos** — not submodules. AGI re
 - Contributing mode: switches to dev fork path via `dev.primeDir` / `dev.marketplaceDir` in runtime config
 - Each repo has a `protocol.json` — AGI checks semver compatibility at boot
 - Contributing mode is toggled via the dashboard Contributing page — not by editing config files
-- `deploy.sh` pulls all 4 repos with structured JSON logging per phase
+- `upgrade.sh` pulls all 4 repos with structured JSON logging per phase
 
 ## Contributing UX (Sacred Projects)
 
@@ -204,7 +204,7 @@ AGI, PRIME, and MARKETPLACE are **independent repos** — not submodules. AGI re
 
 ## Deployment
 
-Production runs at `/opt/aionima/` as a systemd service (`aionima.service`). It's its own git clone. `scripts/deploy.sh` pulls all 4 repos, runs `pnpm install --frozen-lockfile` + `pnpm build`, then restarts the service only if backend checksums changed.
+Production runs at `/opt/aionima/` as a systemd service (`aionima.service`). It's its own git clone. `scripts/upgrade.sh` pulls all 4 repos, runs `pnpm install --frozen-lockfile` + `pnpm build`, then restarts the service only if backend checksums changed.
 
 The dashboard detects new commits (60s poll) and shows an upgrade button. Clicking it triggers `POST /api/system/upgrade`. The upgrade UI shows step-by-step progress with colored status dots per deploy phase.
 
@@ -270,7 +270,7 @@ Read these in `docs/agents/` to understand specific subsystems:
 | `adding-a-plugin.md` | Plugin system architecture |
 | `adding-a-channel.md` | Channel adapter pattern |
 | `adding-dashboard-pages.md` | Dashboard UI pages |
-| `deploy-pipeline.md` | How deployment works |
+| `upgrade-pipeline.md` | How deployment works |
 | `entity-model-extensions.md` | Entity model and GEID |
 | `system-prompt-assembly.md` | How the agent system prompt is built |
 | `testing-and-shipping.md` | Testing strategy, CI, VM tests |

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# System dependency management — called by deploy.sh during upgrades.
+# System dependency management — called by upgrade.sh during upgrades.
 # Each check is idempotent: skip if already installed, install if missing.
 set -euo pipefail
 

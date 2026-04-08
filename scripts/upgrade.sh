@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
-# NOTE: no `set -e` — we handle errors explicitly per step so deploy.sh
+# NOTE: no `set -e` — we handle errors explicitly per step so upgrade.sh
 # always emits a structured error before exiting, making failures visible
 # in the dashboard upgrade log.
 
@@ -378,7 +378,7 @@ if [ "$backend_hash_before" != "$backend_hash_after" ]; then
   # The new server removes it on startup and appends "restart complete" to the upgrade log.
   touch "$DEPLOY_DIR/.upgrade-pending"
   sudo systemctl restart aionima
-  # deploy.sh typically dies here (SIGPIPE when parent Node process exits).
+  # upgrade.sh typically dies here (SIGPIPE when parent Node process exits).
   # If it survives (e.g. stdout redirected), clean up:
   rm -f "$DEPLOY_DIR/.upgrade-pending"
   emit "restart" "done"

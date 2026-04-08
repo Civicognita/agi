@@ -605,9 +605,9 @@ export function createManageSystemHandler(config: AgentToolsConfig): ToolHandler
       if (!config.selfRepoPath) {
         return JSON.stringify({ error: "selfRepo not configured — cannot trigger upgrade" });
       }
-      const scriptPath = join(config.selfRepoPath, "scripts/deploy.sh");
+      const scriptPath = join(config.selfRepoPath, "scripts/upgrade.sh");
       try {
-        // Fire-and-forget: spawn deploy.sh in the background
+        // Fire-and-forget: spawn upgrade.sh in the background
         const child = spawn("bash", [scriptPath], {
           cwd: config.selfRepoPath,
           stdio: "ignore",
@@ -633,7 +633,7 @@ export const MANAGE_SYSTEM_MANIFEST = {
   name: "manage_system",
   description:
     "System operations. Actions: status (CPU, memory, disk usage, uptime, hostname), " +
-    "upgrade (trigger deploy.sh to pull updates, rebuild, and restart).",
+    "upgrade (trigger upgrade.sh to pull updates, rebuild, and restart).",
   requiresState: ["ONLINE" as const],
   requiresTier: ["verified" as const, "sealed" as const],
 };

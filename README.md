@@ -145,7 +145,7 @@ aionima/
     android-companion/          Android companion app
     macos-desktop/              macOS desktop client
   scripts/
-    deploy.sh                   Production deployment pipeline
+    upgrade.sh                   Production deployment pipeline
     agi-cli.sh                  Standalone bash CLI (agi status/upgrade/logs)
     migrate-project-configs.sh  Schema migration for project.json files
     hosting-setup.sh            Caddy + dnsmasq installation

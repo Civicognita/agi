@@ -86,7 +86,7 @@ Catppuccin color variables used: `--color-mantle`, `--color-surface0`, `--color-
 
 ## Deployment
 
-The production directory (`/opt/aionima/`) is its own git clone. `scripts/deploy.sh` runs `git pull` which updates `docs/` along with everything else.
+The production directory (`/opt/aionima/`) is its own git clone. `scripts/upgrade.sh` runs `git pull` which updates `docs/` along with everything else.
 
 Documentation changes are zero-downtime — the backend reads files from disk on each request, so no restart is needed.
 
@@ -100,7 +100,7 @@ Documentation changes are zero-downtime — the backend reads files from disk on
 | `ui/dashboard/src/lib/markdown.tsx` | Shared `markdownComponents()` factory |
 | `ui/dashboard/src/router.tsx` | Route `{ path: "docs", element: <DocsPage /> }` |
 | `ui/dashboard/src/components/AppSidebar.tsx` | Documentation section in sidebar nav |
-| `scripts/deploy.sh` | `git pull` updates docs alongside all other files |
+| `scripts/upgrade.sh` | `git pull` updates docs alongside all other files |
 
 ## How to Add New Documentation
 
@@ -139,7 +139,7 @@ Note: The editor plugin also allows absolute paths inside the external PRIME dir
 | [adding-a-plugin.md](adding-a-plugin.md) | How to add a new plugin |
 | [adding-dashboard-pages.md](adding-dashboard-pages.md) | How to add dashboard UI pages |
 | [config-schema-changes.md](config-schema-changes.md) | How to extend the config schema |
-| [deploy-pipeline.md](deploy-pipeline.md) | How deployment works |
+| [upgrade-pipeline.md](upgrade-pipeline.md) | How deployment works |
 | [entity-model-extensions.md](entity-model-extensions.md) | How to extend the entity model |
 | [system-prompt-assembly.md](system-prompt-assembly.md) | How the agent system prompt is built |
 | [bots-workers.md](bots-workers.md) | Workers & Taskmaster system |

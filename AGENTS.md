@@ -45,7 +45,7 @@ channels/
 ui/
   dashboard/                  React dashboard (Vite + Tailwind + TanStack Query)
 scripts/
-  deploy.sh                   Production deployment
+  upgrade.sh                   Production deployment
   aionima.service             systemd unit file
   hosting-setup.sh            Caddy + dnsmasq installation
 skills/                       Agent skill definitions
@@ -172,7 +172,7 @@ CI (GitHub Actions) sets `AIONIMA_TEST_VM=1` to bypass the host guard — it run
 
 ## Deployment
 
-Deployment is automated through the dashboard — **never run deploy.sh manually** unless explicitly asked.
+Deployment is automated through the dashboard — **never run upgrade.sh manually** unless explicitly asked.
 
 ### Multi-Repo Architecture
 
@@ -198,7 +198,7 @@ Each repo has a `protocol.json` at its root. AGI checks semver compatibility at 
 
 1. **Push to `main`** — GitHub webhook notifies the server; dashboard also polls every 60s
 2. **User clicks "Upgrade"** in the dashboard UI
-3. **`POST /api/system/upgrade`** triggers `scripts/deploy.sh`, which:
+3. **`POST /api/system/upgrade`** triggers `scripts/upgrade.sh`, which:
    - Pulls AGI, PRIME, ID, and MARKETPLACE repos (structured JSON logging per phase)
    - Checks protocol compatibility across repos
    - `pnpm install --frozen-lockfile && pnpm build`
@@ -247,7 +247,7 @@ Two documentation sets live in `docs/`:
 
 ### How Docs Are Served
 
-Docs are served through the editor plugin (now in the marketplace repo). The dashboard has a `/docs` route at `ui/dashboard/src/routes/docs.tsx` with a two-column layout (file tree + rendered markdown). Shared markdown components are in `ui/dashboard/src/lib/markdown.tsx`. The `docs/` directory is synced to `/opt/aionima/docs/` via `deploy.sh`.
+Docs are served through the editor plugin (now in the marketplace repo). The dashboard has a `/docs` route at `ui/dashboard/src/routes/docs.tsx` with a two-column layout (file tree + rendered markdown). Shared markdown components are in `ui/dashboard/src/lib/markdown.tsx`. The `docs/` directory is synced to `/opt/aionima/docs/` via `upgrade.sh`.
 
 ---
 

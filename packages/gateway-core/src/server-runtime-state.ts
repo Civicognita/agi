@@ -2164,7 +2164,7 @@ export async function createGatewayRuntimeState(
     commits: { hash: string; message: string }[];
     serviceUpdates?: Array<{ name: string; behind: number }>;
   }> {
-    // Read the deployed commit marker (written by deploy.sh into the deploy dir)
+    // Read the deployed commit marker (written by upgrade.sh into the deploy dir)
     let deployedCommit = "";
     try {
       deployedCommit = readFileSync(join(process.cwd(), ".deployed-commit"), "utf-8").trim();
@@ -2261,7 +2261,7 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
-  // POST /api/system/upgrade — trigger deploy.sh (private network only)
+  // POST /api/system/upgrade — trigger upgrade.sh (private network only)
   // -----------------------------------------------------------------------
 
   fastify.post("/api/system/upgrade", async (request, reply) => {
@@ -2288,7 +2288,7 @@ export async function createGatewayRuntimeState(
     // Respond immediately — upgrade runs in the background
     void reply.code(202).send({ ok: true, message: "Upgrade started" });
 
-    const scriptPath = join(repoPath, "scripts/deploy.sh");
+    const scriptPath = join(repoPath, "scripts/upgrade.sh");
     const child = spawn("bash", [scriptPath], { cwd: repoPath, stdio: ["ignore", "pipe", "pipe"] });
 
     let currentPhase = "pulling";
@@ -2297,7 +2297,7 @@ export async function createGatewayRuntimeState(
     // Emit immediate "Upgrade started" so the log stream has an entry from the start
     broadcastUpgrade("pulling", "Upgrade started", "upgrade", "start");
 
-    // Phase mapping — coarse UI phase for each deploy.sh step
+    // Phase mapping — coarse UI phase for each upgrade.sh step
     const phaseToUiPhase: Record<string, string> = {
       "pull-agi": "pulling",
       "pull-prime": "pulling",
@@ -2318,7 +2318,7 @@ export async function createGatewayRuntimeState(
     child.stdout.on("data", (chunk: Buffer) => {
       const lines = chunk.toString("utf-8").split("\n").filter(Boolean);
       for (const line of lines) {
-        // Try parsing as structured JSON from deploy.sh
+        // Try parsing as structured JSON from upgrade.sh
         try {
           const parsed = JSON.parse(line) as { phase?: string; status?: string; details?: string };
           if (parsed.phase) {

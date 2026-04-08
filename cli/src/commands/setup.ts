@@ -524,7 +524,7 @@ function printPostSetup(ctx: SetupContext): void {
     console.log();
     console.log(
       dim(
-        "  For production deployment, run install.sh or deploy.sh to sync to /opt/aionima",
+        "  For production deployment, run install.sh or upgrade.sh to sync to /opt/aionima",
       ),
     );
   }

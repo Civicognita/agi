@@ -411,7 +411,7 @@ Response:
 
 #### POST /api/system/upgrade
 
-Trigger the deployment pipeline (`scripts/deploy.sh`). Returns `202 Accepted` immediately and broadcasts progress via WebSocket `system:upgrade` events. Concurrent upgrades are rejected with `409` (5-minute timeout).
+Trigger the deployment pipeline (`scripts/upgrade.sh`). Returns `202 Accepted` immediately and broadcasts progress via WebSocket `system:upgrade` events. Concurrent upgrades are rejected with `409` (5-minute timeout).
 
 Response:
 

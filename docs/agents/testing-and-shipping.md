@@ -324,7 +324,7 @@ SCRIPT
 
 Without this, the CLI crashes with "Failed to load native module: pty.node."
 
-**3. deploy.sh assumes git repo** — `install.sh` calls `deploy.sh` at the end, which does `git pull` inside `/opt/aionima`. Since the VM's `/opt/aionima` is not a git clone (it's an empty dir), this step fails. For dev testing, skip deploy and run directly from the cloned repo:
+**3. upgrade.sh assumes git repo** — `install.sh` calls `upgrade.sh` at the end, which does `git pull` inside `/opt/aionima`. Since the VM's `/opt/aionima` is not a git clone (it's an empty dir), this step fails. For dev testing, skip deploy and run directly from the cloned repo:
 
 ```bash
 multipass exec aionima-test -- sudo -u aionima env HOME=/home/aionima bash << 'SCRIPT'
@@ -373,7 +373,7 @@ test("docs page shows file tree and renders markdown", async ({ page }) => {
 
 ## CI Pipeline (GitHub Actions)
 
-The CI workflow runs on every push and pull request to `main`. It does not run deploy.sh — CI only validates.
+The CI workflow runs on every push and pull request to `main`. It does not run upgrade.sh — CI only validates.
 
 CI steps:
 1. `pnpm install` — install all dependencies

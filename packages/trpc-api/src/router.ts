@@ -247,7 +247,7 @@ const systemRouter = router({
     const { join } = await import("node:path");
 
     const repoPath = ctx.selfRepoPath;
-    const scriptPath = join(repoPath, "scripts/deploy.sh");
+    const scriptPath = join(repoPath, "scripts/upgrade.sh");
 
     // Fire-and-forget the deploy script; broadcast progress via WS
     const child = spawn("bash", [scriptPath], { cwd: repoPath, stdio: ["ignore", "pipe", "pipe"] });

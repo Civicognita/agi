@@ -235,7 +235,7 @@ npm run install
 SCRIPT
 ```
 
-**deploy.sh fails**: `install.sh` calls `deploy.sh` which expects `/opt/aionima` to be a git repo. For VM testing, skip deploy and run directly from the cloned repo:
+**upgrade.sh fails**: `install.sh` calls `upgrade.sh` which expects `/opt/aionima` to be a git repo. For VM testing, skip deploy and run directly from the cloned repo:
 
 ```bash
 multipass exec aionima-test -- sudo -u aionima env HOME=/home/aionima bash << 'SCRIPT'

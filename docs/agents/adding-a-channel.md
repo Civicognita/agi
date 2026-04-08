@@ -227,11 +227,11 @@ For the channel to be loaded, add it to the `channels` array in `aionima.json`:
 
 ## Step 8: Deploy
 
-The production deployment directory (`/opt/aionima/`) is its own git clone. `scripts/deploy.sh` runs `git pull` to update it, then `pnpm install --frozen-lockfile && pnpm build` to rebuild.
+The production deployment directory (`/opt/aionima/`) is its own git clone. `scripts/upgrade.sh` runs `git pull` to update it, then `pnpm install --frozen-lockfile && pnpm build` to rebuild.
 
 New channel directories committed to the repo are automatically included when deploy pulls. No rsync or manual sync is needed.
 
-If your channel has a compiled `dist/` that needs to be hashed for backend-change detection, add it to `BACKEND_DIRS` in `deploy.sh`:
+If your channel has a compiled `dist/` that needs to be hashed for backend-change detection, add it to `BACKEND_DIRS` in `upgrade.sh`:
 
 ```bash
 BACKEND_DIRS=(
@@ -287,7 +287,7 @@ import Comms<Name>Page from "./routes/comms-<name>.js";
 | `channels/<name>/src/normalizer.ts` | Create — message normalization |
 | `channels/<name>/src/outbound.ts` | Create — send logic |
 | `aionima.json` | Add channel entry to `channels[]` array |
-| `scripts/deploy.sh` | Add to `BACKEND_DIRS` if channel compiles to `dist/` |
+| `scripts/upgrade.sh` | Add to `BACKEND_DIRS` if channel compiles to `dist/` |
 | `ui/dashboard/src/routes/comms-<name>.tsx` | Create — thin wrapper around `ChannelPage` |
 | `ui/dashboard/src/router.tsx` | Add route for `/comms/<name>` |
 | `ui/dashboard/src/components/AppSidebar.tsx` | Add item to Communication section |

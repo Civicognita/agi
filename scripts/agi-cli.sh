@@ -8,7 +8,7 @@
 # Usage:
 #   agi status          — service + infra status
 #   agi logs [N]        — tail gateway logs (default 50 lines)
-#   agi upgrade         — pull + build + restart (runs deploy.sh)
+#   agi upgrade         — pull + build + restart (runs upgrade.sh)
 #   agi restart         — restart the aionima service
 #   agi start           — start the aionima service
 #   agi stop            — stop the aionima service
@@ -171,14 +171,14 @@ cmd_upgrade() {
   info "Starting upgrade..."
   cd "$DEPLOY_DIR"
 
-  local deploy_script="$DEPLOY_DIR/scripts/deploy.sh"
+  local deploy_script="$DEPLOY_DIR/scripts/upgrade.sh"
   if [ ! -x "$deploy_script" ]; then
-    err "deploy.sh not found or not executable"
+    err "upgrade.sh not found or not executable"
     exit 1
   fi
 
   bash "$deploy_script" 2>&1 | while IFS= read -r line; do
-    # Parse structured JSON output from deploy.sh
+    # Parse structured JSON output from upgrade.sh
     local phase status details
     phase="$(echo "$line" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));process.stdout.write(d.phase||'')}catch{}" 2>/dev/null)"
     status="$(echo "$line" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));process.stdout.write(d.status||'')}catch{}" 2>/dev/null)"

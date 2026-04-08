@@ -346,8 +346,8 @@ The CLI and gateway read these environment variables:
 | `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp phone number ID |
 | `WHATSAPP_VERIFY_TOKEN` | WhatsApp webhook verification token |
 | `JWT_SECRET` | Dashboard session JWT signing secret |
-| `AIONIMA_USER` | Linux user for deploy.sh (default: owner of `/opt/aionima`) |
-| `AIONIMA_REPO_DIR` | Repository directory for deploy.sh |
+| `AIONIMA_USER` | Linux user for upgrade.sh (default: owner of `/opt/aionima`) |
+| `AIONIMA_REPO_DIR` | Repository directory for upgrade.sh |
 
 ---
 

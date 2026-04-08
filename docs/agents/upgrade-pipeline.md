@@ -1,10 +1,10 @@
-# Deploy Pipeline: deploy.sh, Upgrade Flow
+# Deploy Pipeline: upgrade.sh, Upgrade Flow
 
 This document is a complete walkthrough of the Aionima deployment pipeline for AI agents modifying the deploy system.
 
 ## Overview
 
-Deployment is triggered through the dashboard. Never run `scripts/deploy.sh` manually unless the dashboard is unavailable.
+Deployment is triggered through the dashboard. Never run `scripts/upgrade.sh` manually unless the dashboard is unavailable.
 
 ```
 Developer pushes to `main`
@@ -15,7 +15,7 @@ User clicks "Upgrade" in the dashboard
          |
 POST /api/system/upgrade
          |
-scripts/deploy.sh runs as a child process
+scripts/upgrade.sh runs as a child process
          |
 Structured JSON logs streamed via WebSocket to dashboard
          |
@@ -34,11 +34,11 @@ Five independent git repos are pulled during deployment:
 | MApp Marketplace | `/opt/aionima-mapp-marketplace` | `mappMarketplace.dir` | `AIONIMA_MAPP_MARKETPLACE_DIR` |
 | ID | `/opt/aionima-local-id` | `idService.dir` | `AIONIMA_ID_DIR` |
 
-If a repo directory doesn't exist, deploy.sh auto-clones it (via `sudo git clone`). Clone failures are non-fatal — the system continues in degraded mode.
+If a repo directory doesn't exist, upgrade.sh auto-clones it (via `sudo git clone`). Clone failures are non-fatal — the system continues in degraded mode.
 
-## The deploy.sh Script
+## The upgrade.sh Script
 
-Location: `scripts/deploy.sh`
+Location: `scripts/upgrade.sh`
 
 The script emits structured JSON to stdout for each phase:
 
@@ -68,7 +68,7 @@ The script emits structured JSON to stdout for each phase:
 
 #### ID Service Build
 
-When `idService.local.enabled` is `true` in `~/.agi/aionima.json`, deploy.sh builds the ID service:
+When `idService.local.enabled` is `true` in `~/.agi/aionima.json`, upgrade.sh builds the ID service:
 
 1. `npm install` — installs **all** dependencies (not `--omit=dev`) because `tsc` is a devDependency
 2. `npm run build` — compiles TypeScript to `dist/`
@@ -79,7 +79,7 @@ When `idService.local.enabled` is `true` in `~/.agi/aionima.json`, deploy.sh bui
 
 #### Marketplace Plugin Symlink
 
-After building marketplace plugins, deploy.sh creates a symlink:
+After building marketplace plugins, upgrade.sh creates a symlink:
 
 ```bash
 ln -sfn /opt/aionima/node_modules /opt/aionima-marketplace/node_modules
@@ -141,7 +141,7 @@ At boot, `packages/gateway-core/src/protocol-check.ts` reads all deployed repos 
 
 ## Dashboard Upgrade Trigger
 
-The upgrade endpoint in `packages/gateway-core/src/server-runtime-state.ts` spawns deploy.sh and parses JSON logs:
+The upgrade endpoint in `packages/gateway-core/src/server-runtime-state.ts` spawns upgrade.sh and parses JSON logs:
 
 ```ts
 // Phase mapping for structured JSON logs
@@ -178,7 +178,7 @@ Taskmaster job state is stored in `.ai/jobs/` within the workspace root. Workers
 
 | File | Change |
 |------|--------|
-| `scripts/deploy.sh` | Add new phases, modify pull targets, adjust checksums |
+| `scripts/upgrade.sh` | Add new phases, modify pull targets, adjust checksums |
 | `packages/gateway-core/src/server-runtime-state.ts` | Update `phaseToUiPhase` if new deploy phases are added |
 | `packages/gateway-core/src/protocol-check.ts` | Modify compatibility checking logic |
 | `packages/gateway-core/src/resolve-paths.ts` | Add new repo path resolution |
@@ -187,9 +187,9 @@ Taskmaster job state is stored in `.ai/jobs/` within the workspace root. Workers
 
 ## Verification Checklist
 
-After modifying deploy.sh or the deploy pipeline:
+After modifying upgrade.sh or the deploy pipeline:
 
-- [ ] `bash -n scripts/deploy.sh` -- syntax check passes
+- [ ] `bash -n scripts/upgrade.sh` -- syntax check passes
 - [ ] New phases emit JSON: `{"phase":"...","status":"start|done|error"}`
 - [ ] `pnpm build` completes without errors
 - [ ] Test full deploy: push to `main`, click Upgrade in dashboard

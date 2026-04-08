@@ -110,7 +110,7 @@ CI steps:
 | Scenario | Command |
 |----------|---------|
 | After changing business logic or stores | `pnpm test` |
-| After changing `install.sh` or `deploy.sh` | `pnpm test:e2e` |
+| After changing `install.sh` or `upgrade.sh` | `pnpm test:e2e` |
 | After adding or modifying API endpoints | `pnpm test:e2e` |
 | After changing the onboarding flow | `pnpm test:e2e` |
 | After changing dashboard UI | `pnpm test:e2e:ui` |

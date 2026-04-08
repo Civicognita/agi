@@ -9,18 +9,17 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 AIONIMA_USER="${AIONIMA_USER:-aionima}"
 AIONIMA_REPO="${AIONIMA_REPO:-https://github.com/Civicognita/agi.git}"
-AIONIMA_REPO_DIR="${AIONIMA_REPO_DIR:-/home/$AIONIMA_USER/_projects/agi}"
-AIONIMA_DEPLOY_DIR="${AIONIMA_DEPLOY_DIR:-/opt/aionima}"
-AIONIMA_PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
-AIONIMA_PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
-AIONIMA_MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-marketplace.git}"
-AIONIMA_MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
-AIONIMA_MAPP_MARKETPLACE_REPO="${AIONIMA_MAPP_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-mapp-marketplace.git}"
-AIONIMA_MAPP_MARKETPLACE_DIR="${AIONIMA_MAPP_MARKETPLACE_DIR:-/opt/aionima-mapp-marketplace}"
-AIONIMA_ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
-AIONIMA_ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
-AIONIMA_BRANCH="${AIONIMA_BRANCH:-main}"
-AIONIMA_SKIP_HARDENING="${AIONIMA_SKIP_HARDENING:-}"
+INSTALL_DIR="${AIONIMA_INSTALL_DIR:-/opt/aionima}"
+PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
+PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
+MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-marketplace.git}"
+MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
+MAPP_MARKETPLACE_REPO="${AIONIMA_MAPP_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-mapp-marketplace.git}"
+MAPP_MARKETPLACE_DIR="${AIONIMA_MAPP_MARKETPLACE_DIR:-/opt/aionima-mapp-marketplace}"
+ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
+ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
+BRANCH="${AIONIMA_BRANCH:-main}"
+SKIP_HARDENING="${AIONIMA_SKIP_HARDENING:-}"
 
 # Helper: run a command as the service user without consuming stdin
 # (critical when this script is piped from curl)
@@ -31,12 +30,14 @@ run_as() {
 # ---------------------------------------------------------------------------
 # 0. Pre-flight checks
 # ---------------------------------------------------------------------------
-echo "==> Aionima installer"
-echo "    User:   $AIONIMA_USER"
-echo "    Repo:   $AIONIMA_REPO"
-echo "    Dir:    $AIONIMA_REPO_DIR"
-echo "    Deploy: $AIONIMA_DEPLOY_DIR"
-echo "    Branch: $AIONIMA_BRANCH"
+echo ""
+echo "  ============================================"
+echo "    Aionima Installer"
+echo "  ============================================"
+echo ""
+echo "    User:    $AIONIMA_USER"
+echo "    Install: $INSTALL_DIR"
+echo "    Branch:  $BRANCH"
 echo ""
 
 if [[ $EUID -ne 0 ]]; then
@@ -49,7 +50,6 @@ if ! command -v systemctl &>/dev/null; then
   exit 1
 fi
 
-# Detect OS
 if [ -f /etc/os-release ]; then
   . /etc/os-release
   if [[ "${ID:-}" != "ubuntu" && "${ID_LIKE:-}" != *"ubuntu"* && "${ID_LIKE:-}" != *"debian"* ]]; then
@@ -69,7 +69,6 @@ else
   useradd -m -s /bin/bash "$AIONIMA_USER"
 fi
 
-# Add to adm group for log access
 usermod -aG adm "$AIONIMA_USER" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
@@ -134,67 +133,45 @@ echo "==> Enabling pnpm via corepack..."
 corepack enable pnpm 2>/dev/null || npm install -g corepack && corepack enable pnpm
 
 # ---------------------------------------------------------------------------
-# 5. Clone or update repository
+# 5. Clone all repos
 # ---------------------------------------------------------------------------
-if [ -d "$AIONIMA_REPO_DIR/.git" ]; then
-  echo "==> Updating existing repo at $AIONIMA_REPO_DIR..."
-  run_as "cd '$AIONIMA_REPO_DIR' && git fetch origin && git checkout '$AIONIMA_BRANCH' && git pull --ff-only"
-else
-  echo "==> Cloning repo to $AIONIMA_REPO_DIR..."
-  REPO_PARENT="$(dirname "$AIONIMA_REPO_DIR")"
-  mkdir -p "$REPO_PARENT"
-  chown "$AIONIMA_USER:$AIONIMA_USER" "$REPO_PARENT"
-  run_as "git clone --branch '$AIONIMA_BRANCH' '$AIONIMA_REPO' '$AIONIMA_REPO_DIR'"
-fi
-
-# ---------------------------------------------------------------------------
-# 5b. Clone companion repos (PRIME, Marketplace, ID)
-# ---------------------------------------------------------------------------
-for COMP_LABEL_REPO_DIR in \
-  "PRIME|$AIONIMA_PRIME_REPO|$AIONIMA_PRIME_DIR" \
-  "Marketplace|$AIONIMA_MARKETPLACE_REPO|$AIONIMA_MARKETPLACE_DIR" \
-  "MApp Marketplace|$AIONIMA_MAPP_MARKETPLACE_REPO|$AIONIMA_MAPP_MARKETPLACE_DIR" \
-  "ID|$AIONIMA_ID_REPO|$AIONIMA_ID_DIR"; do
-  COMP_LABEL="${COMP_LABEL_REPO_DIR%%|*}"
-  COMP_REST="${COMP_LABEL_REPO_DIR#*|}"
-  COMP_REPO="${COMP_REST%%|*}"
-  COMP_DIR="${COMP_REST#*|}"
-
-  if [ -d "$COMP_DIR/.git" ]; then
-    echo "==> $COMP_LABEL repo already exists at $COMP_DIR"
+clone_repo() {
+  local label="$1" repo="$2" dir="$3"
+  if [ -d "$dir/.git" ]; then
+    echo "==> $label already exists at $dir"
   else
-    echo "==> Cloning $COMP_LABEL repo to $COMP_DIR..."
-    mkdir -p "$COMP_DIR"
-    chown "$AIONIMA_USER:$AIONIMA_USER" "$COMP_DIR"
-    run_as "git clone --branch '$AIONIMA_BRANCH' '$COMP_REPO' '$COMP_DIR'"
+    echo "==> Cloning $label to $dir..."
+    git clone --branch "$BRANCH" "$repo" "$dir"
+    chown -R "$AIONIMA_USER:$AIONIMA_USER" "$dir"
   fi
-done
+}
+
+clone_repo "AGI"                "$AIONIMA_REPO"        "$INSTALL_DIR"
+clone_repo "PRIME"              "$PRIME_REPO"           "$PRIME_DIR"
+clone_repo "Plugin Marketplace" "$MARKETPLACE_REPO"     "$MARKETPLACE_DIR"
+clone_repo "MApp Marketplace"   "$MAPP_MARKETPLACE_REPO" "$MAPP_MARKETPLACE_DIR"
+clone_repo "ID Service"         "$ID_REPO"              "$ID_DIR"
 
 # ---------------------------------------------------------------------------
 # 6. Install dependencies and build
 # ---------------------------------------------------------------------------
 echo "==> Installing pnpm dependencies..."
-run_as "cd '$AIONIMA_REPO_DIR' && pnpm install --frozen-lockfile"
+run_as "cd '$INSTALL_DIR' && pnpm install --frozen-lockfile"
 
 echo "==> Building..."
-run_as "cd '$AIONIMA_REPO_DIR' && pnpm build"
+run_as "cd '$INSTALL_DIR' && pnpm build"
 
 # ---------------------------------------------------------------------------
-# 7. Create deploy directory and run initial deploy
+# 7. Create data directory
 # ---------------------------------------------------------------------------
-echo "==> Setting up deploy directory..."
-mkdir -p "$AIONIMA_DEPLOY_DIR"
-chown "$AIONIMA_USER:$AIONIMA_USER" "$AIONIMA_DEPLOY_DIR"
-
-echo "==> Running initial deploy..."
-export AIONIMA_USER
-export AIONIMA_REPO_DIR
-run_as "cd '$AIONIMA_REPO_DIR' && AIONIMA_USER='$AIONIMA_USER' AIONIMA_REPO_DIR='$AIONIMA_REPO_DIR' bash scripts/deploy.sh"
+AGI_DATA="/home/$AIONIMA_USER/.agi"
+mkdir -p "$AGI_DATA"
+chown "$AIONIMA_USER:$AIONIMA_USER" "$AGI_DATA"
 
 # ---------------------------------------------------------------------------
 # 8. Create .env skeleton (if not exists)
 # ---------------------------------------------------------------------------
-ENV_FILE="$AIONIMA_DEPLOY_DIR/.env"
+ENV_FILE="$INSTALL_DIR/.env"
 if [ ! -f "$ENV_FILE" ]; then
   echo "==> Creating .env skeleton..."
   cat > "$ENV_FILE" << 'ENVEOF'
@@ -227,50 +204,67 @@ ENVEOF
   chmod 0600 "$ENV_FILE"
 else
   echo "==> .env already exists, preserving"
-  # Ensure permissions are correct
   chmod 0600 "$ENV_FILE"
   chown "$AIONIMA_USER:$AIONIMA_USER" "$ENV_FILE"
 fi
 
 # ---------------------------------------------------------------------------
-# 9. Install and enable systemd unit
+# 9. Record installed commit
+# ---------------------------------------------------------------------------
+git -C "$INSTALL_DIR" rev-parse HEAD > "$INSTALL_DIR/.deployed-commit"
+chown "$AIONIMA_USER:$AIONIMA_USER" "$INSTALL_DIR/.deployed-commit"
+
+# ---------------------------------------------------------------------------
+# 10. Install systemd service
 # ---------------------------------------------------------------------------
 echo "==> Installing systemd service..."
-SERVICE_FILE="$AIONIMA_REPO_DIR/scripts/aionima.service"
+SERVICE_FILE="$INSTALL_DIR/scripts/aionima.service"
 DEST_SERVICE="/etc/systemd/system/aionima.service"
 
-# Template the user into the service file
 sed "s/%AIONIMA_USER%/$AIONIMA_USER/g" "$SERVICE_FILE" > "$DEST_SERVICE"
 systemctl daemon-reload
 systemctl enable aionima
 echo "  [OK] Service installed and enabled"
 
 # ---------------------------------------------------------------------------
-# 10. Run hardening (unless skipped)
+# 11. Install agi CLI (symlink)
 # ---------------------------------------------------------------------------
-if [ "${AIONIMA_SKIP_HARDENING:-}" = "1" ]; then
+AGI_CLI="$INSTALL_DIR/scripts/agi-cli.sh"
+if [ -x "$AGI_CLI" ]; then
+  ln -sf "$AGI_CLI" /usr/local/bin/agi 2>/dev/null || true
+  echo "  [OK] agi CLI linked to /usr/local/bin/agi"
+fi
+
+# ---------------------------------------------------------------------------
+# 12. Run hardening (unless skipped)
+# ---------------------------------------------------------------------------
+if [ "${SKIP_HARDENING}" = "1" ]; then
   echo "==> Skipping hardening (AIONIMA_SKIP_HARDENING=1)"
 else
-  echo "==> Running hardening..."
-  AIONIMA_USER="$AIONIMA_USER" AIONIMA_DEPLOY_DIR="$AIONIMA_DEPLOY_DIR" \
-    bash "$AIONIMA_REPO_DIR/scripts/hardening.sh"
+  HARDENING="$INSTALL_DIR/scripts/hardening.sh"
+  if [ -f "$HARDENING" ]; then
+    echo "==> Running hardening..."
+    AIONIMA_USER="$AIONIMA_USER" AIONIMA_DEPLOY_DIR="$INSTALL_DIR" \
+      bash "$HARDENING"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
 # Done
 # ---------------------------------------------------------------------------
 echo ""
-echo "============================================"
-echo "  Aionima installed successfully!"
-echo "============================================"
+echo "  ============================================"
+echo "    Aionima installed successfully!"
+echo "  ============================================"
 echo ""
 echo "  Next steps:"
-echo "    1. Configure:  su - $AIONIMA_USER -c 'cd $AIONIMA_DEPLOY_DIR && npx aionima setup'"
+echo "    1. Configure:  sudo -u $AIONIMA_USER aionima setup"
 echo "    2. Start:      sudo systemctl start aionima"
 echo "    3. Check:      sudo systemctl status aionima"
-echo "    4. Diagnose:   su - $AIONIMA_USER -c 'cd $AIONIMA_DEPLOY_DIR && npx aionima doctor'"
+echo "    4. Diagnose:   sudo -u $AIONIMA_USER aionima doctor"
 echo ""
-echo "  Config:  $AIONIMA_DEPLOY_DIR/aionima.json"
-echo "  Secrets: $AIONIMA_DEPLOY_DIR/.env"
-echo "  Logs:    journalctl -u aionima -f"
+echo "  Dashboard:  http://$(hostname -I | awk '{print $1}'):3100"
+echo "  Config:     ~/.agi/aionima.json"
+echo "  Secrets:    $INSTALL_DIR/.env"
+echo "  Logs:       journalctl -u aionima -f"
 echo ""

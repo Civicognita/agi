@@ -367,7 +367,7 @@ export default function RootLayout() {
       } else if (phase !== "complete") {
         setUpgradePhase(phase);
       }
-      // Accumulate structured log entries from deploy.sh
+      // Accumulate structured log entries from upgrade.sh
       if (step && status) {
         setUpgradeLogs((prev) => [...prev, { step, status, message, timestamp: event.data.timestamp }]);
       }
@@ -413,7 +413,7 @@ export default function RootLayout() {
     });
 
     // Poll the persisted upgrade log for completion.
-    // The log survives server restarts — deploy.sh writes .upgrade-pending before
+    // The log survives server restarts — upgrade.sh writes .upgrade-pending before
     // restart, and the new server appends "complete" entries on boot.
     const poll = setInterval(() => {
       fetchUpgradeLog()

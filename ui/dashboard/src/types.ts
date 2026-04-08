@@ -98,9 +98,9 @@ export interface SystemUpgradeEvent {
   phase: string;
   message: string;
   timestamp: string;
-  /** Raw deploy step from deploy.sh (e.g. "pull-agi", "build", "restart"). */
+  /** Raw deploy step from upgrade.sh (e.g. "pull-agi", "build", "restart"). */
   step?: string;
-  /** Step status from deploy.sh (e.g. "start", "ok", "skip", "fail"). */
+  /** Step status from upgrade.sh (e.g. "start", "ok", "skip", "fail"). */
   status?: string;
 }
 

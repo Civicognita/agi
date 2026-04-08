@@ -1288,7 +1288,7 @@ export async function startGatewayServer(
   wsRef.server = wsServer;
 
   // -------------------------------------------------------------------------
-  // Post-upgrade boot detection — if deploy.sh restarted the service, finalize the upgrade log
+  // Post-upgrade boot detection — if upgrade.sh restarted the service, finalize the upgrade log
   // -------------------------------------------------------------------------
   const selfRepoPath = config.workspace?.selfRepo;
   if (selfRepoPath) {

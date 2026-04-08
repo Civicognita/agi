@@ -168,7 +168,7 @@ The System section covers infrastructure and administration.
 |------|---------|
 | Resources | CPU, memory, disk usage of the host machine |
 | Services | Status of the `aionima` systemd service; start/stop/restart |
-| Admin | Upgrade via dashboard (triggers `deploy.sh`), view `.deployed-commit` status |
+| Admin | Upgrade via dashboard (triggers `upgrade.sh`), view `.deployed-commit` status |
 | Security | Security scanning — run SAST/SCA/secrets/config scans, manage findings |
 | Identity | Embedded ID service — OAuth connections, channel wizard, entity management |
 | Changelog | Version history and release notes |
@@ -178,7 +178,7 @@ The System section covers infrastructure and administration.
 
 #### Upgrading via Dashboard
 
-The Admin page shows whether the deployed version matches the repository HEAD. When the repository has new commits, an "Upgrade" button appears. Clicking it sends `POST /api/system/upgrade`, which runs `deploy.sh` in the background. The log output streams back to the dashboard via WebSocket.
+The Admin page shows whether the deployed version matches the repository HEAD. When the repository has new commits, an "Upgrade" button appears. Clicking it sends `POST /api/system/upgrade`, which runs `upgrade.sh` in the background. The log output streams back to the dashboard via WebSocket.
 
 The upgrade process does not restart the service if only frontend files changed. Backend changes trigger an automatic service restart.
 

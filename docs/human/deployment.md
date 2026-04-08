@@ -16,7 +16,7 @@ Aionima uses a **multi-repo architecture** with independent git repositories:
 | **MApp Marketplace** | `/opt/aionima-mapp-marketplace` | Declarative JSON MagicApps |
 | **ID** | `/opt/aionima-local-id` | OAuth credential broker and identity service |
 
-Each repo is a standalone git clone on the server. There are no submodules. If a companion repo directory doesn't exist during deployment, deploy.sh auto-clones it.
+Each repo is a standalone git clone on the server. There are no submodules. If a companion repo directory doesn't exist during deployment, upgrade.sh auto-clones it.
 
 The upgrade flow is:
 
@@ -25,10 +25,10 @@ The upgrade flow is:
 2. Dashboard detects new commits (polls every 60 seconds)
 3. Operator clicks "Upgrade" in the dashboard
 4. Gateway calls POST /api/system/upgrade
-5. deploy.sh runs: pull all repos -> protocol check -> build -> conditionally restart
+5. upgrade.sh runs: pull all repos -> protocol check -> build -> conditionally restart
 ```
 
-**Never run `deploy.sh` manually** unless explicitly needed. The normal path is always through the dashboard Upgrade button.
+**Never run `upgrade.sh` manually** unless explicitly needed. The normal path is always through the dashboard Upgrade button.
 
 ---
 
@@ -106,7 +106,7 @@ When `idService.local.enabled` is `true`, the gateway manages a local ID service
 
 ```bash
 cd /opt/aionima
-bash scripts/deploy.sh
+bash scripts/upgrade.sh
 ```
 
 ### Step 7 -- Start the Service
@@ -118,9 +118,9 @@ sudo systemctl status aionima
 
 ---
 
-## deploy.sh -- What It Does
+## upgrade.sh -- What It Does
 
-The deployment script (`scripts/deploy.sh`) emits structured JSON logs for each phase, which the dashboard parses to show real-time progress.
+The deployment script (`scripts/upgrade.sh`) emits structured JSON logs for each phase, which the dashboard parses to show real-time progress.
 
 ### Phase 1 -- Pull AGI
 
@@ -276,9 +276,9 @@ sudo journalctl -u aionima -n 100
 2. The endpoint compares the repo HEAD SHA against the `.deployed-commit` file.
 3. If they differ, the dashboard shows an "Upgrade available" badge.
 4. Clicking "Upgrade" sends `POST /api/system/upgrade`.
-5. The gateway spawns `scripts/deploy.sh` and streams structured JSON logs via WebSocket.
+5. The gateway spawns `scripts/upgrade.sh` and streams structured JSON logs via WebSocket.
 6. Each phase (pull-agi, pull-prime, build, etc.) is shown in real time.
-7. When deploy.sh exits, the dashboard shows "Upgrade complete" (or an error).
+7. When upgrade.sh exits, the dashboard shows "Upgrade complete" (or an error).
 8. If the backend changed and the service restarted, the WebSocket connection drops briefly. The dashboard reconnects automatically within 3 seconds.
 
 ---

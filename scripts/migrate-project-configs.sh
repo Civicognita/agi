@@ -2,7 +2,7 @@
 # ---------------------------------------------------------------------------
 # migrate-project-configs.sh — Upgrade project.json files to current schema
 #
-# Called by deploy.sh after build. Backfills required fields that may be
+# Called by upgrade.sh after build. Backfills required fields that may be
 # missing from legacy project configs written before schema validation.
 #
 # Safe to run multiple times (idempotent).

@@ -72,7 +72,7 @@ aionima/
 ├── ui/
 │   └── dashboard/          React dashboard (Vite + Tailwind + TanStack Query)
 ├── scripts/
-│   ├── deploy.sh           Production deployment script
+│   ├── upgrade.sh           Production deployment script
 │   └── aionima.service     systemd unit file
 ├── skills/                 Agent skill definitions (.skill.md files)
 └── aionima.example.json    Example configuration to copy from
