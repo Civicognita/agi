@@ -213,22 +213,22 @@ function repoChecks(config: AionimaConfig): CheckGroup {
     {
       name: "PRIME corpus",
       path: config.prime?.dir ?? "/opt/aionima-prime",
-      repo: "git@github.com:Civicognita/aionima.git",
+      repo: "https://github.com/Civicognita/aionima.git",
     },
     {
       name: "Plugin Marketplace",
       path: config.marketplace?.dir ?? "/opt/aionima-marketplace",
-      repo: "git@github.com:Civicognita/aionima-marketplace.git",
+      repo: "https://github.com/Civicognita/aionima-marketplace.git",
     },
     {
       name: "MApp Marketplace",
       path: mappMarketplaceConfig?.dir ?? "/opt/aionima-mapp-marketplace",
-      repo: "git@github.com:Civicognita/aionima-mapp-marketplace.git",
+      repo: "https://github.com/Civicognita/aionima-mapp-marketplace.git",
     },
     {
       name: "ID service",
       path: config.idService?.dir ?? "/opt/aionima-local-id",
-      repo: "git@github.com:Civicognita/aionima-local-id.git",
+      repo: "https://github.com/Civicognita/aionima-local-id.git",
     },
   ];
 

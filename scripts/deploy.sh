@@ -6,13 +6,13 @@ set -uo pipefail
 
 DEPLOY_DIR="/opt/aionima"
 PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
-PRIME_REPO="${AIONIMA_PRIME_REPO:-git@github.com:Civicognita/aionima.git}"
+PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
 MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
-MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-git@github.com:Civicognita/aionima-marketplace.git}"
+MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-marketplace.git}"
 MAPP_MARKETPLACE_DIR="${AIONIMA_MAPP_MARKETPLACE_DIR:-/opt/aionima-mapp-marketplace}"
-MAPP_MARKETPLACE_REPO="${AIONIMA_MAPP_MARKETPLACE_REPO:-git@github.com:Civicognita/aionima-mapp-marketplace.git}"
+MAPP_MARKETPLACE_REPO="${AIONIMA_MAPP_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-mapp-marketplace.git}"
 ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
-ID_REPO="${AIONIMA_ID_REPO:-git@github.com:Civicognita/aionima-local-id.git}"
+ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
 
 # Backend dist dirs — changes here require a service restart.
@@ -83,6 +83,7 @@ else
   if sudo git clone --branch main "$PRIME_REPO" "$PRIME_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$PRIME_DIR"; then
     emit "clone-prime" "done" "PRIME repo cloned to $PRIME_DIR"
   else
+    sudo rm -rf "$PRIME_DIR"
     emit "clone-prime" "error" "PRIME clone failed from $PRIME_REPO"
     # Non-fatal — continue in degraded mode
   fi
@@ -104,6 +105,7 @@ else
   if sudo git clone --branch main "$MARKETPLACE_REPO" "$MARKETPLACE_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$MARKETPLACE_DIR"; then
     emit "clone-marketplace" "done" "Marketplace repo cloned to $MARKETPLACE_DIR"
   else
+    sudo rm -rf "$MARKETPLACE_DIR"
     emit "clone-marketplace" "error" "Marketplace clone failed from $MARKETPLACE_REPO"
     # Non-fatal — plugins still work from cache
   fi
