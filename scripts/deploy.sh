@@ -6,8 +6,11 @@ set -uo pipefail
 
 DEPLOY_DIR="/opt/aionima"
 PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
+PRIME_REPO="${AIONIMA_PRIME_REPO:-git@github.com:Civicognita/aionima.git}"
 MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
+MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-git@github.com:Civicognita/aionima-mapp-marketplace.git}"
 ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
+ID_REPO="${AIONIMA_ID_REPO:-git@github.com:Civicognita/aionima-local-id.git}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
 
 # Backend dist dirs — changes here require a service restart.
@@ -63,7 +66,7 @@ if [ -f "$DEPLOY_DIR/.gitmodules" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Pull PRIME repo
+# 2. Pull PRIME repo (auto-clone if missing)
 # ---------------------------------------------------------------------------
 if [ -d "$PRIME_DIR/.git" ]; then
   emit "pull-prime" "start"
@@ -74,11 +77,17 @@ if [ -d "$PRIME_DIR/.git" ]; then
     # Non-fatal — continue in degraded mode
   fi
 else
-  emit "pull-prime" "skip" "PRIME directory not found at $PRIME_DIR"
+  emit "clone-prime" "start" "PRIME not found at $PRIME_DIR — cloning"
+  if git clone --branch main "$PRIME_REPO" "$PRIME_DIR" 2>&1; then
+    emit "clone-prime" "done" "PRIME repo cloned to $PRIME_DIR"
+  else
+    emit "clone-prime" "error" "PRIME clone failed from $PRIME_REPO"
+    # Non-fatal — continue in degraded mode
+  fi
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Pull MARKETPLACE repo
+# 3. Pull MARKETPLACE repo (auto-clone if missing)
 # ---------------------------------------------------------------------------
 if [ -d "$MARKETPLACE_DIR/.git" ]; then
   emit "pull-marketplace" "start"
@@ -89,11 +98,17 @@ if [ -d "$MARKETPLACE_DIR/.git" ]; then
     # Non-fatal — plugins still work from cache
   fi
 else
-  emit "pull-marketplace" "skip" "Marketplace directory not found at $MARKETPLACE_DIR"
+  emit "clone-marketplace" "start" "Marketplace not found at $MARKETPLACE_DIR — cloning"
+  if git clone --branch main "$MARKETPLACE_REPO" "$MARKETPLACE_DIR" 2>&1; then
+    emit "clone-marketplace" "done" "Marketplace repo cloned to $MARKETPLACE_DIR"
+  else
+    emit "clone-marketplace" "error" "Marketplace clone failed from $MARKETPLACE_REPO"
+    # Non-fatal — plugins still work from cache
+  fi
 fi
 
 # ---------------------------------------------------------------------------
-# 3c. Pull ID service repo
+# 3c. Pull ID service repo (auto-clone if missing)
 # ---------------------------------------------------------------------------
 if [ -d "$ID_DIR/.git" ]; then
   emit "pull-id" "start"
@@ -104,7 +119,13 @@ if [ -d "$ID_DIR/.git" ]; then
     # Non-fatal — continue in degraded mode
   fi
 else
-  emit "pull-id" "skip" "ID directory not found at $ID_DIR"
+  emit "clone-id" "start" "ID service not found at $ID_DIR — cloning"
+  if git clone --branch main "$ID_REPO" "$ID_DIR" 2>&1; then
+    emit "clone-id" "done" "ID service repo cloned to $ID_DIR"
+  else
+    emit "clone-id" "error" "ID clone failed from $ID_REPO"
+    # Non-fatal — continue in degraded mode
+  fi
 fi
 
 # MApp Marketplace is fetched remotely — no local pull needed.

@@ -11,6 +11,12 @@ AIONIMA_USER="${AIONIMA_USER:-aionima}"
 AIONIMA_REPO="${AIONIMA_REPO:-https://github.com/Civicognita/agi.git}"
 AIONIMA_REPO_DIR="${AIONIMA_REPO_DIR:-/home/$AIONIMA_USER/_projects/agi}"
 AIONIMA_DEPLOY_DIR="${AIONIMA_DEPLOY_DIR:-/opt/aionima}"
+AIONIMA_PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
+AIONIMA_PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
+AIONIMA_MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-mapp-marketplace.git}"
+AIONIMA_MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
+AIONIMA_ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
+AIONIMA_ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
 AIONIMA_BRANCH="${AIONIMA_BRANCH:-main}"
 AIONIMA_SKIP_HARDENING="${AIONIMA_SKIP_HARDENING:-}"
 
@@ -132,6 +138,28 @@ else
   chown "$AIONIMA_USER:$AIONIMA_USER" "$REPO_PARENT"
   su - "$AIONIMA_USER" -c "git clone --branch '$AIONIMA_BRANCH' '$AIONIMA_REPO' '$AIONIMA_REPO_DIR'"
 fi
+
+# ---------------------------------------------------------------------------
+# 5b. Clone companion repos (PRIME, Marketplace, ID)
+# ---------------------------------------------------------------------------
+for COMP_LABEL_REPO_DIR in \
+  "PRIME:$AIONIMA_PRIME_REPO:$AIONIMA_PRIME_DIR" \
+  "Marketplace:$AIONIMA_MARKETPLACE_REPO:$AIONIMA_MARKETPLACE_DIR" \
+  "ID:$AIONIMA_ID_REPO:$AIONIMA_ID_DIR"; do
+  COMP_LABEL="${COMP_LABEL_REPO_DIR%%:*}"
+  COMP_REST="${COMP_LABEL_REPO_DIR#*:}"
+  COMP_REPO="${COMP_REST%%:*}"
+  COMP_DIR="${COMP_REST#*:}"
+
+  if [ -d "$COMP_DIR/.git" ]; then
+    echo "==> $COMP_LABEL repo already exists at $COMP_DIR"
+  else
+    echo "==> Cloning $COMP_LABEL repo to $COMP_DIR..."
+    mkdir -p "$COMP_DIR"
+    chown "$AIONIMA_USER:$AIONIMA_USER" "$COMP_DIR"
+    su - "$AIONIMA_USER" -c "git clone --branch '$AIONIMA_BRANCH' '$COMP_REPO' '$COMP_DIR'"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 # 6. Install dependencies and build

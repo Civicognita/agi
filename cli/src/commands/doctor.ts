@@ -209,9 +209,21 @@ function repoChecks(config: AionimaConfig): CheckGroup {
   const checks: Check[] = [];
 
   const repos = [
-    { name: "PRIME corpus", path: config.prime?.dir ?? "/opt/aionima-prime" },
-    { name: "Marketplace", path: config.marketplace?.dir ?? "/opt/aionima-marketplace" },
-    { name: "ID service", path: config.idService?.dir ?? "/opt/aionima-local-id" },
+    {
+      name: "PRIME corpus",
+      path: config.prime?.dir ?? "/opt/aionima-prime",
+      repo: "git@github.com:Civicognita/aionima.git",
+    },
+    {
+      name: "Marketplace",
+      path: config.marketplace?.dir ?? "/opt/aionima-marketplace",
+      repo: "git@github.com:Civicognita/aionima-mapp-marketplace.git",
+    },
+    {
+      name: "ID service",
+      path: config.idService?.dir ?? "/opt/aionima-local-id",
+      repo: "git@github.com:Civicognita/aionima-local-id.git",
+    },
   ];
 
   for (const repo of repos) {
@@ -222,8 +234,8 @@ function repoChecks(config: AionimaConfig): CheckGroup {
       ok: exists,
       warn: !exists && isIdService,
       fix: exists ? undefined : isIdService
-        ? `${repo.name} not found — federation features unavailable`
-        : `Clone: git clone <source> ${repo.path}`,
+        ? `${repo.name} not found — federation features unavailable. Fix: sudo git clone ${repo.repo} ${repo.path} && sudo chown -R $USER:$USER ${repo.path}`
+        : `Fix: sudo git clone ${repo.repo} ${repo.path} && sudo chown -R $USER:$USER ${repo.path}`,
     });
 
     // Protocol compatibility
