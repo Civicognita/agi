@@ -172,6 +172,30 @@ AGI_DATA="/home/$AIONIMA_USER/.agi"
 mkdir -p "$AGI_DATA"
 chown "$AIONIMA_USER:$AIONIMA_USER" "$AGI_DATA"
 
+# Create minimal config if it doesn't exist (gateway requires it to boot)
+AGI_CONFIG="$AGI_DATA/aionima.json"
+if [ ! -f "$AGI_CONFIG" ]; then
+  LAN_IP="$(hostname -I | awk '{print $1}')"
+  cat > "$AGI_CONFIG" << CFGEOF
+{
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 3100
+  },
+  "hosting": {
+    "enabled": true,
+    "baseDomain": "ai.on"
+  },
+  "workspace": {
+    "selfRepo": "$INSTALL_DIR",
+    "root": "/home/$AIONIMA_USER"
+  }
+}
+CFGEOF
+  chown "$AIONIMA_USER:$AIONIMA_USER" "$AGI_CONFIG"
+  echo "  [OK] Config created at $AGI_CONFIG"
+fi
+
 # ---------------------------------------------------------------------------
 # 8. Create .env skeleton (if not exists)
 # ---------------------------------------------------------------------------
