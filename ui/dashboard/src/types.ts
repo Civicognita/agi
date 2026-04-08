@@ -854,7 +854,8 @@ export type PanelWidget =
   | { type: "metric"; label: string; valueEndpoint: string; unit?: string; format?: string }
   | { type: "iframe"; src: string; title?: string; height?: string }
   | { type: "code-editor"; language?: string; defaultValue?: string; readOnly?: boolean; height?: string; maxHeight?: string }
-  | { type: "tree-nav"; dataEndpoint?: string; title?: string };
+  | { type: "tree-nav"; dataEndpoint?: string; title?: string }
+  | { type: "layout"; direction: "horizontal" | "vertical" | "grid"; sizes?: string[]; gap?: string; height?: string; children: PanelWidget[] };
 
 export interface PluginPanel {
   id: string;

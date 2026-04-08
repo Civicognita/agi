@@ -590,45 +590,93 @@ export interface WidgetRendererProps {
   projectPath?: string;
 }
 
+/** Render a single widget — extracted for recursive use by layout widgets. */
+function renderWidget(widget: PanelWidget, i: number, actions: PluginAction[], projectPath?: string): React.ReactNode {
+  switch (widget.type) {
+    case "field-group":
+      return <FieldGroupWidget key={i} widget={widget} />;
+    case "action-bar":
+      return <ActionBarWidget key={i} widget={widget} actions={actions} projectPath={projectPath} />;
+    case "status-display":
+      return <StatusDisplayWidget key={i} widget={widget} projectPath={projectPath} />;
+    case "log-stream":
+      return <LogStreamWidget key={i} widget={widget} />;
+    case "markdown":
+      return <MarkdownWidget key={i} widget={widget} />;
+    case "table":
+      return <TableWidget key={i} widget={widget} />;
+    case "metric":
+      return <MetricWidget key={i} widget={widget} />;
+    case "iframe":
+      return <IframeWidget key={i} widget={widget} projectPath={projectPath} />;
+    case "chart":
+      return <ChartWidget key={i} widget={widget} />;
+    case "timeline":
+      return <TimelineWidget key={i} widget={widget} />;
+    case "kanban":
+      return <KanbanWidget key={i} widget={widget} />;
+    case "editor":
+      return <EditorWidget key={i} widget={widget} />;
+    case "diagram":
+      return <DiagramWidget key={i} widget={widget} />;
+    case "code-editor":
+      return <CodeEditorWidget key={i} widget={widget} />;
+    case "tree-nav":
+      return <TreeNavWidget key={i} widget={widget} projectPath={projectPath} />;
+    case "layout":
+      return <LayoutWidget key={i} widget={widget} actions={actions} projectPath={projectPath} />;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Layout widget — arranges child widgets in horizontal, vertical, or grid layouts.
+ *
+ * Props (from JSON):
+ * - direction: "horizontal" | "vertical" | "grid"
+ * - sizes: CSS grid template values per child (e.g. ["260px", "1fr"])
+ * - gap: CSS gap value (default "0")
+ * - height: CSS height for the container
+ * - children: nested PanelWidget[]
+ */
+function LayoutWidget({ widget, actions, projectPath }: {
+  widget: Extract<PanelWidget, { type: "layout" }>;
+  actions: PluginAction[];
+  projectPath?: string;
+}) {
+  const { direction, sizes, gap, height, children } = widget;
+
+  const style: React.CSSProperties = {
+    display: direction === "grid" ? "grid" : "flex",
+    flexDirection: direction === "vertical" ? "column" : "row",
+    gap: gap ?? "0",
+    height: height ?? undefined,
+  };
+
+  if (direction === "horizontal" && sizes?.length) {
+    // Use CSS grid for precise column sizing
+    style.display = "grid";
+    style.gridTemplateColumns = sizes.join(" ");
+  } else if (direction === "grid" && sizes?.length) {
+    style.gridTemplateColumns = sizes.join(" ");
+  }
+
+  return (
+    <div style={style} className="overflow-hidden">
+      {children.map((child, i) => (
+        <div key={i} className="overflow-auto min-w-0 min-h-0">
+          {renderWidget(child, i, actions, projectPath)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function WidgetRenderer({ widgets, actions = [], projectPath }: WidgetRendererProps) {
   return (
     <div className="space-y-4">
-      {widgets.map((widget, i) => {
-        switch (widget.type) {
-          case "field-group":
-            return <FieldGroupWidget key={i} widget={widget} />;
-          case "action-bar":
-            return <ActionBarWidget key={i} widget={widget} actions={actions} projectPath={projectPath} />;
-          case "status-display":
-            return <StatusDisplayWidget key={i} widget={widget} projectPath={projectPath} />;
-          case "log-stream":
-            return <LogStreamWidget key={i} widget={widget} />;
-          case "markdown":
-            return <MarkdownWidget key={i} widget={widget} />;
-          case "table":
-            return <TableWidget key={i} widget={widget} />;
-          case "metric":
-            return <MetricWidget key={i} widget={widget} />;
-          case "iframe":
-            return <IframeWidget key={i} widget={widget} projectPath={projectPath} />;
-          case "chart":
-            return <ChartWidget key={i} widget={widget} />;
-          case "timeline":
-            return <TimelineWidget key={i} widget={widget} />;
-          case "kanban":
-            return <KanbanWidget key={i} widget={widget} />;
-          case "editor":
-            return <EditorWidget key={i} widget={widget} />;
-          case "diagram":
-            return <DiagramWidget key={i} widget={widget} />;
-          case "code-editor":
-            return <CodeEditorWidget key={i} widget={widget} />;
-          case "tree-nav":
-            return <TreeNavWidget key={i} widget={widget} projectPath={projectPath} />;
-          default:
-            return null;
-        }
-      })}
+      {widgets.map((widget, i) => renderWidget(widget, i, actions, projectPath))}
     </div>
   );
 }

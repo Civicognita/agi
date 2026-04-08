@@ -181,6 +181,7 @@ export const WIDGET_COMPONENT_MAP = {
   "diagram": "Diagram",
   "code-editor": "CodeEditor (@particle-academy/fancy-code)",
   "tree-nav": "TreeNav (@particle-academy/react-fancy)",
+  "layout": "Layout container (horizontal, vertical, grid) with nested children",
 } as const;
 
 /**
