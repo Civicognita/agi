@@ -161,6 +161,7 @@ export const MAppDefinitionSchema = z.object({
   container: MAppContainerConfigSchema.optional(),
   panel: MAppPanelSchema,
   theme: MAppThemeSchema.optional(),
+  dockable: z.boolean().optional(),
   pages: z.array(MAppPageSchema).optional(),
   constants: z.array(MAppConstantSchema).optional(),
   output: MAppOutputSchema.optional(),

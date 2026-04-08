@@ -445,10 +445,10 @@ export function ProjectDetail({
           )}
         </TabsContent>
 
-        <TabsContent value="files" className="mt-4">
-          <div className="rounded-xl bg-card border border-border overflow-hidden">
+        <TabsContent value="files" className="mt-4" style={{ maxHeight: "calc(100vh - 14rem)", overflow: "hidden" }}>
+          <div className="rounded-xl bg-card border border-border overflow-hidden flex flex-col h-full">
             {/* Toolbar */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
               <span className="text-[11px] font-semibold text-muted-foreground">Editor</span>
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
@@ -465,7 +465,7 @@ export function ProjectDetail({
                 </Button>
               </div>
             </div>
-            <div className="flex overflow-hidden" style={{ height: "calc(100vh - 280px)", minHeight: 400, maxHeight: "calc(100vh - 280px)" }}>
+            <div className="flex flex-1 min-h-0 overflow-hidden">
               {/* TreeNav file tree pane */}
               <div className="w-[260px] shrink-0 border-r border-border overflow-y-auto overflow-x-hidden">
                 {treeLoading ? (

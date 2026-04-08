@@ -83,9 +83,11 @@ export function MagicAppModal({
             </button>
           ) : (
             <>
-              <button onClick={onDock} className="text-[10px] px-1.5 py-0.5 rounded hover:bg-surface1 text-muted-foreground" title="Dock left">
-                {"\u2B05\uFE0F"}
-              </button>
+              {app.dockable !== false && (
+                <button onClick={onDock} className="text-[10px] px-1.5 py-0.5 rounded hover:bg-surface1 text-muted-foreground" title="Dock left">
+                  {"\u2B05\uFE0F"}
+                </button>
+              )}
               <button
                 data-testid="mapp-maximize-btn"
                 onClick={onMaximize}
@@ -106,7 +108,7 @@ export function MagicAppModal({
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-auto p-3">
+      <div className="flex-1 overflow-hidden p-3 flex flex-col">
         {/* Form mode — MApp has pages */}
         {hasPages && !formResult ? (
           <MAppFormRenderer

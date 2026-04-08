@@ -252,6 +252,8 @@ export interface MagicAppInfo {
   prompts?: Array<Record<string, unknown>>;
   workflows?: Array<Record<string, unknown>>;
   tools?: Array<Record<string, unknown>>;
+  /** Whether this MApp supports docking to the left panel (default: true). */
+  dockable?: boolean;
   // Legacy serialized fields (backward compat)
   hasContainer?: boolean;
   panelLabel?: string;

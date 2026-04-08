@@ -395,6 +395,8 @@ export interface MAppDefinition {
   panel: MAppPanel;
   /** Visual theme overrides. */
   theme?: MAppTheme;
+  /** Whether this MApp supports docking to the left panel (default: true). */
+  dockable?: boolean;
 
   // --- Forms ---
   /** Multi-step form pages (for tool/suite MApps). */

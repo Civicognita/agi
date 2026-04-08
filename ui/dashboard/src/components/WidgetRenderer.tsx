@@ -499,23 +499,21 @@ function EditorWidget({ widget }: { widget: Extract<PanelWidget, { type: "editor
 
 function CodeEditorWidget({ widget }: { widget: Extract<PanelWidget, { type: "code-editor" }> }) {
   const [value, setValue] = useState(widget.defaultValue ?? "");
-  const minH = widget.height ? parseInt(widget.height, 10) || 300 : 300;
-  const maxH = widget.maxHeight ? parseInt(widget.maxHeight, 10) || undefined : undefined;
   return (
-    <CodeEditor
-      value={value}
-      onChange={setValue}
-      language={widget.language ?? "javascript"}
-      readOnly={widget.readOnly ?? false}
-      theme="auto"
-      minHeight={minH}
-      maxHeight={maxH}
-      className="rounded-lg border border-border"
-    >
-      <CodeEditor.Toolbar />
-      <CodeEditor.Panel />
-      <CodeEditor.StatusBar />
-    </CodeEditor>
+    <div className="h-full flex flex-col">
+      <CodeEditor
+        value={value}
+        onChange={setValue}
+        language={widget.language ?? "javascript"}
+        readOnly={widget.readOnly ?? false}
+        theme="auto"
+        className="flex-1 flex flex-col h-full"
+      >
+        <CodeEditor.Toolbar />
+        <CodeEditor.Panel />
+        <CodeEditor.StatusBar />
+      </CodeEditor>
+    </div>
   );
 }
 
@@ -546,7 +544,7 @@ function TreeNavWidget({ projectPath }: { widget: Extract<PanelWidget, { type: "
   if (nodes.length === 0) return <div className="text-muted-foreground text-xs py-4 text-center">Loading file tree...</div>;
 
   return (
-    <div className="border border-border rounded-lg overflow-auto max-h-[400px]">
+    <div className="border-r border-border overflow-auto h-full">
       <TreeNav
         nodes={nodes as never}
         selectedId={selectedId}
@@ -651,21 +649,22 @@ function LayoutWidget({ widget, actions, projectPath }: {
     display: direction === "grid" ? "grid" : "flex",
     flexDirection: direction === "vertical" ? "column" : "row",
     gap: gap ?? "0",
-    height: height ?? undefined,
+    height: height ?? "100%",
+    minHeight: 0,
   };
 
   if (direction === "horizontal" && sizes?.length) {
-    // Use CSS grid for precise column sizing
     style.display = "grid";
     style.gridTemplateColumns = sizes.join(" ");
+    style.gridTemplateRows = "1fr"; // children fill full height
   } else if (direction === "grid" && sizes?.length) {
     style.gridTemplateColumns = sizes.join(" ");
   }
 
   return (
-    <div style={style} className="overflow-hidden">
+    <div style={style} className="flex-1 overflow-hidden">
       {children.map((child, i) => (
-        <div key={i} className="overflow-auto min-w-0 min-h-0">
+        <div key={i} className="overflow-auto min-w-0 min-h-0 h-full">
           {renderWidget(child, i, actions, projectPath)}
         </div>
       ))}
@@ -675,7 +674,7 @@ function LayoutWidget({ widget, actions, projectPath }: {
 
 export function WidgetRenderer({ widgets, actions = [], projectPath }: WidgetRendererProps) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 flex-1 flex flex-col min-h-0">
       {widgets.map((widget, i) => renderWidget(widget, i, actions, projectPath))}
     </div>
   );
