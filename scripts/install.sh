@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Aionima — single-command bootstrap for Ubuntu.
-# Usage: curl -fsSL <url>/install.sh | sudo bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/Civicognita/agi/main/scripts/install.sh | sudo bash
 #    or: sudo AIONIMA_USER=myuser bash install.sh
 set -euo pipefail
 
@@ -13,12 +13,18 @@ AIONIMA_REPO_DIR="${AIONIMA_REPO_DIR:-/home/$AIONIMA_USER/_projects/agi}"
 AIONIMA_DEPLOY_DIR="${AIONIMA_DEPLOY_DIR:-/opt/aionima}"
 AIONIMA_PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
 AIONIMA_PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
-AIONIMA_MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-mapp-marketplace.git}"
+AIONIMA_MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-marketplace.git}"
 AIONIMA_MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
 AIONIMA_ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
 AIONIMA_ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
 AIONIMA_BRANCH="${AIONIMA_BRANCH:-main}"
 AIONIMA_SKIP_HARDENING="${AIONIMA_SKIP_HARDENING:-}"
+
+# Helper: run a command as the service user without consuming stdin
+# (critical when this script is piped from curl)
+run_as() {
+  su - "$AIONIMA_USER" -c "$1" < /dev/null
+}
 
 # ---------------------------------------------------------------------------
 # 0. Pre-flight checks
@@ -130,13 +136,13 @@ corepack enable pnpm 2>/dev/null || npm install -g corepack && corepack enable p
 # ---------------------------------------------------------------------------
 if [ -d "$AIONIMA_REPO_DIR/.git" ]; then
   echo "==> Updating existing repo at $AIONIMA_REPO_DIR..."
-  su - "$AIONIMA_USER" -c "cd '$AIONIMA_REPO_DIR' && git fetch origin && git checkout '$AIONIMA_BRANCH' && git pull --ff-only"
+  run_as "cd '$AIONIMA_REPO_DIR' && git fetch origin && git checkout '$AIONIMA_BRANCH' && git pull --ff-only"
 else
   echo "==> Cloning repo to $AIONIMA_REPO_DIR..."
   REPO_PARENT="$(dirname "$AIONIMA_REPO_DIR")"
   mkdir -p "$REPO_PARENT"
   chown "$AIONIMA_USER:$AIONIMA_USER" "$REPO_PARENT"
-  su - "$AIONIMA_USER" -c "git clone --branch '$AIONIMA_BRANCH' '$AIONIMA_REPO' '$AIONIMA_REPO_DIR'"
+  run_as "git clone --branch '$AIONIMA_BRANCH' '$AIONIMA_REPO' '$AIONIMA_REPO_DIR'"
 fi
 
 # ---------------------------------------------------------------------------
@@ -157,7 +163,7 @@ for COMP_LABEL_REPO_DIR in \
     echo "==> Cloning $COMP_LABEL repo to $COMP_DIR..."
     mkdir -p "$COMP_DIR"
     chown "$AIONIMA_USER:$AIONIMA_USER" "$COMP_DIR"
-    su - "$AIONIMA_USER" -c "git clone --branch '$AIONIMA_BRANCH' '$COMP_REPO' '$COMP_DIR'"
+    run_as "git clone --branch '$AIONIMA_BRANCH' '$COMP_REPO' '$COMP_DIR'"
   fi
 done
 
@@ -165,10 +171,10 @@ done
 # 6. Install dependencies and build
 # ---------------------------------------------------------------------------
 echo "==> Installing pnpm dependencies..."
-su - "$AIONIMA_USER" -c "cd '$AIONIMA_REPO_DIR' && pnpm install --frozen-lockfile"
+run_as "cd '$AIONIMA_REPO_DIR' && pnpm install --frozen-lockfile"
 
 echo "==> Building..."
-su - "$AIONIMA_USER" -c "cd '$AIONIMA_REPO_DIR' && pnpm build"
+run_as "cd '$AIONIMA_REPO_DIR' && pnpm build"
 
 # ---------------------------------------------------------------------------
 # 7. Create deploy directory and run initial deploy
@@ -180,7 +186,7 @@ chown "$AIONIMA_USER:$AIONIMA_USER" "$AIONIMA_DEPLOY_DIR"
 echo "==> Running initial deploy..."
 export AIONIMA_USER
 export AIONIMA_REPO_DIR
-su - "$AIONIMA_USER" -c "cd '$AIONIMA_REPO_DIR' && AIONIMA_USER='$AIONIMA_USER' AIONIMA_REPO_DIR='$AIONIMA_REPO_DIR' bash scripts/deploy.sh"
+run_as "cd '$AIONIMA_REPO_DIR' && AIONIMA_USER='$AIONIMA_USER' AIONIMA_REPO_DIR='$AIONIMA_REPO_DIR' bash scripts/deploy.sh"
 
 # ---------------------------------------------------------------------------
 # 8. Create .env skeleton (if not exists)
