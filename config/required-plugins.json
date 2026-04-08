@@ -24,11 +24,6 @@
     { "id": "worker-comm", "disableable": true },
     { "id": "worker-ops", "disableable": true },
     { "id": "worker-gov", "disableable": true },
-    { "id": "worker-data", "disableable": true },
-    { "id": "plugin-python", "disableable": true },
-    { "id": "plugin-ruby", "disableable": true },
-    { "id": "plugin-go", "disableable": true },
-    { "id": "plugin-mysql", "disableable": true },
-    { "id": "plugin-redis", "disableable": true }
+    { "id": "worker-data", "disableable": true }
   ]
 }
