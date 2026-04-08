@@ -240,7 +240,7 @@ if [ -f "$REQUIRED_PLUGINS_FILE" ] && [ -d "$MARKETPLACE_DIR/plugins" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 7d. Sync installed MApps from marketplace (fetch missing + update outdated)
+# 7d. Update installed MApps to latest marketplace versions
 # ---------------------------------------------------------------------------
 emit "mapp-sync" "start"
 GATEWAY_PORT=$(node -e "

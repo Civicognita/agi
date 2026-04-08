@@ -4170,7 +4170,7 @@ export async function createGatewayRuntimeState(
     return reply.send({ ok: true });
   });
 
-  // POST /api/mapp-marketplace/sync — install missing + update outdated MApps from marketplace
+  // POST /api/mapp-marketplace/sync — update already-installed MApps to latest marketplace versions
   fastify.post("/api/mapp-marketplace/sync", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) {
@@ -4183,7 +4183,6 @@ export async function createGatewayRuntimeState(
     }
 
     const { MAppDefinitionSchema } = await import("@aionima/config");
-    const installed: string[] = [];
     const updated: string[] = [];
     const errors: string[] = [];
 
@@ -4193,16 +4192,17 @@ export async function createGatewayRuntimeState(
       const marketplaceVersion = entry.version as string;
       const sourcePath = (entry.source as string)?.replace(/^\.\//, "") ?? `mapps/${author}/${id}.json`;
 
-      // Check if already installed and at current version
+      // Only update MApps that are already installed — never auto-install
       const installedPath = join(mappsInstallDir, author, `${id}.json`);
-      if (existsSync(installedPath)) {
-        try {
-          const local = JSON.parse(readFileSync(installedPath, "utf-8")) as { version?: string };
-          if (local.version === marketplaceVersion) continue; // Up to date
-        } catch { /* re-install on parse error */ }
-      }
+      if (!existsSync(installedPath)) continue;
 
-      // Fetch from GitHub and install
+      // Skip if already at current version
+      try {
+        const local = JSON.parse(readFileSync(installedPath, "utf-8")) as { version?: string };
+        if (local.version === marketplaceVersion) continue;
+      } catch { /* re-fetch on parse error */ }
+
+      // Fetch updated version from GitHub
       const result = await fetchFromMAppMarketplace(sourcePath);
       if (!result.ok) {
         errors.push(`${id}: ${result.error}`);
@@ -4216,22 +4216,16 @@ export async function createGatewayRuntimeState(
         continue;
       }
 
-      const destDir = join(mappsInstallDir, author);
-      mkdirSync(destDir, { recursive: true });
       writeFileSync(installedPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
 
       if (deps.mappRegistry) {
         deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
       }
 
-      if (existsSync(installedPath)) {
-        updated.push(id);
-      } else {
-        installed.push(id);
-      }
+      updated.push(id);
     }
 
-    return reply.send({ ok: true, installed, updated, errors });
+    return reply.send({ ok: true, updated, errors });
   });
 
   // -----------------------------------------------------------------------
