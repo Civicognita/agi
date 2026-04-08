@@ -26,6 +26,21 @@ class SettingsBuilder {
     return this;
   }
 
+  type(sectionType: SettingsSectionDefinition["type"]): this {
+    this.def.type = sectionType;
+    return this;
+  }
+
+  language(lang: string): this {
+    this.def.language = lang;
+    return this;
+  }
+
+  serviceIds(ids: string[]): this {
+    this.def.serviceIds = ids;
+    return this;
+  }
+
   position(pos: number): this {
     this.def.position = pos;
     return this;
