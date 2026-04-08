@@ -513,7 +513,7 @@ export const AionimaConfigSchema = z
     backup: BackupConfigSchema.optional(),
     compliance: ComplianceConfigSchema.optional(),
   })
-  .strict();
+  .passthrough();
 
 export type AionimaConfig = z.infer<typeof AionimaConfigSchema>;
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
