@@ -9,6 +9,8 @@ PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
 PRIME_REPO="${AIONIMA_PRIME_REPO:-git@github.com:Civicognita/aionima.git}"
 MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
 MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-git@github.com:Civicognita/aionima-marketplace.git}"
+MAPP_MARKETPLACE_DIR="${AIONIMA_MAPP_MARKETPLACE_DIR:-/opt/aionima-mapp-marketplace}"
+MAPP_MARKETPLACE_REPO="${AIONIMA_MAPP_MARKETPLACE_REPO:-git@github.com:Civicognita/aionima-mapp-marketplace.git}"
 ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
 ID_REPO="${AIONIMA_ID_REPO:-git@github.com:Civicognita/aionima-local-id.git}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
@@ -128,7 +130,26 @@ else
   fi
 fi
 
-# MApp Marketplace is fetched remotely — no local pull needed.
+# ---------------------------------------------------------------------------
+# 3d. Pull MApp marketplace repo (auto-clone if missing)
+# ---------------------------------------------------------------------------
+if [ -d "$MAPP_MARKETPLACE_DIR/.git" ]; then
+  emit "pull-mapp-marketplace" "start"
+  if (cd "$MAPP_MARKETPLACE_DIR" && git pull --ff-only origin main 2>&1); then
+    emit "pull-mapp-marketplace" "done" "MApp marketplace repo updated"
+  else
+    emit "pull-mapp-marketplace" "error" "MApp marketplace pull failed"
+    # Non-fatal — MApps still work from installed cache
+  fi
+else
+  emit "clone-mapp-marketplace" "start" "MApp marketplace not found at $MAPP_MARKETPLACE_DIR — cloning"
+  if sudo git clone --branch main "$MAPP_MARKETPLACE_REPO" "$MAPP_MARKETPLACE_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$MAPP_MARKETPLACE_DIR"; then
+    emit "clone-mapp-marketplace" "done" "MApp marketplace repo cloned to $MAPP_MARKETPLACE_DIR"
+  else
+    emit "clone-mapp-marketplace" "error" "MApp marketplace clone failed from $MAPP_MARKETPLACE_REPO"
+    # Non-fatal — MApps still work from installed cache
+  fi
+fi
 # MApps are installed on demand from GitHub via the dashboard.
 
 # ---------------------------------------------------------------------------

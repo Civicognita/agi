@@ -24,16 +24,17 @@ Service restarts (if backend changed)
 
 ## Multi-Repo Architecture
 
-Four independent git repos are pulled during deployment:
+Five independent git repos are pulled during deployment:
 
 | Repo | Production Path | Config Key | Env Override |
 |------|----------------|------------|--------------|
 | AGI | `/opt/aionima` | (implicit -- always cwd) | -- |
 | PRIME | `/opt/aionima-prime` | `prime.dir` | `AIONIMA_PRIME_DIR` |
-| MARKETPLACE | `/opt/aionima-marketplace` | `marketplace.dir` | `AIONIMA_MARKETPLACE_DIR` |
+| Plugin Marketplace | `/opt/aionima-marketplace` | `marketplace.dir` | `AIONIMA_MARKETPLACE_DIR` |
+| MApp Marketplace | `/opt/aionima-mapp-marketplace` | `mappMarketplace.dir` | `AIONIMA_MAPP_MARKETPLACE_DIR` |
 | ID | `/opt/aionima-local-id` | `idService.dir` | `AIONIMA_ID_DIR` |
 
-PRIME, MARKETPLACE, and ID are optional — if their directory doesn't exist, the pull phase is skipped silently.
+If a repo directory doesn't exist, deploy.sh auto-clones it (via `sudo git clone`). Clone failures are non-fatal — the system continues in degraded mode.
 
 ## The deploy.sh Script
 
@@ -51,9 +52,10 @@ The script emits structured JSON to stdout for each phase:
 | Phase | What it does | Fatal? |
 |-------|-------------|--------|
 | `pull-agi` | `git pull --ff-only` in `/opt/aionima` | Yes |
-| `pull-prime` | `git pull --ff-only` in PRIME dir | No (degraded mode) |
-| `pull-marketplace` | `git pull --ff-only` in MARKETPLACE dir | No (plugins still cached) |
-| `pull-id` | `git pull --ff-only` in ID dir | No (degraded mode) |
+| `pull-prime` / `clone-prime` | Pull or auto-clone PRIME corpus | No (degraded mode) |
+| `pull-marketplace` / `clone-marketplace` | Pull or auto-clone plugin marketplace | No (plugins still cached) |
+| `pull-mapp-marketplace` / `clone-mapp-marketplace` | Pull or auto-clone MApp marketplace | No (MApps still cached) |
+| `pull-id` / `clone-id` | Pull or auto-clone ID service | No (degraded mode) |
 | `build-id` | `npm install && npm run build` in ID dir (if local ID enabled) | No |
 | `protocol-check` | Verify `protocol.json` exists in deployed repos | No (warn) |
 | `install` | `pnpm install --frozen-lockfile` | Yes |

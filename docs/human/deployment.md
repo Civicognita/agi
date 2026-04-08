@@ -12,10 +12,11 @@ Aionima uses a **multi-repo architecture** with independent git repositories:
 |------|----------------|---------|
 | **AGI** | `/opt/aionima` | Gateway server, dashboard, plugins |
 | **PRIME** | `/opt/aionima-prime` | Knowledge corpus (Mycelium Protocol) |
-| **MARKETPLACE** | `/opt/aionima-marketplace` | Plugin marketplace |
+| **Plugin Marketplace** | `/opt/aionima-marketplace` | Code plugins (runtimes, stacks, workers, etc.) |
+| **MApp Marketplace** | `/opt/aionima-mapp-marketplace` | Declarative JSON MagicApps |
 | **ID** | `/opt/aionima-local-id` | OAuth credential broker and identity service |
 
-Each repo is a standalone git clone on the server. There are no submodules. PRIME, MARKETPLACE, and ID are optional -- if a repo's directory doesn't exist, it's silently skipped during deployment.
+Each repo is a standalone git clone on the server. There are no submodules. If a companion repo directory doesn't exist during deployment, deploy.sh auto-clones it.
 
 The upgrade flow is:
 

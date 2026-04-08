@@ -208,6 +208,7 @@ function authChecks(config: AionimaConfig): CheckGroup {
 function repoChecks(config: AionimaConfig): CheckGroup {
   const checks: Check[] = [];
 
+  const mappMarketplaceConfig = (config as Record<string, unknown>).mappMarketplace as Record<string, string> | undefined;
   const repos = [
     {
       name: "PRIME corpus",
@@ -215,8 +216,13 @@ function repoChecks(config: AionimaConfig): CheckGroup {
       repo: "git@github.com:Civicognita/aionima.git",
     },
     {
-      name: "Marketplace",
+      name: "Plugin Marketplace",
       path: config.marketplace?.dir ?? "/opt/aionima-marketplace",
+      repo: "git@github.com:Civicognita/aionima-marketplace.git",
+    },
+    {
+      name: "MApp Marketplace",
+      path: mappMarketplaceConfig?.dir ?? "/opt/aionima-mapp-marketplace",
       repo: "git@github.com:Civicognita/aionima-mapp-marketplace.git",
     },
     {

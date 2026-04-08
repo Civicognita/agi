@@ -15,6 +15,8 @@ AIONIMA_PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima
 AIONIMA_PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
 AIONIMA_MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-marketplace.git}"
 AIONIMA_MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
+AIONIMA_MAPP_MARKETPLACE_REPO="${AIONIMA_MAPP_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-mapp-marketplace.git}"
+AIONIMA_MAPP_MARKETPLACE_DIR="${AIONIMA_MAPP_MARKETPLACE_DIR:-/opt/aionima-mapp-marketplace}"
 AIONIMA_ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
 AIONIMA_ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
 AIONIMA_BRANCH="${AIONIMA_BRANCH:-main}"
@@ -151,6 +153,7 @@ fi
 for COMP_LABEL_REPO_DIR in \
   "PRIME:$AIONIMA_PRIME_REPO:$AIONIMA_PRIME_DIR" \
   "Marketplace:$AIONIMA_MARKETPLACE_REPO:$AIONIMA_MARKETPLACE_DIR" \
+  "MApp Marketplace:$AIONIMA_MAPP_MARKETPLACE_REPO:$AIONIMA_MAPP_MARKETPLACE_DIR" \
   "ID:$AIONIMA_ID_REPO:$AIONIMA_ID_DIR"; do
   COMP_LABEL="${COMP_LABEL_REPO_DIR%%:*}"
   COMP_REST="${COMP_LABEL_REPO_DIR#*:}"
