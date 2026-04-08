@@ -239,11 +239,28 @@ if [ -f "$REQUIRED_PLUGINS_FILE" ] && [ -d "$MARKETPLACE_DIR/plugins" ]; then
   fi
 fi
 
-# MApp reconciliation is not needed — MApps are fetched from GitHub on demand.
-# Updates are handled via the dashboard MagicApps admin page.
+# ---------------------------------------------------------------------------
+# 7d. Sync installed MApps from marketplace (fetch missing + update outdated)
+# ---------------------------------------------------------------------------
+emit "mapp-sync" "start"
+GATEWAY_PORT=$(node -e "
+  try {
+    const c = JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.agi/aionima.json', 'utf-8'));
+    console.log((c.gateway && c.gateway.port) || 3100);
+  } catch { console.log(3100); }
+" 2>/dev/null)
+SYNC_RESULT=$(curl -s -X POST "http://127.0.0.1:${GATEWAY_PORT}/api/mapp-marketplace/sync" \
+  -H "Content-Type: application/json" 2>/dev/null || echo '{"ok":false,"error":"service not running"}')
+SYNC_OK=$(echo "$SYNC_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.ok?'true':'false')}catch{console.log('false')}" 2>/dev/null)
+if [ "$SYNC_OK" = "true" ]; then
+  SYNC_INSTALLED=$(echo "$SYNC_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log((d.installed||[]).length + ' installed, ' + (d.updated||[]).length + ' updated')}catch{console.log('unknown')}" 2>/dev/null)
+  emit "mapp-sync" "done" "$SYNC_INSTALLED"
+else
+  emit "mapp-sync" "skip" "MApp sync skipped (service not running or fetch failed)"
+fi
 
 # ---------------------------------------------------------------------------
-# 7d. Migrate project configs to current schema
+# 7e. Migrate project configs to current schema
 # ---------------------------------------------------------------------------
 emit "migrate" "start"
 MIGRATE_SCRIPT="$DEPLOY_DIR/scripts/migrate-project-configs.sh"

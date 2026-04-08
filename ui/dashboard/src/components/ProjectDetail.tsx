@@ -465,12 +465,9 @@ export function ProjectDetail({
                 </Button>
               </div>
             </div>
-            <div className="flex" style={{ height: "calc(100vh - 280px)", minHeight: 400 }}>
+            <div className="flex overflow-hidden" style={{ height: "calc(100vh - 280px)", minHeight: 400, maxHeight: "calc(100vh - 280px)" }}>
               {/* TreeNav file tree pane */}
-              <div className={cn(
-                "border-r border-border overflow-auto",
-                openFilePath ? "w-[260px] shrink-0" : "flex-1",
-              )}>
+              <div className="w-[260px] shrink-0 border-r border-border overflow-y-auto overflow-x-hidden">
                 {treeLoading ? (
                   <div className="text-[12px] text-muted-foreground p-4">Loading files...</div>
                 ) : fileTree.length === 0 ? (
@@ -491,8 +488,8 @@ export function ProjectDetail({
                 )}
               </div>
               {/* CodeEditor pane */}
-              {openFilePath && (
-                <div className="flex-1 flex flex-col min-w-0">
+              {openFilePath ? (
+                <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
                   {/* Editor header */}
                   <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-mantle shrink-0">
                     <span className="text-[13px] font-semibold text-foreground truncate">
@@ -527,7 +524,7 @@ export function ProjectDetail({
                     </button>
                   </div>
                   {/* Editor body */}
-                  <div className="flex-1 min-h-0">
+                  <div className="flex-1 min-h-0 overflow-hidden">
                     {fileLoading ? (
                       <div className="p-4 text-[12px] text-muted-foreground">Loading...</div>
                     ) : fileError ? (
@@ -551,6 +548,13 @@ export function ProjectDetail({
                         <CodeEditor.StatusBar />
                       </CodeEditor>
                     )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-muted-foreground">
+                  <div className="text-center">
+                    <div className="text-3xl mb-2">{"</>"}</div>
+                    <div className="text-sm">Select a file to edit</div>
                   </div>
                 </div>
               )}

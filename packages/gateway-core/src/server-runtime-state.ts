@@ -4170,6 +4170,70 @@ export async function createGatewayRuntimeState(
     return reply.send({ ok: true });
   });
 
+  // POST /api/mapp-marketplace/sync — install missing + update outdated MApps from marketplace
+  fastify.post("/api/mapp-marketplace/sync", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
+    }
+
+    const catalog = await fetchMAppCatalog();
+    if (!catalog.ok) {
+      return reply.code(502).send({ error: `Failed to fetch catalog: ${catalog.error}` });
+    }
+
+    const { MAppDefinitionSchema } = await import("@aionima/config");
+    const installed: string[] = [];
+    const updated: string[] = [];
+    const errors: string[] = [];
+
+    for (const entry of catalog.mapps) {
+      const id = entry.id as string;
+      const author = (entry.author as string) ?? "civicognita";
+      const marketplaceVersion = entry.version as string;
+      const sourcePath = (entry.source as string)?.replace(/^\.\//, "") ?? `mapps/${author}/${id}.json`;
+
+      // Check if already installed and at current version
+      const installedPath = join(mappsInstallDir, author, `${id}.json`);
+      if (existsSync(installedPath)) {
+        try {
+          const local = JSON.parse(readFileSync(installedPath, "utf-8")) as { version?: string };
+          if (local.version === marketplaceVersion) continue; // Up to date
+        } catch { /* re-install on parse error */ }
+      }
+
+      // Fetch from GitHub and install
+      const result = await fetchFromMAppMarketplace(sourcePath);
+      if (!result.ok) {
+        errors.push(`${id}: ${result.error}`);
+        continue;
+      }
+
+      const raw = result.data as Record<string, unknown>;
+      const parsed = MAppDefinitionSchema.safeParse(raw);
+      if (!parsed.success) {
+        errors.push(`${id}: invalid definition`);
+        continue;
+      }
+
+      const destDir = join(mappsInstallDir, author);
+      mkdirSync(destDir, { recursive: true });
+      writeFileSync(installedPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
+
+      if (deps.mappRegistry) {
+        deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+      }
+
+      if (existsSync(installedPath)) {
+        updated.push(id);
+      } else {
+        installed.push(id);
+      }
+    }
+
+    return reply.send({ ok: true, installed, updated, errors });
+  });
+
   // -----------------------------------------------------------------------
   // Pre-listen hooks — register additional routes before the server starts
   // -----------------------------------------------------------------------
