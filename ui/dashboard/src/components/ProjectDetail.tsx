@@ -445,8 +445,8 @@ export function ProjectDetail({
           )}
         </TabsContent>
 
-        <TabsContent value="files" className="mt-4" style={{ maxHeight: "calc(100vh - 14rem)", overflow: "hidden" }}>
-          <div className="rounded-xl bg-card border border-border overflow-hidden flex flex-col h-full">
+        <TabsContent value="files" className="mt-4" style={{ height: "calc(100vh - 14rem)" }}>
+          <div className="rounded-xl bg-card border border-border overflow-hidden flex flex-col" style={{ height: "100%" }}>
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
               <span className="text-[11px] font-semibold text-muted-foreground">Editor</span>
@@ -465,9 +465,10 @@ export function ProjectDetail({
                 </Button>
               </div>
             </div>
-            <div className="flex flex-1 min-h-0 overflow-hidden">
-              {/* TreeNav file tree pane */}
-              <div className="w-[260px] shrink-0 border-r border-border overflow-y-auto overflow-x-hidden">
+            <div className="flex" style={{ flex: "1 1 0", minHeight: 0 }}>
+              {/* TreeNav file tree pane — relative container with absolute child for scroll containment */}
+              <div className="w-[260px] shrink-0 border-r border-border relative">
+                <div className="absolute inset-0 overflow-y-auto overflow-x-hidden">
                 {treeLoading ? (
                   <div className="text-[12px] text-muted-foreground p-4">Loading files...</div>
                 ) : fileTree.length === 0 ? (
@@ -486,10 +487,11 @@ export function ProjectDetail({
                     indentSize={14}
                   />
                 )}
+                </div>
               </div>
               {/* CodeEditor pane */}
               {openFilePath ? (
-                <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+                <div className="flex-1 flex flex-col min-w-0" style={{ minHeight: 0 }}>
                   {/* Editor header */}
                   <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-mantle shrink-0">
                     <span className="text-[13px] font-semibold text-foreground truncate">
@@ -524,7 +526,8 @@ export function ProjectDetail({
                     </button>
                   </div>
                   {/* Editor body */}
-                  <div className="flex-1 min-h-0 overflow-hidden">
+                  <div className="relative" style={{ flex: "1 1 0", minHeight: 0 }}>
+                    <div className="absolute inset-0 overflow-hidden">
                     {fileLoading ? (
                       <div className="p-4 text-[12px] text-muted-foreground">Loading...</div>
                     ) : fileError ? (
@@ -548,6 +551,7 @@ export function ProjectDetail({
                         <CodeEditor.StatusBar />
                       </CodeEditor>
                     )}
+                    </div>
                   </div>
                 </div>
               ) : (
