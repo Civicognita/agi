@@ -90,7 +90,7 @@ export function ProjectDetail({
 
   // Change detection: track a generation counter to trigger refreshes
   const [fileTreeGen, setFileTreeGen] = useState(0);
-  const [showHiddenFiles, setShowHiddenFiles] = useState(true);
+  const [showHiddenFiles, setShowHiddenFiles] = useState(false);
   const repoPanelRef = useRef<{ refresh: () => void } | null>(null);
 
   // Fetch plugin panels & actions for this project type
