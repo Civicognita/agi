@@ -161,6 +161,10 @@ run_as "cd '$INSTALL_DIR' && pnpm install --frozen-lockfile"
 echo "==> Building..."
 run_as "cd '$INSTALL_DIR' && pnpm build"
 
+# Record Node.js version so upgrade.sh knows when to rebuild native modules
+node -v > "$INSTALL_DIR/.node-version-hash"
+chown "$AIONIMA_USER:$AIONIMA_USER" "$INSTALL_DIR/.node-version-hash"
+
 # ---------------------------------------------------------------------------
 # 7. Create data directory
 # ---------------------------------------------------------------------------

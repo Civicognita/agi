@@ -237,14 +237,32 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Install dependencies
+# 5. Install dependencies (rebuild native modules if Node.js version changed)
 # ---------------------------------------------------------------------------
+NODE_VERSION_FILE="$DEPLOY_DIR/.node-version-hash"
+CURRENT_NODE_VERSION="$(node -v)"
+PREVIOUS_NODE_VERSION=""
+[ -f "$NODE_VERSION_FILE" ] && PREVIOUS_NODE_VERSION="$(cat "$NODE_VERSION_FILE")"
+
 emit "install" "start"
 if NO_COLOR=1 FORCE_COLOR=0 pnpm install --frozen-lockfile 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
   emit "install" "done" "Dependencies installed"
 else
   die "install" "pnpm install failed"
 fi
+
+# If Node.js was upgraded, native modules (better-sqlite3, node-pty, etc.)
+# must be recompiled or they crash with NODE_MODULE_VERSION mismatch.
+if [ "$CURRENT_NODE_VERSION" != "$PREVIOUS_NODE_VERSION" ] && [ -n "$PREVIOUS_NODE_VERSION" ]; then
+  emit "rebuild" "start" "Node.js changed ($PREVIOUS_NODE_VERSION -> $CURRENT_NODE_VERSION)"
+  if NO_COLOR=1 pnpm rebuild 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
+    emit "rebuild" "done" "Native modules rebuilt for $CURRENT_NODE_VERSION"
+  else
+    emit "rebuild" "error" "pnpm rebuild failed"
+    # Non-fatal — try to continue, service may still work
+  fi
+fi
+echo "$CURRENT_NODE_VERSION" > "$NODE_VERSION_FILE"
 
 # ---------------------------------------------------------------------------
 # 6. Snapshot backend checksums before build
