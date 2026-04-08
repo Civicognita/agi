@@ -14,9 +14,6 @@ WorkingDirectory=/opt/aionima
 # --- BEGIN CREDENTIALS ---
 # --- END CREDENTIALS ---
 
-# Legacy fallback (optional, will be removed once fully migrated)
-EnvironmentFile=-/opt/aionima/.env
-
 ExecStart=/usr/bin/node /opt/aionima/cli/dist/index.js run
 Restart=on-failure
 RestartSec=5
