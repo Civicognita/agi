@@ -445,10 +445,10 @@ export function ProjectDetail({
           )}
         </TabsContent>
 
-        <TabsContent value="files" className="mt-4" style={{ height: "calc(100vh - 14rem)" }}>
-          <div className="rounded-xl bg-card border border-border overflow-hidden flex flex-col" style={{ height: "100%" }}>
+        <TabsContent value="files" className="mt-4">
+          <div className="rounded-xl bg-card border border-border overflow-hidden">
             {/* Toolbar */}
-            <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
+            <div className="flex items-center justify-between px-4 py-2 border-b border-border">
               <span className="text-[11px] font-semibold text-muted-foreground">Editor</span>
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
@@ -465,10 +465,10 @@ export function ProjectDetail({
                 </Button>
               </div>
             </div>
-            <div className="flex" style={{ flex: "1 1 0", minHeight: 0 }}>
-              {/* TreeNav file tree pane — relative container with absolute child for scroll containment */}
-              <div className="w-[260px] shrink-0 border-r border-border relative">
-                <div className="absolute inset-0 overflow-y-auto overflow-x-hidden">
+            {/* Panes — CSS grid with fixed height; both columns always visible */}
+            <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "clamp(400px, calc(100vh - 16rem), calc(100vh - 16rem))" }}>
+              {/* TreeNav pane */}
+              <div style={{ overflow: "auto", borderRight: "1px solid var(--border)" }}>
                 {treeLoading ? (
                   <div className="text-[12px] text-muted-foreground p-4">Loading files...</div>
                 ) : fileTree.length === 0 ? (
@@ -487,13 +487,12 @@ export function ProjectDetail({
                     indentSize={14}
                   />
                 )}
-                </div>
               </div>
               {/* CodeEditor pane */}
               {openFilePath ? (
-                <div className="flex-1 flex flex-col min-w-0" style={{ minHeight: 0 }}>
+                <div style={{ display: "grid", gridTemplateRows: "auto 1fr", overflow: "hidden" }}>
                   {/* Editor header */}
-                  <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-mantle shrink-0">
+                  <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border bg-mantle">
                     <span className="text-[13px] font-semibold text-foreground truncate">
                       {openFilePath.split("/").pop()}
                     </span>
@@ -526,8 +525,7 @@ export function ProjectDetail({
                     </button>
                   </div>
                   {/* Editor body */}
-                  <div className="relative" style={{ flex: "1 1 0", minHeight: 0 }}>
-                    <div className="absolute inset-0 overflow-hidden">
+                  <div style={{ overflow: "hidden" }}>
                     {fileLoading ? (
                       <div className="p-4 text-[12px] text-muted-foreground">Loading...</div>
                     ) : fileError ? (
@@ -551,11 +549,10 @@ export function ProjectDetail({
                         <CodeEditor.StatusBar />
                       </CodeEditor>
                     )}
-                    </div>
                   </div>
                 </div>
               ) : (
-                <div className="flex-1 flex items-center justify-center text-muted-foreground">
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }} className="text-muted-foreground">
                   <div className="text-center">
                     <div className="text-3xl mb-2">{"</>"}</div>
                     <div className="text-sm">Select a file to edit</div>
