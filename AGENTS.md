@@ -176,18 +176,19 @@ Deployment is automated through the dashboard — **never run deploy.sh manually
 
 ### Multi-Repo Architecture
 
-The system is built from **independent git repos** — not submodules. The **core three** (AGI, PRIME, ID) are required; MARKETPLACE is optional and will be promoted to core later with the Doers Market.
+The system is built from **independent git repos** — not submodules.
 
 | Repo | Production Path | Dev Path | Source |
 |------|----------------|----------|--------|
 | AGI | `/opt/aionima` | (dev workspace) | `@Civicognita/agi` |
 | PRIME | `/opt/aionima-prime` | `/opt/aionima-prime_dev` | `@Civicognita/aionima` |
 | ID | `/opt/aionima-local-id` | `/opt/aionima-local-id_dev` | `@Civicognita/aionima-local-id` |
-| MARKETPLACE | `/opt/aionima-marketplace` | `/opt/aionima-marketplace_dev` | `@Civicognita/aionima-marketplace` |
+| Plugin Marketplace | `/opt/aionima-marketplace` | `/opt/aionima-marketplace_dev` | `@Civicognita/aionima-marketplace` |
+| MApp Marketplace | `/opt/aionima-mapp-marketplace` | — | `@Civicognita/aionima-mapp-marketplace` |
 
-AGI resolves repo paths at runtime from config (`prime.dir`, `idService.dir`, `marketplace.dir`). Dev mode (`dev.enabled: true`) switches to dev directories automatically.
+AGI resolves repo paths at runtime from config (`prime.dir`, `idService.dir`, `marketplace.dir`, `mappMarketplace.dir`). Dev mode (`dev.enabled: true`) switches to dev directories automatically.
 
-**Plugin architecture:** ALL plugins live in the MARKETPLACE repo and are discovered at boot via `discoverMarketplacePlugins()`. "Built-in" plugins are pre-installed during onboarding but still come from the marketplace. The marketplace also supports third-party plugins installed from external sources via the `manage_marketplace` agent tool or dashboard UI.
+**Two marketplaces:** The **Plugin Marketplace** (`aionima-marketplace`) contains code plugins (runtimes, stacks, workers, settings pages) discovered at boot via `discoverMarketplacePlugins()`. The **MApp Marketplace** (`aionima-mapp-marketplace`) contains declarative JSON MagicApps installed on-demand from the dashboard. These are separate repos — do not confuse them.
 
 ### Protocol Versioning
 
