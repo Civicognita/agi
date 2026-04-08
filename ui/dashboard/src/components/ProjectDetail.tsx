@@ -17,8 +17,9 @@ import { RepoPanel } from "./RepoPanel.js";
 import { HostingPanel } from "./HostingPanel.js";
 import { ProjectManagement } from "./ProjectManagement.js";
 import type { HostingStatus } from "../api.js";
-import { FileTree } from "./FileTree.js";
-import { FileEditor } from "./FileEditor.js";
+import { TreeNav } from "@particle-academy/react-fancy";
+import { CodeEditor } from "@particle-academy/fancy-code";
+import "@particle-academy/fancy-code/styles.css";
 import { projectSlug } from "./Projects.js";
 import { WidgetRenderer } from "./WidgetRenderer.js";
 import { isSacredProject } from "@/lib/sacred-projects.js";
@@ -186,6 +187,18 @@ export function ProjectDetail({
     }
   }, [openFilePath, fileDraft, fileDirty]);
 
+  // Cmd+S / Ctrl+S to save the active file
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        void handleFileSave();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleFileSave]);
+
   const handleSelectFile = useCallback((relPath: string) => {
     if (!project) return;
     setOpenFilePath(`${project.path}/${relPath}`);
@@ -271,7 +284,7 @@ export function ProjectDetail({
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList variant="line">
           <TabsTrigger value="details">Details</TabsTrigger>
-          <TabsTrigger value="files">Files</TabsTrigger>
+          <TabsTrigger value="files">Editor</TabsTrigger>
           <TabsTrigger value="repository">Repository</TabsTrigger>
           {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
             <TabsTrigger value="hosting">Development</TabsTrigger>
@@ -436,7 +449,7 @@ export function ProjectDetail({
           <div className="rounded-xl bg-card border border-border overflow-hidden">
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-              <span className="text-[11px] font-semibold text-muted-foreground">Project Files</span>
+              <span className="text-[11px] font-semibold text-muted-foreground">Editor</span>
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
                   <input
@@ -453,7 +466,7 @@ export function ProjectDetail({
               </div>
             </div>
             <div className="flex" style={{ height: "calc(100vh - 280px)", minHeight: 400 }}>
-              {/* File tree pane */}
+              {/* TreeNav file tree pane */}
               <div className={cn(
                 "border-r border-border overflow-auto",
                 openFilePath ? "w-[260px] shrink-0" : "flex-1",
@@ -463,14 +476,21 @@ export function ProjectDetail({
                 ) : fileTree.length === 0 ? (
                   <div className="text-[12px] text-muted-foreground p-4">No files found.</div>
                 ) : (
-                  <FileTree
-                    nodes={fileTree}
-                    selectedPath={openFilePath ? openFilePath.replace(`${project.path}/`, "") : null}
-                    onSelect={handleSelectFile}
+                  <TreeNav
+                    nodes={fileTree.map(function mapNode(n: FileNode): { id: string; label: string; type: "file" | "folder"; ext?: string; children?: { id: string; label: string; type: "file" | "folder"; ext?: string; children?: unknown[] }[] } {
+                      return { id: n.path.startsWith(project.path) ? n.path.slice(project.path.length + 1) : n.path, label: n.name, type: n.type === "dir" ? "folder" : "file", ext: n.ext, children: n.children?.map(mapNode) };
+                    }) as never}
+                    selectedId={openFilePath ? openFilePath.replace(`${project.path}/`, "") : undefined}
+                    onSelect={(id: string, node: { type?: string }) => {
+                      if (node.type === "file") handleSelectFile(id);
+                    }}
+                    defaultExpandAll
+                    showIcons
+                    indentSize={14}
                   />
                 )}
               </div>
-              {/* Editor pane */}
+              {/* CodeEditor pane */}
               {openFilePath && (
                 <div className="flex-1 flex flex-col min-w-0">
                   {/* Editor header */}
@@ -513,13 +533,23 @@ export function ProjectDetail({
                     ) : fileError ? (
                       <div className="p-4 text-[12px] text-red">{fileError}</div>
                     ) : (
-                      <FileEditor
-                        filePath={openFilePath}
-                        content={fileContent}
-                        theme={theme ?? "dark"}
+                      <CodeEditor
+                        value={fileDraft}
                         onChange={setFileDraft}
-                        onSave={handleFileSave}
-                      />
+                        language={(() => {
+                          const ext = openFilePath.split(".").pop()?.toLowerCase();
+                          if (ext === "ts" || ext === "tsx") return "typescript";
+                          if (ext === "js" || ext === "jsx") return "javascript";
+                          if (ext === "html" || ext === "htm") return "html";
+                          if (ext === "php") return "php";
+                          return "javascript";
+                        })()}
+                        theme="auto"
+                      >
+                        <CodeEditor.Toolbar />
+                        <CodeEditor.Panel />
+                        <CodeEditor.StatusBar />
+                      </CodeEditor>
                     )}
                   </div>
                 </div>
