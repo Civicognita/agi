@@ -47,6 +47,28 @@ if [ -n "$(git diff --name-only 2>/dev/null)" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 0b. Ensure all repos use HTTPS remotes (public repos don't need SSH keys)
+# ---------------------------------------------------------------------------
+ensure_https_remote() {
+  local dir="$1"
+  [ -d "$dir/.git" ] || return
+  local url
+  url="$(git -C "$dir" remote get-url origin 2>/dev/null)" || return
+  case "$url" in
+    git@github.com:*)
+      local https_url="https://github.com/${url#git@github.com:}"
+      git -C "$dir" remote set-url origin "$https_url" 2>/dev/null
+      ;;
+  esac
+}
+
+ensure_https_remote "$DEPLOY_DIR"
+ensure_https_remote "$PRIME_DIR"
+ensure_https_remote "$MARKETPLACE_DIR"
+ensure_https_remote "$MAPP_MARKETPLACE_DIR"
+ensure_https_remote "$ID_DIR"
+
+# ---------------------------------------------------------------------------
 # 1. Pull AGI repo
 # ---------------------------------------------------------------------------
 emit "pull-agi" "start"
