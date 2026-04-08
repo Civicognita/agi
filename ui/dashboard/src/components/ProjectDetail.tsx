@@ -482,7 +482,6 @@ export function ProjectDetail({
                     onSelect={(id: string, node: { type?: string }) => {
                       if (node.type === "file") handleSelectFile(id);
                     }}
-                    defaultExpandAll
                     showIcons
                     indentSize={14}
                   />
