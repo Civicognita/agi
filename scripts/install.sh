@@ -151,14 +151,14 @@ fi
 # 5b. Clone companion repos (PRIME, Marketplace, ID)
 # ---------------------------------------------------------------------------
 for COMP_LABEL_REPO_DIR in \
-  "PRIME:$AIONIMA_PRIME_REPO:$AIONIMA_PRIME_DIR" \
-  "Marketplace:$AIONIMA_MARKETPLACE_REPO:$AIONIMA_MARKETPLACE_DIR" \
-  "MApp Marketplace:$AIONIMA_MAPP_MARKETPLACE_REPO:$AIONIMA_MAPP_MARKETPLACE_DIR" \
-  "ID:$AIONIMA_ID_REPO:$AIONIMA_ID_DIR"; do
-  COMP_LABEL="${COMP_LABEL_REPO_DIR%%:*}"
-  COMP_REST="${COMP_LABEL_REPO_DIR#*:}"
-  COMP_REPO="${COMP_REST%%:*}"
-  COMP_DIR="${COMP_REST#*:}"
+  "PRIME|$AIONIMA_PRIME_REPO|$AIONIMA_PRIME_DIR" \
+  "Marketplace|$AIONIMA_MARKETPLACE_REPO|$AIONIMA_MARKETPLACE_DIR" \
+  "MApp Marketplace|$AIONIMA_MAPP_MARKETPLACE_REPO|$AIONIMA_MAPP_MARKETPLACE_DIR" \
+  "ID|$AIONIMA_ID_REPO|$AIONIMA_ID_DIR"; do
+  COMP_LABEL="${COMP_LABEL_REPO_DIR%%|*}"
+  COMP_REST="${COMP_LABEL_REPO_DIR#*|}"
+  COMP_REPO="${COMP_REST%%|*}"
+  COMP_DIR="${COMP_REST#*|}"
 
   if [ -d "$COMP_DIR/.git" ]; then
     echo "==> $COMP_LABEL repo already exists at $COMP_DIR"
