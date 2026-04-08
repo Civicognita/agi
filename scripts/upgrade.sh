@@ -251,10 +251,12 @@ else
   die "install" "pnpm install failed"
 fi
 
-# Always rebuild native modules — guarantees they match the running Node.js.
-# Fast no-op when nothing changed, prevents NODE_MODULE_VERSION crashes.
-emit "rebuild" "start" "Rebuilding native modules for $CURRENT_NODE_VERSION"
-if NO_COLOR=1 pnpm rebuild 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
+# Always rebuild native modules using the system Node (/usr/bin/node) —
+# the same binary systemd uses. Shell shims (fnm, nvm) may point to a
+# different version, causing NODE_MODULE_VERSION mismatches at runtime.
+SYSTEM_NODE="/usr/bin/node"
+emit "rebuild" "start" "Rebuilding native modules for $($SYSTEM_NODE -v)"
+if PATH="/usr/bin:$PATH" NO_COLOR=1 pnpm rebuild 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
   emit "rebuild" "done" "Native modules rebuilt"
 else
   emit "rebuild" "error" "pnpm rebuild failed"
