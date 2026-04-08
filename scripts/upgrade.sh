@@ -251,16 +251,13 @@ else
   die "install" "pnpm install failed"
 fi
 
-# If Node.js was upgraded, native modules (better-sqlite3, node-pty, etc.)
-# must be recompiled or they crash with NODE_MODULE_VERSION mismatch.
-if [ "$CURRENT_NODE_VERSION" != "$PREVIOUS_NODE_VERSION" ] && [ -n "$PREVIOUS_NODE_VERSION" ]; then
-  emit "rebuild" "start" "Node.js changed ($PREVIOUS_NODE_VERSION -> $CURRENT_NODE_VERSION)"
-  if NO_COLOR=1 pnpm rebuild 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
-    emit "rebuild" "done" "Native modules rebuilt for $CURRENT_NODE_VERSION"
-  else
-    emit "rebuild" "error" "pnpm rebuild failed"
-    # Non-fatal — try to continue, service may still work
-  fi
+# Always rebuild native modules — guarantees they match the running Node.js.
+# Fast no-op when nothing changed, prevents NODE_MODULE_VERSION crashes.
+emit "rebuild" "start" "Rebuilding native modules for $CURRENT_NODE_VERSION"
+if NO_COLOR=1 pnpm rebuild 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
+  emit "rebuild" "done" "Native modules rebuilt"
+else
+  emit "rebuild" "error" "pnpm rebuild failed"
 fi
 echo "$CURRENT_NODE_VERSION" > "$NODE_VERSION_FILE"
 
