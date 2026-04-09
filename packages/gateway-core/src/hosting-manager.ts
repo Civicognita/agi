@@ -13,9 +13,10 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
 import { join, resolve as resolvePath, dirname } from "node:path";
+import { homedir } from "node:os";
 import { execSync, execFileSync, spawnSync, spawn, type ChildProcess } from "node:child_process";
 import { createComponentLogger } from "./logger.js";
-import { projectConfigPath } from "./project-config-path.js";
+import { projectConfigPath, projectSlug } from "./project-config-path.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 import type { ProjectTypeRegistry } from "./project-types.js";
 import type { PluginRegistry } from "@aionima/plugins";
@@ -72,6 +73,8 @@ export interface ProjectHostingMeta {
   internalPort: number | null;
   runtimeId?: string | null;
   tunnelUrl?: string | null;
+  /** Named tunnel ID (persisted, survives restarts with same URL). */
+  tunnelId?: string | null;
   /** MagicApp ID used as the content viewer for this project's *.ai.on URL. */
   viewer?: string | null;
 }
@@ -462,6 +465,7 @@ export class HostingManager {
         internalPort: hosting.internalPort ?? null,
         runtimeId: hosting.runtimeId ?? null,
         tunnelUrl: hosting.tunnelUrl ?? null,
+        tunnelId: hosting.tunnelId ?? null,
         viewer: hosting.viewer ?? null,
       };
     }
@@ -486,6 +490,7 @@ export class HostingManager {
         internalPort: (hosting.internalPort as number) ?? null,
         runtimeId: (hosting.runtimeId as string) ?? null,
         tunnelUrl: (hosting.tunnelUrl as string) ?? null,
+        tunnelId: (hosting.tunnelId as string) ?? null,
       };
     } catch {
       return null;
@@ -506,6 +511,7 @@ export class HostingManager {
         internalPort: meta.internalPort,
         ...(meta.runtimeId != null ? { runtimeId: meta.runtimeId } : {}),
         ...(meta.tunnelUrl != null ? { tunnelUrl: meta.tunnelUrl } : {}),
+        ...(meta.tunnelId != null ? { tunnelId: meta.tunnelId } : {}),
       });
       return;
     }
@@ -533,6 +539,7 @@ export class HostingManager {
       internalPort: meta.internalPort,
       ...(meta.runtimeId ? { runtimeId: meta.runtimeId } : {}),
       ...(meta.tunnelUrl ? { tunnelUrl: meta.tunnelUrl } : {}),
+      ...(meta.tunnelId ? { tunnelId: meta.tunnelId } : {}),
     };
 
     mkdirSync(dirname(metaPath), { recursive: true });
@@ -1716,15 +1723,22 @@ export class HostingManager {
   }
 
   // -------------------------------------------------------------------------
-  // Cloudflare Quick Tunnels
+  // Cloudflare Named Tunnels (persistent URL across restarts)
   // -------------------------------------------------------------------------
+  //
+  // Named tunnels keep the same URL forever because Cloudflare assigns a
+  // deterministic subdomain based on the tunnel ID:
+  //   https://<tunnel-id>.cfargotunnel.com
+  //
+  // Credentials are stored per-project in ~/.agi/{slug}/tunnel.json.
+  // Requires one-time `cloudflared tunnel login` (browser auth).
 
   /** Re-enable tunnels for projects that had them active before a restart/upgrade. */
   private async restoreTunnels(): Promise<void> {
     const projectsWithTunnels: string[] = [];
 
     for (const [path, hosted] of this.projects) {
-      if (hosted.meta.tunnelUrl && hosted.status === "running") {
+      if (hosted.meta.tunnelId && hosted.status === "running") {
         projectsWithTunnels.push(path);
       }
     }
@@ -1739,13 +1753,6 @@ export class HostingManager {
         this.log.info(`tunnel restored for ${path}: ${result.url}`);
       } catch (err) {
         this.log.warn(`failed to restore tunnel for ${path}: ${err instanceof Error ? err.message : String(err)}`);
-        // Clear the stale URL so the dashboard doesn't show a dead link
-        const hosted = this.projects.get(path);
-        if (hosted) {
-          hosted.tunnelUrl = null;
-          hosted.meta.tunnelUrl = null;
-          this.writeHostingMeta(path, hosted.meta);
-        }
       }
     }
 
@@ -1763,49 +1770,117 @@ export class HostingManager {
     }
   }
 
-  /** Spin up a Cloudflare quick tunnel for a hosted project. */
+  /** Check if cloudflared is authenticated (has origin cert from `cloudflared tunnel login`). */
+  isCloudflaredAuthenticated(): boolean {
+    const certPath = join(homedir(), ".cloudflared", "cert.pem");
+    return existsSync(certPath);
+  }
+
+  /** Get the credentials file path for a project's named tunnel. */
+  private tunnelCredPath(projectPath: string): string {
+    return join(homedir(), ".agi", projectSlug(projectPath), "tunnel.json");
+  }
+
+  /**
+   * Enable a persistent named tunnel for a hosted project.
+   * Creates the tunnel on first call, reuses it on subsequent calls.
+   * The URL (https://<tunnel-id>.cfargotunnel.com) never changes.
+   */
   async enableTunnel(projectPath: string): Promise<{ url: string }> {
     const resolved = resolvePath(projectPath);
     const hosted = this.projects.get(resolved);
     if (!hosted) throw new Error("Project is not hosted");
     if (hosted.status !== "running") throw new Error("Project container is not running");
 
-    // Already active?
+    // Already running?
     const existing = this.tunnelProcesses.get(resolved);
     if (existing && hosted.tunnelUrl) {
       return { url: hosted.tunnelUrl };
     }
 
-    const bin = this.ensureCloudflared();
+    if (!this.isCloudflaredAuthenticated()) {
+      throw new Error("Cloudflare not authenticated. Run: cloudflared tunnel login");
+    }
 
+    const bin = this.ensureCloudflared();
+    const credPath = this.tunnelCredPath(resolved);
+    const tunnelName = `aionima-${hosted.meta.hostname}`;
+
+    // Create tunnel if no credentials exist yet
+    if (!existsSync(credPath)) {
+      mkdirSync(dirname(credPath), { recursive: true });
+      try {
+        execSync(
+          `${bin} tunnel create --credentials-file ${credPath} ${tunnelName}`,
+          { stdio: "pipe", timeout: 30_000 },
+        );
+      } catch (err: unknown) {
+        const stderr = (err as { stderr?: Buffer })?.stderr?.toString() ?? "";
+        // Tunnel may already exist — try to get its ID
+        if (!stderr.includes("already exists")) {
+          throw new Error(`Failed to create tunnel: ${stderr || (err instanceof Error ? err.message : String(err))}`);
+        }
+      }
+    }
+
+    // Read tunnel ID from credentials file
+    let tunnelId: string;
+    try {
+      const creds = JSON.parse(readFileSync(credPath, "utf-8")) as { AccountTag: string; TunnelID: string; TunnelSecret: string };
+      tunnelId = creds.TunnelID;
+    } catch {
+      throw new Error(`Cannot read tunnel credentials at ${credPath}`);
+    }
+
+    const url = `https://${tunnelId}.cfargotunnel.com`;
+
+    // Write inline config for this tunnel
+    const configPath = join(dirname(credPath), "tunnel-config.yml");
+    const configContent = [
+      `tunnel: ${tunnelId}`,
+      `credentials-file: ${credPath}`,
+      `ingress:`,
+      `  - service: http://localhost:${String(hosted.meta.port)}`,
+    ].join("\n");
+    writeFileSync(configPath, configContent);
+
+    // Start the tunnel process
     return new Promise<{ url: string }>((resolve, reject) => {
-      const child = spawn(bin, ["tunnel", "--url", `http://localhost:${String(hosted.meta.port)}`], {
+      const child = spawn(bin, ["tunnel", "--config", configPath, "run"], {
         stdio: ["ignore", "pipe", "pipe"],
       });
 
       let stderrBuf = "";
-      const urlRegex = /https:\/\/[-a-z0-9]+\.trycloudflare\.com/;
-      let resolved_url = false;
+      let started = false;
 
       const timeout = setTimeout(() => {
-        if (!resolved_url) {
-          try { child.kill(); } catch { /* ignore */ }
-          this.tunnelProcesses.delete(resolved);
-          reject(new Error("Timed out waiting for cloudflared tunnel URL (15s)"));
+        if (!started) {
+          // Tunnel may take a moment but we already know the URL
+          // Assume it's starting — don't kill it
+          started = true;
+          hosted.tunnelUrl = url;
+          hosted.tunnelPid = child.pid ?? null;
+          hosted.meta.tunnelUrl = url;
+          hosted.meta.tunnelId = tunnelId;
+          this.tunnelProcesses.set(resolved, child);
+          this.writeHostingMeta(resolved, hosted.meta);
+          this.notifyStatusChange();
+          this.log.info(`[${hosted.meta.hostname}] tunnel starting: ${url}`);
+          resolve({ url });
         }
-      }, 15_000);
+      }, 5_000);
 
       child.stderr.on("data", (data: Buffer) => {
         stderrBuf += data.toString();
-        const match = urlRegex.exec(stderrBuf);
-        if (match && !resolved_url) {
-          resolved_url = true;
+        // Detect successful connection
+        if (!started && (stderrBuf.includes("Registered tunnel connection") || stderrBuf.includes("Connection registered"))) {
+          started = true;
           clearTimeout(timeout);
-          const url = match[0];
 
           hosted.tunnelUrl = url;
           hosted.tunnelPid = child.pid ?? null;
           hosted.meta.tunnelUrl = url;
+          hosted.meta.tunnelId = tunnelId;
           this.tunnelProcesses.set(resolved, child);
           this.writeHostingMeta(resolved, hosted.meta);
           this.notifyStatusChange();
@@ -1815,33 +1890,31 @@ export class HostingManager {
         }
       });
 
-      child.on("close", () => {
+      child.on("close", (code) => {
         clearTimeout(timeout);
         if (this.tunnelProcesses.get(resolved) === child) {
           this.tunnelProcesses.delete(resolved);
-          hosted.tunnelUrl = null;
           hosted.tunnelPid = null;
-          hosted.meta.tunnelUrl = null;
-          this.writeHostingMeta(resolved, hosted.meta);
+          // Keep tunnelUrl and tunnelId so restore can re-enable it
           this.notifyStatusChange();
-          this.log.info(`[${hosted.meta.hostname}] tunnel closed`);
+          this.log.info(`[${hosted.meta.hostname}] tunnel process exited (code ${String(code)})`);
         }
-        if (!resolved_url) {
-          reject(new Error(`cloudflared exited before providing a URL. stderr: ${stderrBuf.slice(0, 500)}`));
+        if (!started) {
+          reject(new Error(`cloudflared exited before connecting. stderr: ${stderrBuf.slice(0, 500)}`));
         }
       });
 
       child.on("error", (err) => {
         clearTimeout(timeout);
         this.tunnelProcesses.delete(resolved);
-        if (!resolved_url) {
+        if (!started) {
           reject(new Error(`cloudflared spawn error: ${err.message}`));
         }
       });
     });
   }
 
-  /** Kill a running tunnel for a hosted project. */
+  /** Kill a running tunnel for a hosted project. Keeps credentials so it can be re-enabled with the same URL. */
   disableTunnel(projectPath: string): void {
     const resolved = resolvePath(projectPath);
     const proc = this.tunnelProcesses.get(resolved);
@@ -1855,8 +1928,10 @@ export class HostingManager {
       hosted.tunnelUrl = null;
       hosted.tunnelPid = null;
       hosted.meta.tunnelUrl = null;
+      // Keep tunnelId — credentials persist in ~/.agi/{slug}/tunnel.json
+      // Re-enabling will use the same URL
       this.writeHostingMeta(resolved, hosted.meta);
-      this.log.info(`[${hosted.meta.hostname}] tunnel disabled`);
+      this.log.info(`[${hosted.meta.hostname}] tunnel disabled (credentials preserved)`);
     }
     this.notifyStatusChange();
   }

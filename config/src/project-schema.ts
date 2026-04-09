@@ -71,6 +71,8 @@ export const ProjectHostingSchema = z
     runtimeId: z.string().nullable().optional(),
     /** Active Cloudflare tunnel URL. */
     tunnelUrl: z.string().nullable().optional(),
+    /** Named tunnel ID (persists across restarts — same URL forever). */
+    tunnelId: z.string().nullable().optional(),
     /** Installed stack instances. */
     stacks: z.array(ProjectStackInstanceSchema).default([]),
     /** MagicApp ID used as the viewer for this project's *.ai.on URL. */
