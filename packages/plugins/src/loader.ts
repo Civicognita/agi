@@ -49,6 +49,7 @@ export interface LoadResult {
 export async function loadPlugins(
   discovered: DiscoveredPlugin[],
   deps: PluginLoaderDeps,
+  options?: { bustCache?: boolean },
 ): Promise<LoadResult> {
   const log = createComponentLogger(deps.logger, "plugin-loader");
   const loaded: string[] = [];
@@ -77,6 +78,7 @@ export async function loadPlugins(
         basePath,
         deps,
         log,
+        options?.bustCache,
       );
 
       deps.pluginRegistry.add({ manifest, instance, basePath });
@@ -98,9 +100,11 @@ async function loadSinglePlugin(
   basePath: string,
   deps: PluginLoaderDeps,
   log: ComponentLogger,
+  bustCache?: boolean,
 ): Promise<AionimaPlugin> {
   // Dynamic import of plugin entry
-  const mod = await (import(/* @vite-ignore */ entryPath) as Promise<Record<string, unknown>>);
+  const importPath = bustCache ? `${entryPath}?v=${Date.now()}` : entryPath;
+  const mod = await (import(/* @vite-ignore */ importPath) as Promise<Record<string, unknown>>);
 
   // Plugin must export a default AionimaPlugin or an activate function
   let instance: AionimaPlugin;
@@ -132,6 +136,7 @@ function createPluginAPI(
   return {
     registerProjectType(def: ProjectTypeDefinition): void {
       deps.projectTypeRegistry.register(def);
+      deps.pluginRegistry.trackProjectType(pluginId, def.id);
     },
 
     registerTool(projectType: string, tool: ProjectTypeTool): void {
@@ -142,7 +147,7 @@ function createPluginAPI(
     },
 
     registerHook<K extends keyof AionimaHookMap>(hook: K, handler: AionimaHookMap[K]): void {
-      deps.hookBus.register(hook, handler);
+      deps.hookBus.register(hook, handler, pluginId);
     },
 
     registerHttpRoute(method: string, path: string, handler: RouteHandler, options?: { raw?: boolean }): void {

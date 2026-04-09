@@ -223,9 +223,15 @@ export interface RuntimeStateDeps {
     uninstall(pluginName: string, force?: boolean): { ok: boolean; error?: string; dependents?: string[] };
     getInstalled(): { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }[];
     checkUpdates(): { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[];
+    syncLocalCatalog(marketplaceDir: string): { ok: boolean; error?: string; pluginCount?: number };
+    updatePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }>;
   };
   /** Callback to hot-load a newly installed plugin (discover, activate, bridge). */
   onPluginInstalled?: (installPath: string) => Promise<{ loaded: boolean; pluginId?: string; error?: string }>;
+  /** Callback to hot-reload an updated plugin (with ESM cache busting). */
+  onPluginUpdated?: (installPath: string) => Promise<{ loaded: boolean; pluginId?: string; error?: string }>;
+  /** Callback to deactivate a plugin before update (unbridge, unregister, deactivate). */
+  onPluginDeactivating?: (pluginId: string) => Promise<void>;
   /** Federation — identity provider, OAuth, visitor auth, federation node/router. */
   identityProvider?: IdentityProvider;
   oauthHandler?: OAuthHandler | null;
@@ -2227,6 +2233,7 @@ export async function createGatewayRuntimeState(
     commits: { hash: string; message: string }[];
     channel: "main" | "dev";
     serviceUpdates?: Array<{ name: string; behind: number }>;
+    pluginUpdates?: Array<{ pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }>;
   }> {
     const channel = getUpdateChannel();
     const ref = `origin/${channel}`;
@@ -2294,6 +2301,20 @@ export async function createGatewayRuntimeState(
     const serviceUpdates = serviceChecks.filter(s => s.behind > 0);
     const totalServiceBehind = serviceUpdates.reduce((sum, s) => sum + s.behind, 0);
 
+    // Check for marketplace plugin updates when the marketplace repo has changes
+    let pluginUpdates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[] | undefined;
+    if (deps.marketplaceManager && totalServiceBehind > 0) {
+      const mp = deps.marketplaceManager;
+      const marketplaceDir = deps.config
+        ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string> | undefined)?.dir ?? "/opt/aionima-marketplace"
+        : "/opt/aionima-marketplace";
+      if (existsSync(marketplaceDir)) {
+        mp.syncLocalCatalog(marketplaceDir);
+        const updates = mp.checkUpdates();
+        if (updates.length > 0) pluginUpdates = updates;
+      }
+    }
+
     return {
       updateAvailable: behindCount > 0 || totalServiceBehind > 0,
       localCommit: deployedCommit,
@@ -2302,6 +2323,7 @@ export async function createGatewayRuntimeState(
       commits,
       channel,
       serviceUpdates: serviceUpdates.length > 0 ? serviceUpdates : undefined,
+      pluginUpdates,
     };
   }
 
@@ -2926,14 +2948,24 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
-  // Plugin-registered HTTP routes
+  // Plugin-registered HTTP routes (dynamic dispatch via indirection map)
+  //
+  // Handlers are stored in a map keyed by "METHOD:path". Fastify routes
+  // delegate to the map at call time, so plugin hot-reload can update
+  // handlers without re-registering Fastify routes.
   // -----------------------------------------------------------------------
 
+  const pluginRouteHandlers = new Map<string, RouteHandler>();
+
   for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+    const key = `${route.method.toUpperCase()}:${route.path}`;
+    pluginRouteHandlers.set(key, route.handler);
     const method = route.method.toLowerCase() as "get" | "put" | "post" | "delete";
     fastify[method](route.path, async (request, reply) => {
+      const handler = pluginRouteHandlers.get(key);
+      if (!handler) return reply.code(404).send({ error: "Plugin route no longer available" });
       const clientIp = (request.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ?? request.ip;
-      await route.handler(
+      await handler(
         {
           body: request.body,
           query: request.query as Record<string, string>,
@@ -3150,6 +3182,64 @@ export async function createGatewayRuntimeState(
 
     fastify.get("/api/marketplace/updates", async (_request, reply) => {
       return reply.send(mp.checkUpdates());
+    });
+
+    // POST /api/marketplace/update/:pluginName — hot-reload an installed plugin
+    fastify.post<{ Params: { pluginName: string } }>("/api/marketplace/update/:pluginName", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
+      }
+
+      const { pluginName } = request.params;
+      const body = request.body as { sourceId?: number } | undefined;
+
+      const installed = mp.getInstalled().find(i => i.name === pluginName);
+      if (!installed) return reply.code(404).send({ error: "Plugin not installed" });
+      const sourceId = body?.sourceId ?? installed.sourceId;
+
+      // 1. Deactivate old plugin (unbridge skills, unregister stacks/types, deactivate)
+      if (deps.onPluginDeactivating) {
+        try {
+          await deps.onPluginDeactivating(pluginName);
+        } catch (deactErr) {
+          log.warn(`plugin deactivation warning for "${pluginName}": ${deactErr instanceof Error ? deactErr.message : String(deactErr)}`);
+        }
+      }
+
+      // 2. Update route dispatch map — remove old handlers for this plugin
+      for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+        if (route.pluginId === pluginName) {
+          pluginRouteHandlers.delete(`${route.method.toUpperCase()}:${route.path}`);
+        }
+      }
+
+      // 3. Reinstall from marketplace
+      const updateResult = await mp.updatePlugin(pluginName, sourceId);
+      if (!updateResult.ok) return reply.code(400).send(updateResult);
+
+      // 4. Hot-load the updated plugin with cache busting
+      if (deps.onPluginUpdated && updateResult.installPath) {
+        const hlResult = await deps.onPluginUpdated(updateResult.installPath);
+        if (!hlResult.loaded) {
+          return reply.code(500).send({ error: hlResult.error ?? "Failed to reload plugin" });
+        }
+
+        // 5. Update route dispatch map with new handlers
+        for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+          if (route.pluginId === pluginName) {
+            pluginRouteHandlers.set(`${route.method.toUpperCase()}:${route.path}`, route.handler);
+          }
+        }
+      }
+
+      log.info(`plugin updated: ${pluginName} (${updateResult.oldVersion} → ${updateResult.newVersion})`);
+      return reply.send({
+        ok: true,
+        pluginName,
+        oldVersion: updateResult.oldVersion,
+        newVersion: updateResult.newVersion,
+      });
     });
   }
 

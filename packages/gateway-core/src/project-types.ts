@@ -89,6 +89,10 @@ export class ProjectTypeRegistry {
     return this.types.has(id);
   }
 
+  unregister(id: string): boolean {
+    return this.types.delete(id);
+  }
+
   getAll(): ProjectTypeDefinition[] {
     return Array.from(this.types.values());
   }

@@ -1833,6 +1833,20 @@ export async function fetchMarketplaceUpdates(): Promise<import("./types.js").Ma
   return res.json() as Promise<import("./types.js").MarketplaceUpdate[]>;
 }
 
+export async function updateMarketplacePlugin(
+  pluginName: string,
+  sourceId?: number,
+): Promise<{ ok: boolean; error?: string; oldVersion?: string; newVersion?: string }> {
+  const res = await fetch(`/api/marketplace/update/${encodeURIComponent(pluginName)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sourceId }),
+  });
+  const data = await res.json() as { ok: boolean; error?: string; oldVersion?: string; newVersion?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
 export async function fetchPluginDetails(id: string): Promise<import("./types.js").PluginDetails> {
   const res = await fetch(`/api/plugins/${encodeURIComponent(id)}/details`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);

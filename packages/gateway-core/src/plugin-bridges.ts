@@ -77,3 +77,34 @@ export function bridgePluginCapabilities(deps: PluginBridgeDeps): PluginBridgeRe
 
   return { toolsBridged, skillsBridged, knowledgeNamespaces };
 }
+
+/**
+ * Remove a single plugin's bridged capabilities from core registries.
+ * Call before `deactivateSingle()` so we can still read the plugin's registrations.
+ */
+export function unbridgePluginCapabilities(
+  pluginId: string,
+  deps: Pick<PluginBridgeDeps, "pluginRegistry" | "skillRegistry" | "logger">,
+): { skillsRemoved: number } {
+  const log = deps.logger ? createComponentLogger(deps.logger, "plugin-bridge") : undefined;
+  let skillsRemoved = 0;
+
+  // Remove skills for this plugin from SkillRegistry's internal map.
+  // Skills are named `plugin_${pluginId}_${skill.name}` (see bridgePluginCapabilities).
+  const skillMap = (deps.skillRegistry as unknown as { skills: Map<string, unknown> }).skills;
+  const prefix = `plugin_${pluginId}_`;
+  for (const key of [...skillMap.keys()]) {
+    if (key.startsWith(prefix)) {
+      skillMap.delete(key);
+      skillsRemoved++;
+    }
+  }
+
+  // Agent tools are looked up dynamically from pluginRegistry.getAgentTools() at
+  // call time — removing them from the registry array (done by deactivateSingle)
+  // is sufficient. No explicit unbridging needed here.
+
+  if (skillsRemoved > 0) log?.info(`unbridged ${String(skillsRemoved)} skills for plugin "${pluginId}"`);
+
+  return { skillsRemoved };
+}

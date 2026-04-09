@@ -20,6 +20,10 @@ export class StackRegistry {
     return this.stacks.has(id);
   }
 
+  unregister(id: string): boolean {
+    return this.stacks.delete(id);
+  }
+
   getAll(): StackDefinition[] {
     return Array.from(this.stacks.values());
   }

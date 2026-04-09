@@ -149,6 +149,18 @@ export interface RegisteredRuntimeInstaller {
   installer: RuntimeInstaller;
 }
 
+/** Remove entries from an array in-place, returning the count removed. */
+function filterInPlace<T>(arr: T[], keep: (item: T) => boolean): number {
+  let removed = 0;
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (!keep(arr[i]!)) {
+      arr.splice(i, 1);
+      removed++;
+    }
+  }
+  return removed;
+}
+
 export class PluginRegistry {
   private readonly plugins = new Map<string, LoadedPlugin>();
   private readonly routes: RegisteredRoute[] = [];
@@ -178,6 +190,7 @@ export class PluginRegistry {
   private readonly providers: RegisteredProvider[] = [];
   private readonly scanProviders: RegisteredScanProvider[] = [];
   private readonly workers: RegisteredWorker[] = [];
+  private readonly projectTypesByPlugin = new Map<string, string[]>();
 
   add(loaded: LoadedPlugin): void {
     this.plugins.set(loaded.manifest.id, loaded);
@@ -193,6 +206,16 @@ export class PluginRegistry {
 
   getAll(): LoadedPlugin[] {
     return Array.from(this.plugins.values());
+  }
+
+  trackProjectType(pluginId: string, typeId: string): void {
+    const ids = this.projectTypesByPlugin.get(pluginId) ?? [];
+    ids.push(typeId);
+    this.projectTypesByPlugin.set(pluginId, ids);
+  }
+
+  getProjectTypeIds(pluginId: string): string[] {
+    return this.projectTypesByPlugin.get(pluginId) ?? [];
   }
 
   addRoute(route: RegisteredRoute, priority = 0): { replaced: string | null } {
@@ -611,6 +634,59 @@ export class PluginRegistry {
     return result;
   }
 
+  async deactivateSingle(pluginId: string): Promise<{ deactivated: boolean; removedCounts: Record<string, number> }> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) return { deactivated: false, removedCounts: {} };
+
+    try {
+      await loaded.instance.deactivate?.();
+    } catch {
+      // Best-effort deactivation — continue with cleanup
+    }
+
+    this.plugins.delete(pluginId);
+    this.projectTypesByPlugin.delete(pluginId);
+
+    const keep = (entry: { pluginId: string }) => entry.pluginId !== pluginId;
+    const removedCounts: Record<string, number> = {};
+
+    removedCounts.routes = filterInPlace(this.routes, keep);
+    removedCounts.tabs = filterInPlace(this.tabs, keep);
+    removedCounts.runtimes = filterInPlace(this.runtimes, keep);
+    removedCounts.services = filterInPlace(this.services, keep);
+    removedCounts.hostingExtensions = filterInPlace(this.hostingExtensions, keep);
+    removedCounts.runtimeInstallers = filterInPlace(this.runtimeInstallers, keep);
+    removedCounts.actions = filterInPlace(this.actions, keep);
+    removedCounts.panels = filterInPlace(this.panels, keep);
+    removedCounts.settingsSections = filterInPlace(this.settingsSections, keep);
+    removedCounts.skills = filterInPlace(this.skills, keep);
+    removedCounts.knowledgeNamespaces = filterInPlace(this.knowledgeNamespaces, keep);
+    removedCounts.systemServices = filterInPlace(this.systemServices, keep);
+    removedCounts.themes = filterInPlace(this.themes, keep);
+    removedCounts.agentTools = filterInPlace(this.agentTools, keep);
+    removedCounts.sidebarSections = filterInPlace(this.sidebarSections, keep);
+    removedCounts.scheduledTasks = filterInPlace(this.scheduledTasks, keep);
+    removedCounts.workflows = filterInPlace(this.workflows, keep);
+    removedCounts.settingsPages = filterInPlace(this.settingsPages, keep);
+    removedCounts.dashboardPages = filterInPlace(this.dashboardPages, keep);
+    removedCounts.dashboardDomains = filterInPlace(this.dashboardDomains, keep);
+    removedCounts.subdomainRoutes = filterInPlace(this.subdomainRoutes, keep);
+    removedCounts.stacks = filterInPlace(this.stacks, keep);
+    removedCounts.channels = filterInPlace(this.channels, keep);
+    removedCounts.providers = filterInPlace(this.providers, keep);
+    removedCounts.scanProviders = filterInPlace(this.scanProviders, keep);
+    removedCounts.workers = filterInPlace(this.workers, keep);
+
+    // Clean up route priorities for removed routes
+    for (const [key] of this.routePriorities) {
+      if (!this.routes.some(r => `${r.method.toUpperCase()}:${r.path}` === key)) {
+        this.routePriorities.delete(key);
+      }
+    }
+
+    return { deactivated: true, removedCounts };
+  }
+
   async deactivateAll(onError?: (pluginId: string, error: unknown) => void): Promise<void> {
     for (const loaded of this.plugins.values()) {
       try {
@@ -620,6 +696,7 @@ export class PluginRegistry {
       }
     }
     this.plugins.clear();
+    this.projectTypesByPlugin.clear();
     this.routes.length = 0;
     this.routePriorities.clear();
     this.tabs.length = 0;

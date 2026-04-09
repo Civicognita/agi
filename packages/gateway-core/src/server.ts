@@ -82,7 +82,7 @@ import { createProjectTypeRegistry } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { discoverPlugins, getDefaultSearchPaths, loadPlugins, PluginRegistry, HookBus } from "@aionima/plugins";
 import { ServiceManager } from "./service-manager.js";
-import { bridgePluginCapabilities } from "./plugin-bridges.js";
+import { bridgePluginCapabilities, unbridgePluginCapabilities } from "./plugin-bridges.js";
 import { ScheduledTaskManager } from "./scheduled-task-manager.js";
 import { MarketplaceManager } from "@aionima/marketplace";
 import { FederationNode, generateNodeKeypair } from "./federation-node.js";
@@ -1269,6 +1269,63 @@ export async function startGatewayServer(
         } catch (err) {
           return { loaded: false, error: err instanceof Error ? err.message : String(err) };
         }
+      },
+      onPluginUpdated: async (installPath: string) => {
+        try {
+          const newDiscovery = discoverPlugins([installPath]);
+          if (newDiscovery.plugins.length === 0) {
+            return { loaded: false, error: "No plugin found at install path" };
+          }
+          const pluginToLoad = newDiscovery.plugins[0]!;
+          // Do NOT check pluginRegistry.has() — the plugin was just deactivated for update
+          const result = await loadPlugins([pluginToLoad], {
+            pluginRegistry,
+            hookBus,
+            projectTypeRegistry,
+            config: config as Record<string, unknown>,
+            logger,
+            workspaceRoot: opts?.configPath ? dirname(resolvePath(opts.configPath)) : workspaceRoot,
+            projectDirs: projectPaths,
+            pluginPriorities: Object.fromEntries(
+              Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
+            ),
+            channelRegistry,
+            channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+          }, { bustCache: true });
+          if (result.loaded.length > 0) {
+            bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
+            for (const { stack } of pluginRegistry.getStacks()) {
+              if (!stackRegistry.get(stack.id)) stackRegistry.register(stack);
+            }
+            log.info(`hot-reloaded plugin: ${pluginToLoad.manifest.id}`);
+            return { loaded: true, pluginId: pluginToLoad.manifest.id };
+          }
+          return { loaded: false, error: result.failed[0]?.error ?? "Unknown error" };
+        } catch (err) {
+          return { loaded: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      },
+      onPluginDeactivating: async (pluginId: string) => {
+        // 1. Unbridge skills registered by this plugin
+        unbridgePluginCapabilities(pluginId, { pluginRegistry, skillRegistry, logger });
+
+        // 2. Unregister stacks owned by this plugin
+        for (const { pluginId: pid, stack } of pluginRegistry.getStacks()) {
+          if (pid === pluginId) stackRegistry.unregister(stack.id);
+        }
+
+        // 3. Unregister project types owned by this plugin
+        for (const typeId of pluginRegistry.getProjectTypeIds(pluginId)) {
+          projectTypeRegistry.unregister(typeId);
+        }
+
+        // 4. Remove hook handlers registered by this plugin
+        hookBus.removeForPlugin(pluginId);
+
+        // 5. Deactivate and remove all registrations
+        await pluginRegistry.deactivateSingle(pluginId);
+
+        log.info(`deactivated plugin for update: ${pluginId}`);
       },
       secrets,
       config: config as Record<string, unknown>,
