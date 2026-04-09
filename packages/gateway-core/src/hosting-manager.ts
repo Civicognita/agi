@@ -1779,6 +1779,21 @@ export class HostingManager {
     }
   }
 
+  /** Read tunnel config fresh from aionima.json — picks up changes made since boot. */
+  private readTunnelConfig(): { mode: "quick" | "named"; domain: string | undefined } {
+    try {
+      const cfgPath = join(homedir(), ".agi", "aionima.json");
+      const raw = readFileSync(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw) as { hosting?: { tunnelMode?: string; tunnelDomain?: string } };
+      return {
+        mode: cfg.hosting?.tunnelMode === "quick" ? "quick" : "named",
+        domain: cfg.hosting?.tunnelDomain || undefined,
+      };
+    } catch {
+      return { mode: this.tunnelMode, domain: this.tunnelDomain };
+    }
+  }
+
   /** Check if cloudflared is authenticated (has origin cert from `cloudflared tunnel login`). */
   isCloudflaredAuthenticated(): boolean {
     const certPath = join(homedir(), ".cloudflared", "cert.pem");
@@ -1831,7 +1846,8 @@ export class HostingManager {
       }
     }
 
-    return { binaryInstalled, binaryPath, authenticated, certPath, tunnelMode: this.tunnelMode, tunnelDomain: this.tunnelDomain ?? null, activeTunnels };
+    const liveCfg = this.readTunnelConfig();
+    return { binaryInstalled, binaryPath, authenticated, certPath, tunnelMode: liveCfg.mode, tunnelDomain: liveCfg.domain ?? null, activeTunnels };
   }
 
   /**
@@ -1952,9 +1968,12 @@ export class HostingManager {
 
     const bin = this.ensureCloudflared();
 
+    // Read tunnel config fresh from disk — user may have changed settings since boot
+    const { mode, domain } = this.readTunnelConfig();
+
     // Use named tunnel if mode is "named", Cloudflare is authenticated, AND a tunnel domain is configured
-    if (this.tunnelMode === "named" && this.isCloudflaredAuthenticated() && this.tunnelDomain) {
-      return this.enableNamedTunnel(resolved, hosted, bin);
+    if (mode === "named" && this.isCloudflaredAuthenticated() && domain) {
+      return this.enableNamedTunnel(resolved, hosted, bin, domain);
     }
     return this.enableQuickTunnel(resolved, hosted, bin);
   }
@@ -2025,10 +2044,10 @@ export class HostingManager {
   }
 
   /** Named tunnel — persistent URL via Cloudflare DNS. Credentials stored in ~/.agi/{slug}/tunnel.json. */
-  private async enableNamedTunnel(resolved: string, hosted: HostedProject, bin: string): Promise<{ url: string }> {
+  private async enableNamedTunnel(resolved: string, hosted: HostedProject, bin: string, domain: string): Promise<{ url: string }> {
     const credPath = this.tunnelCredPath(resolved);
     const tunnelName = `aionima-${hosted.meta.hostname}`;
-    const dnsHostname = `${hosted.meta.hostname}.${this.tunnelDomain!}`;
+    const dnsHostname = `${hosted.meta.hostname}.${domain}`;
 
     // Create tunnel if no credentials exist yet
     if (!existsSync(credPath)) {
