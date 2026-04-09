@@ -435,6 +435,11 @@ export class HostingManager {
 
     const count = Array.from(this.projects.values()).filter((p) => p.status === "running").length;
     this.log.info(`hosting initialized: ${String(count)} project(s) running`);
+
+    // Restore tunnels for projects that had them active before shutdown/upgrade.
+    // Quick tunnels get a new URL each time but the tunnel itself stays active.
+    // The new URL is persisted and the dashboard shows it automatically.
+    void this.restoreTunnels();
   }
 
   // -------------------------------------------------------------------------
@@ -1713,6 +1718,39 @@ export class HostingManager {
   // -------------------------------------------------------------------------
   // Cloudflare Quick Tunnels
   // -------------------------------------------------------------------------
+
+  /** Re-enable tunnels for projects that had them active before a restart/upgrade. */
+  private async restoreTunnels(): Promise<void> {
+    const projectsWithTunnels: string[] = [];
+
+    for (const [path, hosted] of this.projects) {
+      if (hosted.meta.tunnelUrl && hosted.status === "running") {
+        projectsWithTunnels.push(path);
+      }
+    }
+
+    if (projectsWithTunnels.length === 0) return;
+
+    this.log.info(`restoring ${String(projectsWithTunnels.length)} tunnel(s)...`);
+
+    for (const path of projectsWithTunnels) {
+      try {
+        const result = await this.enableTunnel(path);
+        this.log.info(`tunnel restored for ${path}: ${result.url}`);
+      } catch (err) {
+        this.log.warn(`failed to restore tunnel for ${path}: ${err instanceof Error ? err.message : String(err)}`);
+        // Clear the stale URL so the dashboard doesn't show a dead link
+        const hosted = this.projects.get(path);
+        if (hosted) {
+          hosted.tunnelUrl = null;
+          hosted.meta.tunnelUrl = null;
+          this.writeHostingMeta(path, hosted.meta);
+        }
+      }
+    }
+
+    this.notifyStatusChange();
+  }
 
   /** Locate the cloudflared binary. Throws if not installed. */
   private ensureCloudflared(): string {
