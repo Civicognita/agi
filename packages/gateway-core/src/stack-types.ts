@@ -57,6 +57,8 @@ export interface StackContainerConfig {
   shared: boolean;
   /** Unique key for shared containers (e.g. "postgres-17"). */
   sharedKey?: string;
+  /** Document root within the project (e.g. "public" for Laravel). */
+  docRoot?: string;
   volumeMounts: (ctx: StackContainerContext) => string[];
   env: (ctx: StackContainerContext) => Record<string, string>;
   command?: (ctx: StackContainerContext) => string[] | null;

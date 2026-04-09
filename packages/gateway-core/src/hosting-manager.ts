@@ -840,6 +840,21 @@ export class HostingManager {
     return null;
   }
 
+  /** Resolve the full StackDefinition (not just containerConfig) for devCommands fallback. */
+  private resolveStackDefinition(hosted: HostedProject): StackDefinition | null {
+    if (!this.stackReg) return null;
+
+    const stacks = this.getProjectStacks(hosted.path);
+    for (const instance of stacks) {
+      const def = this.stackReg.get(instance.stackId);
+      if (def?.containerConfig && !def.containerConfig.shared) {
+        return def;
+      }
+    }
+
+    return null;
+  }
+
   private startContainer(hosted: HostedProject): void {
     if (hosted.meta.port === null) {
       hosted.status = "error";
@@ -941,7 +956,21 @@ export class HostingManager {
         : undefined;
       args.push(runtimeDef?.containerImage ?? stackConfig.image);
 
-      const cmdTokens = stackConfig.command?.(ctx);
+      let cmdTokens = stackConfig.command?.(ctx) ?? null;
+
+      // Fallback: derive command from devCommands on the stack definition
+      if (!cmdTokens) {
+        const stackDef = this.resolveStackDefinition(hosted);
+        if (stackDef?.devCommands) {
+          const cmd = hosted.meta.mode === "development"
+            ? stackDef.devCommands.dev
+            : stackDef.devCommands.start;
+          if (cmd) {
+            cmdTokens = ["sh", "-c", cmd];
+          }
+        }
+      }
+
       if (cmdTokens) {
         args.push(...cmdTokens);
       }

@@ -111,11 +111,11 @@ export function RuntimeManagerSection({ language }: Props) {
                     <span className="text-[13px] font-medium text-foreground">{rt.label}</span>
                     {isInstalled ? (
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-medium">
-                        Installed
+                        Image ready
                       </span>
                     ) : (
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground font-medium">
-                        Not installed
+                        Not pulled
                       </span>
                     )}
                     <span className="text-[11px] text-muted-foreground">
@@ -132,7 +132,7 @@ export function RuntimeManagerSection({ language }: Props) {
                           onClick={() => void handleUninstall(rt.id)}
                           className="text-[11px] h-7"
                         >
-                          {isBusy ? "Working..." : "Uninstall"}
+                          {isBusy ? "Working..." : "Remove image"}
                         </Button>
                       ) : (
                         <Button
@@ -142,7 +142,7 @@ export function RuntimeManagerSection({ language }: Props) {
                           onClick={() => void handleInstall(rt.id)}
                           className="text-[11px] h-7"
                         >
-                          {isBusy ? "Working..." : "Install"}
+                          {isBusy ? "Working..." : "Pull image"}
                         </Button>
                       )}
                     </div>
