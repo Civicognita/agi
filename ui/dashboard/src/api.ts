@@ -1491,6 +1491,40 @@ export async function resetDashboardUserPassword(token: string, id: string, pass
 // Machine Admin API — /api/machine/*
 // ---------------------------------------------------------------------------
 
+export interface MachineNetworkInfo {
+  supported: boolean;
+  platform?: string;
+  reason?: string;
+  connection?: string;
+  interface?: string;
+  ip?: string;
+  subnet?: string;
+  gateway?: string;
+  method?: "static" | "dhcp";
+}
+
+export async function fetchMachineNetwork(): Promise<MachineNetworkInfo> {
+  const res = await fetch("/api/machine/network");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<MachineNetworkInfo>;
+}
+
+export async function setMachineNetwork(params: {
+  method: "static" | "dhcp";
+  ip?: string;
+  subnet?: string;
+  gateway?: string;
+}): Promise<{ ok: boolean; error?: string; method?: string; newIp?: string }> {
+  const res = await fetch("/api/machine/network", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json() as { ok: boolean; error?: string; method?: string; newIp?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
 export async function fetchMachineInfo(): Promise<import("./types.js").MachineInfo> {
   const res = await fetch("/api/machine/info");
   if (!res.ok) {

@@ -181,8 +181,8 @@ const HostingConfigSchema = z
   .object({
     /** Enable project hosting infrastructure. */
     enabled: z.boolean().default(false),
-    /** LAN IP address for DNS resolution and Caddy binding. */
-    lanIp: z.string().default("192.168.0.144"),
+    /** LAN IP address for DNS resolution and Caddy binding. Set during install/setup. */
+    lanIp: z.string().optional(),
     /** Base domain for hosted projects (e.g. "ai.on"). */
     baseDomain: z.string().default("ai.on"),
     /** Extra domain names that also reverse-proxy to the gateway dashboard. */

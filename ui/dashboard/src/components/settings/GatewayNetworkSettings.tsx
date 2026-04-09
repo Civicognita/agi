@@ -12,7 +12,10 @@ import {
   fetchCloudflaredStatus,
   startCloudflaredLogin,
   cloudflaredLogout,
+  fetchMachineNetwork,
+  setMachineNetwork,
   type CloudflaredStatus,
+  type MachineNetworkInfo,
 } from "../../api.js";
 import type { AionimaConfig, GatewayConfig } from "../../types.js";
 
@@ -23,6 +26,50 @@ interface Props {
 }
 
 export function GatewayNetworkSettings({ gateway, config, update }: Props) {
+  // Machine network state
+  const [netInfo, setNetInfo] = useState<MachineNetworkInfo | null>(null);
+  const [netMethod, setNetMethod] = useState<"static" | "dhcp">("dhcp");
+  const [netIp, setNetIp] = useState("");
+  const [netSubnet, setNetSubnet] = useState("24");
+  const [netGateway, setNetGateway] = useState("");
+  const [netSaving, setNetSaving] = useState(false);
+  const [netError, setNetError] = useState<string | null>(null);
+
+  // Fetch machine network info on mount
+  useEffect(() => {
+    fetchMachineNetwork()
+      .then((info) => {
+        setNetInfo(info);
+        if (info.supported) {
+          setNetMethod(info.method ?? "dhcp");
+          setNetIp(info.ip ?? "");
+          setNetSubnet(info.subnet ?? "24");
+          setNetGateway(info.gateway ?? "");
+        }
+      })
+      .catch(() => { /* machine API unavailable */ });
+  }, []);
+
+  const handleNetworkSave = useCallback(async () => {
+    setNetSaving(true);
+    setNetError(null);
+    try {
+      await setMachineNetwork({
+        method: netMethod,
+        ip: netMethod === "static" ? netIp : undefined,
+        subnet: netMethod === "static" ? netSubnet : undefined,
+        gateway: netMethod === "static" ? netGateway : undefined,
+      });
+      // Refresh network info after change
+      const info = await fetchMachineNetwork();
+      setNetInfo(info);
+    } catch (err) {
+      setNetError(err instanceof Error ? err.message : "Failed to update network");
+    } finally {
+      setNetSaving(false);
+    }
+  }, [netMethod, netIp, netSubnet, netGateway]);
+
   // Cloudflared state
   const [cfStatus, setCfStatus] = useState<CloudflaredStatus | null>(null);
   const [cfLoading, setCfLoading] = useState(false);
@@ -88,6 +135,55 @@ export function GatewayNetworkSettings({ gateway, config, update }: Props) {
 
   return (
     <>
+      {/* Machine IP Configuration */}
+      {netInfo && (
+        <Card className="p-6 gap-0 mb-4">
+          <SectionHeading>Machine IP</SectionHeading>
+          {!netInfo.supported ? (
+            <p className="text-sm text-muted-foreground">{netInfo.reason ?? "Network configuration is managed by your operating system."}</p>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-xs text-muted-foreground">Interface: {netInfo.interface}</span>
+                <span className="text-xs text-muted-foreground">Connection: {netInfo.connection}</span>
+              </div>
+              <div className="grid grid-cols-4 gap-4">
+                <FieldGroup label="Method">
+                  <select
+                    className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+                    value={netMethod}
+                    onChange={(e) => setNetMethod(e.target.value as "static" | "dhcp")}
+                  >
+                    <option value="static">Static</option>
+                    <option value="dhcp">DHCP</option>
+                  </select>
+                </FieldGroup>
+                {netMethod === "static" && (
+                  <>
+                    <FieldGroup label="IP Address">
+                      <Input className="font-mono" value={netIp} onChange={(e) => setNetIp(e.target.value)} />
+                    </FieldGroup>
+                    <FieldGroup label="Subnet Prefix">
+                      <Input className="font-mono" value={netSubnet} onChange={(e) => setNetSubnet(e.target.value)} />
+                    </FieldGroup>
+                    <FieldGroup label="Gateway">
+                      <Input className="font-mono" value={netGateway} onChange={(e) => setNetGateway(e.target.value)} />
+                    </FieldGroup>
+                  </>
+                )}
+              </div>
+              {netError && <p className="text-xs text-red mt-2">{netError}</p>}
+              <div className="mt-3 flex items-center gap-3">
+                <Button size="sm" disabled={netSaving} onClick={() => void handleNetworkSave()}>
+                  {netSaving ? "Applying..." : "Apply"}
+                </Button>
+                <span className="text-xs text-yellow">Changing the IP will disconnect your current session. Reconnect at the new address.</span>
+              </div>
+            </>
+          )}
+        </Card>
+      )}
+
       {/* Gateway Host/Port/State */}
       <Card className="p-6 gap-0 mb-4">
         <SectionHeading>Gateway</SectionHeading>
