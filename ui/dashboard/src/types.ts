@@ -92,6 +92,8 @@ export interface UpdateCheck {
   remoteCommit: string;
   behindCount: number;
   commits: { hash: string; message: string }[];
+  channel?: "main" | "dev";
+  serviceUpdates?: Array<{ name: string; behind: number }>;
 }
 
 export interface SystemUpgradeEvent {
@@ -478,6 +480,7 @@ export interface GatewayConfig {
   host: string;
   port: number;
   state: "ONLINE" | "LIMBO" | "OFFLINE" | "UNKNOWN";
+  updateChannel?: "main" | "dev";
 }
 
 export interface WorkerModelOverride {

@@ -102,7 +102,7 @@ export default function SettingsGatewayPage() {
       )}
 
       {activeTab === "network" && (
-        <GatewayNetworkSettings gateway={gateway} update={update} />
+        <GatewayNetworkSettings gateway={gateway} config={draft} update={update} />
       )}
     </div>
   );

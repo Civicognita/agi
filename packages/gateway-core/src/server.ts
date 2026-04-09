@@ -1056,6 +1056,7 @@ export async function startGatewayServer(
       portRangeStart: hostingConfig?.portRangeStart ?? 4000,
       containerRuntime: hostingConfig?.containerRuntime ?? "podman",
       statusPollIntervalMs: hostingConfig?.statusPollIntervalMs ?? 10_000,
+      tunnelMode: hostingConfig?.tunnelMode ?? "named",
     },
     workspaceProjects: projectPaths,
     projectTypeRegistry,

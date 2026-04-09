@@ -382,6 +382,54 @@ export function registerHostingRoutes(
   });
 
   // -----------------------------------------------------------------------
+  // GET /api/hosting/cloudflared/status — check cloudflared binary + auth status
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/hosting/cloudflared/status", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+    return reply.send(hostingManager.getCloudflaredStatus());
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/hosting/cloudflared/login — start interactive Cloudflare auth flow
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/hosting/cloudflared/login", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    try {
+      const { loginUrl, waitForCompletion } = await hostingManager.startCloudflaredLogin();
+
+      // Return the URL immediately — the UI will poll /cloudflared/status for completion
+      void reply.send({ ok: true, loginUrl });
+
+      // Fire and forget: the completion promise cleans up the child process
+      waitForCompletion.then((result) => {
+        if (result.success) {
+          log.info("cloudflared login completed successfully");
+        } else {
+          log.warn(`cloudflared login failed: ${result.error ?? "unknown"}`);
+        }
+      }).catch(() => { /* ignore */ });
+    } catch (loginErr) {
+      const message = loginErr instanceof Error ? loginErr.message : String(loginErr);
+      return reply.code(500).send({ error: message });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/hosting/cloudflared/logout — revoke Cloudflare auth (remove cert.pem)
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/hosting/cloudflared/logout", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+    return reply.send(hostingManager.revokeCloudflaredAuth());
+  });
+
+  // -----------------------------------------------------------------------
   // GET /api/hosting/logs — retrieve container logs for a project
   // -----------------------------------------------------------------------
 

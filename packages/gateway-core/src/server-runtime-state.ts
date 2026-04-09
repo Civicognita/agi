@@ -2132,19 +2132,33 @@ export async function createGatewayRuntimeState(
     return true;
   }
 
+  /** Read the configured update channel from aionima.json. Returns "main" or "dev". */
+  function getUpdateChannel(): "main" | "dev" {
+    if (!deps.configPath) return "main";
+    try {
+      const raw = readFileSync(deps.configPath, "utf-8");
+      const cfg = JSON.parse(raw) as { gateway?: { updateChannel?: string } };
+      return cfg.gateway?.updateChannel === "dev" ? "dev" : "main";
+    } catch {
+      return "main";
+    }
+  }
+
   /**
    * Check if a service repo has updates available.
    * Returns behind count or 0 if up-to-date/missing.
    */
   async function checkServiceRepo(dir: string): Promise<{ behind: number; name: string }> {
     const name = dir.split("/").pop() ?? dir;
+    const channel = getUpdateChannel();
+    const ref = `origin/${channel}`;
     try {
       if (!existsSync(join(dir, ".git"))) return { behind: 0, name };
       await execGitDashboard(["fetch", "origin", "--quiet"], dir);
       const local = (await execGitDashboard(["rev-parse", "HEAD"], dir)).stdout.trim();
-      const remote = (await execGitDashboard(["rev-parse", "origin/main"], dir)).stdout.trim();
+      const remote = (await execGitDashboard(["rev-parse", ref], dir)).stdout.trim();
       if (local === remote) return { behind: 0, name };
-      const count = (await execGitDashboard(["rev-list", `${local}..origin/main`, "--count"], dir)).stdout.trim();
+      const count = (await execGitDashboard(["rev-list", `${local}..${ref}`, "--count"], dir)).stdout.trim();
       return { behind: parseInt(count, 10) || 0, name };
     } catch {
       return { behind: 0, name };
@@ -2152,7 +2166,7 @@ export async function createGatewayRuntimeState(
   }
 
   /**
-   * Build an UpdateCheck result by comparing deployedCommit vs origin/main.
+   * Build an UpdateCheck result by comparing deployedCommit vs origin/{channel}.
    * Also checks ID, PRIME, and marketplace repos for pending updates.
    * Shared between the poll endpoint and the webhook handler.
    */
@@ -2162,27 +2176,31 @@ export async function createGatewayRuntimeState(
     remoteCommit: string;
     behindCount: number;
     commits: { hash: string; message: string }[];
+    channel: "main" | "dev";
     serviceUpdates?: Array<{ name: string; behind: number }>;
   }> {
+    const channel = getUpdateChannel();
+    const ref = `origin/${channel}`;
+
     // Read the deployed commit marker (written by upgrade.sh into the deploy dir)
     let deployedCommit = "";
     try {
       deployedCommit = readFileSync(join(process.cwd(), ".deployed-commit"), "utf-8").trim();
     } catch {
-      // No marker file — use origin/main as both source and "deployed" reference
-      // (nothing meaningful to compare against)
-      const remote = await execGitDashboard(["rev-parse", "origin/main"], repoPath);
+      // No marker file — use origin/{channel} as both source and "deployed" reference
+      const remote = await execGitDashboard(["rev-parse", ref], repoPath);
       return {
         updateAvailable: false,
         localCommit: remote.stdout.trim(),
         remoteCommit: remote.stdout.trim(),
         behindCount: 0,
         commits: [],
+        channel,
       };
     }
 
-    // Get origin/main commit (source of truth from GitHub)
-    const remoteResult = await execGitDashboard(["rev-parse", "origin/main"], repoPath);
+    // Get origin/{channel} commit (source of truth from GitHub)
+    const remoteResult = await execGitDashboard(["rev-parse", ref], repoPath);
     const remoteCommit = remoteResult.stdout.trim();
 
     if (deployedCommit === remoteCommit) {
@@ -2192,19 +2210,20 @@ export async function createGatewayRuntimeState(
         remoteCommit,
         behindCount: 0,
         commits: [],
+        channel,
       };
     }
 
-    // Count commits between deployed and origin/main
+    // Count commits between deployed and origin/{channel}
     const countResult = await execGitDashboard(
-      ["rev-list", `${deployedCommit}..origin/main`, "--count"], repoPath,
+      ["rev-list", `${deployedCommit}..${ref}`, "--count"], repoPath,
     );
     const behindCount = parseInt(countResult.stdout.trim(), 10) || 0;
 
     let commits: { hash: string; message: string }[] = [];
     if (behindCount > 0) {
       const logResult = await execGitDashboard(
-        ["log", `${deployedCommit}..origin/main`, "--oneline"], repoPath,
+        ["log", `${deployedCommit}..${ref}`, "--oneline"], repoPath,
       );
       commits = logResult.stdout.trim().split("\n").filter(Boolean).map((line) => {
         const spaceIdx = line.indexOf(" ");
@@ -2232,6 +2251,7 @@ export async function createGatewayRuntimeState(
       remoteCommit,
       behindCount,
       commits,
+      channel,
       serviceUpdates: serviceUpdates.length > 0 ? serviceUpdates : undefined,
     };
   }
@@ -2289,7 +2309,12 @@ export async function createGatewayRuntimeState(
     void reply.code(202).send({ ok: true, message: "Upgrade started" });
 
     const scriptPath = join(repoPath, "scripts/upgrade.sh");
-    const child = spawn("bash", [scriptPath], { cwd: repoPath, stdio: ["ignore", "pipe", "pipe"] });
+    const channel = getUpdateChannel();
+    const child = spawn("bash", [scriptPath], {
+      cwd: repoPath,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, AIONIMA_UPDATE_CHANNEL: channel },
+    });
 
     let currentPhase = "pulling";
     let lastStep = "upgrade";

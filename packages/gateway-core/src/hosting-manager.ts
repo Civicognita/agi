@@ -54,6 +54,8 @@ export interface HostingConfig {
   portRangeStart: number;
   containerRuntime: "podman";
   statusPollIntervalMs: number;
+  /** Default tunnel mode: "quick" (ephemeral URL) or "named" (persistent URL). */
+  tunnelMode?: "quick" | "named";
   /** Local ID service config — when enabled, generates a Caddy entry for id.{baseDomain}. */
   idService?: {
     enabled: boolean;
@@ -171,11 +173,14 @@ export class HostingManager {
   private readonly configMgr: ProjectConfigManager | null;
   private readonly mappReg: import("./mapp-registry.js").MAppRegistry | null;
   private readonly tunnelProcesses = new Map<string, ChildProcess>();
+  private readonly tunnelMode: "quick" | "named";
+  private loginProcess: ChildProcess | null = null;
   private onStatusChange: (() => void) | null = null;
   private statusPollTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(deps: HostingManagerDeps) {
     this.config = deps.config;
+    this.tunnelMode = deps.config.tunnelMode ?? "named";
     this.workspaceProjects = deps.workspaceProjects;
     this.registry = deps.projectTypeRegistry ?? null;
     this.pluginReg = deps.pluginRegistry ?? null;
@@ -1776,6 +1781,148 @@ export class HostingManager {
     return existsSync(certPath);
   }
 
+  /** Return composite status of cloudflared binary, auth, and active tunnels. */
+  getCloudflaredStatus(): {
+    binaryInstalled: boolean;
+    binaryPath: string | null;
+    authenticated: boolean;
+    certPath: string;
+    tunnelMode: "quick" | "named";
+    activeTunnels: {
+      projectPath: string;
+      hostname: string;
+      tunnelUrl: string;
+      tunnelType: "quick" | "named";
+      tunnelId: string | null;
+    }[];
+  } {
+    let binaryInstalled = false;
+    let binaryPath: string | null = null;
+    try {
+      binaryPath = execSync("which cloudflared", { stdio: "pipe", timeout: 5000 }).toString().trim();
+      binaryInstalled = true;
+    } catch { /* not installed */ }
+
+    const certPath = join(homedir(), ".cloudflared", "cert.pem");
+    const authenticated = existsSync(certPath);
+
+    const activeTunnels: {
+      projectPath: string;
+      hostname: string;
+      tunnelUrl: string;
+      tunnelType: "quick" | "named";
+      tunnelId: string | null;
+    }[] = [];
+
+    for (const [path, hosted] of this.projects) {
+      if (hosted.tunnelUrl) {
+        activeTunnels.push({
+          projectPath: path,
+          hostname: hosted.meta.hostname,
+          tunnelUrl: hosted.tunnelUrl,
+          tunnelType: hosted.meta.tunnelId ? "named" : "quick",
+          tunnelId: hosted.meta.tunnelId ?? null,
+        });
+      }
+    }
+
+    return { binaryInstalled, binaryPath, authenticated, certPath, tunnelMode: this.tunnelMode, activeTunnels };
+  }
+
+  /**
+   * Start the interactive cloudflared login flow.
+   * Spawns `cloudflared tunnel login`, captures the OAuth URL from stderr,
+   * and returns it so the UI can display it to the user.
+   */
+  startCloudflaredLogin(): Promise<{ loginUrl: string; waitForCompletion: Promise<{ success: boolean; error?: string }> }> {
+    // Prevent concurrent login attempts
+    if (this.loginProcess) {
+      try { this.loginProcess.kill(); } catch { /* ignore */ }
+      this.loginProcess = null;
+    }
+
+    const bin = this.ensureCloudflared();
+
+    return new Promise((resolve, reject) => {
+      const child = spawn(bin, ["tunnel", "login"], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      this.loginProcess = child;
+
+      let stderrBuf = "";
+      let urlResolved = false;
+      const urlRegex = /https:\/\/dash\.cloudflare\.com\/[^\s]+/;
+
+      const timeout = setTimeout(() => {
+        if (!urlResolved) {
+          try { child.kill(); } catch { /* ignore */ }
+          this.loginProcess = null;
+          reject(new Error("Timed out waiting for cloudflared login URL (30s)"));
+        }
+      }, 30_000);
+
+      child.stderr.on("data", (data: Buffer) => {
+        stderrBuf += data.toString();
+        if (!urlResolved) {
+          const match = urlRegex.exec(stderrBuf);
+          if (match) {
+            urlResolved = true;
+            clearTimeout(timeout);
+            const loginUrl = match[0];
+
+            const waitForCompletion = new Promise<{ success: boolean; error?: string }>((completeResolve) => {
+              child.on("close", (code) => {
+                this.loginProcess = null;
+                const success = code === 0 && this.isCloudflaredAuthenticated();
+                completeResolve({ success, error: success ? undefined : `cloudflared login exited with code ${String(code)}` });
+              });
+              child.on("error", (err) => {
+                this.loginProcess = null;
+                completeResolve({ success: false, error: err.message });
+              });
+            });
+
+            resolve({ loginUrl, waitForCompletion });
+          }
+        }
+      });
+
+      child.stdout.on("data", (data: Buffer) => {
+        // cloudflared may also print the URL to stdout in some versions
+        stderrBuf += data.toString();
+      });
+
+      child.on("close", (code) => {
+        clearTimeout(timeout);
+        this.loginProcess = null;
+        if (!urlResolved) {
+          reject(new Error(`cloudflared login exited (code ${String(code)}) before producing a URL`));
+        }
+      });
+
+      child.on("error", (err) => {
+        clearTimeout(timeout);
+        this.loginProcess = null;
+        if (!urlResolved) {
+          reject(new Error(`cloudflared spawn error: ${err.message}`));
+        }
+      });
+    });
+  }
+
+  /** Remove cloudflared authentication (deletes cert.pem). */
+  revokeCloudflaredAuth(): { success: boolean; error?: string } {
+    const certPath = join(homedir(), ".cloudflared", "cert.pem");
+    if (!existsSync(certPath)) return { success: true };
+    try {
+      const { unlinkSync } = require("node:fs") as typeof import("node:fs");
+      unlinkSync(certPath);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   /** Get the credentials file path for a project's named tunnel. */
   private tunnelCredPath(projectPath: string): string {
     return join(homedir(), ".agi", projectSlug(projectPath), "tunnel.json");
@@ -1800,8 +1947,8 @@ export class HostingManager {
 
     const bin = this.ensureCloudflared();
 
-    // Use named tunnel if Cloudflare is authenticated, otherwise fall back to quick tunnel
-    if (this.isCloudflaredAuthenticated()) {
+    // Use named tunnel if mode is "named" AND Cloudflare is authenticated, otherwise quick tunnel
+    if (this.tunnelMode === "named" && this.isCloudflaredAuthenticated()) {
       return this.enableNamedTunnel(resolved, hosted, bin);
     }
     return this.enableQuickTunnel(resolved, hosted, bin);

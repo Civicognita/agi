@@ -707,6 +707,52 @@ export async function disableTunnel(path: string): Promise<{ ok: boolean }> {
   return res.json() as Promise<{ ok: boolean }>;
 }
 
+// ---------------------------------------------------------------------------
+// Cloudflared management
+// ---------------------------------------------------------------------------
+
+export interface CloudflaredStatus {
+  binaryInstalled: boolean;
+  binaryPath: string | null;
+  authenticated: boolean;
+  certPath: string;
+  tunnelMode: "quick" | "named";
+  activeTunnels: {
+    projectPath: string;
+    hostname: string;
+    tunnelUrl: string;
+    tunnelType: "quick" | "named";
+    tunnelId: string | null;
+  }[];
+}
+
+export async function fetchCloudflaredStatus(): Promise<CloudflaredStatus> {
+  const res = await fetch("/api/hosting/cloudflared/status");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<CloudflaredStatus>;
+}
+
+export async function startCloudflaredLogin(): Promise<{ ok: boolean; loginUrl: string }> {
+  const res = await fetch("/api/hosting/cloudflared/login", { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean; loginUrl: string }>;
+}
+
+export async function cloudflaredLogout(): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch("/api/hosting/cloudflared/logout", { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ success: boolean; error?: string }>;
+}
+
 export async function fetchContainerLogs(path: string, tail = 100, source?: string): Promise<{ logs: string }> {
   const url = new URL("/api/hosting/logs", window.location.origin);
   url.searchParams.set("path", path);

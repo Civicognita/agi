@@ -587,11 +587,14 @@ export default function RootLayout() {
                   className="rounded-xl"
                 >
                   {updateCheck.behindCount} update{updateCheck.behindCount !== 1 ? "s" : ""}
+                  {updateCheck.channel === "dev" && (
+                    <span className="ml-1 text-[10px] opacity-70">(dev)</span>
+                  )}
                 </Button>
                 {upgradeDropdown && (
                   <div className="absolute top-[calc(100%+8px)] right-0 w-[min(320px,calc(100vw-24px))] bg-card border border-border rounded-xl p-4 z-[200] shadow-lg">
                     <div className="text-[13px] font-semibold mb-2">
-                      Pending commits
+                      Pending commits{updateCheck.channel === "dev" ? " (dev)" : ""}
                     </div>
                     <div className="max-h-[200px] overflow-y-auto mb-3">
                       {updateCheck.commits.map((c) => (

@@ -7,6 +7,8 @@ const GatewayConfigSchema = z
     host: z.string().default("127.0.0.1"),
     port: z.number().int().min(1).max(65535).default(3100),
     state: GatewayStateSchema.default("OFFLINE"),
+    /** Release channel: "main" (stable) or "dev" (bleeding edge). Controls which branch all repos track for updates. */
+    updateChannel: z.enum(["main", "dev"]).optional(),
   })
   .strict();
 
@@ -191,6 +193,8 @@ const HostingConfigSchema = z
     containerRuntime: z.enum(["podman"]).default("podman"),
     /** Interval in ms for polling container statuses. */
     statusPollIntervalMs: z.number().int().positive().default(10_000),
+    /** Default tunnel mode: "quick" (ephemeral URL, no auth) or "named" (persistent URL, requires Cloudflare auth). */
+    tunnelMode: z.enum(["quick", "named"]).optional(),
   })
   .strict();
 

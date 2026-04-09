@@ -15,6 +15,16 @@ ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
 ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
 
+# Release channel — controls which branch all repos pull from.
+# Priority: env var > config file > "main"
+BRANCH="${AIONIMA_UPDATE_CHANNEL:-$(node -e "
+  try {
+    const c = JSON.parse(require('fs').readFileSync(
+      require('path').join(require('os').homedir(), '.agi/aionima.json'), 'utf-8'));
+    console.log((c.gateway && c.gateway.updateChannel) || 'main');
+  } catch { console.log('main'); }
+" 2>/dev/null || echo "main")}"
+
 # Backend dist dirs — changes here require a service restart.
 # Channel adapters are marketplace plugins (not bundled in core).
 BACKEND_DIRS=(
@@ -71,9 +81,10 @@ ensure_https_remote "$ID_DIR"
 # ---------------------------------------------------------------------------
 # 1. Pull AGI repo
 # ---------------------------------------------------------------------------
-emit "pull-agi" "start"
-if git pull --ff-only origin main 2>&1; then
-  emit "pull-agi" "done" "AGI repo updated"
+emit "pull-agi" "start" "channel: $BRANCH"
+# fetch + checkout -B handles both fast-forwards and branch switches safely
+if git fetch origin 2>&1 && git checkout -B "$BRANCH" "origin/$BRANCH" 2>&1; then
+  emit "pull-agi" "done" "AGI repo updated ($BRANCH)"
 else
   emit "pull-agi" "error" "AGI pull failed"
   exit 1
@@ -94,16 +105,16 @@ fi
 # ---------------------------------------------------------------------------
 if [ -d "$PRIME_DIR/.git" ]; then
   emit "pull-prime" "start"
-  if (cd "$PRIME_DIR" && git pull --ff-only origin main 2>&1); then
-    emit "pull-prime" "done" "PRIME repo updated"
+  if (cd "$PRIME_DIR" && git fetch origin 2>&1 && git checkout -B "$BRANCH" "origin/$BRANCH" 2>&1); then
+    emit "pull-prime" "done" "PRIME repo updated ($BRANCH)"
   else
     emit "pull-prime" "error" "PRIME pull failed"
     # Non-fatal — continue in degraded mode
   fi
 else
   emit "clone-prime" "start" "PRIME not found at $PRIME_DIR — cloning"
-  if sudo git clone --branch main "$PRIME_REPO" "$PRIME_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$PRIME_DIR"; then
-    emit "clone-prime" "done" "PRIME repo cloned to $PRIME_DIR"
+  if sudo git clone --branch "$BRANCH" "$PRIME_REPO" "$PRIME_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$PRIME_DIR"; then
+    emit "clone-prime" "done" "PRIME repo cloned to $PRIME_DIR ($BRANCH)"
   else
     sudo rm -rf "$PRIME_DIR"
     emit "clone-prime" "error" "PRIME clone failed from $PRIME_REPO"
@@ -116,16 +127,16 @@ fi
 # ---------------------------------------------------------------------------
 if [ -d "$MARKETPLACE_DIR/.git" ]; then
   emit "pull-marketplace" "start"
-  if (cd "$MARKETPLACE_DIR" && git pull --ff-only origin main 2>&1); then
-    emit "pull-marketplace" "done" "Marketplace repo updated"
+  if (cd "$MARKETPLACE_DIR" && git fetch origin 2>&1 && git checkout -B "$BRANCH" "origin/$BRANCH" 2>&1); then
+    emit "pull-marketplace" "done" "Marketplace repo updated ($BRANCH)"
   else
     emit "pull-marketplace" "error" "Marketplace pull failed"
     # Non-fatal — plugins still work from cache
   fi
 else
   emit "clone-marketplace" "start" "Marketplace not found at $MARKETPLACE_DIR — cloning"
-  if sudo git clone --branch main "$MARKETPLACE_REPO" "$MARKETPLACE_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$MARKETPLACE_DIR"; then
-    emit "clone-marketplace" "done" "Marketplace repo cloned to $MARKETPLACE_DIR"
+  if sudo git clone --branch "$BRANCH" "$MARKETPLACE_REPO" "$MARKETPLACE_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$MARKETPLACE_DIR"; then
+    emit "clone-marketplace" "done" "Marketplace repo cloned to $MARKETPLACE_DIR ($BRANCH)"
   else
     sudo rm -rf "$MARKETPLACE_DIR"
     emit "clone-marketplace" "error" "Marketplace clone failed from $MARKETPLACE_REPO"
@@ -138,16 +149,16 @@ fi
 # ---------------------------------------------------------------------------
 if [ -d "$ID_DIR/.git" ]; then
   emit "pull-id" "start"
-  if (cd "$ID_DIR" && git pull --ff-only origin main 2>&1); then
-    emit "pull-id" "done" "ID service repo updated"
+  if (cd "$ID_DIR" && git fetch origin 2>&1 && git checkout -B "$BRANCH" "origin/$BRANCH" 2>&1); then
+    emit "pull-id" "done" "ID service repo updated ($BRANCH)"
   else
     emit "pull-id" "error" "ID pull failed"
     # Non-fatal — continue in degraded mode
   fi
 else
   emit "clone-id" "start" "ID service not found at $ID_DIR — cloning"
-  if sudo git clone --branch main "$ID_REPO" "$ID_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$ID_DIR"; then
-    emit "clone-id" "done" "ID service repo cloned to $ID_DIR"
+  if sudo git clone --branch "$BRANCH" "$ID_REPO" "$ID_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$ID_DIR"; then
+    emit "clone-id" "done" "ID service repo cloned to $ID_DIR ($BRANCH)"
   else
     emit "clone-id" "error" "ID clone failed from $ID_REPO"
     # Non-fatal — continue in degraded mode
@@ -159,16 +170,16 @@ fi
 # ---------------------------------------------------------------------------
 if [ -d "$MAPP_MARKETPLACE_DIR/.git" ]; then
   emit "pull-mapp-marketplace" "start"
-  if (cd "$MAPP_MARKETPLACE_DIR" && git pull --ff-only origin main 2>&1); then
-    emit "pull-mapp-marketplace" "done" "MApp marketplace repo updated"
+  if (cd "$MAPP_MARKETPLACE_DIR" && git fetch origin 2>&1 && git checkout -B "$BRANCH" "origin/$BRANCH" 2>&1); then
+    emit "pull-mapp-marketplace" "done" "MApp marketplace repo updated ($BRANCH)"
   else
     emit "pull-mapp-marketplace" "error" "MApp marketplace pull failed"
     # Non-fatal — MApps still work from installed cache
   fi
 else
   emit "clone-mapp-marketplace" "start" "MApp marketplace not found at $MAPP_MARKETPLACE_DIR — cloning"
-  if sudo git clone --branch main "$MAPP_MARKETPLACE_REPO" "$MAPP_MARKETPLACE_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$MAPP_MARKETPLACE_DIR"; then
-    emit "clone-mapp-marketplace" "done" "MApp marketplace repo cloned to $MAPP_MARKETPLACE_DIR"
+  if sudo git clone --branch "$BRANCH" "$MAPP_MARKETPLACE_REPO" "$MAPP_MARKETPLACE_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$MAPP_MARKETPLACE_DIR"; then
+    emit "clone-mapp-marketplace" "done" "MApp marketplace repo cloned to $MAPP_MARKETPLACE_DIR ($BRANCH)"
   else
     emit "clone-mapp-marketplace" "error" "MApp marketplace clone failed from $MAPP_MARKETPLACE_REPO"
     # Non-fatal — MApps still work from installed cache
