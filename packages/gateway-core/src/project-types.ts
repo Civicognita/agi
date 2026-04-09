@@ -141,5 +141,21 @@ export function createProjectTypeRegistry(): ProjectTypeRegistry {
     ],
   });
 
+  // Aionima Core — reserved type for AGI core repo forks.
+  // Non-hostable, no code tabs — only Repository, Editor, and Details (read-only).
+  registry.register({
+    id: "aionima",
+    label: "Aionima Core",
+    category: "monorepo",
+    hostable: false,
+    hasCode: false,
+    defaultMeta: {
+      type: "aionima",
+      mode: "production",
+      internalPort: null,
+    },
+    tools: [],
+  });
+
   return registry;
 }

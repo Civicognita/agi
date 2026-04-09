@@ -195,6 +195,8 @@ const HostingConfigSchema = z
     statusPollIntervalMs: z.number().int().positive().default(10_000),
     /** Default tunnel mode: "quick" (ephemeral URL, no auth) or "named" (persistent URL, requires Cloudflare auth). */
     tunnelMode: z.enum(["quick", "named"]).optional(),
+    /** Cloudflare-managed domain for named tunnels (e.g. "example.com"). Named tunnels create DNS records as <project>.<tunnelDomain>. */
+    tunnelDomain: z.string().optional(),
   })
   .strict();
 
@@ -327,12 +329,18 @@ const DevConfigSchema = z
     primeRepo: z.string().default("git@github.com:wishborn/aionima.git"),
     /** Dev directory for PRIME fork. */
     primeDir: z.string().default("/opt/aionima-prime_dev"),
+    /** Git remote URL for marketplace fork. */
+    marketplaceRepo: z.string().default("git@github.com:wishborn/aionima-marketplace.git"),
     /** Dev directory for marketplace fork. */
     marketplaceDir: z.string().default("/opt/aionima-marketplace_dev"),
     /** Git remote URL for ID service fork. */
     idRepo: z.string().default("git@github.com:wishborn/aionima-local-id.git"),
     /** Dev directory for ID service fork. */
     idDir: z.string().default("/opt/aionima-local-id_dev"),
+    /** Git remote URL for MApp marketplace fork. */
+    mappMarketplaceRepo: z.string().default("git@github.com:wishborn/aionima-mapp-marketplace.git"),
+    /** Dev directory for MApp marketplace fork. */
+    mappMarketplaceDir: z.string().default("/opt/aionima-mapp-marketplace_dev"),
   })
   .strict();
 

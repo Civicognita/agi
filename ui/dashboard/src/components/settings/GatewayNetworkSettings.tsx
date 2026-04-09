@@ -84,6 +84,7 @@ export function GatewayNetworkSettings({ gateway, config, update }: Props) {
 
   const channel = gateway.updateChannel ?? "main";
   const tunnelMode = (config.hosting as Record<string, unknown> | undefined)?.["tunnelMode"] as string ?? "named";
+  const tunnelDomain = (config.hosting as Record<string, unknown> | undefined)?.["tunnelDomain"] as string ?? "";
 
   return (
     <>
@@ -233,7 +234,7 @@ export function GatewayNetworkSettings({ gateway, config, update }: Props) {
               </div>
             )}
 
-            {/* Default Tunnel Mode */}
+            {/* Default Tunnel Mode + Domain */}
             <div className="grid grid-cols-2 gap-4 mb-4">
               <FieldGroup label="Default Tunnel Mode">
                 <select
@@ -244,11 +245,32 @@ export function GatewayNetworkSettings({ gateway, config, update }: Props) {
                     hosting: { ...(prev.hosting as Record<string, unknown> ?? {}), tunnelMode: e.target.value },
                   }))}
                 >
-                  <option value="named">Named (persistent URL, requires auth)</option>
+                  <option value="named">Named (persistent URL, requires auth + domain)</option>
                   <option value="quick">Quick (ephemeral URL, no auth needed)</option>
                 </select>
               </FieldGroup>
+              <FieldGroup label="Cloudflare Domain">
+                <Input
+                  className="font-mono"
+                  value={tunnelDomain}
+                  onChange={(e) => update((prev) => ({
+                    ...prev,
+                    hosting: { ...(prev.hosting as Record<string, unknown> ?? {}), tunnelDomain: e.target.value || undefined },
+                  }))}
+                  placeholder="example.com"
+                />
+              </FieldGroup>
             </div>
+            {tunnelMode === "named" && !tunnelDomain && (
+              <p className="text-[12px] text-yellow mb-4">
+                Named tunnels require a Cloudflare-managed domain. Projects will use quick tunnels until a domain is configured.
+              </p>
+            )}
+            {tunnelMode === "named" && tunnelDomain && (
+              <p className="text-[12px] text-muted-foreground mb-4">
+                Named tunnels will create DNS records as &lt;project&gt;.{tunnelDomain}
+              </p>
+            )}
 
             {/* Active Tunnels */}
             {cfStatus.activeTunnels.length > 0 && (

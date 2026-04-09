@@ -776,7 +776,11 @@ export interface DevStatus {
   githubAuthenticated: boolean;
   agi: { remote: string };
   prime: { remote: string; branch: string; entries: number };
-  bots: { remote: string; branch: string };
+  bots?: { remote: string; branch: string };
+  id?: { remote: string; branch: string };
+  marketplace?: { remote: string; branch: string };
+  mappMarketplace?: { remote: string; branch: string };
+  provisionedProjects?: string[];
 }
 
 /** System connection status from GET /api/system/connections. */

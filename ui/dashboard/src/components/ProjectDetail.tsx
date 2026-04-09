@@ -59,7 +59,7 @@ export function ProjectDetail({
 }: ProjectDetailProps) {
   const { slug } = useParams<{ slug: string }>();
   const project = projects.find((p) => projectSlug(p.path) === slug);
-  const isSacred = project ? isSacredProject(project) : false;
+  const isSacred = project ? (isSacredProject(project) || project.projectType?.id === "aionima") : false;
   const canViewSacred = Boolean(contributingEnabled);
 
   const [editName, setEditName] = useState<string | null>(null);

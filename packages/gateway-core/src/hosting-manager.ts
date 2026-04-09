@@ -56,6 +56,8 @@ export interface HostingConfig {
   statusPollIntervalMs: number;
   /** Default tunnel mode: "quick" (ephemeral URL) or "named" (persistent URL). */
   tunnelMode?: "quick" | "named";
+  /** Cloudflare-managed domain for named tunnels. Named tunnels create DNS as <project>.<tunnelDomain>. */
+  tunnelDomain?: string;
   /** Local ID service config — when enabled, generates a Caddy entry for id.{baseDomain}. */
   idService?: {
     enabled: boolean;
@@ -174,6 +176,7 @@ export class HostingManager {
   private readonly mappReg: import("./mapp-registry.js").MAppRegistry | null;
   private readonly tunnelProcesses = new Map<string, ChildProcess>();
   private readonly tunnelMode: "quick" | "named";
+  private readonly tunnelDomain: string | undefined;
   private loginProcess: ChildProcess | null = null;
   private onStatusChange: (() => void) | null = null;
   private statusPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -181,6 +184,7 @@ export class HostingManager {
   constructor(deps: HostingManagerDeps) {
     this.config = deps.config;
     this.tunnelMode = deps.config.tunnelMode ?? "named";
+    this.tunnelDomain = deps.config.tunnelDomain;
     this.workspaceProjects = deps.workspaceProjects;
     this.registry = deps.projectTypeRegistry ?? null;
     this.pluginReg = deps.pluginRegistry ?? null;
@@ -1775,6 +1779,21 @@ export class HostingManager {
     }
   }
 
+  /** Read tunnel config fresh from aionima.json — picks up changes made since boot. */
+  private readTunnelConfig(): { mode: "quick" | "named"; domain: string | undefined } {
+    try {
+      const cfgPath = join(homedir(), ".agi", "aionima.json");
+      const raw = readFileSync(cfgPath, "utf-8");
+      const cfg = JSON.parse(raw) as { hosting?: { tunnelMode?: string; tunnelDomain?: string } };
+      return {
+        mode: cfg.hosting?.tunnelMode === "quick" ? "quick" : "named",
+        domain: cfg.hosting?.tunnelDomain || undefined,
+      };
+    } catch {
+      return { mode: this.tunnelMode, domain: this.tunnelDomain };
+    }
+  }
+
   /** Check if cloudflared is authenticated (has origin cert from `cloudflared tunnel login`). */
   isCloudflaredAuthenticated(): boolean {
     const certPath = join(homedir(), ".cloudflared", "cert.pem");
@@ -1788,6 +1807,7 @@ export class HostingManager {
     authenticated: boolean;
     certPath: string;
     tunnelMode: "quick" | "named";
+    tunnelDomain: string | null;
     activeTunnels: {
       projectPath: string;
       hostname: string;
@@ -1826,7 +1846,8 @@ export class HostingManager {
       }
     }
 
-    return { binaryInstalled, binaryPath, authenticated, certPath, tunnelMode: this.tunnelMode, activeTunnels };
+    const liveCfg = this.readTunnelConfig();
+    return { binaryInstalled, binaryPath, authenticated, certPath, tunnelMode: liveCfg.mode, tunnelDomain: liveCfg.domain ?? null, activeTunnels };
   }
 
   /**
@@ -1947,9 +1968,12 @@ export class HostingManager {
 
     const bin = this.ensureCloudflared();
 
-    // Use named tunnel if mode is "named" AND Cloudflare is authenticated, otherwise quick tunnel
-    if (this.tunnelMode === "named" && this.isCloudflaredAuthenticated()) {
-      return this.enableNamedTunnel(resolved, hosted, bin);
+    // Read tunnel config fresh from disk — user may have changed settings since boot
+    const { mode, domain } = this.readTunnelConfig();
+
+    // Use named tunnel if mode is "named", Cloudflare is authenticated, AND a tunnel domain is configured
+    if (mode === "named" && this.isCloudflaredAuthenticated() && domain) {
+      return this.enableNamedTunnel(resolved, hosted, bin, domain);
     }
     return this.enableQuickTunnel(resolved, hosted, bin);
   }
@@ -2019,10 +2043,11 @@ export class HostingManager {
     });
   }
 
-  /** Named tunnel — persistent URL, requires Cloudflare auth. Credentials stored in ~/.agi/{slug}/tunnel.json. */
-  private async enableNamedTunnel(resolved: string, hosted: HostedProject, bin: string): Promise<{ url: string }> {
+  /** Named tunnel — persistent URL via Cloudflare DNS. Credentials stored in ~/.agi/{slug}/tunnel.json. */
+  private async enableNamedTunnel(resolved: string, hosted: HostedProject, bin: string, domain: string): Promise<{ url: string }> {
     const credPath = this.tunnelCredPath(resolved);
     const tunnelName = `aionima-${hosted.meta.hostname}`;
+    const dnsHostname = `${hosted.meta.hostname}.${domain}`;
 
     // Create tunnel if no credentials exist yet
     if (!existsSync(credPath)) {
@@ -2048,13 +2073,30 @@ export class HostingManager {
       throw new Error(`Cannot read tunnel credentials at ${credPath}`);
     }
 
-    const url = `https://${tunnelId}.cfargotunnel.com`;
+    // Create DNS CNAME record: <hostname>.<tunnelDomain> → <tunnelId>.cfargotunnel.com
+    try {
+      execSync(
+        `${bin} tunnel route dns ${tunnelName} ${dnsHostname}`,
+        { stdio: "pipe", timeout: 30_000 },
+      );
+      this.log.info(`[${hosted.meta.hostname}] DNS route created: ${dnsHostname}`);
+    } catch (err: unknown) {
+      const stderr = (err as { stderr?: Buffer })?.stderr?.toString() ?? "";
+      // "already exists" is fine — the CNAME was created on a previous run
+      if (!stderr.includes("already exists")) {
+        this.log.warn(`[${hosted.meta.hostname}] DNS route warning: ${stderr || (err instanceof Error ? err.message : String(err))}`);
+      }
+    }
+
+    const url = `https://${dnsHostname}`;
     const configPath = join(dirname(credPath), "tunnel-config.yml");
     const configContent = [
       `tunnel: ${tunnelId}`,
       `credentials-file: ${credPath}`,
       `ingress:`,
-      `  - service: http://localhost:${String(hosted.meta.port)}`,
+      `  - hostname: ${dnsHostname}`,
+      `    service: http://localhost:${String(hosted.meta.port)}`,
+      `  - service: http_status:404`,
     ].join("\n");
     writeFileSync(configPath, configContent);
 

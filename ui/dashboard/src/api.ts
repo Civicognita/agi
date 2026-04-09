@@ -717,6 +717,7 @@ export interface CloudflaredStatus {
   authenticated: boolean;
   certPath: string;
   tunnelMode: "quick" | "named";
+  tunnelDomain: string | null;
   activeTunnels: {
     projectPath: string;
     hostname: string;
