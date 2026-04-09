@@ -2506,6 +2506,46 @@ export async function startGatewayServer(
         }
       }
 
+      // Hot-swap worker runtime config (autoApprove, concurrency, timeout, model map)
+      if (event.changedKeys.some((k) => k === "workers" || k === "agent")) {
+        try {
+          const fc = freshConfig as { workers?: { autoApprove?: boolean; maxConcurrentJobs?: number; workerTimeoutMs?: number }; agent?: { model?: string } };
+          workerRuntime.reloadConfig({
+            autoApprove: fc.workers?.autoApprove ?? false,
+            maxConcurrentJobs: fc.workers?.maxConcurrentJobs ?? 3,
+            workerTimeoutMs: fc.workers?.workerTimeoutMs ?? 300_000,
+            reportsDir: join(homedir(), ".agi", "reports"),
+            modelMap: {
+              haiku: "claude-haiku-4-5-20251001",
+              sonnet: fc.agent?.model ?? "claude-sonnet-4-6",
+              opus: "claude-opus-4-6",
+              default: fc.agent?.model ?? "claude-sonnet-4-6",
+            },
+          }, llmProvider);
+          log.info("worker runtime config hot-swapped");
+        } catch (err) {
+          log.error(`failed to hot-swap worker runtime: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      // Hot-swap auth tokens and password
+      if (event.changedKeys.some((k) => k === "auth")) {
+        try {
+          const fc = freshConfig as { auth?: { tokens?: string[]; password?: string; maxAttemptsPerWindow?: number; rateLimitWindowMs?: number; lockoutDurationMs?: number; maxBodyBytes?: number } };
+          auth.reloadConfig({
+            tokens: fc.auth?.tokens ?? [],
+            password: fc.auth?.password,
+            maxAttemptsPerWindow: fc.auth?.maxAttemptsPerWindow,
+            rateLimitWindowMs: fc.auth?.rateLimitWindowMs,
+            lockoutDurationMs: fc.auth?.lockoutDurationMs,
+            maxBodyBytes: fc.auth?.maxBodyBytes,
+          });
+          log.info("auth config hot-swapped");
+        } catch (err) {
+          log.error(`failed to hot-swap auth: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
       // Dispatch config:changed hooks to plugins
       for (const key of event.changedKeys) {
         hookBus.dispatch("config:changed", key, (freshConfig as Record<string, unknown>)[key]).catch((err: unknown) => {

@@ -70,12 +70,12 @@ const DEFAULT_CONFIG: Omit<AuthConfig, "tokens"> = {
 // ---------------------------------------------------------------------------
 
 export class GatewayAuth {
-  private readonly config: AuthConfig;
+  private config: AuthConfig;
   private readonly ipTrackers = new Map<string, IpTracker>();
   /** Pre-hashed tokens for constant-time comparison. */
-  private readonly tokenHashes: Buffer[];
+  private tokenHashes: Buffer[];
   /** Pre-hashed password. */
-  private readonly passwordHash: Buffer | null;
+  private passwordHash: Buffer | null;
 
   constructor(config: Pick<AuthConfig, "tokens"> & Partial<AuthConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -83,6 +83,15 @@ export class GatewayAuth {
     // Pre-hash tokens for constant-time comparison
     this.tokenHashes = this.config.tokens.map((t) => hashForComparison(t));
 
+    this.passwordHash = this.config.password !== undefined
+      ? hashForComparison(this.config.password)
+      : null;
+  }
+
+  /** Hot-reload auth config — re-hash tokens and password. */
+  reloadConfig(config: Pick<AuthConfig, "tokens"> & Partial<AuthConfig>): void {
+    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.tokenHashes = this.config.tokens.map((t) => hashForComparison(t));
     this.passwordHash = this.config.password !== undefined
       ? hashForComparison(this.config.password)
       : null;

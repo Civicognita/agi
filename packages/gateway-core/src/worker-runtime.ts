@@ -292,6 +292,12 @@ export class WorkerRuntime extends EventEmitter {
     this.invoker = createRuntimeInvoker(deps.llmProvider, config.modelMap);
   }
 
+  /** Hot-reload config without interrupting running jobs. */
+  reloadConfig(config: WorkerRuntimeConfig, llmProvider: LLMProvider): void {
+    this.config = config;
+    this.invoker = createRuntimeInvoker(llmProvider, config.modelMap);
+  }
+
   /**
    * Execute a worker job. Fire-and-forget — called after agentInvoker.process().
    */
