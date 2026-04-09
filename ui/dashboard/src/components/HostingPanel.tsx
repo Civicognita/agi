@@ -80,6 +80,7 @@ export function HostingPanel({
   const [devCommands, setDevCommands] = useState<Record<string, string>>({});
   const [runtimes, setRuntimes] = useState<RuntimeInfo[]>([]);
   const [stickyError, setStickyError] = useState<string | null>(null);
+  const [logRefreshKey, setLogRefreshKey] = useState(0);
 
   // Sync state when hosting prop changes
   useEffect(() => {
@@ -306,6 +307,7 @@ export function HostingPanel({
             }))}
             projectPath={projectPath}
             onExecute={onToolExecute}
+            onToolComplete={() => setLogRefreshKey((k) => k + 1)}
             compact
           />
         </div>
@@ -319,6 +321,7 @@ export function HostingPanel({
             tools={tools}
             projectPath={projectPath}
             onExecute={onToolExecute}
+            onToolComplete={() => setLogRefreshKey((k) => k + 1)}
             compact
           />
         </div>
@@ -456,7 +459,7 @@ export function HostingPanel({
 
           {/* Project Logs + Container Terminal — always visible when hosting is enabled */}
           <div className="mt-3 pt-2 border-t border-border">
-            <TerminalArea projectPath={projectPath} />
+            <TerminalArea projectPath={projectPath} refreshKey={logRefreshKey} />
           </div>
         </div>
     </div>

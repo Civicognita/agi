@@ -4,9 +4,11 @@ import { fetchContainerLogs, fetchLogSources } from "../api.js";
 
 interface ProjectLogViewerProps {
   projectPath: string;
+  /** Bump this key to trigger an immediate log reload. */
+  refreshKey?: number;
 }
 
-export function ProjectLogViewer({ projectPath }: ProjectLogViewerProps) {
+export function ProjectLogViewer({ projectPath, refreshKey }: ProjectLogViewerProps) {
   const [sources, setSources] = useState<LogSourceDefinition[]>([]);
   const [selectedSource, setSelectedSource] = useState("container");
   const [logs, setLogs] = useState<string | null>(null);
@@ -45,6 +47,13 @@ export function ProjectLogViewer({ projectPath }: ProjectLogViewerProps) {
   useEffect(() => {
     void loadLogs();
   }, [loadLogs]);
+
+  // Reload when refreshKey changes (tool execution completed)
+  useEffect(() => {
+    if (refreshKey !== undefined && refreshKey > 0) {
+      void loadLogs();
+    }
+  }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-refresh interval
   useEffect(() => {

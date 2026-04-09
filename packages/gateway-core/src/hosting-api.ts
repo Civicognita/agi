@@ -593,10 +593,13 @@ export function registerHostingRoutes(
     try {
       let output: string;
       if (containerName) {
-        const meta = hostingManager.readHostingMeta(body.path);
-        const nodeEnv = meta?.mode ?? "production";
+        // Unset NODE_ENV so each command can determine its own (e.g. next build
+        // needs production, next dev needs development). The container's own env
+        // is inherited by podman exec — we strip NODE_ENV to avoid conflicts.
+        // Pipe output through /proc/1/fd/1 so it appears in `podman logs`.
+        const wrappedCmd = `(${tool.command}) 2>&1 | tee /proc/1/fd/1`;
         output = execSync(
-          `podman exec -e NODE_ENV=${nodeEnv} -e TERM=xterm-256color ${containerName} sh -c ${JSON.stringify(tool.command)}`,
+          `podman exec -e TERM=xterm-256color ${containerName} env -u NODE_ENV sh -c ${JSON.stringify(wrappedCmd)}`,
           { timeout: 60_000, stdio: "pipe" },
         ).toString();
       } else {

@@ -934,6 +934,11 @@ export class HostingManager {
         args.push("-e", `${key}=${value}`);
       }
 
+      const magicTunnelOrigin = this.computeTunnelOrigin(hosted);
+      if (magicTunnelOrigin) {
+        args.push("-e", `ALLOWED_DEV_ORIGINS=${magicTunnelOrigin}`);
+      }
+
       args.push(magicAppConfig.image);
 
       const cmdTokens = magicAppConfig.command?.(ctx);
@@ -975,6 +980,13 @@ export class HostingManager {
       }
       for (const [key, value] of Object.entries(stackConfig.env(ctx))) {
         args.push("-e", `${key}=${value}`);
+      }
+
+      // Inject tunnel hostname as allowed dev origin so frameworks like Next.js
+      // accept HMR WebSocket connections through the tunnel domain.
+      const tunnelOrigin = this.computeTunnelOrigin(hosted);
+      if (tunnelOrigin) {
+        args.push("-e", `ALLOWED_DEV_ORIGINS=${tunnelOrigin}`);
       }
 
       // Set working directory to /app (where project is typically mounted)
@@ -1091,6 +1103,8 @@ export class HostingManager {
           args.push("-w", "/app");
           args.push("-e", `PORT=${String(internalPort)}`);
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
+          const nodeTunnelOrigin = this.computeTunnelOrigin(hosted);
+          if (nodeTunnelOrigin) args.push("-e", `ALLOWED_DEV_ORIGINS=${nodeTunnelOrigin}`);
           args.push(image);
           const cmdTokens = hosted.meta.startCommand.split(/\s+/);
           args.push(...cmdTokens);
@@ -1107,6 +1121,8 @@ export class HostingManager {
           args.push("-w", "/app");
           args.push("-e", `PORT=${String(internalPort)}`);
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
+          const defaultTunnelOrigin = this.computeTunnelOrigin(hosted);
+          if (defaultTunnelOrigin) args.push("-e", `ALLOWED_DEV_ORIGINS=${defaultTunnelOrigin}`);
           args.push(image);
           args.push(...hosted.meta.startCommand.split(/\s+/));
           break;
@@ -1178,6 +1194,30 @@ export class HostingManager {
     this.startContainer(hosted);
     this.notifyStatusChange();
     return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // Tunnel origin computation
+  // -------------------------------------------------------------------------
+
+  /**
+   * Compute the tunnel origin hostname for a hosted project.
+   * Returns the tunnel domain (e.g. "blackorchid-web.doers.market") if a tunnel
+   * is configured, so frameworks like Next.js can allow HMR through it.
+   */
+  private computeTunnelOrigin(hosted: HostedProject): string | null {
+    // If a tunnel URL is already known, extract the hostname
+    if (hosted.meta.tunnelUrl) {
+      try {
+        return new URL(hosted.meta.tunnelUrl).hostname;
+      } catch { /* fall through */ }
+    }
+    // For named tunnels, compute from hostname + configured tunnel domain
+    const { domain } = this.readTunnelConfig();
+    if (domain && hosted.meta.hostname) {
+      return `${hosted.meta.hostname}.${domain}`;
+    }
+    return null;
   }
 
   // -------------------------------------------------------------------------
@@ -1981,10 +2021,23 @@ export class HostingManager {
     const { mode, domain } = this.readTunnelConfig();
 
     // Use named tunnel if mode is "named", Cloudflare is authenticated, AND a tunnel domain is configured
+    let result: { url: string };
     if (mode === "named" && this.isCloudflaredAuthenticated() && domain) {
-      return this.enableNamedTunnel(resolved, hosted, bin, domain);
+      result = await this.enableNamedTunnel(resolved, hosted, bin, domain);
+    } else {
+      result = await this.enableQuickTunnel(resolved, hosted, bin);
     }
-    return this.enableQuickTunnel(resolved, hosted, bin);
+
+    // Restart the container so it picks up ALLOWED_DEV_ORIGINS with the tunnel hostname.
+    // This ensures frameworks like Next.js accept HMR connections through the tunnel.
+    if (hosted.meta.mode === "development" && hosted.containerName) {
+      this.log.info(`[${hosted.meta.hostname}] restarting container to inject tunnel origin`);
+      this.stopContainer(hosted);
+      this.startContainer(hosted);
+      this.notifyStatusChange();
+    }
+
+    return result;
   }
 
   /** Quick tunnel — ephemeral random URL, no auth needed. Falls back here when Cloudflare is not authenticated. */
