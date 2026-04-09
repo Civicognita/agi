@@ -66,9 +66,8 @@ export function Projects({
       }))
     : [];
 
-  const visibleProjects = isContributing
-    ? projects.filter((p) => !isSacredProject(p))
-    : projects.filter((p) => !isSacredProject(p));
+  const isAionimaProject = (p: ProjectInfo) => isSacredProject(p) || p.projectType?.id === "aionima";
+  const visibleProjects = projects.filter((p) => !isAionimaProject(p));
 
   return (
     <div>

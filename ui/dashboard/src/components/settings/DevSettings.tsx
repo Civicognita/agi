@@ -131,7 +131,7 @@ export function DevSettings({ config, update }: {
           <div>
             <p className="text-sm text-card-foreground">Fork Switching</p>
             <p className="text-[13px] text-muted-foreground">
-              Switch all 3 core repos (AGI, PRIME, BOTS) to owner forks for contributing
+              Clone owner forks of core repos (AGI, PRIME, ID, Marketplace) into your workspace
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -159,7 +159,7 @@ export function DevSettings({ config, update }: {
           <div className="mt-3 p-3 rounded-md bg-surface0 border border-overlay0">
             <p className="text-sm text-card-foreground">GitHub authentication required</p>
             <p className="text-[13px] text-muted-foreground mt-1">
-              Contributing mode creates owner forks of the AGI, PRIME, and BOTS repositories.
+              Contributing mode clones owner forks of the AGI, PRIME, ID, and Marketplace repositories.
               Connect your GitHub account via Aionima ID in the onboarding setup first.
             </p>
             <div className="mt-2">
@@ -201,12 +201,30 @@ export function DevSettings({ config, update }: {
                 entries={devStatus.prime.entries}
                 isOwnerFork={isOwnerFork(devStatus.prime.remote)}
               />
-              <RepoCard
-                name="BOTS"
-                remote={devStatus.bots.remote}
-                branch={devStatus.bots.branch}
-                isOwnerFork={isOwnerFork(devStatus.bots.remote)}
-              />
+              {devStatus.id && (
+                <RepoCard
+                  name="ID"
+                  remote={devStatus.id.remote}
+                  branch={devStatus.id.branch}
+                  isOwnerFork={isOwnerFork(devStatus.id.remote)}
+                />
+              )}
+              {devStatus.marketplace && (
+                <RepoCard
+                  name="Marketplace"
+                  remote={devStatus.marketplace.remote}
+                  branch={devStatus.marketplace.branch}
+                  isOwnerFork={isOwnerFork(devStatus.marketplace.remote)}
+                />
+              )}
+              {devStatus.mappMarketplace && (
+                <RepoCard
+                  name="MApp Marketplace"
+                  remote={devStatus.mappMarketplace.remote}
+                  branch={devStatus.mappMarketplace.branch}
+                  isOwnerFork={isOwnerFork(devStatus.mappMarketplace.remote)}
+                />
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Unable to load repo status</p>

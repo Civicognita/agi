@@ -64,7 +64,7 @@ import { projectConfigPath } from "./project-config-path.js";
 // Types
 // ---------------------------------------------------------------------------
 
-const SACRED_PROJECT_NAMES = new Set(["agi", "prime", "bots", "id"]);
+const SACRED_PROJECT_NAMES = new Set(["agi", "prime", "id", "marketplace", "mapp-marketplace"]);
 
 function isSacredProjectPath(pathStr: string): boolean {
   return SACRED_PROJECT_NAMES.has(basename(pathStr).toLowerCase());
@@ -1658,6 +1658,9 @@ export async function createGatewayRuntimeState(
     const workspaceRoot = deps.workspaceRoot ?? process.cwd();
     const primeDir = deps.primeDir ?? join(workspaceRoot, ".aionima");
     const botsDir = deps.botsDir ?? join(workspaceRoot, ".bots");
+    const idDir = ((deps.config as Record<string, unknown> | undefined)?.idService as Record<string, string> | undefined)?.dir ?? "/opt/aionima-local-id";
+    const marketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.marketplace as Record<string, string> | undefined)?.dir ?? "/opt/aionima-marketplace";
+    const mappMarketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.mappMarketplace as Record<string, string> | undefined)?.dir ?? "/opt/aionima-mapp-marketplace";
 
     const getRemote = (cwd: string): string => {
       try {
@@ -1704,6 +1707,9 @@ export async function createGatewayRuntimeState(
         agi: { remote: getRemote(workspaceRoot) },
         prime: { remote: getRemote(primeDir), branch: getBranch(primeDir), entries: primeEntries },
         bots: { remote: getRemote(botsDir), branch: getBranch(botsDir) },
+        id: { remote: getRemote(idDir), branch: getBranch(idDir) },
+        marketplace: { remote: getRemote(marketplaceDir), branch: getBranch(marketplaceDir) },
+        mappMarketplace: { remote: getRemote(mappMarketplaceDir), branch: getBranch(mappMarketplaceDir) },
       });
     });
 
@@ -1756,17 +1762,59 @@ export async function createGatewayRuntimeState(
           writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
         }
 
-        // Report which directories will be active
-        const activePrimeDir = targetEnabled
-          ? (deps.config as Record<string, unknown> | undefined)?.dev
-            ? ((deps.config as Record<string, unknown>).dev as Record<string, unknown>).primeDir as string ?? "/opt/aionima-prime_dev"
-            : "/opt/aionima-prime_dev"
-          : primeDir;
-        const activeBotsDir = targetEnabled
-          ? (deps.config as Record<string, unknown> | undefined)?.dev
-            ? ((deps.config as Record<string, unknown>).dev as Record<string, unknown>).botsDir as string ?? "/opt/aionima-bots_dev"
-            : "/opt/aionima-bots_dev"
-          : botsDir;
+        // Provision fork repos into workspace when enabling dev mode
+        const provisionedProjects: string[] = [];
+        if (targetEnabled) {
+          const projectDir = (deps.workspaceProjects ?? [])[0];
+          if (projectDir && existsSync(projectDir)) {
+            // Read dev config from file (cfg may be scoped above)
+            let devCfg: Record<string, unknown> = {};
+            if (deps.configPath) {
+              try {
+                const cfgRaw = JSON.parse(readFileSync(deps.configPath, "utf-8")) as Record<string, unknown>;
+                devCfg = (cfgRaw.dev as Record<string, unknown>) ?? {};
+              } catch { /* use empty defaults */ }
+            }
+            const CORE_REPOS: Array<{ slug: string; name: string; repoKey: string }> = [
+              { slug: "agi", name: "AGI", repoKey: "agiRepo" },
+              { slug: "prime", name: "PRIME", repoKey: "primeRepo" },
+              { slug: "id", name: "ID", repoKey: "idRepo" },
+              { slug: "marketplace", name: "Marketplace", repoKey: "marketplaceRepo" },
+              { slug: "mapp-marketplace", name: "MApp Marketplace", repoKey: "mappMarketplaceRepo" },
+            ];
+
+            for (const repo of CORE_REPOS) {
+              const repoUrl = devCfg[repo.repoKey] as string | undefined;
+              if (!repoUrl) continue;
+              const targetDir = join(projectDir, repo.slug);
+              try {
+                // Clone if directory doesn't exist
+                if (!existsSync(targetDir)) {
+                  mkdirSync(targetDir, { recursive: true });
+                  execSync(`git clone ${JSON.stringify(repoUrl)} .`, {
+                    cwd: targetDir, stdio: "pipe", timeout: 120_000,
+                  });
+                }
+                // Write/update project.json with aionima type
+                const metaPath = projectConfigPath(targetDir);
+                mkdirSync(dirname(metaPath), { recursive: true });
+                let existingMeta: Record<string, unknown> = {};
+                try { existingMeta = JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>; } catch { /* new project */ }
+                const meta = {
+                  ...existingMeta,
+                  name: repo.name,
+                  type: "aionima",
+                  category: "monorepo",
+                  createdAt: existingMeta.createdAt ?? new Date().toISOString(),
+                };
+                writeFileSync(metaPath, JSON.stringify(meta, null, 2) + "\n", "utf-8");
+                provisionedProjects.push(repo.slug);
+              } catch (cloneErr) {
+                log.warn(`dev: failed to provision ${repo.slug}: ${cloneErr instanceof Error ? cloneErr.message : String(cloneErr)}`);
+              }
+            }
+          }
+        }
 
         if (deps.coaLogger && deps.entityStore) {
           const ownerEntity = deps.ownerEntityId
@@ -1789,9 +1837,10 @@ export async function createGatewayRuntimeState(
         return reply.send({
           ok: true,
           enabled: targetEnabled,
-          primeDir: activePrimeDir,
-          botsDir: activeBotsDir,
-          note: "Restart required for path changes to take effect",
+          provisionedProjects,
+          note: targetEnabled && provisionedProjects.length > 0
+            ? `Provisioned ${provisionedProjects.length} repos. Restart required for path changes to take effect.`
+            : "Restart required for path changes to take effect",
         });
       } catch (err) {
         return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
