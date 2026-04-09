@@ -86,6 +86,8 @@ export function useDashboardWS(
           const msg = JSON.parse(event.data as string) as { type: string; payload?: unknown };
           if (msg.type === "dashboard_event" && msg.payload !== undefined) {
             onEventRef.current(msg.payload as DashboardEvent);
+          } else if (msg.type === "config_reloaded" && msg.payload !== undefined) {
+            onEventRef.current({ type: "config:changed", data: msg.payload } as DashboardEvent);
           }
         } catch {
           // Ignore malformed messages
@@ -135,6 +137,9 @@ export function useProjectConfigWS() {
         case "hosting:status":
           void queryClient.invalidateQueries({ queryKey: ["hosting"] });
           void queryClient.invalidateQueries({ queryKey: ["projects"] });
+          break;
+        case "config:changed":
+          void queryClient.invalidateQueries({ queryKey: ["config"] });
           break;
       }
     }, [queryClient]),

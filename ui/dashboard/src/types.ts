@@ -296,7 +296,8 @@ export type DashboardEvent =
   | { type: "project:container_status"; data: ContainerStatusChangedData }
   | { type: "bots:job_update"; data: WorkerJobUpdate }
   | { type: "bots:report_ready"; data: WorkerReportReady }
-  | { type: "notification:new"; data: Notification };
+  | { type: "notification:new"; data: Notification }
+  | { type: "config:changed"; data: { changedKeys: string[]; timestamp: string } };
 
 /** Structured log entry streamed from the gateway. */
 export interface LogEntry {

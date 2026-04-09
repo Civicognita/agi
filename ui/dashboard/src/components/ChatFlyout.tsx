@@ -10,7 +10,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { markdownComponents } from "@/lib/markdown.js";
 import type { WorkerJobSummary, Plan, PlanStatus, PlanStep, ProjectInfo } from "../types.js";
-import { approveBotsJob, fetchBotsJobs, rejectBotsJob } from "../api.js";
+import { approveTaskmasterJob, fetchTaskmasterJobs, rejectTaskmasterJob } from "../api.js";
 import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
 import type { ToolCard } from "./ToolCards.js";
 import { PlanViewer } from "./PlanViewer.js";
@@ -1200,25 +1200,25 @@ const DRAWER_TABS: { key: DrawerTab; label: string }[] = [
 ];
 
 function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: DrawerSystemProps) {
-  const [botsJobs, setBotsJobs] = useState<WorkerJobSummary[]>([]);
-  const [botsError, setBotsError] = useState<string | null>(null);
-  const [botsLoading, setBotsLoading] = useState(false);
+  const [taskmasterJobs, setTaskmasterJobs] = useState<WorkerJobSummary[]>([]);
+  const [taskmasterError, setTaskmasterError] = useState<string | null>(null);
+  const [taskmasterLoading, setTaskmasterLoading] = useState(false);
   const [actionPending, setActionPending] = useState<string | null>(null);
 
   const loadJobs = useCallback(async () => {
     try {
-      const jobs = await fetchBotsJobs();
-      setBotsJobs(jobs);
-      setBotsError(null);
+      const jobs = await fetchTaskmasterJobs();
+      setTaskmasterJobs(jobs);
+      setTaskmasterError(null);
     } catch (err) {
-      setBotsError(err instanceof Error ? err.message : "Failed to load jobs");
+      setTaskmasterError(err instanceof Error ? err.message : "Failed to load jobs");
     }
   }, []);
 
   useEffect(() => {
     if (activeDrawer !== "work-queue") return;
-    setBotsLoading(true);
-    void loadJobs().finally(() => setBotsLoading(false));
+    setTaskmasterLoading(true);
+    void loadJobs().finally(() => setTaskmasterLoading(false));
     const interval = setInterval(() => { void loadJobs(); }, 5000);
     return () => clearInterval(interval);
   }, [activeDrawer, loadJobs]);
@@ -1226,10 +1226,10 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: 
   const handleApprove = useCallback(async (jobId: string) => {
     setActionPending(jobId);
     try {
-      await approveBotsJob(jobId);
+      await approveTaskmasterJob(jobId);
       await loadJobs();
     } catch (err) {
-      setBotsError(err instanceof Error ? err.message : "Failed to approve job");
+      setTaskmasterError(err instanceof Error ? err.message : "Failed to approve job");
     } finally {
       setActionPending(null);
     }
@@ -1238,10 +1238,10 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: 
   const handleReject = useCallback(async (jobId: string) => {
     setActionPending(jobId);
     try {
-      await rejectBotsJob(jobId);
+      await rejectTaskmasterJob(jobId);
       await loadJobs();
     } catch (err) {
-      setBotsError(err instanceof Error ? err.message : "Failed to reject job");
+      setTaskmasterError(err instanceof Error ? err.message : "Failed to reject job");
     } finally {
       setActionPending(null);
     }
@@ -1280,16 +1280,16 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: 
         <div className="px-3 py-2.5 bg-background border-t border-border max-h-[160px] overflow-y-auto">
           {activeDrawer === "work-queue" && (
             <div>
-              {botsLoading && botsJobs.length === 0 && (
+              {taskmasterLoading && taskmasterJobs.length === 0 && (
                 <span className="text-[11px] text-muted-foreground">Loading...</span>
               )}
-              {botsError !== null && (
-                <span className="text-[11px] text-red">{botsError}</span>
+              {taskmasterError !== null && (
+                <span className="text-[11px] text-red">{taskmasterError}</span>
               )}
-              {!botsLoading && botsJobs.length === 0 && botsError === null && (
+              {!taskmasterLoading && taskmasterJobs.length === 0 && taskmasterError === null && (
                 <span className="text-[11px] text-muted-foreground">No active work</span>
               )}
-              {botsJobs.map((job) => (
+              {taskmasterJobs.map((job) => (
                 <div
                   key={job.id}
                   className="flex items-start gap-2 py-1.5 border-b border-border text-[11px]"

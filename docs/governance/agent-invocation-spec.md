@@ -868,7 +868,7 @@ role before implementation.
 - `packages/gateway-core/src/queue-consumer.ts` — `QueueConsumer` (polling loop)
 - `packages/entity-model/src/types.ts` — `Entity`, `VerificationTier`, `ChannelAccount`
 - `packages/coa-chain/src/types.ts` — `COARecord`, `COAFingerprint`, `COAWorkType`
-- `MYCELIUM.md` in PRIME repo — Mycelium Protocol operational states, dispatch protocol
+- `prompts/mycelium.md` — Mycelium Protocol operational states, runtime config
 - `core/0DISPATCH.md` in PRIME repo — Multi-agent orchestration
 - `core/0COMPACT.md` in PRIME repo — Context compaction workflow
 - `core/0MEMORY.md` in PRIME repo — Memory pointer system

@@ -470,11 +470,11 @@ export async function fetchModels(provider: string): Promise<ModelEntry[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Work Queue API — /api/bots
+// Work Queue API — /api/taskmaster
 // ---------------------------------------------------------------------------
 
-export async function fetchBotsJobs(): Promise<WorkerJobSummary[]> {
-  const res = await fetch("/api/bots/jobs");
+export async function fetchTaskmasterJobs(): Promise<WorkerJobSummary[]> {
+  const res = await fetch("/api/taskmaster/jobs");
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -482,8 +482,8 @@ export async function fetchBotsJobs(): Promise<WorkerJobSummary[]> {
   return res.json() as Promise<WorkerJobSummary[]>;
 }
 
-export async function approveBotsJob(jobId: string): Promise<{ ok: boolean }> {
-  const res = await fetch(`/api/bots/approve/${jobId}`, { method: "POST" });
+export async function approveTaskmasterJob(jobId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/taskmaster/approve/${jobId}`, { method: "POST" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -491,8 +491,8 @@ export async function approveBotsJob(jobId: string): Promise<{ ok: boolean }> {
   return res.json() as Promise<{ ok: boolean }>;
 }
 
-export async function rejectBotsJob(jobId: string): Promise<{ ok: boolean }> {
-  const res = await fetch(`/api/bots/reject/${jobId}`, { method: "POST" });
+export async function rejectTaskmasterJob(jobId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/taskmaster/reject/${jobId}`, { method: "POST" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);

@@ -143,7 +143,6 @@ Note: The editor plugin also allows absolute paths inside the external PRIME dir
 | [entity-model-extensions.md](entity-model-extensions.md) | How to extend the entity model |
 | [system-prompt-assembly.md](system-prompt-assembly.md) | How the agent system prompt is built |
 | [bots-workers.md](bots-workers.md) | Workers & Taskmaster system |
-| [notes-to-papa.md](notes-to-papa.md) | Living reference for Papa (OpenClaw agent) — project overview, conventions, current state |
 
 ### SDK Documentation (`docs/sdk/`)
 

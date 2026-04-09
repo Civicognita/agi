@@ -376,19 +376,10 @@ export class AgentInvoker extends EventEmitter {
       try {
         const { readFileSync } = await import("node:fs");
         const { resolve: resolvePath } = await import("node:path");
-        const builderPromptPath = resolvePath(process.cwd(), "packages/gateway-core/src/prompts/builder-chat.md");
+        const builderPromptPath = resolvePath(process.cwd(), "prompts/builder-chat.md");
         const builderPrompt = readFileSync(builderPromptPath, "utf-8");
         systemPrompt = builderPrompt + "\n\n---\n\n" + systemPrompt;
-      } catch {
-        // Builder prompt file not found in production — try dist-relative path
-        try {
-          const { readFileSync } = await import("node:fs");
-          const { resolve: resolvePath } = await import("node:path");
-          const altPath = resolvePath(process.cwd(), "prompts/builder-chat.md");
-          const builderPrompt = readFileSync(altPath, "utf-8");
-          systemPrompt = builderPrompt + "\n\n---\n\n" + systemPrompt;
-        } catch { /* proceed without builder prompt */ }
-      }
+      } catch { /* proceed without builder prompt */ }
     }
 
     const systemPromptTokens = estimateTokens(systemPrompt);

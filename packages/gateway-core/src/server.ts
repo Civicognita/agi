@@ -44,6 +44,7 @@ import { QueueConsumer } from "./queue-consumer.js";
 import { AgentSessionManager } from "./agent-session.js";
 import { SessionStore } from "./session-store.js";
 import { createLLMProvider } from "./llm/index.js";
+import type { LLMProvider } from "./llm/index.js";
 import { RateLimiter } from "./rate-limiter.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { AgentInvoker } from "./agent-invoker.js";
@@ -99,33 +100,47 @@ import { registerWorkerApi } from "./worker-api.js";
 import { appendUpgradeLog } from "./upgrade-log.js";
 
 // ---------------------------------------------------------------------------
-// Quick reply suggestion generator
+// LLM-backed next-step suggestion generator
 // ---------------------------------------------------------------------------
 
-function generateQuickReplies(responseText: string): string[] {
-  const suggestions: string[] = [];
-  const text = responseText.toLowerCase();
+let _nextStepsPrompt: string | null = null;
 
-  // Context-aware suggestions based on response content
-  if (text.includes("would you like") || text.includes("shall i") || text.includes("do you want")) {
-    suggestions.push("Yes, go ahead");
-    suggestions.push("No, thanks");
+function loadNextStepsPrompt(): string {
+  if (_nextStepsPrompt !== null) return _nextStepsPrompt;
+  try {
+    _nextStepsPrompt = readFileSync(
+      resolvePath(process.cwd(), "prompts/next-steps.md"),
+      "utf-8",
+    );
+  } catch {
+    _nextStepsPrompt = "Generate 3-4 concise follow-up suggestions as a JSON array of strings.";
   }
-  if (text.includes("error") || text.includes("failed") || text.includes("issue")) {
-    suggestions.push("Show me the details");
-    suggestions.push("How can I fix this?");
+  return _nextStepsPrompt;
+}
+
+async function generateNextSteps(
+  userMessage: string,
+  responseText: string,
+  llm: LLMProvider,
+): Promise<string[]> {
+  try {
+    const prompt = loadNextStepsPrompt();
+    const combined = `User message: ${userMessage}\n\nAgent response: ${responseText}`;
+    const raw = await llm.summarize(combined, prompt);
+
+    // Extract JSON array from response (handle possible markdown fences)
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return [];
+
+    const parsed: unknown = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .filter((item): item is string => typeof item === "string" && item.length > 0)
+      .slice(0, 4);
+  } catch {
+    return [];
   }
-  if (text.includes("created") || text.includes("done") || text.includes("completed") || text.includes("finished")) {
-    suggestions.push("What's next?");
-  }
-  if (text.includes("project") || text.includes("file") || text.includes("code")) {
-    suggestions.push("Tell me more");
-  }
-  if (suggestions.length === 0) {
-    suggestions.push("Tell me more");
-    suggestions.push("What else can you do?");
-  }
-  return suggestions.slice(0, 4);
 }
 
 // ---------------------------------------------------------------------------
@@ -1798,8 +1813,8 @@ export async function startGatewayServer(
               text,
               timestamp: new Date().toISOString(),
             });
-            // Generate quick reply suggestions from the response
-            const suggestions = generateQuickReplies(text);
+            // Generate contextual next-step suggestions via LLM
+            const suggestions = await generateNextSteps(chatText ?? "", text, getLLMProvider());
             if (suggestions.length > 0) {
               wsServer.sendTo(connectionId, "chat:suggestions", {
                 sessionId: chatSessionId,
@@ -2503,6 +2518,46 @@ export async function startGatewayServer(
           log.info("LLM provider hot-swapped");
         } catch (err) {
           log.error(`failed to hot-swap LLM provider: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      // Hot-swap worker runtime config (autoApprove, concurrency, timeout, model map)
+      if (event.changedKeys.some((k) => k === "workers" || k === "agent")) {
+        try {
+          const fc = freshConfig as { workers?: { autoApprove?: boolean; maxConcurrentJobs?: number; workerTimeoutMs?: number }; agent?: { model?: string } };
+          workerRuntime.reloadConfig({
+            autoApprove: fc.workers?.autoApprove ?? false,
+            maxConcurrentJobs: fc.workers?.maxConcurrentJobs ?? 3,
+            workerTimeoutMs: fc.workers?.workerTimeoutMs ?? 300_000,
+            reportsDir: join(homedir(), ".agi", "reports"),
+            modelMap: {
+              haiku: "claude-haiku-4-5-20251001",
+              sonnet: fc.agent?.model ?? "claude-sonnet-4-6",
+              opus: "claude-opus-4-6",
+              default: fc.agent?.model ?? "claude-sonnet-4-6",
+            },
+          }, llmProvider);
+          log.info("worker runtime config hot-swapped");
+        } catch (err) {
+          log.error(`failed to hot-swap worker runtime: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      // Hot-swap auth tokens and password
+      if (event.changedKeys.some((k) => k === "auth")) {
+        try {
+          const fc = freshConfig as { auth?: { tokens?: string[]; password?: string; maxAttemptsPerWindow?: number; rateLimitWindowMs?: number; lockoutDurationMs?: number; maxBodyBytes?: number } };
+          auth.reloadConfig({
+            tokens: fc.auth?.tokens ?? [],
+            password: fc.auth?.password,
+            maxAttemptsPerWindow: fc.auth?.maxAttemptsPerWindow,
+            rateLimitWindowMs: fc.auth?.rateLimitWindowMs,
+            lockoutDurationMs: fc.auth?.lockoutDurationMs,
+            maxBodyBytes: fc.auth?.maxBodyBytes,
+          });
+          log.info("auth config hot-swapped");
+        } catch (err) {
+          log.error(`failed to hot-swap auth: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
 
