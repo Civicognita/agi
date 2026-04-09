@@ -27,6 +27,15 @@ import type { ProjectConfigManager } from "./project-config-manager.js";
 import type { MagicAppContainerConfig, MagicAppContainerContext } from "./magic-app-types.js";
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Strip ANSI escape codes from command output for clean dashboard display. */
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07/g;
+function stripAnsi(text: string): string { return text.replace(ANSI_RE, ""); }
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -2284,12 +2293,12 @@ export class HostingManager {
         cwd: resolved,
         timeout: 120_000,
         stdio: "pipe",
-        env: { ...process.env },
+        env: { ...process.env, TERM: "xterm-256color" },
       });
-      return { actionId: action.id, ok: true, output: output.toString().slice(0, 4096) };
+      return { actionId: action.id, ok: true, output: stripAnsi(output.toString()).slice(0, 4096) };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { actionId: action.id, ok: false, error: msg };
+      return { actionId: action.id, ok: false, error: stripAnsi(msg) };
     }
   }
 
