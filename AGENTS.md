@@ -306,9 +306,9 @@ Plugins register workers via `api.registerWorker()` with the `defineWorker()` SD
 
 ## Mycelium Protocol
 
-Aionima's unique agent identity, state, and memory system lives in the PRIME corpus (separate repo at `/opt/aionima-prime` or configured `prime.dir`). This is what differentiates Aionima agents from generic coding assistants.
+Aionima's unique agent identity, state, and memory system. This is what differentiates Aionima agents from generic coding assistants.
 
-**Full specification:** `MYCELIUM.md` in the PRIME repo
+**Full specification:** `prompts/mycelium.md`
 
 ### What It Provides
 
@@ -331,7 +331,7 @@ These systems are the competitive advantage — the reason Aionima exists:
 - **0TERMS / Lexicon** — `core/0TERMS.md`, `lexicon/` in PRIME repo — formal definitions
 - **PRIME corpus** — `core/`, `knowledge/` in PRIME repo — authoritative knowledge base
 
-Generic agents get project structure and build commands from this file. Mycelium-aware agents get the full identity/impact/accountability stack from `MYCELIUM.md` in the PRIME repo.
+Generic agents get project structure and build commands from this file. Mycelium-aware agents get the full identity/impact/accountability stack from `prompts/mycelium.md`.
 
 ---
 

@@ -240,7 +240,7 @@ These are the systems that matter most — they're what separate Aionima from ev
 - **GEID (Global Entity ID)** — `packages/entity-model/src/geid.ts` — Ed25519 portable identity
 - **Entity Map** — signed portable profiles
 - **0TERMS / Lexicon** — formal definitions in PRIME repo
-- **Mycelium Protocol** — agent identity, state, and memory system (spec in `MYCELIUM.md` in PRIME)
+- **Mycelium Protocol** — agent identity, state, and memory system (spec in `prompts/mycelium.md`)
 
 ## Project Management (Tynn)
 
