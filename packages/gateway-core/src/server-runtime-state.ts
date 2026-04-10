@@ -8,7 +8,7 @@
  * Uses Fastify v5 instead of raw http.createServer.
  */
 
-import { readFileSync, writeFileSync, appendFileSync, existsSync, statSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, statSync, mkdirSync, readdirSync, rmSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { homedir } from "node:os";
 import { execSync, execFile, execFileSync, spawn } from "node:child_process";
@@ -1978,7 +1978,7 @@ export async function createGatewayRuntimeState(
   const STATS_HISTORY_MAX = 2880;
   const STATS_RECORD_INTERVAL_MS = 30_000;
   const STATS_FLUSH_INTERVAL_MS = 5 * 60 * 1000; // Write to disk every 5 minutes
-  type StatsPoint = { ts: string; cpu: number; mem: number; disk: number; load1: number; load5: number; load15: number };
+  type StatsPoint = { ts: string; cpu: number; mem: number; disk: number; diskRead: number; diskWrite: number; load1: number; load5: number; load15: number };
   const statsHistory: StatsPoint[] = [];
 
   // Stats log file — JSONL format, rotated daily
@@ -2001,7 +2001,11 @@ export async function createGatewayRuntimeState(
         if (!line) continue;
         try {
           const point = JSON.parse(line) as StatsPoint;
-          if (point.ts && typeof point.cpu === "number") statsHistory.push(point);
+          if (point.ts && typeof point.cpu === "number") {
+            point.diskRead ??= 0;
+            point.diskWrite ??= 0;
+            statsHistory.push(point);
+          }
         } catch { /* skip malformed lines */ }
       }
       if (statsHistory.length > STATS_HISTORY_MAX) {
@@ -2039,6 +2043,52 @@ export async function createGatewayRuntimeState(
     cpuUsageCache = { value: usage, ts: now };
     return usage;
   }
+
+  // Disk I/O tracking — reads /proc/diskstats for the root volume device
+  let rootDiskDevice = "";
+  try {
+    const dfOut = execSync("df / --output=source", { timeout: 5000 }).toString();
+    const dfLines = dfOut.trim().split("\n");
+    if (dfLines.length >= 2) {
+      const source = dfLines[1]!.trim();
+      rootDiskDevice = realpathSync(source).replace(/^\/dev\//, "");
+    }
+  } catch { /* root device detection failed — disk I/O will report zeros */ }
+
+  let prevDiskSectors: { read: number; written: number; ts: number } | null = null;
+  let diskIOCache: { readBytesPerSec: number; writeBytesPerSec: number; ts: number } = { readBytesPerSec: 0, writeBytesPerSec: 0, ts: 0 };
+
+  function getDiskIO(): { readBytesPerSec: number; writeBytesPerSec: number } {
+    const now = Date.now();
+    if (now - diskIOCache.ts < 5000) return diskIOCache;
+    if (!rootDiskDevice) return diskIOCache;
+    try {
+      const content = readFileSync("/proc/diskstats", "utf-8");
+      for (const line of content.split("\n")) {
+        const parts = line.trim().split(/\s+/);
+        if (parts[2] === rootDiskDevice) {
+          const sectorsRead = parseInt(parts[5] ?? "0", 10);
+          const sectorsWritten = parseInt(parts[9] ?? "0", 10);
+          if (prevDiskSectors) {
+            const elapsed = (now - prevDiskSectors.ts) / 1000;
+            if (elapsed > 0) {
+              diskIOCache = {
+                readBytesPerSec: Math.round(((sectorsRead - prevDiskSectors.read) * 512) / elapsed),
+                writeBytesPerSec: Math.round(((sectorsWritten - prevDiskSectors.written) * 512) / elapsed),
+                ts: now,
+              };
+            }
+          }
+          prevDiskSectors = { read: sectorsRead, written: sectorsWritten, ts: now };
+          break;
+        }
+      }
+    } catch { /* /proc/diskstats read failed */ }
+    return diskIOCache;
+  }
+
+  // Seed the initial disk sector reading so the first real sample has a baseline
+  getDiskIO();
 
   fastify.get("/api/system/stats", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
@@ -2078,10 +2128,13 @@ export async function createGatewayRuntimeState(
       // disk stats unavailable
     }
 
+    const diskIO = getDiskIO();
+
     return reply.send({
       cpu: { loadAvg, cores, usage: cpuUsage },
       memory: { total: totalMem, free: freeMem, used: usedMem, percent: memPercent },
       disk: { total: diskTotal, used: diskUsed, free: diskFree, percent: diskPercent },
+      diskIO,
       uptime: os.uptime(),
       hostname: os.hostname(),
     });
@@ -2107,11 +2160,15 @@ export async function createGatewayRuntimeState(
         }
       } catch { /* disk stats unavailable */ }
 
+      const diskIO = getDiskIO();
+
       statsHistory.push({
         ts: new Date().toISOString(),
         cpu: cpuUsage,
         mem: memPercent,
         disk: diskPercent,
+        diskRead: diskIO.readBytesPerSec,
+        diskWrite: diskIO.writeBytesPerSec,
         load1: Math.round(loadAvg[0]! * 100) / 100,
         load5: Math.round(loadAvg[1]! * 100) / 100,
         load15: Math.round(loadAvg[2]! * 100) / 100,

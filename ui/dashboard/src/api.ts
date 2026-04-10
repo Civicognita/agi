@@ -278,6 +278,7 @@ export interface SystemStats {
   cpu: { loadAvg: [number, number, number]; cores: number; usage: number };
   memory: { total: number; free: number; used: number; percent: number };
   disk: { total: number; used: number; free: number; percent: number };
+  diskIO: { readBytesPerSec: number; writeBytesPerSec: number };
   uptime: number;
   hostname: string;
 }
@@ -296,6 +297,8 @@ export interface StatsHistoryPoint {
   cpu: number;
   mem: number;
   disk: number;
+  diskRead: number;
+  diskWrite: number;
   load1: number;
   load5: number;
   load15: number;
