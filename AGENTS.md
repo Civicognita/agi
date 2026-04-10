@@ -345,10 +345,6 @@ Generic agents get project structure and build commands from this file. Mycelium
 
 ### Provider-Specific Config
 
-Each AI coding tool stores its own config in its standard directory:
+Worker prompts live in `prompts/workers/` (with domain subdirectories: `code/`, `comm/`, `k/`, `strat/`, `ux/`, `ops/`, `gov/`, `data/`). They are loaded dynamically by `WorkerPromptLoader` and served via `GET /api/workers/catalog`. These are provider-agnostic — all agents use the same worker prompts.
 
-- **Claude Code:** `.claude/` — commands, worker prompts, settings
-- **Cursor:** `.cursor/` (if present)
-- **Other agents:** Use your tool's standard config directory
-
-Worker definitions for Claude Code live in `.claude/agents/workers/`. Other providers would define equivalent workers in their own config dirs.
+Provider-specific config directories (`.claude/`, `.cursor/`, etc.) are for the agent tool's own settings only — NOT for worker definitions or project config.

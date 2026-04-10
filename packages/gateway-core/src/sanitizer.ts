@@ -223,3 +223,79 @@ export function capToolResult(result: string, maxBytes: number): { content: stri
 
   return { content: capped, wasTruncated: true };
 }
+
+// ---------------------------------------------------------------------------
+// Web content sanitization
+// ---------------------------------------------------------------------------
+
+export interface WebContentResult {
+  title: string;
+  metaDescription: string;
+  content: string;
+  wasInjectionBlocked: boolean;
+}
+
+/**
+ * Strip HTML and sanitize web page content for safe agent consumption.
+ * Removes scripts, styles, HTML tags, data URIs, and long encoded payloads.
+ * Then runs standard prompt injection scanning.
+ */
+export function scanWebContent(rawHtml: string): WebContentResult {
+  let html = rawHtml;
+
+  // Extract title before stripping
+  const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  const title = titleMatch ? titleMatch[1]!.trim() : "";
+
+  // Extract meta description before stripping
+  const metaMatch = /<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["'][^>]*>/i.exec(html)
+    ?? /<meta[^>]*content=["']([^"']*)["'][^>]*name=["']description["'][^>]*>/i.exec(html);
+  const metaDescription = metaMatch ? metaMatch[1]!.trim() : "";
+
+  // Remove script blocks
+  html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
+
+  // Remove style blocks
+  html = html.replace(/<style[\s\S]*?<\/style>/gi, "");
+
+  // Remove HTML comments
+  html = html.replace(/<!--[\s\S]*?-->/g, "");
+
+  // Remove noscript blocks
+  html = html.replace(/<noscript[\s\S]*?<\/noscript>/gi, "");
+
+  // Strip all remaining HTML tags
+  html = html.replace(/<[^>]+>/g, " ");
+
+  // Decode common HTML entities
+  html = html
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_m, code) => String.fromCharCode(parseInt(code, 10)));
+
+  // Remove data URIs (potential XSS / payload injection)
+  html = html.replace(/data:(?:text\/html|application\/javascript|text\/javascript)[^,\s]*/gi, "[data URI removed]");
+
+  // Remove suspiciously long base64 payloads (>200 chars)
+  html = html.replace(/(?:[A-Za-z0-9+/]{200,}={0,2})/g, "[encoded payload removed]");
+
+  // Remove event handler patterns
+  html = html.replace(/on(?:click|load|error|mouseover|focus|blur|submit|change)\s*=/gi, "[event handler removed]=");
+
+  // Collapse whitespace
+  html = html.replace(/\s+/g, " ").trim();
+
+  // Run standard prompt injection scanning
+  const injectionResult = scanToolResult(html);
+
+  return {
+    title,
+    metaDescription,
+    content: injectionResult.content,
+    wasInjectionBlocked: injectionResult.wasModified,
+  };
+}

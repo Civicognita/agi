@@ -75,6 +75,7 @@ import { ChatPersistence } from "./chat-persistence.js";
 import type { PersistedChatSession } from "./chat-persistence.js";
 import { ImageBlobStore } from "./image-blob-store.js";
 import { WorkerPromptLoader } from "./worker-prompt-loader.js";
+import { ChatGarbageCollector } from "./chat-garbage-collector.js";
 import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
 import { projectConfigPath } from "./project-config-path.js";
 import { HostingManager } from "./hosting-manager.js";
@@ -517,6 +518,7 @@ export async function startGatewayServer(
     projectDirs: projectPaths,
     projectConfigManager,
     botsDir: undefined, // Workers are file-driven prompts
+    imageBlobStore,
     onJobCreated: (jobId: string, coaReqId: string) => {
       workerRuntimeRef.current?.executeJob(jobId, coaReqId).catch((err: unknown) => {
         log.error(`workerRuntime.executeJob error: ${err instanceof Error ? err.message : String(err)}`);
@@ -2599,6 +2601,22 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const scheduledTaskManager = new ScheduledTaskManager({ pluginRegistry, logger });
+
+  // Register core scheduled task: chat garbage collector
+  const chatGC = new ChatGarbageCollector({ chatPersistence, imageBlobStore, configPath: opts?.configPath });
+  pluginRegistry.addScheduledTask("core", {
+    id: "chat-garbage-collector",
+    name: "Chat Garbage Collector",
+    description: "Prunes chat sessions older than retention period and removes orphaned image directories",
+    cron: "0 2 * * *",
+    handler: async () => {
+      const stats = await chatGC.collect();
+      log.info(`chat GC: scanned=${String(stats.sessionsScanned)} deleted=${String(stats.sessionsDeleted)} orphans=${String(stats.orphanedImageDirsDeleted)} duration=${String(stats.durationMs)}ms`);
+    },
+    skipIfRunning: true,
+    enabled: true,
+  });
+
   scheduledTaskManager.start();
 
   // -------------------------------------------------------------------------

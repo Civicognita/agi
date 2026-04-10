@@ -34,7 +34,7 @@ The Planner is the first worker that touches every queued job. When a user fires
 ## Capabilities
 
 - Parse user intent from shortcode trigger text
-- Read `.bots/state/taskmaster.json` for domain hints, enforced chains, routing rules
+- Read `~/.agi/state/taskmaster.json` for domain hints, enforced chains, routing rules
 - Analyze codebase scope when `s:` modifier is present
 - Break work into discrete $W.TASKs
 - Assign workers using domain hints (not hardcoded — Planner decides)
@@ -58,7 +58,7 @@ The Planner is the first worker that touches every queued job. When a user fires
 
 ### Phase 2 — Analyze & Scope
 
-3. Read `.bots/state/taskmaster.json`:
+3. Read `~/.agi/state/taskmaster.json`:
    - Domain hints → match keywords to suggested workers
    - Enforced chains → auto-append chain workers
    - Worker taxonomy → validate worker assignments

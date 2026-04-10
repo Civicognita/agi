@@ -127,6 +127,12 @@ import {
 // Builder tools (MagicApp creation/editing)
 import { BUILDER_TOOLS } from "./builder-tools.js";
 
+// Web page tool
+import { createGetWebPageHandler, GET_WEB_PAGE_MANIFEST, GET_WEB_PAGE_INPUT_SCHEMA } from "./web-page.js";
+
+// Visual inspection tool
+import { createVisualInspectHandler, VISUAL_INSPECT_MANIFEST, VISUAL_INSPECT_INPUT_SCHEMA } from "./visual-inspect.js";
+
 
 // ---------------------------------------------------------------------------
 // Config
@@ -154,6 +160,8 @@ export interface ToolRegistrationConfig {
   onJobCreated?: (jobId: string, coaReqId: string) => void;
   /** COA request ID for the current invocation context. */
   coaReqId?: string;
+  /** Image blob store for screenshot storage (visual-inspect tool). */
+  imageBlobStore?: import("../image-blob-store.js").ImageBlobStore;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +290,18 @@ export function registerAllTools(
       MANAGE_PROJECT_MANIFEST as ToolManifestEntry,
       createManageProjectHandler({ projectDirs: config.projectDirs, projectConfigManager: config.projectConfigManager }),
       MANAGE_PROJECT_INPUT_SCHEMA,
+    );
+  }
+
+  // Web page tool — fetch and sanitize web content
+  register(GET_WEB_PAGE_MANIFEST as ToolManifestEntry, createGetWebPageHandler(), GET_WEB_PAGE_INPUT_SCHEMA);
+
+  // Visual inspection tool — Playwright screenshots (requires imageBlobStore)
+  if (config.imageBlobStore !== undefined) {
+    register(
+      VISUAL_INSPECT_MANIFEST as ToolManifestEntry,
+      createVisualInspectHandler({ imageBlobStore: config.imageBlobStore }),
+      VISUAL_INSPECT_INPUT_SCHEMA,
     );
   }
 
