@@ -44,6 +44,7 @@ function getClientIp(req: IncomingMessage): string {
 
 export interface ChatHistoryRouteDeps {
   chatPersistence: ChatPersistence;
+  imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,7 +55,7 @@ export function registerChatHistoryRoutes(
   fastify: FastifyInstance,
   deps: ChatHistoryRouteDeps,
 ): void {
-  const { chatPersistence } = deps;
+  const { chatPersistence, imageBlobStore } = deps;
 
   // GET /api/chat/sessions — list all saved sessions
   fastify.get("/api/chat/sessions", async (request, reply) => {
@@ -91,6 +92,7 @@ export function registerChatHistoryRoutes(
 
     const { id } = request.params as { id: string };
     const deleted = chatPersistence.delete(id);
+    if (deleted) imageBlobStore?.deleteSession(id);
     return { ok: deleted };
   });
 }

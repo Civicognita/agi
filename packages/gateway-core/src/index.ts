@@ -173,7 +173,7 @@ export type {
   COAExplorerResponse,
   DashboardEvent,
   DashboardSubscription,
-  BotsJobUpdateData,
+  TmJobUpdateData,
   NotificationData,
   ProjectConfigChangedData,
   ContainerStatusChangedData,

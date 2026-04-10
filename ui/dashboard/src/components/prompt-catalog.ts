@@ -243,7 +243,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "Worker Base Protocol",
     description:
       "Universal worker prompt template. Contains identity placeholders and execution protocol.",
-    filePath: "packages/workers/src/prompts/base.ts",
+    filePath: "prompts/workers/base.md",
     category: "worker",
     tags: ["protocol", "template"],
   },
@@ -254,7 +254,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "strat.planner",
     description:
       "Universal entry point for all shortcode-triggered work (w:>, w<:, !:>). Transforms raw intent into WORK.CHUNK execution plan with phases, assignments, gates, and dependencies.",
-    filePath: "packages/workers/src/prompts/strat/planner.ts",
+    filePath: "prompts/workers/strat/planner.md",
     category: "worker",
     model: "sonnet",
     tags: ["strat"],
@@ -264,7 +264,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "strat.prioritizer",
     description:
       "Impact vs effort analysis. Ranks work items by priority criteria, urgency assessment, and dependency analysis.",
-    filePath: "packages/workers/src/prompts/strat/prioritizer.ts",
+    filePath: "prompts/workers/strat/prioritizer.md",
     category: "worker",
     model: "haiku",
     tags: ["strat"],
@@ -276,7 +276,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "code.engineer",
     description:
       "Architecture worker. Analyzes requirements and produces implementation specs with phase definitions. Does NOT write code.",
-    filePath: "packages/workers/src/prompts/code/engineer.ts",
+    filePath: "prompts/workers/code/engineer.md",
     category: "worker",
     model: "sonnet",
     tags: ["code"],
@@ -286,7 +286,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "code.hacker",
     description:
       "Implementation worker. Writes production code following specs from engineer or planner.",
-    filePath: "packages/workers/src/prompts/code/hacker.ts",
+    filePath: "prompts/workers/code/hacker.md",
     category: "worker",
     model: "sonnet",
     chain: { to: ["code.tester"] },
@@ -297,7 +297,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "code.reviewer",
     description:
       "Code review worker. Quality, security, and pattern analysis. Produces structured feedback only — no changes.",
-    filePath: "packages/workers/src/prompts/code/reviewer.ts",
+    filePath: "prompts/workers/code/reviewer.md",
     category: "worker",
     model: "sonnet",
     tags: ["code"],
@@ -307,7 +307,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "code.tester",
     description:
       "Test worker. Writes and runs tests for hacker output. Follows existing test patterns. Computes error hashes for STUMPED escalation.",
-    filePath: "packages/workers/src/prompts/code/tester.ts",
+    filePath: "prompts/workers/code/tester.md",
     category: "worker",
     model: "sonnet",
     chain: { from: ["code.hacker"] },
@@ -320,7 +320,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "comm.writer.tech",
     description:
       "Technical writing worker for documentation, API docs, READMEs, and code comments.",
-    filePath: "packages/workers/src/prompts/comm/writer.tech.ts",
+    filePath: "prompts/workers/comm/writer.tech.md",
     category: "worker",
     model: "sonnet",
     chain: { to: ["comm.editor"] },
@@ -331,7 +331,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "comm.writer.policy",
     description:
       "Policy writing worker for governance documents, procedures, and compliance documentation.",
-    filePath: "packages/workers/src/prompts/comm/writer.policy.ts",
+    filePath: "prompts/workers/comm/writer.policy.md",
     category: "worker",
     model: "sonnet",
     chain: { to: ["comm.editor"] },
@@ -342,7 +342,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "comm.editor",
     description:
       "Style and consistency editor. Refines writer output for clarity, consistency, and correctness without changing meaning.",
-    filePath: "packages/workers/src/prompts/comm/editor.ts",
+    filePath: "prompts/workers/comm/editor.md",
     category: "worker",
     model: "haiku",
     chain: { from: ["comm.writer.tech", "comm.writer.policy"] },
@@ -355,7 +355,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "data.modeler",
     description:
       "Schema design and entity relationship worker. Entry point for 'schema' route.",
-    filePath: "packages/workers/src/prompts/data/modeler.ts",
+    filePath: "prompts/workers/data/modeler.md",
     category: "worker",
     model: "sonnet",
     chain: { to: ["k.linguist"] },
@@ -366,7 +366,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "data.migrator",
     description:
       "Data transformation, format conversion, and migration script generation.",
-    filePath: "packages/workers/src/prompts/data/migrator.ts",
+    filePath: "prompts/workers/data/migrator.md",
     category: "worker",
     model: "sonnet",
     tags: ["data"],
@@ -378,7 +378,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "k.analyst",
     description:
       "Pattern recognition and connection analysis. Entry point for 'analyze' route.",
-    filePath: "packages/workers/src/prompts/k/analyst.ts",
+    filePath: "prompts/workers/k/analyst.md",
     category: "worker",
     model: "sonnet",
     tags: ["k"],
@@ -388,7 +388,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "k.cryptologist",
     description:
       "Packs/unpacks 0R (Zero-R) compressed knowledge format. Serialization and integrity.",
-    filePath: "packages/workers/src/prompts/k/cryptologist.ts",
+    filePath: "prompts/workers/k/cryptologist.md",
     category: "worker",
     model: "haiku",
     tags: ["k"],
@@ -398,7 +398,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "k.librarian",
     description:
       "Knowledge cataloging, indexing, and information retrieval optimization.",
-    filePath: "packages/workers/src/prompts/k/librarian.ts",
+    filePath: "prompts/workers/k/librarian.md",
     category: "worker",
     model: "haiku",
     tags: ["k"],
@@ -408,7 +408,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "k.linguist",
     description:
       "Terminology validation, naming conventions, and lexicon consistency. Ensures language patterns are uniform.",
-    filePath: "packages/workers/src/prompts/k/linguist.ts",
+    filePath: "prompts/workers/k/linguist.md",
     category: "worker",
     model: "sonnet",
     chain: { from: ["data.modeler"] },
@@ -421,7 +421,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "gov.auditor",
     description:
       "Compliance checking, COA chain verification, seal validation, and governance auditing.",
-    filePath: "packages/workers/src/prompts/gov/auditor.ts",
+    filePath: "prompts/workers/gov/auditor.md",
     category: "worker",
     model: "sonnet",
     chain: { to: ["gov.archivist"] },
@@ -432,7 +432,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "gov.archivist",
     description:
       "Seal management and record keeping. Creates governance seals and archives audit results.",
-    filePath: "packages/workers/src/prompts/gov/archivist.ts",
+    filePath: "prompts/workers/gov/archivist.md",
     category: "worker",
     model: "haiku",
     chain: { from: ["gov.auditor"] },
@@ -445,7 +445,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "ops.deployer",
     description:
       "CI/CD worker for deployments, version bumps, release notes, and pipeline configuration.",
-    filePath: "packages/workers/src/prompts/ops/deployer.ts",
+    filePath: "prompts/workers/ops/deployer.md",
     category: "worker",
     model: "sonnet",
     tags: ["ops"],
@@ -455,7 +455,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "ops.custodian",
     description:
       "Cleanup and maintenance worker. Archival, pruning, cache clearing, and housekeeping.",
-    filePath: "packages/workers/src/prompts/ops/custodian.ts",
+    filePath: "prompts/workers/ops/custodian.md",
     category: "worker",
     model: "haiku",
     tags: ["ops"],
@@ -465,7 +465,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "ops.syncer",
     description:
       "Cross-repo synchronization. Upstream merges, fork syncing, state reconciliation.",
-    filePath: "packages/workers/src/prompts/ops/syncer.ts",
+    filePath: "prompts/workers/ops/syncer.md",
     category: "worker",
     model: "sonnet",
     tags: ["ops"],
@@ -477,7 +477,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "ux.designer.web",
     description:
       "UI component design, responsive layouts, and web interface patterns following the existing design system.",
-    filePath: "packages/workers/src/prompts/ux/designer.web.ts",
+    filePath: "prompts/workers/ux/designer.web.md",
     category: "worker",
     model: "sonnet",
     tags: ["ux"],
@@ -487,7 +487,7 @@ export const WORKER_ENTRIES: PromptEntry[] = [
     title: "ux.designer.cli",
     description:
       "Terminal UI: CLI interfaces, box-drawing layouts, and console output formatting.",
-    filePath: "packages/workers/src/prompts/ux/designer.cli.ts",
+    filePath: "prompts/workers/ux/designer.cli.md",
     category: "worker",
     model: "sonnet",
     tags: ["ux"],

@@ -140,6 +140,8 @@ export interface RuntimeStateDeps {
   notificationStore?: NotificationStore;
   /** ChatPersistence — file-based chat history storage. */
   chatPersistence?: ChatPersistence;
+  /** ImageBlobStore — file-backed image storage for chat sessions. */
+  imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
   /** PluginRegistry — loaded plugin instances (for GET /api/plugins + HTTP route mounting). */
   pluginRegistry?: {
     getAll(): { manifest: { id: string; name: string; version: string; description: string; author?: string; permissions: string[]; category?: string; bakedIn?: boolean; disableable?: boolean }; basePath: string }[];
@@ -3324,7 +3326,7 @@ export async function createGatewayRuntimeState(
   // -----------------------------------------------------------------------
 
   if (deps.chatPersistence !== undefined) {
-    registerChatHistoryRoutes(fastify, { chatPersistence: deps.chatPersistence });
+    registerChatHistoryRoutes(fastify, { chatPersistence: deps.chatPersistence, imageBlobStore: deps.imageBlobStore });
   }
 
   // -----------------------------------------------------------------------

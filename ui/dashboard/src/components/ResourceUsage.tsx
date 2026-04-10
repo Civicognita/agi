@@ -242,38 +242,17 @@ export function ResourceUsage() {
               style={{ height: 160 }}
             />
           </Card>
-          <Card className="p-2">
+          <Card className="p-2 flex flex-col items-center">
             <EChart
               option={{
                 tooltip: {
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   formatter: (params: any) => `${params.name}: ${formatBytes(params.value as number)}`,
                 },
-                graphic: [
-                  {
-                    type: "text",
-                    left: "center",
-                    top: "32%",
-                    style: { text: `${data.disk.percent}%`, fontSize: 20, fontWeight: "bold", fill: COLORS.foreground, textAlign: "center" },
-                  },
-                  {
-                    type: "text",
-                    left: "center",
-                    top: "50%",
-                    style: { text: `${formatBytes(data.disk.used)} / ${formatBytes(data.disk.total)}`, fontSize: 10, fill: COLORS.text, textAlign: "center" },
-                  },
-                  {
-                    type: "text",
-                    left: "center",
-                    top: "78%",
-                    style: { text: "Disk Volume", fontSize: 11, fill: COLORS.text, textAlign: "center" },
-                  },
-                ],
                 series: [{
                   type: "pie",
-                  radius: ["48%", "68%"],
-                  center: ["50%", "42%"],
-                  silent: false,
+                  radius: "70%",
+                  center: ["50%", "50%"],
                   label: { show: false },
                   emphasis: { scale: false },
                   data: [
@@ -286,8 +265,13 @@ export function ResourceUsage() {
                   ],
                 }],
               }}
-              style={{ height: 160 }}
+              style={{ height: 116 }}
             />
+            <div className="text-center -mt-1">
+              <div className="text-lg font-bold text-foreground">{data.disk.percent}%</div>
+              <div className="text-[10px] text-muted-foreground">{formatBytes(data.disk.used)} / {formatBytes(data.disk.total)}</div>
+              <div className="text-[11px] text-muted-foreground">Disk Volume</div>
+            </div>
           </Card>
         </div>
       )}

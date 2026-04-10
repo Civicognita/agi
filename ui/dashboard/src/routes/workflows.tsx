@@ -2,7 +2,7 @@
  * Workflows route — Worker topology, system prompts, and workflow documentation.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs.js";
 import { WorkflowGraph } from "@/components/WorkflowGraph.js";
 import { SystemPromptPipeline, PromptEntryList } from "@/components/PromptCatalog.js";
@@ -14,11 +14,33 @@ import {
   AGENT_ENTRIES,
   COMMAND_ENTRIES,
 } from "@/components/prompt-catalog.js";
+import type { PromptEntry } from "@/components/prompt-catalog.js";
 import { useRootContext } from "./root.js";
 
 export default function WorkflowsPage() {
   const { theme, configHook } = useRootContext();
   const [editorPath, setEditorPath] = useState<string | null>(null);
+  const [workerEntries, setWorkerEntries] = useState<PromptEntry[]>(WORKER_ENTRIES);
+
+  // Fetch dynamic worker catalog from API, fall back to static catalog
+  useEffect(() => {
+    fetch("/api/workers/catalog")
+      .then((res) => res.ok ? res.json() as Promise<Array<{ id: string; title: string; description: string; domain: string; role: string; model: string; color: string; filePath: string }>> : null)
+      .then((data) => {
+        if (data && data.length > 0) {
+          setWorkerEntries(data.map((w) => ({
+            id: w.id,
+            title: w.title,
+            description: w.description,
+            filePath: w.filePath,
+            category: "worker" as const,
+            model: w.model as "sonnet" | "haiku" | "opus",
+            tags: [w.domain, w.role],
+          })));
+        }
+      })
+      .catch(() => { /* keep static fallback */ });
+  }, []);
 
   return (
     <>
@@ -48,7 +70,7 @@ export default function WorkflowsPage() {
         </TabsContent>
 
         <TabsContent value="workers" className="mt-4">
-          <PromptEntryList entries={WORKER_ENTRIES} onFileOpen={setEditorPath} />
+          <PromptEntryList entries={workerEntries} onFileOpen={setEditorPath} />
         </TabsContent>
 
         <TabsContent value="agents" className="mt-4">

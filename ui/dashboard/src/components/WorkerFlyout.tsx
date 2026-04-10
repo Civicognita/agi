@@ -33,7 +33,7 @@ const PROVIDER_OPTIONS: { value: Provider; label: string }[] = [
 export function WorkerFlyout({ selected, onClose, config, onSaveConfig }: WorkerFlyoutProps) {
   const workerKey = selected ? `${selected.domain}.${selected.worker}` : null;
   const meta: WorkerMeta | undefined = workerKey ? WORKER_META[workerKey] : undefined;
-  const currentOverride = workerKey ? config?.bots?.workerModels?.[workerKey] : undefined;
+  const currentOverride = workerKey ? config?.workers?.workerModels?.[workerKey] : undefined;
 
   const [overrideEnabled, setOverrideEnabled] = useState(false);
   const [provider, setProvider] = useState<Provider>("anthropic");
@@ -99,20 +99,20 @@ export function WorkerFlyout({ selected, onClose, config, onSaveConfig }: Worker
       const updated = { ...config };
       if (!overrideEnabled) {
         // Remove override
-        if (updated.bots?.workerModels?.[workerKey]) {
-          const models = { ...updated.bots.workerModels };
+        if (updated.workers?.workerModels?.[workerKey]) {
+          const models = { ...updated.workers.workerModels };
           delete models[workerKey];
-          updated.bots = { ...updated.bots, workerModels: Object.keys(models).length > 0 ? models : undefined };
-          if (!updated.bots.workerModels) delete updated.bots;
+          updated.workers = { ...updated.workers, workerModels: Object.keys(models).length > 0 ? models : undefined };
+          if (!updated.workers.workerModels) delete updated.workers;
         }
       } else {
         // Set override
         const override: WorkerModelOverride = { provider, model };
         if (apiKey) override.apiKey = apiKey;
         if (baseUrl) override.baseUrl = baseUrl;
-        updated.bots = {
-          ...updated.bots,
-          workerModels: { ...updated.bots?.workerModels, [workerKey]: override },
+        updated.workers = {
+          ...updated.workers,
+          workerModels: { ...updated.workers?.workerModels, [workerKey]: override },
         };
       }
       await onSaveConfig(updated);

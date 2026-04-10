@@ -10,8 +10,9 @@
 
 import type { FastifyInstance } from "fastify";
 import type { WorkerRuntime, WorkerJob } from "./worker-runtime.js";
+import type { WorkerPromptLoader } from "./worker-prompt-loader.js";
 
-/** Shape the dashboard expects (matches BotsJobSummary in ui/dashboard/src/types.ts). */
+/** Shape the dashboard expects (matches WorkerJobSummary in ui/dashboard/src/types.ts). */
 interface JobSummary {
   id: string;
   description: string;
@@ -38,7 +39,23 @@ function toSummary(job: WorkerJob): JobSummary {
 export function registerWorkerApi(
   app: FastifyInstance,
   runtime: WorkerRuntime,
+  promptLoader?: WorkerPromptLoader,
 ): void {
+  // GET /api/workers/catalog — dynamic worker prompt catalog
+  if (promptLoader) {
+    app.get("/api/workers/catalog", async () => {
+      return promptLoader.discover().map((entry) => ({
+        id: entry.id,
+        title: entry.name,
+        description: entry.description,
+        domain: entry.domain,
+        role: entry.role,
+        model: entry.model,
+        color: entry.color,
+        filePath: entry.filePath,
+      }));
+    });
+  }
   app.post<{ Params: { jobId: string } }>("/api/taskmaster/approve/:jobId", async (request) => {
     await runtime.approveCheckpoint(request.params.jobId);
     return { ok: true };

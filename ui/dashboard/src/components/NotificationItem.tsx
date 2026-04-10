@@ -11,14 +11,14 @@ interface NotificationItemProps {
 }
 
 function getTypeLabel(type: string): string {
-  if (type.startsWith("bots:")) return "Worker";
+  if (type.startsWith("tm:")) return "Worker";
   if (type.startsWith("comms:")) return "Comms";
   if (type.startsWith("system:")) return "System";
   return "Info";
 }
 
 function getTypeColor(type: string): string {
-  if (type.startsWith("bots:")) return "bg-blue";
+  if (type.startsWith("tm:")) return "bg-blue";
   if (type.startsWith("comms:")) return "bg-green";
   if (type.startsWith("system:")) return "bg-peach";
   return "bg-lavender";

@@ -73,6 +73,8 @@ import { checkProtocolCompatibility } from "./protocol-check.js";
 import { PlanStore } from "./plan-store.js";
 import { ChatPersistence } from "./chat-persistence.js";
 import type { PersistedChatSession } from "./chat-persistence.js";
+import { ImageBlobStore } from "./image-blob-store.js";
+import { WorkerPromptLoader } from "./worker-prompt-loader.js";
 import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
 import { projectConfigPath } from "./project-config-path.js";
 import { HostingManager } from "./hosting-manager.js";
@@ -486,6 +488,9 @@ export async function startGatewayServer(
   // Chat persistence — file-based storage in ~/.agi/chat-history/
   const chatPersistence = new ChatPersistence();
 
+  // Image blob store — file-backed storage for chat images at ~/.agi/chat-images/
+  const imageBlobStore = new ImageBlobStore();
+
   // In-flight session data for persistence — maps sessionId → PersistedChatSession
   const chatSessionData = new Map<string, PersistedChatSession>();
   const canvasDocuments: CanvasDocument[] = [];
@@ -511,7 +516,7 @@ export async function startGatewayServer(
     primeLoader,
     projectDirs: projectPaths,
     projectConfigManager,
-    botsDir: undefined, // BOTS repo removed — workers are now plugins
+    botsDir: undefined, // Workers are file-driven prompts
     onJobCreated: (jobId: string, coaReqId: string) => {
       workerRuntimeRef.current?.executeJob(jobId, coaReqId).catch((err: unknown) => {
         log.error(`workerRuntime.executeJob error: ${err instanceof Error ? err.message : String(err)}`);
@@ -565,6 +570,7 @@ export async function startGatewayServer(
       channels: ownerConfig.channels as Record<string, string | undefined>,
     } : undefined,
     logger,
+    imageBlobStore,
   });
 
   // -------------------------------------------------------------------------
@@ -583,12 +589,17 @@ export async function startGatewayServer(
         opus: "claude-opus-4-6",
         default: config.agent?.model ?? "claude-sonnet-4-6",
       },
+      promptDir: resolvePath(workspaceRoot, "prompts", "workers"),
+      stateDir: join(homedir(), ".agi", "state"),
     },
     { llmProvider: getLLMProvider() },
   );
 
   // Wire the late-bound ref so onJobCreated callbacks reach the runtime.
   workerRuntimeRef.current = workerRuntime;
+
+  // Worker prompt loader — discovers worker prompts from prompts/workers/
+  const workerPromptLoader = new WorkerPromptLoader(resolvePath(workspaceRoot, "prompts", "workers"));
 
   const reportsStore = new ReportsStore(join(homedir(), ".agi", "reports"));
   reportsStore.watch();
@@ -1208,6 +1219,7 @@ export async function startGatewayServer(
       commsLog,
       notificationStore,
       chatPersistence,
+      imageBlobStore,
       pluginRegistry,
       stackRegistry,
       sharedContainerManager,
@@ -1230,7 +1242,7 @@ export async function startGatewayServer(
       pluginPrefs,
       primeLoader,
       primeDir,
-      botsDir: undefined, // BOTS repo removed — workers are now plugins
+      botsDir: undefined, // Workers are file-driven prompts
       marketplaceManager,
       onPluginInstalled: async (installPath: string) => {
         try {
@@ -1350,7 +1362,7 @@ export async function startGatewayServer(
       },
       preListenHooks: [
         (f) => registerReportsApi(f, reportsStore),
-        (f) => registerWorkerApi(f, workerRuntime),
+        (f) => registerWorkerApi(f, workerRuntime, workerPromptLoader),
         (f) => registerComplianceRoutes(f, { incidentStore, vendorStore, sessionStore: complianceSessionStore, backupManager }),
         (f) => registerSecurityRoutes(f, { scanRunner, scanStore }),
       ],
@@ -1515,12 +1527,24 @@ export async function startGatewayServer(
           // Re-hydrate the in-flight tracker
           chatSessionData.set(chatSessionId, persisted);
 
-          // Re-hydrate the agent session so LLM has full context
+          // Re-hydrate the agent session so LLM has full context (including images)
           const agentSession = agentSessionManager.getOrCreate(sessionKey, ownerEntityId, "web");
           if (agentSession.turns.length === 0) {
             for (const msg of persisted.messages) {
               if (msg.role === "user") {
-                agentSessionManager.addUserTurn(sessionKey, msg.content, "");
+                // Resolve stored image IDs back to ImageRef objects
+                let imageRefs: import("./agent-session.js").ImageRef[] | undefined;
+                if (msg.images?.length) {
+                  imageRefs = msg.images
+                    .map((imageId) => {
+                      const blob = imageBlobStore.load(chatSessionId, imageId);
+                      if (!blob) return null;
+                      return { imageId, mediaType: blob.mediaType, estimatedTokens: 1600 };
+                    })
+                    .filter((r): r is import("./agent-session.js").ImageRef => r !== null);
+                  if (imageRefs.length === 0) imageRefs = undefined;
+                }
+                agentSessionManager.addUserTurn(sessionKey, msg.content, "", imageRefs);
               } else if (msg.role === "assistant") {
                 agentSessionManager.addAssistantTurn(sessionKey, msg.content, "");
               }
@@ -1648,7 +1672,23 @@ export async function startGatewayServer(
           timestamp: new Date().toISOString(),
         });
 
-        // Track user message for persistence
+        // Save images to blob store and build image refs for the session pipeline
+        const chatImageIds: string[] = [];
+        const chatImageRefs: import("./agent-session.js").ImageRef[] = [];
+        if (chatSessionId) {
+          for (const img of chatImages) {
+            const imageId = ulid();
+            const base64 = img.data.replace(/^data:[^;]+;base64,/, "");
+            imageBlobStore.save(chatSessionId, imageId, img.mediaType, base64);
+            chatImageIds.push(imageId);
+            // Estimate tokens: ~1600 per 200KB of base64
+            const bytes = base64.length * 0.75;
+            const tiles = Math.max(1, Math.ceil(bytes / 200_000));
+            chatImageRefs.push({ imageId, mediaType: img.mediaType, estimatedTokens: tiles * 1600 });
+          }
+        }
+
+        // Track user message for persistence (with image IDs)
         if (chatSessionId) {
           const existing = chatSessionData.get(chatSessionId);
           if (existing) {
@@ -1657,6 +1697,7 @@ export async function startGatewayServer(
               content: typeof chatText === "string" ? chatText : "[media]",
               timestamp: new Date().toISOString(),
               runId,
+              images: chatImageIds.length > 0 ? chatImageIds : undefined,
             }));
           }
         }
@@ -1835,6 +1876,8 @@ export async function startGatewayServer(
             sessionKey,
             projectContext: chatProjectPath,
             builderMode,
+            imageRefs: chatImageRefs.length > 0 ? chatImageRefs : undefined,
+            chatSessionId,
           });
         }).then(async (outcome) => {
           removeProgressListeners();
@@ -2433,7 +2476,7 @@ export async function startGatewayServer(
   if (dashboardBroadcaster !== null) {
     workerRuntime.on("runtime:event", (event: { type: string; jobId: string; [key: string]: unknown }) => {
       if (event.type === "job_started") {
-        dashboardBroadcaster.emitBotsJobUpdate({
+        dashboardBroadcaster.emitTmJobUpdate({
           jobId: event.jobId,
           status: "running",
           description: String(event.description ?? ""),
@@ -2441,16 +2484,46 @@ export async function startGatewayServer(
           workers: (event.workers as string[]) ?? [],
         });
       } else if (event.type === "job_failed") {
-        dashboardBroadcaster.emitBotsJobUpdate({
+        dashboardBroadcaster.emitTmJobUpdate({
           jobId: event.jobId,
           status: "failed",
           description: String(event.error ?? ""),
           currentPhase: null,
           workers: [],
         });
+      } else if (event.type === "worker_done") {
+        dashboardBroadcaster.emitTmJobUpdate({
+          jobId: event.jobId,
+          status: "running",
+          description: `Worker ${String(event.worker ?? "")} completed`,
+          currentPhase: String(event.phase ?? ""),
+          workers: (event.workers as string[]) ?? [],
+        });
+      } else if (event.type === "phase_done") {
+        dashboardBroadcaster.emitTmJobUpdate({
+          jobId: event.jobId,
+          status: "running",
+          description: `Phase ${String(event.phase ?? "")} completed`,
+          currentPhase: String(event.nextPhase ?? ""),
+          workers: [],
+        });
+      } else if (event.type === "checkpoint") {
+        dashboardBroadcaster.emitTmJobUpdate({
+          jobId: event.jobId,
+          status: "checkpoint",
+          description: String(event.message ?? "Checkpoint reached — awaiting approval"),
+          currentPhase: String(event.phase ?? ""),
+          workers: [],
+        });
+      } else if (event.type === "report_ready") {
+        dashboardBroadcaster.emitTmJobUpdate({
+          jobId: event.jobId,
+          status: "complete",
+          description: String(event.gist ?? "Job completed"),
+          currentPhase: null,
+          workers: [],
+        });
       }
-      // worker_done, phase_done, checkpoint, report_ready handled by workerRuntime
-      // internal tracking; no dedicated broadcaster method for these yet.
     });
   }
 

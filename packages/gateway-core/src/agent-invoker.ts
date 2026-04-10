@@ -125,6 +125,8 @@ export interface AgentInvokerDeps {
   ownerConfig?: { displayName: string; channels: Record<string, string | undefined> };
   /** Optional logger instance. */
   logger?: Logger;
+  /** Optional image blob store for resolving image references in history. */
+  imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
 }
 
 export interface InvocationRequest {
@@ -148,6 +150,10 @@ export interface InvocationRequest {
   projectContext?: string;
   /** BuilderChat mode — loads builder system prompt and designer tools. */
   builderMode?: "create" | "update" | "review";
+  /** Pre-saved image references for this invocation (from ImageBlobStore). */
+  imageRefs?: import("./agent-session.js").ImageRef[];
+  /** Chat session ID used for image blob resolution. */
+  chatSessionId?: string;
 }
 
 export type InvocationOutcome =
@@ -279,11 +285,12 @@ export class AgentInvoker extends EventEmitter {
       ? sanitized.contentBlocks as LLMContentBlock[]
       : sanitized.content;
 
-    // Add user turn to session (text-only for compaction/token estimation)
+    // Add user turn to session (text + image refs for context continuity)
     this.deps.sessionManager.addUserTurn(
       sKey,
       sanitized.content,
       coaFingerprint,
+      request.imageRefs,
     );
 
     // -----------------------------------------------------------------------
@@ -473,15 +480,42 @@ export class AgentInvoker extends EventEmitter {
         entity.verificationTier,
       );
 
-      // Build API messages: use content blocks for the current turn when
-      // images are present so the model receives them as proper image blocks.
-      const apiMessages: LLMMessage[] = [...history.messages];
-      if (typeof apiContent !== "string" && apiMessages.length > 0) {
-        const last = apiMessages[apiMessages.length - 1]!;
-        if (last.role === "user") {
-          apiMessages[apiMessages.length - 1] = { ...last, content: apiContent };
+      // Build API messages: resolve image refs on ALL history turns so the
+      // model can reference screenshots/images from earlier in the conversation.
+      // The current turn uses in-memory content blocks (freshest data), while
+      // prior turns resolve from the ImageBlobStore on disk.
+      const apiMessages: LLMMessage[] = history.messages.map((msg, idx) => {
+        const isLastUser = idx === history.messages.length - 1 && msg.role === "user";
+
+        // Current turn: use the in-memory content blocks if they include images
+        if (isLastUser && typeof apiContent !== "string") {
+          return { role: msg.role, content: apiContent };
         }
-      }
+
+        // Prior turns: resolve stored image refs back to content blocks
+        if (msg.role === "user" && msg.imageRefs?.length && this.deps.imageBlobStore && request.chatSessionId) {
+          const blocks: LLMContentBlock[] = [];
+          for (const ref of msg.imageRefs) {
+            const blob = this.deps.imageBlobStore.load(request.chatSessionId, ref.imageId);
+            if (blob) {
+              blocks.push({
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: blob.mediaType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+                  data: blob.data,
+                },
+              });
+            }
+          }
+          if (msg.content) {
+            blocks.push({ type: "text", text: msg.content });
+          }
+          return { role: msg.role, content: blocks.length > 0 ? blocks : msg.content };
+        }
+
+        return { role: msg.role, content: msg.content };
+      });
 
       const thinkingConfig = { type: "enabled" as const, budget_tokens: 10_000 };
 

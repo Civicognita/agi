@@ -10,6 +10,7 @@
 
 import { EventEmitter } from "node:events";
 import { join } from "node:path";
+import { JobBridge } from "./job-bridge.js";
 import type { LLMProvider } from "./llm/provider.js";
 import type { LLMInvokeParams, LLMToolContinuationParams, LLMContentBlock } from "./llm/types.js";
 
@@ -65,6 +66,7 @@ interface RuntimeConfig {
   modelMap: Record<string, string>;
   projectContext?: { path: string; name: string };
   onProgress?: (event: RuntimeEvent) => void;
+  promptDir?: string;
 }
 
 interface RuntimeResult {
@@ -120,6 +122,10 @@ export interface WorkerRuntimeConfig {
   workerTimeoutMs: number;
   reportsDir: string;
   modelMap: Record<string, string>;
+  /** Directory containing worker prompt .md files. */
+  promptDir?: string;
+  /** Directory for runtime state files (default: ~/.agi/state/). */
+  stateDir?: string;
 }
 
 export interface WorkerRuntimeDeps {
@@ -325,7 +331,18 @@ export class WorkerRuntime extends EventEmitter {
       modelMap: this.config.modelMap,
       projectContext,
       onProgress: (event: RuntimeEvent) => this.handleRuntimeEvent(event),
+      promptDir: this.config.promptDir,
     };
+
+    // Bridge the dispatch file into taskmaster state so the runtime can find it
+    const jobsDir = resolve(BOTS_LIB, "..", "jobs");
+    const dispatchFile = join(jobsDir, `${jobId}.json`);
+    try {
+      const bridge = new JobBridge(this.config.stateDir);
+      bridge.ensureJob(jobId, dispatchFile);
+    } catch {
+      // Bridge failure is non-fatal — runtime may still find the job in state
+    }
 
     // Dynamic imports: load runtime modules at execution time
     const [runJob, createSandbox] = await Promise.all([
@@ -389,7 +406,8 @@ export class WorkerRuntime extends EventEmitter {
    */
   async listAllJobs(): Promise<WorkerJob[]> {
     try {
-      const statePath = resolve(BOTS_LIB, "..", "state", "taskmaster.json");
+      const stateBase = this.config.stateDir ?? resolve(BOTS_LIB, "..", "state");
+      const statePath = join(stateBase, "taskmaster.json");
       const { readFileSync } = await import("node:fs");
       const content = readFileSync(statePath, "utf-8");
       const state = JSON.parse(content) as { wip?: { jobs?: Record<string, WorkerJob> } };

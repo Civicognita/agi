@@ -294,7 +294,7 @@ export interface HostedProjectStatus {
 }
 
 /** Worker job update event payload. */
-export interface BotsJobUpdateData {
+export interface TmJobUpdateData {
   jobId: string;
   status: "pending" | "running" | "checkpoint" | "complete" | "failed";
   description: string;
@@ -303,7 +303,7 @@ export interface BotsJobUpdateData {
 }
 
 /** Worker completion event payload. */
-export interface BotsWorkerDoneData {
+export interface TmWorkerDoneData {
   jobId: string;
   workerTid: string;
   worker: string;
@@ -312,21 +312,21 @@ export interface BotsWorkerDoneData {
 }
 
 /** Worker phase completion event payload. */
-export interface BotsPhaseDoneData {
+export interface TmPhaseDoneData {
   jobId: string;
   phaseId: string;
   gate: string;
 }
 
 /** Worker checkpoint event payload. */
-export interface BotsCheckpointData {
+export interface TmCheckpointData {
   jobId: string;
   phaseId: string;
   gate: string;
 }
 
 /** Worker report ready event payload. */
-export interface BotsReportReadyData {
+export interface TmReportReadyData {
   jobId: string;
   coaReqId: string;
   fileCount: number;
@@ -334,7 +334,7 @@ export interface BotsReportReadyData {
 }
 
 /** Worker job failure event payload. */
-export interface BotsJobFailedData {
+export interface TmJobFailedData {
   jobId: string;
   error: string;
 }
@@ -440,12 +440,12 @@ export type DashboardEvent =
   | { type: "hosting:status"; data: HostingStatusData }
   | { type: "project:config_changed"; data: ProjectConfigChangedData }
   | { type: "project:container_status"; data: ContainerStatusChangedData }
-  | { type: "bots:job_update"; data: BotsJobUpdateData }
-  | { type: "worker:done"; data: BotsWorkerDoneData }
-  | { type: "bots:phase_done"; data: BotsPhaseDoneData }
-  | { type: "bots:checkpoint"; data: BotsCheckpointData }
-  | { type: "bots:report_ready"; data: BotsReportReadyData }
-  | { type: "bots:job_failed"; data: BotsJobFailedData }
+  | { type: "tm:job_update"; data: TmJobUpdateData }
+  | { type: "worker:done"; data: TmWorkerDoneData }
+  | { type: "tm:phase_done"; data: TmPhaseDoneData }
+  | { type: "tm:checkpoint"; data: TmCheckpointData }
+  | { type: "tm:report_ready"; data: TmReportReadyData }
+  | { type: "tm:job_failed"; data: TmJobFailedData }
   | { type: "notification:new"; data: NotificationData };
 
 /** Dashboard WebSocket subscription message. */

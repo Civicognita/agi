@@ -10,7 +10,7 @@ import type { EventEmitter } from "node:events";
 
 import type {
   ActivityEntry,
-  BotsJobUpdateData,
+  TmJobUpdateData,
   COAExplorerEntry,
   ContainerStatusChangedData,
   DashboardEvent,
@@ -165,10 +165,10 @@ export class DashboardEventBroadcaster {
     });
   }
 
-  /** Emit a bots:job_update event. */
-  emitBotsJobUpdate(data: BotsJobUpdateData): void {
+  /** Emit a tm:job_update event. */
+  emitTmJobUpdate(data: TmJobUpdateData): void {
     this.broadcastToSubscribers({
-      type: "bots:job_update",
+      type: "tm:job_update",
       data,
     });
   }
@@ -302,12 +302,12 @@ function extractEntityId(event: DashboardEvent): string | null {
     case "hosting:status":
     case "project:config_changed":
     case "project:container_status":
-    case "bots:job_update":
+    case "tm:job_update":
     case "worker:done":
-    case "bots:phase_done":
-    case "bots:checkpoint":
-    case "bots:report_ready":
-    case "bots:job_failed":
+    case "tm:phase_done":
+    case "tm:checkpoint":
+    case "tm:report_ready":
+    case "tm:job_failed":
     case "notification:new":
       return null;
   }
@@ -324,7 +324,7 @@ function extractChannel(event: DashboardEvent): string | null {
     case "hosting:status":
     case "project:config_changed":
     case "project:container_status":
-    case "bots:job_update":
+    case "tm:job_update":
     case "notification:new":
       return null;
     default:
