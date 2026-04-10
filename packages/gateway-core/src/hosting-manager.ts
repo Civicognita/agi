@@ -189,6 +189,7 @@ export class HostingManager {
   private loginProcess: ChildProcess | null = null;
   private onStatusChange: (() => void) | null = null;
   private statusPollTimer: ReturnType<typeof setInterval> | null = null;
+  private eventsProcess: ChildProcess | null = null;
 
   constructor(deps: HostingManagerDeps) {
     this.config = deps.config;
@@ -1256,17 +1257,109 @@ export class HostingManager {
   }
 
   // -------------------------------------------------------------------------
-  // Status polling
+  // Status monitoring — event-driven with fallback polling
+  //
+  // Uses `podman events` to stream container state changes via a single
+  // persistent process instead of spawning `podman inspect` per container
+  // every N seconds. A low-frequency fallback poll (120s) catches anything
+  // the event stream misses.
   // -------------------------------------------------------------------------
 
   private startStatusPolling(): void {
+    // Start event-driven monitoring
+    this.startEventsStream();
+
+    // Low-frequency fallback poll (120s) in case events stream misses something
     if (this.statusPollTimer !== null) return;
     this.statusPollTimer = setInterval(
       () => this.pollContainerStatuses(),
-      this.config.statusPollIntervalMs,
+      120_000,
     );
   }
 
+  /**
+   * Start a persistent `podman events` process that streams container state changes.
+   * Replaces the old per-container `podman inspect` polling that caused kernel lockups
+   * by spawning ~36 processes/minute (6 containers * every 10 seconds).
+   */
+  private startEventsStream(): void {
+    if (this.eventsProcess !== null) return;
+
+    try {
+      const child = spawn("podman", [
+        "events",
+        "--format", "json",
+        "--filter", "type=container",
+        "--filter", "event=start",
+        "--filter", "event=stop",
+        "--filter", "event=die",
+        "--filter", "event=exited",
+      ], { stdio: ["ignore", "pipe", "ignore"] });
+
+      this.eventsProcess = child;
+
+      let buffer = "";
+      child.stdout!.on("data", (chunk: Buffer) => {
+        buffer += chunk.toString();
+        // Process complete JSON lines
+        let newlineIdx: number;
+        while ((newlineIdx = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, newlineIdx).trim();
+          buffer = buffer.slice(newlineIdx + 1);
+          if (!line) continue;
+          try {
+            const event = JSON.parse(line) as { Actor?: { Attributes?: { name?: string } }; Action?: string; Status?: string };
+            const containerName = event.Actor?.Attributes?.name;
+            const action = event.Action ?? event.Status ?? "";
+            if (containerName) this.handleContainerEvent(containerName, action);
+          } catch {
+            // Malformed JSON — skip
+          }
+        }
+      });
+
+      child.on("close", () => {
+        this.eventsProcess = null;
+        // Restart after a delay if the process dies unexpectedly
+        setTimeout(() => {
+          if (this.statusPollTimer !== null) this.startEventsStream();
+        }, 5_000);
+      });
+
+      child.on("error", () => {
+        this.eventsProcess = null;
+      });
+
+      this.log.info("container status monitoring started (podman events)");
+    } catch {
+      this.log.warn("failed to start podman events stream — relying on fallback polling");
+    }
+  }
+
+  /** Handle a container state change event from the podman events stream. */
+  private handleContainerEvent(containerName: string, action: string): void {
+    // Find the hosted project for this container
+    for (const hosted of this.projects.values()) {
+      if (hosted.containerName !== containerName) continue;
+
+      let newStatus: "running" | "stopped" | "error";
+      if (action === "start") {
+        newStatus = "running";
+      } else if (action === "stop" || action === "die" || action === "exited") {
+        newStatus = "stopped";
+      } else {
+        return; // Unknown action — ignore
+      }
+
+      if (hosted.status !== newStatus) {
+        hosted.status = newStatus;
+        this.notifyStatusChange();
+      }
+      return;
+    }
+  }
+
+  /** Low-frequency fallback poll — runs every 120s to catch missed events. */
   private pollContainerStatuses(): void {
     let changed = false;
 
@@ -1289,7 +1382,6 @@ export class HostingManager {
           newStatus = "error";
         }
       } catch {
-        // Container not found
         newStatus = "stopped";
         hosted.containerId = null;
       }
@@ -1759,10 +1851,14 @@ export class HostingManager {
   async shutdown(): Promise<void> {
     this.log.info("shutting down hosted projects...");
 
-    // Stop polling
+    // Stop polling and events stream
     if (this.statusPollTimer !== null) {
       clearInterval(this.statusPollTimer);
       this.statusPollTimer = null;
+    }
+    if (this.eventsProcess !== null) {
+      try { this.eventsProcess.kill(); } catch { /* already dead */ }
+      this.eventsProcess = null;
     }
 
     // Kill all tunnel processes

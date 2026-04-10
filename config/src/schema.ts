@@ -192,7 +192,7 @@ const HostingConfigSchema = z
     /** Container runtime (currently only podman). */
     containerRuntime: z.enum(["podman"]).default("podman"),
     /** Interval in ms for polling container statuses. */
-    statusPollIntervalMs: z.number().int().positive().default(10_000),
+    statusPollIntervalMs: z.number().int().positive().default(120_000),
     /** Default tunnel mode: "quick" (ephemeral URL, no auth) or "named" (persistent URL, requires Cloudflare auth). */
     tunnelMode: z.enum(["quick", "named"]).optional(),
     /** Cloudflare-managed domain for named tunnels (e.g. "example.com"). Named tunnels create DNS records as <project>.<tunnelDomain>. */
