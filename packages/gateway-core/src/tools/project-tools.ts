@@ -135,10 +135,14 @@ function handleCreate(config: ProjectToolConfig, input: Record<string, unknown>)
 
   // Write metadata via ProjectConfigManager or legacy fallback
   const tynnToken = input.tynnToken ? String(input.tynnToken).trim() : "";
+  const category = input.category ? String(input.category).trim() : "";
   const mgr = config.projectConfigManager;
 
   if (mgr) {
-    mgr.create(targetDir, name, tynnToken.length > 0 ? { tynnToken } : undefined);
+    const opts: Record<string, string> = {};
+    if (tynnToken.length > 0) opts.tynnToken = tynnToken;
+    if (category.length > 0) opts.category = category;
+    mgr.create(targetDir, name, Object.keys(opts).length > 0 ? opts : undefined);
   } else {
     const meta: Record<string, unknown> = { name, createdAt: new Date().toISOString() };
     if (tynnToken.length > 0) {
@@ -339,6 +343,11 @@ export const MANAGE_PROJECT_INPUT_SCHEMA = {
     repoRemote: {
       type: "string",
       description: "Git clone URL (for create only)",
+    },
+    category: {
+      type: "string",
+      enum: ["web", "app", "literature", "media", "administration", "ops", "monorepo"],
+      description: 'Project category (for create). Administrative projects are not locally hosted.',
     },
     confirm: {
       type: "boolean",

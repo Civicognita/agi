@@ -1,5 +1,5 @@
 /**
- * Workflows route — Worker topology, system prompts, and workflow documentation.
+ * Workflows route — Taskmaster topology, worker catalog, system prompts, and PRIME truth.
  */
 
 import { useEffect, useState } from "react";
@@ -11,6 +11,7 @@ import {
   SYSTEM_PROMPT_SECTIONS,
   PRIME_TRUTH_ENTRIES,
   WORKER_ENTRIES,
+  TASKMASTER_ENTRY,
   AGENT_ENTRIES,
   COMMAND_ENTRIES,
 } from "@/components/prompt-catalog.js";
@@ -47,10 +48,11 @@ export default function WorkflowsPage() {
       <Tabs defaultValue="topology">
         <TabsList variant="line">
           <TabsTrigger value="topology">Topology</TabsTrigger>
+          <TabsTrigger value="taskmaster">Taskmaster</TabsTrigger>
+          <TabsTrigger value="workers">Workers</TabsTrigger>
           <TabsTrigger value="system-prompt">System Prompt</TabsTrigger>
           <TabsTrigger value="prime">PRIME Truth</TabsTrigger>
-          <TabsTrigger value="workers">Workers</TabsTrigger>
-          <TabsTrigger value="agents">Agents & Commands</TabsTrigger>
+          <TabsTrigger value="agents">Agents</TabsTrigger>
         </TabsList>
 
         <TabsContent value="topology">
@@ -61,16 +63,20 @@ export default function WorkflowsPage() {
           />
         </TabsContent>
 
+        <TabsContent value="taskmaster" className="mt-4">
+          <PromptEntryList entries={[TASKMASTER_ENTRY]} onFileOpen={setEditorPath} />
+        </TabsContent>
+
+        <TabsContent value="workers" className="mt-4">
+          <PromptEntryList entries={workerEntries} onFileOpen={setEditorPath} />
+        </TabsContent>
+
         <TabsContent value="system-prompt" className="mt-4">
           <SystemPromptPipeline entries={SYSTEM_PROMPT_SECTIONS} />
         </TabsContent>
 
         <TabsContent value="prime" className="mt-4">
           <PromptEntryList entries={PRIME_TRUTH_ENTRIES} onFileOpen={setEditorPath} />
-        </TabsContent>
-
-        <TabsContent value="workers" className="mt-4">
-          <PromptEntryList entries={workerEntries} onFileOpen={setEditorPath} />
         </TabsContent>
 
         <TabsContent value="agents" className="mt-4">

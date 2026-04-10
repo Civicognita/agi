@@ -127,12 +127,13 @@ export class ProjectTypeRegistry {
 export function createProjectTypeRegistry(): ProjectTypeRegistry {
   const registry = new ProjectTypeRegistry();
 
-  // Administrative is the sole built-in type — not driven by a plugin.
+  // Administrative projects are NOT locally hosted — only production-based
+  // projects (web, writing, art, etc.) get hosted.
   registry.register({
     id: "production",
     label: "General Production",
     category: "administration",
-    hostable: true,
+    hostable: false,
     hasCode: false,
     defaultMeta: {
       type: "production",

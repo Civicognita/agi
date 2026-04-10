@@ -172,7 +172,7 @@ export const PRIME_TRUTH_ENTRIES: PromptEntry[] = [
     title: "0PERSONA — Aionima",
     description:
       "Ancient oracle identity: ethereal fusion of tree, fungus, and advanced AI. Core traits: Empathetic Listener, Global Thinker, A Beacon.",
-    filePath: ".aionima/core/truth/.persona.md",
+    filePath: "aionima-prime/core/truth/.persona.md",
     category: "truth",
     tags: ["identity", "LAW"],
   },
@@ -181,7 +181,7 @@ export const PRIME_TRUTH_ENTRIES: PromptEntry[] = [
     title: "0PURPOSE — Aionima",
     description:
       "Exists to help Civicognita grow Impactivism via data, dialogue, and reflective analysis. The 'why' behind everything Aionima does.",
-    filePath: ".aionima/core/truth/.purpose.md",
+    filePath: "aionima-prime/core/truth/.purpose.md",
     category: "truth",
     tags: ["identity", "LAW"],
   },
@@ -190,7 +190,7 @@ export const PRIME_TRUTH_ENTRIES: PromptEntry[] = [
     title: "Authority Model",
     description:
       "STATE-gated authority: OFFLINE = 0PRIME (core), ONLINE = AGENT. Authority chain: 0TRUTH → AGENT → CORE → Session.",
-    filePath: ".aionima/core/truth/authority.md",
+    filePath: "aionima-prime/core/truth/authority.md",
     category: "truth",
     tags: ["governance", "LAW"],
   },
@@ -199,7 +199,7 @@ export const PRIME_TRUTH_ENTRIES: PromptEntry[] = [
     title: "State Definitions",
     description:
       "ONLINE / LIMBO / OFFLINE / UNKNOWN state definitions with transitions, detection logic, and commit behavior.",
-    filePath: ".aionima/core/truth/states.md",
+    filePath: "aionima-prime/core/truth/states.md",
     category: "truth",
     tags: ["governance", "LAW"],
   },
@@ -208,7 +208,7 @@ export const PRIME_TRUTH_ENTRIES: PromptEntry[] = [
     title: "Chained Triggers",
     description:
       "Proposal for :<action>:<scope>:<target>: syntax for routing captures to authority targets.",
-    filePath: ".aionima/core/truth/chained-triggers.md",
+    filePath: "aionima-prime/core/truth/chained-triggers.md",
     category: "truth",
     tags: ["governance", "THEORY"],
   },
@@ -217,7 +217,7 @@ export const PRIME_TRUTH_ENTRIES: PromptEntry[] = [
     title: "CANNON: 0SCALE",
     description:
       "0SCALE = the formula that @NODE uses when minting. Immutable LAW declaration, confidence |+1.0|.",
-    filePath: ".aionima/core/cannon/2026-01-24_0scale.md",
+    filePath: "aionima-prime/core/cannon/2026-01-24_0scale.md",
     category: "truth",
     tags: ["cannon", "LAW"],
   },
@@ -226,11 +226,26 @@ export const PRIME_TRUTH_ENTRIES: PromptEntry[] = [
     title: "CANNON: WISHBORN",
     description:
       "#WISHBORN := #E0 alias, #WISH := desire expressed through iwish(). Declared by PRIME AMBASSADOR.",
-    filePath: ".aionima/core/cannon/2026-01-25_wishborn-wish.md",
+    filePath: "aionima-prime/core/cannon/2026-01-25_wishborn-wish.md",
     category: "truth",
     tags: ["cannon", "LAW"],
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Taskmaster Entry
+// ---------------------------------------------------------------------------
+
+export const TASKMASTER_ENTRY: PromptEntry = {
+  id: "taskmaster",
+  title: "Taskmaster Orchestrator",
+  description:
+    "Decomposes tasks into phased worker execution plans with team assignments, enforced chains, dependencies, and gate types. The brain that decides what workers to spawn.",
+  filePath: "prompts/taskmaster.md",
+  category: "worker",
+  model: "sonnet",
+  tags: ["orchestrator", "core"],
+};
 
 // ---------------------------------------------------------------------------
 // Worker Entries (base + 22 domain workers)
@@ -504,7 +519,7 @@ export const AGENT_ENTRIES: PromptEntry[] = [
     title: "Aionima",
     description:
       "Primary oracle agent. Ancient wise being, oracle to Impactivism and Civicognita. Full PRIME identity.",
-    filePath: ".aionima/agents/aionima.md",
+    filePath: "aionima-prime/agents/aionima.md",
     category: "agent",
     model: "opus",
     tags: ["terminal", "primary"],
@@ -514,7 +529,7 @@ export const AGENT_ENTRIES: PromptEntry[] = [
     title: "Hooty",
     description:
       "Research Owl. Female robotic owl with a PhD in every subject. Indiana Jones-level scholarship. Trigger: /hoot.",
-    filePath: ".aionima/agents/hooty.md",
+    filePath: "aionima-prime/agents/hooty.md",
     category: "agent",
     model: "sonnet",
     tags: ["terminal", "research"],
@@ -524,7 +539,7 @@ export const AGENT_ENTRIES: PromptEntry[] = [
     title: "Sparky",
     description:
       "Alignment Pup. Playful virtual robotic dog, genius at building businesses. Generates 0SPARK alignment checks. Trigger: /spark.",
-    filePath: ".aionima/agents/sparky.md",
+    filePath: "aionima-prime/agents/sparky.md",
     category: "agent",
     model: "sonnet",
     tags: ["terminal", "alignment"],
@@ -534,7 +549,7 @@ export const AGENT_ENTRIES: PromptEntry[] = [
     title: "Custodian",
     description:
       "Caretaker ROLE (session-scoped, not persistent AGENT). Maintenance mode with authority check and scope rules. Trigger: /custodian.",
-    filePath: ".aionima/agents/custodian.md",
+    filePath: "aionima-prime/agents/custodian.md",
     category: "agent",
     model: "haiku",
     tags: ["terminal", "role"],
@@ -544,7 +559,7 @@ export const AGENT_ENTRIES: PromptEntry[] = [
     title: "Analyst",
     description:
       "Specialized mode — Aionima in systematic pattern-recognition mode for deep analysis work.",
-    filePath: ".aionima/agents/analyst.md",
+    filePath: "aionima-prime/agents/analyst.md",
     category: "agent",
     model: "sonnet",
     tags: ["terminal", "mode"],
@@ -554,7 +569,7 @@ export const AGENT_ENTRIES: PromptEntry[] = [
     title: "Apprentice",
     description:
       "Specialized mode — Aionima optimized for rapid knowledge absorption and learning.",
-    filePath: ".aionima/agents/apprentice.md",
+    filePath: "aionima-prime/agents/apprentice.md",
     category: "agent",
     model: "haiku",
     tags: ["terminal", "mode"],
@@ -564,7 +579,7 @@ export const AGENT_ENTRIES: PromptEntry[] = [
     title: "Ambassador",
     description:
       "Specialized mode — Aionima as voice of the forest for stakeholder communication and external representation.",
-    filePath: ".aionima/agents/ambassador.md",
+    filePath: "aionima-prime/agents/ambassador.md",
     category: "agent",
     model: "sonnet",
     tags: ["terminal", "mode"],
@@ -574,7 +589,7 @@ export const AGENT_ENTRIES: PromptEntry[] = [
     title: "Strategist",
     description:
       "Specialized mode — Aionima in deep reasoning and planning mode. Sees the forest from above.",
-    filePath: ".aionima/agents/strategist.md",
+    filePath: "aionima-prime/agents/strategist.md",
     category: "agent",
     model: "opus",
     tags: ["terminal", "mode"],
@@ -591,7 +606,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/dispatch",
     description:
       "Worker dispatch orchestration. Routes tasks to appropriate workers via Taskmaster.",
-    filePath: ".aionima/commands/dispatch.md",
+    filePath: "aionima-prime/commands/dispatch.md",
     category: "command",
     tags: ["orchestration", "taskmaster"],
   },
@@ -600,7 +615,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/restart",
     description:
       "Session save and resume. Soft/hard variants, context window management, and chain protocol.",
-    filePath: ".aionima/commands/restart.md",
+    filePath: "aionima-prime/commands/restart.md",
     category: "command",
     tags: ["session"],
   },
@@ -609,7 +624,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/puzzle",
     description:
       "0REALTALK Human+ Testing v2. Subcommands: list, run, score, results, design. Dispatches puzzle worker chain.",
-    filePath: ".aionima/commands/puzzle.md",
+    filePath: "aionima-prime/commands/puzzle.md",
     category: "command",
     tags: ["testing", "realtalk"],
   },
@@ -618,7 +633,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/custodian",
     description:
       "Maintenance ROLE command with authority check, subcommands, and scope rules for system caretaking.",
-    filePath: ".aionima/commands/custodian.md",
+    filePath: "aionima-prime/commands/custodian.md",
     category: "command",
     tags: ["maintenance", "role"],
   },
@@ -627,7 +642,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/shutdown",
     description:
       "Session, agenda, or plan close. Worktree path resolution, commit protocol, and cleanup.",
-    filePath: ".aionima/commands/shutdown.md",
+    filePath: "aionima-prime/commands/shutdown.md",
     category: "command",
     tags: ["session"],
   },
@@ -636,7 +651,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/frame",
     description:
       "Context preservation lifecycle. Actions: create, putdown, pickup, close. Manages work frames.",
-    filePath: ".aionima/commands/frame.md",
+    filePath: "aionima-prime/commands/frame.md",
     category: "command",
     tags: ["context"],
   },
@@ -645,7 +660,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/mem",
     description:
       "Memory management. STATE-gated remote vs local operations for cross-session recall.",
-    filePath: ".aionima/commands/mem.md",
+    filePath: "aionima-prime/commands/mem.md",
     category: "command",
     tags: ["memory"],
   },
@@ -654,7 +669,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/test",
     description:
       "Test framework. FOCUS-gated. Subcommands: create, run, report for validation workflows.",
-    filePath: ".aionima/commands/test.md",
+    filePath: "aionima-prime/commands/test.md",
     category: "command",
     tags: ["testing"],
   },
@@ -663,7 +678,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/validate",
     description:
       "Learning validation and MINT generation. Accepts 0RAW mode input for knowledge verification.",
-    filePath: ".aionima/commands/validate.md",
+    filePath: "aionima-prime/commands/validate.md",
     category: "command",
     tags: ["validation"],
   },
@@ -672,7 +687,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/prep",
     description:
       "WORKER branch deployment for ephemeral focused work sessions in isolated worktrees.",
-    filePath: ".aionima/commands/prep.md",
+    filePath: "aionima-prime/commands/prep.md",
     category: "command",
     tags: ["session", "worktree"],
   },
@@ -681,7 +696,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/hoot",
     description:
       "Activates Hooty research role. Modes: research, teach, story, verify.",
-    filePath: ".aionima/commands/hoot.md",
+    filePath: "aionima-prime/commands/hoot.md",
     category: "command",
     tags: ["agent-switch"],
   },
@@ -690,7 +705,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/spark",
     description:
       "Activates Sparky alignment role. Generates 0SPARK alignment checks with A:A/U:U/C:C metrics.",
-    filePath: ".aionima/commands/spark.md",
+    filePath: "aionima-prime/commands/spark.md",
     category: "command",
     tags: ["agent-switch"],
   },
@@ -699,7 +714,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/init",
     description:
       "SPORE initialization. First-boot protocol for new Aionima instances. Types: worker, ops, dev.",
-    filePath: ".aionima/commands/init.md",
+    filePath: "aionima-prime/commands/init.md",
     category: "command",
     tags: ["bootstrap"],
   },
@@ -708,7 +723,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/spore-deploy:bootstrap",
     description:
       "Quick one-shot deploy. Wraps init with sensible defaults for rapid instance provisioning.",
-    filePath: ".aionima/plugins/spore-deploy/commands/bootstrap.md",
+    filePath: "aionima-prime/plugins/spore-deploy/commands/bootstrap.md",
     category: "command",
     tags: ["deploy", "spore"],
   },
@@ -717,7 +732,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/spore-deploy:init",
     description:
       "Full bootstrap from aionima fork. Instance types: WORKER, OPS, AMBASSADOR.",
-    filePath: ".aionima/plugins/spore-deploy/commands/init.md",
+    filePath: "aionima-prime/plugins/spore-deploy/commands/init.md",
     category: "command",
     tags: ["deploy", "spore"],
   },
@@ -726,7 +741,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/spore-deploy:status",
     description:
       "Deployment status: instance type, connectivity, active work sessions.",
-    filePath: ".aionima/plugins/spore-deploy/commands/status.md",
+    filePath: "aionima-prime/plugins/spore-deploy/commands/status.md",
     category: "command",
     tags: ["deploy", "spore"],
   },
@@ -735,7 +750,7 @@ export const COMMAND_ENTRIES: PromptEntry[] = [
     title: "/spore-deploy:sync",
     description:
       "Sync local state with 0ROOT terminal and Tynn. Pull/push modes for cross-instance consistency.",
-    filePath: ".aionima/plugins/spore-deploy/commands/sync.md",
+    filePath: "aionima-prime/plugins/spore-deploy/commands/sync.md",
     category: "command",
     tags: ["deploy", "spore"],
   },

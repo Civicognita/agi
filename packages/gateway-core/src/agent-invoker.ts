@@ -777,9 +777,14 @@ export class AgentInvoker extends EventEmitter {
             this.emit("progress", { sessionKey: sKey, text: result.text, phase: "tool_loop" });
           }
 
+          const toolResultBlocks: LLMContentBlock[] = toolResults.map((r) => ({
+            type: "tool_result" as const,
+            tool_use_id: r.tool_use_id,
+            content: r.content,
+          }));
           accumulatedMessages.push(
             { role: "assistant", content: prevContentBlocks },
-            { role: "user", content: toolResults.map((r) => ({ type: "tool_result" as const, tool_use_id: r.tool_use_id, content: r.content })) },
+            { role: "user", content: toolResultBlocks },
           );
         }
       }

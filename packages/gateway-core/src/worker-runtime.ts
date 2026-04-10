@@ -1,22 +1,27 @@
 /**
- * Worker Runtime — gateway adapter that wires LLMProvider to the runtime engine.
+ * Worker Runtime — executes Taskmaster worker jobs within the gateway process.
  *
- * Creates RuntimeInvoker from the gateway's LLMProvider, manages concurrent
- * job execution, and bridges runtime events to the DashboardEventBroadcaster.
+ * Manages concurrent job execution, tool loops, and bridges runtime events
+ * to the DashboardEventBroadcaster. Worker prompts are loaded from
+ * prompts/workers/ via WorkerPromptLoader.
  *
- * Uses dynamic imports for .bots/lib/ modules since they are outside the
- * gateway-core package boundary.
+ * Previously this dynamically imported from .bots/lib/ — now all execution
+ * logic is inlined into gateway-core.
  */
 
 import { EventEmitter } from "node:events";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { execSync } from "node:child_process";
+
 import { JobBridge } from "./job-bridge.js";
+import { WorkerPromptLoader } from "./worker-prompt-loader.js";
 import type { LLMProvider } from "./llm/provider.js";
 import type { LLMInvokeParams, LLMToolContinuationParams, LLMContentBlock } from "./llm/types.js";
 
 // ---------------------------------------------------------------------------
-// Inline minimal types (mirrors .bots/lib/runtime-types.ts)
-// Avoids cross-package imports that TypeScript can't resolve.
+// Runtime types
 // ---------------------------------------------------------------------------
 
 interface RuntimeInvoker {
@@ -52,40 +57,11 @@ interface RuntimeResponse {
   stopReason: string | null;
 }
 
-interface RuntimeToolExecutor {
-  execute(toolName: string, input: Record<string, unknown>): Promise<string>;
-  getToolDefinitions(): RuntimeToolDef[];
-}
-
-interface RuntimeConfig {
-  concurrency: number;
-  autoApprove: boolean;
-  reportDir: string;
-  coaReqId: string;
-  maxToolLoops: number;
-  modelMap: Record<string, string>;
-  projectContext?: { path: string; name: string };
-  onProgress?: (event: RuntimeEvent) => void;
-  promptDir?: string;
-}
-
-interface RuntimeResult {
-  jobId: string;
-  status: "completed" | "failed" | "checkpoint";
-  phases: unknown[];
-  burn: unknown;
-  reportDir: string;
-  errors: string[];
-}
-
-interface RuntimeEvent {
-  type: string;
-  jobId: string;
-  [key: string]: unknown;
-}
+// Runtime events are plain objects passed to emit("runtime:event", {...}).
+// No interface needed — EventEmitter accepts any payload.
 
 // ---------------------------------------------------------------------------
-// Worker state types (mirrors .bots/lib/job-manager.ts — read-only)
+// Worker state types
 // ---------------------------------------------------------------------------
 
 export interface WorkerJobPhase {
@@ -126,18 +102,12 @@ export interface WorkerRuntimeConfig {
   promptDir?: string;
   /** Directory for runtime state files (default: ~/.agi/state/). */
   stateDir?: string;
+  /** Workspace root for resolving dispatch files. */
+  workspaceRoot?: string;
 }
 
 export interface WorkerRuntimeDeps {
   llmProvider: LLMProvider;
-}
-
-// ---------------------------------------------------------------------------
-// COA filesystem key helper (inlined from runtime-types)
-// ---------------------------------------------------------------------------
-
-function sanitizeCoaForFs(fingerprint: string): string {
-  return fingerprint.replace(/[$#@]/g, "").replace(/\./g, "-");
 }
 
 // ---------------------------------------------------------------------------
@@ -233,37 +203,110 @@ function resolveModel(
 }
 
 // ---------------------------------------------------------------------------
-// Dynamic imports for .bots/lib/ modules
-//
-// These modules live outside the gateway-core package boundary (.bots/lib/).
-// We compute paths at runtime so TypeScript doesn't try to resolve them.
+// Worker tool definitions (sandboxed subset)
 // ---------------------------------------------------------------------------
 
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const BOTS_LIB = resolve(__dirname, "..", "..", "..", ".bots", "lib");
-
-type RunJobFn = (
-  jobId: string,
-  invoker: RuntimeInvoker,
-  factory: (p: string) => RuntimeToolExecutor,
-  config: RuntimeConfig,
-) => Promise<RuntimeResult>;
-
-type SandboxFactoryFn = (worktreePath: string) => RuntimeToolExecutor;
-
-async function loadRunJob(): Promise<RunJobFn> {
-  const modPath = join(BOTS_LIB, "runtime.js");
-  const mod = await import(modPath) as { runJob: RunJobFn };
-  return mod.runJob;
+function getWorkerTools(): RuntimeToolDef[] {
+  return [
+    {
+      name: "read_file",
+      description: "Read a file from the project directory.",
+      input_schema: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "File path relative to project root" },
+        },
+        required: ["path"],
+      },
+    },
+    {
+      name: "write_file",
+      description: "Write content to a file in the project directory.",
+      input_schema: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "File path relative to project root" },
+          content: { type: "string", description: "File content to write" },
+        },
+        required: ["path", "content"],
+      },
+    },
+    {
+      name: "list_files",
+      description: "List files in a directory.",
+      input_schema: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Directory path relative to project root" },
+          pattern: { type: "string", description: "Glob pattern to filter (optional)" },
+        },
+        required: ["path"],
+      },
+    },
+    {
+      name: "search_files",
+      description: "Search file contents for a pattern using grep.",
+      input_schema: {
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: "Search pattern (regex)" },
+          path: { type: "string", description: "Directory to search in (default: project root)" },
+        },
+        required: ["pattern"],
+      },
+    },
+    {
+      name: "run_command",
+      description: "Run a shell command in the project directory. Only for build/test commands.",
+      input_schema: {
+        type: "object",
+        properties: {
+          command: { type: "string", description: "Shell command to execute" },
+        },
+        required: ["command"],
+      },
+    },
+  ];
 }
 
-async function loadSandboxFactory(): Promise<SandboxFactoryFn> {
-  const modPath = join(BOTS_LIB, "runtime-tools.js");
-  const mod = await import(modPath) as { createSandboxedToolExecutor: SandboxFactoryFn };
-  return mod.createSandboxedToolExecutor;
+function executeWorkerTool(toolName: string, input: Record<string, unknown>, projectRoot: string): string {
+  try {
+    switch (toolName) {
+      case "read_file": {
+        const filePath = resolve(projectRoot, String(input.path ?? ""));
+        if (!existsSync(filePath)) return JSON.stringify({ error: "File not found" });
+        return readFileSync(filePath, "utf-8");
+      }
+      case "write_file": {
+        const filePath = resolve(projectRoot, String(input.path ?? ""));
+        const dir = resolve(filePath, "..");
+        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+        writeFileSync(filePath, String(input.content ?? ""), "utf-8");
+        return JSON.stringify({ ok: true, path: filePath });
+      }
+      case "list_files": {
+        const dirPath = resolve(projectRoot, String(input.path ?? "."));
+        if (!existsSync(dirPath)) return JSON.stringify({ error: "Directory not found" });
+        const out = execSync(`find ${JSON.stringify(dirPath)} -maxdepth 2 -type f | head -100`, { timeout: 10000 }).toString();
+        return out || "(empty)";
+      }
+      case "search_files": {
+        const searchPath = resolve(projectRoot, String(input.path ?? "."));
+        const pattern = String(input.pattern ?? "");
+        const out = execSync(`grep -rn --include='*.ts' --include='*.tsx' --include='*.md' ${JSON.stringify(pattern)} ${JSON.stringify(searchPath)} | head -50`, { timeout: 10000 }).toString();
+        return out || "(no matches)";
+      }
+      case "run_command": {
+        const cmd = String(input.command ?? "");
+        const out = execSync(cmd, { cwd: projectRoot, timeout: 60000, stdio: "pipe" }).toString();
+        return out.slice(0, 10000);
+      }
+      default:
+        return JSON.stringify({ error: `Unknown tool: ${toolName}` });
+    }
+  } catch (err) {
+    return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +317,17 @@ interface ActiveJob {
   jobId: string;
   coaReqId: string;
   startedAt: number;
-  promise: Promise<RuntimeResult>;
+  promise: Promise<WorkerRunResult>;
+}
+
+interface WorkerRunResult {
+  jobId: string;
+  status: "completed" | "failed";
+  text: string;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  toolLoops: number;
+  errors: string[];
 }
 
 export interface ActiveJobStatus {
@@ -291,21 +344,28 @@ export class WorkerRuntime extends EventEmitter {
   private activeJobs = new Map<string, ActiveJob>();
   private config: WorkerRuntimeConfig;
   private invoker: RuntimeInvoker;
+  private promptLoader: WorkerPromptLoader | null = null;
 
   constructor(config: WorkerRuntimeConfig, deps: WorkerRuntimeDeps) {
     super();
     this.config = config;
     this.invoker = createRuntimeInvoker(deps.llmProvider, config.modelMap);
+    if (config.promptDir) {
+      this.promptLoader = new WorkerPromptLoader(config.promptDir);
+    }
   }
 
   /** Hot-reload config without interrupting running jobs. */
   reloadConfig(config: WorkerRuntimeConfig, llmProvider: LLMProvider): void {
     this.config = config;
     this.invoker = createRuntimeInvoker(llmProvider, config.modelMap);
+    if (config.promptDir) {
+      this.promptLoader = new WorkerPromptLoader(config.promptDir);
+    }
   }
 
   /**
-   * Execute a worker job. Fire-and-forget — called after agentInvoker.process().
+   * Execute a worker job. Fire-and-forget — called after worker_dispatch.
    */
   async executeJob(
     jobId: string,
@@ -313,80 +373,202 @@ export class WorkerRuntime extends EventEmitter {
     projectContext?: { path: string; name: string },
   ): Promise<void> {
     if (this.activeJobs.size >= this.config.maxConcurrentJobs) {
-      this.emit("error", { jobId, error: "Max concurrent jobs reached" });
+      this.emit("runtime:event", { type: "job_failed", jobId, error: "Max concurrent jobs reached" });
       return;
     }
 
     if (this.activeJobs.has(jobId)) {
-      return; // Already running
+      return;
     }
 
-    const reportDir = join(this.config.reportsDir);
-    const runtimeConfig: RuntimeConfig = {
-      concurrency: 4,
-      autoApprove: this.config.autoApprove,
-      reportDir,
-      coaReqId,
-      maxToolLoops: 30,
-      modelMap: this.config.modelMap,
-      projectContext,
-      onProgress: (event: RuntimeEvent) => this.handleRuntimeEvent(event),
-      promptDir: this.config.promptDir,
-    };
-
-    // Bridge the dispatch file into taskmaster state so the runtime can find it
-    const jobsDir = resolve(BOTS_LIB, "..", "jobs");
+    // Read dispatch file to get job details
+    const jobsDir = join(this.config.workspaceRoot ?? ".", ".dispatch", "jobs");
     const dispatchFile = join(jobsDir, `${jobId}.json`);
+    let dispatch: { description: string; domain: string; worker: string; priority: string } | null = null;
+
+    // Try dispatch file first, then state file
+    if (existsSync(dispatchFile)) {
+      try {
+        dispatch = JSON.parse(readFileSync(dispatchFile, "utf-8")) as typeof dispatch;
+      } catch { /* fall through */ }
+    }
+
+    // Bridge into taskmaster state
     try {
       const bridge = new JobBridge(this.config.stateDir);
-      bridge.ensureJob(jobId, dispatchFile);
-    } catch {
-      // Bridge failure is non-fatal — runtime may still find the job in state
+      if (dispatch && existsSync(dispatchFile)) {
+        bridge.ensureJob(jobId, dispatchFile);
+      }
+    } catch { /* non-fatal */ }
+
+    if (!dispatch) {
+      // Try reading from taskmaster state
+      const job = await this.getJob(jobId);
+      if (job) {
+        const parts = job.entryWorker.replace("$W.", "").split(".");
+        dispatch = { description: job.queueText, domain: parts[0] ?? "code", worker: parts[1] ?? "engineer", priority: "normal" };
+      }
     }
 
-    // Dynamic imports: load runtime modules at execution time
-    const [runJob, createSandbox] = await Promise.all([
-      loadRunJob(),
-      loadSandboxFactory(),
-    ]);
+    if (!dispatch) {
+      this.emit("runtime:event", { type: "job_failed", jobId, error: "Dispatch file not found and job not in state" });
+      return;
+    }
 
-    const promise = runJob(jobId, this.invoker, createSandbox, runtimeConfig);
-
-    this.activeJobs.set(jobId, {
+    this.emit("runtime:event", {
+      type: "job_started",
       jobId,
-      coaReqId,
-      startedAt: Date.now(),
-      promise,
+      description: dispatch.description,
+      workers: [`$W.${dispatch.domain}.${dispatch.worker}`],
     });
 
-    // Fire-and-forget: clean up when done
+    const promise = this.runWorker(jobId, dispatch, coaReqId, projectContext?.path ?? ".");
+
+    this.activeJobs.set(jobId, { jobId, coaReqId, startedAt: Date.now(), promise });
+
     promise
-      .then((result: RuntimeResult) => {
+      .then((result) => {
         this.activeJobs.delete(jobId);
-        this.emit("job:completed", result);
+        // Update state
+        try {
+          const bridge = new JobBridge(this.config.stateDir);
+          bridge.updateJobStatus(jobId, result.status === "completed" ? "complete" : "failed",
+            result.errors.length > 0 ? result.errors.join("; ") : undefined);
+        } catch { /* non-fatal */ }
+        this.emit("runtime:event", {
+          type: result.status === "completed" ? "report_ready" : "job_failed",
+          jobId,
+          gist: result.text.slice(0, 500),
+          error: result.errors.join("; ") || undefined,
+        });
       })
       .catch((err: unknown) => {
         this.activeJobs.delete(jobId);
-        this.emit("job:failed", { jobId, error: err instanceof Error ? err.message : String(err) });
+        this.emit("runtime:event", { type: "job_failed", jobId, error: err instanceof Error ? err.message : String(err) });
       });
   }
 
-  async approveCheckpoint(jobId: string): Promise<void> {
-    const modPath = join(BOTS_LIB, "job-manager.js");
-    const mod = await import(modPath) as { approveCheckpoint: (id: string) => void };
-    mod.approveCheckpoint(jobId);
-    // Re-trigger job execution if paused at checkpoint
-    const active = this.activeJobs.get(jobId);
-    if (!active) {
-      const coaReqId = sanitizeCoaForFs(jobId);
-      await this.executeJob(jobId, coaReqId);
+  // -------------------------------------------------------------------------
+  // Inline worker execution — replaces .bots/lib/runtime.ts
+  // -------------------------------------------------------------------------
+
+  private async runWorker(
+    jobId: string,
+    dispatch: { description: string; domain: string; worker: string; priority: string },
+    coaReqId: string,
+    projectRoot: string,
+  ): Promise<WorkerRunResult> {
+    const workerSpec = `$W.${dispatch.domain}.${dispatch.worker}`;
+    const model = this.config.modelMap[dispatch.worker] ?? this.config.modelMap["sonnet"] ?? this.config.modelMap["default"] ?? "claude-sonnet-4-6";
+
+    this.emit("runtime:event", { type: "worker_started", jobId, worker: workerSpec, model });
+
+    // Load worker system prompt
+    let systemPrompt: string;
+    if (this.promptLoader) {
+      systemPrompt = this.promptLoader.getSystemPrompt(dispatch.domain, dispatch.worker)
+        ?? `You are ${workerSpec}, a Taskmaster worker. Domain: ${dispatch.domain}. Role: ${dispatch.worker}.\n\nComplete the dispatched task.`;
+    } else {
+      systemPrompt = `You are ${workerSpec}, a Taskmaster worker. Domain: ${dispatch.domain}. Role: ${dispatch.worker}.\n\nComplete the dispatched task.`;
+    }
+
+    const tools = getWorkerTools();
+    const messages: RuntimeMessage[] = [
+      { role: "user", content: `## Dispatch\n\n**Task:** ${dispatch.description}\n**Priority:** ${dispatch.priority}\n**Project:** ${projectRoot}\n\nExecute this task. Use the available tools to read, write, and search project files. When done, summarize what you accomplished.` },
+    ];
+
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let toolLoops = 0;
+    const maxToolLoops = 30;
+    const errors: string[] = [];
+
+    try {
+      let response = await this.invoker.invoke({
+        system: systemPrompt,
+        messages,
+        tools,
+        model,
+        maxTokens: 8192,
+        entityId: coaReqId,
+      });
+      totalInputTokens += response.usage.inputTokens;
+      totalOutputTokens += response.usage.outputTokens;
+
+      // Tool loop
+      const accMessages: RuntimeMessage[] = [...messages];
+
+      while (response.toolCalls.length > 0 && toolLoops < maxToolLoops) {
+        toolLoops++;
+
+        // Execute each tool call
+        const toolResults: RuntimeToolResult[] = [];
+        for (const tc of response.toolCalls) {
+          const result = executeWorkerTool(tc.name, tc.input, projectRoot);
+          toolResults.push({ tool_use_id: tc.id, content: result });
+        }
+
+        const prevBlocks = response.contentBlocks;
+
+        // Build tool result blocks
+        const toolResultBlocks: RuntimeContentBlock[] = toolResults.map((r) => ({
+          type: "tool_result" as const,
+          tool_use_id: r.tool_use_id,
+          content: r.content,
+        }));
+
+        response = await this.invoker.continueWithToolResults({
+          original: { system: systemPrompt, messages: accMessages, tools, model, maxTokens: 8192, entityId: coaReqId },
+          assistantContent: prevBlocks,
+          toolResults,
+        });
+        totalInputTokens += response.usage.inputTokens;
+        totalOutputTokens += response.usage.outputTokens;
+
+        // Append turns for next iteration
+        accMessages.push(
+          { role: "assistant", content: prevBlocks },
+          { role: "user", content: toolResultBlocks },
+        );
+
+        this.emit("runtime:event", { type: "worker_progress", jobId, worker: workerSpec, toolLoops, text: response.text.slice(0, 200) });
+      }
+
+      this.emit("runtime:event", { type: "worker_done", jobId, worker: workerSpec, status: "completed" });
+
+      return {
+        jobId,
+        status: "completed",
+        text: response.text,
+        totalInputTokens,
+        totalOutputTokens,
+        toolLoops,
+        errors,
+      };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      errors.push(errorMsg);
+      this.emit("runtime:event", { type: "worker_done", jobId, worker: workerSpec, status: "failed" });
+      return { jobId, status: "failed", text: "", totalInputTokens, totalOutputTokens, toolLoops, errors };
     }
   }
 
-  async rejectCheckpoint(jobId: string, reason: string): Promise<void> {
-    const modPath = join(BOTS_LIB, "job-manager.js");
-    const mod = await import(modPath) as { rejectCheckpoint: (id: string, reason: string) => void };
-    mod.rejectCheckpoint(jobId, reason);
+  // -------------------------------------------------------------------------
+  // Checkpoint management (via JobBridge state)
+  // -------------------------------------------------------------------------
+
+  async approveCheckpoint(jobId: string): Promise<void> {
+    const bridge = new JobBridge(this.config.stateDir);
+    bridge.updateJobStatus(jobId, "running");
+    const active = this.activeJobs.get(jobId);
+    if (!active) {
+      await this.executeJob(jobId, jobId);
+    }
+  }
+
+  async rejectCheckpoint(jobId: string, _reason: string): Promise<void> {
+    const bridge = new JobBridge(this.config.stateDir);
+    bridge.updateJobStatus(jobId, "failed", _reason);
     this.activeJobs.delete(jobId);
   }
 
@@ -400,15 +582,13 @@ export class WorkerRuntime extends EventEmitter {
   }
 
   /**
-   * Read all jobs from the worker state file.
-   * Returns the full Job objects from `.bots/state/taskmaster.json`.
-   * Falls back to empty array if the state file doesn't exist yet.
+   * Read all jobs from the taskmaster state file at ~/.agi/state/taskmaster.json.
    */
   async listAllJobs(): Promise<WorkerJob[]> {
     try {
-      const stateBase = this.config.stateDir ?? resolve(BOTS_LIB, "..", "state");
+      const stateBase = this.config.stateDir ?? join(homedir(), ".agi", "state");
       const statePath = join(stateBase, "taskmaster.json");
-      const { readFileSync } = await import("node:fs");
+      if (!existsSync(statePath)) return [];
       const content = readFileSync(statePath, "utf-8");
       const state = JSON.parse(content) as { wip?: { jobs?: Record<string, WorkerJob> } };
       if (!state.wip?.jobs) return [];
@@ -418,9 +598,6 @@ export class WorkerRuntime extends EventEmitter {
     }
   }
 
-  /**
-   * Get a single job from the worker state file by ID.
-   */
   async getJob(jobId: string): Promise<WorkerJob | null> {
     const jobs = await this.listAllJobs();
     return jobs.find((j) => j.id === jobId) ?? null;
@@ -430,9 +607,5 @@ export class WorkerRuntime extends EventEmitter {
     const promises = Array.from(this.activeJobs.values()).map((j) => j.promise);
     await Promise.allSettled(promises);
     this.activeJobs.clear();
-  }
-
-  private handleRuntimeEvent(event: RuntimeEvent): void {
-    this.emit("runtime:event", event);
   }
 }

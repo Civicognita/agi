@@ -1,5 +1,5 @@
 /**
- * worker_dispatch tool — write a worker job file to the .bots/jobs/ directory.
+ * worker_dispatch tool — write a worker job file to the .dispatch/jobs/ directory.
  *
  * Requires state ONLINE, tier verified/sealed.
  */
@@ -38,7 +38,7 @@ export function createWorkerDispatchHandler(
       });
     }
 
-    const jobsDir = resolve(config.botsDir ?? join(config.workspaceRoot, ".bots"), "jobs");
+    const jobsDir = resolve(config.botsDir ?? join(config.workspaceRoot, ".dispatch"), "jobs");
 
     try {
       mkdirSync(jobsDir, { recursive: true });
@@ -95,7 +95,7 @@ export function createWorkerDispatchHandler(
 export const WORKER_DISPATCH_MANIFEST = {
   name: "worker_dispatch",
   description:
-    "Dispatch a background worker task by writing a job file to .bots/jobs/. " +
+    "Dispatch a background worker task. " +
     "Accepts description, domain, worker, and priority. Returns the job ID.",
   requiresState: ["ONLINE" as const],
   requiresTier: ["verified" as const, "sealed" as const],

@@ -591,6 +591,7 @@ export async function startGatewayServer(
       },
       promptDir: resolvePath(workspaceRoot, "prompts", "workers"),
       stateDir: join(homedir(), ".agi", "state"),
+      workspaceRoot,
     },
     { llmProvider: getLLMProvider() },
   );
