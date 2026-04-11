@@ -25,7 +25,6 @@ export default function ProjectDetailPage() {
   }, [onOpenChatWithMessage]);
 
   return (
-    <PageScroll>
     <ProjectDetail
       projects={projectsHook.projects}
       onUpdate={projectsHook.update}
@@ -49,6 +48,5 @@ export default function ProjectDetailPage() {
       onFixFinding={handleFixFinding}
       onOpenMagicApp={onOpenMagicApp}
     />
-    </PageScroll>
   );
 }

@@ -12,7 +12,6 @@ import type { ProjectHostingInfo, ProjectTypeTool, RuntimeInfo, StackInfo, Proje
 import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks } from "../api.js";
 import { ProjectToolbar } from "./ProjectToolbar.js";
 import { StackManager } from "./StackManager.js";
-import { EnvManager } from "./EnvManager.js";
 import { TerminalArea } from "./TerminalArea.js";
 
 export interface HostingPanelProps {
@@ -442,50 +441,45 @@ export function HostingPanel({
             </div>
           )}
 
-          {/* Project Logs + Container Terminal — always visible when hosting is enabled */}
+          {/* Stack dev commands — above logs */}
+          {Object.keys(devCommands).length > 0 && onToolExecute && (
+            <div className="mt-3 pt-2 border-t border-border">
+              <div className="text-[10px] font-semibold text-muted-foreground mb-1.5">Dev Commands</div>
+              <ProjectToolbar
+                tools={Object.entries(devCommands).map(([key, cmd]) => ({
+                  id: `dev-cmd-${key}`,
+                  label: key,
+                  description: cmd,
+                  action: "shell" as const,
+                  command: cmd,
+                }))}
+                projectPath={projectPath}
+                onExecute={onToolExecute}
+                onToolComplete={() => setLogRefreshKey((k) => k + 1)}
+                compact
+              />
+            </div>
+          )}
+
+          {/* Stack tools */}
+          {tools && tools.length > 0 && onToolExecute && (
+            <div className="mt-3 pt-2 border-t border-border">
+              <div className="text-[10px] font-semibold text-muted-foreground mb-1.5">Tools</div>
+              <ProjectToolbar
+                tools={tools}
+                projectPath={projectPath}
+                onExecute={onToolExecute}
+                onToolComplete={() => setLogRefreshKey((k) => k + 1)}
+                compact
+              />
+            </div>
+          )}
+
+          {/* Project Logs + Container Terminal */}
           <div className="mt-3 pt-2 border-t border-border">
             <TerminalArea projectPath={projectPath} refreshKey={logRefreshKey} />
           </div>
         </div>
-
-      {/* Environment Variables */}
-      <div className="mb-3 pt-2 border-t border-border">
-        <EnvManager projectPath={projectPath} />
-      </div>
-
-      {/* Stack dev commands — visible as soon as stacks are added */}
-      {Object.keys(devCommands).length > 0 && onToolExecute && (
-        <div className="mt-3 pt-2 border-t border-border">
-          <div className="text-[10px] font-semibold text-muted-foreground mb-1.5">Dev Commands</div>
-          <ProjectToolbar
-            tools={Object.entries(devCommands).map(([key, cmd]) => ({
-              id: `dev-cmd-${key}`,
-              label: key,
-              description: cmd,
-              action: "shell" as const,
-              command: cmd,
-            }))}
-            projectPath={projectPath}
-            onExecute={onToolExecute}
-            onToolComplete={() => setLogRefreshKey((k) => k + 1)}
-            compact
-          />
-        </div>
-      )}
-
-      {/* Stack tools */}
-      {tools && tools.length > 0 && onToolExecute && (
-        <div className="mt-3 pt-2 border-t border-border">
-          <div className="text-[10px] font-semibold text-muted-foreground mb-1.5">Tools</div>
-          <ProjectToolbar
-            tools={tools}
-            projectPath={projectPath}
-            onExecute={onToolExecute}
-            onToolComplete={() => setLogRefreshKey((k) => k + 1)}
-            compact
-          />
-        </div>
-      )}
     </div>
   );
 }

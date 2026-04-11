@@ -15,6 +15,7 @@ import type { FileNode } from "../api.js";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
 import { HostingPanel } from "./HostingPanel.js";
+import { EnvManager } from "./EnvManager.js";
 import { ProjectManagement } from "./ProjectManagement.js";
 import type { HostingStatus } from "../api.js";
 import { TreeNav } from "@particle-academy/react-fancy";
@@ -228,9 +229,9 @@ export function ProjectDetail({
   }
 
   return (
-    <div>
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden p-3 md:p-6">
       {/* Header row */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 shrink-0">
         <Link to="/projects" className="no-underline">
           <Button variant="outline" size="sm">Back to Projects</Button>
         </Link>
@@ -245,7 +246,7 @@ export function ProjectDetail({
       </div>
 
       {/* Project heading */}
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex items-center gap-3 mb-6 shrink-0">
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         {isSacred && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">sacred</span>
@@ -281,13 +282,16 @@ export function ProjectDetail({
         )}
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
         <TabsList variant="line">
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="files">Editor</TabsTrigger>
           <TabsTrigger value="repository">Repository</TabsTrigger>
           {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
             <TabsTrigger value="hosting">Development</TabsTrigger>
+          )}
+          {project.projectType?.hasCode && (
+            <TabsTrigger value="environment">Environment</TabsTrigger>
           )}
           <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>
           {pluginPanels.map((p) => (
@@ -298,7 +302,7 @@ export function ProjectDetail({
           )}
         </TabsList>
 
-        <TabsContent value="details" className="mt-4">
+        <TabsContent value="details" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <div className="rounded-xl bg-card border border-border p-4">
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
@@ -445,7 +449,7 @@ export function ProjectDetail({
           )}
         </TabsContent>
 
-        <TabsContent value="files" className="mt-4">
+        <TabsContent value="files" className="mt-4 flex-1 min-h-0 overflow-hidden">
           <div className="rounded-xl bg-card border border-border overflow-hidden">
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-border">
@@ -562,7 +566,7 @@ export function ProjectDetail({
           </div>
         </TabsContent>
 
-        <TabsContent value="repository" className="mt-4">
+        <TabsContent value="repository" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <div className="rounded-xl bg-card border border-border p-4">
             {project.hasGit ? (
               <>
@@ -649,7 +653,7 @@ export function ProjectDetail({
         </TabsContent>
 
         {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
-          <TabsContent value="hosting" className="mt-4">
+          <TabsContent value="hosting" className="mt-4 flex-1 min-h-0 overflow-y-auto">
             <div className="rounded-xl bg-card border border-border p-4">
               <HostingPanel
                 projectPath={project.path}
@@ -672,7 +676,15 @@ export function ProjectDetail({
           </TabsContent>
         )}
 
-        <TabsContent value="magic-apps" className="mt-4">
+        {project.projectType?.hasCode && (
+          <TabsContent value="environment" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+            <div className="rounded-xl bg-card border border-border p-4">
+              <EnvManager projectPath={project.path} />
+            </div>
+          </TabsContent>
+        )}
+
+        <TabsContent value="magic-apps" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <div className="rounded-xl bg-card border border-border p-4">
             <MagicAppPicker
               project={project}
@@ -697,7 +709,7 @@ export function ProjectDetail({
         ))}
 
         {project.projectType?.hasCode && (
-          <TabsContent value="security" className="mt-4">
+          <TabsContent value="security" className="mt-4 flex-1 min-h-0 overflow-y-auto">
             <SecurityTab projectPath={project.path} onFixFinding={onFixFinding ? (f) => onFixFinding(project.path, f) : undefined} />
           </TabsContent>
         )}
