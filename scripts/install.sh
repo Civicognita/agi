@@ -12,10 +12,8 @@ AIONIMA_REPO="${AIONIMA_REPO:-https://github.com/Civicognita/agi.git}"
 INSTALL_DIR="${AIONIMA_INSTALL_DIR:-/opt/aionima}"
 PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
 PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
-MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-marketplace.git}"
-MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
-MAPP_MARKETPLACE_REPO="${AIONIMA_MAPP_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-mapp-marketplace.git}"
-MAPP_MARKETPLACE_DIR="${AIONIMA_MAPP_MARKETPLACE_DIR:-/opt/aionima-mapp-marketplace}"
+# Plugin and MApp marketplaces are fetched from GitHub on demand by the gateway.
+# No local clones needed.
 ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
 ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
 BRANCH="${AIONIMA_BRANCH:-main}"
@@ -148,9 +146,9 @@ clone_repo() {
 
 clone_repo "AGI"                "$AIONIMA_REPO"        "$INSTALL_DIR"
 clone_repo "PRIME"              "$PRIME_REPO"           "$PRIME_DIR"
-clone_repo "Plugin Marketplace" "$MARKETPLACE_REPO"     "$MARKETPLACE_DIR"
-clone_repo "MApp Marketplace"   "$MAPP_MARKETPLACE_REPO" "$MAPP_MARKETPLACE_DIR"
 clone_repo "ID Service"         "$ID_REPO"              "$ID_DIR"
+# Plugin and MApp marketplaces are NOT cloned locally — the gateway
+# fetches catalogs and installs plugins directly from GitHub on demand.
 
 # ---------------------------------------------------------------------------
 # 6. Install dependencies and build

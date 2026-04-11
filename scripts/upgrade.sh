@@ -8,7 +8,7 @@ DEPLOY_DIR="/opt/aionima"
 PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
 PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
 # Marketplace repos are NOT pulled locally — plugins are fetched from GitHub
-# on demand by the gateway's marketplace manager.
+# on demand by the gateway's plugin marketplace manager.
 ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
 ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
@@ -24,7 +24,7 @@ BRANCH="${AIONIMA_UPDATE_CHANNEL:-$(node -e "
 " 2>/dev/null || echo "main")}"
 
 # Backend dist dirs — changes here require a service restart.
-# Channel adapters are marketplace plugins (not bundled in core).
+# Channel adapters are plugin marketplace items (not bundled in core).
 BACKEND_DIRS=(
   "cli/dist"
   "packages/gateway-core/dist"
@@ -119,7 +119,7 @@ else
 fi
 
 # Marketplace plugins are managed by the gateway — fetched from GitHub on demand.
-# No local marketplace repo needed.
+# No local plugin marketplace repo needed.
 
 # ---------------------------------------------------------------------------
 # 3c. Pull ID service repo (auto-clone if missing)
@@ -254,7 +254,7 @@ else
 fi
 
 # Plugin builds happen in ~/.agi/plugins/cache/ at install time.
-# Required plugins are verified by the gateway on boot via the marketplace catalog.
+# Required plugins are verified by the gateway on boot via the plugin marketplace catalog.
 
 # Plugin and MApp updates are handled by the gateway via GitHub — not during upgrade.
 # The gateway syncs catalogs and updates on boot and via dashboard API calls.
