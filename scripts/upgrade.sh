@@ -296,9 +296,14 @@ else
   die "build" "pnpm build failed"
 fi
 
-# Marketplace plugins are built at install time (not deploy time).
-# The marketplace repo is a catalog source — plugins are pulled from it
-# on demand and installed into ~/.agi/plugins/cache/.
+# Build marketplace plugins — bundle src/index.ts → dist/index.js for each plugin
+emit "build-marketplace" "start"
+if npx tsx "$DEPLOY_DIR/scripts/build-marketplace.ts" "$MARKETPLACE_DIR" 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
+  emit "build-marketplace" "done" "Marketplace plugins built"
+else
+  emit "build-marketplace" "error" "Marketplace build failed (non-fatal)"
+  # Non-fatal — plugins fall back to src/index.ts if dist is missing
+fi
 
 # ---------------------------------------------------------------------------
 # 7c. Reconcile required plugins against marketplace
