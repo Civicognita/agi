@@ -409,9 +409,7 @@ export class HostingManager {
             };
           }
 
-          await this.enableProject(fullPath, meta);
-
-          // Auto-assign: stacks for code projects, viewer for non-code projects
+          // Auto-assign stacks BEFORE enabling (container launch needs the stack config)
           const typeDef = this.registry?.get(meta.type);
           const isCodeType = typeDef?.hasCode ?? true; // default to code if unknown
 
@@ -428,7 +426,11 @@ export class HostingManager {
                 this.log.info(`[${this.slugFromPath(fullPath)}] auto-assigned stack "${detected.suggestedStacks[0]}"`);
               }
             }
-          } else {
+          }
+
+          await this.enableProject(fullPath, meta);
+
+          if (!isCodeType) {
             // Non-code projects: auto-set viewer to first matching MagicApp
             const hosting = this.readHostingMeta(fullPath);
             if (hosting && !hosting.viewer) {
