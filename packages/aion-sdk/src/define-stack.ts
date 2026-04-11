@@ -78,7 +78,7 @@ import type {
   StackInstallAction,
   StackDevCommands,
 } from "@aionima/gateway-core";
-import type { ProjectCategory, ProjectTypeTool } from "@aionima/gateway-core";
+import type { ProjectCategory, ProjectTypeTool, LogSourceDefinition } from "@aionima/gateway-core";
 
 class StackBuilder {
   private def: Partial<StackDefinition> & {
@@ -154,6 +154,12 @@ class StackBuilder {
 
   compatibleLanguages(...langs: string[]): this {
     this.def.compatibleLanguages = langs;
+    return this;
+  }
+
+  logSource(source: LogSourceDefinition): this {
+    if (!this.def.logSources) this.def.logSources = [];
+    this.def.logSources.push(source);
     return this;
   }
 

@@ -6,7 +6,7 @@
  * containers across projects.
  */
 
-import type { ProjectCategory, ProjectTypeTool } from "./project-types.js";
+import type { ProjectCategory, ProjectTypeTool, LogSourceDefinition } from "./project-types.js";
 
 // ---------------------------------------------------------------------------
 // Stack categories
@@ -152,6 +152,8 @@ export interface StackDefinition {
    *  When set, the runtime picker only shows matching runtimes.
    *  When omitted, all runtimes are shown (backward compatible). */
   compatibleLanguages?: string[];
+  /** Log sources exposed by this stack (shown in the Logs dropdown). */
+  logSources?: LogSourceDefinition[];
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +188,7 @@ export interface StackInfo {
   tools: ProjectTypeTool[];
   icon?: string;
   compatibleLanguages?: string[];
+  logSources?: LogSourceDefinition[];
 }
 
 // ---------------------------------------------------------------------------

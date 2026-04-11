@@ -456,10 +456,24 @@ export function registerHostingRoutes(
     let containerFilePath: string | undefined;
 
     if (query.source && query.source !== "container") {
-      const meta = hostingManager.readHostingMeta(query.path);
-      const registry = hostingManager.getProjectTypeRegistry();
-      const typeDef = registry?.get(meta?.type ?? "");
-      const logSource = typeDef?.logSources?.find(s => s.id === query.source);
+      let logSource: { type: "container" | "container-file"; containerPath?: string } | undefined;
+
+      // Check stack-prefixed sources first (format: "stack:{stackId}:{sourceId}")
+      if (query.source.startsWith("stack:")) {
+        const parts = query.source.split(":");
+        const stackId = parts[1];
+        const sourceId = parts.slice(2).join(":");
+        const stackRegistry = hostingManager.getStackRegistry();
+        const stackDef = stackRegistry?.get(stackId ?? "");
+        logSource = stackDef?.logSources?.find(s => s.id === sourceId);
+      } else {
+        // Fall back to project-type-level log sources
+        const meta = hostingManager.readHostingMeta(query.path);
+        const registry = hostingManager.getProjectTypeRegistry();
+        const typeDef = registry?.get(meta?.type ?? "");
+        logSource = typeDef?.logSources?.find(s => s.id === query.source);
+      }
+
       if (!logSource) {
         return reply.code(404).send({ error: `Unknown log source: ${query.source}` });
       }
@@ -492,10 +506,35 @@ export function registerHostingRoutes(
     const pathErr = validateProjectPath(query.path);
     if (pathErr) return reply.code(403).send({ error: pathErr });
 
+    // Start with default container output
+    const sources: Array<{ id: string; label: string; type: string; containerPath?: string }> = [
+      { id: "container", label: "Container Output", type: "container" },
+    ];
+
+    // Append project-type-level log sources
     const meta = hostingManager.readHostingMeta(query.path);
     const registry = hostingManager.getProjectTypeRegistry();
     const typeDef = registry?.get(meta?.type ?? "");
-    const sources = typeDef?.logSources ?? [{ id: "container", label: "Container Output", type: "container" }];
+    if (typeDef?.logSources) {
+      for (const s of typeDef.logSources) {
+        sources.push(s);
+      }
+    }
+
+    // Append stack-defined log sources
+    const stackInstances = hostingManager.getProjectStacks(query.path);
+    const stackRegistry = hostingManager.getStackRegistry();
+    if (stackRegistry) {
+      for (const inst of stackInstances) {
+        const def = stackRegistry.get(inst.stackId);
+        if (def?.logSources) {
+          for (const s of def.logSources) {
+            sources.push({ ...s, id: `stack:${inst.stackId}:${s.id}` });
+          }
+        }
+      }
+    }
+
     return reply.send({ sources });
   });
 
