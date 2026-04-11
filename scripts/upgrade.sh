@@ -296,14 +296,8 @@ else
   die "build" "pnpm build failed"
 fi
 
-# Build marketplace plugins — bundle src/index.ts → dist/index.js for each plugin
-emit "build-marketplace" "start"
-if npx tsx "$DEPLOY_DIR/scripts/build-marketplace.ts" "$MARKETPLACE_DIR" 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
-  emit "build-marketplace" "done" "Marketplace plugins built"
-else
-  emit "build-marketplace" "error" "Marketplace build failed (non-fatal)"
-  # Non-fatal — plugins fall back to src/index.ts if dist is missing
-fi
+# Plugin dist bundles are built in ~/.agi/plugins/cache/ at install time.
+# The reconcileInstalled() method on boot detects source changes and rebuilds.
 
 # ---------------------------------------------------------------------------
 # 7c. Reconcile required plugins against marketplace

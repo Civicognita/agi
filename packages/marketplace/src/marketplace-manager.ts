@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MarketplaceStore } from "./store.js";
 import { fetchCatalog, parseSourceRef } from "./catalog-fetcher.js";
-import { installPlugin, uninstallPlugin, computePluginIntegrityHash } from "./installer.js";
+import { installPlugin, uninstallPlugin, installFromLocal, computePluginIntegrityHash } from "./installer.js";
 import type {
   MarketplaceSource,
   MarketplacePluginEntry,
@@ -140,15 +140,26 @@ export class MarketplaceManager {
       const freshHash = computePluginIntegrityHash(srcDir);
       if (freshHash === item.integrityHash) continue; // No changes
 
-      // Re-install: remove old, install fresh
+      // Copy directly from local marketplace dir and rebuild in cache
       try {
+        const installPath = item.installPath;
+        uninstallPlugin(installPath);
+        await installFromLocal(srcDir, installPath);
+
+        const integrityHash = computePluginIntegrityHash(installPath);
         this.store.removeInstalled(item.name);
-        const result = await this.install(item.name, item.sourceId);
-        if (result.ok) {
-          updated.push(item.name);
-        } else {
-          errors.push(`${item.name}: ${result.error ?? "unknown"}`);
-        }
+        this.store.addInstalled({
+          name: item.name,
+          sourceId: item.sourceId,
+          type: (catalogPlugin.type as import("./types.js").MarketplaceItemType) ?? "plugin",
+          version: catalogPlugin.version ?? "0.0.0",
+          installedAt: new Date().toISOString(),
+          installPath,
+          sourceJson: catalogPlugin.sourceJson,
+          integrityHash: integrityHash || undefined,
+          trustTier: catalogPlugin.trustTier,
+        });
+        updated.push(item.name);
       } catch (err) {
         errors.push(`${item.name}: ${err instanceof Error ? err.message : String(err)}`);
       }

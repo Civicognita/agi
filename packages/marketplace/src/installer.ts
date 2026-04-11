@@ -365,6 +365,19 @@ await build({
   }
 }
 
+/**
+ * Install a plugin by copying from a local directory and rebuilding.
+ * Used by reconcileInstalled() to update plugins from the local marketplace
+ * without cloning from GitHub (dist/ is gitignored so clone misses it).
+ */
+export async function installFromLocal(srcDir: string, installPath: string): Promise<void> {
+  sudoRm(installPath);
+  sudoMkdir(installPath);
+  sudoCpContents(srcDir, installPath);
+  sudoRm(join(installPath, ".git"));
+  await buildPlugin(installPath);
+}
+
 /** Uninstall a plugin by removing its install path. */
 export function uninstallPlugin(installPath: string): void {
   if (existsSync(installPath)) {
