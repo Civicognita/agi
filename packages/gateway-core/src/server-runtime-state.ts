@@ -201,6 +201,16 @@ export interface RuntimeStateDeps {
 
   /** MAppRegistry — standalone MApp registry (NOT plugin-based). */
   mappRegistry?: import("./mapp-registry.js").MAppRegistry;
+  mappMarketplaceManager?: {
+    getSources(): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number }[];
+    addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number };
+    removeSource(id: number): void;
+    syncSource(id: number): Promise<{ ok: boolean; error?: string; mappCount?: number }>;
+    getCatalogWithInstalled(): Array<{ id: string; sourceId: number; author: string; description?: string; category?: string; version?: string; sourcePath: string; installed: boolean }>;
+    install(appId: string, sourceId: number): Promise<{ ok: boolean; error?: string }>;
+    uninstall(appId: string, author: string): { ok: boolean; error?: string };
+    syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
+  };
   /** MagicAppStateStore — persistent MApp instance state. */
   magicAppStateStore?: import("./magic-app-state-store.js").MagicAppStateStore;
 
@@ -4326,209 +4336,118 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
-  // MApp Marketplace — browse and install MApps from the marketplace repo
+  // MApp Marketplace — browse, install, and manage MApp sources
   // -----------------------------------------------------------------------
 
-  const mappsInstallDir = join(homedir(), ".agi", "mapps");
+  if (deps.mappMarketplaceManager) {
+    const mappMp = deps.mappMarketplaceManager;
 
-  /** Official MApp marketplace GitHub source — hardcoded. */
-  const OFFICIAL_MAPP_MARKETPLACE = "Civicognita/aionima-mapp-marketplace";
-
-  /**
-   * Fetch a file from the MApp marketplace GitHub repo.
-   * Uses the GitHub Contents API (works for public and private repos with token).
-   * Falls back to raw.githubusercontent.com for public repos.
-   */
-  async function fetchFromMAppMarketplace(path: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-    // Use the gateway's update channel to fetch from the correct branch
-    const channel = ((deps.config as Record<string, unknown> | undefined)?.gateway as Record<string, string> | undefined)?.updateChannel ?? "main";
-    // Try GitHub Contents API first (works with auth tokens for private repos)
-    const apiUrl = `https://api.github.com/repos/${OFFICIAL_MAPP_MARKETPLACE}/contents/${path}?ref=${channel}`;
-    try {
-      const headers: Record<string, string> = { Accept: "application/vnd.github.raw+json" };
-      // Use GITHUB_TOKEN if available (for private repos)
-      const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
-      if (token) headers.Authorization = `token ${token}`;
-
-      const res = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(15_000) });
-      if (res.ok) {
-        const data = await res.json() as unknown;
-        return { ok: true, data };
-      }
-
-      // Fallback to raw.githubusercontent.com (public repos only)
-      const rawUrl = `https://raw.githubusercontent.com/${OFFICIAL_MAPP_MARKETPLACE}/${channel}/${path}`;
-      const rawRes = await fetch(rawUrl, {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!rawRes.ok) return { ok: false, error: `HTTP ${rawRes.status}` };
-      const rawData = await rawRes.json() as unknown;
-      return { ok: true, data: rawData };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  }
-
-  async function fetchMAppCatalog(): Promise<{ ok: boolean; mapps: Array<Record<string, unknown>>; error?: string }> {
-    const result = await fetchFromMAppMarketplace("marketplace.json");
-    if (!result.ok) return { ok: false, mapps: [], error: result.error };
-    const data = result.data as { mapps?: Array<Record<string, unknown>> };
-    return { ok: true, mapps: data.mapps ?? [] };
-  }
-
-  // GET /api/mapp-marketplace/catalog — fetch catalog from GitHub + mark installed status
-  fastify.get("/api/mapp-marketplace/catalog", async (request, reply) => {
-    const clientIp = getClientIp(request.raw);
-    if (!isPrivateNetwork(clientIp)) {
-      return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
-    }
-
-    const result = await fetchMAppCatalog();
-    const entries = result.mapps.map((m) => {
-      const author = (m.author as string) ?? "civicognita";
-      const id = m.id as string;
-      const installedPath = join(mappsInstallDir, author, `${id}.json`);
-      return {
-        definition: m,
-        source: m.source as string,
-        installed: existsSync(installedPath),
-      };
+    // Source management
+    fastify.get("/api/mapp-marketplace/sources", async (_request, reply) => {
+      return reply.send(mappMp.getSources());
     });
-    return reply.send({ apps: entries });
-  });
 
-  // POST /api/mapp-marketplace/install — fetch MApp JSON from GitHub and install
-  fastify.post("/api/mapp-marketplace/install", async (request, reply) => {
-    const clientIp = getClientIp(request.raw);
-    if (!isPrivateNetwork(clientIp)) {
-      return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
-    }
+    fastify.post("/api/mapp-marketplace/sources", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "MApp Marketplace API only allowed from private network" });
+      const body = request.body as { ref?: string; name?: string };
+      if (!body.ref) return reply.code(400).send({ error: "ref is required (e.g. 'owner/repo')" });
+      const source = mappMp.addSource(body.ref, body.name);
+      return reply.send(source);
+    });
 
-    const body = request.body as { appId?: string; author?: string; source?: string } | undefined;
-    if (!body?.appId || !body?.author) {
-      return reply.code(400).send({ error: "appId and author are required" });
-    }
+    fastify.delete<{ Params: { id: string } }>("/api/mapp-marketplace/sources/:id", async (request, reply) => {
+      mappMp.removeSource(Number(request.params.id));
+      return reply.send({ ok: true });
+    });
 
-    const sourcePath = body.source ?? `./mapps/${body.author}/${body.appId}.json`;
-    const relativePath = sourcePath.replace(/^\.\//, "");
+    fastify.post<{ Params: { id: string } }>("/api/mapp-marketplace/sources/:id/sync", async (request, reply) => {
+      const result = await mappMp.syncSource(Number(request.params.id));
+      if (!result.ok) return reply.code(400).send(result);
+      return reply.send(result);
+    });
 
-    try {
-      // Fetch the MApp JSON from GitHub
-      const result = await fetchFromMAppMarketplace(relativePath);
-      if (!result.ok) {
-        return reply.code(404).send({ error: `MApp "${body.appId}" not found in marketplace: ${result.error}` });
+    // Catalog
+    fastify.get("/api/mapp-marketplace/catalog", async (_request, reply) => {
+      const catalog = mappMp.getCatalogWithInstalled();
+      // Wrap in { apps } for backward compatibility with dashboard
+      return reply.send({ apps: catalog.map((entry) => ({
+        definition: { id: entry.id, author: entry.author, description: entry.description, category: entry.category, version: entry.version, source: entry.sourcePath },
+        source: entry.sourcePath,
+        installed: entry.installed,
+        sourceId: entry.sourceId,
+      })) });
+    });
+
+    // Install
+    fastify.post("/api/mapp-marketplace/install", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "MApp Marketplace API only allowed from private network" });
+      const body = request.body as { appId?: string; sourceId?: number } | undefined;
+      if (!body?.appId || body.sourceId === undefined) {
+        return reply.code(400).send({ error: "appId and sourceId are required" });
       }
-      const raw = result.data as Record<string, unknown>;
 
-      // Validate before writing
-      const { MAppDefinitionSchema } = await import("@aionima/config");
-      const parsed = MAppDefinitionSchema.safeParse(raw);
-      if (!parsed.success) {
-        return reply.code(400).send({ error: "Invalid MApp definition", issues: parsed.error.issues });
-      }
-
-      // Write to install directory
-      const destDir = join(mappsInstallDir, body.author);
-      mkdirSync(destDir, { recursive: true });
-      const destPath = join(destDir, `${body.appId}.json`);
-      writeFileSync(destPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
+      const result = await mappMp.install(body.appId, body.sourceId);
+      if (!result.ok) return reply.code(400).send(result);
 
       // Register in live registry
-      if (deps.mappRegistry) {
-        deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+      const { MAppDefinitionSchema } = await import("@aionima/config");
+      const catalog = mappMp.getCatalogWithInstalled();
+      const entry = catalog.find((e) => e.id === body.appId);
+      if (entry && deps.mappRegistry) {
+        const mappsDir = join(homedir(), ".agi", "mapps");
+        const filePath = join(mappsDir, entry.author, `${body.appId}.json`);
+        try {
+          const raw = JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, unknown>;
+          const parsed = MAppDefinitionSchema.safeParse(raw);
+          if (parsed.success) {
+            deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+          }
+        } catch { /* non-fatal */ }
       }
 
       return reply.send({ ok: true, id: body.appId });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return reply.code(500).send({ error: msg });
-    }
-  });
+    });
 
-  // DELETE /api/mapp-marketplace/installed/:id — uninstall a MApp
-  fastify.delete("/api/mapp-marketplace/installed/:id", async (request, reply) => {
-    const clientIp = getClientIp(request.raw);
-    if (!isPrivateNetwork(clientIp)) {
-      return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
-    }
+    // Uninstall
+    fastify.delete<{ Params: { id: string } }>("/api/mapp-marketplace/installed/:id", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "MApp Marketplace API only allowed from private network" });
+      const { id } = request.params;
+      const def = deps.mappRegistry?.get(id);
+      if (!def) return reply.code(404).send({ error: `MApp "${id}" is not installed` });
+      mappMp.uninstall(id, def.author);
+      deps.mappRegistry?.unregister(id);
+      return reply.send({ ok: true });
+    });
 
-    const { id } = request.params as { id: string };
+    // Pull — sync all sources + update installed MApps
+    fastify.post("/api/mapp-marketplace/pull", async (_request, reply) => {
+      const clientIp = getClientIp(_request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "MApp Marketplace API only allowed from private network" });
+      const result = await mappMp.syncAndUpdateAll();
 
-    // Find the installed MApp to determine its author directory
-    const def = deps.mappRegistry?.get(id);
-    if (!def) {
-      return reply.code(404).send({ error: `MApp "${id}" is not installed` });
-    }
-
-    const filePath = join(mappsInstallDir, def.author, `${id}.json`);
-    if (existsSync(filePath)) {
-      rmSync(filePath);
-    }
-
-    // Unregister from live registry
-    deps.mappRegistry?.unregister(id);
-
-    return reply.send({ ok: true });
-  });
-
-  // POST /api/mapp-marketplace/sync — update already-installed MApps to latest marketplace versions
-  fastify.post("/api/mapp-marketplace/sync", async (request, reply) => {
-    const clientIp = getClientIp(request.raw);
-    if (!isPrivateNetwork(clientIp)) {
-      return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
-    }
-
-    const catalog = await fetchMAppCatalog();
-    if (!catalog.ok) {
-      return reply.code(502).send({ error: `Failed to fetch catalog: ${catalog.error}` });
-    }
-
-    const { MAppDefinitionSchema } = await import("@aionima/config");
-    const updated: string[] = [];
-    const errors: string[] = [];
-
-    for (const entry of catalog.mapps) {
-      const id = entry.id as string;
-      const author = (entry.author as string) ?? "civicognita";
-      const marketplaceVersion = entry.version as string;
-      const sourcePath = (entry.source as string)?.replace(/^\.\//, "") ?? `mapps/${author}/${id}.json`;
-
-      // Only update MApps that are already installed — never auto-install
-      const installedPath = join(mappsInstallDir, author, `${id}.json`);
-      if (!existsSync(installedPath)) continue;
-
-      // Skip if already at current version
-      try {
-        const local = JSON.parse(readFileSync(installedPath, "utf-8")) as { version?: string };
-        if (local.version === marketplaceVersion) continue;
-      } catch { /* re-fetch on parse error */ }
-
-      // Fetch updated version from GitHub
-      const result = await fetchFromMAppMarketplace(sourcePath);
-      if (!result.ok) {
-        errors.push(`${id}: ${result.error}`);
-        continue;
+      // Re-register updated MApps in live registry
+      if (deps.mappRegistry && result.updated.length > 0) {
+        const { MAppDefinitionSchema } = await import("@aionima/config");
+        const mappsDir = join(homedir(), ".agi", "mapps");
+        for (const appId of result.updated) {
+          const catalog = mappMp.getCatalogWithInstalled();
+          const entry = catalog.find((e) => e.id === appId);
+          if (!entry) continue;
+          try {
+            const raw = JSON.parse(readFileSync(join(mappsDir, entry.author, `${appId}.json`), "utf-8")) as Record<string, unknown>;
+            const parsed = MAppDefinitionSchema.safeParse(raw);
+            if (parsed.success) deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+          } catch { /* non-fatal */ }
+        }
       }
 
-      const raw = result.data as Record<string, unknown>;
-      const parsed = MAppDefinitionSchema.safeParse(raw);
-      if (!parsed.success) {
-        errors.push(`${id}: invalid definition`);
-        continue;
-      }
-
-      writeFileSync(installedPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
-
-      if (deps.mappRegistry) {
-        deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
-      }
-
-      updated.push(id);
-    }
-
-    return reply.send({ ok: true, updated, errors });
-  });
+      log.info(`mapp-marketplace pull: synced=${String(result.synced)}, updated=${result.updated.length}`);
+      return reply.send({ ok: true, ...result });
+    });
+  }
 
   // -----------------------------------------------------------------------
   // Pre-listen hooks — register additional routes before the server starts

@@ -12,6 +12,8 @@ import type {
   InstalledItem,
   CatalogSearchParams,
   TrustTier,
+  MAppSource,
+  MAppCatalogEntry,
 } from "./types.js";
 
 export class MarketplaceStore {
@@ -293,6 +295,90 @@ export class MarketplaceStore {
   isInstalled(name: string): boolean {
     const row = this.db.prepare("SELECT 1 FROM marketplace_installed WHERE name = ?").get(name);
     return row !== undefined;
+  }
+
+  // -------------------------------------------------------------------------
+  // MApp Sources
+  // -------------------------------------------------------------------------
+
+  addMAppSource(ref: string, sourceType: string, name: string): MAppSource {
+    const info = this.db.prepare(
+      "INSERT INTO mapp_sources (ref, source_type, name) VALUES (?, ?, ?)",
+    ).run(ref, sourceType, name);
+    return { id: Number(info.lastInsertRowid), ref, sourceType: sourceType as MAppSource["sourceType"], name, lastSyncedAt: null, mappCount: 0 };
+  }
+
+  removeMAppSource(id: number): void {
+    this.db.prepare("DELETE FROM mapp_sources WHERE id = ?").run(id);
+  }
+
+  getMAppSources(): MAppSource[] {
+    const rows = this.db.prepare("SELECT * FROM mapp_sources ORDER BY id").all() as {
+      id: number; ref: string; source_type: string; name: string; last_synced_at: string | null; mapp_count: number;
+    }[];
+    return rows.map((r) => ({
+      id: r.id, ref: r.ref, sourceType: r.source_type as MAppSource["sourceType"],
+      name: r.name, lastSyncedAt: r.last_synced_at, mappCount: r.mapp_count,
+    }));
+  }
+
+  getMAppSource(id: number): MAppSource | undefined {
+    const row = this.db.prepare("SELECT * FROM mapp_sources WHERE id = ?").get(id) as {
+      id: number; ref: string; source_type: string; name: string; last_synced_at: string | null; mapp_count: number;
+    } | undefined;
+    if (!row) return undefined;
+    return {
+      id: row.id, ref: row.ref, sourceType: row.source_type as MAppSource["sourceType"],
+      name: row.name, lastSyncedAt: row.last_synced_at, mappCount: row.mapp_count,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // MApp Catalog
+  // -------------------------------------------------------------------------
+
+  syncMApps(sourceId: number, mapps: Array<{ id: string; author?: string; description?: string; category?: string; version?: string; source?: string }>): void {
+    const txn = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM mapp_catalog WHERE source_id = ?").run(sourceId);
+      const insert = this.db.prepare(
+        "INSERT INTO mapp_catalog (id, source_id, author, description, category, version, source_path) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      );
+      for (const m of mapps) {
+        const author = m.author ?? "civicognita";
+        const sourcePath = m.source?.replace(/^\.\//, "") ?? `mapps/${author}/${m.id}.json`;
+        insert.run(m.id, sourceId, author, m.description ?? null, m.category ?? null, m.version ?? null, sourcePath);
+      }
+      this.db.prepare("UPDATE mapp_sources SET last_synced_at = ?, mapp_count = ? WHERE id = ?")
+        .run(new Date().toISOString(), mapps.length, sourceId);
+    });
+    txn();
+  }
+
+  getMAppCatalog(sourceId?: number): MAppCatalogEntry[] {
+    const sql = sourceId !== undefined
+      ? "SELECT * FROM mapp_catalog WHERE source_id = ? ORDER BY id"
+      : "SELECT * FROM mapp_catalog ORDER BY id";
+    const rows = (sourceId !== undefined
+      ? this.db.prepare(sql).all(sourceId)
+      : this.db.prepare(sql).all()
+    ) as { id: string; source_id: number; author: string; description: string | null; category: string | null; version: string | null; source_path: string }[];
+    return rows.map((r) => ({
+      id: r.id, sourceId: r.source_id, author: r.author,
+      description: r.description ?? undefined, category: r.category ?? undefined,
+      version: r.version ?? undefined, sourcePath: r.source_path,
+    }));
+  }
+
+  getMApp(id: string, sourceId: number): MAppCatalogEntry | undefined {
+    const row = this.db.prepare("SELECT * FROM mapp_catalog WHERE id = ? AND source_id = ?").get(id, sourceId) as {
+      id: string; source_id: number; author: string; description: string | null; category: string | null; version: string | null; source_path: string;
+    } | undefined;
+    if (!row) return undefined;
+    return {
+      id: row.id, sourceId: row.source_id, author: row.author,
+      description: row.description ?? undefined, category: row.category ?? undefined,
+      version: row.version ?? undefined, sourcePath: row.source_path,
+    };
   }
 
   close(): void {

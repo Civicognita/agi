@@ -1122,6 +1122,28 @@ export async function startGatewayServer(
   const mappDiscoveryResult = discoverMApps(mappsDir, mappRegistry, logger);
   log.info(`MApps: ${String(mappDiscoveryResult.loaded)} loaded, ${String(mappDiscoveryResult.skipped)} skipped`);
 
+  // MApp Marketplace Manager — multi-source MApp catalog, install, and updates
+  const { MAppMarketplaceManager } = await import("@aionima/marketplace");
+  const mappMarketplaceManager = new MAppMarketplaceManager({
+    store: marketplaceManager.getStore(),
+    mappsDir,
+    updateChannel,
+  });
+
+  // Seed official MApp Marketplace source if none exist
+  {
+    const mappSources = mappMarketplaceManager.getSources();
+    const mappRef = `Civicognita/aionima-mapp-marketplace#${updateChannel}`;
+    if (mappSources.length === 0) {
+      mappMarketplaceManager.addSource(mappRef, "Aionima MApps");
+      log.info(`mapp-marketplace: seeded default source (${mappRef})`);
+    } else if (mappSources[0]!.ref !== mappRef) {
+      mappMarketplaceManager.removeSource(mappSources[0]!.id);
+      mappMarketplaceManager.addSource(mappRef, "Aionima MApps");
+      log.info(`mapp-marketplace: updated source to ${mappRef}`);
+    }
+  }
+
   const hostingManager = new HostingManager({
     config: {
       enabled: hostingConfig?.enabled ?? false,
@@ -1397,9 +1419,7 @@ export async function startGatewayServer(
       secrets,
       config: config as Record<string, unknown>,
       mappRegistry,
-      mappMarketplaceDir: (config as Record<string, unknown>).mappMarketplace
-        ? ((config as Record<string, unknown>).mappMarketplace as Record<string, string>).dir
-        : undefined,
+      mappMarketplaceManager,
       magicAppStateStore,
       identityProvider,
       oauthHandler,

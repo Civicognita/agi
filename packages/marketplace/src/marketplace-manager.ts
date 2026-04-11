@@ -40,6 +40,11 @@ export class MarketplaceManager {
     this.requiredPluginIds = this.loadRequiredPluginIds(options.installDir);
   }
 
+  /** Expose the underlying store for shared access (e.g. MApp Marketplace Manager). */
+  getStore(): MarketplaceStore {
+    return this.store;
+  }
+
   private loadRequiredPluginIds(installDir?: string): Set<string> {
     const dir = installDir ?? process.cwd();
     const reqPath = join(dir, "config/required-plugins.json");

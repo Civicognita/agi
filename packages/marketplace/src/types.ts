@@ -139,3 +139,37 @@ export interface CatalogSearchParams {
   category?: string;
   provides?: string;
 }
+
+// ---------------------------------------------------------------------------
+// MApp Marketplace types
+// ---------------------------------------------------------------------------
+
+export interface MAppSource {
+  id: number;
+  ref: string;
+  sourceType: MarketplaceSourceType;
+  name: string;
+  lastSyncedAt: string | null;
+  mappCount: number;
+}
+
+export interface MAppCatalogEntry {
+  id: string;
+  sourceId: number;
+  author: string;
+  description?: string;
+  category?: string;
+  version?: string;
+  sourcePath: string;
+}
+
+export interface MAppCatalog {
+  mapps: Array<{
+    id: string;
+    author?: string;
+    description?: string;
+    category?: string;
+    version?: string;
+    source?: string;
+  }>;
+}

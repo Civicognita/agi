@@ -647,11 +647,11 @@ export async function fetchMAppCatalog(): Promise<{ apps: import("./types.js").M
   return res.json() as Promise<{ apps: import("./types.js").MAppCatalogEntry[] }>;
 }
 
-export async function installMApp(appId: string, author: string, source?: string): Promise<{ ok: boolean }> {
+export async function installMApp(appId: string, sourceId: number): Promise<{ ok: boolean }> {
   const res = await fetch("/api/mapp-marketplace/install", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ appId, author, source }),
+    body: JSON.stringify({ appId, sourceId }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
@@ -669,6 +669,37 @@ export async function uninstallMApp(appId: string): Promise<{ ok: boolean }> {
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<{ ok: boolean }>;
+}
+
+// MApp Marketplace source management
+
+export async function fetchMAppSources(): Promise<Array<{ id: number; ref: string; name: string; lastSyncedAt: string | null; mappCount: number }>> {
+  const res = await fetch("/api/mapp-marketplace/sources");
+  if (!res.ok) return [];
+  return res.json() as Promise<Array<{ id: number; ref: string; name: string; lastSyncedAt: string | null; mappCount: number }>>;
+}
+
+export async function addMAppSource(ref: string, name?: string): Promise<{ id: number; ref: string; name: string }> {
+  const res = await fetch("/api/mapp-marketplace/sources", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ref, name }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ id: number; ref: string; name: string }>;
+}
+
+export async function removeMAppSource(id: number): Promise<void> {
+  await fetch(`/api/mapp-marketplace/sources/${id}`, { method: "DELETE" });
+}
+
+export async function pullMAppMarketplace(): Promise<{ ok: boolean; synced: number; updated: string[]; errors: string[] }> {
+  const res = await fetch("/api/mapp-marketplace/pull", { method: "POST" });
+  if (!res.ok) return { ok: false, synced: 0, updated: [], errors: ["Pull failed"] };
+  return res.json() as Promise<{ ok: boolean; synced: number; updated: string[]; errors: string[] }>;
 }
 
 export async function restartHosting(path: string): Promise<{ ok: boolean; hosting: unknown }> {
