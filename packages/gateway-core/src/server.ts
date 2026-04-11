@@ -1440,7 +1440,16 @@ export async function startGatewayServer(
   // Track topic subscriptions per connection
   const subscriptions = new Map<string, Set<string>>();
 
+  // Track the latest connectionId per owner entity — updated on every WS message.
+  // Event handlers use this to always send to the current connection, even if the
+  // browser reconnected during a long tool execution (e.g., Playwright sessions).
+  const ownerConnectionMap = new Map<string, string>();
+
   wsServer.on("message", (connectionId: string, message: WSMessage) => {
+    // Update the owner → connection mapping on every message
+    if (ownerEntityId !== undefined) {
+      ownerConnectionMap.set(ownerEntityId, connectionId);
+    }
     switch (message.type) {
       case "ping": {
         wsServer.broadcast("pong", null);
@@ -1771,7 +1780,7 @@ export async function startGatewayServer(
         };
         const toolStartHandler = (data: { sessionKey: string; toolName: string; toolIndex: number; loopIteration: number; toolInput?: Record<string, unknown> }) => {
           if (data.sessionKey !== sessionKey) return;
-          wsServer.sendTo(connectionId, "chat:tool_start", {
+          wsServer.sendTo(getConnId(), "chat:tool_start", {
             sessionId: chatSessionId,
             runId,
             toolName: data.toolName,
@@ -1793,7 +1802,7 @@ export async function startGatewayServer(
           if (data.sessionKey !== sessionKey) return;
           const toolResultTs = new Date().toISOString();
           const toolCardId = `${chatSessionId ?? "t"}-${String(data.loopIteration)}-${String(data.toolIndex)}`;
-          wsServer.sendTo(connectionId, "chat:tool_result", {
+          wsServer.sendTo(getConnId(), "chat:tool_result", {
             sessionId: chatSessionId,
             runId,
             toolName: data.toolName,
@@ -1836,7 +1845,7 @@ export async function startGatewayServer(
               const parsed = JSON.parse(data.resultContent) as { ok?: boolean; path?: string; name?: string; slug?: string };
               if (parsed.ok && parsed.path) {
                 chatProjectPath = parsed.path;
-                wsServer.sendTo(connectionId, "chat:context_set", {
+                wsServer.sendTo(getConnId(), "chat:context_set", {
                   sessionId: chatSessionId,
                   context: parsed.path,
                   contextLabel: parsed.name ?? parsed.slug ?? "Project",
@@ -1855,7 +1864,7 @@ export async function startGatewayServer(
         };
         const progressHandler = (data: { sessionKey: string; text: string; phase: string }) => {
           if (data.sessionKey !== sessionKey) return;
-          wsServer.sendTo(connectionId, "chat:progress", {
+          wsServer.sendTo(getConnId(), "chat:progress", {
             sessionId: chatSessionId,
             text: data.text,
             phase: data.phase,
@@ -1865,7 +1874,7 @@ export async function startGatewayServer(
         const thoughtHandler = (data: { sessionKey: string; content: string }) => {
           if (data.sessionKey !== sessionKey) return;
           const thoughtTs = new Date().toISOString();
-          wsServer.sendTo(connectionId, "chat:thought", {
+          wsServer.sendTo(getConnId(), "chat:thought", {
             sessionId: chatSessionId,
             runId,
             content: data.content,
@@ -1884,6 +1893,11 @@ export async function startGatewayServer(
             }
           }
         };
+
+        // Use a getter that always resolves the CURRENT connectionId for this owner,
+        // not the one captured at message-send time. This prevents stale connections
+        // when the browser reconnects during long tool executions (Playwright, etc.).
+        const getConnId = () => ownerConnectionMap.get(ownerEntityId!) ?? connectionId;
 
         agentInvoker.on("tool_start", toolStartHandler);
         agentInvoker.on("tool_result", toolResultHandler);
@@ -1947,7 +1961,7 @@ export async function startGatewayServer(
             } else if (!text) {
               text = "[No response]";
             }
-            wsServer.sendTo(connectionId, "chat:response", {
+            wsServer.sendTo(getConnId(), "chat:response", {
               sessionId: chatSessionId,
               runId,
               text,
@@ -1956,7 +1970,7 @@ export async function startGatewayServer(
             // Generate contextual next-step suggestions via LLM
             const suggestions = await generateNextSteps(chatText ?? "", text, getLLMProvider());
             if (suggestions.length > 0) {
-              wsServer.sendTo(connectionId, "chat:suggestions", {
+              wsServer.sendTo(getConnId(), "chat:suggestions", {
                 sessionId: chatSessionId,
                 suggestions,
               });
@@ -1996,23 +2010,23 @@ export async function startGatewayServer(
               }
             }
           } else if (outcome.type === "error") {
-            wsServer.sendTo(connectionId, "chat:error", { sessionId: chatSessionId, error: outcome.message });
+            wsServer.sendTo(getConnId(), "chat:error", { sessionId: chatSessionId, error: outcome.message });
           } else if (outcome.type === "rate_limited") {
-            wsServer.sendTo(connectionId, "chat:error", { sessionId: chatSessionId, error: outcome.entityNotification });
+            wsServer.sendTo(getConnId(), "chat:error", { sessionId: chatSessionId, error: outcome.entityNotification });
           } else if (outcome.type === "queued") {
-            wsServer.sendTo(connectionId, "chat:response", {
+            wsServer.sendTo(getConnId(), "chat:response", {
               sessionId: chatSessionId,
               text: outcome.entityNotification || "[Message queued]",
               timestamp: new Date().toISOString(),
             });
           } else if (outcome.type === "human_routed") {
-            wsServer.sendTo(connectionId, "chat:response", {
+            wsServer.sendTo(getConnId(), "chat:response", {
               sessionId: chatSessionId,
               text: "[Routed to human operator]",
               timestamp: new Date().toISOString(),
             });
           } else if (outcome.type === "log_only") {
-            wsServer.sendTo(connectionId, "chat:response", {
+            wsServer.sendTo(getConnId(), "chat:response", {
               sessionId: chatSessionId,
               text: "[Logged — no response in current state]",
               timestamp: new Date().toISOString(),
@@ -2098,7 +2112,7 @@ export async function startGatewayServer(
             });
           }
           log.error(`chat:send error: ${err instanceof Error ? err.message : String(err)}`);
-          wsServer.sendTo(connectionId, "chat:error", {
+          wsServer.sendTo(getConnId(), "chat:error", {
             sessionId: chatSessionId,
             error: err instanceof Error ? err.message : "Agent processing failed",
           });
