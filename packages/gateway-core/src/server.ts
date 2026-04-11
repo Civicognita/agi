@@ -499,6 +499,10 @@ export async function startGatewayServer(
   // The onJobCreated callback is only invoked during agent tool execution (after boot),
   // so workerRuntimeRef.current is always set by the time it is first called.
   const workerRuntimeRef: { current: WorkerRuntime | null } = { current: null };
+  // Late-bound refs for project tool — populated after hosting/stack/mapp managers boot.
+  const hostingManagerRef: { current: unknown | null } = { current: null };
+  const stackRegistryRef: { current: unknown | null } = { current: null };
+  const mappRegistryRef: { current: unknown | null } = { current: null };
 
   // Config services — created early (no heavy dependencies) so tools can use them.
   const projectConfigManager = new ProjectConfigManager({ logger });
@@ -519,6 +523,9 @@ export async function startGatewayServer(
     projectConfigManager,
     botsDir: undefined, // Workers are file-driven prompts
     imageBlobStore,
+    hostingManagerRef,
+    stackRegistryRef,
+    mappRegistryRef,
     onJobCreated: (jobId: string, coaReqId: string) => {
       workerRuntimeRef.current?.executeJob(jobId, coaReqId).catch((err: unknown) => {
         log.error(`workerRuntime.executeJob error: ${err instanceof Error ? err.message : String(err)}`);
@@ -1103,6 +1110,11 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   hostingManager.regenerateSystemDomains();
+
+  // Populate late-bound refs so project tools can access hosting/stack/mapp data
+  hostingManagerRef.current = hostingManager;
+  stackRegistryRef.current = stackRegistry;
+  mappRegistryRef.current = mappRegistry;
 
   // -------------------------------------------------------------------------
   // Terminal session manager

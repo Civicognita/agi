@@ -158,6 +158,9 @@ clone_repo "ID Service"         "$ID_REPO"              "$ID_DIR"
 echo "==> Installing pnpm dependencies..."
 run_as "cd '$INSTALL_DIR' && pnpm install --frozen-lockfile"
 
+echo "==> Installing Playwright browser (chromium)..."
+run_as "cd '$INSTALL_DIR' && npx playwright install chromium --with-deps" || echo "WARNING: Playwright browser install failed (visual-inspect tool will be unavailable)"
+
 echo "==> Building..."
 run_as "cd '$INSTALL_DIR' && pnpm build"
 

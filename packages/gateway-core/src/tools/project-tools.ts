@@ -25,6 +25,12 @@ export interface ProjectToolConfig {
   projectDirs: string[];
   /** ProjectConfigManager for validated config operations. */
   projectConfigManager?: ProjectConfigManager;
+  /** Late-bound hosting manager for URLs, container status, tunnels. */
+  hostingManager?: { getProjectHostingInfo(path: string): unknown; getProjectDevCommands(path: string): Record<string, string> };
+  /** Late-bound stack registry for stack definitions. */
+  stackRegistry?: { get(id: string): { id: string; label: string; description: string; category: string } | undefined };
+  /** Late-bound MApp registry for MagicApp definitions. */
+  mappRegistry?: { get(id: string): { id: string; name: string; description: string; category: string; version: string } | undefined };
 }
 
 // ---------------------------------------------------------------------------
@@ -233,49 +239,130 @@ function handleInfo(config: ProjectToolConfig, input: Record<string, unknown>): 
     return JSON.stringify({ error: "Project directory does not exist" });
   }
 
+  // Git info
   const hasGit = existsSync(join(targetPath, ".git"));
-  if (!hasGit) {
-    return JSON.stringify({ path: targetPath, branch: null, remote: null, status: null, commits: [] });
-  }
-
   let branch: string | null = null;
-  try {
-    branch = execSync(`git -C ${JSON.stringify(targetPath)} rev-parse --abbrev-ref HEAD`, {
-      timeout: 5000, stdio: "pipe",
-    }).toString().trim();
-  } catch { /* no branch */ }
-
   let remote: string | null = null;
-  try {
-    remote = execSync(`git -C ${JSON.stringify(targetPath)} remote get-url origin`, {
-      timeout: 5000, stdio: "pipe",
-    }).toString().trim();
-  } catch { /* no remote */ }
-
-  let status: "clean" | "dirty" | null = null;
-  try {
-    const porcelain = execSync(`git -C ${JSON.stringify(targetPath)} status --porcelain`, {
-      timeout: 5000, stdio: "pipe",
-    }).toString().trim();
-    status = porcelain.length === 0 ? "clean" : "dirty";
-  } catch { /* unknown status */ }
-
+  let gitStatus: "clean" | "dirty" | null = null;
   const commits: { hash: string; message: string }[] = [];
-  try {
-    const logOutput = execSync(`git -C ${JSON.stringify(targetPath)} log --oneline -5`, {
-      timeout: 5000, stdio: "pipe",
-    }).toString().trim();
-    if (logOutput.length > 0) {
-      for (const line of logOutput.split("\n")) {
-        const spaceIdx = line.indexOf(" ");
-        if (spaceIdx > 0) {
-          commits.push({ hash: line.slice(0, spaceIdx), message: line.slice(spaceIdx + 1) });
+
+  if (hasGit) {
+    try { branch = execSync(`git -C ${JSON.stringify(targetPath)} rev-parse --abbrev-ref HEAD`, { timeout: 5000, stdio: "pipe" }).toString().trim(); } catch { /* */ }
+    try { remote = execSync(`git -C ${JSON.stringify(targetPath)} remote get-url origin`, { timeout: 5000, stdio: "pipe" }).toString().trim(); } catch { /* */ }
+    try {
+      const porcelain = execSync(`git -C ${JSON.stringify(targetPath)} status --porcelain`, { timeout: 5000, stdio: "pipe" }).toString().trim();
+      gitStatus = porcelain.length === 0 ? "clean" : "dirty";
+    } catch { /* */ }
+    try {
+      const logOutput = execSync(`git -C ${JSON.stringify(targetPath)} log --oneline -5`, { timeout: 5000, stdio: "pipe" }).toString().trim();
+      if (logOutput.length > 0) {
+        for (const line of logOutput.split("\n")) {
+          const spaceIdx = line.indexOf(" ");
+          if (spaceIdx > 0) commits.push({ hash: line.slice(0, spaceIdx), message: line.slice(spaceIdx + 1) });
         }
       }
-    }
-  } catch { /* no commits */ }
+    } catch { /* */ }
+  }
 
-  return JSON.stringify({ path: targetPath, branch, remote, status, commits });
+  // Project config (name, category, description, type)
+  let projectConfig: Record<string, unknown> | null = null;
+  if (config.projectConfigManager) {
+    try {
+      const cfg = config.projectConfigManager.read(targetPath);
+      if (cfg) {
+        projectConfig = {
+          name: cfg.name,
+          category: cfg.category ?? null,
+          type: cfg.type ?? null,
+          description: cfg.description ?? null,
+          tynnToken: cfg.tynnToken ?? null,
+        };
+      }
+    } catch { /* */ }
+  }
+
+  // Hosting info (local URL, tunnel URL, container status)
+  let hosting: Record<string, unknown> | null = null;
+  if (config.hostingManager) {
+    try {
+      const info = config.hostingManager.getProjectHostingInfo(targetPath) as {
+        meta?: { enabled?: boolean; hostname?: string; tunnelUrl?: string | null; tunnelId?: string | null; port?: number | null; mode?: string; viewer?: string | null };
+        status?: string;
+        localUrl?: string;
+        containerId?: string | null;
+      } | null;
+      if (info) {
+        hosting = {
+          enabled: info.meta?.enabled ?? false,
+          status: info.status ?? "unconfigured",
+          localUrl: info.localUrl ?? null,
+          tunnelUrl: info.meta?.tunnelUrl ?? null,
+          port: info.meta?.port ?? null,
+          mode: info.meta?.mode ?? null,
+          containerId: info.containerId ?? null,
+          viewer: info.meta?.viewer ?? null,
+        };
+      }
+    } catch { /* */ }
+  }
+
+  // Dev commands from stacks
+  let devCommands: Record<string, string> | null = null;
+  if (config.hostingManager) {
+    try {
+      const cmds = config.hostingManager.getProjectDevCommands(targetPath);
+      if (Object.keys(cmds).length > 0) devCommands = cmds;
+    } catch { /* */ }
+  }
+
+  // Stacks attached to this project
+  let stacks: Array<{ stackId: string; label: string; category: string; description: string }> | null = null;
+  if (config.projectConfigManager && config.stackRegistry) {
+    try {
+      const stackInstances = config.projectConfigManager.getStacks(targetPath);
+      if (stackInstances.length > 0) {
+        stacks = stackInstances.map((si) => {
+          const def = config.stackRegistry!.get(si.stackId);
+          return {
+            stackId: si.stackId,
+            label: def?.label ?? si.stackId,
+            category: def?.category ?? "unknown",
+            description: def?.description ?? "",
+          };
+        });
+      }
+    } catch { /* */ }
+  }
+
+  // MagicApps attached to this project
+  let magicApps: Array<{ id: string; name: string; category: string; description: string }> | null = null;
+  if (config.projectConfigManager && config.mappRegistry) {
+    try {
+      const cfg = config.projectConfigManager.read(targetPath);
+      const appIds = cfg?.magicApps ?? [];
+      if (appIds.length > 0) {
+        magicApps = appIds.map((id: string) => {
+          const def = config.mappRegistry!.get(id);
+          return {
+            id,
+            name: def?.name ?? id,
+            category: def?.category ?? "unknown",
+            description: def?.description ?? "",
+          };
+        });
+      }
+    } catch { /* */ }
+  }
+
+  return JSON.stringify({
+    path: targetPath,
+    config: projectConfig,
+    git: { branch, remote, status: gitStatus, commits },
+    hosting,
+    devCommands,
+    stacks,
+    magicApps,
+  });
 }
 
 function handleDelete(config: ProjectToolConfig, input: Record<string, unknown>): string {

@@ -162,6 +162,12 @@ export interface ToolRegistrationConfig {
   coaReqId?: string;
   /** Image blob store for screenshot storage (visual-inspect tool). */
   imageBlobStore?: import("../image-blob-store.js").ImageBlobStore;
+  /** Late-bound hosting manager ref — populated after boot. */
+  hostingManagerRef?: { current: unknown | null };
+  /** Late-bound stack registry ref — populated after boot. */
+  stackRegistryRef?: { current: unknown | null };
+  /** Late-bound MApp registry ref — populated after boot. */
+  mappRegistryRef?: { current: unknown | null };
 }
 
 // ---------------------------------------------------------------------------
@@ -286,9 +292,20 @@ export function registerAllTools(
 
   // Project tools (only registered if projectDirs configured)
   if (config.projectDirs !== undefined && config.projectDirs.length > 0) {
+    // Late-bound refs: resolve at tool call time, not registration time.
+    // HostingManager, StackRegistry, MAppRegistry boot after tool registration.
+    const hostingRef = config.hostingManagerRef;
+    const stackRef = config.stackRegistryRef;
+    const mappRef = config.mappRegistryRef;
     register(
       MANAGE_PROJECT_MANIFEST as ToolManifestEntry,
-      createManageProjectHandler({ projectDirs: config.projectDirs, projectConfigManager: config.projectConfigManager }),
+      createManageProjectHandler({
+        projectDirs: config.projectDirs,
+        projectConfigManager: config.projectConfigManager,
+        hostingManager: hostingRef ? { getProjectHostingInfo: (p: string) => (hostingRef.current as { getProjectHostingInfo(p: string): unknown } | null)?.getProjectHostingInfo(p), getProjectDevCommands: (p: string) => (hostingRef.current as { getProjectDevCommands(p: string): Record<string, string> } | null)?.getProjectDevCommands(p) ?? {} } : undefined,
+        stackRegistry: stackRef ? { get: (id: string) => (stackRef.current as { get(id: string): unknown } | null)?.get(id) as { id: string; label: string; description: string; category: string } | undefined } : undefined,
+        mappRegistry: mappRef ? { get: (id: string) => (mappRef.current as { get(id: string): unknown } | null)?.get(id) as { id: string; name: string; description: string; category: string; version: string } | undefined } : undefined,
+      }),
       MANAGE_PROJECT_INPUT_SCHEMA,
     );
   }
