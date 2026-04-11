@@ -3331,7 +3331,7 @@ export async function createGatewayRuntimeState(
         }
       }
 
-      log.info(`marketplace pull: synced=${String(result.synced)}, updated=${result.updated.length}, reloaded=${reloaded.length}`);
+      log.info(`plugin-marketplace pull: synced=${String(result.synced)}, updated=${result.updated.length}, reloaded=${reloaded.length}`);
       return reply.send({
         ok: true,
         catalogSynced: result.synced,

@@ -866,14 +866,14 @@ export async function startGatewayServer(
   const existingSources = marketplaceManager.getSources();
   if (existingSources.length === 0) {
     marketplaceManager.addSource(marketplaceRef, "Aionima");
-    log.info(`marketplace: seeded default source (${marketplaceRef})`);
+    log.info(`plugin-marketplace: seeded default source (${marketplaceRef})`);
   } else {
     // Ensure the source ref matches the current update channel
     const defaultSource = existingSources[0]!;
     if (defaultSource.ref !== marketplaceRef) {
       marketplaceManager.removeSource(defaultSource.id);
       marketplaceManager.addSource(marketplaceRef, "Aionima");
-      log.info(`marketplace: updated source to ${marketplaceRef}`);
+      log.info(`plugin-marketplace: updated source to ${marketplaceRef}`);
     }
   }
 
@@ -881,7 +881,7 @@ export async function startGatewayServer(
   for (const source of marketplaceManager.getSources()) {
     const result = await marketplaceManager.syncSource(source.id);
     if (result.ok) {
-      log.info(`marketplace: synced ${String(result.pluginCount)} plugins from catalog`);
+      log.info(`plugin-marketplace: synced ${String(result.pluginCount)} plugins from catalog`);
     }
   }
 
@@ -948,7 +948,7 @@ export async function startGatewayServer(
   }
   discovered.errors.push(...installedDiscovery.errors);
   if (installedDiscovery.plugins.length > 0) {
-    log.info(`plugins: ${String(installedDiscovery.plugins.length)} installed from marketplace cache`);
+    log.info(`plugin-marketplace: ${String(installedDiscovery.plugins.length)} installed from cache`);
   }
 
   // Ensure all cached plugins have marketplace DB records so version updates work.
@@ -975,7 +975,7 @@ export async function startGatewayServer(
         }
       }
       if (backfilled > 0) {
-        log.info(`marketplace: backfilled ${String(backfilled)} installed plugin DB records`);
+        log.info(`plugin-marketplace: backfilled ${String(backfilled)} DB records for cached plugins`);
       }
     }
   }
@@ -984,10 +984,10 @@ export async function startGatewayServer(
   {
     const syncResult = await marketplaceManager.syncAndUpdateAll();
     if (syncResult.updated.length > 0) {
-      log.info(`marketplace: updated ${String(syncResult.updated.length)} plugin(s): ${syncResult.updated.join(", ")}`);
+      log.info(`plugin-marketplace: updated ${String(syncResult.updated.length)} plugin(s): ${syncResult.updated.join(", ")}`);
     }
     for (const err of syncResult.errors) {
-      log.warn(`marketplace: update error: ${err}`);
+      log.warn(`plugin-marketplace: update error: ${err}`);
     }
   }
 
