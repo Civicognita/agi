@@ -7,10 +7,8 @@ set -uo pipefail
 DEPLOY_DIR="/opt/aionima"
 PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
 PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
-MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
-MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-marketplace.git}"
-MAPP_MARKETPLACE_DIR="${AIONIMA_MAPP_MARKETPLACE_DIR:-/opt/aionima-mapp-marketplace}"
-MAPP_MARKETPLACE_REPO="${AIONIMA_MAPP_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-mapp-marketplace.git}"
+# Marketplace repos are NOT pulled locally — plugins are fetched from GitHub
+# on demand by the gateway's marketplace manager.
 ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
 ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
@@ -74,8 +72,6 @@ ensure_https_remote() {
 
 ensure_https_remote "$DEPLOY_DIR"
 ensure_https_remote "$PRIME_DIR"
-ensure_https_remote "$MARKETPLACE_DIR"
-ensure_https_remote "$MAPP_MARKETPLACE_DIR"
 ensure_https_remote "$ID_DIR"
 
 # ---------------------------------------------------------------------------
@@ -122,27 +118,8 @@ else
   fi
 fi
 
-# ---------------------------------------------------------------------------
-# 3. Pull MARKETPLACE repo (auto-clone if missing)
-# ---------------------------------------------------------------------------
-if [ -d "$MARKETPLACE_DIR/.git" ]; then
-  emit "pull-marketplace" "start"
-  if (cd "$MARKETPLACE_DIR" && git fetch origin 2>&1 && git checkout -B "$BRANCH" "origin/$BRANCH" 2>&1); then
-    emit "pull-marketplace" "done" "Marketplace repo updated ($BRANCH)"
-  else
-    emit "pull-marketplace" "error" "Marketplace pull failed"
-    # Non-fatal — plugins still work from cache
-  fi
-else
-  emit "clone-marketplace" "start" "Marketplace not found at $MARKETPLACE_DIR — cloning"
-  if sudo git clone --branch "$BRANCH" "$MARKETPLACE_REPO" "$MARKETPLACE_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$MARKETPLACE_DIR"; then
-    emit "clone-marketplace" "done" "Marketplace repo cloned to $MARKETPLACE_DIR ($BRANCH)"
-  else
-    sudo rm -rf "$MARKETPLACE_DIR"
-    emit "clone-marketplace" "error" "Marketplace clone failed from $MARKETPLACE_REPO"
-    # Non-fatal — plugins still work from cache
-  fi
-fi
+# Marketplace plugins are managed by the gateway — fetched from GitHub on demand.
+# No local marketplace repo needed.
 
 # ---------------------------------------------------------------------------
 # 3c. Pull ID service repo (auto-clone if missing)
@@ -165,27 +142,7 @@ else
   fi
 fi
 
-# ---------------------------------------------------------------------------
-# 3d. Pull MApp marketplace repo (auto-clone if missing)
-# ---------------------------------------------------------------------------
-if [ -d "$MAPP_MARKETPLACE_DIR/.git" ]; then
-  emit "pull-mapp-marketplace" "start"
-  if (cd "$MAPP_MARKETPLACE_DIR" && git fetch origin 2>&1 && git checkout -B "$BRANCH" "origin/$BRANCH" 2>&1); then
-    emit "pull-mapp-marketplace" "done" "MApp marketplace repo updated ($BRANCH)"
-  else
-    emit "pull-mapp-marketplace" "error" "MApp marketplace pull failed"
-    # Non-fatal — MApps still work from installed cache
-  fi
-else
-  emit "clone-mapp-marketplace" "start" "MApp marketplace not found at $MAPP_MARKETPLACE_DIR — cloning"
-  if sudo git clone --branch "$BRANCH" "$MAPP_MARKETPLACE_REPO" "$MAPP_MARKETPLACE_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$MAPP_MARKETPLACE_DIR"; then
-    emit "clone-mapp-marketplace" "done" "MApp marketplace repo cloned to $MAPP_MARKETPLACE_DIR ($BRANCH)"
-  else
-    emit "clone-mapp-marketplace" "error" "MApp marketplace clone failed from $MAPP_MARKETPLACE_REPO"
-    # Non-fatal — MApps still work from installed cache
-  fi
-fi
-# MApps are installed on demand from GitHub via the dashboard.
+# MApps are fetched from GitHub on demand via the dashboard.
 
 # ---------------------------------------------------------------------------
 # 3d. Build local ID service (if enabled in config)
@@ -296,64 +253,11 @@ else
   die "build" "pnpm build failed"
 fi
 
-# Plugin dist bundles are built in ~/.agi/plugins/cache/ at install time.
-# The reconcileInstalled() method on boot detects source changes and rebuilds.
+# Plugin builds happen in ~/.agi/plugins/cache/ at install time.
+# Required plugins are verified by the gateway on boot via the marketplace catalog.
 
-# ---------------------------------------------------------------------------
-# 7c. Reconcile required plugins against marketplace
-# ---------------------------------------------------------------------------
-REQUIRED_PLUGINS_FILE="$DEPLOY_DIR/config/required-plugins.json"
-if [ -f "$REQUIRED_PLUGINS_FILE" ] && [ -d "$MARKETPLACE_DIR/plugins" ]; then
-  emit "required-check" "start"
-  MISSING=""
-  for pid in $(node -e "
-    const r = JSON.parse(require('fs').readFileSync('$REQUIRED_PLUGINS_FILE','utf-8'));
-    r.plugins.forEach(p => console.log(p.id));
-  " 2>/dev/null); do
-    # Check if any plugin directory contains this ID in its package.json
-    FOUND=false
-    for pdir in "$MARKETPLACE_DIR"/plugins/plugin-*/; do
-      if [ -f "$pdir/package.json" ]; then
-        MANIFEST_ID=$(node -e "
-          const p = JSON.parse(require('fs').readFileSync('${pdir}package.json','utf-8'));
-          console.log((p.aionima||p.nexus||{}).id||'');
-        " 2>/dev/null)
-        if [ "$MANIFEST_ID" = "$pid" ]; then
-          FOUND=true
-          break
-        fi
-      fi
-    done
-    if [ "$FOUND" = false ]; then
-      MISSING="$MISSING $pid"
-    fi
-  done
-  if [ -n "$MISSING" ]; then
-    emit "required-check" "error" "Missing required plugins:$MISSING"
-  else
-    emit "required-check" "done" "All required plugins present"
-  fi
-fi
-
-# ---------------------------------------------------------------------------
-# 7d. Update installed MApps to latest marketplace versions
-# ---------------------------------------------------------------------------
-emit "mapp-sync" "start"
-GATEWAY_PORT=$(node -e "
-  try {
-    const c = JSON.parse(require('fs').readFileSync(require('os').homedir() + '/.agi/aionima.json', 'utf-8'));
-    console.log((c.gateway && c.gateway.port) || 3100);
-  } catch { console.log(3100); }
-" 2>/dev/null)
-SYNC_RESULT=$(curl -s -X POST "http://127.0.0.1:${GATEWAY_PORT}/api/mapp-marketplace/sync" \
-  -H "Content-Type: application/json" 2>/dev/null || echo '{"ok":false,"error":"service not running"}')
-SYNC_OK=$(echo "$SYNC_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log(d.ok?'true':'false')}catch{console.log('false')}" 2>/dev/null)
-if [ "$SYNC_OK" = "true" ]; then
-  SYNC_INSTALLED=$(echo "$SYNC_RESULT" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf-8'));console.log((d.installed||[]).length + ' installed, ' + (d.updated||[]).length + ' updated')}catch{console.log('unknown')}" 2>/dev/null)
-  emit "mapp-sync" "done" "$SYNC_INSTALLED"
-else
-  emit "mapp-sync" "skip" "MApp sync skipped (service not running or fetch failed)"
-fi
+# Plugin and MApp updates are handled by the gateway via GitHub — not during upgrade.
+# The gateway syncs catalogs and updates on boot and via dashboard API calls.
 
 # ---------------------------------------------------------------------------
 # 7e. Migrate project configs to current schema

@@ -226,6 +226,8 @@ export interface RuntimeStateDeps {
     getInstalled(): { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }[];
     checkUpdates(): { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[];
     syncLocalCatalog(marketplaceDir: string): { ok: boolean; error?: string; pluginCount?: number };
+    reconcileInstalled(marketplaceDir: string): Promise<{ updated: string[]; errors: string[] }>;
+    syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
     updatePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }>;
   };
   /** Callback to hot-load a newly installed plugin (discover, activate, bridge). */
@@ -3299,6 +3301,42 @@ export async function createGatewayRuntimeState(
         pluginName,
         oldVersion: updateResult.oldVersion,
         newVersion: updateResult.newVersion,
+      });
+    });
+
+    // POST /api/marketplace/pull — sync catalog from GitHub, update all installed plugins, hot-reload
+    fastify.post("/api/marketplace/pull", async (_request, reply) => {
+      const clientIp = getClientIp(_request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
+      }
+
+      // 1. Sync catalog from GitHub sources + update all installed plugins
+      const result = await mp.syncAndUpdateAll();
+
+      // 2. Hot-reload any updated plugins
+      const reloaded: string[] = [];
+      if (deps.onPluginUpdated && deps.onPluginDeactivating) {
+        for (const name of result.updated) {
+          const installed = mp.getInstalled().find(i => i.name === name);
+          if (!installed) continue;
+          try {
+            await deps.onPluginDeactivating(name);
+            await deps.onPluginUpdated(installed.installPath);
+            reloaded.push(name);
+          } catch (err) {
+            log.warn(`hot-reload failed for "${name}": ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      }
+
+      log.info(`marketplace pull: synced=${String(result.synced)}, updated=${result.updated.length}, reloaded=${reloaded.length}`);
+      return reply.send({
+        ok: true,
+        catalogSynced: result.synced,
+        updated: result.updated,
+        reloaded,
+        errors: result.errors,
       });
     });
   }

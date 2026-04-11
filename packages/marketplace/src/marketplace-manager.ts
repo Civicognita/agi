@@ -9,7 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MarketplaceStore } from "./store.js";
 import { fetchCatalog, parseSourceRef } from "./catalog-fetcher.js";
-import { installPlugin, uninstallPlugin, installFromLocal, computePluginIntegrityHash } from "./installer.js";
+import { installPlugin, uninstallPlugin, computePluginIntegrityHash } from "./installer.js";
 import type {
   MarketplaceSource,
   MarketplacePluginEntry,
@@ -140,26 +140,15 @@ export class MarketplaceManager {
       const freshHash = computePluginIntegrityHash(srcDir);
       if (freshHash === item.integrityHash) continue; // No changes
 
-      // Copy directly from local marketplace dir and rebuild in cache
+      // Re-install from GitHub source and rebuild in cache
       try {
-        const installPath = item.installPath;
-        uninstallPlugin(installPath);
-        await installFromLocal(srcDir, installPath);
-
-        const integrityHash = computePluginIntegrityHash(installPath);
         this.store.removeInstalled(item.name);
-        this.store.addInstalled({
-          name: item.name,
-          sourceId: item.sourceId,
-          type: (catalogPlugin.type as import("./types.js").MarketplaceItemType) ?? "plugin",
-          version: catalogPlugin.version ?? "0.0.0",
-          installedAt: new Date().toISOString(),
-          installPath,
-          sourceJson: catalogPlugin.sourceJson,
-          integrityHash: integrityHash || undefined,
-          trustTier: catalogPlugin.trustTier,
-        });
-        updated.push(item.name);
+        const result = await this.install(item.name, item.sourceId);
+        if (result.ok) {
+          updated.push(item.name);
+        } else {
+          errors.push(`${item.name}: ${result.error ?? "unknown"}`);
+        }
       } catch (err) {
         errors.push(`${item.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -339,6 +328,35 @@ export class MarketplaceManager {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err), oldVersion, newVersion };
     }
+  }
+
+  /**
+   * Sync catalog from all GitHub sources, then update every installed plugin
+   * that has a newer version available. Returns what changed.
+   */
+  async syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }> {
+    // 1. Sync catalog from all configured sources (GitHub)
+    let synced = 0;
+    for (const source of this.store.getSources()) {
+      const result = await this.syncSource(source.id);
+      if (result.ok) synced += result.pluginCount ?? 0;
+    }
+
+    // 2. Find and apply all available updates
+    const updates = this.checkUpdates();
+    const updated: string[] = [];
+    const errors: string[] = [];
+
+    for (const { pluginName, sourceId } of updates) {
+      const result = await this.updatePlugin(pluginName, sourceId);
+      if (result.ok) {
+        updated.push(pluginName);
+      } else {
+        errors.push(`${pluginName}: ${result.error ?? "unknown"}`);
+      }
+    }
+
+    return { synced, updated, errors };
   }
 
   checkUpdates(): { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[] {
