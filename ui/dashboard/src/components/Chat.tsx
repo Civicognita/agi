@@ -66,7 +66,7 @@ export function Chat({ messages, thinking, error, onSend, theme }: ChatProps) {
   const inputBg = d ? "#181825" : "#f5f5f5";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 90px)" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       {/* Message list */}
       <div
         ref={listRef}

@@ -14,8 +14,13 @@ import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 
 // ---------------------------------------------------------------------------
-// Helpers (same as server-runtime-state.ts)
+// Helpers
 // ---------------------------------------------------------------------------
+
+/** Strip ANSI escape codes from command output so the dashboard renders clean text. */
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07/g;
+function stripAnsi(text: string): string { return text.replace(ANSI_RE, ""); }
 
 function isLoopback(ip: string): boolean {
   return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
@@ -579,25 +584,36 @@ export function registerHostingRoutes(
     const resolved = resolvePath(body.path);
     const containerName = hostingManager.getContainerName(body.path);
 
+    // Build a clean env that won't leak the gateway's NODE_ENV into containers.
+    // For container exec we only pass TERM for color support; the container
+    // already has its own environment from podman run.
+    const hostEnv = { ...process.env };
+    delete hostEnv.NODE_ENV;
+
     try {
       let output: string;
       if (containerName) {
+        // Unset NODE_ENV so each command can determine its own (e.g. next build
+        // needs production, next dev needs development). The container's own env
+        // is inherited by podman exec — we strip NODE_ENV to avoid conflicts.
+        // Pipe output through /proc/1/fd/1 so it appears in `podman logs`.
+        const wrappedCmd = `(${tool.command}) 2>&1 | tee /proc/1/fd/1`;
         output = execSync(
-          `podman exec ${containerName} sh -c ${JSON.stringify(tool.command)}`,
-          { timeout: 60_000, stdio: "pipe", env: { ...process.env } },
+          `podman exec -e TERM=xterm-256color ${containerName} env -u NODE_ENV sh -c ${JSON.stringify(wrappedCmd)}`,
+          { timeout: 60_000, stdio: "pipe" },
         ).toString();
       } else {
         output = execSync(tool.command, {
           cwd: resolved,
           timeout: 60_000,
           stdio: "pipe",
-          env: { ...process.env },
+          env: hostEnv,
         }).toString();
       }
-      return reply.send({ ok: true, output });
+      return reply.send({ ok: true, output: stripAnsi(output) });
     } catch (toolErr) {
       const message = toolErr instanceof Error ? toolErr.message : String(toolErr);
-      return reply.code(500).send({ error: message });
+      return reply.code(500).send({ error: stripAnsi(message) });
     }
   });
 

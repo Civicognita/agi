@@ -4,12 +4,17 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { FileTree } from "@/components/FileTree.js";
+import { TreeNav } from "@particle-academy/react-fancy";
 import { FileEditor } from "@/components/FileEditor.js";
 import { fetchFile, fetchFileTree, saveFile } from "@/api.js";
 import type { FileNode } from "@/api.js";
 import { useRootContext } from "./root.js";
 import { useIsMobile } from "@/hooks.js";
+
+type TreeNodeData = { id: string; label: string; type: "file" | "folder"; ext?: string; children?: TreeNodeData[] };
+function mapNode(n: FileNode): TreeNodeData {
+  return { id: n.path, label: n.name, type: n.type === "dir" ? "folder" : "file", ext: n.ext, children: n.children?.map(mapNode) };
+}
 
 export default function KnowledgePage() {
   const { theme } = useRootContext();
@@ -86,13 +91,22 @@ export default function KnowledgePage() {
             <div style={{ padding: "10px 12px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-muted-foreground)", borderBottom: "1px solid var(--color-border)", flexShrink: 0 }}>
               Knowledge
             </div>
-            {treeLoading ? (
-              <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>Loading...</div>
-            ) : treeNodes.length === 0 ? (
-              <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>No files found</div>
-            ) : (
-              <FileTree nodes={treeNodes} selectedPath={selectedPath} onSelect={(path) => { setSelectedPath(path); setShowTree(false); }} />
-            )}
+            <div style={{ flex: 1, overflow: "auto" }}>
+              {treeLoading ? (
+                <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>Loading...</div>
+              ) : treeNodes.length === 0 ? (
+                <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>No files found</div>
+              ) : (
+                <TreeNav
+                  nodes={treeNodes.map(mapNode) as never}
+                  selectedId={selectedPath ?? undefined}
+                  onSelect={(id: string, node: { type?: string }) => { if (node.type === "file") { setSelectedPath(id); setShowTree(false); } }}
+                  defaultExpandAll
+                  showIcons
+                  indentSize={14}
+                />
+              )}
+            </div>
           </div>
         ) : (
           <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -159,21 +173,26 @@ export default function KnowledgePage() {
         >
           Knowledge
         </div>
-        {treeLoading ? (
-          <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>
-            Loading...
-          </div>
-        ) : treeNodes.length === 0 ? (
-          <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>
-            No files found
-          </div>
-        ) : (
-          <FileTree
-            nodes={treeNodes}
-            selectedPath={selectedPath}
-            onSelect={setSelectedPath}
-          />
-        )}
+        <div style={{ flex: 1, overflow: "auto" }}>
+          {treeLoading ? (
+            <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>
+              Loading...
+            </div>
+          ) : treeNodes.length === 0 ? (
+            <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>
+              No files found
+            </div>
+          ) : (
+            <TreeNav
+              nodes={treeNodes.map(mapNode) as never}
+              selectedId={selectedPath ?? undefined}
+              onSelect={(id: string, node: { type?: string }) => { if (node.type === "file") setSelectedPath(id); }}
+              defaultExpandAll
+              showIcons
+              indentSize={14}
+            />
+          )}
+        </div>
       </div>
 
       {/* Main — editor area */}

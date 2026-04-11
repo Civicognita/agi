@@ -20,6 +20,10 @@ export class StackRegistry {
     return this.stacks.has(id);
   }
 
+  unregister(id: string): boolean {
+    return this.stacks.delete(id);
+  }
+
   getAll(): StackDefinition[] {
     return Array.from(this.stacks.values());
   }
@@ -61,5 +65,6 @@ function serializeStack(def: StackDefinition): StackInfo {
     devCommands: def.devCommands,
     tools: def.tools,
     icon: def.icon,
+    compatibleLanguages: def.compatibleLanguages,
   };
 }

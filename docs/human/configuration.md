@@ -438,6 +438,322 @@ Taskmaster engine settings. Workers are registered by plugins and discovered at 
 }
 ```
 
+### federation
+
+Federation protocol configuration. Enables this node to participate in the Aionima HIVE network, discover peers, and accept visitors from federated nodes.
+
+```json
+{
+  "federation": {
+    "enabled": false,
+    "publicUrl": "https://aionima.example.com",
+    "seedPeers": ["https://id.aionima.ai"],
+    "autoGeid": true,
+    "allowVisitors": true
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable federation protocol |
+| `publicUrl` | string | — | Public URL for this node (used in manifests and peer discovery) |
+| `seedPeers` | string[] | `["https://id.aionima.ai"]` | Seed peers to connect to on startup |
+| `autoGeid` | boolean | `true` | Auto-generate GEID for new entities |
+| `allowVisitors` | boolean | `true` | Allow visitor authentication from federated nodes |
+
+### idService
+
+ID service configuration. Controls the location and tracking of the local ID service repo, and optionally enables self-hosting the ID service on this node.
+
+```json
+{
+  "idService": {
+    "dir": "/opt/aionima-local-id",
+    "source": "git@github.com:Civicognita/aionima-local-id.git",
+    "branch": "main",
+    "local": {
+      "enabled": false,
+      "port": 3200,
+      "subdomain": "id",
+      "postgresContainer": true
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `dir` | string | `"/opt/aionima-local-id"` | Path to the ID service directory |
+| `source` | string | `"git@github.com:Civicognita/aionima-local-id.git"` | Git remote URL |
+| `branch` | string | `"main"` | Branch to track |
+| `local.enabled` | boolean | `false` | Enable local ID service |
+| `local.port` | number | `3200` | HTTP port |
+| `local.subdomain` | string | `"id"` | Subdomain (e.g. `"id"` → `id.ai.on`) |
+| `local.databaseUrl` | string | — | PostgreSQL connection string |
+| `local.postgresContainer` | boolean | `true` | Auto-provision a Podman PostgreSQL container |
+
+### marketplace
+
+Plugin marketplace configuration. Controls where the official marketplace repo is checked out and which branch is tracked.
+
+```json
+{
+  "marketplace": {
+    "dir": "/opt/aionima-marketplace",
+    "source": "git@github.com:Civicognita/aionima-marketplace.git",
+    "branch": "main"
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `dir` | string | `"/opt/aionima-marketplace"` | Path to the official marketplace directory |
+| `source` | string | `"git@github.com:Civicognita/aionima-marketplace.git"` | Git remote URL |
+| `branch` | string | `"main"` | Branch to track |
+
+### mappMarketplace
+
+MApp marketplace configuration. Controls where the official MApp marketplace repo is checked out and which branch is tracked.
+
+```json
+{
+  "mappMarketplace": {
+    "dir": "/opt/aionima-mapp-marketplace",
+    "source": "git@github.com:Civicognita/aionima-mapp-marketplace.git",
+    "branch": "main"
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `dir` | string | `"/opt/aionima-mapp-marketplace"` | Path to the official MApp marketplace directory |
+| `source` | string | `"git@github.com:Civicognita/aionima-mapp-marketplace.git"` | Git remote URL |
+| `branch` | string | `"main"` | Branch to track |
+
+### dev
+
+Developer mode configuration. When enabled, AGI switches all core repos to owner forks, allowing development work to proceed against personal fork branches rather than the upstream repos.
+
+```json
+{
+  "dev": {
+    "enabled": false,
+    "agiRepo": "git@github.com:wishborn/agi.git",
+    "primeRepo": "git@github.com:wishborn/aionima.git",
+    "primeDir": "/opt/aionima-prime_dev",
+    "marketplaceRepo": "git@github.com:wishborn/aionima-marketplace.git",
+    "marketplaceDir": "/opt/aionima-marketplace_dev",
+    "idRepo": "git@github.com:wishborn/aionima-local-id.git",
+    "idDir": "/opt/aionima-local-id_dev",
+    "mappMarketplaceRepo": "git@github.com:wishborn/aionima-mapp-marketplace.git",
+    "mappMarketplaceDir": "/opt/aionima-mapp-marketplace_dev"
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable dev mode (switches core repos to owner forks) |
+| `agiRepo` | string | — | Git remote URL for AGI repo fork |
+| `primeRepo` | string | — | Git remote URL for PRIME repo fork |
+| `primeDir` | string | `"/opt/aionima-prime_dev"` | Dev directory for PRIME fork |
+| `marketplaceRepo` | string | — | Git remote URL for marketplace fork |
+| `marketplaceDir` | string | `"/opt/aionima-marketplace_dev"` | Dev directory for marketplace fork |
+| `idRepo` | string | — | Git remote URL for ID service fork |
+| `idDir` | string | `"/opt/aionima-local-id_dev"` | Dev directory for ID service fork |
+| `mappMarketplaceRepo` | string | — | Git remote URL for MApp marketplace fork |
+| `mappMarketplaceDir` | string | `"/opt/aionima-mapp-marketplace_dev"` | Dev directory for MApp marketplace fork |
+
+Dev mode is toggled from the dashboard at Settings > Gateway > Contributing. Enabling it clones forks into the workspace as projects with the restricted `"aionima"` project type.
+
+### services
+
+Per-service runtime overrides. Allows individual services to be enabled/disabled, have their port overridden, or receive extra environment variables without changing the service definition.
+
+```json
+{
+  "services": {
+    "overrides": {
+      "my-service": {
+        "enabled": true,
+        "port": 4100,
+        "env": {
+          "LOG_LEVEL": "debug"
+        }
+      }
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `overrides` | object | — | Per-service overrides keyed by service ID |
+| `overrides[id].enabled` | boolean | — | Override whether this service is enabled |
+| `overrides[id].port` | number (≥1024) | — | Override the service HTTP port |
+| `overrides[id].env` | object | — | Extra environment variables injected into the service process |
+
+### providers
+
+System-level LLM provider credentials. Keyed by provider name. These credentials are used as fallbacks when no API key is found in the environment or the `agent` config.
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "apiKey": "$ENV{ANTHROPIC_API_KEY}",
+      "model": "claude-sonnet-4-6"
+    },
+    "openai": {
+      "apiKey": "$ENV{OPENAI_API_KEY}",
+      "baseUrl": "https://api.openai.com/v1"
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `[provider].apiKey` | string | — | API key for this provider |
+| `[provider].baseUrl` | string | — | Base URL override (for proxies or self-hosted endpoints) |
+| `[provider].model` | string | — | Default model for this provider |
+
+### compliance
+
+Compliance and security controls. Enables field-level encryption for PII, MFA enforcement, and related controls required for regulated environments.
+
+```json
+{
+  "compliance": {
+    "encryptionAtRest": false,
+    "encryptionKey": "$ENV{ENCRYPTION_KEY}",
+    "requireMfa": false
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `encryptionAtRest` | boolean | `false` | Enable field-level encryption for PII at rest |
+| `encryptionKey` | string | — | Hex-encoded 32-byte encryption key (or `$ENV{}` reference) |
+| `requireMfa` | boolean | `false` | Require MFA for dashboard access |
+
+Never store the raw `encryptionKey` value in `aionima.json`. Use `$ENV{ENCRYPTION_KEY}` and put the key in `.env`.
+
+### persona
+
+Agent soul and identity file paths. These Markdown files are loaded at boot and injected into the system prompt to shape the agent's character and purpose.
+
+```json
+{
+  "persona": {
+    "soulPath": "./data/persona/SOUL.md",
+    "identityPath": "./data/persona/IDENTITY.md"
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `soulPath` | string | `"./data/persona/SOUL.md"` | Path to the agent soul/purpose definition |
+| `identityPath` | string | `"./data/persona/IDENTITY.md"` | Path to the agent identity definition |
+
+### agentCredentials
+
+Credentials the agent uses when acting on the owner's behalf in external services such as email and GitHub.
+
+```json
+{
+  "agentCredentials": {
+    "email": {
+      "provider": "google",
+      "address": "agent@example.com"
+    },
+    "github": {
+      "username": "my-agent-bot"
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `email.provider` | enum | — | Email provider: `"google"` or `"outlook"` |
+| `email.address` | string | — | Email address the agent sends from |
+| `github.username` | string | — | GitHub username the agent acts as |
+
+### backup
+
+Automated backup configuration. When enabled, AGI periodically snapshots runtime data (`~/.agi/`) and retains backups for the configured number of days.
+
+```json
+{
+  "backup": {
+    "enabled": true,
+    "dir": "~/.agi/backups",
+    "retentionDays": 30
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable automated backups |
+| `dir` | string | `"~/.agi/backups"` | Backup directory path |
+| `retentionDays` | number | `30` | Days to retain backups before pruning |
+
+### identity
+
+OAuth provider credentials for local identity issuance. Used when the local ID service is hosting sign-in flows directly, rather than delegating to the remote HIVE identity service.
+
+```json
+{
+  "identity": {
+    "oauth": {
+      "google": {
+        "clientId": "$ENV{GOOGLE_CLIENT_ID}",
+        "clientSecret": "$ENV{GOOGLE_CLIENT_SECRET}",
+        "scopes": ["openid", "email", "profile"]
+      },
+      "github": {
+        "clientId": "$ENV{GITHUB_CLIENT_ID}",
+        "clientSecret": "$ENV{GITHUB_CLIENT_SECRET}"
+      }
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `oauth.google.clientId` | string | required | Google OAuth client ID |
+| `oauth.google.clientSecret` | string | required | Google OAuth client secret |
+| `oauth.google.scopes` | string[] | — | OAuth scopes to request |
+| `oauth.github.clientId` | string | required | GitHub OAuth client ID |
+| `oauth.github.clientSecret` | string | required | GitHub OAuth client secret |
+| `oauth.github.scopes` | string[] | — | OAuth scopes to request |
+
+Store client secrets via `$ENV{}` references — never paste them directly into `aionima.json`.
+
+### chat
+
+Chat history configuration. Controls how long chat sessions are retained before they are garbage collected.
+
+```json
+{
+  "chat": {
+    "retentionDays": 30
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `retentionDays` | number | `30` | Days to retain chat sessions before garbage collection |
+
 ---
 
 ## Hot-Reload

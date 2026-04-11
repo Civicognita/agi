@@ -104,6 +104,13 @@ export class ScheduledTaskManager {
     if (parts[0] === "0" && parts[1] === "0" && parts.slice(2).every((p) => p === "*")) {
       return 86_400_000;
     }
+    // Every day at hour N: 0 N * * * (approximate — runs every 24h from server start)
+    if (parts[0] === "0" && parts[1] !== "*" && parts.slice(2).every((p) => p === "*")) {
+      const hour = parseInt(parts[1]!, 10);
+      if (!isNaN(hour) && hour >= 0 && hour <= 23) {
+        return 86_400_000;
+      }
+    }
 
     return null;
   }

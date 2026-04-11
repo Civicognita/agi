@@ -9,7 +9,7 @@
 #
 set -euo pipefail
 
-LAN_IP="${LAN_IP:-192.168.0.144}"
+LAN_IP="${LAN_IP:?LAN_IP environment variable is required — pass it from install.sh or set it manually}"
 BASE_DOMAIN="${BASE_DOMAIN:-ai.on}"
 LISTEN_ADDR="127.0.0.2"
 

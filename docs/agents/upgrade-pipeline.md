@@ -148,7 +148,6 @@ The upgrade endpoint in `packages/gateway-core/src/server-runtime-state.ts` spaw
 const phaseToUiPhase: Record<string, string> = {
   "pull-agi": "pulling",
   "pull-prime": "pulling",
-  "pull-bots": "pulling",
   "pull-marketplace": "pulling",
   "pull-id": "pulling",
   "build-id": "building",

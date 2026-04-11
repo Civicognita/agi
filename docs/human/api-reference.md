@@ -1415,7 +1415,7 @@ Provider-specific behavior:
 - **OpenAI** — Fetches from `https://api.openai.com/v1/models` (or configured `baseUrl`), authenticated with `Authorization: Bearer`
 - **Ollama** — Fetches from `http://127.0.0.1:11434/api/tags` (or configured `baseUrl`), no auth
 
-Credentials are resolved from `bots.providers[provider]` in config, or fallback env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
+Credentials are resolved from `providers[provider]` in config, or fallback env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
 
 Response:
 

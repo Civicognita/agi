@@ -13,6 +13,7 @@ import { randomBytes } from "node:crypto";
 import type { Command } from "commander";
 import { AionimaConfigSchema } from "@aionima/config";
 import { bold, cyan, dim, green, red, yellow } from "../output.js";
+import { detectLanIp, openBrowser } from "./platform.js";
 import {
   ask,
   askSecret,
@@ -62,7 +63,7 @@ export function registerSetupCommand(program: Command): void {
         await generateFiles(ctx, result);
 
         // Phase 9: Post-setup
-        printPostSetup(ctx);
+        await printPostSetup(rl, ctx);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ERR_USE_AFTER_CLOSE") {
           // User pressed Ctrl+C
@@ -342,7 +343,31 @@ async function collectConfig(
 
   const enableHosting = await askYesNo(rl, "Enable project hosting?", false);
   if (enableHosting) {
-    const lanIp = await ask(rl, "LAN IP address", "192.168.0.144");
+    const detectedIp = detectLanIp();
+    console.log();
+    console.log(`    Detected IP: ${cyan(detectedIp)}`);
+    console.log();
+    console.log(dim("    Your machine needs a fixed IP if other devices will connect to it."));
+    console.log(dim("    Otherwise, it can use whatever IP your router assigns (DHCP)."));
+    console.log();
+    const ipChoice = await askChoice(rl, "IP configuration", [
+      { label: `Use detected IP (${detectedIp})`, value: "detected" as const },
+      { label: "Use Aionima standard IP (192.168.0.144)", value: "standard" as const },
+      { label: "Enter a custom IP", value: "custom" as const },
+      { label: "Use DHCP (auto-assigned, may change)", value: "dhcp" as const },
+    ]);
+    let lanIp: string;
+    if (ipChoice === "detected") {
+      lanIp = detectedIp;
+    } else if (ipChoice === "standard") {
+      lanIp = "192.168.0.144";
+      console.log(dim("    Note: Configure 192.168.0.144 as a static IP on this machine."));
+    } else if (ipChoice === "custom") {
+      lanIp = await ask(rl, "IP address", detectedIp);
+    } else {
+      lanIp = detectedIp;
+      console.log(dim("    Using current IP — it may change on reboot."));
+    }
     const baseDomain = await ask(rl, "Base domain", "ai.on");
     config.hosting = { enabled: true, lanIp, baseDomain };
   }
@@ -504,7 +529,7 @@ async function generateFiles(
 // Phase 9: Post-setup
 // ---------------------------------------------------------------------------
 
-function printPostSetup(ctx: SetupContext): void {
+async function printPostSetup(rl: import("node:readline/promises").Interface, ctx: SetupContext): Promise<void> {
   console.log();
   console.log(bold("  Setup complete!"));
   console.log();
@@ -527,6 +552,14 @@ function printPostSetup(ctx: SetupContext): void {
         "  For production deployment, run install.sh or upgrade.sh to sync to /opt/aionima",
       ),
     );
+  }
+
+  console.log();
+
+  const wantStar = await askYesNo(rl, "Would you like to show some love by starring the project on GitHub?", true);
+  if (wantStar) {
+    console.log(dim("  Opening GitHub..."));
+    openBrowser("https://github.com/Civicognita/agi");
   }
 
   console.log();

@@ -376,7 +376,7 @@ export default function RootLayout() {
       void hostingHook.refresh();
       void projectsHook.refresh();
     }
-    if (event.type === "bots:job_update") {
+    if (event.type === "tm:job_update") {
       const { status } = event.data;
       if (status === "running") {
         setSystemActive(true);
@@ -386,7 +386,7 @@ export default function RootLayout() {
         activityTimerRef.current = setTimeout(() => setSystemActive(false), 2000);
       }
     }
-    if (event.type === "bots:report_ready") {
+    if (event.type === "tm:report_ready") {
       void queryClient.invalidateQueries({ queryKey: ["reports"] });
     }
     if (event.type === "system:update_available") {
@@ -715,7 +715,7 @@ export default function RootLayout() {
         ) : (
           // Normal mode: content area with flyout overlays
           <>
-            <main className="max-w-[1200px] w-full mx-auto p-3 md:p-6 flex-1 overflow-y-auto">
+            <main className="max-w-[1200px] w-full mx-auto p-3 md:p-6 flex-1 overflow-y-auto min-h-0">
               <Outlet context={ctx} />
             </main>
 

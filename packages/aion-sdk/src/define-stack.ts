@@ -152,6 +152,11 @@ class StackBuilder {
     return this;
   }
 
+  compatibleLanguages(...langs: string[]): this {
+    this.def.compatibleLanguages = langs;
+    return this;
+  }
+
   build(): StackDefinition {
     if (!this.def.description) throw new Error("StackDefinition requires a description");
     if (!this.def.category) throw new Error("StackDefinition requires a category");

@@ -16,12 +16,20 @@ import { estimateTokens } from "./system-prompt.js";
 // Types
 // ---------------------------------------------------------------------------
 
+export interface ImageRef {
+  imageId: string;
+  mediaType: string;
+  /** Estimated tokens for this image (~1600 per 768px tile). */
+  estimatedTokens: number;
+}
+
 export interface ConversationTurn {
   role: "user" | "assistant";
   content: string;
   timestamp: string;
   coaFingerprint: string;
   toolsUsed?: string[];
+  imageRefs?: ImageRef[];
 }
 
 export interface AgentSession {
@@ -55,7 +63,7 @@ export interface SessionManagerConfig {
 }
 
 export interface HistoryAssemblyResult {
-  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  messages: Array<{ role: "user" | "assistant"; content: string; imageRefs?: ImageRef[] }>;
   tokenEstimate: number;
   turnsIncluded: number;
   needsCompaction: boolean;
@@ -189,6 +197,7 @@ export class AgentSessionManager {
     entityId: string,
     content: string,
     coaFingerprint: string,
+    imageRefs?: ImageRef[],
   ): void {
     const session = this.sessions.get(entityId);
     if (session === undefined) return;
@@ -198,6 +207,7 @@ export class AgentSessionManager {
       content,
       timestamp: new Date().toISOString(),
       coaFingerprint,
+      imageRefs: imageRefs?.length ? imageRefs : undefined,
     });
     session.lastActivityAt = new Date().toISOString();
   }
@@ -252,7 +262,7 @@ export class AgentSessionManager {
       this.config.responseBudget;
 
     const totalHistoryTokens = session.turns.reduce(
-      (sum, t) => sum + estimateTokens(t.content),
+      (sum, t) => sum + estimateTokens(t.content) + estimateImageRefsTokens(t.imageRefs),
       0,
     );
 
@@ -267,7 +277,7 @@ export class AgentSessionManager {
     // Walk backwards through turns, collecting pairs
     for (let i = session.turns.length - 1; i >= 0; i--) {
       const turn = session.turns[i]!;
-      const turnTokens = estimateTokens(turn.content);
+      const turnTokens = estimateTokens(turn.content) + estimateImageRefsTokens(turn.imageRefs);
 
       if (usedTokens + turnTokens > historyBudget && selected.length >= 2) {
         break;
@@ -281,15 +291,15 @@ export class AgentSessionManager {
     if (selected.length < 2 && session.turns.length >= 2) {
       const lastTwo = session.turns.slice(-2);
       return {
-        messages: lastTwo.map((t) => ({ role: t.role, content: t.content })),
-        tokenEstimate: lastTwo.reduce((s, t) => s + estimateTokens(t.content), 0),
+        messages: lastTwo.map((t) => ({ role: t.role, content: t.content, imageRefs: t.imageRefs })),
+        tokenEstimate: lastTwo.reduce((s, t) => s + estimateTokens(t.content) + estimateImageRefsTokens(t.imageRefs), 0),
         turnsIncluded: 2,
         needsCompaction,
       };
     }
 
     return {
-      messages: selected.map((t) => ({ role: t.role, content: t.content })),
+      messages: selected.map((t) => ({ role: t.role, content: t.content, imageRefs: t.imageRefs })),
       tokenEstimate: usedTokens,
       turnsIncluded: selected.length,
       needsCompaction,
@@ -441,6 +451,27 @@ export class AgentSessionManager {
     this.stopSweep();
     this.sessions.clear();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Image token estimation
+// ---------------------------------------------------------------------------
+
+/**
+ * Estimate token cost for a base64-encoded image.
+ * Claude charges ~1600 tokens per 768px tile. Without decoding pixel
+ * dimensions, we approximate from byte size: ~200KB per tile.
+ */
+export function estimateImageTokens(base64Data: string): number {
+  const bytes = base64Data.length * 0.75;
+  const tiles = Math.max(1, Math.ceil(bytes / 200_000));
+  return tiles * 1600;
+}
+
+/** Sum estimated tokens for a set of image refs (0 if none). */
+function estimateImageRefsTokens(refs?: ImageRef[]): number {
+  if (!refs?.length) return 0;
+  return refs.reduce((sum, r) => sum + r.estimatedTokens, 0);
 }
 
 // ---------------------------------------------------------------------------

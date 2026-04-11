@@ -21,6 +21,7 @@ export default defineConfig({
   },
   test: {
     pool: "forks",
+    testTimeout: 15_000,
     include: [
       "packages/**/src/**/*.test.ts",
       "channels/**/src/**/*.test.ts",

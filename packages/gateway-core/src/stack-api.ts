@@ -9,12 +9,18 @@ import type { HostingManager } from "./hosting-manager.js";
 import type { ProjectCategory } from "./project-types.js";
 import type { StackCategory } from "./stack-types.js";
 import type { ComponentLogger } from "./logger.js";
+import type { RuntimeDefinition } from "@aionima/plugins";
+
+export interface PluginRegistryLike {
+  getRuntimes(): RuntimeDefinition[];
+}
 
 export interface StackApiDeps {
   stackRegistry: StackRegistry;
   sharedContainerManager: SharedContainerManager;
   hostingManager: HostingManager;
   log: ComponentLogger;
+  pluginRegistry?: PluginRegistryLike;
 }
 
 export function registerStackRoutes(app: FastifyInstance, deps: StackApiDeps): void {
@@ -122,6 +128,34 @@ export function registerStackRoutes(app: FastifyInstance, deps: StackApiDeps): v
 
     const stacks = hostingManager.getProjectStacks(query.path);
     reply.send({ stacks });
+  });
+
+  // GET /api/stacks/compatible-runtimes — runtimes filtered by installed stacks' compatibleLanguages
+  app.get("/api/stacks/compatible-runtimes", async (request, reply) => {
+    const query = request.query as { projectPath?: string };
+    if (!query.projectPath) {
+      reply.code(400).send({ error: "projectPath query parameter required" });
+      return;
+    }
+
+    const allRuntimes = deps.pluginRegistry?.getRuntimes() ?? [];
+    const instances = hostingManager.getProjectStacks(query.projectPath);
+
+    const compatibleLanguages = new Set<string>();
+    for (const instance of instances) {
+      const def = stackRegistry.get(instance.stackId);
+      if (def?.compatibleLanguages) {
+        for (const lang of def.compatibleLanguages) {
+          compatibleLanguages.add(lang);
+        }
+      }
+    }
+
+    const runtimes = compatibleLanguages.size > 0
+      ? allRuntimes.filter((r) => compatibleLanguages.has(r.language))
+      : allRuntimes;
+
+    reply.send({ runtimes });
   });
 
   // GET /api/shared-containers — list all shared containers

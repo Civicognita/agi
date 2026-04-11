@@ -44,6 +44,7 @@ function getClientIp(req: IncomingMessage): string {
 
 export interface ChatHistoryRouteDeps {
   chatPersistence: ChatPersistence;
+  imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,7 +55,7 @@ export function registerChatHistoryRoutes(
   fastify: FastifyInstance,
   deps: ChatHistoryRouteDeps,
 ): void {
-  const { chatPersistence } = deps;
+  const { chatPersistence, imageBlobStore } = deps;
 
   // GET /api/chat/sessions — list all saved sessions
   fastify.get("/api/chat/sessions", async (request, reply) => {
@@ -82,6 +83,31 @@ export function registerChatHistoryRoutes(
     return session;
   });
 
+  // GET /api/chat/images/:sessionId/:imageId — serve an image from the blob store
+  fastify.get("/api/chat/images/:sessionId/:imageId", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Private network only" });
+    }
+
+    if (!imageBlobStore) {
+      return reply.code(501).send({ error: "Image blob store not available" });
+    }
+
+    const { sessionId, imageId } = request.params as { sessionId: string; imageId: string };
+    const blob = imageBlobStore.load(sessionId, imageId);
+    if (!blob) {
+      return reply.code(404).send({ error: "Image not found" });
+    }
+
+    const buffer = Buffer.from(blob.data, "base64");
+    return reply
+      .header("Content-Type", blob.mediaType)
+      .header("Content-Length", buffer.length)
+      .header("Cache-Control", "public, max-age=86400")
+      .send(buffer);
+  });
+
   // DELETE /api/chat/sessions/:id — delete a saved session
   fastify.delete("/api/chat/sessions/:id", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
@@ -91,6 +117,7 @@ export function registerChatHistoryRoutes(
 
     const { id } = request.params as { id: string };
     const deleted = chatPersistence.delete(id);
+    if (deleted) imageBlobStore?.deleteSession(id);
     return { ok: deleted };
   });
 }

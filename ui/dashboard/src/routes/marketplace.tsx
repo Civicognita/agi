@@ -28,6 +28,7 @@ import {
   searchMarketplaceCatalog,
   installMarketplacePlugin,
   uninstallMarketplacePlugin,
+  updateMarketplacePlugin,
   fetchMarketplaceInstalled,
   fetchMarketplaceUpdates,
   fetchPluginDetails,
@@ -644,6 +645,7 @@ function InstalledTab() {
   const [catalog, setCatalog] = useState<MarketplaceCatalogItem[]>([]);
   const [sources, setSources] = useState<MarketplaceSource[]>([]);
   const [uninstalling, setUninstalling] = useState<string | null>(null);
+  const [updating, setUpdating] = useState<string | null>(null);
   const [selectedPlugin, setSelectedPlugin] = useState<MarketplaceCatalogItem | null>(null);
 
   // Cleanup preview state
@@ -689,8 +691,9 @@ function InstalledTab() {
       await uninstallMarketplacePlugin(name);
       setSelectedPlugin(null);
       void load();
-    } catch { /* ignore */ }
-    finally { setUninstalling(null); }
+    } catch (err) {
+      console.error("Uninstall failed:", err);
+    } finally { setUninstalling(null); }
   }, [load]);
 
   const handleConfirmUninstall = useCallback(async () => {
@@ -703,9 +706,19 @@ function InstalledTab() {
       await uninstallMarketplacePlugin(name, ids);
       setSelectedPlugin(null);
       void load();
-    } catch { /* ignore */ }
-    finally { setUninstalling(null); }
+    } catch (err) {
+      console.error("Uninstall failed:", err);
+    } finally { setUninstalling(null); }
   }, [cleanupTarget, selectedCleanupIds, load]);
+
+  const handleUpdate = useCallback(async (pluginName: string, sourceId: number) => {
+    setUpdating(pluginName);
+    try {
+      await updateMarketplacePlugin(pluginName, sourceId);
+      void load();
+    } catch { /* ignore */ }
+    finally { setUpdating(null); }
+  }, [load]);
 
   if (items.length === 0) {
     return (
@@ -792,7 +805,17 @@ function InstalledTab() {
                   <span>v{item.version}</span>
                   <span>{new Date(item.installedAt).toLocaleDateString()}</span>
                 </div>
-                <div className="shrink-0">
+                <div className="flex gap-1.5 shrink-0">
+                  {update && (
+                    <Button
+                      size="sm"
+                      variant="default"
+                      disabled={updating === item.name}
+                      onClick={(e) => { e.stopPropagation(); void handleUpdate(item.name, item.sourceId); }}
+                    >
+                      {updating === item.name ? "Updating..." : "Update"}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="destructive"

@@ -158,6 +158,9 @@ clone_repo "ID Service"         "$ID_REPO"              "$ID_DIR"
 echo "==> Installing pnpm dependencies..."
 run_as "cd '$INSTALL_DIR' && pnpm install --frozen-lockfile"
 
+echo "==> Installing Playwright browser (chromium)..."
+run_as "cd '$INSTALL_DIR' && npx playwright install chromium --with-deps" || echo "WARNING: Playwright browser install failed (visual-inspect tool will be unavailable)"
+
 echo "==> Building..."
 run_as "cd '$INSTALL_DIR' && pnpm build"
 
@@ -175,7 +178,54 @@ chown "$AIONIMA_USER:$AIONIMA_USER" "$AGI_DATA"
 # Create minimal config if it doesn't exist (gateway requires it to boot)
 AGI_CONFIG="$AGI_DATA/aionima.json"
 if [ ! -f "$AGI_CONFIG" ]; then
-  LAN_IP="$(hostname -I | awk '{print $1}')"
+  DETECTED_IP="$(hostname -I | awk '{print $1}')"
+
+  echo ""
+  echo "  Detected IP: $DETECTED_IP"
+  echo ""
+  echo "  Your machine needs a fixed IP if other devices will connect to it."
+  echo "  Otherwise, it can use whatever IP your router assigns (DHCP)."
+  echo ""
+  echo "  1) Use detected IP ($DETECTED_IP)"
+  echo "  2) Use Aionima standard IP (192.168.0.144)"
+  echo "  3) Enter a custom IP"
+  echo "  4) Use DHCP (auto-assigned, may change on reboot)"
+  echo ""
+  read -p "  Choose [1]: " IP_CHOICE
+
+  case "${IP_CHOICE:-1}" in
+    2)
+      LAN_IP="192.168.0.144"
+      # Attempt to set static IP via nmcli if available
+      if command -v nmcli &>/dev/null; then
+        ACTIVE_CON="$(nmcli -t -f NAME con show --active | head -1)"
+        if [ -n "$ACTIVE_CON" ]; then
+          CURRENT_PREFIX="$(ip -o -4 addr show | awk '{print $4}' | head -1 | cut -d/ -f2)"
+          CURRENT_GW="$(ip route show default | awk '{print $3}' | head -1)"
+          echo "  Setting static IP $LAN_IP via nmcli..."
+          nmcli con mod "$ACTIVE_CON" ipv4.addresses "$LAN_IP/${CURRENT_PREFIX:-24}" ipv4.gateway "${CURRENT_GW:-}" ipv4.method manual 2>/dev/null || true
+          nmcli con up "$ACTIVE_CON" 2>/dev/null || true
+        fi
+      else
+        echo "  [NOTE] nmcli not found — please configure $LAN_IP as a static IP manually."
+      fi
+      ;;
+    3)
+      read -p "  Enter IP address: " LAN_IP
+      if [ -z "$LAN_IP" ]; then
+        LAN_IP="$DETECTED_IP"
+        echo "  Using detected IP: $LAN_IP"
+      fi
+      ;;
+    4)
+      LAN_IP="$DETECTED_IP"
+      echo "  Using DHCP — current IP is $LAN_IP (may change on reboot)"
+      ;;
+    *)
+      LAN_IP="$DETECTED_IP"
+      ;;
+  esac
+
   cat > "$AGI_CONFIG" << CFGEOF
 {
   "gateway": {
@@ -187,6 +237,7 @@ if [ ! -f "$AGI_CONFIG" ]; then
   },
   "hosting": {
     "enabled": true,
+    "lanIp": "$LAN_IP",
     "baseDomain": "ai.on"
   },
   "workspace": {
@@ -196,7 +247,7 @@ if [ ! -f "$AGI_CONFIG" ]; then
 }
 CFGEOF
   chown "$AIONIMA_USER:$AIONIMA_USER" "$AGI_CONFIG"
-  echo "  [OK] Config created at $AGI_CONFIG"
+  echo "  [OK] Config created at $AGI_CONFIG (LAN IP: $LAN_IP)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -312,4 +363,13 @@ echo "    agi status     Check service health"
 echo "    agi upgrade    Pull updates and rebuild"
 echo "    agi logs       View gateway logs"
 echo "    agi doctor     Run diagnostics"
+echo ""
+
+# Ask user to star the project on GitHub
+read -p "  Would you like to show some love by starring the project on GitHub? [Y/n] " STAR_CHOICE
+if [[ "${STAR_CHOICE:-Y}" =~ ^[Yy] ]]; then
+  xdg-open "https://github.com/Civicognita/agi" 2>/dev/null \
+    || open "https://github.com/Civicognita/agi" 2>/dev/null \
+    || echo "  Visit: https://github.com/Civicognita/agi"
+fi
 echo ""

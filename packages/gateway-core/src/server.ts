@@ -73,6 +73,9 @@ import { checkProtocolCompatibility } from "./protocol-check.js";
 import { PlanStore } from "./plan-store.js";
 import { ChatPersistence } from "./chat-persistence.js";
 import type { PersistedChatSession } from "./chat-persistence.js";
+import { ImageBlobStore } from "./image-blob-store.js";
+import { WorkerPromptLoader } from "./worker-prompt-loader.js";
+import { ChatGarbageCollector } from "./chat-garbage-collector.js";
 import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
 import { projectConfigPath } from "./project-config-path.js";
 import { HostingManager } from "./hosting-manager.js";
@@ -82,7 +85,7 @@ import { createProjectTypeRegistry } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { discoverPlugins, getDefaultSearchPaths, loadPlugins, PluginRegistry, HookBus } from "@aionima/plugins";
 import { ServiceManager } from "./service-manager.js";
-import { bridgePluginCapabilities } from "./plugin-bridges.js";
+import { bridgePluginCapabilities, unbridgePluginCapabilities } from "./plugin-bridges.js";
 import { ScheduledTaskManager } from "./scheduled-task-manager.js";
 import { MarketplaceManager } from "@aionima/marketplace";
 import { FederationNode, generateNodeKeypair } from "./federation-node.js";
@@ -486,6 +489,9 @@ export async function startGatewayServer(
   // Chat persistence — file-based storage in ~/.agi/chat-history/
   const chatPersistence = new ChatPersistence();
 
+  // Image blob store — file-backed storage for chat images at ~/.agi/chat-images/
+  const imageBlobStore = new ImageBlobStore();
+
   // In-flight session data for persistence — maps sessionId → PersistedChatSession
   const chatSessionData = new Map<string, PersistedChatSession>();
   const canvasDocuments: CanvasDocument[] = [];
@@ -493,6 +499,10 @@ export async function startGatewayServer(
   // The onJobCreated callback is only invoked during agent tool execution (after boot),
   // so workerRuntimeRef.current is always set by the time it is first called.
   const workerRuntimeRef: { current: WorkerRuntime | null } = { current: null };
+  // Late-bound refs for project tool — populated after hosting/stack/mapp managers boot.
+  const hostingManagerRef: { current: unknown | null } = { current: null };
+  const stackRegistryRef: { current: unknown | null } = { current: null };
+  const mappRegistryRef: { current: unknown | null } = { current: null };
 
   // Config services — created early (no heavy dependencies) so tools can use them.
   const projectConfigManager = new ProjectConfigManager({ logger });
@@ -511,7 +521,11 @@ export async function startGatewayServer(
     primeLoader,
     projectDirs: projectPaths,
     projectConfigManager,
-    botsDir: undefined, // BOTS repo removed — workers are now plugins
+    botsDir: undefined, // Workers are file-driven prompts
+    imageBlobStore,
+    hostingManagerRef,
+    stackRegistryRef,
+    mappRegistryRef,
     onJobCreated: (jobId: string, coaReqId: string) => {
       workerRuntimeRef.current?.executeJob(jobId, coaReqId).catch((err: unknown) => {
         log.error(`workerRuntime.executeJob error: ${err instanceof Error ? err.message : String(err)}`);
@@ -565,6 +579,7 @@ export async function startGatewayServer(
       channels: ownerConfig.channels as Record<string, string | undefined>,
     } : undefined,
     logger,
+    imageBlobStore,
   });
 
   // -------------------------------------------------------------------------
@@ -583,12 +598,18 @@ export async function startGatewayServer(
         opus: "claude-opus-4-6",
         default: config.agent?.model ?? "claude-sonnet-4-6",
       },
+      promptDir: resolvePath(workspaceRoot, "prompts", "workers"),
+      stateDir: join(homedir(), ".agi", "state"),
+      workspaceRoot,
     },
     { llmProvider: getLLMProvider() },
   );
 
   // Wire the late-bound ref so onJobCreated callbacks reach the runtime.
   workerRuntimeRef.current = workerRuntime;
+
+  // Worker prompt loader — discovers worker prompts from prompts/workers/
+  const workerPromptLoader = new WorkerPromptLoader(resolvePath(workspaceRoot, "prompts", "workers"));
 
   const reportsStore = new ReportsStore(join(homedir(), ".agi", "reports"));
   reportsStore.watch();
@@ -1090,6 +1111,11 @@ export async function startGatewayServer(
 
   hostingManager.regenerateSystemDomains();
 
+  // Populate late-bound refs so project tools can access hosting/stack/mapp data
+  hostingManagerRef.current = hostingManager;
+  stackRegistryRef.current = stackRegistry;
+  mappRegistryRef.current = mappRegistry;
+
   // -------------------------------------------------------------------------
   // Terminal session manager
   // -------------------------------------------------------------------------
@@ -1208,6 +1234,7 @@ export async function startGatewayServer(
       commsLog,
       notificationStore,
       chatPersistence,
+      imageBlobStore,
       pluginRegistry,
       stackRegistry,
       sharedContainerManager,
@@ -1230,7 +1257,7 @@ export async function startGatewayServer(
       pluginPrefs,
       primeLoader,
       primeDir,
-      botsDir: undefined, // BOTS repo removed — workers are now plugins
+      botsDir: undefined, // Workers are file-driven prompts
       marketplaceManager,
       onPluginInstalled: async (installPath: string) => {
         try {
@@ -1270,6 +1297,63 @@ export async function startGatewayServer(
           return { loaded: false, error: err instanceof Error ? err.message : String(err) };
         }
       },
+      onPluginUpdated: async (installPath: string) => {
+        try {
+          const newDiscovery = discoverPlugins([installPath]);
+          if (newDiscovery.plugins.length === 0) {
+            return { loaded: false, error: "No plugin found at install path" };
+          }
+          const pluginToLoad = newDiscovery.plugins[0]!;
+          // Do NOT check pluginRegistry.has() — the plugin was just deactivated for update
+          const result = await loadPlugins([pluginToLoad], {
+            pluginRegistry,
+            hookBus,
+            projectTypeRegistry,
+            config: config as Record<string, unknown>,
+            logger,
+            workspaceRoot: opts?.configPath ? dirname(resolvePath(opts.configPath)) : workspaceRoot,
+            projectDirs: projectPaths,
+            pluginPriorities: Object.fromEntries(
+              Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
+            ),
+            channelRegistry,
+            channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+          }, { bustCache: true });
+          if (result.loaded.length > 0) {
+            bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
+            for (const { stack } of pluginRegistry.getStacks()) {
+              if (!stackRegistry.get(stack.id)) stackRegistry.register(stack);
+            }
+            log.info(`hot-reloaded plugin: ${pluginToLoad.manifest.id}`);
+            return { loaded: true, pluginId: pluginToLoad.manifest.id };
+          }
+          return { loaded: false, error: result.failed[0]?.error ?? "Unknown error" };
+        } catch (err) {
+          return { loaded: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      },
+      onPluginDeactivating: async (pluginId: string) => {
+        // 1. Unbridge skills registered by this plugin
+        unbridgePluginCapabilities(pluginId, { pluginRegistry, skillRegistry, logger });
+
+        // 2. Unregister stacks owned by this plugin
+        for (const { pluginId: pid, stack } of pluginRegistry.getStacks()) {
+          if (pid === pluginId) stackRegistry.unregister(stack.id);
+        }
+
+        // 3. Unregister project types owned by this plugin
+        for (const typeId of pluginRegistry.getProjectTypeIds(pluginId)) {
+          projectTypeRegistry.unregister(typeId);
+        }
+
+        // 4. Remove hook handlers registered by this plugin
+        hookBus.removeForPlugin(pluginId);
+
+        // 5. Deactivate and remove all registrations
+        await pluginRegistry.deactivateSingle(pluginId);
+
+        log.info(`deactivated plugin for update: ${pluginId}`);
+      },
       secrets,
       config: config as Record<string, unknown>,
       mappRegistry,
@@ -1293,7 +1377,7 @@ export async function startGatewayServer(
       },
       preListenHooks: [
         (f) => registerReportsApi(f, reportsStore),
-        (f) => registerWorkerApi(f, workerRuntime),
+        (f) => registerWorkerApi(f, workerRuntime, workerPromptLoader),
         (f) => registerComplianceRoutes(f, { incidentStore, vendorStore, sessionStore: complianceSessionStore, backupManager }),
         (f) => registerSecurityRoutes(f, { scanRunner, scanStore }),
       ],
@@ -1350,10 +1434,22 @@ export async function startGatewayServer(
   // Per-session message queue chain — ensures sequential processing per session.
   const sessionProcessingChain = new Map<string, Promise<void>>();
 
+  // Per-session abort controllers — allows cancellation of in-flight invocations.
+  const sessionAbortControllers = new Map<string, AbortController>();
+
   // Track topic subscriptions per connection
   const subscriptions = new Map<string, Set<string>>();
 
+  // Track the latest connectionId per owner entity — updated on every WS message.
+  // Event handlers use this to always send to the current connection, even if the
+  // browser reconnected during a long tool execution (e.g., Playwright sessions).
+  const ownerConnectionMap = new Map<string, string>();
+
   wsServer.on("message", (connectionId: string, message: WSMessage) => {
+    // Update the owner → connection mapping on every message
+    if (ownerEntityId !== undefined) {
+      ownerConnectionMap.set(ownerEntityId, connectionId);
+    }
     switch (message.type) {
       case "ping": {
         wsServer.broadcast("pong", null);
@@ -1458,12 +1554,24 @@ export async function startGatewayServer(
           // Re-hydrate the in-flight tracker
           chatSessionData.set(chatSessionId, persisted);
 
-          // Re-hydrate the agent session so LLM has full context
+          // Re-hydrate the agent session so LLM has full context (including images)
           const agentSession = agentSessionManager.getOrCreate(sessionKey, ownerEntityId, "web");
           if (agentSession.turns.length === 0) {
             for (const msg of persisted.messages) {
               if (msg.role === "user") {
-                agentSessionManager.addUserTurn(sessionKey, msg.content, "");
+                // Resolve stored image IDs back to ImageRef objects
+                let imageRefs: import("./agent-session.js").ImageRef[] | undefined;
+                if (msg.images?.length) {
+                  imageRefs = msg.images
+                    .map((imageId) => {
+                      const blob = imageBlobStore.load(chatSessionId, imageId);
+                      if (!blob) return null;
+                      return { imageId, mediaType: blob.mediaType, estimatedTokens: 1600 };
+                    })
+                    .filter((r): r is import("./agent-session.js").ImageRef => r !== null);
+                  if (imageRefs.length === 0) imageRefs = undefined;
+                }
+                agentSessionManager.addUserTurn(sessionKey, msg.content, "", imageRefs);
               } else if (msg.role === "assistant") {
                 agentSessionManager.addAssistantTurn(sessionKey, msg.content, "");
               }
@@ -1509,6 +1617,22 @@ export async function startGatewayServer(
           context: chatContext,
           messages: historyTurns,
         });
+        break;
+      }
+
+      case "chat:cancel": {
+        // Cancel an in-flight agent invocation for a session.
+        const cancelPayload = message.payload as { sessionId?: string } | undefined;
+        const cancelSessionId = cancelPayload?.sessionId;
+        if (cancelSessionId) {
+          const controller = sessionAbortControllers.get(cancelSessionId);
+          if (controller) {
+            controller.abort();
+            sessionAbortControllers.delete(cancelSessionId);
+            wsServer.sendTo(connectionId, "chat:cancelled", { sessionId: cancelSessionId, timestamp: new Date().toISOString() });
+            log.info(`agent invocation cancelled for session ${cancelSessionId}`);
+          }
+        }
         break;
       }
 
@@ -1591,7 +1715,23 @@ export async function startGatewayServer(
           timestamp: new Date().toISOString(),
         });
 
-        // Track user message for persistence
+        // Save images to blob store and build image refs for the session pipeline
+        const chatImageIds: string[] = [];
+        const chatImageRefs: import("./agent-session.js").ImageRef[] = [];
+        if (chatSessionId) {
+          for (const img of chatImages) {
+            const imageId = ulid();
+            const base64 = img.data.replace(/^data:[^;]+;base64,/, "");
+            imageBlobStore.save(chatSessionId, imageId, img.mediaType, base64);
+            chatImageIds.push(imageId);
+            // Estimate tokens: ~1600 per 200KB of base64
+            const bytes = base64.length * 0.75;
+            const tiles = Math.max(1, Math.ceil(bytes / 200_000));
+            chatImageRefs.push({ imageId, mediaType: img.mediaType, estimatedTokens: tiles * 1600 });
+          }
+        }
+
+        // Track user message for persistence (with image IDs)
         if (chatSessionId) {
           const existing = chatSessionData.get(chatSessionId);
           if (existing) {
@@ -1600,6 +1740,7 @@ export async function startGatewayServer(
               content: typeof chatText === "string" ? chatText : "[media]",
               timestamp: new Date().toISOString(),
               runId,
+              images: chatImageIds.length > 0 ? chatImageIds : undefined,
             }));
           }
         }
@@ -1639,7 +1780,7 @@ export async function startGatewayServer(
         };
         const toolStartHandler = (data: { sessionKey: string; toolName: string; toolIndex: number; loopIteration: number; toolInput?: Record<string, unknown> }) => {
           if (data.sessionKey !== sessionKey) return;
-          wsServer.sendTo(connectionId, "chat:tool_start", {
+          wsServer.sendTo(getConnId(), "chat:tool_start", {
             sessionId: chatSessionId,
             runId,
             toolName: data.toolName,
@@ -1661,7 +1802,7 @@ export async function startGatewayServer(
           if (data.sessionKey !== sessionKey) return;
           const toolResultTs = new Date().toISOString();
           const toolCardId = `${chatSessionId ?? "t"}-${String(data.loopIteration)}-${String(data.toolIndex)}`;
-          wsServer.sendTo(connectionId, "chat:tool_result", {
+          wsServer.sendTo(getConnId(), "chat:tool_result", {
             sessionId: chatSessionId,
             runId,
             toolName: data.toolName,
@@ -1704,7 +1845,7 @@ export async function startGatewayServer(
               const parsed = JSON.parse(data.resultContent) as { ok?: boolean; path?: string; name?: string; slug?: string };
               if (parsed.ok && parsed.path) {
                 chatProjectPath = parsed.path;
-                wsServer.sendTo(connectionId, "chat:context_set", {
+                wsServer.sendTo(getConnId(), "chat:context_set", {
                   sessionId: chatSessionId,
                   context: parsed.path,
                   contextLabel: parsed.name ?? parsed.slug ?? "Project",
@@ -1723,7 +1864,7 @@ export async function startGatewayServer(
         };
         const progressHandler = (data: { sessionKey: string; text: string; phase: string }) => {
           if (data.sessionKey !== sessionKey) return;
-          wsServer.sendTo(connectionId, "chat:progress", {
+          wsServer.sendTo(getConnId(), "chat:progress", {
             sessionId: chatSessionId,
             text: data.text,
             phase: data.phase,
@@ -1733,7 +1874,7 @@ export async function startGatewayServer(
         const thoughtHandler = (data: { sessionKey: string; content: string }) => {
           if (data.sessionKey !== sessionKey) return;
           const thoughtTs = new Date().toISOString();
-          wsServer.sendTo(connectionId, "chat:thought", {
+          wsServer.sendTo(getConnId(), "chat:thought", {
             sessionId: chatSessionId,
             runId,
             content: data.content,
@@ -1753,6 +1894,11 @@ export async function startGatewayServer(
           }
         };
 
+        // Use a getter that always resolves the CURRENT connectionId for this owner,
+        // not the one captured at message-send time. This prevents stale connections
+        // when the browser reconnects during long tool executions (Playwright, etc.).
+        const getConnId = () => ownerConnectionMap.get(ownerEntityId!) ?? connectionId;
+
         agentInvoker.on("tool_start", toolStartHandler);
         agentInvoker.on("tool_result", toolResultHandler);
         agentInvoker.on("progress", progressHandler);
@@ -1766,6 +1912,10 @@ export async function startGatewayServer(
         };
 
         const chainKey = sessionKey ?? `${ownerEntityId}:web:default`;
+        // Create abort controller for this invocation (cancellable via chat:cancel)
+        const abortController = new AbortController();
+        if (chatSessionId) sessionAbortControllers.set(chatSessionId, abortController);
+
         const prev = sessionProcessingChain.get(chainKey) ?? Promise.resolve();
         const current = prev.then(async () => {
           return agentInvoker.process({
@@ -1778,9 +1928,13 @@ export async function startGatewayServer(
             sessionKey,
             projectContext: chatProjectPath,
             builderMode,
+            imageRefs: chatImageRefs.length > 0 ? chatImageRefs : undefined,
+            chatSessionId,
+            abortSignal: abortController.signal,
           });
         }).then(async (outcome) => {
           removeProgressListeners();
+          if (chatSessionId) sessionAbortControllers.delete(chatSessionId);
           // Emit invocation_complete to clear the project activity indicator.
           if (chatProjectPath !== undefined) {
             dashboardBroadcasterRef?.emitProjectActivity({
@@ -1807,7 +1961,7 @@ export async function startGatewayServer(
             } else if (!text) {
               text = "[No response]";
             }
-            wsServer.sendTo(connectionId, "chat:response", {
+            wsServer.sendTo(getConnId(), "chat:response", {
               sessionId: chatSessionId,
               runId,
               text,
@@ -1816,7 +1970,7 @@ export async function startGatewayServer(
             // Generate contextual next-step suggestions via LLM
             const suggestions = await generateNextSteps(chatText ?? "", text, getLLMProvider());
             if (suggestions.length > 0) {
-              wsServer.sendTo(connectionId, "chat:suggestions", {
+              wsServer.sendTo(getConnId(), "chat:suggestions", {
                 sessionId: chatSessionId,
                 suggestions,
               });
@@ -1856,23 +2010,23 @@ export async function startGatewayServer(
               }
             }
           } else if (outcome.type === "error") {
-            wsServer.sendTo(connectionId, "chat:error", { sessionId: chatSessionId, error: outcome.message });
+            wsServer.sendTo(getConnId(), "chat:error", { sessionId: chatSessionId, error: outcome.message });
           } else if (outcome.type === "rate_limited") {
-            wsServer.sendTo(connectionId, "chat:error", { sessionId: chatSessionId, error: outcome.entityNotification });
+            wsServer.sendTo(getConnId(), "chat:error", { sessionId: chatSessionId, error: outcome.entityNotification });
           } else if (outcome.type === "queued") {
-            wsServer.sendTo(connectionId, "chat:response", {
+            wsServer.sendTo(getConnId(), "chat:response", {
               sessionId: chatSessionId,
               text: outcome.entityNotification || "[Message queued]",
               timestamp: new Date().toISOString(),
             });
           } else if (outcome.type === "human_routed") {
-            wsServer.sendTo(connectionId, "chat:response", {
+            wsServer.sendTo(getConnId(), "chat:response", {
               sessionId: chatSessionId,
               text: "[Routed to human operator]",
               timestamp: new Date().toISOString(),
             });
           } else if (outcome.type === "log_only") {
-            wsServer.sendTo(connectionId, "chat:response", {
+            wsServer.sendTo(getConnId(), "chat:response", {
               sessionId: chatSessionId,
               text: "[Logged — no response in current state]",
               timestamp: new Date().toISOString(),
@@ -1958,7 +2112,7 @@ export async function startGatewayServer(
             });
           }
           log.error(`chat:send error: ${err instanceof Error ? err.message : String(err)}`);
-          wsServer.sendTo(connectionId, "chat:error", {
+          wsServer.sendTo(getConnId(), "chat:error", {
             sessionId: chatSessionId,
             error: err instanceof Error ? err.message : "Agent processing failed",
           });
@@ -2376,7 +2530,7 @@ export async function startGatewayServer(
   if (dashboardBroadcaster !== null) {
     workerRuntime.on("runtime:event", (event: { type: string; jobId: string; [key: string]: unknown }) => {
       if (event.type === "job_started") {
-        dashboardBroadcaster.emitBotsJobUpdate({
+        dashboardBroadcaster.emitTmJobUpdate({
           jobId: event.jobId,
           status: "running",
           description: String(event.description ?? ""),
@@ -2384,16 +2538,46 @@ export async function startGatewayServer(
           workers: (event.workers as string[]) ?? [],
         });
       } else if (event.type === "job_failed") {
-        dashboardBroadcaster.emitBotsJobUpdate({
+        dashboardBroadcaster.emitTmJobUpdate({
           jobId: event.jobId,
           status: "failed",
           description: String(event.error ?? ""),
           currentPhase: null,
           workers: [],
         });
+      } else if (event.type === "worker_done") {
+        dashboardBroadcaster.emitTmJobUpdate({
+          jobId: event.jobId,
+          status: "running",
+          description: `Worker ${String(event.worker ?? "")} completed`,
+          currentPhase: String(event.phase ?? ""),
+          workers: (event.workers as string[]) ?? [],
+        });
+      } else if (event.type === "phase_done") {
+        dashboardBroadcaster.emitTmJobUpdate({
+          jobId: event.jobId,
+          status: "running",
+          description: `Phase ${String(event.phase ?? "")} completed`,
+          currentPhase: String(event.nextPhase ?? ""),
+          workers: [],
+        });
+      } else if (event.type === "checkpoint") {
+        dashboardBroadcaster.emitTmJobUpdate({
+          jobId: event.jobId,
+          status: "checkpoint",
+          description: String(event.message ?? "Checkpoint reached — awaiting approval"),
+          currentPhase: String(event.phase ?? ""),
+          workers: [],
+        });
+      } else if (event.type === "report_ready") {
+        dashboardBroadcaster.emitTmJobUpdate({
+          jobId: event.jobId,
+          status: "complete",
+          description: String(event.gist ?? "Job completed"),
+          currentPhase: null,
+          workers: [],
+        });
       }
-      // worker_done, phase_done, checkpoint, report_ready handled by workerRuntime
-      // internal tracking; no dedicated broadcaster method for these yet.
     });
   }
 
@@ -2468,6 +2652,22 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const scheduledTaskManager = new ScheduledTaskManager({ pluginRegistry, logger });
+
+  // Register core scheduled task: chat garbage collector
+  const chatGC = new ChatGarbageCollector({ chatPersistence, imageBlobStore, configPath: opts?.configPath });
+  pluginRegistry.addScheduledTask("core", {
+    id: "chat-garbage-collector",
+    name: "Chat Garbage Collector",
+    description: "Prunes chat sessions older than retention period and removes orphaned image directories",
+    cron: "0 2 * * *",
+    handler: async () => {
+      const stats = await chatGC.collect();
+      log.info(`chat GC: scanned=${String(stats.sessionsScanned)} deleted=${String(stats.sessionsDeleted)} orphans=${String(stats.orphanedImageDirsDeleted)} duration=${String(stats.durationMs)}ms`);
+    },
+    skipIfRunning: true,
+    enabled: true,
+  });
+
   scheduledTaskManager.start();
 
   // -------------------------------------------------------------------------

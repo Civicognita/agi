@@ -170,8 +170,10 @@ export class ScanStore {
     if (opts?.projectPath) sql += " JOIN scan_runs r ON f.scan_id = r.id";
     if (conditions.length > 0) sql += " WHERE " + conditions.join(" AND ");
     sql += " ORDER BY CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, f.created_at DESC";
-    sql += ` LIMIT ? OFFSET ?`;
-    params.push(opts?.limit ?? 100, opts?.offset ?? 0);
+    if (opts?.limit !== undefined) {
+      sql += ` LIMIT ? OFFSET ?`;
+      params.push(opts.limit, opts?.offset ?? 0);
+    }
     const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
     return rows.map(r => this.rowToFinding(r));
   }

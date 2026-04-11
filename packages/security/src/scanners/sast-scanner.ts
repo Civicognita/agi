@@ -3,8 +3,9 @@
  * Implements detection checks from the security audit specification.
  */
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, relative, extname } from "node:path";
+import { minimatch } from "minimatch";
 import { randomUUID } from "node:crypto";
 import type { ScanProviderDefinition, SecurityFinding, ScanConfig, ScanProviderContext } from "../types.js";
 
@@ -131,8 +132,33 @@ const SAST_RULES: SastRule[] = [
   },
 ];
 
+function parseGitignore(rootDir: string): string[] {
+  const gitignorePath = join(rootDir, ".gitignore");
+  if (!existsSync(gitignorePath)) return [];
+  try {
+    return readFileSync(gitignorePath, "utf-8")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
+  } catch {
+    return [];
+  }
+}
+
+function isGitignored(relPath: string, patterns: string[]): boolean {
+  for (const pattern of patterns) {
+    // Handle negation (!) — skip if the pattern negates a match
+    if (pattern.startsWith("!")) continue;
+    if (minimatch(relPath, pattern, { dot: true })) return true;
+    // Also match directory patterns (e.g., ".next" should match ".next/foo")
+    if (minimatch(relPath, `${pattern}/**`, { dot: true })) return true;
+  }
+  return false;
+}
+
 function walkFiles(dir: string, extensions: Set<string>, excludePaths: string[] = []): string[] {
   const files: string[] = [];
+  const gitignorePatterns = parseGitignore(dir);
   const stack = [dir];
   while (stack.length > 0) {
     const current = stack.pop()!;
@@ -142,8 +168,11 @@ function walkFiles(dir: string, extensions: Set<string>, excludePaths: string[] 
     for (const entry of entries) {
       const fullPath = join(current, entry.name);
       const rel = relative(dir, fullPath);
-      // Skip node_modules, .git, dist, build
-      if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist" || entry.name === "build") continue;
+      // Fast-path: skip common non-source directories
+      if (entry.name === "node_modules" || entry.name === ".git") continue;
+      // Honor .gitignore patterns
+      if (gitignorePatterns.length > 0 && isGitignored(rel, gitignorePatterns)) continue;
+      // Honor explicit excludePaths from config
       if (excludePaths.some(p => rel.startsWith(p))) continue;
       if (entry.isDirectory()) {
         stack.push(fullPath);

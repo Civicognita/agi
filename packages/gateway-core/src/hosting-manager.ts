@@ -27,6 +27,15 @@ import type { ProjectConfigManager } from "./project-config-manager.js";
 import type { MagicAppContainerConfig, MagicAppContainerContext } from "./magic-app-types.js";
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Strip ANSI escape codes from command output for clean dashboard display. */
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07/g;
+function stripAnsi(text: string): string { return text.replace(ANSI_RE, ""); }
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -180,6 +189,7 @@ export class HostingManager {
   private loginProcess: ChildProcess | null = null;
   private onStatusChange: (() => void) | null = null;
   private statusPollTimer: ReturnType<typeof setInterval> | null = null;
+  private eventsProcess: ChildProcess | null = null;
 
   constructor(deps: HostingManagerDeps) {
     this.config = deps.config;
@@ -925,6 +935,11 @@ export class HostingManager {
         args.push("-e", `${key}=${value}`);
       }
 
+      const magicTunnelOrigin = this.computeTunnelOrigin(hosted);
+      if (magicTunnelOrigin) {
+        args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${magicTunnelOrigin}`);
+      }
+
       args.push(magicAppConfig.image);
 
       const cmdTokens = magicAppConfig.command?.(ctx);
@@ -968,8 +983,21 @@ export class HostingManager {
         args.push("-e", `${key}=${value}`);
       }
 
-      // Set working directory to /app (where project is typically mounted)
-      args.push("-w", "/app");
+      // Inject tunnel hostname as allowed dev origin so frameworks like Next.js
+      // accept HMR WebSocket connections through the tunnel domain.
+      // HOSTNAME_ALLOWED_ORIGIN is read by our dev-origin shim (injected below).
+      const tunnelOrigin = this.computeTunnelOrigin(hosted);
+      if (tunnelOrigin) {
+        args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${tunnelOrigin}`);
+      }
+
+      // Set working directory to the container-side mount path from the stack's first volume.
+      // Different stacks mount to different paths (e.g. /app for Node, /var/www/html for PHP).
+      const firstMount = stackConfig.volumeMounts(ctx)[0];
+      if (firstMount) {
+        const containerPath = firstMount.split(":")[1];
+        if (containerPath) args.push("-w", containerPath);
+      }
 
       // Use runtime-selected image if available, otherwise stack's default
       const runtimeDef = hosted.meta.runtimeId
@@ -990,6 +1018,27 @@ export class HostingManager {
             cmdTokens = ["sh", "-c", cmd];
           }
         }
+      }
+
+      // Wrap dev commands with an origin-injection shim for Next.js.
+      // Next.js blocks HMR WebSocket connections from unknown origins in dev mode.
+      // If HOSTNAME_ALLOWED_ORIGIN is set, inject allowedDevOrigins into next.config.
+      if (cmdTokens && hosted.meta.mode === "development" && tunnelOrigin) {
+        const origCmd = cmdTokens.length === 3 && cmdTokens[0] === "sh" && cmdTokens[1] === "-c"
+          ? cmdTokens[2]!
+          : cmdTokens.join(" ");
+        const shimScript = [
+          // Inject allowedDevOrigins into next.config if it exists (Next.js 15+)
+          `if [ -n "$HOSTNAME_ALLOWED_ORIGIN" ] && [ -f next.config.ts ] || [ -f next.config.mjs ] || [ -f next.config.js ]; then`,
+          `  CFG=$(ls next.config.ts next.config.mjs next.config.js 2>/dev/null | head -1);`,
+          `  if ! grep -q allowedDevOrigins "$CFG" 2>/dev/null; then`,
+          `    sed -i "s|/\\* config options here \\*/|allowedDevOrigins: [\\\"$HOSTNAME_ALLOWED_ORIGIN\\\"],|" "$CFG" 2>/dev/null || true;`,
+          `    sed -i "s|};|  allowedDevOrigins: [\\\"$HOSTNAME_ALLOWED_ORIGIN\\\"],\\n};|" "$CFG" 2>/dev/null || true;`,
+          `  fi;`,
+          `fi;`,
+          origCmd,
+        ].join(" ");
+        cmdTokens = ["sh", "-c", shimScript];
       }
 
       if (cmdTokens) {
@@ -1082,6 +1131,8 @@ export class HostingManager {
           args.push("-w", "/app");
           args.push("-e", `PORT=${String(internalPort)}`);
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
+          const nodeTunnelOrigin = this.computeTunnelOrigin(hosted);
+          if (nodeTunnelOrigin) args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${nodeTunnelOrigin}`);
           args.push(image);
           const cmdTokens = hosted.meta.startCommand.split(/\s+/);
           args.push(...cmdTokens);
@@ -1098,6 +1149,8 @@ export class HostingManager {
           args.push("-w", "/app");
           args.push("-e", `PORT=${String(internalPort)}`);
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
+          const defaultTunnelOrigin = this.computeTunnelOrigin(hosted);
+          if (defaultTunnelOrigin) args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${defaultTunnelOrigin}`);
           args.push(image);
           args.push(...hosted.meta.startCommand.split(/\s+/));
           break;
@@ -1172,6 +1225,30 @@ export class HostingManager {
   }
 
   // -------------------------------------------------------------------------
+  // Tunnel origin computation
+  // -------------------------------------------------------------------------
+
+  /**
+   * Compute the tunnel origin hostname for a hosted project.
+   * Returns the tunnel domain (e.g. "blackorchid-web.doers.market") if a tunnel
+   * is configured, so frameworks like Next.js can allow HMR through it.
+   */
+  private computeTunnelOrigin(hosted: HostedProject): string | null {
+    // If a tunnel URL is already known, extract the hostname
+    if (hosted.meta.tunnelUrl) {
+      try {
+        return new URL(hosted.meta.tunnelUrl).hostname;
+      } catch { /* fall through */ }
+    }
+    // For named tunnels, compute from hostname + configured tunnel domain
+    const { domain } = this.readTunnelConfig();
+    if (domain && hosted.meta.hostname) {
+      return `${hosted.meta.hostname}.${domain}`;
+    }
+    return null;
+  }
+
+  // -------------------------------------------------------------------------
   // Container logs
   // -------------------------------------------------------------------------
 
@@ -1207,17 +1284,109 @@ export class HostingManager {
   }
 
   // -------------------------------------------------------------------------
-  // Status polling
+  // Status monitoring — event-driven with fallback polling
+  //
+  // Uses `podman events` to stream container state changes via a single
+  // persistent process instead of spawning `podman inspect` per container
+  // every N seconds. A low-frequency fallback poll (120s) catches anything
+  // the event stream misses.
   // -------------------------------------------------------------------------
 
   private startStatusPolling(): void {
+    // Start event-driven monitoring
+    this.startEventsStream();
+
+    // Low-frequency fallback poll (120s) in case events stream misses something
     if (this.statusPollTimer !== null) return;
     this.statusPollTimer = setInterval(
       () => this.pollContainerStatuses(),
-      this.config.statusPollIntervalMs,
+      120_000,
     );
   }
 
+  /**
+   * Start a persistent `podman events` process that streams container state changes.
+   * Replaces the old per-container `podman inspect` polling that caused kernel lockups
+   * by spawning ~36 processes/minute (6 containers * every 10 seconds).
+   */
+  private startEventsStream(): void {
+    if (this.eventsProcess !== null) return;
+
+    try {
+      const child = spawn("podman", [
+        "events",
+        "--format", "json",
+        "--filter", "type=container",
+        "--filter", "event=start",
+        "--filter", "event=stop",
+        "--filter", "event=die",
+        "--filter", "event=exited",
+      ], { stdio: ["ignore", "pipe", "ignore"] });
+
+      this.eventsProcess = child;
+
+      let buffer = "";
+      child.stdout!.on("data", (chunk: Buffer) => {
+        buffer += chunk.toString();
+        // Process complete JSON lines
+        let newlineIdx: number;
+        while ((newlineIdx = buffer.indexOf("\n")) >= 0) {
+          const line = buffer.slice(0, newlineIdx).trim();
+          buffer = buffer.slice(newlineIdx + 1);
+          if (!line) continue;
+          try {
+            const event = JSON.parse(line) as { Actor?: { Attributes?: { name?: string } }; Action?: string; Status?: string };
+            const containerName = event.Actor?.Attributes?.name;
+            const action = event.Action ?? event.Status ?? "";
+            if (containerName) this.handleContainerEvent(containerName, action);
+          } catch {
+            // Malformed JSON — skip
+          }
+        }
+      });
+
+      child.on("close", () => {
+        this.eventsProcess = null;
+        // Restart after a delay if the process dies unexpectedly
+        setTimeout(() => {
+          if (this.statusPollTimer !== null) this.startEventsStream();
+        }, 5_000);
+      });
+
+      child.on("error", () => {
+        this.eventsProcess = null;
+      });
+
+      this.log.info("container status monitoring started (podman events)");
+    } catch {
+      this.log.warn("failed to start podman events stream — relying on fallback polling");
+    }
+  }
+
+  /** Handle a container state change event from the podman events stream. */
+  private handleContainerEvent(containerName: string, action: string): void {
+    // Find the hosted project for this container
+    for (const hosted of this.projects.values()) {
+      if (hosted.containerName !== containerName) continue;
+
+      let newStatus: "running" | "stopped" | "error";
+      if (action === "start") {
+        newStatus = "running";
+      } else if (action === "stop" || action === "die" || action === "exited") {
+        newStatus = "stopped";
+      } else {
+        return; // Unknown action — ignore
+      }
+
+      if (hosted.status !== newStatus) {
+        hosted.status = newStatus;
+        this.notifyStatusChange();
+      }
+      return;
+    }
+  }
+
+  /** Low-frequency fallback poll — runs every 120s to catch missed events. */
   private pollContainerStatuses(): void {
     let changed = false;
 
@@ -1240,7 +1409,6 @@ export class HostingManager {
           newStatus = "error";
         }
       } catch {
-        // Container not found
         newStatus = "stopped";
         hosted.containerId = null;
       }
@@ -1626,7 +1794,12 @@ export class HostingManager {
 
     // 1. Laravel (composer.json with laravel/framework)
     if (hasComposerJson && "laravel/framework" in composerRequire) {
-      return { projectType: "web-app", suggestedStacks: ["stack-laravel"], docRoot: "public", startCommand: null };
+      const suggestedStacks = ["stack-laravel"];
+      // Monorepo: suggest React stack if React is also present
+      if (hasPackageJson && "react" in pkgDeps) {
+        suggestedStacks.push("stack-react");
+      }
+      return { projectType: "web-app", suggestedStacks, docRoot: "public", startCommand: null };
     }
 
     // 2. WordPress (composer.json with roots/wordpress or johnpbloch/wordpress-core)
@@ -1710,10 +1883,14 @@ export class HostingManager {
   async shutdown(): Promise<void> {
     this.log.info("shutting down hosted projects...");
 
-    // Stop polling
+    // Stop polling and events stream
     if (this.statusPollTimer !== null) {
       clearInterval(this.statusPollTimer);
       this.statusPollTimer = null;
+    }
+    if (this.eventsProcess !== null) {
+      try { this.eventsProcess.kill(); } catch { /* already dead */ }
+      this.eventsProcess = null;
     }
 
     // Kill all tunnel processes
@@ -1972,10 +2149,23 @@ export class HostingManager {
     const { mode, domain } = this.readTunnelConfig();
 
     // Use named tunnel if mode is "named", Cloudflare is authenticated, AND a tunnel domain is configured
+    let result: { url: string };
     if (mode === "named" && this.isCloudflaredAuthenticated() && domain) {
-      return this.enableNamedTunnel(resolved, hosted, bin, domain);
+      result = await this.enableNamedTunnel(resolved, hosted, bin, domain);
+    } else {
+      result = await this.enableQuickTunnel(resolved, hosted, bin);
     }
-    return this.enableQuickTunnel(resolved, hosted, bin);
+
+    // Restart the container so it picks up HOSTNAME_ALLOWED_ORIGIN with the tunnel hostname.
+    // This ensures frameworks like Next.js accept HMR connections through the tunnel.
+    if (hosted.meta.mode === "development" && hosted.containerName) {
+      this.log.info(`[${hosted.meta.hostname}] restarting container to inject tunnel origin`);
+      this.stopContainer(hosted);
+      this.startContainer(hosted);
+      this.notifyStatusChange();
+    }
+
+    return result;
   }
 
   /** Quick tunnel — ephemeral random URL, no auth needed. Falls back here when Cloudflare is not authenticated. */
@@ -2284,12 +2474,12 @@ export class HostingManager {
         cwd: resolved,
         timeout: 120_000,
         stdio: "pipe",
-        env: { ...process.env },
+        env: { ...process.env, TERM: "xterm-256color" },
       });
-      return { actionId: action.id, ok: true, output: output.toString().slice(0, 4096) };
+      return { actionId: action.id, ok: true, output: stripAnsi(output.toString()).slice(0, 4096) };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return { actionId: action.id, ok: false, error: msg };
+      return { actionId: action.id, ok: false, error: stripAnsi(msg) };
     }
   }
 

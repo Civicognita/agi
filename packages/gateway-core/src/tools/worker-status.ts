@@ -1,5 +1,5 @@
 /**
- * worker_status tool — read worker job status from .bots/jobs/ directory.
+ * worker_status tool — read worker job status from .dispatch/jobs/ directory.
  *
  * Requires state ONLINE, tier unverified (read-only).
  */
@@ -17,7 +17,7 @@ export function createWorkerStatusHandler(
 ): ToolHandler {
   return async (input: Record<string, unknown>): Promise<string> => {
     const jobId = input.jobId !== undefined ? String(input.jobId).trim() : undefined;
-    const jobsDir = resolve(config.botsDir ?? join(config.workspaceRoot, ".bots"), "jobs");
+    const jobsDir = resolve(config.botsDir ?? join(config.workspaceRoot, ".dispatch"), "jobs");
 
     if (jobId !== undefined && jobId.length > 0) {
       // Single job lookup
@@ -73,7 +73,7 @@ export function createWorkerStatusHandler(
 export const WORKER_STATUS_MANIFEST = {
   name: "worker_status",
   description:
-    "Check worker job status from .bots/jobs/. " +
+    "Check worker job status from .dispatch/jobs/. " +
     "If jobId is provided, returns details for that job. " +
     "Otherwise lists all jobs and their statuses.",
   requiresState: ["ONLINE" as const],

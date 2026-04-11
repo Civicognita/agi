@@ -1,5 +1,7 @@
 # Workers & Taskmaster: Writing Prompts and Chains
 
+> **This document has been superseded by [taskmaster.md](taskmaster.md).** The content below may contain stale paths. Refer to the new document for current architecture: worker prompts now live in `prompts/workers/`, execution is inlined in `worker-runtime.ts`, and events use `tm:*` prefix.
+
 **Taskmaster** is the built-in job orchestration engine in Aionima. It discovers registered workers (provided by plugins), routes background tasks to them, enforces chains between workers, and manages gate-controlled phase transitions. This document covers how to write worker prompts, understand chains, and work with the Taskmaster engine.
 
 > **Note:** Workers are defined by plugins via `api.registerWorker()` using the `defineWorker()` SDK builder. The Taskmaster engine lives inside `packages/gateway-core/`. There is no external BOTS repo.

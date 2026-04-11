@@ -181,8 +181,8 @@ const HostingConfigSchema = z
   .object({
     /** Enable project hosting infrastructure. */
     enabled: z.boolean().default(false),
-    /** LAN IP address for DNS resolution and Caddy binding. */
-    lanIp: z.string().default("192.168.0.144"),
+    /** LAN IP address for DNS resolution and Caddy binding. Set during install/setup. */
+    lanIp: z.string().optional(),
     /** Base domain for hosted projects (e.g. "ai.on"). */
     baseDomain: z.string().default("ai.on"),
     /** Extra domain names that also reverse-proxy to the gateway dashboard. */
@@ -192,7 +192,7 @@ const HostingConfigSchema = z
     /** Container runtime (currently only podman). */
     containerRuntime: z.enum(["podman"]).default("podman"),
     /** Interval in ms for polling container statuses. */
-    statusPollIntervalMs: z.number().int().positive().default(10_000),
+    statusPollIntervalMs: z.number().int().positive().default(120_000),
     /** Default tunnel mode: "quick" (ephemeral URL, no auth) or "named" (persistent URL, requires Cloudflare auth). */
     tunnelMode: z.enum(["quick", "named"]).optional(),
     /** Cloudflare-managed domain for named tunnels (e.g. "example.com"). Named tunnels create DNS records as <project>.<tunnelDomain>. */
@@ -487,6 +487,13 @@ const ComplianceConfigSchema = z
   })
   .strict();
 
+const ChatConfigSchema = z
+  .object({
+    /** Days to retain chat sessions before garbage collection (default: 30). */
+    retentionDays: z.number().int().positive().default(30),
+  })
+  .strict();
+
 export const AionimaConfigSchema = z
   .object({
     gateway: GatewayConfigSchema.optional(),
@@ -524,6 +531,7 @@ export const AionimaConfigSchema = z
     agentCredentials: AgentCredentialsConfigSchema.optional(),
     backup: BackupConfigSchema.optional(),
     compliance: ComplianceConfigSchema.optional(),
+    chat: ChatConfigSchema.optional(),
   })
   .passthrough();
 
@@ -565,3 +573,4 @@ export type IdServiceConfig = z.infer<typeof IdServiceConfigSchema>;
 export type IdServiceLocalConfig = z.infer<typeof IdServiceLocalSchema>;
 export type BackupConfig = z.infer<typeof BackupConfigSchema>;
 export type ComplianceConfig = z.infer<typeof ComplianceConfigSchema>;
+export type ChatConfig = z.infer<typeof ChatConfigSchema>;

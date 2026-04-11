@@ -38,8 +38,10 @@
     "tm:jobs": "npx tsx .bots/lib/cli.ts jobs"
   },
   "dependencies": {
+    "ansi-to-html": "^0.7.2",
     "better-sqlite3": "^11.0.0",
-    "node-pty": "^1.1.0"
+    "node-pty": "^1.1.0",
+    "playwright": "^1.59.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

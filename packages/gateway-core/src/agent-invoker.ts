@@ -90,6 +90,7 @@ function extractToolDetail(
     case "manage_project": return { action: input.action, name: input.name };
     case "search_prime": return { query: input.query };
     case "create_plan": case "update_plan": return { title: input.title };
+    case "browser_session": return { action: input.action, url: input.url, selector: input.selector };
     default: return undefined;
   }
 }
@@ -125,6 +126,8 @@ export interface AgentInvokerDeps {
   ownerConfig?: { displayName: string; channels: Record<string, string | undefined> };
   /** Optional logger instance. */
   logger?: Logger;
+  /** Optional image blob store for resolving image references in history. */
+  imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
 }
 
 export interface InvocationRequest {
@@ -148,6 +151,12 @@ export interface InvocationRequest {
   projectContext?: string;
   /** BuilderChat mode — loads builder system prompt and designer tools. */
   builderMode?: "create" | "update" | "review";
+  /** Pre-saved image references for this invocation (from ImageBlobStore). */
+  imageRefs?: import("./agent-session.js").ImageRef[];
+  /** Chat session ID used for image blob resolution. */
+  chatSessionId?: string;
+  /** Abort signal — when triggered, the invocation stops at the next checkpoint. */
+  abortSignal?: AbortSignal;
 }
 
 export type InvocationOutcome =
@@ -279,11 +288,12 @@ export class AgentInvoker extends EventEmitter {
       ? sanitized.contentBlocks as LLMContentBlock[]
       : sanitized.content;
 
-    // Add user turn to session (text-only for compaction/token estimation)
+    // Add user turn to session (text + image refs for context continuity)
     this.deps.sessionManager.addUserTurn(
       sKey,
       sanitized.content,
       coaFingerprint,
+      request.imageRefs,
     );
 
     // -----------------------------------------------------------------------
@@ -473,15 +483,42 @@ export class AgentInvoker extends EventEmitter {
         entity.verificationTier,
       );
 
-      // Build API messages: use content blocks for the current turn when
-      // images are present so the model receives them as proper image blocks.
-      const apiMessages: LLMMessage[] = [...history.messages];
-      if (typeof apiContent !== "string" && apiMessages.length > 0) {
-        const last = apiMessages[apiMessages.length - 1]!;
-        if (last.role === "user") {
-          apiMessages[apiMessages.length - 1] = { ...last, content: apiContent };
+      // Build API messages: resolve image refs on ALL history turns so the
+      // model can reference screenshots/images from earlier in the conversation.
+      // The current turn uses in-memory content blocks (freshest data), while
+      // prior turns resolve from the ImageBlobStore on disk.
+      const apiMessages: LLMMessage[] = history.messages.map((msg, idx) => {
+        const isLastUser = idx === history.messages.length - 1 && msg.role === "user";
+
+        // Current turn: use the in-memory content blocks if they include images
+        if (isLastUser && typeof apiContent !== "string") {
+          return { role: msg.role, content: apiContent };
         }
-      }
+
+        // Prior turns: resolve stored image refs back to content blocks
+        if (msg.role === "user" && msg.imageRefs?.length && this.deps.imageBlobStore && request.chatSessionId) {
+          const blocks: LLMContentBlock[] = [];
+          for (const ref of msg.imageRefs) {
+            const blob = this.deps.imageBlobStore.load(request.chatSessionId, ref.imageId);
+            if (blob) {
+              blocks.push({
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: blob.mediaType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+                  data: blob.data,
+                },
+              });
+            }
+          }
+          if (msg.content) {
+            blocks.push({ type: "text", text: msg.content });
+          }
+          return { role: msg.role, content: blocks.length > 0 ? blocks : msg.content };
+        }
+
+        return { role: msg.role, content: msg.content };
+      });
 
       const thinkingConfig = { type: "enabled" as const, budget_tokens: 10_000 };
 
@@ -508,6 +545,7 @@ export class AgentInvoker extends EventEmitter {
       const toolsUsed: string[] = [];
       let loopCount = 0;
       const maxToolLoops = 15;
+      const abortSignal = request.abortSignal;
 
       // Accumulate messages across tool iterations so the model sees the full
       // conversation history including prior tool calls and their results.
@@ -517,6 +555,11 @@ export class AgentInvoker extends EventEmitter {
       const toolCallHashes = new Map<string, number>();
 
       while (result.toolCalls.length > 0 && loopCount < maxToolLoops) {
+        // Check for cancellation before each tool iteration
+        if (abortSignal?.aborted) {
+          return { type: "response", text: "[Cancelled by user]", toolsUsed, coaFingerprint, taskmasterEmissions: [], model: result.model, provider: "cancelled", usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens }, toolCount: toolsUsed.length, loopCount };
+        }
+
         loopCount++;
         const toolResults: LLMToolResult[] = [];
 
@@ -563,6 +606,15 @@ export class AgentInvoker extends EventEmitter {
           );
           toolsUsed.push(toolCall.name);
 
+          // Merge result data into detail for tools that return structured output (e.g., browser screenshots)
+          let detail = extractToolDetail(toolCall.name, toolCall.input ?? {});
+          if (toolCall.name === "browser_session" || toolCall.name === "visual_inspect") {
+            try {
+              const parsed = JSON.parse(execResult.content) as Record<string, unknown>;
+              detail = { ...detail, ...parsed };
+            } catch { /* non-JSON result */ }
+          }
+
           this.emit("tool_result", {
             sessionKey: sKey,
             toolName: toolCall.name,
@@ -571,7 +623,7 @@ export class AgentInvoker extends EventEmitter {
             success: !execResult.content.startsWith("Error executing tool"),
             summary: FRIENDLY_TOOL_SUMMARY[toolCall.name] ?? (execResult.wasTruncated ? "Done (truncated)" : "Done"),
             resultContent: execResult.content,
-            detail: extractToolDetail(toolCall.name, toolCall.input ?? {}),
+            detail,
             toolInput: sanitizeToolInput(toolCall.input ?? {}),
           });
 
@@ -689,6 +741,9 @@ export class AgentInvoker extends EventEmitter {
 
         // If the model now wants tools, enter the tool loop
         while (result.toolCalls.length > 0 && loopCount < maxToolLoops) {
+          if (abortSignal?.aborted) {
+            return { type: "response", text: "[Cancelled by user]", toolsUsed, coaFingerprint, taskmasterEmissions: [], model: result.model, provider: "cancelled", usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens }, toolCount: toolsUsed.length, loopCount };
+          }
           loopCount++;
           const toolResults: LLMToolResult[] = [];
 
@@ -711,6 +766,15 @@ export class AgentInvoker extends EventEmitter {
             this.emit("tool_start", { sessionKey: sKey, toolName: toolCall.name, toolIndex: i, loopIteration: loopCount, toolInput: sanitizeToolInput(toolCall.input ?? {}) });
             const execResult = await this.executeToolSafe(toolCall, entity, coaFingerprint, state);
             toolsUsed.push(toolCall.name);
+            // Merge result data into detail for tools that return structured output
+            let acDetail = extractToolDetail(toolCall.name, toolCall.input ?? {});
+            if (toolCall.name === "browser_session" || toolCall.name === "visual_inspect") {
+              try {
+                const parsed = JSON.parse(execResult.content) as Record<string, unknown>;
+                acDetail = { ...acDetail, ...parsed };
+              } catch { /* non-JSON result */ }
+            }
+
             this.emit("tool_result", {
               sessionKey: sKey,
               toolName: toolCall.name,
@@ -719,7 +783,7 @@ export class AgentInvoker extends EventEmitter {
               success: !execResult.content.startsWith("Error executing tool"),
               summary: FRIENDLY_TOOL_SUMMARY[toolCall.name] ?? (execResult.wasTruncated ? "Done (truncated)" : "Done"),
               resultContent: execResult.content,
-              detail: extractToolDetail(toolCall.name, toolCall.input ?? {}),
+              detail: acDetail,
               toolInput: sanitizeToolInput(toolCall.input ?? {}),
             });
             toolResults.push({ tool_use_id: toolCall.id, content: execResult.content });
@@ -743,9 +807,14 @@ export class AgentInvoker extends EventEmitter {
             this.emit("progress", { sessionKey: sKey, text: result.text, phase: "tool_loop" });
           }
 
+          const toolResultBlocks: LLMContentBlock[] = toolResults.map((r) => ({
+            type: "tool_result" as const,
+            tool_use_id: r.tool_use_id,
+            content: r.content,
+          }));
           accumulatedMessages.push(
             { role: "assistant", content: prevContentBlocks },
-            { role: "user", content: toolResults.map((r) => ({ type: "tool_result" as const, tool_use_id: r.tool_use_id, content: r.content })) },
+            { role: "user", content: toolResultBlocks },
           );
         }
       }

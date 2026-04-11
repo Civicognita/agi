@@ -514,6 +514,15 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             setError(p.error);
             break;
           }
+          case "chat:cancelled": {
+            const p = payload as { sessionId?: string };
+            if (p.sessionId) {
+              setSessions((prev) => prev.map((s) =>
+                s.id === p.sessionId ? { ...s, thinking: false, toolActivity: [], progressText: undefined } : s
+              ));
+            }
+            break;
+          }
           case "chat:plan_created": {
             const p = payload as { sessionId: string; plan: Plan };
             if (!p.sessionId) break;
@@ -669,6 +678,16 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     setInput("");
     setAttachments([]);
   }, [activeSession, attachments]);
+
+  const cancelInvocation = useCallback(() => {
+    if (!activeSession) return;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "chat:cancel", payload: { sessionId: activeSession.id } }));
+    setSessions((prev) => prev.map((s) =>
+      s.id === activeSession.id ? { ...s, thinking: false, toolActivity: [] } : s
+    ));
+  }, [activeSession]);
 
   const closeSession = useCallback((sessionId: string) => {
     wsRef.current?.send(JSON.stringify({ type: "chat:close", payload: { sessionId } }));
@@ -1136,18 +1155,27 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
               rows={1}
               className="flex-1 px-3 py-2 rounded-[10px] border border-border bg-background text-foreground text-[13px] font-[inherit] resize-none outline-none min-h-[44px] max-h-[100px]"
             />
-            <button
-              onClick={() => sendMessage(input)}
-              disabled={!canSend}
-              className={cn(
-                "px-3.5 py-2 rounded-[10px] border-none text-[13px] font-semibold",
-                canSend
-                  ? "bg-primary text-primary-foreground cursor-pointer"
-                  : "bg-secondary text-muted-foreground cursor-default",
-              )}
-            >
-              Send
-            </button>
+            {activeSession?.thinking ? (
+              <button
+                onClick={cancelInvocation}
+                className="px-3.5 py-2 rounded-[10px] border-none text-[13px] font-semibold bg-red text-white cursor-pointer"
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                onClick={() => sendMessage(input)}
+                disabled={!canSend}
+                className={cn(
+                  "px-3.5 py-2 rounded-[10px] border-none text-[13px] font-semibold",
+                  canSend
+                    ? "bg-primary text-primary-foreground cursor-pointer"
+                    : "bg-secondary text-muted-foreground cursor-default",
+                )}
+              >
+                Send
+              </button>
+            )}
           </div>
         )}
     </div>

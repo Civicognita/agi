@@ -278,6 +278,7 @@ export interface SystemStats {
   cpu: { loadAvg: [number, number, number]; cores: number; usage: number };
   memory: { total: number; free: number; used: number; percent: number };
   disk: { total: number; used: number; free: number; percent: number };
+  diskIO: { readBytesPerSec: number; writeBytesPerSec: number };
   uptime: number;
   hostname: string;
 }
@@ -296,6 +297,8 @@ export interface StatsHistoryPoint {
   cpu: number;
   mem: number;
   disk: number;
+  diskRead: number;
+  diskWrite: number;
   load1: number;
   load5: number;
   load15: number;
@@ -1491,6 +1494,40 @@ export async function resetDashboardUserPassword(token: string, id: string, pass
 // Machine Admin API — /api/machine/*
 // ---------------------------------------------------------------------------
 
+export interface MachineNetworkInfo {
+  supported: boolean;
+  platform?: string;
+  reason?: string;
+  connection?: string;
+  interface?: string;
+  ip?: string;
+  subnet?: string;
+  gateway?: string;
+  method?: "static" | "dhcp";
+}
+
+export async function fetchMachineNetwork(): Promise<MachineNetworkInfo> {
+  const res = await fetch("/api/machine/network");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<MachineNetworkInfo>;
+}
+
+export async function setMachineNetwork(params: {
+  method: "static" | "dhcp";
+  ip?: string;
+  subnet?: string;
+  gateway?: string;
+}): Promise<{ ok: boolean; error?: string; method?: string; newIp?: string }> {
+  const res = await fetch("/api/machine/network", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json() as { ok: boolean; error?: string; method?: string; newIp?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
 export async function fetchMachineInfo(): Promise<import("./types.js").MachineInfo> {
   const res = await fetch("/api/machine/info");
   if (!res.ok) {
@@ -1831,6 +1868,20 @@ export async function fetchMarketplaceUpdates(): Promise<import("./types.js").Ma
   const res = await fetch("/api/marketplace/updates");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<import("./types.js").MarketplaceUpdate[]>;
+}
+
+export async function updateMarketplacePlugin(
+  pluginName: string,
+  sourceId?: number,
+): Promise<{ ok: boolean; error?: string; oldVersion?: string; newVersion?: string }> {
+  const res = await fetch(`/api/marketplace/update/${encodeURIComponent(pluginName)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sourceId }),
+  });
+  const data = await res.json() as { ok: boolean; error?: string; oldVersion?: string; newVersion?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
 }
 
 export async function fetchPluginDetails(id: string): Promise<import("./types.js").PluginDetails> {

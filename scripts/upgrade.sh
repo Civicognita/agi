@@ -262,6 +262,9 @@ else
   die "install" "pnpm install failed"
 fi
 
+# Ensure Playwright browser is installed (required for visual-inspect tool)
+npx playwright install chromium --with-deps 2>/dev/null || true
+
 # Always rebuild native modules using the system Node (/usr/bin/node) —
 # the same binary systemd uses. Shell shims (fnm, nvm) may point to a
 # different version, causing NODE_MODULE_VERSION mismatches at runtime.

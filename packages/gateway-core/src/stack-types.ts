@@ -148,6 +148,10 @@ export interface StackDefinition {
   /** Tools added to projects using this stack. */
   tools: ProjectTypeTool[];
   icon?: string;
+  /** Runtime languages compatible with this stack (e.g. ["node"], ["php"]).
+   *  When set, the runtime picker only shows matching runtimes.
+   *  When omitted, all runtimes are shown (backward compatible). */
+  compatibleLanguages?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +185,7 @@ export interface StackInfo {
   devCommands?: StackDevCommands;
   tools: ProjectTypeTool[];
   icon?: string;
+  compatibleLanguages?: string[];
 }
 
 // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@
  * Uses Fastify v5 instead of raw http.createServer.
  */
 
-import { readFileSync, writeFileSync, appendFileSync, existsSync, statSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, statSync, mkdirSync, readdirSync, rmSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { homedir } from "node:os";
 import { execSync, execFile, execFileSync, spawn } from "node:child_process";
@@ -140,6 +140,8 @@ export interface RuntimeStateDeps {
   notificationStore?: NotificationStore;
   /** ChatPersistence — file-based chat history storage. */
   chatPersistence?: ChatPersistence;
+  /** ImageBlobStore — file-backed image storage for chat sessions. */
+  imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
   /** PluginRegistry — loaded plugin instances (for GET /api/plugins + HTTP route mounting). */
   pluginRegistry?: {
     getAll(): { manifest: { id: string; name: string; version: string; description: string; author?: string; permissions: string[]; category?: string; bakedIn?: boolean; disableable?: boolean }; basePath: string }[];
@@ -223,9 +225,15 @@ export interface RuntimeStateDeps {
     uninstall(pluginName: string, force?: boolean): { ok: boolean; error?: string; dependents?: string[] };
     getInstalled(): { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }[];
     checkUpdates(): { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[];
+    syncLocalCatalog(marketplaceDir: string): { ok: boolean; error?: string; pluginCount?: number };
+    updatePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }>;
   };
   /** Callback to hot-load a newly installed plugin (discover, activate, bridge). */
   onPluginInstalled?: (installPath: string) => Promise<{ loaded: boolean; pluginId?: string; error?: string }>;
+  /** Callback to hot-reload an updated plugin (with ESM cache busting). */
+  onPluginUpdated?: (installPath: string) => Promise<{ loaded: boolean; pluginId?: string; error?: string }>;
+  /** Callback to deactivate a plugin before update (unbridge, unregister, deactivate). */
+  onPluginDeactivating?: (pluginId: string) => Promise<void>;
   /** Federation — identity provider, OAuth, visitor auth, federation node/router. */
   identityProvider?: IdentityProvider;
   oauthHandler?: OAuthHandler | null;
@@ -1972,7 +1980,7 @@ export async function createGatewayRuntimeState(
   const STATS_HISTORY_MAX = 2880;
   const STATS_RECORD_INTERVAL_MS = 30_000;
   const STATS_FLUSH_INTERVAL_MS = 5 * 60 * 1000; // Write to disk every 5 minutes
-  type StatsPoint = { ts: string; cpu: number; mem: number; disk: number; load1: number; load5: number; load15: number };
+  type StatsPoint = { ts: string; cpu: number; mem: number; disk: number; diskRead: number; diskWrite: number; load1: number; load5: number; load15: number };
   const statsHistory: StatsPoint[] = [];
 
   // Stats log file — JSONL format, rotated daily
@@ -1995,7 +2003,11 @@ export async function createGatewayRuntimeState(
         if (!line) continue;
         try {
           const point = JSON.parse(line) as StatsPoint;
-          if (point.ts && typeof point.cpu === "number") statsHistory.push(point);
+          if (point.ts && typeof point.cpu === "number") {
+            point.diskRead ??= 0;
+            point.diskWrite ??= 0;
+            statsHistory.push(point);
+          }
         } catch { /* skip malformed lines */ }
       }
       if (statsHistory.length > STATS_HISTORY_MAX) {
@@ -2033,6 +2045,52 @@ export async function createGatewayRuntimeState(
     cpuUsageCache = { value: usage, ts: now };
     return usage;
   }
+
+  // Disk I/O tracking — reads /proc/diskstats for the root volume device
+  let rootDiskDevice = "";
+  try {
+    const dfOut = execSync("df / --output=source", { timeout: 5000 }).toString();
+    const dfLines = dfOut.trim().split("\n");
+    if (dfLines.length >= 2) {
+      const source = dfLines[1]!.trim();
+      rootDiskDevice = realpathSync(source).replace(/^\/dev\//, "");
+    }
+  } catch { /* root device detection failed — disk I/O will report zeros */ }
+
+  let prevDiskSectors: { read: number; written: number; ts: number } | null = null;
+  let diskIOCache: { readBytesPerSec: number; writeBytesPerSec: number; ts: number } = { readBytesPerSec: 0, writeBytesPerSec: 0, ts: 0 };
+
+  function getDiskIO(): { readBytesPerSec: number; writeBytesPerSec: number } {
+    const now = Date.now();
+    if (now - diskIOCache.ts < 5000) return diskIOCache;
+    if (!rootDiskDevice) return diskIOCache;
+    try {
+      const content = readFileSync("/proc/diskstats", "utf-8");
+      for (const line of content.split("\n")) {
+        const parts = line.trim().split(/\s+/);
+        if (parts[2] === rootDiskDevice) {
+          const sectorsRead = parseInt(parts[5] ?? "0", 10);
+          const sectorsWritten = parseInt(parts[9] ?? "0", 10);
+          if (prevDiskSectors) {
+            const elapsed = (now - prevDiskSectors.ts) / 1000;
+            if (elapsed > 0) {
+              diskIOCache = {
+                readBytesPerSec: Math.round(((sectorsRead - prevDiskSectors.read) * 512) / elapsed),
+                writeBytesPerSec: Math.round(((sectorsWritten - prevDiskSectors.written) * 512) / elapsed),
+                ts: now,
+              };
+            }
+          }
+          prevDiskSectors = { read: sectorsRead, written: sectorsWritten, ts: now };
+          break;
+        }
+      }
+    } catch { /* /proc/diskstats read failed */ }
+    return diskIOCache;
+  }
+
+  // Seed the initial disk sector reading so the first real sample has a baseline
+  getDiskIO();
 
   fastify.get("/api/system/stats", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
@@ -2072,10 +2130,13 @@ export async function createGatewayRuntimeState(
       // disk stats unavailable
     }
 
+    const diskIO = getDiskIO();
+
     return reply.send({
       cpu: { loadAvg, cores, usage: cpuUsage },
       memory: { total: totalMem, free: freeMem, used: usedMem, percent: memPercent },
       disk: { total: diskTotal, used: diskUsed, free: diskFree, percent: diskPercent },
+      diskIO,
       uptime: os.uptime(),
       hostname: os.hostname(),
     });
@@ -2101,11 +2162,15 @@ export async function createGatewayRuntimeState(
         }
       } catch { /* disk stats unavailable */ }
 
+      const diskIO = getDiskIO();
+
       statsHistory.push({
         ts: new Date().toISOString(),
         cpu: cpuUsage,
         mem: memPercent,
         disk: diskPercent,
+        diskRead: diskIO.readBytesPerSec,
+        diskWrite: diskIO.writeBytesPerSec,
         load1: Math.round(loadAvg[0]! * 100) / 100,
         load5: Math.round(loadAvg[1]! * 100) / 100,
         load15: Math.round(loadAvg[2]! * 100) / 100,
@@ -2227,6 +2292,7 @@ export async function createGatewayRuntimeState(
     commits: { hash: string; message: string }[];
     channel: "main" | "dev";
     serviceUpdates?: Array<{ name: string; behind: number }>;
+    pluginUpdates?: Array<{ pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }>;
   }> {
     const channel = getUpdateChannel();
     const ref = `origin/${channel}`;
@@ -2294,6 +2360,20 @@ export async function createGatewayRuntimeState(
     const serviceUpdates = serviceChecks.filter(s => s.behind > 0);
     const totalServiceBehind = serviceUpdates.reduce((sum, s) => sum + s.behind, 0);
 
+    // Check for marketplace plugin updates when the marketplace repo has changes
+    let pluginUpdates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[] | undefined;
+    if (deps.marketplaceManager && totalServiceBehind > 0) {
+      const mp = deps.marketplaceManager;
+      const marketplaceDir = deps.config
+        ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string> | undefined)?.dir ?? "/opt/aionima-marketplace"
+        : "/opt/aionima-marketplace";
+      if (existsSync(marketplaceDir)) {
+        mp.syncLocalCatalog(marketplaceDir);
+        const updates = mp.checkUpdates();
+        if (updates.length > 0) pluginUpdates = updates;
+      }
+    }
+
     return {
       updateAvailable: behindCount > 0 || totalServiceBehind > 0,
       localCommit: deployedCommit,
@@ -2302,6 +2382,7 @@ export async function createGatewayRuntimeState(
       commits,
       channel,
       serviceUpdates: serviceUpdates.length > 0 ? serviceUpdates : undefined,
+      pluginUpdates,
     };
   }
 
@@ -2644,6 +2725,7 @@ export async function createGatewayRuntimeState(
         sharedContainerManager: deps.sharedContainerManager,
         hostingManager: deps.hostingManager,
         log: createComponentLogger(deps.logger, "stack-api"),
+        pluginRegistry: deps.pluginRegistry,
       });
     }
   }
@@ -2926,14 +3008,24 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
-  // Plugin-registered HTTP routes
+  // Plugin-registered HTTP routes (dynamic dispatch via indirection map)
+  //
+  // Handlers are stored in a map keyed by "METHOD:path". Fastify routes
+  // delegate to the map at call time, so plugin hot-reload can update
+  // handlers without re-registering Fastify routes.
   // -----------------------------------------------------------------------
 
+  const pluginRouteHandlers = new Map<string, RouteHandler>();
+
   for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+    const key = `${route.method.toUpperCase()}:${route.path}`;
+    pluginRouteHandlers.set(key, route.handler);
     const method = route.method.toLowerCase() as "get" | "put" | "post" | "delete";
     fastify[method](route.path, async (request, reply) => {
+      const handler = pluginRouteHandlers.get(key);
+      if (!handler) return reply.code(404).send({ error: "Plugin route no longer available" });
       const clientIp = (request.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ?? request.ip;
-      await route.handler(
+      await handler(
         {
           body: request.body,
           query: request.query as Record<string, string>,
@@ -3151,6 +3243,64 @@ export async function createGatewayRuntimeState(
     fastify.get("/api/marketplace/updates", async (_request, reply) => {
       return reply.send(mp.checkUpdates());
     });
+
+    // POST /api/marketplace/update/:pluginName — hot-reload an installed plugin
+    fastify.post<{ Params: { pluginName: string } }>("/api/marketplace/update/:pluginName", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
+      }
+
+      const { pluginName } = request.params;
+      const body = request.body as { sourceId?: number } | undefined;
+
+      const installed = mp.getInstalled().find(i => i.name === pluginName);
+      if (!installed) return reply.code(404).send({ error: "Plugin not installed" });
+      const sourceId = body?.sourceId ?? installed.sourceId;
+
+      // 1. Deactivate old plugin (unbridge skills, unregister stacks/types, deactivate)
+      if (deps.onPluginDeactivating) {
+        try {
+          await deps.onPluginDeactivating(pluginName);
+        } catch (deactErr) {
+          log.warn(`plugin deactivation warning for "${pluginName}": ${deactErr instanceof Error ? deactErr.message : String(deactErr)}`);
+        }
+      }
+
+      // 2. Update route dispatch map — remove old handlers for this plugin
+      for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+        if (route.pluginId === pluginName) {
+          pluginRouteHandlers.delete(`${route.method.toUpperCase()}:${route.path}`);
+        }
+      }
+
+      // 3. Reinstall from marketplace
+      const updateResult = await mp.updatePlugin(pluginName, sourceId);
+      if (!updateResult.ok) return reply.code(400).send(updateResult);
+
+      // 4. Hot-load the updated plugin with cache busting
+      if (deps.onPluginUpdated && updateResult.installPath) {
+        const hlResult = await deps.onPluginUpdated(updateResult.installPath);
+        if (!hlResult.loaded) {
+          return reply.code(500).send({ error: hlResult.error ?? "Failed to reload plugin" });
+        }
+
+        // 5. Update route dispatch map with new handlers
+        for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+          if (route.pluginId === pluginName) {
+            pluginRouteHandlers.set(`${route.method.toUpperCase()}:${route.path}`, route.handler);
+          }
+        }
+      }
+
+      log.info(`plugin updated: ${pluginName} (${updateResult.oldVersion} → ${updateResult.newVersion})`);
+      return reply.send({
+        ok: true,
+        pluginName,
+        oldVersion: updateResult.oldVersion,
+        newVersion: updateResult.newVersion,
+      });
+    });
   }
 
   // -----------------------------------------------------------------------
@@ -3177,7 +3327,7 @@ export async function createGatewayRuntimeState(
   // -----------------------------------------------------------------------
 
   if (deps.chatPersistence !== undefined) {
-    registerChatHistoryRoutes(fastify, { chatPersistence: deps.chatPersistence });
+    registerChatHistoryRoutes(fastify, { chatPersistence: deps.chatPersistence, imageBlobStore: deps.imageBlobStore });
   }
 
   // -----------------------------------------------------------------------
@@ -3195,7 +3345,7 @@ export async function createGatewayRuntimeState(
     configPath: deps.configPath,
   });
 
-  registerMachineAdminRoutes(fastify, { logger: deps.logger, dashboardUserStore, localIdAuthProvider, idBaseUrl: localIdBaseUrl });
+  registerMachineAdminRoutes(fastify, { logger: deps.logger, dashboardUserStore, localIdAuthProvider, idBaseUrl: localIdBaseUrl, configPath: deps.configPath });
 
   // -----------------------------------------------------------------------
   // GET /api/plugins — list installed plugins (private network only)
@@ -3730,6 +3880,13 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Built-in file tree only serves docs/" });
     }
     const tree = buildFileTree(docsRoot, "docs");
+    // Append plugin-provided knowledge namespaces as virtual folders under plugin-docs/
+    const knowledgeEntries = deps.pluginRegistry?.getKnowledge() ?? [];
+    for (const { namespace } of knowledgeEntries) {
+      if (!namespace.contentDir || !existsSync(namespace.contentDir)) continue;
+      const subtree = buildFileTree(namespace.contentDir, `plugin-docs/${namespace.id}`);
+      tree.push({ name: namespace.label, path: `plugin-docs/${namespace.id}`, type: "dir", children: subtree });
+    }
     return reply.send({ tree });
   });
 
@@ -3738,8 +3895,38 @@ export async function createGatewayRuntimeState(
     if (!filePath) {
       return reply.code(400).send({ error: "path query parameter is required" });
     }
-    // Resolve and validate the path stays within docs/
     const repoRoot = deps.selfRepoPath ?? deps.workspaceRoot ?? process.cwd();
+
+    if (filePath.startsWith("plugin-docs/")) {
+      // Extract namespace ID from the second path segment: plugin-docs/<namespaceId>/...
+      const parts = filePath.split("/");
+      const namespaceId = parts[1];
+      if (!namespaceId) {
+        return reply.code(400).send({ error: "Invalid plugin-docs path: missing namespace ID" });
+      }
+      const knowledgeEntries = deps.pluginRegistry?.getKnowledge() ?? [];
+      const entry = knowledgeEntries.find((k) => k.namespace.id === namespaceId);
+      if (!entry) {
+        return reply.code(404).send({ error: `Plugin knowledge namespace not found: ${namespaceId}` });
+      }
+      const { contentDir } = entry.namespace;
+      // Remaining path after plugin-docs/<namespaceId>/
+      const relativePart = parts.slice(2).join("/");
+      const resolved = resolvePath(contentDir, relativePart);
+      const contentDirAbsolute = resolvePath(contentDir);
+      // Path traversal protection — must stay within contentDir
+      if (!resolved.startsWith(contentDirAbsolute + "/") && resolved !== contentDirAbsolute) {
+        return reply.code(403).send({ error: "Path is outside the plugin knowledge namespace directory" });
+      }
+      if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+        return reply.code(404).send({ error: "File not found" });
+      }
+      const content = readFileSync(resolved, "utf-8");
+      const size = statSync(resolved).size;
+      return reply.send({ content, size });
+    }
+
+    // Resolve and validate the path stays within docs/
     const resolved = resolvePath(repoRoot, filePath);
     const docsAbsolute = resolvePath(docsRoot);
     if (!resolved.startsWith(docsAbsolute + "/") && resolved !== docsAbsolute) {

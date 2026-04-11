@@ -10,7 +10,7 @@
 import type { FastifyInstance } from "fastify";
 import type { IncomingMessage } from "node:http";
 import { execFileSync, execFile } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { hostname, arch, cpus, totalmem } from "node:os";
 import { promisify } from "node:util";
 import { createComponentLogger } from "./logger.js";
@@ -60,6 +60,8 @@ export interface MachineAdminDeps {
   localIdAuthProvider?: LocalIdAuthProvider;
   /** Local-ID base URL — if provided, enables proxying admin CRUD to Local-ID. */
   idBaseUrl?: string;
+  /** Path to aionima.json — used to update hosting.lanIp when network changes. */
+  configPath?: string;
 }
 
 export function registerMachineAdminRoutes(
@@ -172,6 +174,139 @@ export function registerMachineAdminRoutes(
     } catch (e) {
       log.error(`Failed to set hostname: ${e instanceof Error ? e.message : String(e)}`);
       return reply.code(500).send({ error: e instanceof Error ? e.message : "Unknown error" });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/machine/network — current network interface configuration
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/machine/network", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    const os = await import("node:os");
+    const plat = os.platform();
+
+    // Only Linux with nmcli is fully supported for now
+    if (plat !== "linux") {
+      return reply.send({ supported: false, platform: plat, reason: "Network configuration is managed by your operating system." });
+    }
+
+    try {
+      // Get the primary active connection
+      const conName = execFileSync("nmcli", ["-t", "-f", "NAME", "con", "show", "--active"], { stdio: "pipe", timeout: 5_000 }).toString().trim().split("\n")[0] ?? "";
+      if (!conName) {
+        return reply.send({ supported: false, platform: plat, reason: "No active NetworkManager connection found." });
+      }
+
+      // Get connection details
+      const details = execFileSync("nmcli", ["-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,ipv4.method,connection.interface-name", "con", "show", conName], { stdio: "pipe", timeout: 5_000 }).toString().trim();
+
+      let ip = "";
+      let subnet = "24";
+      let gateway = "";
+      let method = "auto";
+      let iface = "";
+
+      for (const line of details.split("\n")) {
+        if (line.startsWith("IP4.ADDRESS")) {
+          const addr = line.split(":").slice(1).join(":").trim();
+          const parts = addr.split("/");
+          ip = parts[0] ?? "";
+          subnet = parts[1] ?? "24";
+        } else if (line.startsWith("IP4.GATEWAY")) {
+          gateway = line.split(":").slice(1).join(":").trim();
+        } else if (line.startsWith("ipv4.method")) {
+          method = line.split(":").slice(1).join(":").trim();
+        } else if (line.startsWith("connection.interface-name")) {
+          iface = line.split(":").slice(1).join(":").trim();
+        }
+      }
+
+      return reply.send({
+        supported: true,
+        connection: conName,
+        interface: iface,
+        ip,
+        subnet,
+        gateway,
+        method: method === "manual" ? "static" : "dhcp",
+      });
+    } catch (e) {
+      return reply.send({ supported: false, platform: plat, reason: e instanceof Error ? e.message : "Failed to query network" });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/machine/network — change IP configuration (static/DHCP)
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/machine/network", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    const os = await import("node:os");
+    if (os.platform() !== "linux") {
+      return reply.code(400).send({ error: "Network configuration only supported on Linux" });
+    }
+
+    const body = request.body as {
+      method?: "static" | "dhcp";
+      ip?: string;
+      subnet?: string;
+      gateway?: string;
+    } | null;
+
+    if (!body?.method) {
+      return reply.code(400).send({ error: "method is required (static or dhcp)" });
+    }
+
+    try {
+      // Find active connection
+      const conName = execFileSync("nmcli", ["-t", "-f", "NAME", "con", "show", "--active"], { stdio: "pipe", timeout: 5_000 }).toString().trim().split("\n")[0] ?? "";
+      if (!conName) {
+        return reply.code(400).send({ error: "No active NetworkManager connection found" });
+      }
+
+      if (body.method === "static") {
+        if (!body.ip) return reply.code(400).send({ error: "ip is required for static configuration" });
+        const prefix = body.subnet ?? "24";
+        const args = ["con", "mod", conName, "ipv4.addresses", `${body.ip}/${prefix}`, "ipv4.method", "manual"];
+        if (body.gateway) args.push("ipv4.gateway", body.gateway);
+        execFileSync("sudo", ["nmcli", ...args], { stdio: "pipe", timeout: 10_000 });
+      } else {
+        execFileSync("sudo", ["nmcli", "con", "mod", conName, "ipv4.method", "auto"], { stdio: "pipe", timeout: 10_000 });
+        execFileSync("sudo", ["nmcli", "con", "mod", conName, "ipv4.addresses", ""], { stdio: "pipe", timeout: 10_000 });
+        execFileSync("sudo", ["nmcli", "con", "mod", conName, "ipv4.gateway", ""], { stdio: "pipe", timeout: 10_000 });
+      }
+
+      // Apply changes
+      execFileSync("sudo", ["nmcli", "con", "up", conName], { stdio: "pipe", timeout: 15_000 });
+
+      // Update hosting.lanIp in aionima.json to match
+      const newIp = body.method === "static"
+        ? body.ip!
+        : execFileSync("hostname", ["-I"], { stdio: "pipe", timeout: 5_000 }).toString().trim().split(" ")[0] ?? "";
+
+      if (deps.configPath && newIp) {
+        try {
+          const cfgRaw = readFileSync(deps.configPath, "utf-8");
+          const cfg = JSON.parse(cfgRaw) as Record<string, unknown>;
+          if (!cfg.hosting) cfg.hosting = {};
+          (cfg.hosting as Record<string, unknown>).lanIp = newIp;
+          writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2));
+          log.info(`Updated hosting.lanIp to ${newIp} in config`);
+        } catch {
+          log.warn("Failed to update hosting.lanIp in config");
+        }
+      }
+
+      log.info(`Network changed to ${body.method}${body.method === "static" ? ` (${body.ip})` : ""}`);
+      return reply.send({ ok: true, method: body.method, newIp });
+    } catch (e) {
+      log.error(`Failed to change network: ${e instanceof Error ? e.message : String(e)}`);
+      return reply.code(500).send({ error: e instanceof Error ? e.message : "Failed to change network configuration" });
     }
   });
 

@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import AnsiToHtml from "ansi-to-html";
 import type { LogSourceDefinition } from "../types.js";
 import { fetchContainerLogs, fetchLogSources } from "../api.js";
 
 interface ProjectLogViewerProps {
   projectPath: string;
+  /** Bump this key to trigger an immediate log reload. */
+  refreshKey?: number;
 }
 
-export function ProjectLogViewer({ projectPath }: ProjectLogViewerProps) {
+const ansiConverter = new AnsiToHtml({ fg: "#e1e4ea", bg: "transparent", escapeXML: true });
+
+export function ProjectLogViewer({ projectPath, refreshKey }: ProjectLogViewerProps) {
   const [sources, setSources] = useState<LogSourceDefinition[]>([]);
   const [selectedSource, setSelectedSource] = useState("container");
   const [logs, setLogs] = useState<string | null>(null);
@@ -45,6 +50,13 @@ export function ProjectLogViewer({ projectPath }: ProjectLogViewerProps) {
   useEffect(() => {
     void loadLogs();
   }, [loadLogs]);
+
+  // Reload when refreshKey changes (tool execution completed)
+  useEffect(() => {
+    if (refreshKey !== undefined && refreshKey > 0) {
+      void loadLogs();
+    }
+  }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-refresh interval
   useEffect(() => {
@@ -99,9 +111,16 @@ export function ProjectLogViewer({ projectPath }: ProjectLogViewerProps) {
       <pre
         ref={preRef}
         className="bg-background border border-border rounded-md p-2 text-[11px] font-mono max-h-48 overflow-auto text-foreground whitespace-pre-wrap break-all"
-      >
-        {error ? "Failed to retrieve logs" : logs === null ? "Loading..." : logs || "No output yet"}
-      </pre>
+        dangerouslySetInnerHTML={{
+          __html: error
+            ? "Failed to retrieve logs"
+            : logs === null
+              ? "Loading..."
+              : logs
+                ? ansiConverter.toHtml(logs)
+                : "No output yet",
+        }}
+      />
     </div>
   );
 }

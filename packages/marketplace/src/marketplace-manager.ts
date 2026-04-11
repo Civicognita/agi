@@ -277,6 +277,59 @@ export class MarketplaceManager {
     return this.store.getInstalled();
   }
 
+  /**
+   * Update a single installed plugin to the latest version from the catalog.
+   * Removes old files, reinstalls from source, and updates the DB record.
+   */
+  async updatePlugin(
+    pluginName: string,
+    sourceId: number,
+  ): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }> {
+    const installed = this.store.getInstalled().find((i) => i.name === pluginName);
+    if (!installed) return { ok: false, error: "Plugin not installed", oldVersion: "", newVersion: "" };
+
+    const catalogPlugin = this.store.getPlugin(pluginName, sourceId);
+    if (!catalogPlugin) return { ok: false, error: "Plugin not found in catalog", oldVersion: installed.version, newVersion: "" };
+
+    const oldVersion = installed.version;
+    const newVersion = catalogPlugin.version ?? "0.0.0";
+
+    // Remove old plugin files from disk
+    try {
+      uninstallPlugin(installed.installPath);
+    } catch {
+      // Best-effort — directory may already be gone
+    }
+    this.store.removeInstalled(pluginName);
+
+    // Reinstall from marketplace source
+    const itemType: MarketplaceItemType = (catalogPlugin.type as MarketplaceItemType) ?? "plugin";
+    const sourceInfo = this.store.getSource(sourceId);
+
+    try {
+      const { installPath, integrityHash } = await installPlugin(
+        pluginName,
+        catalogPlugin.source,
+        itemType,
+        { workspaceRoot: this.workspaceRoot, cacheDir: this.cacheDir, sourceRef: sourceInfo?.ref },
+      );
+      this.store.addInstalled({
+        name: pluginName,
+        sourceId,
+        type: itemType,
+        version: newVersion,
+        installedAt: new Date().toISOString(),
+        installPath,
+        sourceJson: catalogPlugin.sourceJson,
+        integrityHash: integrityHash || undefined,
+        trustTier: catalogPlugin.trustTier,
+      });
+      return { ok: true, installPath, oldVersion, newVersion };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err), oldVersion, newVersion };
+    }
+  }
+
   checkUpdates(): { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[] {
     const installed = this.store.getInstalled();
     const updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[] = [];

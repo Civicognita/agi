@@ -15,6 +15,8 @@ interface DataPoint {
   cpu: number;
   mem: number;
   disk: number;
+  diskRead: number;
+  diskWrite: number;
   load1: number;
   load5: number;
   load15: number;
@@ -96,6 +98,7 @@ function makeAreaOption(
       backgroundColor: COLORS.card,
       borderColor: COLORS.border,
       textStyle: { color: COLORS.foreground, fontSize: 12 },
+      valueFormatter: yFormatter as ((value: number) => string) | undefined,
     },
     legend: {
       data: series.map((s) => s.name),
@@ -161,6 +164,8 @@ export function ResourceUsage() {
       cpu: data.cpu.usage,
       mem: data.memory.percent,
       disk: data.disk.percent,
+      diskRead: data.diskIO?.readBytesPerSec ?? 0,
+      diskWrite: data.diskIO?.writeBytesPerSec ?? 0,
       load1: Math.round(data.cpu.loadAvg[0] * 100) / 100,
       load5: Math.round(data.cpu.loadAvg[1] * 100) / 100,
       load15: Math.round(data.cpu.loadAvg[2] * 100) / 100,
@@ -237,13 +242,36 @@ export function ResourceUsage() {
               style={{ height: 160 }}
             />
           </Card>
-          <Card className="p-4 flex flex-col items-center justify-center">
-            <div className="text-[11px] text-muted-foreground font-semibold uppercase tracking-wider mb-1">Load Avg</div>
-            <div className="text-lg font-bold text-foreground">{data.cpu.loadAvg[0].toFixed(2)}</div>
-            <div className="text-[11px] text-muted-foreground mt-1">
-              {data.cpu.loadAvg[1].toFixed(2)} / {data.cpu.loadAvg[2].toFixed(2)}
+          <Card className="p-2 flex flex-col items-center">
+            <EChart
+              option={{
+                tooltip: {
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  formatter: (params: any) => `${params.name}: ${formatBytes(params.value as number)}`,
+                },
+                series: [{
+                  type: "pie",
+                  radius: "70%",
+                  center: ["50%", "50%"],
+                  label: { show: false },
+                  emphasis: { scale: false },
+                  data: [
+                    {
+                      value: data.disk.used,
+                      name: "Used",
+                      itemStyle: { color: data.disk.percent > 90 ? COLORS.red : data.disk.percent > 70 ? COLORS.yellow : COLORS.blue },
+                    },
+                    { value: data.disk.free, name: "Free", itemStyle: { color: COLORS.border } },
+                  ],
+                }],
+              }}
+              style={{ height: 116 }}
+            />
+            <div className="text-center -mt-1">
+              <div className="text-lg font-bold text-foreground">{data.disk.percent}%</div>
+              <div className="text-[10px] text-muted-foreground">{formatBytes(data.disk.used)} / {formatBytes(data.disk.total)}</div>
+              <div className="text-[11px] text-muted-foreground">Disk Volume</div>
             </div>
-            <div className="text-[10px] text-muted-foreground mt-0.5">1m / 5m / 15m</div>
           </Card>
         </div>
       )}
@@ -279,11 +307,19 @@ export function ResourceUsage() {
         />
       </Card>
 
-      {/* Disk History */}
+      {/* Disk I/O History */}
       <Card className="p-4">
-        <h3 className="text-[13px] font-semibold text-foreground mb-2">Disk Usage</h3>
+        <h3 className="text-[13px] font-semibold text-foreground mb-2">Disk I/O</h3>
         <EChart
-          option={makeAreaOption(history, [{ key: "disk", name: "Disk %", color: COLORS.yellow }], 100, (v) => `${v}%`)}
+          option={makeAreaOption(
+            history,
+            [
+              { key: "diskRead", name: "Read", color: COLORS.green },
+              { key: "diskWrite", name: "Write", color: COLORS.yellow },
+            ],
+            undefined,
+            (v) => `${formatBytes(v)}/s`,
+          )}
           style={{ height: 160 }}
         />
       </Card>

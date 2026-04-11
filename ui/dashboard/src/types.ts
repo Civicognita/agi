@@ -294,8 +294,8 @@ export type DashboardEvent =
   | { type: "hosting:status"; data: HostingStatusData }
   | { type: "project:config_changed"; data: ProjectConfigChangedData }
   | { type: "project:container_status"; data: ContainerStatusChangedData }
-  | { type: "bots:job_update"; data: WorkerJobUpdate }
-  | { type: "bots:report_ready"; data: WorkerReportReady }
+  | { type: "tm:job_update"; data: WorkerJobUpdate }
+  | { type: "tm:report_ready"; data: WorkerReportReady }
   | { type: "notification:new"; data: Notification }
   | { type: "config:changed"; data: { changedKeys: string[]; timestamp: string } };
 
@@ -515,7 +515,7 @@ export interface AionimaConfig {
     devMode?: boolean;
   };
   providers?: Record<string, ProviderCredential>;
-  bots?: WorkerConfig;
+  workers?: WorkerConfig;
   dev?: { enabled?: boolean; agiRepo?: string; primeRepo?: string };
   [key: string]: unknown;
 }
@@ -646,6 +646,7 @@ export interface StackInfo {
   devCommands?: StackDevCommands;
   tools: ProjectTypeTool[];
   icon?: string;
+  compatibleLanguages?: string[];
 }
 
 export interface ProjectStackInstance {
