@@ -265,10 +265,10 @@ const GenericCard: FC<{ card: ToolCard; collapsed?: boolean }> = ({ card, collap
 };
 
 const BrowserCard: FC<{ card: ToolCard; collapsed?: boolean }> = ({ card, collapsed }) => {
-  const detail = card.detail as { screenshotId?: string; sessionId?: string; thumbnailDataUrl?: string; action?: string; url?: string; error?: string } | undefined;
+  const detail = card.detail as { screenshotId?: string; imageSessionId?: string; action?: string; url?: string; error?: string } | undefined;
   const screenshotId = detail?.screenshotId;
-  const sessionId = detail?.sessionId ?? "_screengrabs";
-  const thumbnailSrc = detail?.thumbnailDataUrl ?? (screenshotId ? `/api/chat/images/${sessionId}/${screenshotId}` : null);
+  const imageSessionId = detail?.imageSessionId ?? "_screengrabs";
+  const imgSrc = screenshotId ? `/api/chat/images/${imageSessionId}/${screenshotId}` : null;
   const action = detail?.action ?? "browser";
   const url = detail?.url;
 
@@ -289,12 +289,12 @@ const BrowserCard: FC<{ card: ToolCard; collapsed?: boolean }> = ({ card, collap
       {detail?.error && (
         <span className="text-red text-[10px]">{detail.error}</span>
       )}
-      {thumbnailSrc && card.status === "complete" && (
+      {imgSrc && card.status === "complete" && (
         <img
-          src={thumbnailSrc}
+          src={imgSrc}
           alt={`Screenshot: ${url ?? action}`}
           className="mt-1 rounded border border-border max-w-full max-h-[200px] object-contain cursor-pointer"
-          onClick={() => screenshotId ? window.open(`/api/chat/images/${sessionId}/${screenshotId}`, "_blank") : undefined}
+          onClick={() => window.open(imgSrc, "_blank")}
         />
       )}
     </div>

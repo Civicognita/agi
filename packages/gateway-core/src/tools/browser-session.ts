@@ -152,7 +152,7 @@ export function createBrowserSessionHandler(config: BrowserSessionConfig): ToolH
         sessions.set(sessionKey, { browser, page, lastActivity: Date.now(), sessionId: sid });
 
         const title = await page.title();
-        const result: Record<string, unknown> = { ok: true, action: "open", url: page.url(), title, sessionId: sid };
+        const result: Record<string, unknown> = { ok: true, action: "open", url: page.url(), title, browserSessionId: sid };
 
         if (includeScreenshot) {
           const shot = await captureScreenshot(page, config, fullPage);
@@ -307,30 +307,13 @@ async function captureScreenshot(
   page: PwPage,
   config: BrowserSessionConfig,
   fullPage: boolean,
-): Promise<{ screenshotId: string; imageType: string; sizeBytes: number; thumbnailDataUrl: string }> {
+): Promise<{ screenshotId: string; imageSessionId: string; imageType: string; sizeBytes: number }> {
   const buffer = await page.screenshot({ type: "png", fullPage });
   const base64 = buffer.toString("base64");
   const imageId = ulid();
-  config.imageBlobStore.save("_screengrabs", imageId, "image/png", base64, "screengrab");
-
-  // Generate a small JPEG thumbnail (300px wide) for inline display in chat.
-  // This avoids dependency on the image API endpoint which may not be reachable
-  // through all proxy configurations.
-  let thumbnailDataUrl = `data:image/png;base64,${base64.slice(0, 1000)}`;
-  try {
-    // Use Playwright's screenshot with a smaller clip as a lightweight thumbnail
-    const thumbBuffer = await page.screenshot({ type: "jpeg", fullPage: false });
-    const thumbBase64 = thumbBuffer.toString("base64");
-    // Only use if reasonably small (under 100KB base64)
-    if (thumbBase64.length < 100_000) {
-      thumbnailDataUrl = `data:image/jpeg;base64,${thumbBase64}`;
-    }
-  } catch {
-    // Fall back to data URL of full image (truncated won't render, but that's ok)
-    thumbnailDataUrl = `data:image/png;base64,${base64}`;
-  }
-
-  return { screenshotId: imageId, imageType: "screengrab", sizeBytes: buffer.length, thumbnailDataUrl };
+  const imageSessionId = "_screengrabs";
+  config.imageBlobStore.save(imageSessionId, imageId, "image/png", base64, "screengrab");
+  return { screenshotId: imageId, imageSessionId, imageType: "screengrab", sizeBytes: buffer.length };
 }
 
 function errMsg(err: unknown): string {
