@@ -264,6 +264,42 @@ const GenericCard: FC<{ card: ToolCard; collapsed?: boolean }> = ({ card, collap
   );
 };
 
+const BrowserCard: FC<{ card: ToolCard; collapsed?: boolean }> = ({ card, collapsed }) => {
+  const detail = card.detail as { screenshotId?: string; sessionId?: string; action?: string; url?: string; error?: string } | undefined;
+  const screenshotId = detail?.screenshotId;
+  const sessionId = detail?.sessionId ?? "_screengrabs";
+  const action = detail?.action ?? "browser";
+  const url = detail?.url;
+
+  return (
+    <div className={cn(
+      "flex flex-col gap-1 px-2 py-1.5 rounded-md border text-[11px]",
+      "bg-surface0/30 border-surface0",
+      collapsed && "py-0.5",
+    )}>
+      <div className="flex items-center gap-1.5">
+        <StatusDot status={card.status} />
+        <span className="text-muted-foreground shrink-0">browser: {action}</span>
+        {url && <span className="text-foreground text-[10px] truncate flex-1">{url}</span>}
+        {card.completedAt && (
+          <span className="text-muted-foreground text-[9px] shrink-0">{elapsed(card.timestamp, card.completedAt)}</span>
+        )}
+      </div>
+      {detail?.error && (
+        <span className="text-red text-[10px]">{detail.error}</span>
+      )}
+      {screenshotId && card.status === "complete" && !collapsed && (
+        <img
+          src={`/api/chat/images/${sessionId}/${screenshotId}`}
+          alt={`Screenshot: ${url ?? action}`}
+          className="mt-1 rounded border border-border max-w-full max-h-[200px] object-contain cursor-pointer"
+          onClick={() => window.open(`/api/chat/images/${sessionId}/${screenshotId}`, "_blank")}
+        />
+      )}
+    </div>
+  );
+};
+
 // ---------------------------------------------------------------------------
 // Card router
 // ---------------------------------------------------------------------------
@@ -291,6 +327,9 @@ export const SingleToolCard: FC<{ card: ToolCard; collapsed?: boolean }> = ({ ca
       return <PlanCard card={card} collapsed={collapsed} />;
     case "manage_project":
       return <ProjectCard card={card} collapsed={collapsed} />;
+    case "browser_session":
+    case "visual_inspect":
+      return <BrowserCard card={card} collapsed={collapsed} />;
     default:
       return <GenericCard card={card} collapsed={collapsed} />;
   }

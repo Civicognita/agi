@@ -1434,6 +1434,9 @@ export async function startGatewayServer(
   // Per-session message queue chain — ensures sequential processing per session.
   const sessionProcessingChain = new Map<string, Promise<void>>();
 
+  // Per-session abort controllers — allows cancellation of in-flight invocations.
+  const sessionAbortControllers = new Map<string, AbortController>();
+
   // Track topic subscriptions per connection
   const subscriptions = new Map<string, Set<string>>();
 
@@ -1605,6 +1608,22 @@ export async function startGatewayServer(
           context: chatContext,
           messages: historyTurns,
         });
+        break;
+      }
+
+      case "chat:cancel": {
+        // Cancel an in-flight agent invocation for a session.
+        const cancelPayload = message.payload as { sessionId?: string } | undefined;
+        const cancelSessionId = cancelPayload?.sessionId;
+        if (cancelSessionId) {
+          const controller = sessionAbortControllers.get(cancelSessionId);
+          if (controller) {
+            controller.abort();
+            sessionAbortControllers.delete(cancelSessionId);
+            wsServer.sendTo(connectionId, "chat:cancelled", { sessionId: cancelSessionId, timestamp: new Date().toISOString() });
+            log.info(`agent invocation cancelled for session ${cancelSessionId}`);
+          }
+        }
         break;
       }
 
@@ -1879,6 +1898,10 @@ export async function startGatewayServer(
         };
 
         const chainKey = sessionKey ?? `${ownerEntityId}:web:default`;
+        // Create abort controller for this invocation (cancellable via chat:cancel)
+        const abortController = new AbortController();
+        if (chatSessionId) sessionAbortControllers.set(chatSessionId, abortController);
+
         const prev = sessionProcessingChain.get(chainKey) ?? Promise.resolve();
         const current = prev.then(async () => {
           return agentInvoker.process({
@@ -1893,9 +1916,11 @@ export async function startGatewayServer(
             builderMode,
             imageRefs: chatImageRefs.length > 0 ? chatImageRefs : undefined,
             chatSessionId,
+            abortSignal: abortController.signal,
           });
         }).then(async (outcome) => {
           removeProgressListeners();
+          if (chatSessionId) sessionAbortControllers.delete(chatSessionId);
           // Emit invocation_complete to clear the project activity indicator.
           if (chatProjectPath !== undefined) {
             dashboardBroadcasterRef?.emitProjectActivity({

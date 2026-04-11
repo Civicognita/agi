@@ -90,6 +90,7 @@ function extractToolDetail(
     case "manage_project": return { action: input.action, name: input.name };
     case "search_prime": return { query: input.query };
     case "create_plan": case "update_plan": return { title: input.title };
+    case "browser_session": return { action: input.action, url: input.url, selector: input.selector };
     default: return undefined;
   }
 }
@@ -154,6 +155,8 @@ export interface InvocationRequest {
   imageRefs?: import("./agent-session.js").ImageRef[];
   /** Chat session ID used for image blob resolution. */
   chatSessionId?: string;
+  /** Abort signal — when triggered, the invocation stops at the next checkpoint. */
+  abortSignal?: AbortSignal;
 }
 
 export type InvocationOutcome =
@@ -542,6 +545,7 @@ export class AgentInvoker extends EventEmitter {
       const toolsUsed: string[] = [];
       let loopCount = 0;
       const maxToolLoops = 15;
+      const abortSignal = request.abortSignal;
 
       // Accumulate messages across tool iterations so the model sees the full
       // conversation history including prior tool calls and their results.
@@ -551,6 +555,11 @@ export class AgentInvoker extends EventEmitter {
       const toolCallHashes = new Map<string, number>();
 
       while (result.toolCalls.length > 0 && loopCount < maxToolLoops) {
+        // Check for cancellation before each tool iteration
+        if (abortSignal?.aborted) {
+          return { type: "response", text: "[Cancelled by user]", toolsUsed, coaFingerprint, taskmasterEmissions: [], model: result.model, provider: "cancelled", usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens }, toolCount: toolsUsed.length, loopCount };
+        }
+
         loopCount++;
         const toolResults: LLMToolResult[] = [];
 
@@ -597,6 +606,15 @@ export class AgentInvoker extends EventEmitter {
           );
           toolsUsed.push(toolCall.name);
 
+          // Merge result data into detail for tools that return structured output (e.g., browser screenshots)
+          let detail = extractToolDetail(toolCall.name, toolCall.input ?? {});
+          if (toolCall.name === "browser_session" || toolCall.name === "visual_inspect") {
+            try {
+              const parsed = JSON.parse(execResult.content) as Record<string, unknown>;
+              detail = { ...detail, ...parsed };
+            } catch { /* non-JSON result */ }
+          }
+
           this.emit("tool_result", {
             sessionKey: sKey,
             toolName: toolCall.name,
@@ -605,7 +623,7 @@ export class AgentInvoker extends EventEmitter {
             success: !execResult.content.startsWith("Error executing tool"),
             summary: FRIENDLY_TOOL_SUMMARY[toolCall.name] ?? (execResult.wasTruncated ? "Done (truncated)" : "Done"),
             resultContent: execResult.content,
-            detail: extractToolDetail(toolCall.name, toolCall.input ?? {}),
+            detail,
             toolInput: sanitizeToolInput(toolCall.input ?? {}),
           });
 
@@ -723,6 +741,9 @@ export class AgentInvoker extends EventEmitter {
 
         // If the model now wants tools, enter the tool loop
         while (result.toolCalls.length > 0 && loopCount < maxToolLoops) {
+          if (abortSignal?.aborted) {
+            return { type: "response", text: "[Cancelled by user]", toolsUsed, coaFingerprint, taskmasterEmissions: [], model: result.model, provider: "cancelled", usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens }, toolCount: toolsUsed.length, loopCount };
+          }
           loopCount++;
           const toolResults: LLMToolResult[] = [];
 

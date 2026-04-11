@@ -130,8 +130,8 @@ import { BUILDER_TOOLS } from "./builder-tools.js";
 // Web page tool
 import { createGetWebPageHandler, GET_WEB_PAGE_MANIFEST, GET_WEB_PAGE_INPUT_SCHEMA } from "./web-page.js";
 
-// Visual inspection tool
-import { createVisualInspectHandler, VISUAL_INSPECT_MANIFEST, VISUAL_INSPECT_INPUT_SCHEMA } from "./visual-inspect.js";
+// Browser session tool (replaces visual-inspect with full Playwright session)
+import { createBrowserSessionHandler, BROWSER_SESSION_MANIFEST, BROWSER_SESSION_INPUT_SCHEMA } from "./browser-session.js";
 
 
 // ---------------------------------------------------------------------------
@@ -313,12 +313,12 @@ export function registerAllTools(
   // Web page tool — fetch and sanitize web content
   register(GET_WEB_PAGE_MANIFEST as ToolManifestEntry, createGetWebPageHandler(), GET_WEB_PAGE_INPUT_SCHEMA);
 
-  // Visual inspection tool — Playwright screenshots (requires imageBlobStore)
+  // Browser session tool — full Playwright interaction (requires imageBlobStore)
   if (config.imageBlobStore !== undefined) {
     register(
-      VISUAL_INSPECT_MANIFEST as ToolManifestEntry,
-      createVisualInspectHandler({ imageBlobStore: config.imageBlobStore }),
-      VISUAL_INSPECT_INPUT_SCHEMA,
+      BROWSER_SESSION_MANIFEST as ToolManifestEntry,
+      createBrowserSessionHandler({ imageBlobStore: config.imageBlobStore }),
+      BROWSER_SESSION_INPUT_SCHEMA,
     );
   }
 
