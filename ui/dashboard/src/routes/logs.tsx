@@ -3,12 +3,14 @@
  */
 
 import { Logs } from "@/components/Logs.js";
+import { PageScroll } from "@/components/PageScroll.js";
 import { useRootContext } from "./root.js";
 
 export default function LogsPage() {
   const { logStream } = useRootContext();
 
   return (
+    <PageScroll>
     <Logs
       entries={logStream.entries}
       connected={logStream.connected}
@@ -16,5 +18,6 @@ export default function LogsPage() {
       onClear={logStream.clear}
       onTogglePause={logStream.togglePause}
     />
+    </PageScroll>
   );
 }

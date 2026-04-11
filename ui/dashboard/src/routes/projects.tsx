@@ -3,6 +3,7 @@
  */
 
 import { Projects } from "@/components/Projects.js";
+import { PageScroll } from "@/components/PageScroll.js";
 import { useRootContext } from "./root.js";
 
 export default function ProjectsPage() {
@@ -10,6 +11,7 @@ export default function ProjectsPage() {
   const contributingEnabled = Boolean(configHook.data?.dev?.enabled);
 
   return (
+    <PageScroll>
     <Projects
       projects={projectsHook.projects}
       loading={projectsHook.loading}
@@ -29,5 +31,6 @@ export default function ProjectsPage() {
       hostingBusy={hostingHook.enabling || hostingHook.disabling || hostingHook.configuring || hostingHook.restarting}
       contributingEnabled={contributingEnabled}
     />
+    </PageScroll>
   );
 }

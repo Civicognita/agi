@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { PageScroll } from "@/components/PageScroll.js";
 import { fetchVendors, upsertVendor, updateVendorDpa, updateVendorBaa, updateVendorCompliance } from "../api.js";
 
 interface Vendor {
@@ -62,6 +63,7 @@ export default function VendorsPage() {
   }, [refresh]);
 
   return (
+    <PageScroll>
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
@@ -149,5 +151,6 @@ export default function VendorsPage() {
         )}
       </div>
     </div>
+    </PageScroll>
   );
 }

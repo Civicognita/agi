@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { PageScroll } from "@/components/PageScroll.js";
 import { fetchServices, startService, stopService, restartService } from "@/api.js";
 import type { ServiceInfo } from "@/types.js";
 
@@ -38,15 +39,16 @@ export default function ServicesPage() {
   }
 
   if (loading) {
-    return <div className="text-[12px] text-muted-foreground py-8">Loading services...</div>;
+    return <PageScroll><div className="text-[12px] text-muted-foreground py-8">Loading services...</div></PageScroll>;
   }
 
   if (error) {
-    return <div className="text-[12px] text-red py-8">Failed to load services: {error}</div>;
+    return <PageScroll><div className="text-[12px] text-red py-8">Failed to load services: {error}</div></PageScroll>;
   }
 
   if (services.length === 0) {
     return (
+      <PageScroll>
       <div className="text-center py-12">
         <div className="text-[13px] text-muted-foreground mb-2">No services registered</div>
         <div className="text-[11px] text-muted-foreground">
@@ -54,10 +56,12 @@ export default function ServicesPage() {
           to see them here.
         </div>
       </div>
+      </PageScroll>
     );
   }
 
   return (
+    <PageScroll>
     <div className="grid gap-3">
       {services.map((svc) => {
         const statusColor = {
@@ -129,5 +133,6 @@ export default function ServicesPage() {
         );
       })}
     </div>
+    </PageScroll>
   );
 }

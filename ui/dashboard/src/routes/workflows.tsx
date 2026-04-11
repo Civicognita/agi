@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs.js";
+import { PageScroll } from "@/components/PageScroll.js";
 import { WorkflowGraph } from "@/components/WorkflowGraph.js";
 import { SystemPromptPipeline, PromptEntryList } from "@/components/PromptCatalog.js";
 import { EditorFlyout } from "@/components/EditorFlyout.js";
@@ -44,7 +45,7 @@ export default function WorkflowsPage() {
   }, []);
 
   return (
-    <>
+    <PageScroll>
       <Tabs defaultValue="topology">
         <TabsList variant="line">
           <TabsTrigger value="topology">Topology</TabsTrigger>
@@ -89,6 +90,6 @@ export default function WorkflowsPage() {
         onClose={() => setEditorPath(null)}
         theme={theme}
       />
-    </>
+    </PageScroll>
   );
 }

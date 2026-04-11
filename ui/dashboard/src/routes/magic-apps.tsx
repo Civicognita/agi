@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
+import { PageScroll } from "@/components/PageScroll.js";
 import { ContextMenu } from "@particle-academy/react-fancy";
 import { fetchMagicApps } from "@/api.js";
 import type { MagicAppInfo } from "@/types.js";
@@ -90,7 +91,8 @@ export default function MagicAppsPage() {
   };
 
   return (
-    <div className="p-6 min-h-[calc(100vh-4rem)]">
+    <PageScroll>
+    <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-foreground">MagicApps</h1>
         <input
@@ -199,5 +201,6 @@ export default function MagicAppsPage() {
         app={pickerApp}
       />
     </div>
+    </PageScroll>
   );
 }

@@ -7,6 +7,7 @@ import { useParams } from "react-router";
 import { fetchMagicApp, openMagicAppInstance } from "@/api.js";
 import type { MagicAppInfo } from "@/types.js";
 import { Button } from "@/components/ui/button.js";
+import { PageScroll } from "@/components/PageScroll.js";
 import { useOutletContext } from "react-router";
 import type { RootContext } from "./root.js";
 
@@ -24,8 +25,8 @@ export default function MagicAppDetailPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  if (loading) return <div className="p-6 text-muted-foreground">Loading...</div>;
-  if (!app) return <div className="p-6 text-red">MagicApp not found</div>;
+  if (loading) return <PageScroll><div className="text-muted-foreground">Loading...</div></PageScroll>;
+  if (!app) return <PageScroll><div className="text-red">MagicApp not found</div></PageScroll>;
 
   const handleOpen = async () => {
     try {
@@ -37,7 +38,8 @@ export default function MagicAppDetailPage() {
   };
 
   return (
-    <div className="p-6 max-w-3xl">
+    <PageScroll>
+    <div className="max-w-3xl">
       <div className="flex items-start gap-4 mb-6">
         <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center text-3xl">
           {app.icon ?? "\u2728"}
@@ -72,5 +74,6 @@ export default function MagicAppDetailPage() {
         </div>
       </div>
     </div>
+    </PageScroll>
   );
 }

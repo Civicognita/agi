@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { PageScroll } from "@/components/PageScroll.js";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -55,6 +56,7 @@ export default function MarketplacePage() {
   const [activeTab, setActiveTab] = useState<Tab>("browse");
 
   return (
+    <PageScroll>
     <div>
       {/* Tab bar */}
       <div className="flex gap-1 mb-6 border-b border-border">
@@ -78,6 +80,7 @@ export default function MarketplacePage() {
       {activeTab === "installed" && <InstalledTab />}
       {activeTab === "sources" && <SourcesTab />}
     </div>
+    </PageScroll>
   );
 }
 
@@ -455,7 +458,7 @@ function BrowseTab() {
       if (sourceFilter !== "") {
         filtered = filtered.filter((item) => item.sourceId === sourceFilter);
       }
-      setItems(filtered);
+      setItems(filtered.sort((a, b) => a.name.localeCompare(b.name)));
     } catch {
       setItems([]);
     } finally {
@@ -474,8 +477,7 @@ function BrowseTab() {
       if (result.autoInstalled && result.autoInstalled.length > 0) {
         setInstallNotice(`Installed ${item.name} + dependencies: ${result.autoInstalled.join(", ")}`);
       }
-      setSelectedPlugin(null);
-      void doSearch();
+      window.location.reload();
     } catch (err) {
       setInstallError(err instanceof Error ? err.message : "Install failed");
     } finally { setActing(null); }
@@ -661,7 +663,7 @@ function InstalledTab() {
       searchMarketplaceCatalog().catch(() => [] as MarketplaceCatalogItem[]),
       fetchMarketplaceSources().catch(() => [] as MarketplaceSource[]),
     ]);
-    setItems(installed);
+    setItems(installed.sort((a, b) => a.name.localeCompare(b.name)));
     setUpdates(avail);
     setCatalog(catalogItems);
     setSources(srcs);
@@ -694,8 +696,7 @@ function InstalledTab() {
         window.alert(result.error ?? "Uninstall failed");
         return;
       }
-      setSelectedPlugin(null);
-      void load();
+      window.location.reload();
     } catch (err) {
       console.error("Uninstall failed:", err);
       window.alert(err instanceof Error ? err.message : String(err));
@@ -715,8 +716,7 @@ function InstalledTab() {
         window.alert(result.error ?? "Uninstall failed");
         return;
       }
-      setSelectedPlugin(null);
-      void load();
+      window.location.reload();
     } catch (err) {
       console.error("Uninstall failed:", err);
       window.alert(err instanceof Error ? err.message : String(err));

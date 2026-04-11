@@ -1,5 +1,6 @@
 import { ChannelPage } from "@/components/ChannelPage.js";
+import { PageScroll } from "@/components/PageScroll.js";
 
 export default function CommsWhatsAppPage() {
-  return <ChannelPage channelId="whatsapp" channelName="WhatsApp" />;
+  return <PageScroll><ChannelPage channelId="whatsapp" channelName="WhatsApp" /></PageScroll>;
 }

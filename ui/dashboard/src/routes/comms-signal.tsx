@@ -1,5 +1,6 @@
 import { ChannelPage } from "@/components/ChannelPage.js";
+import { PageScroll } from "@/components/PageScroll.js";
 
 export default function CommsSignalPage() {
-  return <ChannelPage channelId="signal" channelName="Signal" />;
+  return <PageScroll><ChannelPage channelId="signal" channelName="Signal" /></PageScroll>;
 }

@@ -3,7 +3,8 @@
  */
 
 import { ResourceUsage } from "@/components/ResourceUsage.js";
+import { PageScroll } from "@/components/PageScroll.js";
 
 export default function ResourcesPage() {
-  return <ResourceUsage />;
+  return <PageScroll><ResourceUsage /></PageScroll>;
 }

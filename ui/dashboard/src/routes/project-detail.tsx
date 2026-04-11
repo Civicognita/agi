@@ -5,6 +5,7 @@
 import { useCallback } from "react";
 import { useNavigate } from "react-router";
 import { ProjectDetail } from "@/components/ProjectDetail.js";
+import { PageScroll } from "@/components/PageScroll.js";
 import { useRootContext } from "./root.js";
 import { formatSecurityFixPrompt } from "@/lib/security-fix-prompt.js";
 import type { SecurityFinding } from "@/types";
@@ -24,6 +25,7 @@ export default function ProjectDetailPage() {
   }, [onOpenChatWithMessage]);
 
   return (
+    <PageScroll>
     <ProjectDetail
       projects={projectsHook.projects}
       onUpdate={projectsHook.update}
@@ -47,5 +49,6 @@ export default function ProjectDetailPage() {
       onFixFinding={handleFixFinding}
       onOpenMagicApp={onOpenMagicApp}
     />
+    </PageScroll>
   );
 }

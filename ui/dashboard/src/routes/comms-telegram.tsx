@@ -1,5 +1,6 @@
 import { ChannelPage } from "@/components/ChannelPage.js";
+import { PageScroll } from "@/components/PageScroll.js";
 
 export default function CommsTelegramPage() {
-  return <ChannelPage channelId="telegram" channelName="Telegram" />;
+  return <PageScroll><ChannelPage channelId="telegram" channelName="Telegram" /></PageScroll>;
 }

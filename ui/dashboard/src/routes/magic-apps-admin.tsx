@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router";
+import { PageScroll } from "@/components/PageScroll.js";
 import { ContextMenu } from "@particle-academy/react-fancy";
 import { fetchMagicApps, fetchMAppCatalog, installMApp, uninstallMApp } from "@/api.js";
 import type { MagicAppInfo, MAppCatalogEntry } from "@/types.js";
@@ -73,6 +74,7 @@ export default function MagicAppsAdminPage() {
   const defaultApps = installed.filter((a) => a.author === DEFAULT_AUTHOR);
 
   return (
+    <PageScroll>
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -262,5 +264,6 @@ export default function MagicAppsAdminPage() {
         </>
       )}
     </div>
+    </PageScroll>
   );
 }

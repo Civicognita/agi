@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { PageScroll } from "@/components/PageScroll.js";
 import { fetchIncidents, createIncident, updateIncidentStatus, updateIncidentBreach } from "../api.js";
 
 interface Incident {
@@ -69,6 +70,7 @@ export default function IncidentsPage() {
   }, [refresh]);
 
   return (
+    <PageScroll>
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
@@ -167,5 +169,6 @@ export default function IncidentsPage() {
         )}
       </div>
     </div>
+    </PageScroll>
   );
 }

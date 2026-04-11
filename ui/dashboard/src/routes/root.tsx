@@ -715,7 +715,7 @@ export default function RootLayout() {
         ) : (
           // Normal mode: content area with flyout overlays
           <>
-            <main className="max-w-[1200px] w-full mx-auto p-3 md:p-6 flex-1 overflow-y-auto min-h-0">
+            <main className="max-w-[1200px] w-full mx-auto flex-1 min-h-0 flex flex-col overflow-hidden">
               <Outlet context={ctx} />
             </main>
 

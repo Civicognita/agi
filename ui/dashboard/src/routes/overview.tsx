@@ -8,6 +8,7 @@ import { BreakdownChart } from "@/components/BreakdownChart.js";
 import { OverviewCards } from "@/components/OverviewCards.js";
 import { TimelineChart } from "@/components/TimelineChart.js";
 import { UsageSection } from "@/components/UsageSection.js";
+import { PageScroll } from "@/components/PageScroll.js";
 import type { TimeBucket } from "@/types.js";
 import { useRootContext } from "./root.js";
 
@@ -23,6 +24,7 @@ export default function OverviewPage() {
   if (overview.data === null) return null;
 
   return (
+    <PageScroll>
     <div className="flex flex-col gap-6">
       <OverviewCards data={overview.data} />
 
@@ -56,5 +58,6 @@ export default function OverviewPage() {
       {/* Usage & True Cost */}
       <UsageSection days={30} />
     </div>
+    </PageScroll>
   );
 }

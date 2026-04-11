@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate, useOutletContext } from "react-router";
 import { cn } from "@/lib/utils";
+import { PageScroll } from "@/components/PageScroll.js";
 import { fetchPluginSettingsPages } from "../api.js";
 import type { PluginSettingsPage } from "../types.js";
 import { useRootContext } from "./root.js";
@@ -57,6 +58,7 @@ export default function SettingsLayout() {
   const showFilter = pluginPages.length > 5;
 
   return (
+    <PageScroll>
     <div className="flex flex-col md:flex-row gap-6">
       {isMobile ? (
         <select
@@ -111,5 +113,6 @@ export default function SettingsLayout() {
         <Outlet context={{ configHook, pluginPages } satisfies SettingsContext} />
       </div>
     </div>
+    </PageScroll>
   );
 }
