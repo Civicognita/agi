@@ -8,8 +8,8 @@ The Aionima agent has access to a set of built-in tools registered during gatewa
 
 Tools are registered in two batches:
 
-- `registerAllTools()` — core tools (dev, git, canvas, workers, knowledge, plans, projects)
-- `registerAgentTools()` — management tools (marketplace, settings, system, plugins, builder)
+- `registerAllTools()` — core tools (dev, git, canvas, workers, knowledge, plans, projects, browser, web)
+- `registerAgentTools()` — management tools (marketplace, settings, system, hosting, stacks, builder)
 
 The second batch is registered after services are available.
 
@@ -273,7 +273,7 @@ Only registered when `workspace.projects` directories are configured.
 | `tynnToken` | string | Tynn project token (for `create` and `update`; empty string or `null` to clear) |
 | `confirm` | boolean | Must be `true` to confirm a `delete` operation |
 
-Sacred projects (`agi`, `prime`, `bots`, `id`) cannot be modified or deleted.
+Sacred projects (`agi`, `prime`, `id`, `marketplace`, `mapp-marketplace`) cannot be modified or deleted.
 
 ---
 
@@ -438,6 +438,126 @@ Only registered when a `UserContextStore` is configured.
 | `content` | string (required) | Markdown content to store as per-entity context |
 
 Content is written to a per-entity `USER.md` file and injected into the system prompt on the next invocation. This is how the agent builds persistent relationship memory with entities.
+
+---
+
+## Browser Tools
+
+### `browser_session`
+
+Persistent Playwright browser session for multi-step web interaction. The session stays open across tool calls, enabling workflows like navigate, fill a form, click submit, screenshot the result.
+
+| Field | Value |
+|-------|-------|
+| States | `ONLINE` |
+| Tiers | `verified`, `sealed` |
+
+Only registered when `imageBlobStore` is configured (needed for screenshot storage). Playwright runs on the host machine, not inside project containers. Sessions auto-close after 5 minutes of inactivity.
+
+**Key parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `action` | string (required) | One of: `"open"`, `"navigate"`, `"click"`, `"type"`, `"fill"`, `"select"`, `"screenshot"`, `"read_text"`, `"read_html"`, `"evaluate"`, `"wait"`, `"close"` |
+| `url` | string | URL for `open`/`navigate` (http:// or https://) |
+| `selector` | string | CSS selector for `click`, `fill`, `select`, `read_text`, `read_html`, `wait` |
+| `text` | string | Text to type (for `type` action) |
+| `value` | string | Value for `fill` or `select` actions |
+| `script` | string | JavaScript to evaluate in page context (for `evaluate`) |
+| `viewport` | object | Viewport dimensions `{ width, height }` (default: 1280x720, `open` only) |
+| `timeout` | number | Action timeout in ms (default: 10000) |
+| `fullPage` | boolean | Capture full-page screenshot (default: false) |
+| `includeScreenshot` | boolean | Auto-capture screenshot with the action result (default: true) |
+
+**Action details:**
+
+| Action | Description |
+|--------|-------------|
+| `open` | Launch browser and navigate to URL. Creates a new session (closes any existing one). |
+| `navigate` | Navigate to a new URL in the current session. |
+| `click` | Click an element by CSS selector. |
+| `type` | Type text into the currently focused element. |
+| `fill` | Fill an input identified by CSS selector with a value. |
+| `select` | Select an option from a `<select>` dropdown by value. |
+| `screenshot` | Capture current page state as PNG. |
+| `read_text` | Read visible text content (all page text, or from a specific selector). |
+| `read_html` | Read innerHTML of an element by selector. |
+| `evaluate` | Run JavaScript in the page context and return the result. |
+| `wait` | Wait for a selector to appear (or a timeout if no selector given). |
+| `close` | Close the browser session and release resources. |
+
+---
+
+### `get_web_page`
+
+Fetch and sanitize web page content. Strips HTML, scripts, and styles. Scans for prompt injection and malicious payloads before returning content.
+
+| Field | Value |
+|-------|-------|
+| States | `ONLINE` |
+| Tiers | `verified`, `sealed` |
+
+**Key parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `url` | string (required) | URL to fetch (http:// or https:// only) |
+
+Only `http://` and `https://` schemes are allowed; `file:`, `javascript:`, `data:`, `ftp:`, `blob:` are blocked. Raw fetch limit is 512KB, output is capped at 32KB. Content is scanned for prompt injection patterns before being returned.
+
+Returns `{ url, title, metaDescription, content, truncated, wasInjectionBlocked }`.
+
+---
+
+## Hosting Tools
+
+### `manage_hosting`
+
+Manage project hosting infrastructure (Caddy, Podman, Cloudflare tunnels).
+
+| Field | Value |
+|-------|-------|
+| States | `ONLINE` |
+| Tiers | `verified`, `sealed` |
+
+Only registered when a `HostingManager` is available.
+
+**Key parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `action` | string (required) | One of: `"status"`, `"enable"`, `"disable"`, `"restart"`, `"info"`, `"tunnel_enable"` |
+| `path` | string | Absolute project path (for `enable`/`disable`/`restart`/`info`/`tunnel_enable`) |
+| `type` | string | Project type e.g. `"node"`, `"php"`, `"static"` (for `enable`) |
+| `hostname` | string | Custom hostname (for `enable`) |
+| `docRoot` | string | Document root relative to project (for `enable`, PHP/static) |
+| `startCommand` | string | Custom start command (for `enable`) |
+| `mode` | string | Hosting mode: `"container"` or `"process"` (for `enable`) |
+| `internalPort` | number | Internal port the app listens on (for `enable`) |
+| `runtimeId` | string | Runtime ID to use (for `enable`) |
+
+---
+
+### `manage_stacks`
+
+Manage technology stacks (frameworks, databases, caches, tools).
+
+| Field | Value |
+|-------|-------|
+| States | `ONLINE` |
+| Tiers | `verified`, `sealed` |
+
+Only registered when a `PluginRegistry` with stack providers is available.
+
+**Key parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `action` | string (required) | One of: `"list"`, `"get"`, `"add"`, `"remove"`, `"project_stacks"` |
+| `stackId` | string | Stack ID (for `get`/`add`/`remove`) |
+| `path` | string | Project path (for `add`/`remove`/`project_stacks`) |
+| `category` | string | Filter by project category (for `list`) |
+| `stackCategory` | string | Filter by stack category: `"framework"`, `"database"`, `"cache"`, `"tool"` (for `list`) |
 
 ---
 

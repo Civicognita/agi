@@ -15,7 +15,7 @@ import type { ProjectConfigManager } from "../project-config-manager.js";
 // Config
 // ---------------------------------------------------------------------------
 
-const SACRED_PROJECT_NAMES = new Set(["agi", "prime", "bots", "id"]);
+const SACRED_PROJECT_NAMES = new Set(["agi", "prime", "id", "marketplace", "mapp-marketplace"]);
 
 function isSacredProjectPath(pathStr: string): boolean {
   return SACRED_PROJECT_NAMES.has(basename(pathStr).toLowerCase());

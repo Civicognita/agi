@@ -205,10 +205,6 @@ Backend dist directories are checksummed before and after the build. If the chec
 Backend directories tracked:
 - `cli/dist/`
 - `packages/gateway-core/dist/`
-- `channels/telegram/dist/`
-- `channels/discord/dist/`
-- `channels/gmail/dist/`
-- `packages/plugin-*/src/`
 
 ### Phase 7 -- Conditional Restart
 

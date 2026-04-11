@@ -6,11 +6,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { FileTree } from "@/components/FileTree.js";
+import { TreeNav } from "@particle-academy/react-fancy";
 import { fetchDocsTree, fetchFile } from "@/api.js";
 import type { FileNode } from "@/api.js";
 import { markdownComponents } from "@/lib/markdown.js";
 import { useIsMobile } from "@/hooks.js";
+
+type TreeNodeData = { id: string; label: string; type: "file" | "folder"; ext?: string; children?: TreeNodeData[] };
+function mapNode(n: FileNode): TreeNodeData {
+  return { id: n.path, label: n.name, type: n.type === "dir" ? "folder" : "file", ext: n.ext, children: n.children?.map(mapNode) };
+}
 
 export default function DocsPage() {
   const isMobile = useIsMobile();
@@ -79,7 +84,14 @@ export default function DocsPage() {
             ) : treeNodes.length === 0 ? (
               <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>No docs found</div>
             ) : (
-              <FileTree nodes={treeNodes} selectedPath={selectedPath} onSelect={(path) => { handleSelect(path); setShowTree(false); }} />
+              <TreeNav
+                nodes={treeNodes.map(mapNode) as never}
+                selectedId={selectedPath ?? undefined}
+                onSelect={(id: string, node: { type?: string }) => { if (node.type === "file") { handleSelect(id); setShowTree(false); } }}
+                defaultExpandAll
+                showIcons
+                indentSize={14}
+              />
             )}
           </div>
         ) : (
@@ -149,10 +161,13 @@ export default function DocsPage() {
             No docs found
           </div>
         ) : (
-          <FileTree
-            nodes={treeNodes}
-            selectedPath={selectedPath}
-            onSelect={handleSelect}
+          <TreeNav
+            nodes={treeNodes.map(mapNode) as never}
+            selectedId={selectedPath ?? undefined}
+            onSelect={(id: string, node: { type?: string }) => { if (node.type === "file") handleSelect(id); }}
+            defaultExpandAll
+            showIcons
+            indentSize={14}
           />
         )}
       </div>
