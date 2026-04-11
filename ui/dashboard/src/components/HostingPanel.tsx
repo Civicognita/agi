@@ -180,6 +180,38 @@ export function HostingPanel({
         </div>
       )}
 
+      {/* Container status + actions — at the top */}
+      <div className="mb-3 pb-2 border-b border-border">
+        {stickyError && (
+          <div className="rounded-lg bg-red/10 border border-red/30 px-3 py-2 mb-2">
+            <div className="flex items-center justify-between mb-0.5">
+              <span className="text-[11px] font-semibold text-red">Container Error</span>
+              <button onClick={() => setStickyError(null)} className="text-[10px] text-red/60 hover:text-red">Dismiss</button>
+            </div>
+            <div className="text-[11px] text-red/80 whitespace-pre-wrap break-words">{stickyError}</div>
+          </div>
+        )}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className={cn("inline-block w-2 h-2 rounded-full", statusDot)} />
+            <span className={cn("text-[12px] font-semibold capitalize", statusColor)}>{hosting.status}</span>
+            {hosting.url && (
+              <a href={hosting.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue underline">{hosting.url}</a>
+            )}
+          </div>
+          <div className="flex gap-1.5">
+            <Button size="sm" variant="outline" onClick={() => { void onRestart(projectPath).catch((err: unknown) => { setStickyError(err instanceof Error ? err.message : String(err)); }); }} disabled={busy} className="text-[11px] h-7">Restart</Button>
+            <Button size="sm" onClick={() => void handleSaveConfig()} disabled={saving || busy} className="text-[11px] h-7">{saving ? "Saving..." : "Save Config"}</Button>
+          </div>
+        </div>
+        {(hosting.containerName || hosting.image) && (
+          <div className="flex gap-3 mt-1.5 text-[11px] text-muted-foreground">
+            {hosting.containerName && <span>Container: <code className="text-foreground">{hosting.containerName}</code></span>}
+            {hosting.image && <span>Image: <code className="text-foreground">{hosting.image}</code></span>}
+          </div>
+        )}
+      </div>
+
       {/* Config fields */}
       <div className="grid grid-cols-2 gap-2 mb-2">
         <div>
@@ -301,7 +333,7 @@ export function HostingPanel({
         </div>
       </div>
 
-      {/* Stack Manager — always visible so stacks can be configured before enabling hosting */}
+      {/* Stack Manager */}
       <div className="mb-3 pt-2 border-t border-border">
         <StackManager
           projectPath={projectPath}
@@ -311,175 +343,46 @@ export function HostingPanel({
         />
       </div>
 
-      {/* Status + actions — always visible (all projects are auto-hosted) */}
-        <div className="mt-3 pt-2 border-t border-border">
-          {/* Error banner — sticky until status becomes running or dismissed */}
-          {stickyError && (
-            <div className="rounded-lg bg-red/10 border border-red/30 px-3 py-2 mb-2">
-              <div className="flex items-center justify-between mb-0.5">
-                <span className="text-[11px] font-semibold text-red">Container Error</span>
-                <button
-                  onClick={() => setStickyError(null)}
-                  className="text-[10px] text-red/60 hover:text-red"
-                >
-                  Dismiss
-                </button>
-              </div>
-              <div className="text-[11px] text-red/80 whitespace-pre-wrap break-words">{stickyError}</div>
-            </div>
-          )}
-
+      {/* Public tunnel */}
+      {hosting.status === "running" && onTunnelEnable && onTunnelDisable && (
+        <div className="mb-3 pt-2 border-t border-border">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className={cn("inline-block w-2 h-2 rounded-full", statusDot)} />
-              <span className={cn("text-[12px] font-semibold capitalize", statusColor)}>
-                {hosting.status}
-              </span>
-              {hosting.url && (
-                <a
-                  href={hosting.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[11px] text-blue underline"
-                >
-                  {hosting.url}
-                </a>
-              )}
-            </div>
-            <div className="flex gap-1.5">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  void onRestart(projectPath).catch((err: unknown) => {
-                    setStickyError(err instanceof Error ? err.message : String(err));
-                  });
-                }}
-                disabled={busy}
-                className="text-[11px] h-7"
-              >
-                Restart
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => void handleSaveConfig()}
-                disabled={saving || busy}
-                className="text-[11px] h-7"
-              >
-                {saving ? "Saving..." : "Save Config"}
-              </Button>
-            </div>
+            <div className="text-[10px] font-semibold text-muted-foreground">Public Tunnel</div>
+            {hosting.tunnelUrl ? (
+              <Button size="sm" variant="outline" onClick={() => { setTunnelLoading(true); void onTunnelDisable(projectPath).finally(() => setTunnelLoading(false)); }} disabled={tunnelLoading || busy} className="text-[11px] h-7 text-red">Stop Tunnel</Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => { setTunnelLoading(true); void onTunnelEnable(projectPath).finally(() => setTunnelLoading(false)); }} disabled={tunnelLoading || busy} className="text-[11px] h-7">{tunnelLoading ? "Starting..." : "Share"}</Button>
+            )}
           </div>
-          {/* Container info */}
-          {(hosting.containerName || hosting.image) && (
-            <div className="flex gap-3 mt-1.5 text-[11px] text-muted-foreground">
-              {hosting.containerName && (
-                <span>Container: <code className="text-foreground">{hosting.containerName}</code></span>
-              )}
-              {hosting.image && (
-                <span>Image: <code className="text-foreground">{hosting.image}</code></span>
-              )}
+          {hosting.tunnelUrl && (
+            <div className="flex items-center gap-1.5 mt-1.5">
+              <a href={hosting.tunnelUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-green underline truncate">{hosting.tunnelUrl}</a>
+              <button onClick={() => { void navigator.clipboard.writeText(hosting.tunnelUrl!); setTunnelCopied(true); setTimeout(() => setTunnelCopied(false), 2000); }} className="text-[10px] text-muted-foreground hover:text-foreground shrink-0" title="Copy URL">{tunnelCopied ? "Copied!" : "Copy"}</button>
             </div>
           )}
-
-          {/* Public tunnel */}
-          {hosting.status === "running" && onTunnelEnable && onTunnelDisable && (
-            <div className="mt-3 pt-2 border-t border-border">
-              <div className="flex items-center justify-between">
-                <div className="text-[10px] font-semibold text-muted-foreground">Public Tunnel</div>
-                {hosting.tunnelUrl ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setTunnelLoading(true);
-                      void onTunnelDisable(projectPath).finally(() => setTunnelLoading(false));
-                    }}
-                    disabled={tunnelLoading || busy}
-                    className="text-[11px] h-7 text-red"
-                  >
-                    Stop Tunnel
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setTunnelLoading(true);
-                      void onTunnelEnable(projectPath).finally(() => setTunnelLoading(false));
-                    }}
-                    disabled={tunnelLoading || busy}
-                    className="text-[11px] h-7"
-                  >
-                    {tunnelLoading ? "Starting..." : "Share"}
-                  </Button>
-                )}
-              </div>
-              {hosting.tunnelUrl && (
-                <div className="flex items-center gap-1.5 mt-1.5">
-                  <a
-                    href={hosting.tunnelUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[11px] text-green underline truncate"
-                  >
-                    {hosting.tunnelUrl}
-                  </a>
-                  <button
-                    onClick={() => {
-                      void navigator.clipboard.writeText(hosting.tunnelUrl!);
-                      setTunnelCopied(true);
-                      setTimeout(() => setTunnelCopied(false), 2000);
-                    }}
-                    className="text-[10px] text-muted-foreground hover:text-foreground shrink-0"
-                    title="Copy URL"
-                  >
-                    {tunnelCopied ? "Copied!" : "Copy"}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Stack dev commands — above logs */}
-          {Object.keys(devCommands).length > 0 && onToolExecute && (
-            <div className="mt-3 pt-2 border-t border-border">
-              <div className="text-[10px] font-semibold text-muted-foreground mb-1.5">Dev Commands</div>
-              <ProjectToolbar
-                tools={Object.entries(devCommands).map(([key, cmd]) => ({
-                  id: `dev-cmd-${key}`,
-                  label: key,
-                  description: cmd,
-                  action: "shell" as const,
-                  command: cmd,
-                }))}
-                projectPath={projectPath}
-                onExecute={onToolExecute}
-                onToolComplete={() => setLogRefreshKey((k) => k + 1)}
-                compact
-              />
-            </div>
-          )}
-
-          {/* Stack tools */}
-          {tools && tools.length > 0 && onToolExecute && (
-            <div className="mt-3 pt-2 border-t border-border">
-              <div className="text-[10px] font-semibold text-muted-foreground mb-1.5">Tools</div>
-              <ProjectToolbar
-                tools={tools}
-                projectPath={projectPath}
-                onExecute={onToolExecute}
-                onToolComplete={() => setLogRefreshKey((k) => k + 1)}
-                compact
-              />
-            </div>
-          )}
-
-          {/* Project Logs + Container Terminal */}
-          <div className="mt-3 pt-2 border-t border-border">
-            <TerminalArea projectPath={projectPath} refreshKey={logRefreshKey} />
-          </div>
         </div>
+      )}
+
+      {/* Dev Commands — above logs */}
+      {Object.keys(devCommands).length > 0 && onToolExecute && (
+        <div className="mb-3 pt-2 border-t border-border">
+          <div className="text-[10px] font-semibold text-muted-foreground mb-1.5">Dev Commands</div>
+          <ProjectToolbar tools={Object.entries(devCommands).map(([key, cmd]) => ({ id: `dev-cmd-${key}`, label: key, description: cmd, action: "shell" as const, command: cmd }))} projectPath={projectPath} onExecute={onToolExecute} onToolComplete={() => setLogRefreshKey((k) => k + 1)} compact />
+        </div>
+      )}
+
+      {/* Stack tools */}
+      {tools && tools.length > 0 && onToolExecute && (
+        <div className="mb-3 pt-2 border-t border-border">
+          <div className="text-[10px] font-semibold text-muted-foreground mb-1.5">Tools</div>
+          <ProjectToolbar tools={tools} projectPath={projectPath} onExecute={onToolExecute} onToolComplete={() => setLogRefreshKey((k) => k + 1)} compact />
+        </div>
+      )}
+
+      {/* Logs + Terminal */}
+      <div className="pt-2 border-t border-border">
+        <TerminalArea projectPath={projectPath} refreshKey={logRefreshKey} />
+      </div>
     </div>
   );
 }
