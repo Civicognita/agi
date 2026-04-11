@@ -865,23 +865,17 @@ export async function startGatewayServer(
     log.info("marketplace: seeded default source (Civicognita/aionima-marketplace)");
   }
 
-  // Sync the local marketplace catalog into the DB so version checks are current.
-  const marketplaceDir = config.marketplace?.dir ?? "/opt/aionima-marketplace";
-  if (existsSync(marketplaceDir)) {
-    const syncResult = marketplaceManager.syncLocalCatalog(marketplaceDir);
-    if (syncResult.ok) {
-      log.info(`marketplace: synced ${String(syncResult.pluginCount)} plugins from local catalog`);
-    } else {
-      log.warn(`marketplace: local catalog sync failed: ${syncResult.error}`);
+  // Sync marketplace catalog from GitHub sources and auto-update installed plugins.
+  {
+    const syncResult = await marketplaceManager.syncAndUpdateAll();
+    if (syncResult.synced > 0) {
+      log.info(`marketplace: synced ${String(syncResult.synced)} plugins from catalog`);
     }
-
-    // Reconcile installed plugins — re-install any whose source files changed
-    const reconcileResult = await marketplaceManager.reconcileInstalled(marketplaceDir);
-    if (reconcileResult.updated.length > 0) {
-      log.info(`marketplace: updated ${String(reconcileResult.updated.length)} plugin(s): ${reconcileResult.updated.join(", ")}`);
+    if (syncResult.updated.length > 0) {
+      log.info(`marketplace: updated ${String(syncResult.updated.length)} plugin(s): ${syncResult.updated.join(", ")}`);
     }
-    for (const err of reconcileResult.errors) {
-      log.warn(`marketplace: reconcile error: ${err}`);
+    for (const err of syncResult.errors) {
+      log.warn(`marketplace: update error: ${err}`);
     }
   }
 
