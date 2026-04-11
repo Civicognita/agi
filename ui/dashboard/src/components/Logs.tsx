@@ -84,7 +84,7 @@ export function Logs({ entries, connected, paused, onClear, onTogglePause }: Log
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-90px)]">
+    <div className="flex flex-col h-full min-h-0">
       {/* Toolbar */}
       <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border bg-card flex-wrap">
         {/* Level checkboxes */}

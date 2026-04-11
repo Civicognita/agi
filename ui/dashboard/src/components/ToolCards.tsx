@@ -265,9 +265,10 @@ const GenericCard: FC<{ card: ToolCard; collapsed?: boolean }> = ({ card, collap
 };
 
 const BrowserCard: FC<{ card: ToolCard; collapsed?: boolean }> = ({ card, collapsed }) => {
-  const detail = card.detail as { screenshotId?: string; sessionId?: string; action?: string; url?: string; error?: string } | undefined;
+  const detail = card.detail as { screenshotId?: string; sessionId?: string; thumbnailDataUrl?: string; action?: string; url?: string; error?: string } | undefined;
   const screenshotId = detail?.screenshotId;
   const sessionId = detail?.sessionId ?? "_screengrabs";
+  const thumbnailSrc = detail?.thumbnailDataUrl ?? (screenshotId ? `/api/chat/images/${sessionId}/${screenshotId}` : null);
   const action = detail?.action ?? "browser";
   const url = detail?.url;
 
@@ -288,12 +289,12 @@ const BrowserCard: FC<{ card: ToolCard; collapsed?: boolean }> = ({ card, collap
       {detail?.error && (
         <span className="text-red text-[10px]">{detail.error}</span>
       )}
-      {screenshotId && card.status === "complete" && (
+      {thumbnailSrc && card.status === "complete" && (
         <img
-          src={`/api/chat/images/${sessionId}/${screenshotId}`}
+          src={thumbnailSrc}
           alt={`Screenshot: ${url ?? action}`}
           className="mt-1 rounded border border-border max-w-full max-h-[200px] object-contain cursor-pointer"
-          onClick={() => window.open(`/api/chat/images/${sessionId}/${screenshotId}`, "_blank")}
+          onClick={() => screenshotId ? window.open(`/api/chat/images/${sessionId}/${screenshotId}`, "_blank") : undefined}
         />
       )}
     </div>

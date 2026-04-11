@@ -466,7 +466,7 @@ export function ProjectDetail({
               </div>
             </div>
             {/* Panes — CSS grid with fixed height; both columns always visible */}
-            <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "clamp(400px, calc(100vh - 16rem), calc(100vh - 16rem))" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", flex: 1, minHeight: 0 }}>
               {/* TreeNav pane */}
               <div style={{ overflow: "auto", borderRight: "1px solid var(--border)" }}>
                 {treeLoading ? (

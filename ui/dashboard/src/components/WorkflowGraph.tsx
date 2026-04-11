@@ -273,7 +273,7 @@ export function WorkflowGraph({ theme, config, onSaveConfig }: WorkflowGraphProp
   );
 
   return (
-    <div style={{ width: "100%", height: "calc(100vh - 120px)" }}>
+    <div style={{ width: "100%", height: "100%" }} className="min-h-[400px]">
       <ReactFlow
         nodes={nodes}
         edges={edges}
