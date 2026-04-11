@@ -2725,6 +2725,7 @@ export async function createGatewayRuntimeState(
         sharedContainerManager: deps.sharedContainerManager,
         hostingManager: deps.hostingManager,
         log: createComponentLogger(deps.logger, "stack-api"),
+        pluginRegistry: deps.pluginRegistry,
       });
     }
   }
@@ -3879,6 +3880,13 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Built-in file tree only serves docs/" });
     }
     const tree = buildFileTree(docsRoot, "docs");
+    // Append plugin-provided knowledge namespaces as virtual folders under plugin-docs/
+    const knowledgeEntries = deps.pluginRegistry?.getKnowledge() ?? [];
+    for (const { namespace } of knowledgeEntries) {
+      if (!namespace.contentDir || !existsSync(namespace.contentDir)) continue;
+      const subtree = buildFileTree(namespace.contentDir, `plugin-docs/${namespace.id}`);
+      tree.push({ name: namespace.label, path: `plugin-docs/${namespace.id}`, type: "dir", children: subtree });
+    }
     return reply.send({ tree });
   });
 
@@ -3887,8 +3895,38 @@ export async function createGatewayRuntimeState(
     if (!filePath) {
       return reply.code(400).send({ error: "path query parameter is required" });
     }
-    // Resolve and validate the path stays within docs/
     const repoRoot = deps.selfRepoPath ?? deps.workspaceRoot ?? process.cwd();
+
+    if (filePath.startsWith("plugin-docs/")) {
+      // Extract namespace ID from the second path segment: plugin-docs/<namespaceId>/...
+      const parts = filePath.split("/");
+      const namespaceId = parts[1];
+      if (!namespaceId) {
+        return reply.code(400).send({ error: "Invalid plugin-docs path: missing namespace ID" });
+      }
+      const knowledgeEntries = deps.pluginRegistry?.getKnowledge() ?? [];
+      const entry = knowledgeEntries.find((k) => k.namespace.id === namespaceId);
+      if (!entry) {
+        return reply.code(404).send({ error: `Plugin knowledge namespace not found: ${namespaceId}` });
+      }
+      const { contentDir } = entry.namespace;
+      // Remaining path after plugin-docs/<namespaceId>/
+      const relativePart = parts.slice(2).join("/");
+      const resolved = resolvePath(contentDir, relativePart);
+      const contentDirAbsolute = resolvePath(contentDir);
+      // Path traversal protection — must stay within contentDir
+      if (!resolved.startsWith(contentDirAbsolute + "/") && resolved !== contentDirAbsolute) {
+        return reply.code(403).send({ error: "Path is outside the plugin knowledge namespace directory" });
+      }
+      if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+        return reply.code(404).send({ error: "File not found" });
+      }
+      const content = readFileSync(resolved, "utf-8");
+      const size = statSync(resolved).size;
+      return reply.send({ content, size });
+    }
+
+    // Resolve and validate the path stays within docs/
     const resolved = resolvePath(repoRoot, filePath);
     const docsAbsolute = resolvePath(docsRoot);
     if (!resolved.startsWith(docsAbsolute + "/") && resolved !== docsAbsolute) {

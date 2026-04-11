@@ -646,6 +646,7 @@ export interface StackInfo {
   devCommands?: StackDevCommands;
   tools: ProjectTypeTool[];
   icon?: string;
+  compatibleLanguages?: string[];
 }
 
 export interface ProjectStackInstance {

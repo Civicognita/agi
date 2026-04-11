@@ -79,20 +79,22 @@ export default function DocsPage() {
             <div style={{ padding: "10px 12px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-muted-foreground)", borderBottom: "1px solid var(--color-border)", flexShrink: 0 }}>
               Documentation
             </div>
-            {treeLoading ? (
-              <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>Loading...</div>
-            ) : treeNodes.length === 0 ? (
-              <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>No docs found</div>
-            ) : (
-              <TreeNav
-                nodes={treeNodes.map(mapNode) as never}
-                selectedId={selectedPath ?? undefined}
-                onSelect={(id: string, node: { type?: string }) => { if (node.type === "file") { handleSelect(id); setShowTree(false); } }}
-                defaultExpandAll
-                showIcons
-                indentSize={14}
-              />
-            )}
+            <div style={{ flex: 1, overflow: "auto" }}>
+              {treeLoading ? (
+                <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>Loading...</div>
+              ) : treeNodes.length === 0 ? (
+                <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>No docs found</div>
+              ) : (
+                <TreeNav
+                  nodes={treeNodes.map(mapNode) as never}
+                  selectedId={selectedPath ?? undefined}
+                  onSelect={(id: string, node: { type?: string }) => { if (node.type === "file") { handleSelect(id); setShowTree(false); } }}
+                  defaultExpandAll
+                  showIcons
+                  indentSize={14}
+                />
+              )}
+            </div>
           </div>
         ) : (
           <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
@@ -152,24 +154,26 @@ export default function DocsPage() {
         >
           Documentation
         </div>
-        {treeLoading ? (
-          <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>
-            Loading...
-          </div>
-        ) : treeNodes.length === 0 ? (
-          <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>
-            No docs found
-          </div>
-        ) : (
-          <TreeNav
-            nodes={treeNodes.map(mapNode) as never}
-            selectedId={selectedPath ?? undefined}
-            onSelect={(id: string, node: { type?: string }) => { if (node.type === "file") handleSelect(id); }}
-            defaultExpandAll
-            showIcons
-            indentSize={14}
-          />
-        )}
+        <div style={{ flex: 1, overflow: "auto" }}>
+          {treeLoading ? (
+            <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>
+              Loading...
+            </div>
+          ) : treeNodes.length === 0 ? (
+            <div style={{ padding: 12, fontSize: 12, color: "var(--color-muted-foreground)" }}>
+              No docs found
+            </div>
+          ) : (
+            <TreeNav
+              nodes={treeNodes.map(mapNode) as never}
+              selectedId={selectedPath ?? undefined}
+              onSelect={(id: string, node: { type?: string }) => { if (node.type === "file") handleSelect(id); }}
+              defaultExpandAll
+              showIcons
+              indentSize={14}
+            />
+          )}
+        </div>
       </div>
 
       {/* Main — rendered markdown */}

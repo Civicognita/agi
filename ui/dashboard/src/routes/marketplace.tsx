@@ -691,8 +691,9 @@ function InstalledTab() {
       await uninstallMarketplacePlugin(name);
       setSelectedPlugin(null);
       void load();
-    } catch { /* ignore */ }
-    finally { setUninstalling(null); }
+    } catch (err) {
+      console.error("Uninstall failed:", err);
+    } finally { setUninstalling(null); }
   }, [load]);
 
   const handleConfirmUninstall = useCallback(async () => {
@@ -705,8 +706,9 @@ function InstalledTab() {
       await uninstallMarketplacePlugin(name, ids);
       setSelectedPlugin(null);
       void load();
-    } catch { /* ignore */ }
-    finally { setUninstalling(null); }
+    } catch (err) {
+      console.error("Uninstall failed:", err);
+    } finally { setUninstalling(null); }
   }, [cleanupTarget, selectedCleanupIds, load]);
 
   const handleUpdate = useCallback(async (pluginName: string, sourceId: number) => {

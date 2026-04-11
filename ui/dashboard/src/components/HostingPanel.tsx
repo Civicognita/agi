@@ -8,8 +8,8 @@ import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { ProjectHostingInfo, ProjectTypeTool, RuntimeInfo } from "../types.js";
-import { fetchProjectDevCommands, fetchRuntimes } from "../api.js";
+import type { ProjectHostingInfo, ProjectTypeTool, RuntimeInfo, StackInfo, ProjectStackInstance } from "../types.js";
+import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks } from "../api.js";
 import { ProjectToolbar } from "./ProjectToolbar.js";
 import { StackManager } from "./StackManager.js";
 import { EnvManager } from "./EnvManager.js";
@@ -79,6 +79,8 @@ export function HostingPanel({
   const [tunnelCopied, setTunnelCopied] = useState(false);
   const [devCommands, setDevCommands] = useState<Record<string, string>>({});
   const [runtimes, setRuntimes] = useState<RuntimeInfo[]>([]);
+  const [projectStackInstances, setProjectStackInstances] = useState<ProjectStackInstance[]>([]);
+  const [stackDefs, setStackDefs] = useState<StackInfo[]>([]);
   const [stickyError, setStickyError] = useState<string | null>(null);
   const [logRefreshKey, setLogRefreshKey] = useState(0);
 
@@ -111,6 +113,12 @@ export function HostingPanel({
     fetchRuntimes().then(setRuntimes).catch(() => setRuntimes([]));
   }, []);
 
+  // Fetch project stacks and stack definitions for compatible-language filtering
+  useEffect(() => {
+    fetchProjectStacks(projectPath).then(setProjectStackInstances).catch(() => setProjectStackInstances([]));
+    fetchStacks().then(setStackDefs).catch(() => setStackDefs([]));
+  }, [projectPath]);
+
   const handleSaveConfig = useCallback(async () => {
     setSaving(true);
     try {
@@ -128,6 +136,22 @@ export function HostingPanel({
       setSaving(false);
     }
   }, [projectPath, type, hostname, docRoot, startCommand, mode, internalPort, onConfigure]);
+
+  // Derive the set of compatible languages from installed stacks.
+  // If any installed stack declares compatibleLanguages, restrict the runtime
+  // dropdown to those languages. If none declare it, show all runtimes.
+  const compatibleLanguages = new Set<string>();
+  for (const instance of projectStackInstances) {
+    const def = stackDefs.find((d) => d.id === instance.stackId);
+    if (def?.compatibleLanguages) {
+      for (const lang of def.compatibleLanguages) {
+        compatibleLanguages.add(lang);
+      }
+    }
+  }
+  const visibleRuntimes = compatibleLanguages.size > 0
+    ? runtimes.filter((r) => compatibleLanguages.has(r.language))
+    : runtimes;
 
   const statusColor = {
     running: "text-green",
@@ -176,7 +200,7 @@ export function HostingPanel({
             }
           </select>
         </div>
-        {runtimes.length > 0 && (
+        {visibleRuntimes.length > 0 && (
           <div>
             <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
               Runtime
@@ -194,7 +218,7 @@ export function HostingPanel({
               className="w-full h-8 px-2 rounded-md border border-border bg-background text-foreground text-[12px] disabled:opacity-50"
             >
               <option value="">Default</option>
-              {runtimes.filter((r) => r.installed).map((r) => (
+              {visibleRuntimes.filter((r) => r.installed).map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.label}
                 </option>

@@ -991,8 +991,13 @@ export class HostingManager {
         args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${tunnelOrigin}`);
       }
 
-      // Set working directory to /app (where project is typically mounted)
-      args.push("-w", "/app");
+      // Set working directory to the container-side mount path from the stack's first volume.
+      // Different stacks mount to different paths (e.g. /app for Node, /var/www/html for PHP).
+      const firstMount = stackConfig.volumeMounts(ctx)[0];
+      if (firstMount) {
+        const containerPath = firstMount.split(":")[1];
+        if (containerPath) args.push("-w", containerPath);
+      }
 
       // Use runtime-selected image if available, otherwise stack's default
       const runtimeDef = hosted.meta.runtimeId
@@ -1789,7 +1794,12 @@ export class HostingManager {
 
     // 1. Laravel (composer.json with laravel/framework)
     if (hasComposerJson && "laravel/framework" in composerRequire) {
-      return { projectType: "web-app", suggestedStacks: ["stack-laravel"], docRoot: "public", startCommand: null };
+      const suggestedStacks = ["stack-laravel"];
+      // Monorepo: suggest React stack if React is also present
+      if (hasPackageJson && "react" in pkgDeps) {
+        suggestedStacks.push("stack-react");
+      }
+      return { projectType: "web-app", suggestedStacks, docRoot: "public", startCommand: null };
     }
 
     // 2. WordPress (composer.json with roots/wordpress or johnpbloch/wordpress-core)
