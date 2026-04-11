@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import AnsiToHtml from "ansi-to-html";
 import type { LogSourceDefinition } from "../types.js";
 import { fetchContainerLogs, fetchLogSources } from "../api.js";
 
@@ -7,6 +8,8 @@ interface ProjectLogViewerProps {
   /** Bump this key to trigger an immediate log reload. */
   refreshKey?: number;
 }
+
+const ansiConverter = new AnsiToHtml({ fg: "#e1e4ea", bg: "transparent", escapeXML: true });
 
 export function ProjectLogViewer({ projectPath, refreshKey }: ProjectLogViewerProps) {
   const [sources, setSources] = useState<LogSourceDefinition[]>([]);
@@ -108,9 +111,16 @@ export function ProjectLogViewer({ projectPath, refreshKey }: ProjectLogViewerPr
       <pre
         ref={preRef}
         className="bg-background border border-border rounded-md p-2 text-[11px] font-mono max-h-48 overflow-auto text-foreground whitespace-pre-wrap break-all"
-      >
-        {error ? "Failed to retrieve logs" : logs === null ? "Loading..." : logs || "No output yet"}
-      </pre>
+        dangerouslySetInnerHTML={{
+          __html: error
+            ? "Failed to retrieve logs"
+            : logs === null
+              ? "Loading..."
+              : logs
+                ? ansiConverter.toHtml(logs)
+                : "No output yet",
+        }}
+      />
     </div>
   );
 }

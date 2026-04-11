@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { useToast } from "@particle-academy/react-fancy";
 import { Button } from "@/components/ui/button";
 import type { ProjectTypeTool } from "../types.js";
 
@@ -27,15 +28,23 @@ export function ProjectToolbar({
   onToolComplete,
 }: ProjectToolbarProps) {
   const [runningTool, setRunningTool] = useState<string | null>(null);
+  const { toast } = useToast();
 
   const handleRun = async (tool: ProjectTypeTool) => {
     if (tool.action !== "shell" || !tool.command) return;
     setRunningTool(tool.id);
+    toast({ title: `Running: ${tool.label}`, description: "Output will appear in the project logs.", variant: "info" });
     try {
       const result = await onExecute(projectPath, tool.id);
       onToolComplete?.({ ok: result.ok, toolId: tool.id });
-    } catch {
+      if (result.ok) {
+        toast({ title: `${tool.label} completed`, variant: "success" });
+      } else {
+        toast({ title: `${tool.label} failed`, description: result.error ?? "Check project logs for details.", variant: "error" });
+      }
+    } catch (err) {
       onToolComplete?.({ ok: false, toolId: tool.id });
+      toast({ title: `${tool.label} failed`, description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
     } finally {
       setRunningTool(null);
     }

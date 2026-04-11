@@ -286,21 +286,29 @@ function handleInfo(config: ProjectToolConfig, input: Record<string, unknown>): 
   if (config.hostingManager) {
     try {
       const info = config.hostingManager.getProjectHostingInfo(targetPath) as {
-        meta?: { enabled?: boolean; hostname?: string; tunnelUrl?: string | null; tunnelId?: string | null; port?: number | null; mode?: string; viewer?: string | null };
+        enabled?: boolean;
+        hostname?: string;
         status?: string;
-        localUrl?: string;
-        containerId?: string | null;
+        url?: string | null;
+        tunnelUrl?: string | null;
+        port?: number | null;
+        internalPort?: number | null;
+        mode?: string;
+        containerName?: string;
+        viewer?: string | null;
+        error?: string;
       } | null;
       if (info) {
         hosting = {
-          enabled: info.meta?.enabled ?? false,
+          enabled: info.enabled ?? false,
           status: info.status ?? "unconfigured",
-          localUrl: info.localUrl ?? null,
-          tunnelUrl: info.meta?.tunnelUrl ?? null,
-          port: info.meta?.port ?? null,
-          mode: info.meta?.mode ?? null,
-          containerId: info.containerId ?? null,
-          viewer: info.meta?.viewer ?? null,
+          localUrl: info.url ?? null,
+          tunnelUrl: info.tunnelUrl ?? null,
+          hostname: info.hostname ?? null,
+          port: info.port ?? null,
+          mode: info.mode ?? null,
+          containerName: info.containerName ?? null,
+          viewer: info.viewer ?? null,
         };
       }
     } catch { /* */ }
