@@ -859,10 +859,22 @@ export async function startGatewayServer(
   });
 
   // Seed default marketplace source if none exist yet.
+  // The branch matches the gateway's update channel so plugin catalog
+  // versions align with the subscribed release track.
+  const updateChannel = config.gateway?.updateChannel ?? "main";
+  const marketplaceRef = `Civicognita/aionima-marketplace#${updateChannel}`;
   const existingSources = marketplaceManager.getSources();
   if (existingSources.length === 0) {
-    marketplaceManager.addSource("Civicognita/aionima-marketplace", "Aionima");
-    log.info("marketplace: seeded default source (Civicognita/aionima-marketplace)");
+    marketplaceManager.addSource(marketplaceRef, "Aionima");
+    log.info(`marketplace: seeded default source (${marketplaceRef})`);
+  } else {
+    // Ensure the source ref matches the current update channel
+    const defaultSource = existingSources[0]!;
+    if (defaultSource.ref !== marketplaceRef) {
+      marketplaceManager.removeSource(defaultSource.id);
+      marketplaceManager.addSource(marketplaceRef, "Aionima");
+      log.info(`marketplace: updated source to ${marketplaceRef}`);
+    }
   }
 
   // Sync marketplace catalog from GitHub sources and auto-update installed plugins.
