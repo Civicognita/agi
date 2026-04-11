@@ -362,7 +362,7 @@ describe("loadConfig", () => {
     await expect(loadConfig(configPath)).rejects.toThrow();
   });
 
-  it("throws on extra top-level fields (strict schema)", async () => {
+  it("passes through unknown top-level fields (passthrough schema)", async () => {
     const extra = JSON.stringify({
       channels: [],
       unknownField: true,
@@ -370,7 +370,9 @@ describe("loadConfig", () => {
     const configPath = join(tmpDir, "aionima.json");
     await writeFile(configPath, extra, "utf-8");
 
-    await expect(loadConfig(configPath)).rejects.toThrow();
+    // Schema uses .passthrough() — extra fields are allowed, not rejected
+    const result = await loadConfig(configPath);
+    expect(result.config.channels).toEqual([]);
   });
 
   it("returns the correct path in the result", async () => {
@@ -486,15 +488,14 @@ describe("validateConfigFile", () => {
     expect(combined).toContain("host");
   });
 
-  it("returns error for strict schema violation (extra top-level field)", async () => {
+  it("passes through unknown top-level fields in validation (passthrough schema)", async () => {
     const extra = JSON.stringify({ channels: [], extraKey: "bad" });
     const configPath = join(tmpDir, "aionima.json");
     await writeFile(configPath, extra, "utf-8");
 
+    // Schema uses .passthrough() — extra fields do NOT produce validation errors
     const result = await validateConfigFile(configPath);
-
-    expect(result.errors).not.toBeNull();
-    expect(result.errors!.length).toBeGreaterThan(0);
+    expect(result.errors).toBeNull();
   });
 });
 

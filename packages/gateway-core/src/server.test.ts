@@ -2,11 +2,11 @@
  * Gateway Bootstrap Integration Tests (pruned)
  *
  * Validates the core server lifecycle: boot, health, WebSocket, shutdown.
- * Uses a SINGLE shared server instance to avoid repeated full-boot overhead
- * (each boot loads SQLite, tools, plugins, etc.).
+ * Uses a SINGLE shared server instance booted in beforeAll to avoid
+ * repeated full-boot overhead and per-test timeout issues.
  */
 
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as http from "node:http";
 import { WebSocket } from "ws";
 
@@ -15,27 +15,11 @@ import { startGatewayServer } from "./server.js";
 import type { GatewayServer } from "./server.js";
 
 // ---------------------------------------------------------------------------
-// Shared server instance — boots once, used by all tests
+// Shared server — boots once before all tests
 // ---------------------------------------------------------------------------
 
 const PORT = 47300;
-let server: GatewayServer | null = null;
-
-async function ensureServer(): Promise<GatewayServer> {
-  if (server) return server;
-  const config = AionimaConfigSchema.parse({
-    gateway: { host: "127.0.0.1", port: PORT, state: "OFFLINE" },
-    entities: { path: ":memory:" },
-    channels: [],
-    dashboard: { enabled: false },
-  });
-  server = await startGatewayServer(config);
-  return server;
-}
-
-afterAll(async () => {
-  if (server) await server.close().catch(() => {});
-});
+let server: GatewayServer;
 
 function httpGet(url: string): Promise<{ statusCode: number; body: unknown }> {
   return new Promise((resolve, reject) => {
@@ -54,13 +38,27 @@ function httpGet(url: string): Promise<{ statusCode: number; body: unknown }> {
   });
 }
 
+// Boot timeout: 120s — full gateway boot loads SQLite, tools, plugins, etc.
+beforeAll(async () => {
+  const config = AionimaConfigSchema.parse({
+    gateway: { host: "127.0.0.1", port: PORT, state: "OFFLINE" },
+    entities: { path: ":memory:" },
+    channels: [],
+    dashboard: { enabled: false },
+  });
+  server = await startGatewayServer(config);
+}, 120_000);
+
+afterAll(async () => {
+  await server?.close().catch(() => {});
+}, 30_000);
+
 // ---------------------------------------------------------------------------
-// Tests
+// Tests (all use the pre-booted shared server)
 // ---------------------------------------------------------------------------
 
 describe("startGatewayServer() — bootstrap lifecycle", () => {
-  it("boots and responds to /health with correct shape", async () => {
-    await ensureServer();
+  it("responds to /health with correct shape", async () => {
     const { statusCode, body } = await httpGet(`http://127.0.0.1:${String(PORT)}/health`);
 
     expect(statusCode).toBe(200);
@@ -72,7 +70,6 @@ describe("startGatewayServer() — bootstrap lifecycle", () => {
   });
 
   it("accepts WebSocket connections and responds to ping", async () => {
-    await ensureServer();
     const ws = await new Promise<WebSocket>((resolve, reject) => {
       const w = new WebSocket(`ws://127.0.0.1:${String(PORT)}`);
       w.once("open", () => resolve(w));
@@ -94,7 +91,6 @@ describe("startGatewayServer() — bootstrap lifecycle", () => {
   });
 
   it("returns 404 JSON for unknown routes", async () => {
-    await ensureServer();
     const { statusCode, body } = await httpGet(`http://127.0.0.1:${String(PORT)}/not-a-real-route`);
     expect(statusCode).toBe(404);
     expect((body as { error: string }).error).toBe("Not Found");
