@@ -273,6 +273,19 @@ export class MarketplaceManager {
     return this.store.isInstalled(name);
   }
 
+  /** Add an installed record for a plugin already in cache but missing from the DB. */
+  backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): void {
+    this.store.addInstalled({
+      name: item.name,
+      sourceId: item.sourceId,
+      type: item.type as import("./types.js").MarketplaceItemType,
+      version: item.version,
+      installedAt: item.installedAt,
+      installPath: item.installPath,
+      sourceJson: item.sourceJson,
+    });
+  }
+
   getInstalled(): InstalledItem[] {
     return this.store.getInstalled();
   }

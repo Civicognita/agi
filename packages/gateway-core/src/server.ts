@@ -877,17 +877,11 @@ export async function startGatewayServer(
     }
   }
 
-  // Sync marketplace catalog from GitHub sources and auto-update installed plugins.
-  {
-    const syncResult = await marketplaceManager.syncAndUpdateAll();
-    if (syncResult.synced > 0) {
-      log.info(`marketplace: synced ${String(syncResult.synced)} plugins from catalog`);
-    }
-    if (syncResult.updated.length > 0) {
-      log.info(`marketplace: updated ${String(syncResult.updated.length)} plugin(s): ${syncResult.updated.join(", ")}`);
-    }
-    for (const err of syncResult.errors) {
-      log.warn(`marketplace: update error: ${err}`);
+  // Sync marketplace catalog from GitHub (version checks happen after backfill below).
+  for (const source of marketplaceManager.getSources()) {
+    const result = await marketplaceManager.syncSource(source.id);
+    if (result.ok) {
+      log.info(`marketplace: synced ${String(result.pluginCount)} plugins from catalog`);
     }
   }
 
@@ -955,6 +949,46 @@ export async function startGatewayServer(
   discovered.errors.push(...installedDiscovery.errors);
   if (installedDiscovery.plugins.length > 0) {
     log.info(`plugins: ${String(installedDiscovery.plugins.length)} installed from marketplace cache`);
+  }
+
+  // Ensure all cached plugins have marketplace DB records so version updates work.
+  // Plugins installed before DB tracking existed may be in cache but not in the DB.
+  {
+    const sources = marketplaceManager.getSources();
+    const defaultSourceId = sources[0]?.id;
+    if (defaultSourceId !== undefined) {
+      let backfilled = 0;
+      for (const ip of installedDiscovery.plugins) {
+        if (!marketplaceManager.isInstalled(ip.manifest.id)) {
+          const catalog = marketplaceManager.searchCatalog({ q: ip.manifest.id });
+          const match = catalog.find(c => c.name === ip.manifest.id);
+          marketplaceManager.backfillInstalled({
+            name: ip.manifest.id,
+            sourceId: match?.sourceId ?? defaultSourceId,
+            type: "plugin",
+            version: ip.manifest.version ?? "0.0.0",
+            installedAt: new Date().toISOString(),
+            installPath: join(pluginCacheDir, ip.manifest.id),
+            sourceJson: match ? JSON.stringify(match.source) : "{}",
+          });
+          backfilled++;
+        }
+      }
+      if (backfilled > 0) {
+        log.info(`marketplace: backfilled ${String(backfilled)} installed plugin DB records`);
+      }
+    }
+  }
+
+  // Now that all cached plugins are tracked in the DB, check for version updates.
+  {
+    const syncResult = await marketplaceManager.syncAndUpdateAll();
+    if (syncResult.updated.length > 0) {
+      log.info(`marketplace: updated ${String(syncResult.updated.length)} plugin(s): ${syncResult.updated.join(", ")}`);
+    }
+    for (const err of syncResult.errors) {
+      log.warn(`marketplace: update error: ${err}`);
+    }
   }
 
   // Channel plugins are installed from the marketplace like all other plugins.

@@ -228,6 +228,7 @@ export interface RuntimeStateDeps {
     syncLocalCatalog(marketplaceDir: string): { ok: boolean; error?: string; pluginCount?: number };
     reconcileInstalled(marketplaceDir: string): Promise<{ updated: string[]; errors: string[] }>;
     syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
+    backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): void;
     updatePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }>;
   };
   /** Callback to hot-load a newly installed plugin (discover, activate, bridge). */
