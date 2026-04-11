@@ -118,6 +118,45 @@ The `MockRegistrations` object captures everything your plugin registered. Each 
 
 ---
 
+## Testing Stack Plugins
+
+Stack plugins that register container images should verify they use custom GHCR images (not vanilla upstream) and have correct dependency requirements:
+
+```typescript
+import { describe, it, expect } from "vitest";
+import { testActivate } from "@aionima/sdk/testing";
+import plugin from "./index.js";
+
+describe("TALL stack plugin", () => {
+  it("expects laravel (dependency on Laravel stack)", async () => {
+    const reg = await testActivate(plugin);
+    const tall = reg.stacks[0]!;
+    const expected = tall.requirements.filter((r) => r.type === "expected");
+    expect(expected[0]!.id).toBe("laravel");
+  });
+
+  it("does NOT provide laravel (no conflict with Laravel stack)", async () => {
+    const reg = await testActivate(plugin);
+    const tall = reg.stacks[0]!;
+    const provided = tall.requirements.filter((r) => r.type === "provided").map((r) => r.id);
+    expect(provided).not.toContain("laravel");
+  });
+
+  it("uses GHCR images for container config", async () => {
+    const reg = await testActivate(plugin);
+    for (const stack of reg.stacks) {
+      if (stack.containerConfig) {
+        expect(stack.containerConfig.image).toMatch(/^ghcr\.io\/civicognita\//);
+      }
+    }
+  });
+});
+```
+
+All runtime, service, and stack plugins should have tests verifying their image references use `ghcr.io/civicognita/*`. This prevents regressions when upstream images change.
+
+---
+
 ## Complete Example
 
 A full test file for a hypothetical monitoring plugin:

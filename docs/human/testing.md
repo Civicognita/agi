@@ -114,6 +114,8 @@ CI steps:
 | After adding or modifying API endpoints | `pnpm test:e2e` |
 | After changing the onboarding flow | `pnpm test:e2e` |
 | After changing dashboard UI | `pnpm test:e2e:ui` |
+| After changing plugin image refs or stack dependencies | `pnpm test` (plugin tests) |
+| After changing `required-plugins.json` | `pnpm test` |
 | Before shipping a release | `pnpm test:all` |
 
 ---

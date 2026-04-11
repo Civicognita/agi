@@ -467,6 +467,37 @@ If `pnpm lint` reports errors, fix them before committing. Do not use `eslint-di
 |------|--------|
 | `.github/workflows/ci.yml` | Add new test command step if it is not covered by `pnpm test` |
 
+## Testing Plugin Changes (Marketplace Repo)
+
+Plugin tests use `testActivate()` from `@aionima/sdk/testing`. Each plugin that registers stacks, runtimes, or services should have a test file at `plugins/plugin-<name>/src/index.test.ts` that verifies:
+
+- **Correct registration counts** — right number of stacks, services, runtimes
+- **GHCR image references** — all container images use `ghcr.io/civicognita/*`, never vanilla upstream
+- **Stack requirements** — correct `expected` vs `provided` requirements (e.g., TALL expects `laravel`, doesn't provide it)
+- **Shared container flags** — database stacks have `shared: true` and `databaseConfig` with setup/teardown
+- **Project categories** — stacks target the right project types
+
+Example:
+
+```typescript
+import { describe, it, expect } from "vitest";
+import { testActivate } from "@aionima/sdk/testing";
+import plugin from "./index.js";
+
+describe("PostgreSQL plugin", () => {
+  it("uses GHCR images for all services", async () => {
+    const reg = await testActivate(plugin);
+    for (const svc of reg.services) {
+      expect(svc.containerImage).toMatch(/^ghcr\.io\/civicognita\/postgres:\d+$/);
+    }
+  });
+});
+```
+
+## Testing Config Changes (AGI Repo)
+
+Config-level tests (e.g., `config/src/required-plugins.test.ts`) validate structural correctness of JSON config files. These catch regressions like a required plugin being accidentally removed.
+
 ## Pre-Ship Checklist Summary
 
 Before every commit and push:
@@ -476,8 +507,10 @@ Before every commit and push:
 - [ ] `pnpm lint` — no lint errors
 - [ ] `git status` — review ALL changed files, not just task files
 - [ ] Curl-test every new or modified API endpoint
-- [ ] New unit tests written for new store methods or business logic
+- [ ] New unit tests written for new store methods, business logic, or plugin changes
+- [ ] Plugin tests verify GHCR image refs and stack requirements
 - [ ] No secrets, `.env` files, or `dist/` in staged files
 - [ ] Commit message follows conventions (`Add`, `Update`, `Fix`, etc.)
+- [ ] `pnpm test` — Unit tests pass (in VM)
 - [ ] `pnpm test:e2e` — System e2e tests pass (for install.sh, API, or plugin changes)
 - [ ] Push immediately after commit — do not wait
