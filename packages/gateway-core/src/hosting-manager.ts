@@ -937,7 +937,7 @@ export class HostingManager {
 
       const magicTunnelOrigin = this.computeTunnelOrigin(hosted);
       if (magicTunnelOrigin) {
-        args.push("-e", `ALLOWED_DEV_ORIGINS=${magicTunnelOrigin}`);
+        args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${magicTunnelOrigin}`);
       }
 
       args.push(magicAppConfig.image);
@@ -985,9 +985,10 @@ export class HostingManager {
 
       // Inject tunnel hostname as allowed dev origin so frameworks like Next.js
       // accept HMR WebSocket connections through the tunnel domain.
+      // HOSTNAME_ALLOWED_ORIGIN is read by our dev-origin shim (injected below).
       const tunnelOrigin = this.computeTunnelOrigin(hosted);
       if (tunnelOrigin) {
-        args.push("-e", `ALLOWED_DEV_ORIGINS=${tunnelOrigin}`);
+        args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${tunnelOrigin}`);
       }
 
       // Set working directory to /app (where project is typically mounted)
@@ -1012,6 +1013,27 @@ export class HostingManager {
             cmdTokens = ["sh", "-c", cmd];
           }
         }
+      }
+
+      // Wrap dev commands with an origin-injection shim for Next.js.
+      // Next.js blocks HMR WebSocket connections from unknown origins in dev mode.
+      // If HOSTNAME_ALLOWED_ORIGIN is set, inject allowedDevOrigins into next.config.
+      if (cmdTokens && hosted.meta.mode === "development" && tunnelOrigin) {
+        const origCmd = cmdTokens.length === 3 && cmdTokens[0] === "sh" && cmdTokens[1] === "-c"
+          ? cmdTokens[2]!
+          : cmdTokens.join(" ");
+        const shimScript = [
+          // Inject allowedDevOrigins into next.config if it exists (Next.js 15+)
+          `if [ -n "$HOSTNAME_ALLOWED_ORIGIN" ] && [ -f next.config.ts ] || [ -f next.config.mjs ] || [ -f next.config.js ]; then`,
+          `  CFG=$(ls next.config.ts next.config.mjs next.config.js 2>/dev/null | head -1);`,
+          `  if ! grep -q allowedDevOrigins "$CFG" 2>/dev/null; then`,
+          `    sed -i "s|/\\* config options here \\*/|allowedDevOrigins: [\\\"$HOSTNAME_ALLOWED_ORIGIN\\\"],|" "$CFG" 2>/dev/null || true;`,
+          `    sed -i "s|};|  allowedDevOrigins: [\\\"$HOSTNAME_ALLOWED_ORIGIN\\\"],\\n};|" "$CFG" 2>/dev/null || true;`,
+          `  fi;`,
+          `fi;`,
+          origCmd,
+        ].join(" ");
+        cmdTokens = ["sh", "-c", shimScript];
       }
 
       if (cmdTokens) {
@@ -1105,7 +1127,7 @@ export class HostingManager {
           args.push("-e", `PORT=${String(internalPort)}`);
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
           const nodeTunnelOrigin = this.computeTunnelOrigin(hosted);
-          if (nodeTunnelOrigin) args.push("-e", `ALLOWED_DEV_ORIGINS=${nodeTunnelOrigin}`);
+          if (nodeTunnelOrigin) args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${nodeTunnelOrigin}`);
           args.push(image);
           const cmdTokens = hosted.meta.startCommand.split(/\s+/);
           args.push(...cmdTokens);
@@ -1123,7 +1145,7 @@ export class HostingManager {
           args.push("-e", `PORT=${String(internalPort)}`);
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
           const defaultTunnelOrigin = this.computeTunnelOrigin(hosted);
-          if (defaultTunnelOrigin) args.push("-e", `ALLOWED_DEV_ORIGINS=${defaultTunnelOrigin}`);
+          if (defaultTunnelOrigin) args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${defaultTunnelOrigin}`);
           args.push(image);
           args.push(...hosted.meta.startCommand.split(/\s+/));
           break;
@@ -2124,7 +2146,7 @@ export class HostingManager {
       result = await this.enableQuickTunnel(resolved, hosted, bin);
     }
 
-    // Restart the container so it picks up ALLOWED_DEV_ORIGINS with the tunnel hostname.
+    // Restart the container so it picks up HOSTNAME_ALLOWED_ORIGIN with the tunnel hostname.
     // This ensures frameworks like Next.js accept HMR connections through the tunnel.
     if (hosted.meta.mode === "development" && hosted.containerName) {
       this.log.info(`[${hosted.meta.hostname}] restarting container to inject tunnel origin`);
