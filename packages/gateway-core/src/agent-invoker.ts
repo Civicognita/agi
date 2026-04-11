@@ -766,6 +766,15 @@ export class AgentInvoker extends EventEmitter {
             this.emit("tool_start", { sessionKey: sKey, toolName: toolCall.name, toolIndex: i, loopIteration: loopCount, toolInput: sanitizeToolInput(toolCall.input ?? {}) });
             const execResult = await this.executeToolSafe(toolCall, entity, coaFingerprint, state);
             toolsUsed.push(toolCall.name);
+            // Merge result data into detail for tools that return structured output
+            let acDetail = extractToolDetail(toolCall.name, toolCall.input ?? {});
+            if (toolCall.name === "browser_session" || toolCall.name === "visual_inspect") {
+              try {
+                const parsed = JSON.parse(execResult.content) as Record<string, unknown>;
+                acDetail = { ...acDetail, ...parsed };
+              } catch { /* non-JSON result */ }
+            }
+
             this.emit("tool_result", {
               sessionKey: sKey,
               toolName: toolCall.name,
@@ -774,7 +783,7 @@ export class AgentInvoker extends EventEmitter {
               success: !execResult.content.startsWith("Error executing tool"),
               summary: FRIENDLY_TOOL_SUMMARY[toolCall.name] ?? (execResult.wasTruncated ? "Done (truncated)" : "Done"),
               resultContent: execResult.content,
-              detail: extractToolDetail(toolCall.name, toolCall.input ?? {}),
+              detail: acDetail,
               toolInput: sanitizeToolInput(toolCall.input ?? {}),
             });
             toolResults.push({ tool_use_id: toolCall.id, content: execResult.content });

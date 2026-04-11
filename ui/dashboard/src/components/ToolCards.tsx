@@ -288,7 +288,7 @@ const BrowserCard: FC<{ card: ToolCard; collapsed?: boolean }> = ({ card, collap
       {detail?.error && (
         <span className="text-red text-[10px]">{detail.error}</span>
       )}
-      {screenshotId && card.status === "complete" && !collapsed && (
+      {screenshotId && card.status === "complete" && (
         <img
           src={`/api/chat/images/${sessionId}/${screenshotId}`}
           alt={`Screenshot: ${url ?? action}`}
