@@ -416,6 +416,9 @@ cmd_help() {
   echo "  doctor          Check infrastructure health"
   echo "  config [key]    Read config (full or dot-path key)"
   echo "  projects        List hosted projects"
+  echo "  setup           Interactive configuration wizard"
+  echo "  setup-prompts   Configure persona and heartbeat prompts"
+  echo "  channels        Manage channel adapters"
   echo "  help            Show this help"
 }
 
@@ -439,6 +442,9 @@ case "${1:-help}" in
   doctor)   cmd_doctor ;;
   config)   cmd_config "${2:-}" ;;
   projects) cmd_projects ;;
+  setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;
+  setup-prompts) node "$DEPLOY_DIR/cli/dist/index.js" setup-prompts ;;
+  channels) shift; node "$DEPLOY_DIR/cli/dist/index.js" channels "$@" ;;
   help|--help|-h) cmd_help ;;
   *)
     err "Unknown command: $1"
