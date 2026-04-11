@@ -92,21 +92,24 @@ cmd_status() {
     cat "$DEPLOY_DIR/.deployed-commit"
   fi
 
-  # Remote check
+  # Remote check — use the configured update channel (dev or main)
   if [ -d "$DEPLOY_DIR/.git" ]; then
     cd "$DEPLOY_DIR"
-    git fetch --quiet origin main 2>/dev/null
+    local channel
+    channel="$(node -e "try { const c = JSON.parse(require('fs').readFileSync('${CONFIG_FILE}','utf-8')); console.log(c.gateway?.updateChannel === 'dev' ? 'dev' : 'main'); } catch { console.log('main'); }" 2>/dev/null)"
+    channel="${channel:-main}"
+    git fetch --quiet origin "$channel" 2>/dev/null
     local local_rev remote_rev
     local_rev="$(git rev-parse HEAD 2>/dev/null)"
-    remote_rev="$(git rev-parse origin/main 2>/dev/null)"
+    remote_rev="$(git rev-parse "origin/${channel}" 2>/dev/null)"
     if [ "$local_rev" != "$remote_rev" ]; then
       local behind
-      behind="$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "?")"
+      behind="$(git rev-list --count "HEAD..origin/${channel}" 2>/dev/null || echo "?")"
       label "Update:"
-      echo -e "${YELLOW}${behind} commit(s) behind${RESET}"
+      echo -e "${YELLOW}${behind} commit(s) behind (${channel})${RESET}"
     else
       label "Update:"
-      echo -e "${GREEN}up to date${RESET}"
+      echo -e "${GREEN}up to date (${channel})${RESET}"
     fi
   fi
 
