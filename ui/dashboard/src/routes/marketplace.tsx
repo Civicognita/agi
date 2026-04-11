@@ -688,11 +688,17 @@ function InstalledTab() {
     // No cleanup resources — uninstall directly
     setUninstalling(name);
     try {
-      await uninstallMarketplacePlugin(name);
+      const result = await uninstallMarketplacePlugin(name);
+      if (!result.ok) {
+        console.error("Uninstall rejected:", result.error);
+        window.alert(result.error ?? "Uninstall failed");
+        return;
+      }
       setSelectedPlugin(null);
       void load();
     } catch (err) {
       console.error("Uninstall failed:", err);
+      window.alert(err instanceof Error ? err.message : String(err));
     } finally { setUninstalling(null); }
   }, [load]);
 
@@ -703,11 +709,17 @@ function InstalledTab() {
     setUninstalling(name);
     try {
       const ids = selectedCleanupIds.size > 0 ? [...selectedCleanupIds] : undefined;
-      await uninstallMarketplacePlugin(name, ids);
+      const result = await uninstallMarketplacePlugin(name, ids);
+      if (!result.ok) {
+        console.error("Uninstall rejected:", result.error);
+        window.alert(result.error ?? "Uninstall failed");
+        return;
+      }
       setSelectedPlugin(null);
       void load();
     } catch (err) {
       console.error("Uninstall failed:", err);
+      window.alert(err instanceof Error ? err.message : String(err));
     } finally { setUninstalling(null); }
   }, [cleanupTarget, selectedCleanupIds, load]);
 
