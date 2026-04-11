@@ -4339,8 +4339,10 @@ export async function createGatewayRuntimeState(
    * Falls back to raw.githubusercontent.com for public repos.
    */
   async function fetchFromMAppMarketplace(path: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+    // Use the gateway's update channel to fetch from the correct branch
+    const channel = ((deps.config as Record<string, unknown> | undefined)?.gateway as Record<string, string> | undefined)?.updateChannel ?? "main";
     // Try GitHub Contents API first (works with auth tokens for private repos)
-    const apiUrl = `https://api.github.com/repos/${OFFICIAL_MAPP_MARKETPLACE}/contents/${path}?ref=main`;
+    const apiUrl = `https://api.github.com/repos/${OFFICIAL_MAPP_MARKETPLACE}/contents/${path}?ref=${channel}`;
     try {
       const headers: Record<string, string> = { Accept: "application/vnd.github.raw+json" };
       // Use GITHUB_TOKEN if available (for private repos)
@@ -4354,7 +4356,7 @@ export async function createGatewayRuntimeState(
       }
 
       // Fallback to raw.githubusercontent.com (public repos only)
-      const rawUrl = `https://raw.githubusercontent.com/${OFFICIAL_MAPP_MARKETPLACE}/main/${path}`;
+      const rawUrl = `https://raw.githubusercontent.com/${OFFICIAL_MAPP_MARKETPLACE}/${channel}/${path}`;
       const rawRes = await fetch(rawUrl, {
         headers: { Accept: "application/json" },
         signal: AbortSignal.timeout(15_000),
