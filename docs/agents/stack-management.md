@@ -40,7 +40,7 @@ api.registerStack({
   requirements: [{ id: "redis", label: "Redis 7", type: "provided" }],
   guides: [{ title: "Usage", content: "Connect via `redis://localhost:{port}`" }],
   containerConfig: {
-    image: "redis:7-alpine",
+    image: "ghcr.io/civicognita/redis:7",
     internalPort: 6379,
     shared: true,
     sharedKey: "redis-7",

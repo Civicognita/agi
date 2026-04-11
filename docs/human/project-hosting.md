@@ -172,41 +172,33 @@ Rootless Podman is preferred for security. The gateway does not require root acc
 
 ---
 
-## Node.js Runtime Plugin
+## Container Images
 
-The `plugin-node-runtime` package provides:
-- Node.js container image definitions
-- `npm install` and `npm run build` pre-start hooks
-- Environment variable injection for database connections
+All project containers use custom GHCR images (`ghcr.io/civicognita/*`) instead of vanilla upstream images. These images come pre-installed with all common extensions and tools for their ecosystem, eliminating runtime compilation and "missing extension" errors.
 
-The plugin registers available Node.js versions with the plugin system. The dashboard Projects panel shows available versions.
+### Node.js Runtime
 
----
+The `aionima-node-runtime` plugin provides Node.js 24, 22, and 20 LTS runtimes using `ghcr.io/civicognita/node:{version}`. The custom image includes build tools (python3, make, g++, git) for native npm modules like `sharp` and `bcrypt`, plus corepack for pnpm/yarn support.
 
-## PHP Runtime Plugin
+### PHP Runtime
 
-The `plugin-php-runtime` package provides:
-- PHP-FPM container images (configured for PHP 8.5)
-- Composer dependency installation
-- Document root serving via Caddy + FPM
-
-PHP projects are served via Caddy's FastCGI reverse proxy to the PHP-FPM process inside the container. The gateway generates the appropriate Caddy configuration block automatically.
+The `aionima-php-runtime` plugin provides PHP 8.5, 8.4, 8.3, and 8.2 runtimes using `ghcr.io/civicognita/php-apache:{version}`. The custom image includes all common PHP extensions (gd, intl, pdo_pgsql, pdo_mysql, redis, imagick, zip, bcmath, opcache, pcntl, sockets, exif, sodium), Composer, and Apache with mod_rewrite enabled.
 
 ---
 
 ## Database Service Plugins
 
-Database services are managed by service plugins. Each plugin registers a service definition with a container image and default configuration.
+Database services are managed by service plugins. Each uses a custom GHCR image with common extensions pre-installed — databases are ready to use immediately after container start with no runtime compilation.
 
-| Plugin | Service | Default Port | Container Image |
-|--------|---------|-------------|----------------|
-| `plugin-mysql` | MySQL | 3306 | `mysql:8` |
-| `plugin-postgres` | PostgreSQL | 5432 | `postgres:16` |
-| `plugin-redis` | Redis | 6379 | `redis:7` |
+| Plugin | Service | Default Port | Container Image | Pre-installed |
+|--------|---------|-------------|----------------|---------------|
+| `aionima-postgres` | PostgreSQL 17, 16, 15 | 5432 | `ghcr.io/civicognita/postgres:{version}` | pgvector, PostGIS, pg_trgm, uuid-ossp, hstore |
+| `aionima-mysql` | MariaDB 11.4, 10.11, 10.6 | 3306 | `ghcr.io/civicognita/mariadb:{version}` | utf8mb4, dev-friendly defaults |
+| `aionima-redis` | Redis 7.4, 7.2, 6.2 | 6379 | `ghcr.io/civicognita/redis:{version}` | Append-only persistence, LRU eviction |
 
-Services are scoped to projects. When a project uses a database service, the gateway starts the service container and injects connection details as environment variables into the project container.
+Database stacks are shared — one PostgreSQL container serves all projects that use it. Each project gets its own database, username, and password. Extensions like pgvector are already compiled into the image; projects just need `CREATE EXTENSION vector;`.
 
-Services can be managed via the dashboard Projects page → project details → Services tab.
+Services can be managed via the dashboard Projects page → project details → Stacks section.
 
 ---
 

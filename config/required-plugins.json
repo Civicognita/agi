@@ -6,6 +6,20 @@
     { "id": "project-writing", "disableable": false },
     { "id": "project-monorepo", "disableable": false },
     { "id": "project-ops", "disableable": false },
-    { "id": "project-art", "disableable": false }
+    { "id": "project-art", "disableable": false },
+    { "id": "aionima-php-runtime", "disableable": false },
+    { "id": "aionima-node-runtime", "disableable": false },
+    { "id": "aionima-postgres", "disableable": false },
+    { "id": "aionima-mysql", "disableable": false },
+    { "id": "aionima-redis", "disableable": false },
+    { "id": "stack-laravel", "disableable": false },
+    { "id": "stack-tall", "disableable": false },
+    { "id": "stack-nextjs", "disableable": false },
+    { "id": "stack-nuxt", "disableable": false },
+    { "id": "stack-node-app", "disableable": false },
+    { "id": "stack-php-app", "disableable": false },
+    { "id": "stack-react-vite", "disableable": false },
+    { "id": "stack-static-hosting", "disableable": false },
+    { "id": "stack-hono", "disableable": false }
   ]
 }

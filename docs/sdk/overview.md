@@ -31,7 +31,7 @@ export default createPlugin({
     // Register a service
     const redis = defineService("redis", "Redis")
       .description("In-memory data store")
-      .containerImage("redis:7.4-alpine")
+      .containerImage("ghcr.io/civicognita/redis:7.4")
       .defaultPort(6379)
       .healthCheck("redis-cli ping")
       .build();

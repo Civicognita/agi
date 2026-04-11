@@ -894,7 +894,7 @@ Get details for a specific stack definition.
 Response:
 
 ```json
-{ "stack": { "id": "postgres-16", "name": "PostgreSQL 16", "category": "database", "image": "postgres:16" } }
+{ "stack": { "id": "postgres-17", "name": "PostgreSQL 17", "category": "database", "image": "ghcr.io/civicognita/postgres:17" } }
 ```
 
 Returns `404` if the stack is not found.
@@ -947,7 +947,7 @@ List all running shared containers (stacks used across multiple projects).
 Response:
 
 ```json
-{ "containers": [{ "key": "postgres-16", "image": "postgres:16", "status": "running", "projects": 3 }] }
+{ "containers": [{ "key": "postgres-17", "image": "ghcr.io/civicognita/postgres:17", "status": "running", "projects": 3 }] }
 ```
 
 #### GET /api/shared-containers/:key/connection
@@ -1316,7 +1316,7 @@ List all registered runtime definitions.
 Response:
 
 ```json
-{ "runtimes": [{ "id": "node-22", "language": "nodejs", "version": "22", "image": "node:22" }] }
+{ "runtimes": [{ "id": "node-22", "language": "nodejs", "version": "22", "image": "ghcr.io/civicognita/node:22" }] }
 ```
 
 #### GET /api/runtimes/:projectType

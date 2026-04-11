@@ -131,13 +131,13 @@ export interface HostingManagerDeps {
 
 const CONTAINER_IMAGES: Record<string, string> = {
   static: "nginx:alpine",
-  php: "php:8.5-apache",
-  node: "node:22-alpine",
-  laravel: "php:8.5-apache",
-  nextjs: "node:22-alpine",
-  "web-app": "node:22-alpine",
-  "api-service": "node:22-alpine",
-  nuxt: "node:22-alpine",
+  php: "ghcr.io/civicognita/php-apache:8.4",
+  node: "ghcr.io/civicognita/node:22",
+  laravel: "ghcr.io/civicognita/php-apache:8.4",
+  nextjs: "ghcr.io/civicognita/node:22",
+  "web-app": "ghcr.io/civicognita/node:22",
+  "api-service": "ghcr.io/civicognita/node:22",
+  nuxt: "ghcr.io/civicognita/node:22",
   "react-vite": "nginx:alpine",
 };
 
@@ -1070,7 +1070,7 @@ export class HostingManager {
     const image = runtimeDef?.containerImage
       ?? typeDef?.containerConfig?.image
       ?? CONTAINER_IMAGES[knownType]
-      ?? "node:22-alpine";
+      ?? "ghcr.io/civicognita/node:22";
 
     const args: string[] = [
       "run", "-d",

@@ -10,7 +10,7 @@
  * ```ts
  * const redis = defineService("redis-7", "Redis 7")
  *   .description("Redis 7 in-memory store")
- *   .containerImage("redis:7-alpine")
+ *   .containerImage("ghcr.io/civicognita/redis:7")
  *   .defaultPort(6379)
  *   .env({ REDIS_ARGS: "--maxmemory 256mb" })
  *   .volume("{dataDir}/redis:/data")
