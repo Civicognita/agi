@@ -23,9 +23,11 @@ interface Props {
   gateway: GatewayConfig;
   config: AionimaConfig;
   update: (fn: (prev: AionimaConfig) => AionimaConfig) => void;
+  /** Which section to render: "general" shows release channel + state, "network" shows IP + tunnels. Omit for all. */
+  section?: "general" | "network";
 }
 
-export function GatewayNetworkSettings({ gateway, config, update }: Props) {
+export function GatewayNetworkSettings({ gateway, config, update, section }: Props) {
   // Machine network state
   const [netInfo, setNetInfo] = useState<MachineNetworkInfo | null>(null);
   const [netMethod, setNetMethod] = useState<"static" | "dhcp">("dhcp");
@@ -133,10 +135,13 @@ export function GatewayNetworkSettings({ gateway, config, update }: Props) {
   const tunnelMode = (config.hosting as Record<string, unknown> | undefined)?.["tunnelMode"] as string ?? "named";
   const tunnelDomain = (config.hosting as Record<string, unknown> | undefined)?.["tunnelDomain"] as string ?? "";
 
+  const showGeneral = !section || section === "general";
+  const showNetwork = !section || section === "network";
+
   return (
     <>
       {/* Machine IP Configuration */}
-      {netInfo && (
+      {showNetwork && netInfo && (
         <Card className="p-6 gap-0 mb-4">
           <SectionHeading>Machine IP</SectionHeading>
           {!netInfo.supported ? (
@@ -185,7 +190,7 @@ export function GatewayNetworkSettings({ gateway, config, update }: Props) {
       )}
 
       {/* Gateway Host/Port/State */}
-      <Card className="p-6 gap-0 mb-4">
+      {showGeneral && <Card className="p-6 gap-0 mb-4">
         <SectionHeading>Gateway</SectionHeading>
         <div className="grid grid-cols-3 gap-4">
           <FieldGroup label="Host">
@@ -224,10 +229,10 @@ export function GatewayNetworkSettings({ gateway, config, update }: Props) {
             </select>
           </FieldGroup>
         </div>
-      </Card>
+      </Card>}
 
       {/* Release Channel */}
-      <Card className="p-6 gap-0 mb-4">
+      {showGeneral && <Card className="p-6 gap-0 mb-4">
         <SectionHeading>Release Channel</SectionHeading>
         <div className="grid grid-cols-2 gap-4">
           <FieldGroup label="Update Channel">
@@ -252,9 +257,10 @@ export function GatewayNetworkSettings({ gateway, config, update }: Props) {
             ? "Tracking the dev branch. Updates may include untested changes."
             : "Tracking the main branch. Updates are manually merged and stable."}
         </p>
-      </Card>
+      </Card>}
 
       {/* Cloudflare Tunnel */}
+      {showNetwork && <>
       <Card className="p-6 gap-0 mb-4">
         <SectionHeading>Cloudflare Tunnel</SectionHeading>
 
@@ -411,6 +417,7 @@ export function GatewayNetworkSettings({ gateway, config, update }: Props) {
           </>
         )}
       </Card>
+      </>}
     </>
   );
 }

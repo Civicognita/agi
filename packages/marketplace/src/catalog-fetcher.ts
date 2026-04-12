@@ -107,8 +107,12 @@ export async function fetchCatalog(ref: string): Promise<FetchCatalogResult> {
 }
 
 async function fetchJson(url: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
+  // Cache-bust GitHub's raw CDN (caches up to 5 min) so syncs always get the latest
+  const bustUrl = url.includes("raw.githubusercontent.com")
+    ? `${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`
+    : url;
+  const res = await fetch(bustUrl, {
+    headers: { Accept: "application/json", "Cache-Control": "no-cache" },
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {

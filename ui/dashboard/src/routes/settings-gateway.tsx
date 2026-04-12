@@ -15,10 +15,10 @@ import { GatewayNetworkSettings } from "@/components/settings/GatewayNetworkSett
 import { IdentitySettings } from "@/components/settings/IdentitySettings.js";
 import type { AionimaConfig } from "../types.js";
 
-type Tab = "owner" | "identity" | "dev" | "network";
+type Tab = "general" | "identity" | "dev" | "network";
 
 const tabs: { id: Tab; label: string }[] = [
-  { id: "owner", label: "Owner" },
+  { id: "general", label: "General" },
   { id: "identity", label: "Identity" },
   { id: "dev", label: "Contributing" },
   { id: "network", label: "Network" },
@@ -26,7 +26,7 @@ const tabs: { id: Tab; label: string }[] = [
 
 export default function SettingsGatewayPage() {
   const { configHook } = useSettingsContext();
-  const [activeTab, setActiveTab] = useState<Tab>("owner");
+  const [activeTab, setActiveTab] = useState<Tab>("general");
   const [draft, setDraft] = useState<AionimaConfig>(configHook.data ?? ({} as AionimaConfig));
   const [dirty, setDirty] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -89,12 +89,15 @@ export default function SettingsGatewayPage() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "owner" && (
-        <OwnerSettings owner={owner} update={update} />
+      {activeTab === "general" && (
+        <GatewayNetworkSettings gateway={gateway} config={draft} update={update} section="general" />
       )}
 
       {activeTab === "identity" && (
-        <IdentitySettings config={draft} update={update} />
+        <>
+          <OwnerSettings owner={owner} update={update} />
+          <IdentitySettings config={draft} update={update} />
+        </>
       )}
 
       {activeTab === "dev" && (
@@ -102,7 +105,7 @@ export default function SettingsGatewayPage() {
       )}
 
       {activeTab === "network" && (
-        <GatewayNetworkSettings gateway={gateway} config={draft} update={update} />
+        <GatewayNetworkSettings gateway={gateway} config={draft} update={update} section="network" />
       )}
     </div>
   );
