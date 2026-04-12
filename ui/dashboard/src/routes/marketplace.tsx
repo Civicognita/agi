@@ -932,6 +932,7 @@ function InstalledTab() {
 // ---------------------------------------------------------------------------
 
 function SourcesTab() {
+  const { toast } = useToast();
   const [sources, setSources] = useState<PluginMarketplaceSource[]>([]);
   const [newRef, setNewRef] = useState("");
   const [newName, setNewName] = useState("");
@@ -952,26 +953,37 @@ function SourcesTab() {
       await addPluginMarketplaceSource(newRef, newName || undefined);
       setNewRef("");
       setNewName("");
-      void load();
-    } catch { /* ignore */ }
-    finally { setAdding(false); }
-  }, [newRef, newName, load]);
+      toast({ title: "Source added", variant: "success" });
+      await load();
+    } catch (err) {
+      toast({ title: "Failed to add source", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
+    } finally { setAdding(false); }
+  }, [newRef, newName, load, toast]);
 
   const handleSync = useCallback(async (id: number) => {
     setSyncing(id);
     try {
-      await syncPluginMarketplaceSource(id);
-      void load();
-    } catch { /* ignore */ }
-    finally { setSyncing(null); }
-  }, [load]);
+      const result = await syncPluginMarketplaceSource(id);
+      await load();
+      if (result.ok) {
+        toast({ title: "Catalog synced", description: `${result.pluginCount ?? 0} plugins from source`, variant: "success" });
+      } else {
+        toast({ title: "Sync failed", description: result.error ?? "Unknown error", variant: "error" });
+      }
+    } catch (err) {
+      toast({ title: "Sync failed", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
+    } finally { setSyncing(null); }
+  }, [load, toast]);
 
   const handleRemove = useCallback(async (id: number) => {
     try {
       await removePluginMarketplaceSource(id);
-      void load();
-    } catch { /* ignore */ }
-  }, [load]);
+      toast({ title: "Source removed", variant: "success" });
+      await load();
+    } catch (err) {
+      toast({ title: "Failed to remove source", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
+    }
+  }, [load, toast]);
 
   return (
     <div className="space-y-4">
