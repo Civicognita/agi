@@ -22,25 +22,26 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  fetchMarketplaceSources,
-  addMarketplaceSource,
-  removeMarketplaceSource,
-  syncMarketplaceSource,
-  searchMarketplaceCatalog,
-  installMarketplacePlugin,
-  uninstallMarketplacePlugin,
-  updateMarketplacePlugin,
-  fetchMarketplaceInstalled,
-  fetchMarketplaceUpdates,
+  fetchPluginMarketplaceSources,
+  addPluginMarketplaceSource,
+  removePluginMarketplaceSource,
+  syncPluginMarketplaceSource,
+  searchPluginMarketplaceCatalog,
+  installFromPluginMarketplace,
+  uninstallFromPluginMarketplace,
+  updateFromPluginMarketplace,
+  pullPluginMarketplace,
+  fetchPluginMarketplaceInstalled,
+  fetchPluginMarketplaceUpdates,
   fetchPluginDetails,
   fetchUninstallPreview,
 } from "../api.js";
 import type { CleanupResource } from "../api.js";
 import type {
-  MarketplaceSource,
-  MarketplaceCatalogItem,
-  MarketplaceInstalledItem,
-  MarketplaceUpdate,
+  PluginMarketplaceSource,
+  PluginMarketplaceCatalogItem,
+  PluginMarketplaceInstalledItem,
+  PluginMarketplaceUpdate,
   PluginDetails,
 } from "../types.js";
 
@@ -123,7 +124,7 @@ const PROVIDES_LABELS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 interface PluginDetailDialogProps {
-  plugin: MarketplaceCatalogItem | null;
+  plugin: PluginMarketplaceCatalogItem | null;
   sourceName?: string;
   onClose: () => void;
   onAction?: () => void;
@@ -433,16 +434,16 @@ function BrowseTab() {
   const [query, setQuery] = useState("");
   const [providesFilter, setProvidesFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState<number | "">("");
-  const [sources, setSources] = useState<MarketplaceSource[]>([]);
-  const [items, setItems] = useState<MarketplaceCatalogItem[]>([]);
+  const [sources, setSources] = useState<PluginMarketplaceSource[]>([]);
+  const [items, setItems] = useState<PluginMarketplaceCatalogItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
   const [installNotice, setInstallNotice] = useState<string | null>(null);
-  const [selectedPlugin, setSelectedPlugin] = useState<MarketplaceCatalogItem | null>(null);
+  const [selectedPlugin, setSelectedPlugin] = useState<PluginMarketplaceCatalogItem | null>(null);
 
   useEffect(() => {
-    fetchMarketplaceSources().then(setSources).catch(() => {});
+    fetchPluginMarketplaceSources().then(setSources).catch(() => {});
   }, []);
 
   const sourceMap = Object.fromEntries(sources.map((s) => [s.id, s.name]));
@@ -450,7 +451,7 @@ function BrowseTab() {
   const doSearch = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await searchMarketplaceCatalog({
+      const result = await searchPluginMarketplaceCatalog({
         q: query || undefined,
         provides: providesFilter || undefined,
       });
@@ -468,12 +469,12 @@ function BrowseTab() {
 
   useEffect(() => { void doSearch(); }, [doSearch]);
 
-  const handleInstall = useCallback(async (item: MarketplaceCatalogItem) => {
+  const handleInstall = useCallback(async (item: PluginMarketplaceCatalogItem) => {
     setActing(item.name);
     setInstallError(null);
     setInstallNotice(null);
     try {
-      const result = await installMarketplacePlugin(item.name, item.sourceId);
+      const result = await installFromPluginMarketplace(item.name, item.sourceId);
       if (result.autoInstalled && result.autoInstalled.length > 0) {
         setInstallNotice(`Installed ${item.name} + dependencies: ${result.autoInstalled.join(", ")}`);
       }
@@ -642,13 +643,14 @@ function BrowseTab() {
 // ---------------------------------------------------------------------------
 
 function InstalledTab() {
-  const [items, setItems] = useState<MarketplaceInstalledItem[]>([]);
-  const [updates, setUpdates] = useState<MarketplaceUpdate[]>([]);
-  const [catalog, setCatalog] = useState<MarketplaceCatalogItem[]>([]);
-  const [sources, setSources] = useState<MarketplaceSource[]>([]);
+  const [items, setItems] = useState<PluginMarketplaceInstalledItem[]>([]);
+  const [updates, setUpdates] = useState<PluginMarketplaceUpdate[]>([]);
+  const [catalog, setCatalog] = useState<PluginMarketplaceCatalogItem[]>([]);
+  const [sources, setSources] = useState<PluginMarketplaceSource[]>([]);
   const [uninstalling, setUninstalling] = useState<string | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
-  const [selectedPlugin, setSelectedPlugin] = useState<MarketplaceCatalogItem | null>(null);
+  const [pulling, setPulling] = useState(false);
+  const [selectedPlugin, setSelectedPlugin] = useState<PluginMarketplaceCatalogItem | null>(null);
 
   // Cleanup preview state
   const [cleanupTarget, setCleanupTarget] = useState<string | null>(null);
@@ -658,10 +660,10 @@ function InstalledTab() {
 
   const load = useCallback(async () => {
     const [installed, avail, catalogItems, srcs] = await Promise.all([
-      fetchMarketplaceInstalled().catch(() => [] as MarketplaceInstalledItem[]),
-      fetchMarketplaceUpdates().catch(() => [] as MarketplaceUpdate[]),
-      searchMarketplaceCatalog().catch(() => [] as MarketplaceCatalogItem[]),
-      fetchMarketplaceSources().catch(() => [] as MarketplaceSource[]),
+      fetchPluginMarketplaceInstalled().catch(() => [] as PluginMarketplaceInstalledItem[]),
+      fetchPluginMarketplaceUpdates().catch(() => [] as PluginMarketplaceUpdate[]),
+      searchPluginMarketplaceCatalog().catch(() => [] as PluginMarketplaceCatalogItem[]),
+      fetchPluginMarketplaceSources().catch(() => [] as PluginMarketplaceSource[]),
     ]);
     setItems(installed.sort((a, b) => a.name.localeCompare(b.name)));
     setUpdates(avail);
@@ -690,7 +692,7 @@ function InstalledTab() {
     // No cleanup resources — uninstall directly
     setUninstalling(name);
     try {
-      const result = await uninstallMarketplacePlugin(name);
+      const result = await uninstallFromPluginMarketplace(name);
       if (!result.ok) {
         console.error("Uninstall rejected:", result.error);
         window.alert(result.error ?? "Uninstall failed");
@@ -710,7 +712,7 @@ function InstalledTab() {
     setUninstalling(name);
     try {
       const ids = selectedCleanupIds.size > 0 ? [...selectedCleanupIds] : undefined;
-      const result = await uninstallMarketplacePlugin(name, ids);
+      const result = await uninstallFromPluginMarketplace(name, ids);
       if (!result.ok) {
         console.error("Uninstall rejected:", result.error);
         window.alert(result.error ?? "Uninstall failed");
@@ -726,7 +728,7 @@ function InstalledTab() {
   const handleUpdate = useCallback(async (pluginName: string, sourceId: number) => {
     setUpdating(pluginName);
     try {
-      await updateMarketplacePlugin(pluginName, sourceId);
+      await updateFromPluginMarketplace(pluginName, sourceId);
       void load();
     } catch { /* ignore */ }
     finally { setUpdating(null); }
@@ -742,13 +744,28 @@ function InstalledTab() {
 
   return (
     <div className="space-y-4">
-      {updates.length > 0 && (
-        <Card className="p-4 border-blue/30 bg-blue/5">
-          <p className="text-sm font-medium text-foreground">
-            {updates.length} update{updates.length > 1 ? "s" : ""} available
-          </p>
-        </Card>
-      )}
+      <Card className="p-4 flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          {updates.length > 0
+            ? `${updates.length} update${updates.length > 1 ? "s" : ""} available`
+            : "All plugins up to date"}
+        </p>
+        <Button
+          size="sm"
+          variant={updates.length > 0 ? "default" : "outline"}
+          disabled={pulling}
+          onClick={async () => {
+            setPulling(true);
+            try {
+              await pullPluginMarketplace();
+              await load();
+            } catch { /* ignore */ }
+            finally { setPulling(false); }
+          }}
+        >
+          {pulling ? "Updating..." : updates.length > 0 ? "Update All" : "Check for Updates"}
+        </Button>
+      </Card>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {items.map((item) => {
@@ -904,14 +921,14 @@ function InstalledTab() {
 // ---------------------------------------------------------------------------
 
 function SourcesTab() {
-  const [sources, setSources] = useState<MarketplaceSource[]>([]);
+  const [sources, setSources] = useState<PluginMarketplaceSource[]>([]);
   const [newRef, setNewRef] = useState("");
   const [newName, setNewName] = useState("");
   const [adding, setAdding] = useState(false);
   const [syncing, setSyncing] = useState<number | null>(null);
 
   const load = useCallback(async () => {
-    const s = await fetchMarketplaceSources().catch(() => [] as MarketplaceSource[]);
+    const s = await fetchPluginMarketplaceSources().catch(() => [] as PluginMarketplaceSource[]);
     setSources(s);
   }, []);
 
@@ -921,7 +938,7 @@ function SourcesTab() {
     if (!newRef) return;
     setAdding(true);
     try {
-      await addMarketplaceSource(newRef, newName || undefined);
+      await addPluginMarketplaceSource(newRef, newName || undefined);
       setNewRef("");
       setNewName("");
       void load();
@@ -932,7 +949,7 @@ function SourcesTab() {
   const handleSync = useCallback(async (id: number) => {
     setSyncing(id);
     try {
-      await syncMarketplaceSource(id);
+      await syncPluginMarketplaceSource(id);
       void load();
     } catch { /* ignore */ }
     finally { setSyncing(null); }
@@ -940,7 +957,7 @@ function SourcesTab() {
 
   const handleRemove = useCallback(async (id: number) => {
     try {
-      await removeMarketplaceSource(id);
+      await removePluginMarketplaceSource(id);
       void load();
     } catch { /* ignore */ }
   }, [load]);

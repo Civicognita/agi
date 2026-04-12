@@ -1812,13 +1812,13 @@ export async function fetchPluginDashboardDomains(): Promise<import("./types.js"
 // Marketplace API
 // ---------------------------------------------------------------------------
 
-export async function fetchMarketplaceSources(): Promise<import("./types.js").MarketplaceSource[]> {
+export async function fetchPluginMarketplaceSources(): Promise<import("./types.js").PluginMarketplaceSource[]> {
   const res = await fetch("/api/marketplace/sources");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<import("./types.js").MarketplaceSource[]>;
+  return res.json() as Promise<import("./types.js").PluginMarketplaceSource[]>;
 }
 
-export async function addMarketplaceSource(ref: string, name?: string): Promise<import("./types.js").MarketplaceSource> {
+export async function addPluginMarketplaceSource(ref: string, name?: string): Promise<import("./types.js").PluginMarketplaceSource> {
   const res = await fetch("/api/marketplace/sources", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1828,20 +1828,20 @@ export async function addMarketplaceSource(ref: string, name?: string): Promise<
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
-  return res.json() as Promise<import("./types.js").MarketplaceSource>;
+  return res.json() as Promise<import("./types.js").PluginMarketplaceSource>;
 }
 
-export async function removeMarketplaceSource(id: number): Promise<void> {
+export async function removePluginMarketplaceSource(id: number): Promise<void> {
   const res = await fetch(`/api/marketplace/sources/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
-export async function syncMarketplaceSource(id: number): Promise<{ ok: boolean; pluginCount?: number; error?: string }> {
+export async function syncPluginMarketplaceSource(id: number): Promise<{ ok: boolean; pluginCount?: number; error?: string }> {
   const res = await fetch(`/api/marketplace/sources/${id}/sync`, { method: "POST" });
   return res.json() as Promise<{ ok: boolean; pluginCount?: number; error?: string }>;
 }
 
-export async function searchMarketplaceCatalog(params?: { q?: string; type?: string; category?: string; provides?: string }): Promise<import("./types.js").MarketplaceCatalogItem[]> {
+export async function searchPluginMarketplaceCatalog(params?: { q?: string; type?: string; category?: string; provides?: string }): Promise<import("./types.js").PluginMarketplaceCatalogItem[]> {
   const url = new URL("/api/marketplace/catalog", window.location.origin);
   if (params?.q) url.searchParams.set("q", params.q);
   if (params?.type) url.searchParams.set("type", params.type);
@@ -1849,10 +1849,10 @@ export async function searchMarketplaceCatalog(params?: { q?: string; type?: str
   if (params?.provides) url.searchParams.set("provides", params.provides);
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<import("./types.js").MarketplaceCatalogItem[]>;
+  return res.json() as Promise<import("./types.js").PluginMarketplaceCatalogItem[]>;
 }
 
-export async function installMarketplacePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; autoInstalled?: string[] }> {
+export async function installFromPluginMarketplace(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; autoInstalled?: string[] }> {
   const res = await fetch("/api/marketplace/install", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1877,7 +1877,7 @@ export async function fetchUninstallPreview(pluginName: string): Promise<{ resou
   return res.json() as Promise<{ resources: CleanupResource[] }>;
 }
 
-export async function uninstallMarketplacePlugin(
+export async function uninstallFromPluginMarketplace(
   pluginName: string,
   cleanupIds?: string[],
 ): Promise<{ ok: boolean; error?: string }> {
@@ -1889,19 +1889,19 @@ export async function uninstallMarketplacePlugin(
   return res.json() as Promise<{ ok: boolean; error?: string }>;
 }
 
-export async function fetchMarketplaceInstalled(): Promise<import("./types.js").MarketplaceInstalledItem[]> {
+export async function fetchPluginMarketplaceInstalled(): Promise<import("./types.js").PluginMarketplaceInstalledItem[]> {
   const res = await fetch("/api/marketplace/installed");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<import("./types.js").MarketplaceInstalledItem[]>;
+  return res.json() as Promise<import("./types.js").PluginMarketplaceInstalledItem[]>;
 }
 
-export async function fetchMarketplaceUpdates(): Promise<import("./types.js").MarketplaceUpdate[]> {
+export async function fetchPluginMarketplaceUpdates(): Promise<import("./types.js").PluginMarketplaceUpdate[]> {
   const res = await fetch("/api/marketplace/updates");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<import("./types.js").MarketplaceUpdate[]>;
+  return res.json() as Promise<import("./types.js").PluginMarketplaceUpdate[]>;
 }
 
-export async function updateMarketplacePlugin(
+export async function updateFromPluginMarketplace(
   pluginName: string,
   sourceId?: number,
 ): Promise<{ ok: boolean; error?: string; oldVersion?: string; newVersion?: string }> {
@@ -1912,6 +1912,13 @@ export async function updateMarketplacePlugin(
   });
   const data = await res.json() as { ok: boolean; error?: string; oldVersion?: string; newVersion?: string };
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
+export async function pullPluginMarketplace(): Promise<{ synced: number; updated: string[]; reloaded: string[]; errors: string[] }> {
+  const res = await fetch("/api/marketplace/pull", { method: "POST" });
+  const data = await res.json() as { synced: number; updated: string[]; reloaded: string[]; errors: string[] };
+  if (!res.ok) throw new Error((data as unknown as { error?: string }).error ?? `HTTP ${res.status}`);
   return data;
 }
 

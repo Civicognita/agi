@@ -997,10 +997,10 @@ export interface PluginDashboardDomain {
 // Marketplace types
 // ---------------------------------------------------------------------------
 
-export type MarketplaceItemType =
+export type PluginMarketplaceItemType =
   | "plugin" | "skill" | "knowledge" | "theme" | "workflow" | "agent-tool" | "channel";
 
-export interface MarketplaceSource {
+export interface PluginMarketplaceSource {
   id: number;
   /** Original reference (e.g. "owner/repo" or URL). */
   ref: string;
@@ -1011,10 +1011,10 @@ export interface MarketplaceSource {
   pluginCount: number;
 }
 
-export interface MarketplaceCatalogItem {
+export interface PluginMarketplaceCatalogItem {
   name: string;
   description?: string;
-  type?: MarketplaceItemType;
+  type?: PluginMarketplaceItemType;
   version?: string;
   author?: { name: string; email?: string };
   category?: string;
@@ -1034,16 +1034,16 @@ export interface MarketplaceCatalogItem {
   integrityHash?: string;
 }
 
-export interface MarketplaceInstalledItem {
+export interface PluginMarketplaceInstalledItem {
   name: string;
   sourceId: number;
-  type: MarketplaceItemType;
+  type: PluginMarketplaceItemType;
   version: string;
   installedAt: string;
   installPath: string;
 }
 
-export interface MarketplaceUpdate {
+export interface PluginMarketplaceUpdate {
   pluginName: string;
   currentVersion: string;
   availableVersion: string;

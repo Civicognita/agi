@@ -96,7 +96,7 @@ export function StackPicker({ projectCategory, installedStacks, onAdd, onClose, 
 
           {!loading && stacks.length === 0 && !error && (
             <p className="text-sm text-muted-foreground">
-              No stacks available. Install stack plugins from the Marketplace first.
+              No stacks available. Install stack plugins from the Plugin Marketplace first.
             </p>
           )}
 
