@@ -24,6 +24,7 @@
     { "id": "stack-react-vite", "disableable": false },
     { "id": "stack-static-hosting", "disableable": false },
     { "id": "stack-hono", "disableable": false },
+    { "id": "stack-tailwind", "disableable": false },
     { "id": "stack-django", "disableable": false },
     { "id": "stack-fastapi", "disableable": false },
     { "id": "stack-flask", "disableable": false },

@@ -40,6 +40,7 @@ describe("required-plugins.json", () => {
     expect(ids).toContain("stack-react-vite");
     expect(ids).toContain("stack-static-hosting");
     expect(ids).toContain("stack-hono");
+    expect(ids).toContain("stack-tailwind");
     expect(ids).toContain("stack-django");
     expect(ids).toContain("stack-fastapi");
     expect(ids).toContain("stack-flask");
