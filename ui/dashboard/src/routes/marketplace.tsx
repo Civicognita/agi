@@ -677,6 +677,21 @@ function InstalledTab() {
 
   const sourceMap = Object.fromEntries(sources.map((s) => [s.id, s.name]));
 
+  // Installed tab filters
+  const [installedQuery, setInstalledQuery] = useState("");
+  const [installedProvidesFilter, setInstalledProvidesFilter] = useState("");
+  const [installedSourceFilter, setInstalledSourceFilter] = useState<number | "">(""  );
+
+  const filteredItems = items.filter((item) => {
+    if (installedQuery && !item.name.toLowerCase().includes(installedQuery.toLowerCase())) return false;
+    if (installedSourceFilter !== "" && item.sourceId !== installedSourceFilter) return false;
+    if (installedProvidesFilter) {
+      const catalogItem = catalog.find((c) => c.name === item.name);
+      if (!catalogItem?.provides?.includes(installedProvidesFilter)) return false;
+    }
+    return true;
+  });
+
   // Two-step uninstall: preview cleanup resources, then confirm
   const handleUninstallRequest = useCallback(async (name: string) => {
     setLoadingPreview(true);
@@ -778,8 +793,38 @@ function InstalledTab() {
         </Button>
       </Card>
 
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <Input
+          placeholder="Search installed..."
+          value={installedQuery}
+          onChange={(e) => setInstalledQuery(e.target.value)}
+          className="flex-1"
+        />
+        <select
+          className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm cursor-pointer"
+          value={installedProvidesFilter}
+          onChange={(e) => setInstalledProvidesFilter(e.target.value)}
+        >
+          <option value="">All capabilities</option>
+          {Object.entries(PROVIDES_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
+        <select
+          className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm cursor-pointer"
+          value={installedSourceFilter}
+          onChange={(e) => setInstalledSourceFilter(e.target.value === "" ? "" : Number(e.target.value))}
+        >
+          <option value="">All sources</option>
+          {sources.map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {items.map((item) => {
+        {filteredItems.map((item) => {
           const update = updates.find((u) => u.pluginName === item.name);
           const catalogItem = catalog.find((c) => c.name === item.name);
           const provides = catalogItem?.provides ?? [];
