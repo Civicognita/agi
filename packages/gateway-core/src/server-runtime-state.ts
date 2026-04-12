@@ -2512,7 +2512,10 @@ export async function createGatewayRuntimeState(
 
     child.on("close", (code) => {
       upgradeInProgress = false;
-      if (code === 0) {
+      // code === null means the process was killed by a signal (SIGPIPE) — expected
+      // when upgrade.sh calls `systemctl restart aionima` which kills this Node process.
+      // The .upgrade-pending sentinel file handles post-restart completion.
+      if (code === 0 || (code === null && lastStep === "restart")) {
         // Sync marketplace catalog as the final upgrade step — plugin updates run last
         const mp = deps.marketplaceManager;
         if (mp) {

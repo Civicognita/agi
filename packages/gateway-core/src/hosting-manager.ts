@@ -197,6 +197,8 @@ export class HostingManager {
   private readonly log: ComponentLogger;
   private readonly projects = new Map<string, HostedProject>();
   private readonly allocatedPorts = new Set<number>();
+  /** Running containers discovered on startup — used to reconnect instead of recreating. */
+  private _runningContainers = new Map<string, { name: string; image: string; state: string }>();
   private readonly registry: ProjectTypeRegistry | null;
   private readonly pluginReg: PluginRegistry | null;
   private readonly stackReg: StackRegistry | null;
@@ -383,16 +385,30 @@ export class HostingManager {
       return;
     }
 
-    // Clean up any stale aionima-managed containers from prior runs
+    // Discover running containers from prior gateway run — reconnect instead of recreating.
+    // Containers persist across gateway restarts; only replaced when their image changes.
+    const runningContainers = new Map<string, { name: string; image: string; state: string }>();
     try {
-      const stale = execFileSync("podman", ["ps", "-a", "--filter", "label=aionima.managed=true", "--format", "{{.Names}}"], { stdio: "pipe", timeout: 15_000 }).toString().trim();
-      if (stale.length > 0) {
-        for (const name of stale.split("\n")) {
-          try { execFileSync("podman", ["rm", "-f", name], { stdio: "pipe", timeout: 15_000 }); } catch { /* ignore */ }
+      const out = execFileSync("podman", [
+        "ps", "-a", "--filter", "label=aionima.managed=true",
+        "--format", "{{.Names}}|{{.Image}}|{{.State}}|{{.Labels}}",
+      ], { stdio: "pipe", timeout: 15_000 }).toString().trim();
+      if (out.length > 0) {
+        for (const line of out.split("\n")) {
+          const [name, image, state, labels] = line.split("|");
+          if (!name || !image) continue;
+          // Extract project path from labels (format: aionima.managed=true,aionima.project=/path,...)
+          const projectMatch = labels?.match(/aionima\.project=([^,]+)/);
+          const projectPath = projectMatch?.[1];
+          if (projectPath) {
+            runningContainers.set(resolvePath(projectPath), { name, image, state: state ?? "" });
+          }
         }
-        this.log.info(`cleaned up ${String(stale.split("\n").length)} stale container(s)`);
+        this.log.info(`discovered ${String(runningContainers.size)} existing container(s)`);
       }
     } catch { /* podman not available */ }
+    // Store for use in enableProject
+    this._runningContainers = runningContainers;
 
     // Scan all workspace project dirs — auto-enable ALL projects on *.ai.on.
     // Every project directory gets a virtual host, regardless of type or prior state.
@@ -469,6 +485,13 @@ export class HostingManager {
         // Directory may not exist
       }
     }
+
+    // Clean up orphan containers (discovered but not matched to any project)
+    for (const [, orphan] of this._runningContainers) {
+      this.log.info(`removing orphan container: ${orphan.name}`);
+      try { execFileSync("podman", ["rm", "-f", orphan.name], { stdio: "pipe", timeout: 15_000 }); } catch { /* ignore */ }
+    }
+    this._runningContainers.clear();
 
     // Generate Caddyfile and reload (always — even with zero projects,
     // so the ai.on dashboard reverse proxy is configured)
@@ -722,8 +745,22 @@ export class HostingManager {
 
     this.projects.set(resolved, hosted);
 
-    // Start container
-    this.startContainer(hosted);
+    // Check if a container is already running from a prior gateway session
+    const existing = this._runningContainers.get(resolved);
+    if (existing && existing.state.toLowerCase().includes("up")) {
+      // Container is running — reconnect without restarting
+      hosted.containerName = existing.name;
+      hosted.status = "running";
+      this._runningContainers.delete(resolved);
+      this.log.info(`[${meta.hostname}] reconnected to running container ${existing.name}`);
+    } else {
+      // No running container — clean up stale one if exists, start fresh
+      if (existing) {
+        try { execFileSync("podman", ["rm", "-f", existing.name], { stdio: "pipe", timeout: 15_000 }); } catch { /* ignore */ }
+        this._runningContainers.delete(resolved);
+      }
+      this.startContainer(hosted);
+    }
 
     // Persist metadata
     this.writeHostingMeta(resolved, meta);
@@ -1938,16 +1975,15 @@ export class HostingManager {
       this.eventsProcess = null;
     }
 
-    // Kill all tunnel processes
+    // Kill all tunnel processes (gateway-managed, not container processes)
     for (const [, proc] of this.tunnelProcesses) {
       try { proc.kill(); } catch { /* already dead */ }
     }
     this.tunnelProcesses.clear();
 
-    // Stop all containers
-    for (const hosted of this.projects.values()) {
-      this.stopContainer(hosted);
-    }
+    // Do NOT stop containers — they persist as independent Podman processes.
+    // The gateway will reconnect to them on next startup. Containers are only
+    // replaced when their image changes (detected during initialize()).
     this.projects.clear();
     this.allocatedPorts.clear();
     this.log.info("hosting manager shut down");
