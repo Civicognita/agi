@@ -208,7 +208,16 @@ export function ProjectDetail({
 
   const handleRefreshFiles = useCallback(() => {
     setFileTreeGen((g) => g + 1);
-  }, []);
+    // Also reload the currently open file from disk
+    if (openFilePath) {
+      fetchProjectFile(openFilePath)
+        .then((result) => {
+          setFileContent(result.content);
+          setFileDraft(result.content);
+        })
+        .catch(() => { /* file may have been deleted */ });
+    }
+  }, [openFilePath]);
 
   const handleRefreshRepo = useCallback(() => {
     repoPanelRef.current?.refresh();
