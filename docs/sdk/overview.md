@@ -232,7 +232,9 @@ Never use ADF facades in plugin code — use `AionimaPluginAPI` instead.
 
 ## Further Reading
 
-- [Builder Reference](builders.md) — All 14 builders with methods and examples
+- [ADF Reference](adf.md) — Application Development Framework facades and initialization
+- [Builder Reference](builders.md) — All 16 builders with methods and examples
 - [Plugin API Reference](plugin-api.md) — Full `AionimaPluginAPI` interface
+- [UI Components](ui-components.md) — react-fancy, fancy-code, fancy-sheets, react-echarts
 - [Testing Plugins](testing.md) — `testActivate()` and mock API usage
 - [MagicApps (MApps)](magic-apps.md) — Declarative JSON apps: schema, builder API, form system, and widget types
