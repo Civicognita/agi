@@ -473,21 +473,9 @@ export function ProjectDetail({
             {/* Panes — CSS grid with fixed height; both columns always visible */}
             <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "calc(100vh - 280px)", minHeight: "400px" }}>
               {/* TreeNav pane with context menu */}
-              <div
-                style={{ overflow: "auto", borderRight: "1px solid var(--border)" }}
-                onContextMenu={(e) => {
-                  // Find the closest tree node element to determine which file was right-clicked
-                  const target = (e.target as HTMLElement).closest("[data-node-id]");
-                  if (target) {
-                    const nodeId = target.getAttribute("data-node-id") ?? "";
-                    setContextTargetPath(nodeId);
-                  } else {
-                    setContextTargetPath(""); // root-level context
-                  }
-                }}
-              >
-                <ContextMenu.Root>
-                  <ContextMenu.Trigger className="w-full">
+              <div style={{ overflow: "auto", borderRight: "1px solid var(--border)" }}>
+                <ContextMenu>
+                  <ContextMenu.Trigger className="w-full min-h-full">
                     {treeLoading ? (
                       <div className="text-[12px] text-muted-foreground p-4">Loading files...</div>
                     ) : fileTree.length === 0 ? (
@@ -501,6 +489,9 @@ export function ProjectDetail({
                         onSelect={(id: string, node: { type?: string }) => {
                           if (node.type === "file") handleSelectFile(id);
                         }}
+                        onNodeContextMenu={(_e: React.MouseEvent, node: { id?: string }) => {
+                          setContextTargetPath(typeof node.id === "string" ? node.id : "");
+                        }}
                         showIcons
                         indentSize={14}
                       />
@@ -510,7 +501,7 @@ export function ProjectDetail({
                     <ContextMenu.Item onClick={() => {
                       const name = prompt("File name:");
                       if (!name) return;
-                      const dir = contextTargetPath ? contextTargetPath.replace(/\/[^/]+$/, "") : "";
+                      const dir = contextTargetPath && contextTargetPath.includes("/") ? contextTargetPath.replace(/\/[^/]+$/, "") : contextTargetPath;
                       const fullPath = `${project.path}/${dir ? dir + "/" : ""}${name}`;
                       void createProjectFile(fullPath, "file").then(() => void handleRefreshFiles());
                     }}>
@@ -519,7 +510,7 @@ export function ProjectDetail({
                     <ContextMenu.Item onClick={() => {
                       const name = prompt("Folder name:");
                       if (!name) return;
-                      const dir = contextTargetPath ? contextTargetPath.replace(/\/[^/]+$/, "") : "";
+                      const dir = contextTargetPath && contextTargetPath.includes("/") ? contextTargetPath.replace(/\/[^/]+$/, "") : contextTargetPath;
                       const fullPath = `${project.path}/${dir ? dir + "/" : ""}${name}`;
                       void createProjectFile(fullPath, "directory").then(() => void handleRefreshFiles());
                     }}>
@@ -550,7 +541,7 @@ export function ProjectDetail({
                       </>
                     )}
                   </ContextMenu.Content>
-                </ContextMenu.Root>
+                </ContextMenu>
               </div>
               {/* CodeEditor pane */}
               {openFilePath ? (
