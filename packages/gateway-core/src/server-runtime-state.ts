@@ -8,7 +8,7 @@
  * Uses Fastify v5 instead of raw http.createServer.
  */
 
-import { readFileSync, writeFileSync, appendFileSync, existsSync, statSync, mkdirSync, readdirSync, rmSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, statSync, mkdirSync, readdirSync, rmSync, realpathSync, cpSync, renameSync } from "node:fs";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { homedir } from "node:os";
 import { execSync, execFile, execFileSync, spawn } from "node:child_process";
@@ -4035,6 +4035,77 @@ export async function createGatewayRuntimeState(
     const resolved = resolvePath(body.path);
     try {
       writeFileSync(resolved, body.content, "utf-8");
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/files/project-create — create a file or directory
+  fastify.post("/api/files/project-create", async (request, reply) => {
+    const body = request.body as { path?: string; type?: "file" | "directory"; content?: string };
+    if (!body.path) return reply.code(400).send({ error: "path is required" });
+    if (!isInsideWorkspace(body.path)) return reply.code(403).send({ error: "Path is not inside a configured workspace directory" });
+
+    const resolved = resolvePath(body.path);
+    try {
+      if (body.type === "directory") {
+        mkdirSync(resolved, { recursive: true });
+      } else {
+        mkdirSync(dirname(resolved), { recursive: true });
+        writeFileSync(resolved, body.content ?? "", "utf-8");
+      }
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // DELETE /api/files/project-delete — delete a file or directory
+  fastify.delete("/api/files/project-delete", async (request, reply) => {
+    const body = request.body as { path?: string };
+    if (!body.path) return reply.code(400).send({ error: "path is required" });
+    if (!isInsideWorkspace(body.path)) return reply.code(403).send({ error: "Path is not inside a configured workspace directory" });
+
+    const resolved = resolvePath(body.path);
+    try {
+      rmSync(resolved, { recursive: true, force: true });
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/files/project-copy — copy a file or directory
+  fastify.post("/api/files/project-copy", async (request, reply) => {
+    const body = request.body as { sourcePath?: string; destPath?: string };
+    if (!body.sourcePath || !body.destPath) return reply.code(400).send({ error: "sourcePath and destPath are required" });
+    if (!isInsideWorkspace(body.sourcePath) || !isInsideWorkspace(body.destPath)) {
+      return reply.code(403).send({ error: "Paths must be inside a configured workspace directory" });
+    }
+
+    const src = resolvePath(body.sourcePath);
+    const dest = resolvePath(body.destPath);
+    try {
+      cpSync(src, dest, { recursive: true });
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/files/project-rename — rename/move a file or directory
+  fastify.post("/api/files/project-rename", async (request, reply) => {
+    const body = request.body as { oldPath?: string; newPath?: string };
+    if (!body.oldPath || !body.newPath) return reply.code(400).send({ error: "oldPath and newPath are required" });
+    if (!isInsideWorkspace(body.oldPath) || !isInsideWorkspace(body.newPath)) {
+      return reply.code(403).send({ error: "Paths must be inside a configured workspace directory" });
+    }
+
+    const src = resolvePath(body.oldPath);
+    const dest = resolvePath(body.newPath);
+    try {
+      renameSync(src, dest);
       return reply.send({ ok: true });
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });

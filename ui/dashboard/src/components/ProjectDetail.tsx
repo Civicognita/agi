@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes } from "../api.js";
+import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes } from "../api.js";
 import type { FileNode } from "../api.js";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
@@ -18,7 +18,7 @@ import { HostingPanel } from "./HostingPanel.js";
 import { EnvManager } from "./EnvManager.js";
 import { ProjectManagement } from "./ProjectManagement.js";
 import type { HostingStatus } from "../api.js";
-import { TreeNav } from "@particle-academy/react-fancy";
+import { TreeNav, ContextMenu, useToast } from "@particle-academy/react-fancy";
 import { CodeEditor } from "@particle-academy/fancy-code";
 import "@particle-academy/fancy-code/styles.css";
 import { projectSlug } from "./Projects.js";
@@ -86,6 +86,7 @@ export function ProjectDetail({
   const [fileDraft, setFileDraft] = useState("");
   const [fileLoading, setFileLoading] = useState(false);
   const [fileSaving, setFileSaving] = useState(false);
+  const [contextTargetPath, setContextTargetPath] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
   const fileDirty = openFilePath !== null && fileDraft !== fileContent;
 
@@ -470,26 +471,86 @@ export function ProjectDetail({
               </div>
             </div>
             {/* Panes — CSS grid with fixed height; both columns always visible */}
-            <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", flex: 1, minHeight: 0 }}>
-              {/* TreeNav pane */}
-              <div style={{ overflow: "auto", borderRight: "1px solid var(--border)" }}>
-                {treeLoading ? (
-                  <div className="text-[12px] text-muted-foreground p-4">Loading files...</div>
-                ) : fileTree.length === 0 ? (
-                  <div className="text-[12px] text-muted-foreground p-4">No files found.</div>
-                ) : (
-                  <TreeNav
-                    nodes={fileTree.map(function mapNode(n: FileNode): { id: string; label: string; type: "file" | "folder"; ext?: string; children?: { id: string; label: string; type: "file" | "folder"; ext?: string; children?: unknown[] }[] } {
-                      return { id: n.path.startsWith(project.path) ? n.path.slice(project.path.length + 1) : n.path, label: n.name, type: n.type === "dir" ? "folder" : "file", ext: n.ext, children: n.children?.map(mapNode) };
-                    }) as never}
-                    selectedId={openFilePath ? openFilePath.replace(`${project.path}/`, "") : undefined}
-                    onSelect={(id: string, node: { type?: string }) => {
-                      if (node.type === "file") handleSelectFile(id);
-                    }}
-                    showIcons
-                    indentSize={14}
-                  />
-                )}
+            <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "calc(100vh - 280px)", minHeight: "400px" }}>
+              {/* TreeNav pane with context menu */}
+              <div
+                style={{ overflow: "auto", borderRight: "1px solid var(--border)" }}
+                onContextMenu={(e) => {
+                  // Find the closest tree node element to determine which file was right-clicked
+                  const target = (e.target as HTMLElement).closest("[data-node-id]");
+                  if (target) {
+                    const nodeId = target.getAttribute("data-node-id") ?? "";
+                    setContextTargetPath(nodeId);
+                  } else {
+                    setContextTargetPath(""); // root-level context
+                  }
+                }}
+              >
+                <ContextMenu.Root>
+                  <ContextMenu.Trigger className="w-full">
+                    {treeLoading ? (
+                      <div className="text-[12px] text-muted-foreground p-4">Loading files...</div>
+                    ) : fileTree.length === 0 ? (
+                      <div className="text-[12px] text-muted-foreground p-4">No files found.</div>
+                    ) : (
+                      <TreeNav
+                        nodes={fileTree.map(function mapNode(n: FileNode): { id: string; label: string; type: "file" | "folder"; ext?: string; children?: { id: string; label: string; type: "file" | "folder"; ext?: string; children?: unknown[] }[] } {
+                          return { id: n.path.startsWith(project.path) ? n.path.slice(project.path.length + 1) : n.path, label: n.name, type: n.type === "dir" ? "folder" : "file", ext: n.ext, children: n.children?.map(mapNode) };
+                        }) as never}
+                        selectedId={openFilePath ? openFilePath.replace(`${project.path}/`, "") : undefined}
+                        onSelect={(id: string, node: { type?: string }) => {
+                          if (node.type === "file") handleSelectFile(id);
+                        }}
+                        showIcons
+                        indentSize={14}
+                      />
+                    )}
+                  </ContextMenu.Trigger>
+                  <ContextMenu.Content>
+                    <ContextMenu.Item onClick={() => {
+                      const name = prompt("File name:");
+                      if (!name) return;
+                      const dir = contextTargetPath ? contextTargetPath.replace(/\/[^/]+$/, "") : "";
+                      const fullPath = `${project.path}/${dir ? dir + "/" : ""}${name}`;
+                      void createProjectFile(fullPath, "file").then(() => void handleRefreshFiles());
+                    }}>
+                      New File
+                    </ContextMenu.Item>
+                    <ContextMenu.Item onClick={() => {
+                      const name = prompt("Folder name:");
+                      if (!name) return;
+                      const dir = contextTargetPath ? contextTargetPath.replace(/\/[^/]+$/, "") : "";
+                      const fullPath = `${project.path}/${dir ? dir + "/" : ""}${name}`;
+                      void createProjectFile(fullPath, "directory").then(() => void handleRefreshFiles());
+                    }}>
+                      New Folder
+                    </ContextMenu.Item>
+                    {contextTargetPath && (
+                      <>
+                        <ContextMenu.Separator />
+                        <ContextMenu.Item onClick={() => {
+                          const newName = prompt("New name:", contextTargetPath.split("/").pop());
+                          if (!newName) return;
+                          const oldFull = `${project.path}/${contextTargetPath}`;
+                          const dir = contextTargetPath.includes("/") ? contextTargetPath.replace(/\/[^/]+$/, "") : "";
+                          const newFull = `${project.path}/${dir ? dir + "/" : ""}${newName}`;
+                          void renameProjectFile(oldFull, newFull).then(() => void handleRefreshFiles());
+                        }}>
+                          Rename
+                        </ContextMenu.Item>
+                        <ContextMenu.Item danger onClick={() => {
+                          if (!confirm(`Delete "${contextTargetPath}"?`)) return;
+                          void deleteProjectFile(`${project.path}/${contextTargetPath}`).then(() => {
+                            if (openFilePath === `${project.path}/${contextTargetPath}`) setOpenFilePath(null);
+                            void handleRefreshFiles();
+                          });
+                        }}>
+                          Delete
+                        </ContextMenu.Item>
+                      </>
+                    )}
+                  </ContextMenu.Content>
+                </ContextMenu.Root>
               </div>
               {/* CodeEditor pane */}
               {openFilePath ? (
@@ -539,13 +600,29 @@ export function ProjectDetail({
                         onChange={setFileDraft}
                         language={(() => {
                           const ext = openFilePath.split(".").pop()?.toLowerCase();
-                          if (ext === "ts" || ext === "tsx") return "typescript";
-                          if (ext === "js" || ext === "jsx") return "javascript";
-                          if (ext === "html" || ext === "htm") return "html";
-                          if (ext === "php") return "php";
-                          return "javascript";
+                          const map: Record<string, string> = {
+                            ts: "typescript", tsx: "typescript",
+                            js: "javascript", jsx: "javascript",
+                            html: "html", htm: "html",
+                            css: "css", scss: "css",
+                            json: "json",
+                            md: "markdown", mdx: "markdown",
+                            yaml: "yaml", yml: "yaml",
+                            php: "php",
+                            py: "python",
+                            go: "go",
+                            rs: "rust",
+                            sql: "sql",
+                            sh: "shell", bash: "shell",
+                            toml: "toml",
+                            xml: "html",
+                            svg: "html",
+                            env: "shell",
+                          };
+                          return map[ext ?? ""] ?? "plaintext";
                         })()}
                         theme="auto"
+                        className="h-full"
                       >
                         <CodeEditor.Toolbar />
                         <CodeEditor.Panel />

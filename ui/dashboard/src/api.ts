@@ -953,6 +953,58 @@ export async function saveProjectFile(path: string, content: string): Promise<{ 
   return res.json() as Promise<{ ok: boolean }>;
 }
 
+export async function createProjectFile(path: string, type: "file" | "directory" = "file", content?: string): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/files/project-create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, type, content }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function deleteProjectFile(path: string): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/files/project-delete", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function copyProjectFile(sourcePath: string, destPath: string): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/files/project-copy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sourcePath, destPath }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function renameProjectFile(oldPath: string, newPath: string): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/files/project-rename", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ oldPath, newPath }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
 // ---------------------------------------------------------------------------
 // Notifications API — /api/notifications
 // ---------------------------------------------------------------------------

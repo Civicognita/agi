@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { fetchProjectEnv, saveProjectEnv } from "../api.js";
+import { fetchProjectEnv, saveProjectEnv, fetchProjectFile } from "../api.js";
 
 export interface EnvManagerProps {
   projectPath: string;
@@ -26,19 +26,60 @@ export function EnvManager({ projectPath }: EnvManagerProps) {
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Set<number>>(new Set());
   const [dirty, setDirty] = useState(false);
+  const [hasExample, setHasExample] = useState(false);
+  const [showExampleBanner, setShowExampleBanner] = useState(false);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
+    setHasExample(false);
+    setShowExampleBanner(false);
     fetchProjectEnv(projectPath)
       .then((vars) => {
-        setEntries(
-          Object.entries(vars).map(([key, value]) => ({ id: nextId++, key, value })),
-        );
+        const parsed = Object.entries(vars).map(([key, value]) => ({ id: nextId++, key, value }));
+        setEntries(parsed);
         setDirty(false);
+        // If no .env vars found, check for .env.example
+        if (parsed.length === 0) {
+          fetchProjectFile(`${projectPath}/.env.example`)
+            .then(() => {
+              setHasExample(true);
+              setShowExampleBanner(true);
+            })
+            .catch(() => { /* no .env.example either */ });
+        }
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .catch(() => {
+        // .env doesn't exist — check for .env.example
+        setEntries([]);
+        fetchProjectFile(`${projectPath}/.env.example`)
+          .then(() => {
+            setHasExample(true);
+            setShowExampleBanner(true);
+          })
+          .catch(() => { /* no .env.example either */ });
+      })
       .finally(() => setLoading(false));
+  }, [projectPath]);
+
+  const handleCreateFromExample = useCallback(async () => {
+    try {
+      const { content } = await fetchProjectFile(`${projectPath}/.env.example`);
+      // Parse .env.example into key=value pairs
+      const parsed = content
+        .split("\n")
+        .filter((line) => line.trim() && !line.trim().startsWith("#"))
+        .map((line) => {
+          const eqIdx = line.indexOf("=");
+          if (eqIdx === -1) return { id: nextId++, key: line.trim(), value: "" };
+          return { id: nextId++, key: line.slice(0, eqIdx).trim(), value: line.slice(eqIdx + 1).trim() };
+        });
+      setEntries(parsed);
+      setDirty(true);
+      setShowExampleBanner(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load .env.example");
+    }
   }, [projectPath]);
 
   const handleChange = useCallback((id: number, field: "key" | "value", val: string) => {
@@ -115,9 +156,25 @@ export function EnvManager({ projectPath }: EnvManagerProps) {
         <p className="text-xs text-red">{error}</p>
       )}
 
+      {showExampleBanner && hasExample && (
+        <div className="rounded-lg border border-blue/30 bg-blue/5 p-3 flex items-center justify-between">
+          <div>
+            <p className="text-[12px] font-medium text-foreground">No .env file found</p>
+            <p className="text-[11px] text-muted-foreground">A .env.example file was detected. Create your .env from the example template.</p>
+          </div>
+          <Button
+            size="sm"
+            className="text-xs h-7 shrink-0"
+            onClick={() => void handleCreateFromExample()}
+          >
+            Create .env from Example
+          </Button>
+        </div>
+      )}
+
       {loading ? (
         <p className="text-xs text-muted-foreground">Loading...</p>
-      ) : entries.length === 0 ? (
+      ) : entries.length === 0 && !showExampleBanner ? (
         <p className="text-xs text-muted-foreground">No environment variables. Click "Add Variable" to create one.</p>
       ) : (
         <div className="space-y-1.5">
