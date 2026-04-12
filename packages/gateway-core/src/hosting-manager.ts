@@ -139,6 +139,10 @@ const CONTAINER_IMAGES: Record<string, string> = {
   "api-service": "ghcr.io/civicognita/node:22",
   nuxt: "ghcr.io/civicognita/node:22",
   "react-vite": "nginx:alpine",
+  // Non-dev project types — serve static files via nginx when no MApp viewer is configured
+  writing: "nginx:alpine",
+  art: "nginx:alpine",
+  "static-site": "nginx:alpine",
 };
 
 const CONTAINER_INTERNAL_PORTS: Record<string, number> = {
@@ -149,6 +153,9 @@ const CONTAINER_INTERNAL_PORTS: Record<string, number> = {
   nextjs: 3000,
   nuxt: 3000,
   "react-vite": 80,
+  writing: 80,
+  art: 80,
+  "static-site": 80,
 };
 
 const PORT_POOL_SIZE = 100;
