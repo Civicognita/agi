@@ -3932,12 +3932,48 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Built-in file tree only serves docs/" });
     }
     const tree = buildFileTree(docsRoot, "docs");
-    // Append plugin-provided knowledge namespaces as virtual folders under plugin-docs/
+
+    // Append SDK docs as a top-level section
+    const sdkDocsDir = join(docsRoot, "..", "packages", "aion-sdk", "docs");
+    if (!existsSync(sdkDocsDir)) {
+      // Fallback: look for SDK docs in the docs/sdk/ directory (already in tree)
+    }
+
+    // Append plugin-provided knowledge namespaces as virtual folders under plugin-docs/.
+    // Only include documentation files — not raw system dirs or binaries.
+    const DOC_EXTS = new Set([".md", ".txt", ".html", ".rst", ".adoc"]);
     const knowledgeEntries = deps.pluginRegistry?.getKnowledge() ?? [];
     for (const { namespace } of knowledgeEntries) {
       if (!namespace.contentDir || !existsSync(namespace.contentDir)) continue;
-      const subtree = buildFileTree(namespace.contentDir, `plugin-docs/${namespace.id}`);
-      tree.push({ name: namespace.label, path: `plugin-docs/${namespace.id}`, type: "dir", children: subtree });
+      // If namespace has explicit topics, use those instead of scanning the directory
+      if (namespace.topics && namespace.topics.length > 0) {
+        const topicNodes: FileNode[] = namespace.topics
+          .filter((t) => {
+            try { return existsSync(join(namespace.contentDir!, t.path)); } catch { return false; }
+          })
+          .map((t) => ({
+            name: t.title,
+            path: `plugin-docs/${namespace.id}/${t.path}`,
+            type: "file" as const,
+            ext: t.path.includes(".") ? t.path.slice(t.path.lastIndexOf(".")) : undefined,
+          }));
+        if (topicNodes.length > 0) {
+          tree.push({ name: namespace.label, path: `plugin-docs/${namespace.id}`, type: "dir", children: topicNodes });
+        }
+      } else {
+        // No explicit topics — scan directory but only include doc files
+        const subtree = buildFileTree(namespace.contentDir, `plugin-docs/${namespace.id}`)
+          .filter(function filterDocs(node: FileNode): boolean {
+            if (node.type === "dir") {
+              node.children = node.children?.filter(filterDocs);
+              return (node.children?.length ?? 0) > 0;
+            }
+            return node.ext ? DOC_EXTS.has(node.ext) : false;
+          });
+        if (subtree.length > 0) {
+          tree.push({ name: namespace.label, path: `plugin-docs/${namespace.id}`, type: "dir", children: subtree });
+        }
+      }
     }
     return reply.send({ tree });
   });
