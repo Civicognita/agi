@@ -73,6 +73,8 @@ export interface HostingConfig {
     port: number;
     subdomain: string;
   };
+  /** WhoDB database explorer port (default: 5050). Always-on infrastructure. */
+  whodbPort?: number;
 }
 
 export interface ProjectHostingMeta {
@@ -384,6 +386,9 @@ export class HostingManager {
       this.log.warn("hosting infrastructure not ready — skipping auto-start");
       return;
     }
+
+    // Ensure WhoDB is running (always-on infrastructure)
+    this.ensureWhoDB();
 
     // Discover running containers from prior gateway run — reconnect instead of recreating.
     // Containers persist across gateway restarts; only replaced when their image changes.
@@ -1569,10 +1574,11 @@ export class HostingManager {
       blocks.push(`    reverse_proxy ${gw}`);
       blocks.push(`}\n`);
 
-      // Database portal — always present as a system domain
+      // WhoDB database explorer — always-on infrastructure at db.{baseDomain}
+      const whodbPort = this.config.whodbPort ?? 5050;
       blocks.push(`db.${this.config.baseDomain} {`);
       blocks.push(`    tls internal`);
-      blocks.push(`    reverse_proxy ${gw}`);
+      blocks.push(`    reverse_proxy localhost:${String(whodbPort)}`);
       blocks.push(`}\n`);
 
       // Local ID service — when enabled, reverse-proxy id.{baseDomain} to the ID service port
@@ -1956,6 +1962,63 @@ export class HostingManager {
 
     // 14. Fallback
     return { projectType: "static-site", suggestedStacks: ["stack-static-hosting"], docRoot: "dist", startCommand: null };
+  }
+
+  // -------------------------------------------------------------------------
+  // WhoDB — always-on database explorer
+  // -------------------------------------------------------------------------
+
+  private ensureWhoDB(): void {
+    const containerName = "aionima-whodb";
+    const port = this.config.whodbPort ?? 5050;
+
+    try {
+      // Check if container exists and is running
+      const state = execFileSync("podman", ["inspect", containerName, "--format", "{{.State.Status}}"], {
+        stdio: "pipe", timeout: 10_000,
+      }).toString().trim();
+
+      if (state === "running") {
+        this.log.info(`WhoDB already running on port ${String(port)}`);
+        return;
+      }
+
+      // Container exists but stopped — start it
+      if (state === "exited" || state === "stopped" || state === "created") {
+        execFileSync("podman", ["start", containerName], { stdio: "pipe", timeout: 30_000 });
+        this.log.info(`WhoDB started (was ${state})`);
+        return;
+      }
+    } catch {
+      // Container doesn't exist — create it
+    }
+
+    // Build env vars — pass AI provider keys if available
+    const envArgs: string[] = [];
+    if (process.env["ANTHROPIC_API_KEY"]) {
+      envArgs.push("-e", `WHODB_ANTHROPIC_API_KEY=${process.env["ANTHROPIC_API_KEY"]}`);
+    }
+    if (process.env["OPENAI_API_KEY"]) {
+      envArgs.push("-e", `WHODB_OPENAI_API_KEY=${process.env["OPENAI_API_KEY"]}`);
+    }
+    envArgs.push("-e", "WHODB_OLLAMA_HOST=host.containers.internal");
+    envArgs.push("-e", "WHODB_OLLAMA_PORT=11434");
+
+    try {
+      execFileSync("podman", [
+        "run", "-d",
+        "--name", containerName,
+        "--restart=always",
+        "--label", "aionima.infra=true",
+        "-p", `${String(port)}:8080`,
+        "-v", "whodb-data:/data",
+        ...envArgs,
+        "clidey/whodb:latest",
+      ], { stdio: "pipe", timeout: 60_000 });
+      this.log.info(`WhoDB started on port ${String(port)}`);
+    } catch (err) {
+      this.log.warn(`failed to start WhoDB: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // -------------------------------------------------------------------------

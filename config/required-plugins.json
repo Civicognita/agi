@@ -29,7 +29,6 @@
     { "id": "stack-fastapi", "disableable": false },
     { "id": "stack-flask", "disableable": false },
     { "id": "stack-go-app", "disableable": false },
-    { "id": "stack-rust-app", "disableable": false },
-    { "id": "whodb", "disableable": false }
+    { "id": "stack-rust-app", "disableable": false }
   ]
 }

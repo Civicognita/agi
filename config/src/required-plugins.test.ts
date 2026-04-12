@@ -28,7 +28,6 @@ describe("required-plugins.json", () => {
     expect(ids).toContain("aionima-postgres");
     expect(ids).toContain("aionima-mysql");
     expect(ids).toContain("aionima-redis");
-    expect(ids).toContain("whodb");
   });
 
   it("includes framework stack plugins", () => {

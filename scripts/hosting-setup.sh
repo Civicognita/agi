@@ -139,6 +139,32 @@ su - "$SUDO_USER" -c "podman pull ghcr.io/civicognita/go:1.24" 2>/dev/null || ec
 echo "[OK] Container images pulled"
 
 # ---------------------------------------------------------------------------
+# 5b. WhoDB — always-on database explorer at db.ai.on
+# ---------------------------------------------------------------------------
+
+WHODB_CONTAINER="aionima-whodb"
+WHODB_PORT=5050
+
+echo "[...] Setting up WhoDB database explorer..."
+if su - "$SUDO_USER" -c "podman ps -a --format '{{.Names}}' | grep -q '^${WHODB_CONTAINER}$'" 2>/dev/null; then
+  echo "[OK] WhoDB container already exists"
+else
+  echo "[...] Pulling WhoDB image..."
+  su - "$SUDO_USER" -c "podman pull docker.io/clidey/whodb:latest" 2>/dev/null || echo "[WARN] Failed to pull WhoDB"
+  echo "[...] Starting WhoDB container..."
+  su - "$SUDO_USER" -c "podman run -d \
+    --name ${WHODB_CONTAINER} \
+    --restart=always \
+    --label aionima.infra=true \
+    -p ${WHODB_PORT}:8080 \
+    -v whodb-data:/data \
+    -e WHODB_OLLAMA_HOST=host.containers.internal \
+    -e WHODB_OLLAMA_PORT=11434 \
+    clidey/whodb:latest" 2>/dev/null || echo "[WARN] Failed to start WhoDB"
+  echo "[OK] WhoDB running on port ${WHODB_PORT}"
+fi
+
+# ---------------------------------------------------------------------------
 # 6. Write minimal initial Caddyfile
 # ---------------------------------------------------------------------------
 
