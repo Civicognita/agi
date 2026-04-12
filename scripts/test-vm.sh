@@ -45,6 +45,11 @@ runcmd:
   - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   - apt-get install -y nodejs
   - corepack enable pnpm
+  # Pre-create the aionima user with passwordless sudo so install.sh and
+  # Playwright browser installs work without a terminal
+  - useradd -m -s /bin/bash aionima || true
+  - echo "aionima ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/aionima
+  - chmod 0440 /etc/sudoers.d/aionima
 YAML
 )
 

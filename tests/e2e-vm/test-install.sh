@@ -45,8 +45,13 @@ echo ""
 # -----------------------------------------------------------------------
 # Run install.sh
 # -----------------------------------------------------------------------
+echo "--- Configuring git safe.directory ---"
+sudo git config --system --add safe.directory /opt/aionima
+sudo git config --system --add safe.directory /opt/aionima-prime
+sudo git config --system --add safe.directory /opt/aionima-local-id
+
 echo "--- Running install.sh ---"
-sudo AIONIMA_REPO=/mnt/agi AIONIMA_SKIP_HARDENING=1 bash /mnt/agi/scripts/install.sh
+sudo AIONIMA_REPO=/mnt/agi AIONIMA_SKIP_HARDENING=1 LAN_IP="$(hostname -I | awk '{print $1}')" bash /mnt/agi/scripts/install.sh
 echo ""
 
 # -----------------------------------------------------------------------

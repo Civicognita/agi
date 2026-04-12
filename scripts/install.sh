@@ -69,6 +69,14 @@ fi
 
 usermod -aG adm "$AIONIMA_USER" 2>/dev/null || true
 
+# Grant passwordless sudo — needed for hosting-setup.sh, Playwright browser deps,
+# and container runtime management
+if [ ! -f "/etc/sudoers.d/$AIONIMA_USER" ]; then
+  echo "$AIONIMA_USER ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/$AIONIMA_USER"
+  chmod 0440 "/etc/sudoers.d/$AIONIMA_USER"
+  echo "==> Granted passwordless sudo to '$AIONIMA_USER'"
+fi
+
 # ---------------------------------------------------------------------------
 # 2. System dependencies
 # ---------------------------------------------------------------------------
@@ -178,20 +186,24 @@ AGI_CONFIG="$AGI_DATA/aionima.json"
 if [ ! -f "$AGI_CONFIG" ]; then
   DETECTED_IP="$(hostname -I | awk '{print $1}')"
 
-  echo ""
-  echo "  Detected IP: $DETECTED_IP"
-  echo ""
-  echo "  Your machine needs a fixed IP if other devices will connect to it."
-  echo "  Otherwise, it can use whatever IP your router assigns (DHCP)."
-  echo ""
-  echo "  1) Use detected IP ($DETECTED_IP)"
-  echo "  2) Use Aionima standard IP (192.168.0.144)"
-  echo "  3) Enter a custom IP"
-  echo "  4) Use DHCP (auto-assigned, may change on reboot)"
-  echo ""
-  read -p "  Choose [1]: " IP_CHOICE
+  # Allow non-interactive installs by pre-setting LAN_IP
+  if [ -n "${LAN_IP:-}" ]; then
+    echo "  Using pre-set LAN_IP: $LAN_IP"
+  else
+    echo ""
+    echo "  Detected IP: $DETECTED_IP"
+    echo ""
+    echo "  Your machine needs a fixed IP if other devices will connect to it."
+    echo "  Otherwise, it can use whatever IP your router assigns (DHCP)."
+    echo ""
+    echo "  1) Use detected IP ($DETECTED_IP)"
+    echo "  2) Use Aionima standard IP (192.168.0.144)"
+    echo "  3) Enter a custom IP"
+    echo "  4) Use DHCP (auto-assigned, may change on reboot)"
+    echo ""
+    read -p "  Choose [1]: " IP_CHOICE
 
-  case "${IP_CHOICE:-1}" in
+    case "${IP_CHOICE:-1}" in
     2)
       LAN_IP="192.168.0.144"
       # Attempt to set static IP via nmcli if available
@@ -222,7 +234,8 @@ if [ ! -f "$AGI_CONFIG" ]; then
     *)
       LAN_IP="$DETECTED_IP"
       ;;
-  esac
+    esac
+  fi
 
   cat > "$AGI_CONFIG" << CFGEOF
 {
@@ -363,11 +376,13 @@ echo "    agi logs       View gateway logs"
 echo "    agi doctor     Run diagnostics"
 echo ""
 
-# Ask user to star the project on GitHub
-read -p "  Would you like to show some love by starring the project on GitHub? [Y/n] " STAR_CHOICE
-if [[ "${STAR_CHOICE:-Y}" =~ ^[Yy] ]]; then
-  xdg-open "https://github.com/Civicognita/agi" 2>/dev/null \
-    || open "https://github.com/Civicognita/agi" 2>/dev/null \
-    || echo "  Visit: https://github.com/Civicognita/agi"
+# Ask user to star the project on GitHub (skip in non-interactive mode)
+if [ -t 0 ]; then
+  read -p "  Would you like to show some love by starring the project on GitHub? [Y/n] " STAR_CHOICE
+  if [[ "${STAR_CHOICE:-Y}" =~ ^[Yy] ]]; then
+    xdg-open "https://github.com/Civicognita/agi" 2>/dev/null \
+      || open "https://github.com/Civicognita/agi" 2>/dev/null \
+      || echo "  Visit: https://github.com/Civicognita/agi"
+  fi
 fi
 echo ""
