@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { useToast } from "@particle-academy/react-fancy";
 import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import { Button } from "@/components/ui/button";
@@ -643,6 +644,7 @@ function BrowseTab() {
 // ---------------------------------------------------------------------------
 
 function InstalledTab() {
+  const { toast } = useToast();
   const [items, setItems] = useState<PluginMarketplaceInstalledItem[]>([]);
   const [updates, setUpdates] = useState<PluginMarketplaceUpdate[]>([]);
   const [catalog, setCatalog] = useState<PluginMarketplaceCatalogItem[]>([]);
@@ -694,16 +696,15 @@ function InstalledTab() {
     try {
       const result = await uninstallFromPluginMarketplace(name);
       if (!result.ok) {
-        console.error("Uninstall rejected:", result.error);
-        window.alert(result.error ?? "Uninstall failed");
+        toast({ title: "Cannot uninstall", description: result.error ?? "Uninstall rejected", variant: "error" });
         return;
       }
+      toast({ title: `Uninstalled ${name}`, variant: "success" });
       window.location.reload();
     } catch (err) {
-      console.error("Uninstall failed:", err);
-      window.alert(err instanceof Error ? err.message : String(err));
+      toast({ title: "Uninstall failed", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
     } finally { setUninstalling(null); }
-  }, [load]);
+  }, [load, toast]);
 
   const handleConfirmUninstall = useCallback(async () => {
     if (!cleanupTarget) return;
@@ -714,24 +715,25 @@ function InstalledTab() {
       const ids = selectedCleanupIds.size > 0 ? [...selectedCleanupIds] : undefined;
       const result = await uninstallFromPluginMarketplace(name, ids);
       if (!result.ok) {
-        console.error("Uninstall rejected:", result.error);
-        window.alert(result.error ?? "Uninstall failed");
+        toast({ title: "Cannot uninstall", description: result.error ?? "Uninstall rejected", variant: "error" });
         return;
       }
+      toast({ title: `Uninstalled ${name}`, variant: "success" });
       window.location.reload();
     } catch (err) {
-      console.error("Uninstall failed:", err);
-      window.alert(err instanceof Error ? err.message : String(err));
+      toast({ title: "Uninstall failed", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
     } finally { setUninstalling(null); }
-  }, [cleanupTarget, selectedCleanupIds, load]);
+  }, [cleanupTarget, selectedCleanupIds, load, toast]);
 
   const handleUpdate = useCallback(async (pluginName: string, sourceId: number) => {
     setUpdating(pluginName);
     try {
       await updateFromPluginMarketplace(pluginName, sourceId);
-      void load();
-    } catch { /* ignore */ }
-    finally { setUpdating(null); }
+      await load();
+      toast({ title: `Updated ${pluginName}`, variant: "success" });
+    } catch (err) {
+      toast({ title: `Failed to update ${pluginName}`, description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
+    } finally { setUpdating(null); }
   }, [load]);
 
   if (items.length === 0) {
@@ -757,10 +759,19 @@ function InstalledTab() {
           onClick={async () => {
             setPulling(true);
             try {
-              await pullPluginMarketplace();
+              const result = await pullPluginMarketplace();
               await load();
-            } catch { /* ignore */ }
-            finally { setPulling(false); }
+              if (result.updated.length > 0) {
+                toast({ title: `Updated ${result.updated.length} plugin(s)`, description: result.updated.join(", "), variant: "success" });
+              } else {
+                toast({ title: "All plugins up to date", description: `Synced ${result.catalogSynced} plugins from catalog`, variant: "info" });
+              }
+              if (result.errors.length > 0) {
+                toast({ title: "Some updates failed", description: result.errors.join("; "), variant: "error" });
+              }
+            } catch (err) {
+              toast({ title: "Plugin update failed", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
+            } finally { setPulling(false); }
           }}
         >
           {pulling ? "Updating..." : updates.length > 0 ? "Update All" : "Check for Updates"}

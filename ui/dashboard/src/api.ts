@@ -1915,10 +1915,10 @@ export async function updateFromPluginMarketplace(
   return data;
 }
 
-export async function pullPluginMarketplace(): Promise<{ synced: number; updated: string[]; reloaded: string[]; errors: string[] }> {
+export async function pullPluginMarketplace(): Promise<{ ok: boolean; catalogSynced: number; updated: string[]; reloaded: string[]; errors: string[] }> {
   const res = await fetch("/api/marketplace/pull", { method: "POST" });
-  const data = await res.json() as { synced: number; updated: string[]; reloaded: string[]; errors: string[] };
-  if (!res.ok) throw new Error((data as unknown as { error?: string }).error ?? `HTTP ${res.status}`);
+  const data = await res.json() as { ok: boolean; catalogSynced: number; updated: string[]; reloaded: string[]; errors: string[]; error?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
   return data;
 }
 
