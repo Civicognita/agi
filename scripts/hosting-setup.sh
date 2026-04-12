@@ -134,6 +134,8 @@ su - "$SUDO_USER" -c "podman pull docker.io/library/nginx:alpine" 2>/dev/null ||
 su - "$SUDO_USER" -c "podman pull ghcr.io/civicognita/php-apache:8.4" 2>/dev/null || echo "[WARN] Failed to pull php-apache:8.4"
 su - "$SUDO_USER" -c "podman pull ghcr.io/civicognita/node:22" 2>/dev/null || echo "[WARN] Failed to pull node:22"
 su - "$SUDO_USER" -c "podman pull ghcr.io/civicognita/postgres:17" 2>/dev/null || echo "[WARN] Failed to pull postgres:17"
+su - "$SUDO_USER" -c "podman pull ghcr.io/civicognita/python:3.12" 2>/dev/null || echo "[WARN] Failed to pull python:3.12"
+su - "$SUDO_USER" -c "podman pull ghcr.io/civicognita/go:1.24" 2>/dev/null || echo "[WARN] Failed to pull go:1.24"
 echo "[OK] Container images pulled"
 
 # ---------------------------------------------------------------------------

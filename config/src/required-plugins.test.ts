@@ -19,6 +19,9 @@ describe("required-plugins.json", () => {
   it("includes runtime plugins", () => {
     expect(ids).toContain("aionima-php-runtime");
     expect(ids).toContain("aionima-node-runtime");
+    expect(ids).toContain("aionima-python-runtime");
+    expect(ids).toContain("aionima-go-runtime");
+    expect(ids).toContain("aionima-rust-runtime");
   });
 
   it("includes service plugins", () => {
@@ -37,6 +40,11 @@ describe("required-plugins.json", () => {
     expect(ids).toContain("stack-react-vite");
     expect(ids).toContain("stack-static-hosting");
     expect(ids).toContain("stack-hono");
+    expect(ids).toContain("stack-django");
+    expect(ids).toContain("stack-fastapi");
+    expect(ids).toContain("stack-flask");
+    expect(ids).toContain("stack-go-app");
+    expect(ids).toContain("stack-rust-app");
   });
 
   it("marks all required plugins as non-disableable", () => {

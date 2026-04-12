@@ -139,6 +139,13 @@ const CONTAINER_IMAGES: Record<string, string> = {
   "api-service": "ghcr.io/civicognita/node:22",
   nuxt: "ghcr.io/civicognita/node:22",
   "react-vite": "nginx:alpine",
+  // Python / Go / Rust
+  python: "ghcr.io/civicognita/python:3.12",
+  django: "ghcr.io/civicognita/python:3.12",
+  fastapi: "ghcr.io/civicognita/python:3.12",
+  flask: "ghcr.io/civicognita/python:3.12",
+  go: "ghcr.io/civicognita/go:1.24",
+  rust: "ghcr.io/civicognita/rust:1.87",
   // Non-dev project types — serve static files via nginx when no MApp viewer is configured
   writing: "nginx:alpine",
   art: "nginx:alpine",
@@ -153,6 +160,12 @@ const CONTAINER_INTERNAL_PORTS: Record<string, number> = {
   nextjs: 3000,
   nuxt: 3000,
   "react-vite": 80,
+  python: 8000,
+  django: 8000,
+  fastapi: 8000,
+  flask: 8000,
+  go: 8080,
+  rust: 8080,
   writing: 80,
   art: 80,
   "static-site": 80,
@@ -1851,9 +1864,32 @@ export class HostingManager {
       return { projectType: "web-app", suggestedStacks: ["stack-php-app"], docRoot: ".", startCommand: null };
     }
 
-    // 10. Python (manage.py + requirements.txt/pyproject.toml)
+    // 10. Python — Django (manage.py)
     if (has("manage.py") && (has("requirements.txt") || has("pyproject.toml"))) {
-      return { projectType: "api-service", suggestedStacks: [], docRoot: ".", startCommand: "python manage.py runserver" };
+      return { projectType: "web-app", suggestedStacks: ["stack-django"], docRoot: ".", startCommand: "python manage.py runserver" };
+    }
+
+    // 10b. Python — FastAPI/Flask (requirements.txt with framework deps)
+    if (has("requirements.txt")) {
+      try {
+        const reqContent = readFileSync(join(projectPath, "requirements.txt"), "utf-8").toLowerCase();
+        if (reqContent.includes("fastapi")) {
+          return { projectType: "api-service", suggestedStacks: ["stack-fastapi"], docRoot: ".", startCommand: null };
+        }
+        if (reqContent.includes("flask")) {
+          return { projectType: "web-app", suggestedStacks: ["stack-flask"], docRoot: ".", startCommand: null };
+        }
+      } catch { /* unreadable */ }
+    }
+
+    // 10c. Go (go.mod)
+    if (has("go.mod")) {
+      return { projectType: "api-service", suggestedStacks: ["stack-go-app"], docRoot: ".", startCommand: null };
+    }
+
+    // 10d. Rust (Cargo.toml)
+    if (has("Cargo.toml")) {
+      return { projectType: "api-service", suggestedStacks: ["stack-rust-app"], docRoot: ".", startCommand: null };
     }
 
     // 11. Static (index.html in root)
