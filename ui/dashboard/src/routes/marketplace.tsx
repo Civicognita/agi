@@ -774,15 +774,37 @@ function InstalledTab() {
           onClick={async () => {
             setPulling(true);
             try {
-              const result = await pullPluginMarketplace();
-              await load();
-              if (result.updated.length > 0) {
-                toast({ title: `Updated ${result.updated.length} plugin(s)`, description: result.updated.join(", "), variant: "success" });
+              if (updates.length > 0) {
+                // Update each detected plugin individually (don't re-sync catalog)
+                const updated: string[] = [];
+                const errors: string[] = [];
+                for (const u of updates) {
+                  try {
+                    await updateFromPluginMarketplace(u.pluginName, u.sourceId);
+                    updated.push(u.pluginName);
+                  } catch (err) {
+                    errors.push(`${u.pluginName}: ${err instanceof Error ? err.message : "failed"}`);
+                  }
+                }
+                await load();
+                if (updated.length > 0) {
+                  toast({ title: `Updated ${updated.length} plugin(s)`, description: updated.join(", "), variant: "success" });
+                }
+                if (errors.length > 0) {
+                  toast({ title: `${errors.length} update(s) failed`, description: errors.join("; "), variant: "error" });
+                }
               } else {
-                toast({ title: "All plugins up to date", description: `Synced ${result.catalogSynced} plugins from catalog`, variant: "info" });
-              }
-              if (result.errors.length > 0) {
-                toast({ title: "Some updates failed", description: result.errors.join("; "), variant: "error" });
+                // No updates detected — sync catalog to check for new ones
+                const result = await pullPluginMarketplace();
+                await load();
+                if (result.updated.length > 0) {
+                  toast({ title: `Updated ${result.updated.length} plugin(s)`, description: result.updated.join(", "), variant: "success" });
+                } else {
+                  toast({ title: "All plugins up to date", description: `Synced ${result.catalogSynced} plugins from catalog`, variant: "info" });
+                }
+                if (result.errors.length > 0) {
+                  toast({ title: "Some updates failed", description: result.errors.join("; "), variant: "error" });
+                }
               }
             } catch (err) {
               toast({ title: "Plugin update failed", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
