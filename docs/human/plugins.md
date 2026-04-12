@@ -279,9 +279,9 @@ Stack plugins register framework-specific configurations that projects can add. 
 
 The editor plugin provides the file editing API used by the dashboard Settings page and Knowledge editor. It exposes read/write/tree endpoints for config files and project files.
 
-### plugin-adminer
+### WhoDB
 
-Provides a database management portal at `/db-portal`. Ships with Adminer — a lightweight UI for PostgreSQL, MariaDB, and SQLite. The Adminer container is reverse-proxied through the gateway at `/adminer/*`.
+Modern database explorer accessible at `https://db.ai.on`. Supports PostgreSQL, MariaDB, SQLite, Redis, and MongoDB with spreadsheet editing, schema visualization, AI-powered SQL (via configured Claude/GPT/Ollama), and data export. The Aion agent can query databases directly via the `query_database` tool.
 
 ### Channel Plugins
 
