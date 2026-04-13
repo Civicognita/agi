@@ -27,7 +27,7 @@ export function ActiveDownloads() {
       try {
         const models = await fetchHFInstalledModels();
         if (active) {
-          setDownloading(models.filter((m) => m.status === "downloading"));
+          setDownloading(models.filter((m) => m.status === "downloading" || m.status === "starting"));
         }
       } catch {
         // HF not enabled or network error — silently ignore
@@ -51,14 +51,15 @@ export function ActiveDownloads() {
       <div className="text-[11px] text-blue max-w-[200px] truncate">
         {downloading.length === 1 ? (
           <span>
-            Downloading <span className="font-medium">{downloading[0]!.displayName}</span>
-            {downloading[0]!.fileSizeBytes > 0 && (
+            {downloading[0]!.status === "starting" ? "Starting" : "Downloading"}{" "}
+            <span className="font-medium">{downloading[0]!.displayName}</span>
+            {downloading[0]!.status === "downloading" && downloading[0]!.fileSizeBytes > 0 && (
               <span className="text-blue/70"> ({formatBytes(downloading[0]!.fileSizeBytes)})</span>
             )}
           </span>
         ) : (
           <span>
-            Downloading <span className="font-medium">{String(downloading.length)} models</span>
+            <span className="font-medium">{String(downloading.length)} models</span> in progress
           </span>
         )}
       </div>

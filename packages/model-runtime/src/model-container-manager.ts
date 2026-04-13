@@ -120,6 +120,23 @@ export class ModelContainerManager {
     const modelContainerPath = containerConfig.modelContainerPath;
     const modelFilename = containerConfig.modelFilename ?? model.modelFilename ?? "";
 
+    // Ensure container image is available — pull if not present
+    try {
+      execFileSync("podman", ["image", "exists", image], { stdio: "pipe", timeout: 10_000 });
+    } catch {
+      // Image not present locally — pull it
+      this.events.emit("model:starting", model.id);
+      try {
+        execFileSync("podman", ["pull", image], { stdio: "pipe", timeout: 300_000 });
+      } catch (pullErr) {
+        this.allocatedPorts.delete(port);
+        const msg = pullErr instanceof Error ? pullErr.message : String(pullErr);
+        const errorMsg = `Container image "${image}" is not available and could not be pulled. ${msg}`;
+        this.events.emit("model:error", model.id, errorMsg);
+        throw new Error(errorMsg);
+      }
+    }
+
     // Build environment from config, plus mandatory HF_TASK and MODEL_PATH
     const envArgs: string[] = [
       "-e", `HF_TASK=${model.pipelineTag}`,

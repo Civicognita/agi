@@ -321,23 +321,29 @@ export function registerHfRoutes(
         const containerConfig = capabilityResolver.buildContainerConfig(model);
 
         modelStore.updateStatus(modelId, "starting");
-        const containerState = await containerManager.start(model, containerConfig);
 
-        modelStore.bindContainer(
-          modelId,
-          containerState.containerId,
-          containerState.port,
-          containerState.containerName,
-        );
-        modelStore.updateStatus(modelId, "running");
+        // Fire-and-forget: container start may take minutes (image pull + model load)
+        void containerManager
+          .start(model, containerConfig)
+          .then((containerState) => {
+            modelStore.bindContainer(
+              modelId,
+              containerState.containerId,
+              containerState.port,
+              containerState.containerName,
+            );
+          })
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            modelStore.setError(modelId, msg);
+          });
 
-        return reply.send(containerState);
+        return reply.send({ ok: true, status: "starting" });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         const modelId = decodeURIComponent(request.params.modelId);
         if (modelId) {
           modelStore.setError(modelId, msg);
-          modelStore.updateStatus(modelId, "error");
         }
         return reply.code(500).send({ error: msg });
       }

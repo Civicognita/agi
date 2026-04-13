@@ -135,13 +135,13 @@ function getStatusColor(s: HFModelStatus): string {
 
 function getStatusLabel(s: HFModelStatus): string {
   switch (s) {
-    case "downloading": return "Downloading";
-    case "ready": return "Ready";
-    case "starting": return "Starting";
+    case "downloading": return "Downloading...";
+    case "ready": return "Ready to start";
+    case "starting": return "Starting (pulling image & loading model)...";
     case "running": return "Running";
-    case "stopping": return "Stopping";
+    case "stopping": return "Stopping...";
     case "error": return "Error";
-    case "removing": return "Removing";
+    case "removing": return "Removing...";
   }
 }
 
@@ -724,7 +724,7 @@ function InstalledTab() {
                   className={cn(
                     "inline-block w-2 h-2 rounded-full",
                     getStatusColor(model.status),
-                    model.status === "downloading" && "animate-pulse",
+                    (model.status === "downloading" || model.status === "starting") && "animate-pulse",
                   )}
                 />
                 <span className="text-[11px] text-muted-foreground">{getStatusLabel(model.status)}</span>
