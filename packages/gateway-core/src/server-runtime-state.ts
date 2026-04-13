@@ -4328,8 +4328,8 @@ export async function createGatewayRuntimeState(
     if (!def) return reply.code(404).send({ error: `MApp "${id}" not found` });
 
     const dependencies = def.modelDependencies ?? [];
-    const statuses = dependencies.map((dep) => {
-      const model = deps.modelStore?.getById(dep.modelId);
+    const statuses = await Promise.all(dependencies.map(async (dep) => {
+      const model = await deps.modelStore?.getById(dep.modelId);
       return {
         modelId: dep.modelId,
         label: dep.label,
@@ -4339,7 +4339,7 @@ export async function createGatewayRuntimeState(
         running: model?.status === "running",
         status: model?.status ?? "not-installed",
       };
-    });
+    }));
 
     const allRequiredRunning = statuses
       .filter((s) => s.required)

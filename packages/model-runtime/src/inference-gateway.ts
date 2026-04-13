@@ -141,7 +141,7 @@ export class InferenceGateway {
     body?: unknown,
     method?: string,
   ): Promise<unknown> {
-    const model = this.modelStore.getById(modelId);
+    const model = await this.modelStore.getById(modelId);
 
     if (!model) {
       throw new Error(`Model not found: "${modelId}"`);
@@ -203,7 +203,7 @@ export class InferenceGateway {
       );
     }
 
-    this.modelStore.touchLastUsed(modelId);
+    await this.modelStore.touchLastUsed(modelId);
 
     return result;
   }
@@ -227,7 +227,7 @@ export class InferenceGateway {
     endpoint: string,
     body: unknown,
   ): Promise<T> {
-    const model = this.modelStore.getById(modelId);
+    const model = await this.modelStore.getById(modelId);
 
     if (!model) {
       throw new Error(`Model not found: "${modelId}"`);
@@ -288,7 +288,7 @@ export class InferenceGateway {
       );
     }
 
-    this.modelStore.touchLastUsed(modelId);
+    await this.modelStore.touchLastUsed(modelId);
 
     return result;
   }

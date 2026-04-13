@@ -235,7 +235,7 @@ export function registerHfRoutes(
       const downloadedAt = new Date().toISOString();
 
       // Add to store immediately as "downloading"
-      modelStore.addModel({
+      await modelStore.addModel({
         id,
         revision,
         displayName: modelInfo.modelId ?? id,
@@ -277,10 +277,10 @@ export function registerHfRoutes(
             filename,
             destPath,
           });
-          modelStore.updateStatus(id, "ready");
+          await modelStore.updateStatus(id, "ready");
 
           // Check if total disk usage exceeds the available disk space (warn only — no auto-delete)
-          const totalUsage = modelStore.getTotalDiskUsage();
+          const totalUsage = await modelStore.getTotalDiskUsage();
           const diskInfo = hardwareProfiler.getProfile().disk;
           if (diskInfo.availableBytes > 0 && totalUsage > diskInfo.availableBytes * 0.9) {
             const usedGB = (totalUsage / (1024 ** 3)).toFixed(1);
@@ -289,7 +289,7 @@ export function registerHfRoutes(
           }
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          modelStore.setError(id, msg);
+          await modelStore.setError(id, msg);
         }
       })();
 
@@ -309,7 +309,7 @@ export function registerHfRoutes(
           return reply.code(400).send({ error: "modelId is required" });
         }
 
-        const model = modelStore.getById(modelId);
+        const model = await modelStore.getById(modelId);
         if (!model) {
           return reply.code(404).send({ error: `Model not found: ${modelId}` });
         }
@@ -326,7 +326,7 @@ export function registerHfRoutes(
         }
 
         // Remove from store
-        modelStore.remove(modelId);
+        await modelStore.remove(modelId);
 
         return reply.send({ ok: true });
       } catch (err) {
@@ -337,7 +337,7 @@ export function registerHfRoutes(
 
   fastify.get("/api/hf/models", async (_request, reply) => {
     try {
-      const models = modelStore.getAll();
+      const models = await modelStore.getAll();
       return reply.send(models);
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
@@ -354,29 +354,29 @@ export function registerHfRoutes(
           return reply.code(400).send({ error: "modelId is required" });
         }
 
-        const model = modelStore.getById(modelId);
+        const model = await modelStore.getById(modelId);
         if (!model) {
           return reply.code(404).send({ error: `Model not found: ${modelId}` });
         }
 
         const containerConfig = capabilityResolver.buildContainerConfig(model);
 
-        modelStore.updateStatus(modelId, "starting");
+        await modelStore.updateStatus(modelId, "starting");
 
         // Fire-and-forget: container start may take minutes (image pull + model load)
         void containerManager
           .start(model, containerConfig)
-          .then((containerState) => {
-            modelStore.bindContainer(
+          .then(async (containerState) => {
+            await modelStore.bindContainer(
               modelId,
               containerState.containerId,
               containerState.port,
               containerState.containerName,
             );
           })
-          .catch((err: unknown) => {
+          .catch(async (err: unknown) => {
             const msg = err instanceof Error ? err.message : String(err);
-            modelStore.setError(modelId, msg);
+            await modelStore.setError(modelId, msg);
           });
 
         return reply.send({ ok: true, status: "starting" });
@@ -384,7 +384,7 @@ export function registerHfRoutes(
         const msg = err instanceof Error ? err.message : String(err);
         const modelId = decodeURIComponent(request.params.modelId);
         if (modelId) {
-          modelStore.setError(modelId, msg);
+          await modelStore.setError(modelId, msg);
         }
         return reply.code(500).send({ error: msg });
       }
@@ -401,15 +401,15 @@ export function registerHfRoutes(
           return reply.code(400).send({ error: "modelId is required" });
         }
 
-        const model = modelStore.getById(modelId);
+        const model = await modelStore.getById(modelId);
         if (!model) {
           return reply.code(404).send({ error: `Model not found: ${modelId}` });
         }
 
-        modelStore.updateStatus(modelId, "stopping");
+        await modelStore.updateStatus(modelId, "stopping");
         await containerManager.stop(modelId);
-        modelStore.unbindContainer(modelId);
-        modelStore.updateStatus(modelId, "ready");
+        await modelStore.unbindContainer(modelId);
+        await modelStore.updateStatus(modelId, "ready");
 
         return reply.send({ ok: true });
       } catch (err) {
@@ -428,7 +428,7 @@ export function registerHfRoutes(
           return reply.code(400).send({ error: "modelId is required" });
         }
 
-        const model = modelStore.getById(modelId);
+        const model = await modelStore.getById(modelId);
         if (!model) {
           return reply.code(404).send({ error: `Model not found: ${modelId}` });
         }
@@ -455,7 +455,7 @@ export function registerHfRoutes(
           return reply.code(400).send({ error: "modelId is required" });
         }
 
-        const model = modelStore.getById(modelId);
+        const model = await modelStore.getById(modelId);
         if (!model) {
           return reply.code(404).send({ error: `Model not found: ${modelId}` });
         }
@@ -571,7 +571,7 @@ export function registerHfRoutes(
           return reply.code(400).send({ error: "modelId is required" });
         }
 
-        const model = modelStore.getById(modelId);
+        const model = await modelStore.getById(modelId);
         if (!model) {
           return reply.code(404).send({ error: `Model not found: ${modelId}` });
         }
@@ -601,7 +601,7 @@ export function registerHfRoutes(
           return reply.code(400).send({ error: "modelId is required" });
         }
 
-        const model = modelStore.getById(modelId);
+        const model = await modelStore.getById(modelId);
         if (!model) {
           return reply.code(404).send({ error: `Model not found: ${modelId}` });
         }
@@ -687,7 +687,7 @@ export function registerHfRoutes(
       const { id, revision = "main" } = body;
 
       // Check if already installed
-      const existing = datasetStore.getById(id);
+      const existing = await datasetStore.getById(id);
       if (existing && existing.status !== "error") {
         return reply.code(409).send({ error: `Dataset already installed: ${id}` });
       }
@@ -726,9 +726,9 @@ export function registerHfRoutes(
 
       if (existing) {
         // Re-install after error — remove stale entry first
-        datasetStore.remove(id);
+        await datasetStore.remove(id);
       }
-      datasetStore.addDataset(datasetEntry);
+      await datasetStore.addDataset(datasetEntry);
 
       // Fire-and-forget: download ALL dataset files
       void (async () => {
@@ -744,10 +744,10 @@ export function registerHfRoutes(
               destPath,
             });
           }
-          datasetStore.updateStatus(id, "ready");
+          await datasetStore.updateStatus(id, "ready");
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          datasetStore.setError(id, msg);
+          await datasetStore.setError(id, msg);
         }
       })();
 
@@ -759,7 +759,7 @@ export function registerHfRoutes(
 
   fastify.get("/api/hf/datasets", async (_request, reply) => {
     try {
-      const datasets = datasetStore.getAll();
+      const datasets = await datasetStore.getAll();
       return reply.send(datasets);
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
@@ -776,12 +776,12 @@ export function registerHfRoutes(
           return reply.code(400).send({ error: "datasetId is required" });
         }
 
-        const dataset = datasetStore.getById(datasetId);
+        const dataset = await datasetStore.getById(datasetId);
         if (!dataset) {
           return reply.code(404).send({ error: `Dataset not found: ${datasetId}` });
         }
 
-        datasetStore.updateStatus(datasetId, "removing");
+        await datasetStore.updateStatus(datasetId, "removing");
 
         // Remove dataset files from disk
         if (dataset.filePath) {
@@ -789,7 +789,7 @@ export function registerHfRoutes(
         }
 
         // Remove from store
-        datasetStore.remove(datasetId);
+        await datasetStore.remove(datasetId);
 
         return reply.send({ ok: true });
       } catch (err) {
@@ -944,7 +944,7 @@ export function registerHfRoutes(
 
         // Add a placeholder entry with "building" status
         const downloadedAt = new Date().toISOString();
-        modelStore.addModel({
+        await modelStore.addModel({
           id: modelId,
           revision,
           displayName: customDefinition.label,
@@ -963,11 +963,11 @@ export function registerHfRoutes(
         void (async () => {
           try {
             const imageTag = await customContainerBuilder.build(modelId, customDefinition);
-            modelStore.updateStatus(modelId, "ready");
+            await modelStore.updateStatus(modelId, "ready");
             // Store the built image tag so container manager uses it
-            const existing = modelStore.getById(modelId);
+            const existing = await modelStore.getById(modelId);
             if (existing) {
-              modelStore.addModel({
+              await modelStore.addModel({
                 ...existing,
                 containerImage: imageTag,
                 status: "ready",
@@ -975,7 +975,7 @@ export function registerHfRoutes(
             }
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            modelStore.setError(modelId, msg);
+            await modelStore.setError(modelId, msg);
           }
         })();
 
@@ -1000,7 +1000,7 @@ export function registerHfRoutes(
 
       const resolvedRuntime = (body.runtimeType as "llm" | "general" | "diffusion" | "custom" | undefined) ?? runtimeType;
 
-      modelStore.addModel({
+      await modelStore.addModel({
         id: modelId,
         revision,
         displayName: modelInfo.modelId ?? modelId,
@@ -1033,10 +1033,10 @@ export function registerHfRoutes(
             });
           }
           await hfClient.downloadFile({ modelId, revision, filename, destPath });
-          modelStore.updateStatus(modelId, "ready");
+          await modelStore.updateStatus(modelId, "ready");
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          modelStore.setError(modelId, msg);
+          await modelStore.setError(modelId, msg);
         }
       })();
 

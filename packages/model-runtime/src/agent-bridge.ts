@@ -175,7 +175,7 @@ export class ModelAgentBridge {
   private readonly registeredProviders = new Map<string, ProviderRecord>();
 
   /** Bound listener references — retained for off() calls on destroy(). */
-  private readonly boundOnModelStarted: (modelId: string, port: number) => void;
+  private readonly boundOnModelStarted: (modelId: string, port: number) => void | Promise<void>;
   private readonly boundOnModelStopped: (modelId: string) => void;
 
   constructor(
@@ -221,8 +221,8 @@ export class ModelAgentBridge {
    * Returns an empty array if the model is not found, is an LLM (registered as
    * a provider instead), or has no matching tool definition.
    */
-  buildToolDefinitions(modelId: string): AgentToolDef[] {
-    const model = this.modelStore.getById(modelId);
+  async buildToolDefinitions(modelId: string): Promise<AgentToolDef[]> {
+    const model = await this.modelStore.getById(modelId);
     if (model === undefined) return [];
 
     const { pipelineTag } = model;
@@ -249,8 +249,8 @@ export class ModelAgentBridge {
   // Private: event handlers
   // ---------------------------------------------------------------------------
 
-  private onModelStarted(modelId: string, port: number): void {
-    const model = this.modelStore.getById(modelId);
+  private async onModelStarted(modelId: string, port: number): Promise<void> {
+    const model = await this.modelStore.getById(modelId);
     if (model === undefined) return;
 
     const { pipelineTag, displayName, id } = model;
@@ -273,7 +273,7 @@ export class ModelAgentBridge {
         return;
       }
 
-      const defs = this.buildToolDefinitions(modelId);
+      const defs = await this.buildToolDefinitions(modelId);
       const toolNames = defs.map((d) => d.name);
       if (toolNames.length > 0) {
         this.registeredTools.set(modelId, toolNames);

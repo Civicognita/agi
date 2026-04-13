@@ -1,16 +1,16 @@
 /**
- * ModelStore — SQLite-backed storage for installed HuggingFace models.
+ * ModelStore — PostgreSQL-backed storage for installed HuggingFace models.
  *
  * Tracks model lifecycle state, download progress, and container bindings.
- * Database lives at ~/.agi/models/index.db (caller supplies the path).
+ * Uses the ID service's PostgreSQL instance with data isolated in the `agi` schema.
+ * Caller supplies a pg Pool; call initialize() before using any other methods.
  */
 
-import Database from "better-sqlite3";
-import type { Database as DatabaseType, Statement } from "better-sqlite3";
+import type { Pool } from "pg";
 import type { InstalledModel, ModelEndpoint, ModelStatus, ModelRuntimeType, DownloadProgress } from "./types.js";
 
 // ---------------------------------------------------------------------------
-// DB row types — snake_case as returned by better-sqlite3
+// DB row types — snake_case as returned by pg
 // ---------------------------------------------------------------------------
 
 interface ModelRow {
@@ -21,7 +21,7 @@ interface ModelRow {
   runtime_type: string;
   file_path: string;
   model_filename: string | null;
-  file_size_bytes: number;
+  file_size_bytes: string; // pg returns BIGINT as string
   quantization: string | null;
   status: string;
   downloaded_at: string;
@@ -38,77 +38,30 @@ interface ModelRow {
 interface DownloadProgressRow {
   model_id: string;
   filename: string;
-  total_bytes: number;
-  downloaded_bytes: number;
+  total_bytes: string; // pg returns BIGINT as string
+  downloaded_bytes: string; // pg returns BIGINT as string
   speed_bps: number;
   started_at: string;
 }
 
 // ---------------------------------------------------------------------------
-// Named-parameter shapes used by prepared statements
+// Schema SQL
 // ---------------------------------------------------------------------------
 
-interface InsertModelParams {
-  id: string;
-  revision: string;
-  display_name: string;
-  pipeline_tag: string;
-  runtime_type: string;
-  file_path: string;
-  model_filename: string | null;
-  file_size_bytes: number;
-  quantization: string | null;
-  status: string;
-  downloaded_at: string;
-  last_used_at: string | null;
-  error: string | null;
-  container_image: string | null;
-  source_repo: string | null;
-  endpoints_json: string | null;
-}
+const SCHEMA_SQL = `
+CREATE SCHEMA IF NOT EXISTS agi;
 
-interface UpdateStatusParams {
-  id: string;
-  status: string;
-}
-
-interface UpdateErrorParams {
-  id: string;
-  error: string;
-}
-
-interface BindContainerParams {
-  id: string;
-  container_id: string;
-  container_port: number;
-  container_name: string;
-}
-
-interface UpsertProgressParams {
-  model_id: string;
-  filename: string;
-  total_bytes: number;
-  downloaded_bytes: number;
-  speed_bps: number;
-  started_at: string;
-}
-
-// ---------------------------------------------------------------------------
-// Schema
-// ---------------------------------------------------------------------------
-
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS models (
+CREATE TABLE IF NOT EXISTS agi.models (
   id TEXT PRIMARY KEY,
   revision TEXT NOT NULL,
   display_name TEXT NOT NULL,
   pipeline_tag TEXT NOT NULL,
-  runtime_type TEXT NOT NULL CHECK(runtime_type IN ('llm', 'diffusion', 'general', 'custom')),
+  runtime_type TEXT NOT NULL,
   file_path TEXT NOT NULL,
   model_filename TEXT,
-  file_size_bytes INTEGER NOT NULL,
+  file_size_bytes BIGINT NOT NULL DEFAULT 0,
   quantization TEXT,
-  status TEXT NOT NULL DEFAULT 'downloading' CHECK(status IN ('downloading', 'ready', 'starting', 'running', 'stopping', 'error', 'removing')),
+  status TEXT NOT NULL DEFAULT 'downloading',
   downloaded_at TEXT NOT NULL,
   last_used_at TEXT,
   error TEXT,
@@ -120,23 +73,14 @@ CREATE TABLE IF NOT EXISTS models (
   endpoints_json TEXT
 );
 
-CREATE TABLE IF NOT EXISTS download_progress (
-  model_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS agi.download_progress (
+  model_id TEXT PRIMARY KEY REFERENCES agi.models(id) ON DELETE CASCADE,
   filename TEXT NOT NULL,
-  total_bytes INTEGER NOT NULL,
-  downloaded_bytes INTEGER NOT NULL,
+  total_bytes BIGINT NOT NULL,
+  downloaded_bytes BIGINT NOT NULL,
   speed_bps REAL NOT NULL DEFAULT 0,
-  started_at TEXT NOT NULL,
-  FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
+  started_at TEXT NOT NULL
 );
-`;
-
-// Migration: add new columns to existing databases that pre-date this schema.
-// Using a separate exec block so existing installs are not broken.
-const MIGRATIONS = `
-ALTER TABLE models ADD COLUMN container_image TEXT;
-ALTER TABLE models ADD COLUMN source_repo TEXT;
-ALTER TABLE models ADD COLUMN endpoints_json TEXT;
 `;
 
 // ---------------------------------------------------------------------------
@@ -144,210 +88,23 @@ ALTER TABLE models ADD COLUMN endpoints_json TEXT;
 // ---------------------------------------------------------------------------
 
 export class ModelStore {
-  private db: DatabaseType;
-  private stmts: {
-    insertModel: Statement;
-    updateStatus: Statement;
-    updateError: Statement;
-    bindContainer: Statement;
-    unbindContainer: Statement;
-    updateLastUsed: Statement;
-    getById: Statement;
-    getAll: Statement;
-    getByStatus: Statement;
-    getByRuntimeType: Statement;
-    getRunning: Statement;
-    deleteModel: Statement;
-    upsertProgress: Statement;
-    getProgress: Statement;
-    deleteProgress: Statement;
-  };
+  constructor(private readonly pool: Pool) {}
 
-  constructor(dbPath: string) {
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
+  // ---------------------------------------------------------------------------
+  // Lifecycle
+  // ---------------------------------------------------------------------------
 
-    // If the database is corrupt or has stale schema artifacts, nuke and recreate.
-    // This is just an index — model files on disk are unaffected.
-    try {
-      this.migrateCheckConstraint();
-      this.db.exec(SCHEMA);
-    } catch {
-      // Schema setup failed — wipe and recreate
-      this.db.close();
-      const { unlinkSync } = require("node:fs") as typeof import("node:fs");
-      try { unlinkSync(dbPath); } catch { /* may not exist */ }
-      try { unlinkSync(dbPath + "-wal"); } catch { /* may not exist */ }
-      try { unlinkSync(dbPath + "-shm"); } catch { /* may not exist */ }
-      this.db = new Database(dbPath);
-      this.db.pragma("journal_mode = WAL");
-      this.db.pragma("foreign_keys = ON");
-      this.db.exec(SCHEMA);
-    }
+  async initialize(): Promise<void> {
+    await this.pool.query(SCHEMA_SQL);
+  }
 
-    // Run each migration statement individually so a failed one (column exists) does not abort the rest.
-    for (const stmt of MIGRATIONS.split(";").map((s) => s.trim()).filter(Boolean)) {
-      try {
-        this.db.exec(stmt);
-      } catch {
-        // Column already exists — safe to ignore.
-      }
-    }
-
-    this.stmts = {
-      insertModel: this.db.prepare<[InsertModelParams]>(`
-        INSERT INTO models (
-          id, revision, display_name, pipeline_tag, runtime_type,
-          file_path, model_filename, file_size_bytes, quantization,
-          status, downloaded_at, last_used_at, error,
-          container_image, source_repo, endpoints_json
-        ) VALUES (
-          @id, @revision, @display_name, @pipeline_tag, @runtime_type,
-          @file_path, @model_filename, @file_size_bytes, @quantization,
-          @status, @downloaded_at, @last_used_at, @error,
-          @container_image, @source_repo, @endpoints_json
-        )
-      `),
-
-      updateStatus: this.db.prepare<[UpdateStatusParams]>(`
-        UPDATE models
-        SET status = @status,
-            error = CASE WHEN @status != 'error' THEN NULL ELSE error END
-        WHERE id = @id
-      `),
-
-      updateError: this.db.prepare<[UpdateErrorParams]>(`
-        UPDATE models SET status = 'error', error = @error WHERE id = @id
-      `),
-
-      bindContainer: this.db.prepare<[BindContainerParams]>(`
-        UPDATE models
-        SET container_id = @container_id,
-            container_port = @container_port,
-            container_name = @container_name,
-            status = 'running'
-        WHERE id = @id
-      `),
-
-      unbindContainer: this.db.prepare<[{ id: string }]>(`
-        UPDATE models
-        SET container_id = NULL,
-            container_port = NULL,
-            container_name = NULL,
-            status = 'ready'
-        WHERE id = @id
-      `),
-
-      updateLastUsed: this.db.prepare<[{ id: string; last_used_at: string }]>(`
-        UPDATE models SET last_used_at = @last_used_at WHERE id = @id
-      `),
-
-      getById: this.db.prepare<[string], ModelRow>(`
-        SELECT * FROM models WHERE id = ?
-      `),
-
-      getAll: this.db.prepare<[], ModelRow>(`
-        SELECT * FROM models ORDER BY downloaded_at DESC
-      `),
-
-      getByStatus: this.db.prepare<[string], ModelRow>(`
-        SELECT * FROM models WHERE status = ? ORDER BY downloaded_at DESC
-      `),
-
-      getByRuntimeType: this.db.prepare<[string], ModelRow>(`
-        SELECT * FROM models WHERE runtime_type = ? ORDER BY downloaded_at DESC
-      `),
-
-      getRunning: this.db.prepare<[], ModelRow>(`
-        SELECT * FROM models WHERE status = 'running' ORDER BY downloaded_at DESC
-      `),
-
-      deleteModel: this.db.prepare<[string]>(`
-        DELETE FROM models WHERE id = ?
-      `),
-
-      upsertProgress: this.db.prepare<[UpsertProgressParams]>(`
-        INSERT INTO download_progress (model_id, filename, total_bytes, downloaded_bytes, speed_bps, started_at)
-        VALUES (@model_id, @filename, @total_bytes, @downloaded_bytes, @speed_bps, @started_at)
-        ON CONFLICT (model_id) DO UPDATE SET
-          filename = excluded.filename,
-          total_bytes = excluded.total_bytes,
-          downloaded_bytes = excluded.downloaded_bytes,
-          speed_bps = excluded.speed_bps,
-          started_at = excluded.started_at
-      `),
-
-      getProgress: this.db.prepare<[string], DownloadProgressRow>(`
-        SELECT * FROM download_progress WHERE model_id = ?
-      `),
-
-      deleteProgress: this.db.prepare<[string]>(`
-        DELETE FROM download_progress WHERE model_id = ?
-      `),
-    };
+  async close(): Promise<void> {
+    await this.pool.end();
   }
 
   // ---------------------------------------------------------------------------
   // Row mapping
   // ---------------------------------------------------------------------------
-
-  /**
-   * Repair the database if it has stale references or old CHECK constraints.
-   *
-   * Handles two scenarios:
-   * 1. Old CHECK constraint (missing 'custom') — drop + recreate models table
-   * 2. Stale foreign key in download_progress referencing models_old — drop + recreate
-   */
-  private migrateCheckConstraint(): void {
-    try {
-      // Check for stale references to models_old (from a failed prior migration)
-      const dpInfo = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='download_progress'").get() as { sql: string } | undefined;
-      const hasStaleRef = dpInfo?.sql?.includes("models_old") ?? false;
-
-      // Check if models table needs constraint migration
-      const tableInfo = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='models'").get() as { sql: string } | undefined;
-      const needsConstraintMigration = tableInfo?.sql !== undefined && !tableInfo.sql.includes("'custom'");
-
-      if (!hasStaleRef && !needsConstraintMigration) return; // all good
-
-      // Save existing model data
-      let rows: unknown[] = [];
-      try {
-        rows = this.db.prepare("SELECT * FROM models").all();
-      } catch {
-        // models table may not exist if prior migration left things broken
-      }
-
-      // Nuclear option: drop ALL tables and recreate clean
-      this.db.exec("DROP TABLE IF EXISTS download_progress");
-      this.db.exec("DROP TABLE IF EXISTS models_old"); // cleanup from failed prior migration
-      this.db.exec("DROP TABLE IF EXISTS models");
-      this.db.exec(SCHEMA);
-
-      // Restore data
-      if (rows.length > 0) {
-        const insert = this.db.prepare(`
-          INSERT OR IGNORE INTO models (
-            id, revision, display_name, pipeline_tag, runtime_type,
-            file_path, model_filename, file_size_bytes, quantization,
-            status, downloaded_at, last_used_at, error,
-            container_id, container_port, container_name
-          ) VALUES (
-            @id, @revision, @display_name, @pipeline_tag, @runtime_type,
-            @file_path, @model_filename, @file_size_bytes, @quantization,
-            @status, @downloaded_at, @last_used_at, @error,
-            @container_id, @container_port, @container_name
-          )
-        `);
-        for (const row of rows) {
-          try { insert.run(row as Record<string, unknown>); } catch { /* skip bad rows */ }
-        }
-      }
-    } catch {
-      // First run or unrecoverable — SCHEMA will create fresh tables
-    }
-  }
 
   private mapRow(row: ModelRow): InstalledModel {
     let endpoints: ModelEndpoint[] | undefined;
@@ -366,7 +123,7 @@ export class ModelStore {
       runtimeType: row.runtime_type as ModelRuntimeType,
       filePath: row.file_path,
       modelFilename: row.model_filename ?? undefined,
-      fileSizeBytes: row.file_size_bytes,
+      fileSizeBytes: Number(row.file_size_bytes),
       quantization: row.quantization ?? undefined,
       status: row.status as ModelStatus,
       downloadedAt: row.downloaded_at,
@@ -382,13 +139,15 @@ export class ModelStore {
   }
 
   private mapProgressRow(row: DownloadProgressRow): DownloadProgress {
-    const remaining = row.total_bytes - row.downloaded_bytes;
+    const totalBytes = Number(row.total_bytes);
+    const downloadedBytes = Number(row.downloaded_bytes);
+    const remaining = totalBytes - downloadedBytes;
     const etaSeconds = row.speed_bps > 0 ? remaining / row.speed_bps : 0;
     return {
       modelId: row.model_id,
       filename: row.filename,
-      totalBytes: row.total_bytes,
-      downloadedBytes: row.downloaded_bytes,
+      totalBytes,
+      downloadedBytes,
       speedBps: row.speed_bps,
       etaSeconds,
       startedAt: row.started_at,
@@ -399,116 +158,181 @@ export class ModelStore {
   // Model CRUD
   // ---------------------------------------------------------------------------
 
-  addModel(model: Omit<InstalledModel, "containerId" | "containerPort" | "containerName">): void {
-    this.stmts.insertModel.run({
-      id: model.id,
-      revision: model.revision,
-      display_name: model.displayName,
-      pipeline_tag: model.pipelineTag,
-      runtime_type: model.runtimeType,
-      file_path: model.filePath,
-      model_filename: model.modelFilename ?? null,
-      file_size_bytes: model.fileSizeBytes,
-      quantization: model.quantization ?? null,
-      status: model.status,
-      downloaded_at: model.downloadedAt,
-      last_used_at: model.lastUsedAt ?? null,
-      error: model.error ?? null,
-      container_image: model.containerImage ?? null,
-      source_repo: model.sourceRepo ?? null,
-      endpoints_json: model.endpoints ? JSON.stringify(model.endpoints) : null,
-    });
+  async addModel(model: Omit<InstalledModel, "containerId" | "containerPort" | "containerName">): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO agi.models (
+        id, revision, display_name, pipeline_tag, runtime_type,
+        file_path, model_filename, file_size_bytes, quantization,
+        status, downloaded_at, last_used_at, error,
+        container_image, source_repo, endpoints_json
+      ) VALUES (
+        $1, $2, $3, $4, $5,
+        $6, $7, $8, $9,
+        $10, $11, $12, $13,
+        $14, $15, $16
+      ) ON CONFLICT (id) DO NOTHING`,
+      [
+        model.id,
+        model.revision,
+        model.displayName,
+        model.pipelineTag,
+        model.runtimeType,
+        model.filePath,
+        model.modelFilename ?? null,
+        model.fileSizeBytes,
+        model.quantization ?? null,
+        model.status,
+        model.downloadedAt,
+        model.lastUsedAt ?? null,
+        model.error ?? null,
+        model.containerImage ?? null,
+        model.sourceRepo ?? null,
+        model.endpoints ? JSON.stringify(model.endpoints) : null,
+      ],
+    );
   }
 
-  updateStatus(id: string, status: ModelStatus): void {
-    this.stmts.updateStatus.run({ id, status });
+  async updateStatus(id: string, status: ModelStatus): Promise<void> {
+    await this.pool.query(
+      `UPDATE agi.models
+       SET status = $1,
+           error = CASE WHEN $1 != 'error' THEN NULL ELSE error END
+       WHERE id = $2`,
+      [status, id],
+    );
   }
 
-  setError(id: string, error: string): void {
-    this.stmts.updateError.run({ id, error });
+  async setError(id: string, error: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE agi.models SET status = 'error', error = $1 WHERE id = $2`,
+      [error, id],
+    );
   }
 
-  bindContainer(id: string, containerId: string, port: number, containerName: string): void {
-    this.stmts.bindContainer.run({
-      id,
-      container_id: containerId,
-      container_port: port,
-      container_name: containerName,
-    });
+  async bindContainer(id: string, containerId: string, port: number, containerName: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE agi.models
+       SET container_id = $1,
+           container_port = $2,
+           container_name = $3,
+           status = 'running'
+       WHERE id = $4`,
+      [containerId, port, containerName, id],
+    );
   }
 
-  unbindContainer(id: string): void {
-    this.stmts.unbindContainer.run({ id });
+  async unbindContainer(id: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE agi.models
+       SET container_id = NULL,
+           container_port = NULL,
+           container_name = NULL,
+           status = 'ready'
+       WHERE id = $1`,
+      [id],
+    );
   }
 
-  touchLastUsed(id: string): void {
-    this.stmts.updateLastUsed.run({ id, last_used_at: new Date().toISOString() });
+  async touchLastUsed(id: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE agi.models SET last_used_at = $1 WHERE id = $2`,
+      [new Date().toISOString(), id],
+    );
   }
 
-  getById(id: string): InstalledModel | undefined {
-    const row = this.stmts.getById.get(id) as ModelRow | undefined;
+  async getById(id: string): Promise<InstalledModel | undefined> {
+    const result = await this.pool.query<ModelRow>(
+      `SELECT * FROM agi.models WHERE id = $1`,
+      [id],
+    );
+    const row = result.rows[0];
     return row ? this.mapRow(row) : undefined;
   }
 
-  getAll(): InstalledModel[] {
-    const rows = this.stmts.getAll.all() as ModelRow[];
-    return rows.map((r) => this.mapRow(r));
+  async getAll(): Promise<InstalledModel[]> {
+    const result = await this.pool.query<ModelRow>(
+      `SELECT * FROM agi.models ORDER BY downloaded_at DESC`,
+    );
+    return result.rows.map((r) => this.mapRow(r));
   }
 
-  getByStatus(status: ModelStatus): InstalledModel[] {
-    const rows = this.stmts.getByStatus.all(status) as ModelRow[];
-    return rows.map((r) => this.mapRow(r));
+  async getByStatus(status: ModelStatus): Promise<InstalledModel[]> {
+    const result = await this.pool.query<ModelRow>(
+      `SELECT * FROM agi.models WHERE status = $1 ORDER BY downloaded_at DESC`,
+      [status],
+    );
+    return result.rows.map((r) => this.mapRow(r));
   }
 
-  getByRuntimeType(type: ModelRuntimeType): InstalledModel[] {
-    const rows = this.stmts.getByRuntimeType.all(type) as ModelRow[];
-    return rows.map((r) => this.mapRow(r));
+  async getByRuntimeType(type: ModelRuntimeType): Promise<InstalledModel[]> {
+    const result = await this.pool.query<ModelRow>(
+      `SELECT * FROM agi.models WHERE runtime_type = $1 ORDER BY downloaded_at DESC`,
+      [type],
+    );
+    return result.rows.map((r) => this.mapRow(r));
   }
 
-  getRunning(): InstalledModel[] {
-    const rows = this.stmts.getRunning.all() as ModelRow[];
-    return rows.map((r) => this.mapRow(r));
+  async getRunning(): Promise<InstalledModel[]> {
+    const result = await this.pool.query<ModelRow>(
+      `SELECT * FROM agi.models WHERE status = 'running' ORDER BY downloaded_at DESC`,
+    );
+    return result.rows.map((r) => this.mapRow(r));
   }
 
-  remove(id: string): void {
-    this.stmts.deleteModel.run(id);
+  async remove(id: string): Promise<void> {
+    await this.pool.query(`DELETE FROM agi.models WHERE id = $1`, [id]);
   }
 
   // ---------------------------------------------------------------------------
   // Download progress
   // ---------------------------------------------------------------------------
 
-  upsertDownloadProgress(progress: DownloadProgress): void {
-    this.stmts.upsertProgress.run({
-      model_id: progress.modelId,
-      filename: progress.filename,
-      total_bytes: progress.totalBytes,
-      downloaded_bytes: progress.downloadedBytes,
-      speed_bps: progress.speedBps,
-      started_at: progress.startedAt,
-    });
+  async upsertDownloadProgress(progress: DownloadProgress): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO agi.download_progress (model_id, filename, total_bytes, downloaded_bytes, speed_bps, started_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (model_id) DO UPDATE SET
+         filename = EXCLUDED.filename,
+         total_bytes = EXCLUDED.total_bytes,
+         downloaded_bytes = EXCLUDED.downloaded_bytes,
+         speed_bps = EXCLUDED.speed_bps,
+         started_at = EXCLUDED.started_at`,
+      [
+        progress.modelId,
+        progress.filename,
+        progress.totalBytes,
+        progress.downloadedBytes,
+        progress.speedBps,
+        progress.startedAt,
+      ],
+    );
   }
 
-  getDownloadProgress(modelId: string): DownloadProgress | undefined {
-    const row = this.stmts.getProgress.get(modelId) as DownloadProgressRow | undefined;
+  async getDownloadProgress(modelId: string): Promise<DownloadProgress | undefined> {
+    const result = await this.pool.query<DownloadProgressRow>(
+      `SELECT * FROM agi.download_progress WHERE model_id = $1`,
+      [modelId],
+    );
+    const row = result.rows[0];
     return row ? this.mapProgressRow(row) : undefined;
   }
 
-  clearDownloadProgress(modelId: string): void {
-    this.stmts.deleteProgress.run(modelId);
+  async clearDownloadProgress(modelId: string): Promise<void> {
+    await this.pool.query(
+      `DELETE FROM agi.download_progress WHERE model_id = $1`,
+      [modelId],
+    );
   }
 
   // ---------------------------------------------------------------------------
   // Aggregates
   // ---------------------------------------------------------------------------
 
-  getTotalDiskUsage(): number {
-    const row = this.db
-      .prepare<[], { total: number }>(
-        "SELECT COALESCE(SUM(file_size_bytes), 0) AS total FROM models WHERE status != 'removing'",
-      )
-      .get() as { total: number };
-    return row.total;
+  async getTotalDiskUsage(): Promise<number> {
+    const result = await this.pool.query<{ total: string }>(
+      `SELECT COALESCE(SUM(file_size_bytes), 0)::TEXT AS total FROM agi.models WHERE status != 'removing'`,
+    );
+    return Number(result.rows[0]?.total ?? 0);
   }
 
   /**
@@ -523,37 +347,26 @@ export class ModelStore {
    *   cumulative size exceeds budgetBytes above the limit.
    * @returns Array of models that are candidates for eviction, LRU-first.
    */
-  getModelsForEviction(budgetBytes: number): InstalledModel[] {
-    // Fetch all non-active models sorted by last_used_at ASC (nulls first = never used)
-    const rows = this.db
-      .prepare<[], ModelRow>(
-        `SELECT * FROM models
-         WHERE status = 'ready'
-         ORDER BY COALESCE(last_used_at, downloaded_at) ASC`,
-      )
-      .all() as ModelRow[];
-
-    const totalUsage = this.getTotalDiskUsage();
+  async getModelsForEviction(budgetBytes: number): Promise<InstalledModel[]> {
+    const totalUsage = await this.getTotalDiskUsage();
     if (totalUsage <= budgetBytes) return [];
+
+    const result = await this.pool.query<ModelRow>(
+      `SELECT * FROM agi.models
+       WHERE status = 'ready'
+       ORDER BY COALESCE(last_used_at, downloaded_at) ASC`,
+    );
 
     const excess = totalUsage - budgetBytes;
     let accumulated = 0;
     const candidates: InstalledModel[] = [];
 
-    for (const row of rows) {
+    for (const row of result.rows) {
       candidates.push(this.mapRow(row));
-      accumulated += row.file_size_bytes;
+      accumulated += Number(row.file_size_bytes);
       if (accumulated >= excess) break;
     }
 
     return candidates;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Lifecycle
-  // ---------------------------------------------------------------------------
-
-  close(): void {
-    this.db.close();
   }
 }

@@ -102,6 +102,7 @@ import { registerReportsApi } from "./reports-api.js";
 import { registerWorkerApi } from "./worker-api.js";
 import { appendUpgradeLog } from "./upgrade-log.js";
 import { EventEmitter } from "node:events";
+import { Pool } from "pg";
 import {
   HardwareProfiler,
   HfHubClient,
@@ -1236,12 +1237,20 @@ export async function startGatewayServer(
   const hfClient = new HfHubClient({
     apiToken: ((config as Record<string, unknown>).hf as { apiToken?: string } | undefined)?.apiToken,
   });
-  const modelStore = new ModelStore(join(hfCacheDir, "index.db"));
 
-  // Dataset store lives alongside model store — separate db for datasets
+  // Build PostgreSQL connection from ID service config
+  const idServiceConfig = (config as Record<string, unknown>).idService as { local?: { databaseUrl?: string } } | undefined;
+  const pgUrl = idServiceConfig?.local?.databaseUrl ?? "postgres://aionima_id:0a117a24fd397009f19dd7146e348f54@localhost:5433/aionima_id";
+  const pgPool = new Pool({ connectionString: pgUrl });
+
+  const modelStore = new ModelStore(pgPool);
+  await modelStore.initialize(); // creates agi schema + tables
+
+  // Dataset store lives in the same PostgreSQL instance, agi schema
   const datasetsCacheDir = join(homedir(), ".agi", "datasets");
   mkdirSync(join(datasetsCacheDir, "hub"), { recursive: true });
-  const datasetStore = new DatasetStore(join(datasetsCacheDir, "index.db"));
+  const datasetStore = new DatasetStore(pgPool);
+  await datasetStore.initialize(); // creates agi.datasets table
 
   const profile = hardwareProfiler.scan();
 
@@ -1309,7 +1318,7 @@ export async function startGatewayServer(
   if (hfInitConfig?.enabled) {
     const autoStartIds = hfInitConfig.autoStart ?? [];
     for (const modelId of autoStartIds) {
-      const model = modelStore.getById(modelId);
+      const model = await modelStore.getById(modelId);
       if (model !== undefined && model.status === "ready") {
         const containerConfig = capabilityResolver.buildContainerConfig(model, hfInitConfig.images);
         modelContainerManager.start(model, containerConfig).catch((err) => {
@@ -1418,14 +1427,17 @@ export async function startGatewayServer(
           const results = await hfClient.searchModels({ search: q, pipeline_tag: task, limit: 5 });
           return JSON.stringify(results.map((m) => ({ id: m.id, task: m.pipeline_tag, downloads: m.downloads, likes: m.likes })));
         }
-        case "list":
-          return JSON.stringify(modelStore.getAll().map((m) => ({ id: m.id, status: m.status, runtime: m.runtimeType, size: m.fileSizeBytes })));
+        case "list": {
+          const allModels = await modelStore.getAll();
+          return JSON.stringify(allModels.map((m) => ({ id: m.id, status: m.status, runtime: m.runtimeType, size: m.fileSizeBytes })));
+        }
         case "running":
           return JSON.stringify(modelContainerManager.getRunning());
         case "hardware":
           return JSON.stringify(hardwareProfiler.getProfile().capabilities);
         case "status": {
-          return JSON.stringify({ enabled: hfEnabled ?? false, installed: modelStore.getAll().length, running: modelContainerManager.getRunning().length, tier: hardwareProfiler.getProfile().capabilities.tier });
+          const allInstalled = await modelStore.getAll();
+          return JSON.stringify({ enabled: hfEnabled ?? false, installed: allInstalled.length, running: modelContainerManager.getRunning().length, tier: hardwareProfiler.getProfile().capabilities.tier });
         }
         case "datasets": {
           const q = String(input.query ?? "");
@@ -1437,7 +1449,7 @@ export async function startGatewayServer(
           if (!modelId) {
             return JSON.stringify({ error: "modelId is required for action=endpoints" });
           }
-          const model = modelStore.getById(modelId);
+          const model = await modelStore.getById(modelId);
           if (!model) {
             return JSON.stringify({ error: `Model not installed: ${modelId}` });
           }
@@ -3128,8 +3140,7 @@ export async function startGatewayServer(
       log.error(`error stopping model containers: ${err instanceof Error ? err.message : String(err)}`);
     }
     modelAgentBridge.destroy();
-    modelStore.close();
-    datasetStore.close();
+    await pgPool.end();
 
     // Step 5g2: Stop scheduled tasks
     scheduledTaskManager.stop();

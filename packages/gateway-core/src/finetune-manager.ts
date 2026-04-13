@@ -72,7 +72,7 @@ export class FineTuneManager {
 
   async startJob(config: FineTuneConfig): Promise<FineTuneJob> {
     // Validate base model and dataset exist and are ready
-    const model = this.modelStore.getById(config.baseModelId);
+    const model = await this.modelStore.getById(config.baseModelId);
     if (!model) {
       throw new Error(`Base model not installed: ${config.baseModelId}`);
     }
@@ -80,7 +80,7 @@ export class FineTuneManager {
       throw new Error(`Base model is not ready (status: ${model.status})`);
     }
 
-    const dataset = this.datasetStore.getById(config.datasetId);
+    const dataset = await this.datasetStore.getById(config.datasetId);
     if (!dataset) {
       throw new Error(`Dataset not installed: ${config.datasetId}`);
     }

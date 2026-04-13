@@ -130,7 +130,7 @@ export interface HostingManagerDeps {
  * since the HostingManager is created before Step 5i runs.
  */
 export interface HostingManagerModelDeps {
-  modelStore: { getById(id: string): { status: string; containerPort?: number } | undefined };
+  modelStore: { getById(id: string): Promise<{ status: string; containerPort?: number } | undefined> };
   modelContainerManager: { getStatus(modelId: string): { port: number; status: string } | undefined };
 }
 
@@ -785,7 +785,7 @@ export class HostingManager {
         try { execFileSync("podman", ["rm", "-f", existing.name], { stdio: "pipe", timeout: 15_000 }); } catch { /* ignore */ }
         this._runningContainers.delete(resolved);
       }
-      this.startContainer(hosted);
+      void this.startContainer(hosted);
     }
 
     // Persist metadata
@@ -863,7 +863,7 @@ export class HostingManager {
     if (hadContainer) {
       this.stopContainer(hosted);
     }
-    this.startContainer(hosted);
+    void this.startContainer(hosted);
 
     this.writeHostingMeta(resolved, hosted.meta);
     this.regenerateCaddyfile();
@@ -984,7 +984,7 @@ export class HostingManager {
    *
    * Returns separate arrays so each code path can splice them at the right point.
    */
-  private buildAiBindingArgs(projectPath: string): { envArgs: string[]; volumeArgs: string[] } {
+  private async buildAiBindingArgs(projectPath: string): Promise<{ envArgs: string[]; volumeArgs: string[] }> {
     const envArgs: string[] = [];
     const volumeArgs: string[] = [];
 
@@ -1009,7 +1009,7 @@ export class HostingManager {
           port = containerState.port;
         } else {
           // Fall back to port stored in ModelStore (container may have been started externally)
-          const stored = this.modelDeps.modelStore.getById(binding.modelId);
+          const stored = await this.modelDeps.modelStore.getById(binding.modelId);
           if (stored?.status === "running" && stored.containerPort !== undefined) {
             port = stored.containerPort;
           }
@@ -1037,7 +1037,7 @@ export class HostingManager {
     return { envArgs, volumeArgs };
   }
 
-  private startContainer(hosted: HostedProject): void {
+  private async startContainer(hosted: HostedProject): Promise<void> {
     if (hosted.meta.port === null) {
       hosted.status = "error";
       hosted.error = "No port allocated";
@@ -1055,7 +1055,7 @@ export class HostingManager {
 
     // Resolve AI model env vars and dataset volume mounts for this project.
     // These are injected into every code path (magic-app, stack, legacy) before the image token.
-    const aiBindingArgs = this.buildAiBindingArgs(hosted.path);
+    const aiBindingArgs = await this.buildAiBindingArgs(hosted.path);
 
     // -----------------------------------------------------------------------
     // MagicApp path: resolve container config from registered MagicApps
@@ -1397,7 +1397,7 @@ export class HostingManager {
     if (!hosted) return false;
 
     this.stopContainer(hosted);
-    this.startContainer(hosted);
+    void this.startContainer(hosted);
     this.notifyStatusChange();
     return true;
   }
@@ -2427,7 +2427,7 @@ export class HostingManager {
     if (hosted.meta.mode === "development" && hosted.containerName) {
       this.log.info(`[${hosted.meta.hostname}] restarting container to inject tunnel origin`);
       this.stopContainer(hosted);
-      this.startContainer(hosted);
+      void this.startContainer(hosted);
       this.notifyStatusChange();
     }
 
