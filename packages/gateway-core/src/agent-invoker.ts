@@ -113,7 +113,7 @@ export interface AgentInvokerDeps {
   /** Optional memory adapter for context injection (CompositeMemoryAdapter). */
   memoryAdapter?: { query(params: { entityId?: string; category?: string; limit?: number }): Promise<Array<{ content: string; category: string }>>; store(entry: unknown): Promise<void> };
   /** Optional skill registry for skill-based prompt injection. */
-  skillRegistry?: { getAll(): Array<{ definition: { name: string; description: string; domain: string } }> };
+  skillRegistry?: { getAll(): Array<{ definition: { name: string; description: string; domain: string; content: string; triggers: string[]; compiledTriggers: RegExp[]; requiresState?: string[]; requiresTier?: string; priority: number } }>; getValid(): Array<{ definition: { name: string; description: string; domain: string; content: string; triggers: string[]; compiledTriggers: RegExp[]; requiresState?: string[]; requiresTier?: string; priority: number } }> };
   /** Optional per-entity relationship context store (USER.md files). */
   userContextStore?: UserContextStore;
   /** Optional PRIME knowledge loader — loads corpus for system prompt injection. */
@@ -327,15 +327,38 @@ export class AgentInvoker extends EventEmitter {
       }
     }
 
-    // Inject matched skills (if skill registry is wired)
+    // Inject matched skills — match user input against skill triggers
     let skills: Array<{ name: string; description: string; content: string }> | undefined;
     if (this.deps.skillRegistry !== undefined) {
-      const allSkills = this.deps.skillRegistry.getAll();
-      if (allSkills.length > 0) {
-        skills = allSkills.map((s) => ({
+      const validSkills = this.deps.skillRegistry.getValid();
+      const matched: Array<{ definition: typeof validSkills[number]["definition"]; confidence: number }> = [];
+      const inputText = typeof content === "string" ? content : JSON.stringify(content);
+
+      for (const registered of validSkills) {
+        const def = registered.definition;
+        // Filter by gateway state
+        if (def.requiresState !== undefined && def.requiresState.length > 0) {
+          if (!def.requiresState.includes(state)) continue;
+        }
+        // Check trigger patterns against user message
+        for (const regex of def.compiledTriggers) {
+          if (regex.test(inputText)) {
+            matched.push({ definition: def, confidence: 1.0 });
+            break;
+          }
+        }
+      }
+
+      // Sort by priority descending
+      matched.sort((a, b) => b.definition.priority - a.definition.priority);
+
+      // Limit to top 5 matched skills to stay within token budget
+      const topSkills = matched.slice(0, 5);
+      if (topSkills.length > 0) {
+        skills = topSkills.map((s) => ({
           name: s.definition.name,
           description: s.definition.description,
-          content: s.definition.domain,
+          content: s.definition.content,
         }));
       }
     }
