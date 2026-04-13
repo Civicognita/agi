@@ -518,6 +518,7 @@ export default function RootLayout() {
         isMobile={isMobile}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
+        hfEnabled={Boolean((configHook.data as Record<string, unknown> | undefined)?.hf && ((configHook.data as Record<string, unknown>).hf as Record<string, unknown>)?.enabled)}
       />
 
       {/* Main column */}

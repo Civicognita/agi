@@ -409,6 +409,12 @@ export default function SettingsHFPage() {
 
   if (!configHook.data) return null;
 
+  const hfEnabled = Boolean((configHook.data as Record<string, unknown>).hf && ((configHook.data as Record<string, unknown>).hf as Record<string, unknown>).enabled);
+
+  // When HF is not enabled, only show config-based tabs (no API calls)
+  const availableTabs = hfEnabled ? tabs : tabs.filter((t) => t.id === "storage");
+  const safeTab = availableTabs.some((t) => t.id === activeTab) ? activeTab : (availableTabs[0]?.id ?? "storage");
+
   return (
     <div className="flex flex-col">
       <SettingsSaveBar
@@ -419,15 +425,46 @@ export default function SettingsHFPage() {
         onSave={() => void handleSave()}
       />
 
+      {/* Enable/disable toggle */}
+      <Card className="p-4 mb-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-foreground">HuggingFace Model Runtime</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {hfEnabled
+                ? "Browse, download, and run HuggingFace models locally."
+                : "Enable to browse, download, and serve ML models from HuggingFace Hub via local containers."}
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant={hfEnabled ? "outline" : "default"}
+            onClick={() => {
+              update((prev) => ({
+                ...prev,
+                hf: { ...(prev as Record<string, unknown>).hf as Record<string, unknown> | undefined, enabled: !hfEnabled },
+              } as AionimaConfig));
+            }}
+          >
+            {hfEnabled ? "Disable" : "Enable"}
+          </Button>
+        </div>
+        {!hfEnabled && dirty && (
+          <p className="text-xs text-muted-foreground mt-2">
+            Save and restart the gateway to activate HF Marketplace.
+          </p>
+        )}
+      </Card>
+
       {/* Tab bar */}
       <div className="flex gap-1 mb-6 border-b border-border">
-        {tabs.map((tab) => (
+        {availableTabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={cn(
               "px-4 py-2 text-[13px] font-medium border-b-2 transition-colors cursor-pointer bg-transparent",
-              activeTab === tab.id
+              safeTab === tab.id
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
@@ -438,10 +475,10 @@ export default function SettingsHFPage() {
       </div>
 
       {/* Tab content */}
-      {activeTab === "hardware" && <HardwareTab />}
-      {activeTab === "capabilities" && <CapabilitiesTab />}
-      {activeTab === "storage" && <StorageTab draft={draft} />}
-      {activeTab === "authentication" && <AuthenticationTab />}
+      {safeTab === "hardware" && hfEnabled && <HardwareTab />}
+      {safeTab === "capabilities" && hfEnabled && <CapabilitiesTab />}
+      {safeTab === "storage" && <StorageTab draft={draft} />}
+      {safeTab === "authentication" && hfEnabled && <AuthenticationTab />}
     </div>
   );
 }

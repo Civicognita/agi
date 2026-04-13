@@ -114,9 +114,10 @@ export interface AppSidebarProps {
   isMobile: boolean;
   mobileOpen: boolean;
   onMobileClose: () => void;
+  hfEnabled?: boolean;
 }
 
-export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarProps) {
+export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = false }: AppSidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const currentPath = location.pathname;
@@ -177,9 +178,13 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
         const extraItems = pageItemsByDomain.get(domain);
         if (extraItems) items = [...items, ...extraItems];
       }
+      // Hide HF Models when not enabled
+      if (!hfEnabled) {
+        items = items.filter((item) => item.to !== "/hf-marketplace");
+      }
       return { ...section, items };
     }).sort((a, b) => a.position - b.position);
-  }, [pluginSections, pluginDomains, pluginPages]);
+  }, [pluginSections, pluginDomains, pluginPages, hfEnabled]);
 
   const visibleSections = sections.filter((s) => s.mode === mode);
 
