@@ -34,6 +34,8 @@ export interface HfApiDeps {
   capabilityResolver: CapabilityResolver;
   inferenceGateway: InferenceGateway;
   agentBridge: ModelAgentBridge;
+  /** Returns true if hf.enabled is set in the current (hot-reloaded) config. */
+  isEnabled?: () => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -52,10 +54,23 @@ export function registerHfRoutes(
     capabilityResolver,
     inferenceGateway,
     agentBridge,
+    isEnabled,
   } = deps;
 
+  // Prehandler hook: return 503 for non-hardware HF routes when disabled
+  fastify.addHook("onRequest", async (request, reply) => {
+    const url = request.url;
+    if (!url.startsWith("/api/hf/")) return;
+    // Hardware + capabilities routes always work (local system info)
+    if (url.startsWith("/api/hf/hardware") || url.startsWith("/api/hf/capabilities")) return;
+    // Everything else requires hf.enabled
+    if (isEnabled !== undefined && !isEnabled()) {
+      return reply.code(503).send({ error: "HF Marketplace is not enabled. Enable it in Settings > HF Marketplace." });
+    }
+  });
+
   // -------------------------------------------------------------------------
-  // Hardware
+  // Hardware (always available — reads local system, no HF dependency)
   // -------------------------------------------------------------------------
 
   fastify.get("/api/hf/hardware", async (_request, reply) => {

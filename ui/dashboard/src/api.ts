@@ -2430,28 +2430,30 @@ function getHFAuthHeaders(): Record<string, string> {
   return headers;
 }
 
-export async function fetchHFHardwareProfile(): Promise<HFHardwareProfile> {
-  const res = await fetch("/api/hf/hardware", { headers: getHFAuthHeaders() });
+/** Fetch an HF API endpoint, throwing a clear error if the route doesn't exist (returns HTML). */
+async function hfGet<T>(path: string): Promise<T> {
+  const res = await fetch(path, { headers: getHFAuthHeaders() });
+  const ct = res.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) {
+    throw new Error("HF Marketplace is not active. Restart the gateway after enabling.");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+    throw new Error(body.error ?? `HTTP ${String(res.status)}`);
   }
-  return res.json() as Promise<HFHardwareProfile>;
+  return res.json() as Promise<T>;
+}
+
+export async function fetchHFHardwareProfile(): Promise<HFHardwareProfile> {
+  return hfGet<HFHardwareProfile>("/api/hf/hardware");
 }
 
 export async function rescanHFHardware(): Promise<HFHardwareProfile> {
-  const res = await fetch("/api/hf/hardware/rescan", { method: "POST", headers: getHFAuthHeaders() });
-  if (!res.ok) throw new Error("Hardware rescan failed");
-  return res.json() as Promise<HFHardwareProfile>;
+  return hfGet<HFHardwareProfile>("/api/hf/hardware/rescan");
 }
 
 export async function fetchHFCapabilities(): Promise<HFCapabilityEntry[]> {
-  const res = await fetch("/api/hf/capabilities", { headers: getHFAuthHeaders() });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<HFCapabilityEntry[]>;
+  return hfGet<HFCapabilityEntry[]>("/api/hf/capabilities");
 }
 
 export async function searchHFModels(params: {
@@ -2469,21 +2471,11 @@ export async function searchHFModels(params: {
   if (params.sort) sp.set("sort", params.sort);
   if (params.limit) sp.set("limit", String(params.limit));
   if (params.offset) sp.set("offset", String(params.offset));
-  const res = await fetch(`/api/hf/search?${sp.toString()}`, { headers: getHFAuthHeaders() });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<HFModelSearchResult[]>;
+  return hfGet<HFModelSearchResult[]>(`/api/hf/search?${sp.toString()}`);
 }
 
 export async function fetchHFModelDetail(modelId: string): Promise<HFModelDetail> {
-  const res = await fetch(`/api/hf/models/${encodeURIComponent(modelId)}`, { headers: getHFAuthHeaders() });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<HFModelDetail>;
+  return hfGet<HFModelDetail>(`/api/hf/models/${encodeURIComponent(modelId)}`);
 }
 
 export async function installHFModel(id: string, filename: string, revision?: string): Promise<{ ok: boolean; error?: string }> {
@@ -2501,12 +2493,7 @@ export async function uninstallHFModel(modelId: string): Promise<{ ok: boolean }
 }
 
 export async function fetchHFInstalledModels(): Promise<HFInstalledModel[]> {
-  const res = await fetch("/api/hf/models", { headers: getHFAuthHeaders() });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<HFInstalledModel[]>;
+  return hfGet<HFInstalledModel[]>("/api/hf/models");
 }
 
 export async function startHFModel(modelId: string): Promise<{ ok: boolean; error?: string }> {
@@ -2520,12 +2507,7 @@ export async function stopHFModel(modelId: string): Promise<{ ok: boolean }> {
 }
 
 export async function fetchHFRunningModels(): Promise<HFRunningModel[]> {
-  const res = await fetch("/api/hf/running", { headers: getHFAuthHeaders() });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<HFRunningModel[]>;
+  return hfGet<HFRunningModel[]>("/api/hf/running");
 }
 
 export async function testHFInference(modelId: string, prompt: string): Promise<{ response: string; latencyMs: number }> {
@@ -2542,10 +2524,5 @@ export async function testHFInference(modelId: string, prompt: string): Promise<
 }
 
 export async function fetchHFAuthStatus(): Promise<{ authenticated: boolean; username?: string }> {
-  const res = await fetch("/api/hf/auth/status", { headers: getHFAuthHeaders() });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<{ authenticated: boolean; username?: string }>;
+  return hfGet<{ authenticated: boolean; username?: string }>("/api/hf/auth/status");
 }

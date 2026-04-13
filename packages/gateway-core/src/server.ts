@@ -1199,72 +1199,76 @@ export async function startGatewayServer(
   // MarketplaceManager created earlier (Step 5f) for required plugin auto-install.
 
   // -------------------------------------------------------------------------
-  // Step 5i: Model Runtime — HuggingFace model serving (optional, config-gated)
+  // Step 5i: Model Runtime — HuggingFace model serving (always initialized,
+  //          config-gated at request time so hf.enabled can be hot-swapped)
   // -------------------------------------------------------------------------
 
-  const hfConfig = (config as Record<string, unknown>).hf as
-    | { enabled?: boolean; apiToken?: string; cacheDir?: string; portRangeStart?: number; maxConcurrentModels?: number; ramBudgetBytes?: number; autoStart?: string[]; inferenceTimeoutMs?: number; gpuMode?: "auto" | "nvidia" | "amd" | "cpu-only"; images?: { llm?: string; diffusion?: string; general?: string } }
+  const hfCacheDir = (() => {
+    const hfConf = (config as Record<string, unknown>).hf as { cacheDir?: string } | undefined;
+    return (hfConf?.cacheDir ?? "~/.agi/models").replace(/^~/, homedir());
+  })();
+  mkdirSync(join(hfCacheDir, "hub"), { recursive: true });
+
+  const modelRuntimeEvents = new EventEmitter() as ModelRuntimeEventEmitter;
+  const hardwareProfiler = new HardwareProfiler(hfCacheDir);
+  const hfClient = new HfHubClient({
+    apiToken: ((config as Record<string, unknown>).hf as { apiToken?: string } | undefined)?.apiToken,
+  });
+  const modelStore = new ModelStore(join(hfCacheDir, "index.db"));
+  const profile = hardwareProfiler.scan();
+
+  const hfInitConfig = (config as Record<string, unknown>).hf as
+    { portRangeStart?: number; maxConcurrentModels?: number; gpuMode?: "auto" | "nvidia" | "amd" | "cpu-only"; images?: { llm?: string; diffusion?: string; general?: string }; inferenceTimeoutMs?: number; autoStart?: string[]; enabled?: boolean }
     | undefined;
 
-  let modelContainerManager: ModelContainerManager | undefined;
-  let modelAgentBridge: ModelAgentBridge | undefined;
-  let hfApiDeps: Parameters<typeof registerHfRoutes>[1] | undefined;
+  const modelContainerManager = new ModelContainerManager(
+    {
+      portRangeStart: hfInitConfig?.portRangeStart ?? 6000,
+      maxConcurrentModels: hfInitConfig?.maxConcurrentModels ?? 3,
+      gpuMode: hfInitConfig?.gpuMode ?? "auto",
+      images: hfInitConfig?.images,
+      statePath: join(homedir(), ".agi", "model-containers.json"),
+    },
+    modelRuntimeEvents,
+  );
 
-  if (hfConfig?.enabled) {
-    const cacheDir = (hfConfig.cacheDir ?? "~/.agi/models").replace(/^~/, homedir());
-    mkdirSync(join(cacheDir, "hub"), { recursive: true });
+  const capabilityResolver = new CapabilityResolver(profile.capabilities);
+  const inferenceGateway = new InferenceGateway(modelStore, hfInitConfig?.inferenceTimeoutMs ?? 120_000);
 
-    const modelRuntimeEvents = new EventEmitter() as ModelRuntimeEventEmitter;
-    const hardwareProfiler = new HardwareProfiler(cacheDir);
-    const hfClient = new HfHubClient({ apiToken: hfConfig.apiToken });
-    const modelStore = new ModelStore(join(cacheDir, "index.db"));
-    const profile = hardwareProfiler.scan();
+  const modelAgentBridge = new ModelAgentBridge(
+    modelRuntimeEvents,
+    modelStore,
+    inferenceGateway,
+    profile.capabilities,
+  );
 
-    modelContainerManager = new ModelContainerManager(
-      {
-        portRangeStart: hfConfig.portRangeStart ?? 6000,
-        maxConcurrentModels: hfConfig.maxConcurrentModels ?? 3,
-        gpuMode: hfConfig.gpuMode ?? "auto",
-        images: hfConfig.images,
-        statePath: join(homedir(), ".agi", "model-containers.json"),
-      },
-      modelRuntimeEvents,
-    );
+  // Always store deps — routes are always registered and check hf.enabled at request time
+  const hfApiDeps: Parameters<typeof registerHfRoutes>[1] = {
+    hardwareProfiler,
+    hfClient,
+    modelStore,
+    containerManager: modelContainerManager,
+    capabilityResolver,
+    inferenceGateway,
+    agentBridge: modelAgentBridge,
+    isEnabled: () => Boolean(((config as Record<string, unknown>).hf as { enabled?: boolean } | undefined)?.enabled),
+  };
 
-    const capabilityResolver = new CapabilityResolver(profile.capabilities);
-    const inferenceGateway = new InferenceGateway(modelStore, hfConfig.inferenceTimeoutMs ?? 120_000);
-
-    modelAgentBridge = new ModelAgentBridge(
-      modelRuntimeEvents,
-      modelStore,
-      inferenceGateway,
-      profile.capabilities,
-    );
-
-    // Auto-start configured models
-    const autoStartIds = hfConfig.autoStart ?? [];
+  // Auto-start models if HF is enabled at boot
+  if (hfInitConfig?.enabled) {
+    const autoStartIds = hfInitConfig.autoStart ?? [];
     for (const modelId of autoStartIds) {
       const model = modelStore.getById(modelId);
       if (model !== undefined && model.status === "ready") {
-        const containerConfig = capabilityResolver.buildContainerConfig(model, hfConfig.images);
+        const containerConfig = capabilityResolver.buildContainerConfig(model, hfInitConfig.images);
         modelContainerManager.start(model, containerConfig).catch((err) => {
           log.error(`HF auto-start failed for ${modelId}: ${err instanceof Error ? err.message : String(err)}`);
         });
       }
     }
-
-    // Store deps for preListenHooks route registration
-    hfApiDeps = {
-      hardwareProfiler,
-      hfClient,
-      modelStore,
-      containerManager: modelContainerManager,
-      capabilityResolver,
-      inferenceGateway,
-      agentBridge: modelAgentBridge,
-    };
-
-    log.info(`HF Model Runtime enabled — hardware tier: ${profile.capabilities.tier}, cache: ${cacheDir}`);
+    log.info(`HF Model Runtime enabled — hardware tier: ${profile.capabilities.tier}, cache: ${hfCacheDir}`);
+  } else {
+    log.info("HF Model Runtime initialized (disabled — enable via Settings > HF Marketplace)");
   }
 
   // -------------------------------------------------------------------------
@@ -1521,7 +1525,7 @@ export async function startGatewayServer(
         (f) => registerWorkerApi(f, workerRuntime, workerPromptLoader),
         (f) => registerComplianceRoutes(f, { incidentStore, vendorStore, sessionStore: complianceSessionStore, backupManager }),
         (f) => registerSecurityRoutes(f, { scanRunner, scanStore }),
-        ...(hfApiDeps !== undefined ? [(f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps!)] : []),
+        (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
       ],
     },
     { host, port },
@@ -2986,16 +2990,13 @@ export async function startGatewayServer(
     await serviceManager.shutdown();
 
     // Step 5i: Shut down model runtime (stop all model containers)
-    if (modelContainerManager !== undefined) {
-      try {
-        await modelContainerManager.stopAll();
-      } catch (err) {
-        log.error(`error stopping model containers: ${err instanceof Error ? err.message : String(err)}`);
-      }
+    try {
+      await modelContainerManager.stopAll();
+    } catch (err) {
+      log.error(`error stopping model containers: ${err instanceof Error ? err.message : String(err)}`);
     }
-    if (modelAgentBridge !== undefined) {
-      modelAgentBridge.destroy();
-    }
+    modelAgentBridge.destroy();
+    modelStore.close();
 
     // Step 5g2: Stop scheduled tasks
     scheduledTaskManager.stop();
