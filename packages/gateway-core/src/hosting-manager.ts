@@ -2007,10 +2007,10 @@ export class HostingManager {
     try {
       // Pull image if not present (first run after install)
       try {
-        execFileSync("podman", ["image", "exists", "clidey/whodb:latest"], { stdio: "pipe", timeout: 10_000 });
+        execFileSync("podman", ["image", "exists", "docker.io/clidey/whodb:latest"], { stdio: "pipe", timeout: 10_000 });
       } catch {
         this.log.info("Pulling WhoDB image (first run)...");
-        execFileSync("podman", ["pull", "clidey/whodb:latest"], { stdio: "pipe", timeout: 300_000 });
+        execFileSync("podman", ["pull", "docker.io/clidey/whodb:latest"], { stdio: "pipe", timeout: 300_000 });
       }
 
       execFileSync("podman", [
@@ -2021,7 +2021,7 @@ export class HostingManager {
         "-p", `${String(port)}:8080`,
         "-v", "whodb-data:/data",
         ...envArgs,
-        "clidey/whodb:latest",
+        "docker.io/clidey/whodb:latest",
       ], { stdio: "pipe", timeout: 60_000 });
       this.log.info(`WhoDB started on port ${String(port)}`);
     } catch (err) {
