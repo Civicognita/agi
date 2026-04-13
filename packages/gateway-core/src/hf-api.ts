@@ -141,12 +141,11 @@ export function registerHfRoutes(
     }
   });
 
-  fastify.get<{ Params: { "*": string } }>(
-    "/api/hf/models/:modelId(*)",
+  fastify.get<{ Params: { modelId: string } }>(
+    "/api/hf/models/detail/:modelId",
     async (request, reply) => {
       try {
-        const params = request.params as Record<string, string>;
-        const modelId = params["*"] ?? params["modelId"] ?? "";
+        const modelId = decodeURIComponent(request.params.modelId);
 
         if (!modelId) {
           return reply.code(400).send({ error: "modelId is required" });
@@ -232,12 +231,11 @@ export function registerHfRoutes(
     }
   });
 
-  fastify.delete<{ Params: { "*": string } }>(
-    "/api/hf/models/:modelId(*)",
+  fastify.delete<{ Params: { modelId: string } }>(
+    "/api/hf/models/:modelId",
     async (request, reply) => {
       try {
-        const params = request.params as Record<string, string>;
-        const modelId = params["*"] ?? params["modelId"] ?? "";
+        const modelId = decodeURIComponent(request.params.modelId);
 
         if (!modelId) {
           return reply.code(400).send({ error: "modelId is required" });
@@ -278,12 +276,11 @@ export function registerHfRoutes(
     }
   });
 
-  fastify.post<{ Params: { "*": string } }>(
-    "/api/hf/models/:modelId(*)/start",
+  fastify.post<{ Params: { modelId: string } }>(
+    "/api/hf/models/:modelId/start",
     async (request, reply) => {
       try {
-        const params = request.params as Record<string, string>;
-        const modelId = params["*"] ?? params["modelId"] ?? "";
+        const modelId = decodeURIComponent(request.params.modelId);
 
         if (!modelId) {
           return reply.code(400).send({ error: "modelId is required" });
@@ -310,8 +307,7 @@ export function registerHfRoutes(
         return reply.send(containerState);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        const params = request.params as Record<string, string>;
-        const modelId = params["*"] ?? params["modelId"] ?? "";
+        const modelId = decodeURIComponent(request.params.modelId);
         if (modelId) {
           modelStore.setError(modelId, msg);
           modelStore.updateStatus(modelId, "error");
@@ -321,12 +317,11 @@ export function registerHfRoutes(
     },
   );
 
-  fastify.post<{ Params: { "*": string } }>(
-    "/api/hf/models/:modelId(*)/stop",
+  fastify.post<{ Params: { modelId: string } }>(
+    "/api/hf/models/:modelId/stop",
     async (request, reply) => {
       try {
-        const params = request.params as Record<string, string>;
-        const modelId = params["*"] ?? params["modelId"] ?? "";
+        const modelId = decodeURIComponent(request.params.modelId);
 
         if (!modelId) {
           return reply.code(400).send({ error: "modelId is required" });
@@ -349,12 +344,11 @@ export function registerHfRoutes(
     },
   );
 
-  fastify.get<{ Params: { "*": string } }>(
-    "/api/hf/models/:modelId(*)/status",
+  fastify.get<{ Params: { modelId: string } }>(
+    "/api/hf/models/:modelId/status",
     async (request, reply) => {
       try {
-        const params = request.params as Record<string, string>;
-        const modelId = params["*"] ?? params["modelId"] ?? "";
+        const modelId = decodeURIComponent(request.params.modelId);
 
         if (!modelId) {
           return reply.code(400).send({ error: "modelId is required" });
@@ -386,12 +380,11 @@ export function registerHfRoutes(
   // Inference
   // -------------------------------------------------------------------------
 
-  fastify.post<{ Params: { "*": string } }>(
-    "/api/hf/inference/:modelId(*)/chat",
+  fastify.post<{ Params: { modelId: string } }>(
+    "/api/hf/inference/:modelId/chat",
     async (request, reply) => {
       try {
-        const params = request.params as Record<string, string>;
-        const modelId = params["*"] ?? params["modelId"] ?? "";
+        const modelId = decodeURIComponent(request.params.modelId);
 
         if (!modelId) {
           return reply.code(400).send({ error: "modelId is required" });
@@ -406,12 +399,11 @@ export function registerHfRoutes(
     },
   );
 
-  fastify.post<{ Params: { "*": string } }>(
-    "/api/hf/inference/:modelId(*)/embed",
+  fastify.post<{ Params: { modelId: string } }>(
+    "/api/hf/inference/:modelId/embed",
     async (request, reply) => {
       try {
-        const params = request.params as Record<string, string>;
-        const modelId = params["*"] ?? params["modelId"] ?? "";
+        const modelId = decodeURIComponent(request.params.modelId);
 
         if (!modelId) {
           return reply.code(400).send({ error: "modelId is required" });
@@ -426,12 +418,11 @@ export function registerHfRoutes(
     },
   );
 
-  fastify.post<{ Params: { "*": string } }>(
-    "/api/hf/inference/:modelId(*)/generate",
+  fastify.post<{ Params: { modelId: string } }>(
+    "/api/hf/inference/:modelId/generate",
     async (request, reply) => {
       try {
-        const params = request.params as Record<string, string>;
-        const modelId = params["*"] ?? params["modelId"] ?? "";
+        const modelId = decodeURIComponent(request.params.modelId);
 
         if (!modelId) {
           return reply.code(400).send({ error: "modelId is required" });

@@ -2475,7 +2475,7 @@ export async function searchHFModels(params: {
 }
 
 export async function fetchHFModelDetail(modelId: string): Promise<HFModelDetail> {
-  return hfGet<HFModelDetail>(`/api/hf/models/${encodeURIComponent(modelId)}`);
+  return hfGet<HFModelDetail>(`/api/hf/models/detail/${encodeURIComponent(modelId)}`);
 }
 
 export async function installHFModel(id: string, filename: string, revision?: string): Promise<{ ok: boolean; error?: string }> {
