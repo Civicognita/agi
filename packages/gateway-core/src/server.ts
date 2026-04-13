@@ -936,6 +936,24 @@ export async function startGatewayServer(
           }
         }
       }
+
+      // Auto-uninstall plugins that were previously required but removed.
+      // If a plugin is installed, came from the default source, is no longer required,
+      // AND is no longer in the synced catalog, clean it up.
+      const requiredIds = new Set(reqData.plugins.map((p) => p.id));
+      const installed = marketplaceManager.getInstalled();
+      const catalogEntries = marketplaceManager.searchCatalog({});
+      const catalogNames = new Set(catalogEntries.map((c) => c.name));
+      for (const item of installed) {
+        if (!requiredIds.has(item.name) && !catalogNames.has(item.name)) {
+          log.info(`auto-uninstalling removed plugin: ${item.name} (not in catalog or required list)`);
+          try {
+            marketplaceManager.uninstall(item.name, true);
+          } catch (err) {
+            log.warn(`failed to auto-uninstall ${item.name}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      }
     } catch (err) {
       log.warn(`failed to load required-plugins.json: ${err instanceof Error ? err.message : String(err)}`);
     }
