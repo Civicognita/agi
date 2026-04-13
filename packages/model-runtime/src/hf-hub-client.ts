@@ -199,7 +199,14 @@ export class HfHubClient {
 
     while (nextUrl !== null) {
       const resp = await this.fetchWithRetry(nextUrl);
-      const page = (await resp.json()) as HfFileSibling[];
+      // Tree API returns { path, size, type, ... } — map `path` to `rfilename`
+      const raw = (await resp.json()) as Array<{ path?: string; rfilename?: string; size?: number; blobId?: string; lfs?: { sha256: string; size: number; pointerSize: number } }>;
+      const page: HfFileSibling[] = raw.map((f) => ({
+        rfilename: f.rfilename ?? f.path ?? "",
+        size: f.size ?? f.lfs?.size,
+        blobId: f.blobId,
+        lfs: f.lfs,
+      }));
       files.push(...page);
 
       // Follow pagination via Link header: <url>; rel="next"
