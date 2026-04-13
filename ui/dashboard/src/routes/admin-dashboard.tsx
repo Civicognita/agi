@@ -10,11 +10,9 @@ import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { useProjects } from "../hooks.js";
-import { useSystemStats } from "../hooks.js";
-import { useHFRunningModels, useHFHardwareProfile, useHFInstalledModels } from "../hooks.js";
-import { fetchServices, fetchHFAuthStatus } from "../api.js";
-import type { ServiceInfo } from "../types.js";
+import { useProjects, useSystemStats } from "../hooks.js";
+import { fetchServices, fetchHFRunningModels, fetchHFInstalledModels, fetchHFHardwareProfile, fetchHFAuthStatus } from "../api.js";
+import type { ServiceInfo, HFRunningModel, HFInstalledModel, HFHardwareProfile } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -59,30 +57,42 @@ function StatusDot({ status }: { status: "healthy" | "degraded" | "down" | "unkn
   );
 }
 
+function StatCard({ label, value, sub }: { label: string; value: string; sub: string }) {
+  return (
+    <Card className="p-4 text-center">
+      <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">{label}</div>
+      <div className="text-2xl font-bold text-foreground">{value}</div>
+      <div className="text-xs text-muted-foreground mt-1">{sub}</div>
+    </Card>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Admin Dashboard
 // ---------------------------------------------------------------------------
 
 export default function AdminDashboardPage() {
-  const projects = useProjects();
+  const projectsHook = useProjects();
   const systemStats = useSystemStats();
-  const hfRunning = useHFRunningModels();
-  const hfInstalled = useHFInstalledModels();
-  const hfHardware = useHFHardwareProfile();
+
   const [services, setServices] = useState<ServiceInfo[]>([]);
   const [servicesLoading, setServicesLoading] = useState(true);
+  const [runningModels, setRunningModels] = useState<HFRunningModel[]>([]);
+  const [installedModels, setInstalledModels] = useState<HFInstalledModel[]>([]);
+  const [hwProfile, setHwProfile] = useState<HFHardwareProfile | null>(null);
   const [hfAuth, setHfAuth] = useState<{ authenticated: boolean; username?: string } | null>(null);
 
   useEffect(() => {
     fetchServices().then(setServices).catch(() => {}).finally(() => setServicesLoading(false));
+    // HF data — these may fail if HF is not enabled, that's OK
+    fetchHFRunningModels().then(setRunningModels).catch(() => {});
+    fetchHFInstalledModels().then(setInstalledModels).catch(() => {});
+    fetchHFHardwareProfile().then(setHwProfile).catch(() => {});
     fetchHFAuthStatus().then(setHfAuth).catch(() => {});
   }, []);
 
   const stats = systemStats.data;
-  const projectList = projects.data ?? [];
-  const runningModels = hfRunning.data ?? [];
-  const installedModels = hfInstalled.data ?? [];
-  const hwProfile = hfHardware.data;
+  const projectList = projectsHook.projects;
 
   // Derive project stats
   const projectsByType = new Map<string, number>();
@@ -101,11 +111,11 @@ export default function AdminDashboardPage() {
           <StatCard
             label="Projects"
             value={String(projectList.length)}
-            sub={`${String(projectsByType.size)} types`}
+            sub={`${String(projectsByType.size)} type${projectsByType.size === 1 ? "" : "s"}`}
           />
           <StatCard
             label="Uptime"
-            value={stats ? formatUptime(stats.uptime) : "—"}
+            value={stats !== null ? formatUptime(stats.uptime) : "—"}
             sub={stats?.hostname ?? ""}
           />
           <StatCard
@@ -122,7 +132,7 @@ export default function AdminDashboardPage() {
 
         {/* ── Row 2: System resources ── */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {stats && (
+          {stats !== null ? (
             <>
               <Card className="p-4 space-y-2">
                 <div className="flex items-center justify-between">
@@ -157,10 +167,9 @@ export default function AdminDashboardPage() {
                 </div>
               </Card>
             </>
-          )}
-          {!stats && (
+          ) : (
             <Card className="p-4 col-span-3 text-center text-muted-foreground text-sm">
-              Loading system stats...
+              {systemStats.loading ? "Loading system stats..." : "System stats unavailable"}
             </Card>
           )}
         </div>
@@ -193,73 +202,69 @@ export default function AdminDashboardPage() {
           )}
         </Card>
 
-        {/* ── Row 4: HuggingFace Models ── */}
-        <Card className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-foreground">HuggingFace Models</h2>
-            {hwProfile && (
-              <Badge variant="outline" className={cn("text-[10px]",
-                hwProfile.capabilities.tier === "pro" ? "border-green text-green" :
-                hwProfile.capabilities.tier === "accelerated" ? "border-blue text-blue" :
-                hwProfile.capabilities.tier === "standard" ? "border-yellow text-yellow" :
-                "border-overlay0 text-overlay0",
-              )}>
-                {hwProfile.capabilities.tier}
-              </Badge>
-            )}
-          </div>
-
-          {runningModels.length === 0 && installedModels.length === 0 && (
-            <div className="text-sm text-muted-foreground">
-              No HF models installed. Visit the HF Models marketplace to get started.
-            </div>
-          )}
-
-          {runningModels.length > 0 && (
-            <div className="space-y-2 mb-4">
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Running</div>
-              {runningModels.map((model) => (
-                <div key={model.modelId} className="flex items-center gap-3 p-3 rounded-lg bg-surface0/50">
-                  <StatusDot status={model.healthCheckPassed ? "healthy" : "degraded"} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-foreground truncate">{model.modelId}</div>
-                    <div className="text-xs text-muted-foreground">
-                      port {String(model.port)} &middot; {model.runtimeType}
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="text-[10px] border-green text-green shrink-0">running</Badge>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {installedModels.length > 0 && installedModels.some((m) => m.status !== "running") && (
-            <div className="space-y-2">
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Installed</div>
-              {installedModels.filter((m) => m.status !== "running").map((model) => (
-                <div key={model.id} className="flex items-center gap-3 p-3 rounded-lg bg-surface0/50">
-                  <StatusDot status={model.status === "error" ? "down" : model.status === "downloading" ? "degraded" : "unknown"} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium text-foreground truncate">{model.displayName}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {model.runtimeType} &middot; {formatBytes(model.fileSizeBytes)}
-                    </div>
-                  </div>
-                  <Badge variant="outline" className="text-[10px] shrink-0">{model.status}</Badge>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {hwProfile && (
-            <div className="mt-3 pt-3 border-t border-border text-xs text-muted-foreground">
-              {hwProfile.capabilities.summary}
-              {hfAuth?.authenticated && (
-                <span> &middot; HF: {hfAuth.username}</span>
+        {/* ── Row 4: HuggingFace Models (only if any exist) ── */}
+        {(runningModels.length > 0 || installedModels.length > 0) && (
+          <Card className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-foreground">HuggingFace Models</h2>
+              {hwProfile !== null && (
+                <Badge variant="outline" className={cn("text-[10px]",
+                  hwProfile.capabilities.tier === "pro" ? "border-green text-green" :
+                  hwProfile.capabilities.tier === "accelerated" ? "border-blue text-blue" :
+                  hwProfile.capabilities.tier === "standard" ? "border-yellow text-yellow" :
+                  "border-overlay0 text-overlay0",
+                )}>
+                  {hwProfile.capabilities.tier}
+                </Badge>
               )}
             </div>
-          )}
-        </Card>
+
+            {runningModels.length > 0 && (
+              <div className="space-y-2 mb-4">
+                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Running</div>
+                {runningModels.map((model) => (
+                  <div key={model.modelId} className="flex items-center gap-3 p-3 rounded-lg bg-surface0/50">
+                    <StatusDot status={model.healthCheckPassed ? "healthy" : "degraded"} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-foreground truncate">{model.modelId}</div>
+                      <div className="text-xs text-muted-foreground">
+                        port {String(model.port)} &middot; {model.runtimeType}
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] border-green text-green shrink-0">running</Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {installedModels.filter((m) => m.status !== "running").length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Installed</div>
+                {installedModels.filter((m) => m.status !== "running").map((model) => (
+                  <div key={model.id} className="flex items-center gap-3 p-3 rounded-lg bg-surface0/50">
+                    <StatusDot status={model.status === "error" ? "down" : model.status === "downloading" ? "degraded" : "unknown"} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-foreground truncate">{model.displayName}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {model.runtimeType} &middot; {formatBytes(model.fileSizeBytes)}
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] shrink-0">{model.status}</Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {hwProfile !== null && (
+              <div className="mt-3 pt-3 border-t border-border text-xs text-muted-foreground">
+                {hwProfile.capabilities.summary}
+                {hfAuth?.authenticated === true && hfAuth.username !== undefined && (
+                  <span> &middot; HF: {hfAuth.username}</span>
+                )}
+              </div>
+            )}
+          </Card>
+        )}
 
         {/* ── Row 5: Projects breakdown ── */}
         {projectList.length > 0 && (
@@ -279,19 +284,5 @@ export default function AdminDashboardPage() {
         )}
       </div>
     </PageScroll>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// StatCard — compact stat display
-// ---------------------------------------------------------------------------
-
-function StatCard({ label, value, sub }: { label: string; value: string; sub: string }) {
-  return (
-    <Card className="p-4 text-center">
-      <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">{label}</div>
-      <div className="text-2xl font-bold text-foreground">{value}</div>
-      <div className="text-xs text-muted-foreground mt-1">{sub}</div>
-    </Card>
   );
 }

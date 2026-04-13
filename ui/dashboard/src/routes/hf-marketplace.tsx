@@ -230,7 +230,10 @@ function ModelsTab() {
         <p className="text-[13px] text-muted-foreground">Loading models...</p>
       )}
       {modelsQuery.isError && (
-        <p className="text-[13px] text-red">Failed to load models.</p>
+        <div className="p-4 rounded-lg bg-surface0/50 text-sm text-muted-foreground">
+          <p className="font-medium text-foreground mb-1">HuggingFace Marketplace is not enabled</p>
+          <p>Add <code className="px-1 py-0.5 bg-mantle rounded text-xs">{`"hf": { "enabled": true }`}</code> to your aionima.json config and restart the gateway.</p>
+        </div>
       )}
       {!modelsQuery.isLoading && !modelsQuery.isError && models.length === 0 && (
         <p className="text-[13px] text-muted-foreground">No models found.</p>

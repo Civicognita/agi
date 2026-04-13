@@ -1,8 +1,9 @@
 /**
- * AppSidebar — unified sidebar navigation with Admin button.
+ * AppSidebar — dual-mode sidebar with Admin button.
  *
- * All sections are visible at once (no perspective switching).
- * Admin button at the bottom opens the Admin Dashboard.
+ * Default view shows user-facing navigation (Projects, MagicApps, etc.).
+ * Owner users see an "Admin" button at the bottom that switches to the
+ * admin menu (Marketplace, Gateway, Settings, System).
  * Collapsible sidebar with icon-only mode. Mobile uses MobileMenu flyout.
  * Plugin-registered sidebar sections are merged at their configured positions.
  */
@@ -16,7 +17,9 @@ import type { PluginSidebarSection, PluginDashboardPage, PluginDashboardDomain }
 import {
   Folders, Inbox, LayoutDashboard, Link as LinkIcon, FileBarChart,
   Compass, FileText, GitBranch, Store, ScrollText, Rocket,
-  SlidersHorizontal, Sparkles, Cpu, Shield,
+  SlidersHorizontal, Activity, Blocks, ShieldHalf, ShieldCheck,
+  AlertTriangle, Building2, HardDrive, Fingerprint, Sparkles, Cpu,
+  Shield, ArrowLeft,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -33,39 +36,69 @@ interface NavSection {
   position?: number;
 }
 
-const builtinSections: NavSection[] = [
-  { title: "Overview", items: [
+type Mode = "main" | "admin";
+
+interface NavSectionWithMode extends NavSection {
+  mode: Mode;
+}
+
+const builtinSections: NavSectionWithMode[] = [
+  // ── MAIN (user-facing) ──
+  { mode: "main", title: "Overview", items: [
     { to: "/", label: "Dashboard", exact: true, icon: LayoutDashboard },
     { to: "/coa", label: "COA Explorer", icon: LinkIcon },
     { to: "/reports", label: "Reports", icon: FileBarChart },
   ]},
-  { title: "Projects", items: [
+  { mode: "main", title: "Projects", items: [
     { to: "/projects", label: "All Projects", icon: Folders },
   ]},
-  { title: "MagicApps", items: [
+  { mode: "main", title: "MagicApps", items: [
     { to: "/magic-apps", label: "All Apps", icon: Sparkles },
   ]},
-  { title: "Communication", items: [
+  { mode: "main", title: "Communication", items: [
     { to: "/comms", label: "All Messages", exact: true, icon: Inbox },
   ]},
-  { title: "Knowledge", items: [
+  { mode: "main", title: "Knowledge", items: [
     { to: "/knowledge", label: "Browse", icon: Compass },
     { to: "/docs", label: "Documentation", icon: FileText },
   ]},
-  { title: "Marketplace", items: [
+  // ── ADMIN ──
+  { mode: "admin", title: "Marketplace", items: [
     { to: "/gateway/marketplace", label: "Plugins", icon: Store },
     { to: "/magic-apps/admin", label: "MagicApps", icon: Sparkles },
     { to: "/hf-marketplace", label: "HF Models", icon: Cpu },
   ]},
-  { title: "Gateway", items: [
+  { mode: "admin", title: "Gateway", items: [
     { to: "/gateway/workflows", label: "Workflows", icon: GitBranch },
     { to: "/gateway/logs", label: "Logs", icon: ScrollText },
     { to: "/gateway/onboarding", label: "Onboarding", icon: Rocket },
   ]},
-  { title: "Settings", items: [
+  { mode: "admin", title: "Settings", items: [
     { to: "/settings", label: "Settings", icon: SlidersHorizontal },
   ]},
+  { mode: "admin", title: "System", items: [
+    { to: "/system", label: "Resources", exact: true, icon: Activity },
+    { to: "/system/services", label: "Services", icon: Blocks },
+    { to: "/system/admin", label: "Machine", icon: ShieldHalf },
+    { to: "/system/changelog", label: "Changelog", icon: ScrollText },
+    { to: "/system/incidents", label: "Incidents", icon: AlertTriangle },
+    { to: "/system/vendors", label: "Vendors", icon: Building2 },
+    { to: "/system/backups", label: "Backups", icon: HardDrive },
+    { to: "/system/security", label: "Security", icon: ShieldCheck },
+    { to: "/system/identity", label: "Identity", icon: Fingerprint },
+  ]},
 ];
+
+/** Paths that indicate admin mode. */
+const ADMIN_PREFIXES = ["/gateway", "/settings", "/system", "/hf-marketplace", "/admin"];
+
+function detectMode(pathname: string): Mode {
+  for (const prefix of ADMIN_PREFIXES) {
+    if (pathname === prefix || pathname.startsWith(prefix + "/")) return "admin";
+  }
+  if (pathname.startsWith("/magic-apps/admin") || pathname.startsWith("/magic-apps/editor")) return "admin";
+  return "main";
+}
 
 const domainRouteMap: Record<string, string> = {
   impactinomics: "", projects: "/projects", comms: "/comms",
@@ -91,6 +124,13 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
   const [pluginPages, setPluginPages] = useState<PluginDashboardPage[]>([]);
   const [pluginDomains, setPluginDomains] = useState<PluginDashboardDomain[]>([]);
 
+  const detected = detectMode(currentPath);
+  const [manualMode, setManualMode] = useState<Mode | null>(null);
+  const mode = manualMode ?? detected;
+
+  // Reset manual override when URL changes to a different mode
+  useEffect(() => { setManualMode(null); }, [detected]);
+
   useEffect(() => {
     fetchPluginSidebar().then(setPluginSections).catch(() => {});
     fetchPluginDashboardPages().then(setPluginPages).catch(() => {});
@@ -98,14 +138,16 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
   }, []);
 
   const sections = useMemo(() => {
-    const baseSections: (NavSection & { position: number })[] = [
+    const baseSections: (NavSectionWithMode & { position: number })[] = [
       ...builtinSections.map((s, i) => ({ ...s, position: (i + 1) * 10 })),
       ...pluginSections.map((ps) => ({
+        mode: "admin" as Mode,
         title: ps.title,
         items: ps.items.map((item) => ({ to: item.to, label: item.label, exact: item.exact })),
         position: ps.position ?? 50,
       })),
       ...pluginDomains.map((d) => ({
+        mode: "main" as Mode,
         title: d.title,
         items: d.pages
           .sort((a, b) => (a.position ?? 100) - (b.position ?? 100))
@@ -139,7 +181,7 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
     }).sort((a, b) => a.position - b.position);
   }, [pluginSections, pluginDomains, pluginPages]);
 
-  const isAdminActive = currentPath === "/admin" || currentPath.startsWith("/admin/");
+  const visibleSections = sections.filter((s) => s.mode === mode);
 
   // ---------------------------------------------------------------------------
   // Mobile — MobileMenu flyout
@@ -153,7 +195,7 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
         side="left"
         title="Aionima"
       >
-        {sections.map((section) => (
+        {visibleSections.map((section) => (
           <div key={section.title}>
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-3 pt-4 pb-1">
               {section.title}
@@ -177,15 +219,23 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
           </div>
         ))}
 
-        {/* Admin button */}
+        {/* Mode toggle at bottom */}
         <div className="border-t border-border mt-4 pt-2 px-3">
-          <MobileMenu.Item
-            active={isAdminActive}
-            icon={<Shield className="w-4 h-4" />}
-            onClick={() => { navigate("/admin"); onMobileClose(); }}
-          >
-            Admin
-          </MobileMenu.Item>
+          {mode === "main" ? (
+            <MobileMenu.Item
+              icon={<Shield className="w-4 h-4" />}
+              onClick={() => { setManualMode("admin"); navigate("/admin"); onMobileClose(); }}
+            >
+              Admin
+            </MobileMenu.Item>
+          ) : (
+            <MobileMenu.Item
+              icon={<ArrowLeft className="w-4 h-4" />}
+              onClick={() => { setManualMode("main"); navigate("/"); onMobileClose(); }}
+            >
+              Back
+            </MobileMenu.Item>
+          )}
         </div>
       </MobileMenu.Flyout>
     );
@@ -206,7 +256,7 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
       </div>
 
       {/* Nav sections */}
-      {sections.map((section) => (
+      {visibleSections.map((section) => (
         <Sidebar.Group key={section.title} label={section.title}>
           {section.items.map((item) => {
             const isActive = item.exact
@@ -227,15 +277,23 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
         </Sidebar.Group>
       ))}
 
-      {/* Admin + Collapse at bottom */}
+      {/* Mode toggle + collapse at bottom */}
       <div className="mt-auto border-t border-border">
-        <Sidebar.Item
-          active={isAdminActive}
-          icon={<Shield className="w-4 h-4" />}
-          onClick={() => navigate("/admin")}
-        >
-          Admin
-        </Sidebar.Item>
+        {mode === "main" ? (
+          <Sidebar.Item
+            icon={<Shield className="w-4 h-4" />}
+            onClick={() => { setManualMode("admin"); navigate("/admin"); }}
+          >
+            Admin
+          </Sidebar.Item>
+        ) : (
+          <Sidebar.Item
+            icon={<ArrowLeft className="w-4 h-4" />}
+            onClick={() => { setManualMode("main"); navigate("/"); }}
+          >
+            Back
+          </Sidebar.Item>
+        )}
         <Sidebar.Toggle />
       </div>
     </Sidebar>
