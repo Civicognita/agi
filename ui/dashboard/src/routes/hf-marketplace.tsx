@@ -609,16 +609,16 @@ function ModelDetailDialog({
 function DownloadingNotice() {
   return (
     <div className="rounded-md bg-muted/30 border border-border px-3 py-2 space-y-1">
-      <p className="text-[12px] font-medium text-foreground">Downloading... This may take a few minutes for large models.</p>
-      <p className="text-[11px] text-muted-foreground">You can close this dialog. The download continues in the background.</p>
+      <p className="text-[12px] font-medium text-foreground">Preparing download...</p>
     </div>
   );
 }
 
 function DoneNotice() {
   return (
-    <div className="rounded-md bg-green/10 border border-green/30 px-3 py-2">
-      <p className="text-[12px] font-medium text-green">Model installed! Go to the Installed tab to start it.</p>
+    <div className="rounded-md bg-blue/10 border border-blue/30 px-3 py-2 space-y-1">
+      <p className="text-[12px] font-medium text-blue">Download started. This may take several minutes for large models.</p>
+      <p className="text-[11px] text-muted-foreground">You can close this dialog. Check the Installed tab for download progress and to start the model when ready.</p>
     </div>
   );
 }

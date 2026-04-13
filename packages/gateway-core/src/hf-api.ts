@@ -10,7 +10,8 @@
  * - Agent tool and provider introspection
  */
 
-import { rmSync } from "node:fs";
+import { rmSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type {
   HardwareProfiler,
@@ -203,10 +204,21 @@ export function registerHfRoutes(
 
       const { id, revision = "main", filename } = body;
 
+      // Build download destination: ~/.agi/models/hub/models--{org}--{name}/snapshots/{revision}/
+      const cacheDir = hardwareProfiler.getProfile().disk.modelCachePath;
+      const safeId = id.replace(/\//g, "--");
+      const modelDir = join(cacheDir, "hub", `models--${safeId}`, "snapshots", revision);
+      const destPath = join(modelDir, filename);
+      mkdirSync(modelDir, { recursive: true });
+
       // Look up model info to populate display metadata
       const modelInfo = await hfClient.getModelInfo(id);
       const runtimeType = capabilityResolver.resolveRuntimeType(modelInfo);
-      const estimate = capabilityResolver.estimateResources(modelInfo);
+
+      // Get actual file size from tree API
+      const treeFiles = await hfClient.getModelFiles(id, revision).catch(() => []);
+      const fileEntry = treeFiles.find((f) => f.rfilename === filename);
+      const fileSizeBytes = fileEntry?.size ?? 0;
 
       const downloadedAt = new Date().toISOString();
 
@@ -217,9 +229,9 @@ export function registerHfRoutes(
         displayName: modelInfo.modelId ?? id,
         pipelineTag: modelInfo.pipeline_tag ?? "unknown",
         runtimeType,
-        filePath: "", // will be set by download
+        filePath: modelDir,
         modelFilename: filename,
-        fileSizeBytes: estimate.diskUsageBytes,
+        fileSizeBytes,
         status: "downloading",
         downloadedAt,
       });
@@ -230,7 +242,7 @@ export function registerHfRoutes(
           modelId: id,
           revision,
           filename,
-          destPath: "", // HfHubClient resolves actual path internally
+          destPath,
         })
         .then(() => {
           modelStore.updateStatus(id, "ready");
@@ -238,10 +250,9 @@ export function registerHfRoutes(
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
           modelStore.setError(id, msg);
-          modelStore.updateStatus(id, "error");
         });
 
-      return reply.send({ ok: true, id, status: "downloading" });
+      return reply.send({ ok: true, id, status: "downloading", fileSizeBytes });
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }
