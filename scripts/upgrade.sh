@@ -253,6 +253,14 @@ else
   die "build" "pnpm build failed"
 fi
 
+# Build HF model runtime container images (if containers/ dir exists)
+MODEL_CONTAINERS_SCRIPT="$DEPLOY_DIR/scripts/build-model-containers.sh"
+if [ -x "$MODEL_CONTAINERS_SCRIPT" ]; then
+  emit "build" "start" "Building model runtime containers..."
+  bash "$MODEL_CONTAINERS_SCRIPT" 2>&1 | sed 's/\x1b\[[0-9;]*m//g' || true
+  emit "build" "done" "Model containers ready"
+fi
+
 # Plugin builds happen in ~/.agi/plugins/cache/ at install time.
 # Required plugins are verified by the gateway on boot via the plugin marketplace catalog.
 

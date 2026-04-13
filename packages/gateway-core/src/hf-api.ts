@@ -236,21 +236,41 @@ export function registerHfRoutes(
         downloadedAt,
       });
 
-      // Fire-and-forget download
-      void hfClient
-        .downloadFile({
-          modelId: id,
-          revision,
-          filename,
-          destPath,
-        })
-        .then(() => {
+      // Fire-and-forget download — download main model file + all small support files
+      // (config.json, tokenizer.json, etc. that transformers needs to load the model)
+      const SUPPORT_FILE_MAX_SIZE = 10 * 1024 * 1024; // 10 MB — anything smaller is a support file
+      const supportFiles = treeFiles.filter((f) => {
+        if (f.rfilename === filename) return false; // skip the main model file
+        if (!f.size || f.size > SUPPORT_FILE_MAX_SIZE) return false; // skip large files
+        const ext = f.rfilename.split(".").pop()?.toLowerCase() ?? "";
+        // Include config, tokenizer, and metadata files
+        return ["json", "txt", "model", "md"].includes(ext) || f.rfilename.includes("tokenizer") || f.rfilename.includes("config") || f.rfilename.includes("vocab") || f.rfilename.includes("merges");
+      });
+
+      void (async () => {
+        try {
+          // Download support files first (small, fast)
+          for (const sf of supportFiles) {
+            await hfClient.downloadFile({
+              modelId: id,
+              revision,
+              filename: sf.rfilename,
+              destPath: join(modelDir, sf.rfilename),
+            });
+          }
+          // Download the main model file
+          await hfClient.downloadFile({
+            modelId: id,
+            revision,
+            filename,
+            destPath,
+          });
           modelStore.updateStatus(id, "ready");
-        })
-        .catch((err: unknown) => {
+        } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           modelStore.setError(id, msg);
-        });
+        }
+      })();
 
       return reply.send({ ok: true, id, status: "downloading", fileSizeBytes });
     } catch (err) {
