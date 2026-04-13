@@ -180,6 +180,7 @@ cmd_upgrade() {
     exit 1
   fi
 
+  local upgrade_exit=0
   bash "$deploy_script" 2>&1 | while IFS= read -r line; do
     # Parse structured JSON output from upgrade.sh
     local phase status details
@@ -199,9 +200,13 @@ cmd_upgrade() {
       echo "  $line"
     fi
   done
+  upgrade_exit=${PIPESTATUS[0]}
 
   echo ""
-  if is_running; then
+  if [ "$upgrade_exit" -ne 0 ]; then
+    err "Upgrade failed (exit code $upgrade_exit)"
+    warn "Check: agi logs 30"
+  elif is_running; then
     ok "Upgrade complete — service is running"
   else
     err "Upgrade finished but service is not running"
