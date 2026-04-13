@@ -3,7 +3,7 @@
  * Three tabs: Models (browse + install), Installed (manage), Running (live stats + test).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,7 @@ import {
   wizardInstallHFModel,
   startFineTuneJob,
   stopFineTuneJob,
+  fetchHFBuildLog,
 } from "../api.js";
 import type {
   HFModelSearchResult,
@@ -1015,6 +1016,44 @@ function ModelDetailDialog({
   );
 }
 
+function BuildLogPanel({ modelId }: { modelId: string }) {
+  const [lines, setLines] = useState<string[]>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    async function poll() {
+      try {
+        const data = await fetchHFBuildLog(modelId);
+        if (active) {
+          setLines(data.lines);
+          if (scrollRef.current) {
+            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    void poll();
+    const interval = setInterval(() => void poll(), 2_000);
+    return () => { active = false; clearInterval(interval); };
+  }, [modelId]);
+
+  if (lines.length === 0) return null;
+
+  return (
+    <div
+      ref={scrollRef}
+      className="rounded-md bg-mantle border border-border p-2 max-h-[150px] overflow-y-auto font-mono text-[10px] text-subtext0 space-y-0.5"
+    >
+      {lines.map((line, i) => (
+        <div key={i} className={cn(line.includes("FAILED") || line.includes("error") ? "text-red" : line.includes("successfully") || line.includes("built") ? "text-green" : "")}>
+          {line}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DownloadingNotice() {
   return (
     <div className="rounded-md bg-muted/30 border border-border px-3 py-2 space-y-1">
@@ -1138,6 +1177,10 @@ function InstalledTab() {
 
             {model.error && (
               <p className="text-[11px] text-red">{model.error}</p>
+            )}
+
+            {(model.status === "starting" || model.status === "downloading") && (
+              <BuildLogPanel modelId={model.id} />
             )}
 
             <div className="flex items-center gap-2">

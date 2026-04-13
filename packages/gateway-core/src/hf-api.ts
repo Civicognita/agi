@@ -25,6 +25,7 @@ import type {
   CustomContainerBuilder,
 } from "@aionima/model-runtime";
 import type { ModelAgentBridge } from "@aionima/model-runtime";
+import { getBuildLog } from "@aionima/model-runtime";
 import type { FineTuneManager } from "./finetune-manager.js";
 
 // ---------------------------------------------------------------------------
@@ -642,6 +643,18 @@ export function registerHfRoutes(
       } catch (err) {
         return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
       }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Build log (for custom model container builds)
+  // -------------------------------------------------------------------------
+
+  fastify.get<{ Params: { modelId: string } }>(
+    "/api/hf/models/:modelId/build-log",
+    async (request, reply) => {
+      const modelId = decodeURIComponent(request.params.modelId);
+      return reply.send({ modelId, lines: getBuildLog(modelId) });
     },
   );
 

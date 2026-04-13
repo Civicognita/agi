@@ -2511,6 +2511,10 @@ export async function stopHFModel(modelId: string): Promise<{ ok: boolean }> {
   return res.json() as Promise<{ ok: boolean }>;
 }
 
+export async function fetchHFBuildLog(modelId: string): Promise<{ modelId: string; lines: string[] }> {
+  return hfGet<{ modelId: string; lines: string[] }>(`/api/hf/models/${encodeURIComponent(modelId)}/build-log`);
+}
+
 export async function fetchHFRunningModels(): Promise<HFRunningModel[]> {
   return hfGet<HFRunningModel[]>("/api/hf/running");
 }

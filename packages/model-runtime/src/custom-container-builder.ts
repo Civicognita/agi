@@ -12,10 +12,34 @@
  * Image tag format: aionima-custom-{sanitized-model-id}:latest
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { CustomRuntimeDefinition } from "./types.js";
+
+/** In-memory build log per model ID. Capped at 200 lines. */
+const buildLogs = new Map<string, string[]>();
+const BUILD_LOG_MAX = 200;
+
+function appendLog(modelId: string, line: string): void {
+  let lines = buildLogs.get(modelId);
+  if (!lines) {
+    lines = [];
+    buildLogs.set(modelId, lines);
+  }
+  lines.push(line);
+  if (lines.length > BUILD_LOG_MAX) lines.shift();
+}
+
+/** Get current build log for a model. */
+export function getBuildLog(modelId: string): string[] {
+  return buildLogs.get(modelId) ?? [];
+}
+
+/** Clear build log for a model. */
+export function clearBuildLog(modelId: string): void {
+  buildLogs.delete(modelId);
+}
 
 // ---------------------------------------------------------------------------
 // Default Dockerfile template
@@ -123,21 +147,32 @@ export class CustomContainerBuilder {
     const buildDir = mkdtempSync(join(this.cacheDir, "build-"));
 
     try {
+      clearBuildLog(modelId);
+      appendLog(modelId, `[build] Starting build for ${definition.label}`);
+
       // Clone source repo into build context
       if (definition.sourceRepo) {
+        appendLog(modelId, `[clone] Cloning ${definition.sourceRepo}...`);
         const cloneArgs = ["clone", "--depth", "1"];
         if (definition.sourceRef) {
           cloneArgs.push("--branch", definition.sourceRef);
         }
         cloneArgs.push(definition.sourceRepo, join(buildDir, "src"));
 
-        execFileSync("git", cloneArgs, {
+        const cloneResult = spawnSync("git", cloneArgs, {
           stdio: "pipe",
           timeout: 120_000,
         });
+        if (cloneResult.status !== 0) {
+          const err = cloneResult.stderr?.toString().trim() ?? "unknown error";
+          appendLog(modelId, `[clone] FAILED: ${err}`);
+          throw new Error(`git clone failed: ${err}`);
+        }
+        appendLog(modelId, `[clone] Repository cloned successfully`);
       }
 
       // Write Dockerfile
+      appendLog(modelId, `[build] Generating Containerfile...`);
       const dockerfile = definition.dockerfileTemplate ?? buildDefaultDockerfile(definition);
       writeFileSync(join(buildDir, "Containerfile"), dockerfile, "utf8");
 
@@ -148,15 +183,12 @@ export class CustomContainerBuilder {
         writeFileSync(wrapperPath, buildDefaultWrapper(definition), "utf8");
       }
 
-      // Run podman build
-      execFileSync(
+      // Run podman build — use spawnSync to capture output for logging
+      appendLog(modelId, `[build] Building container image ${imageTag}...`);
+      appendLog(modelId, `[build] This may take several minutes (installing dependencies)...`);
+      const buildResult = spawnSync(
         "podman",
-        [
-          "build",
-          "-t", imageTag,
-          "-f", "Containerfile",
-          ".",
-        ],
+        ["build", "-t", imageTag, "-f", "Containerfile", "."],
         {
           cwd: buildDir,
           stdio: "pipe",
@@ -164,6 +196,19 @@ export class CustomContainerBuilder {
         },
       );
 
+      // Log build output (last 20 lines to avoid flooding)
+      const buildOutput = (buildResult.stdout?.toString() ?? "") + (buildResult.stderr?.toString() ?? "");
+      const outputLines = buildOutput.split("\n").filter(Boolean);
+      for (const line of outputLines.slice(-20)) {
+        appendLog(modelId, `[build] ${line.trim()}`);
+      }
+
+      if (buildResult.status !== 0) {
+        appendLog(modelId, `[build] FAILED (exit code ${String(buildResult.status)})`);
+        throw new Error(`podman build failed (exit ${String(buildResult.status)}): ${outputLines.slice(-3).join(" ")}`);
+      }
+
+      appendLog(modelId, `[build] Image ${imageTag} built successfully`);
       return imageTag;
     } finally {
       // Always clean up temp dir

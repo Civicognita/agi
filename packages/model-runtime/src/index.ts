@@ -85,7 +85,7 @@ export { InferenceGateway } from "./inference-gateway.js";
 export { KnownModelsRegistry } from "./known-models-registry.js";
 
 // Custom Container Builder
-export { CustomContainerBuilder } from "./custom-container-builder.js";
+export { CustomContainerBuilder, getBuildLog, clearBuildLog } from "./custom-container-builder.js";
 
 // Agent Bridge
 export { ModelAgentBridge } from "./agent-bridge.js";
