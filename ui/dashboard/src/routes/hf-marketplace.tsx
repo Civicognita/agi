@@ -1245,35 +1245,56 @@ function InstalledTab() {
 // ---------------------------------------------------------------------------
 
 function RunningTab() {
-  const query = useHFRunningModels();
-  const models = query.data ?? [];
+  const query = useHFInstalledModels();
+  const runningModels = (query.data ?? []).filter((m) => m.status === "running");
 
   if (query.isLoading) {
     return <p className="text-[13px] text-muted-foreground">Loading running models...</p>;
   }
 
-  if (models.length === 0) {
+  if (runningModels.length === 0) {
     return (
       <div className="py-12 text-center">
         <p className="text-[13px] text-muted-foreground">No models are currently running.</p>
+        <p className="text-[11px] text-muted-foreground mt-1">Start a model from the Installed tab.</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      {models.map((model) => (
+      {runningModels.map((model) => (
         <RunningModelCard key={model.id} model={model} />
       ))}
     </div>
   );
 }
 
-function RunningModelCard({ model }: { model: HFRunningModel }) {
+function RunningModelCard({ model }: { model: HFInstalledModel }) {
   const [prompt, setPrompt] = useState("");
   const [inferResult, setInferResult] = useState<{ response: string; latencyMs: number } | null>(null);
   const [inferRunning, setInferRunning] = useState(false);
   const [inferError, setInferError] = useState<string | null>(null);
+  const [healthOk, setHealthOk] = useState<boolean | null>(null);
+
+  // Live health check
+  useEffect(() => {
+    if (!model.containerPort) return;
+    let active = true;
+    async function check() {
+      try {
+        const res = await fetch(`/api/hf/models/${encodeURIComponent(model.id)}/proxy/health`);
+        if (active) setHealthOk(res.ok);
+      } catch {
+        if (active) setHealthOk(false);
+      }
+    }
+    void check();
+    const interval = setInterval(() => void check(), 10_000);
+    return () => { active = false; clearInterval(interval); };
+  }, [model.id, model.containerPort]);
+
+  const isCustom = model.runtimeType === "custom";
 
   const handleInfer = useCallback(async () => {
     if (!prompt.trim()) return;
@@ -1281,37 +1302,52 @@ function RunningModelCard({ model }: { model: HFRunningModel }) {
     setInferError(null);
     setInferResult(null);
     try {
-      const result = await testHFInference(model.id, prompt);
-      setInferResult(result);
+      if (isCustom) {
+        // Custom models use the generic proxy — send to the first known endpoint or /predict
+        const start = Date.now();
+        const res = await fetch(`/api/hf/models/${encodeURIComponent(model.id)}/proxy/predict`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: prompt,
+        });
+        const latencyMs = Date.now() - start;
+        const data = await res.text();
+        setInferResult({ response: data.substring(0, 2000), latencyMs });
+      } else {
+        const result = await testHFInference(model.id, prompt);
+        setInferResult(result);
+      }
     } catch (err) {
       setInferError(err instanceof Error ? err.message : "Inference failed");
     } finally {
       setInferRunning(false);
     }
-  }, [model.id, prompt]);
+  }, [model.id, prompt, isCustom]);
 
   return (
     <Card className="p-4 space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-[13px] font-semibold">{model.id}</p>
+            <p className="text-[13px] font-semibold">{model.displayName}</p>
             <Badge variant="outline" className="text-[10px]">{model.runtimeType}</Badge>
+            {isCustom && <Badge variant="outline" className="text-[10px] border-blue text-blue">Custom</Badge>}
           </div>
           <div className="flex items-center gap-4 mt-1 text-[11px] text-muted-foreground">
-            <span>Port {model.port}</span>
-            <span>Up {formatUptime(model.startedAt)}</span>
+            {model.containerPort && <span>Port {String(model.containerPort)}</span>}
+            <span>{model.pipelineTag}</span>
+            {model.quantization && <span>{model.quantization}</span>}
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <span
             className={cn(
               "inline-block w-2 h-2 rounded-full",
-              model.healthCheckPassed ? "bg-green" : "bg-red",
+              healthOk === true ? "bg-green" : healthOk === false ? "bg-red" : "bg-yellow animate-pulse",
             )}
           />
           <span className="text-[11px] text-muted-foreground">
-            {model.healthCheckPassed ? "Healthy" : "Unhealthy"}
+            {healthOk === true ? "Healthy" : healthOk === false ? "Unhealthy" : "Checking..."}
           </span>
         </div>
       </div>
@@ -1319,7 +1355,7 @@ function RunningModelCard({ model }: { model: HFRunningModel }) {
       {/* Quick inference test */}
       <div className="space-y-2">
         <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-          Quick Test
+          {isCustom ? "API Test (JSON body → /predict)" : "Quick Test"}
         </p>
         <div className="flex gap-2">
           <Input

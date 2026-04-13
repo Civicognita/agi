@@ -1431,13 +1431,16 @@ export async function startGatewayServer(
           const allModels = await modelStore.getAll();
           return JSON.stringify(allModels.map((m) => ({ id: m.id, status: m.status, runtime: m.runtimeType, size: m.fileSizeBytes })));
         }
-        case "running":
-          return JSON.stringify(modelContainerManager.getRunning());
+        case "running": {
+          const runningModels = (await modelStore.getAll()).filter((m) => m.status === "running");
+          return JSON.stringify(runningModels.map((m) => ({ id: m.id, displayName: m.displayName, runtime: m.runtimeType, port: m.containerPort, pipeline: m.pipelineTag })));
+        }
         case "hardware":
           return JSON.stringify(hardwareProfiler.getProfile().capabilities);
         case "status": {
           const allInstalled = await modelStore.getAll();
-          return JSON.stringify({ enabled: hfEnabled ?? false, installed: allInstalled.length, running: modelContainerManager.getRunning().length, tier: hardwareProfiler.getProfile().capabilities.tier });
+          const runningCount = allInstalled.filter((m) => m.status === "running").length;
+          return JSON.stringify({ enabled: hfEnabled ?? false, installed: allInstalled.length, running: runningCount, tier: hardwareProfiler.getProfile().capabilities.tier });
         }
         case "datasets": {
           const q = String(input.query ?? "");

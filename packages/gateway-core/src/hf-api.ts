@@ -514,7 +514,8 @@ export function registerHfRoutes(
 
   fastify.get("/api/hf/running", async (_request, reply) => {
     try {
-      const running = containerManager.getRunning();
+      const allModels = await modelStore.getAll();
+      const running = allModels.filter((m) => m.status === "running");
       return reply.send(running);
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
