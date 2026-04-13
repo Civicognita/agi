@@ -167,6 +167,12 @@ export class ModelStore {
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
+
+    // Migrate existing tables: SQLite CHECK constraints are baked at CREATE time
+    // and cannot be altered. If the old constraint exists (no 'custom'), we must
+    // recreate the table.
+    this.migrateCheckConstraint();
+
     this.db.exec(SCHEMA);
     // Run each migration statement individually so a failed one (column exists) does not abort the rest.
     for (const stmt of MIGRATIONS.split(";").map((s) => s.trim()).filter(Boolean)) {
@@ -273,6 +279,38 @@ export class ModelStore {
   // ---------------------------------------------------------------------------
   // Row mapping
   // ---------------------------------------------------------------------------
+
+  /**
+   * Migrate the models table if it has the old CHECK constraint (missing 'custom').
+   * SQLite doesn't support ALTER CHECK — we must recreate the table.
+   */
+  private migrateCheckConstraint(): void {
+    try {
+      const tableInfo = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='models'").get() as { sql: string } | undefined;
+      if (!tableInfo?.sql) return; // table doesn't exist yet — SCHEMA will create it
+
+      // If the constraint already includes 'custom', no migration needed
+      if (tableInfo.sql.includes("'custom'")) return;
+
+      // Recreate table with new constraint
+      this.db.exec("PRAGMA foreign_keys = OFF");
+      this.db.exec("BEGIN TRANSACTION");
+      try {
+        this.db.exec("ALTER TABLE models RENAME TO models_old");
+        this.db.exec(SCHEMA);
+        // Copy data — the new table has extra columns that default to NULL
+        const oldCols = "id, revision, display_name, pipeline_tag, runtime_type, file_path, model_filename, file_size_bytes, quantization, status, downloaded_at, last_used_at, error, container_id, container_port, container_name";
+        this.db.exec(`INSERT INTO models (${oldCols}) SELECT ${oldCols} FROM models_old`);
+        this.db.exec("DROP TABLE models_old");
+        this.db.exec("COMMIT");
+      } catch {
+        this.db.exec("ROLLBACK");
+      }
+      this.db.exec("PRAGMA foreign_keys = ON");
+    } catch {
+      // First run — table doesn't exist, SCHEMA will create it
+    }
+  }
 
   private mapRow(row: ModelRow): InstalledModel {
     let endpoints: ModelEndpoint[] | undefined;
