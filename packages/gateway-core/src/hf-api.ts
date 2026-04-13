@@ -151,7 +151,23 @@ export function registerHfRoutes(
           return reply.code(400).send({ error: "modelId is required" });
         }
 
-        const model = await hfClient.getModelInfo(modelId);
+        const [model, treeFiles] = await Promise.all([
+          hfClient.getModelInfo(modelId),
+          hfClient.getModelFiles(modelId).catch(() => []),
+        ]);
+
+        // Merge file sizes from tree API into siblings (model info doesn't include sizes)
+        if (model.siblings && treeFiles.length > 0) {
+          const sizeMap = new Map(treeFiles.map((f) => [f.rfilename, f.size ?? 0]));
+          for (const sib of model.siblings) {
+            if (sib.size === undefined || sib.size === 0) {
+              sib.size = sizeMap.get(sib.rfilename);
+            }
+          }
+        } else if (!model.siblings && treeFiles.length > 0) {
+          model.siblings = treeFiles;
+        }
+
         const { compatibility, reason } = capabilityResolver.assessCompatibility(model);
         const estimate = capabilityResolver.estimateResources(model);
         const variants = capabilityResolver.resolveVariants(model);

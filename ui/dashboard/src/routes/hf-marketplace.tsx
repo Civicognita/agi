@@ -268,7 +268,7 @@ function ModelCard({ model, onSelect }: { model: HFModelSearchResult; onSelect: 
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-[13px] font-semibold truncate">{model.modelId}</p>
+          <p className="text-[13px] font-semibold truncate">{model.id}</p>
           {model.author && (
             <p className="text-[11px] text-muted-foreground truncate">{model.author}</p>
           )}
@@ -329,11 +329,11 @@ function ModelDetailDialog({
 
   useEffect(() => {
     setLoadingDetail(true);
-    fetchHFModelDetail(model.modelId)
+    fetchHFModelDetail(model.id)
       .then(setDetail)
       .catch(() => setDetail(null))
       .finally(() => setLoadingDetail(false));
-  }, [model.modelId]);
+  }, [model.id]);
 
   const sortedVariants: HFModelVariant[] = detail?.variants.slice().sort((a, b) => {
     const compatOrder: Record<HFCompatibility, number> = { compatible: 0, limited: 1, incompatible: 2 };
@@ -346,7 +346,7 @@ function ModelDetailDialog({
     setInstalling(variant.filename);
     setInstallError(null);
     try {
-      const result = await installHFModel(model.modelId, variant.filename);
+      const result = await installHFModel(model.id, variant.filename);
       if (!result.ok) {
         setInstallError(result.error ?? "Installation failed");
       } else {
@@ -364,7 +364,7 @@ function ModelDetailDialog({
       <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 flex-wrap">
-            <span>{model.modelId}</span>
+            <span>{model.id}</span>
             {model.pipeline_tag && (
               <Badge variant="outline" className="text-[10px]">{model.pipeline_tag}</Badge>
             )}
@@ -624,7 +624,7 @@ function RunningTab() {
   return (
     <div className="space-y-4">
       {models.map((model) => (
-        <RunningModelCard key={model.modelId} model={model} />
+        <RunningModelCard key={model.id} model={model} />
       ))}
     </div>
   );
@@ -642,21 +642,21 @@ function RunningModelCard({ model }: { model: HFRunningModel }) {
     setInferError(null);
     setInferResult(null);
     try {
-      const result = await testHFInference(model.modelId, prompt);
+      const result = await testHFInference(model.id, prompt);
       setInferResult(result);
     } catch (err) {
       setInferError(err instanceof Error ? err.message : "Inference failed");
     } finally {
       setInferRunning(false);
     }
-  }, [model.modelId, prompt]);
+  }, [model.id, prompt]);
 
   return (
     <Card className="p-4 space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-[13px] font-semibold">{model.modelId}</p>
+            <p className="text-[13px] font-semibold">{model.id}</p>
             <Badge variant="outline" className="text-[10px]">{model.runtimeType}</Badge>
           </div>
           <div className="flex items-center gap-4 mt-1 text-[11px] text-muted-foreground">

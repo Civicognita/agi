@@ -1362,6 +1362,53 @@ export async function startGatewayServer(
   });
   log.info(`registered ${String(agentToolCount)} agent tools`);
 
+  // Register HF model management tool for the agent
+  toolRegistry.register(
+    {
+      name: "hf_models",
+      description: "Manage HuggingFace models — search the Hub, list installed models, check hardware capabilities, start/stop model containers. Use this tool when the user asks about AI models, HuggingFace, model downloads, or local inference.",
+      requiresState: [],
+      requiresTier: [],
+    },
+    async (input: Record<string, unknown>) => {
+      const action = String(input.action ?? "list");
+      const hfEnabled = ((config as Record<string, unknown>).hf as { enabled?: boolean } | undefined)?.enabled;
+
+      if (!hfEnabled && action !== "hardware" && action !== "status") {
+        return JSON.stringify({ error: "HF Marketplace is not enabled. Ask the user to enable it in Settings > HF Marketplace." });
+      }
+
+      switch (action) {
+        case "search": {
+          const q = String(input.query ?? "");
+          const task = input.task as string | undefined;
+          const results = await hfClient.searchModels({ search: q, pipeline_tag: task, limit: 5 });
+          return JSON.stringify(results.map((m) => ({ id: m.id, task: m.pipeline_tag, downloads: m.downloads, likes: m.likes })));
+        }
+        case "list":
+          return JSON.stringify(modelStore.getAll().map((m) => ({ id: m.id, status: m.status, runtime: m.runtimeType, size: m.fileSizeBytes })));
+        case "running":
+          return JSON.stringify(modelContainerManager.getRunning());
+        case "hardware":
+          return JSON.stringify(hardwareProfiler.getProfile().capabilities);
+        case "status": {
+          return JSON.stringify({ enabled: hfEnabled ?? false, installed: modelStore.getAll().length, running: modelContainerManager.getRunning().length, tier: hardwareProfiler.getProfile().capabilities.tier });
+        }
+        default:
+          return JSON.stringify({ error: `Unknown action: ${action}. Available: search, list, running, hardware, status` });
+      }
+    },
+    {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["search", "list", "running", "hardware", "status"], description: "Action to perform" },
+        query: { type: "string", description: "Search query (for action=search)" },
+        task: { type: "string", description: "Pipeline task filter (for action=search), e.g. text-generation, text-to-image" },
+      },
+      required: ["action"],
+    },
+  );
+
   // -------------------------------------------------------------------------
   // Step 4: Runtime state creation (HTTP + WS servers)
   //
