@@ -73,9 +73,6 @@ const builtinSections: NavSectionWithMode[] = [
     { to: "/gateway/logs", label: "Logs", icon: ScrollText },
     { to: "/gateway/onboarding", label: "Onboarding", icon: Rocket },
   ]},
-  { mode: "admin", title: "Settings", items: [
-    { to: "/settings", label: "Settings", icon: SlidersHorizontal },
-  ]},
   { mode: "admin", title: "System", items: [
     { to: "/system", label: "Resources", exact: true, icon: Activity },
     { to: "/system/services", label: "Services", icon: Blocks },
@@ -86,6 +83,7 @@ const builtinSections: NavSectionWithMode[] = [
     { to: "/system/backups", label: "Backups", icon: HardDrive },
     { to: "/system/security", label: "Security", icon: ShieldCheck },
     { to: "/system/identity", label: "Identity", icon: Fingerprint },
+    { to: "/settings", label: "Settings", icon: SlidersHorizontal },
   ]},
 ];
 
