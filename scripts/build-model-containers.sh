@@ -40,11 +40,10 @@ podman build \
   "${CONTAINERS_DIR}"
 ok "ghcr.io/civicognita/diffusion-server:latest built"
 
-# LLM runtime — pull upstream llama.cpp server image
+# LLM runtime — pull upstream llama.cpp server image (ghcr.io is GitHub, not Docker Hub)
 info "Pulling LLM runtime image (llama.cpp server)..."
-podman pull docker.io/ghcr.io/ggerganov/llama.cpp:server 2>/dev/null || \
-  podman pull ghcr.io/ggerganov/llama.cpp:server 2>/dev/null || \
-  warn "Could not pull llama.cpp server image — LLM runtime will not be available"
+podman pull ghcr.io/ggerganov/llama.cpp:server 2>/dev/null || \
+  warn "Could not pull llama.cpp server image — LLM runtime will not be available until manually pulled"
 
 # Fine-tune runtime (PEFT/LoRA via trl + transformers)
 info "Building fine-tune runtime image..."

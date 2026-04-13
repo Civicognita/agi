@@ -281,24 +281,39 @@ export class ModelStore {
   // ---------------------------------------------------------------------------
 
   /**
-   * Migrate the models table if it has the old CHECK constraint (missing 'custom').
-   * SQLite doesn't support ALTER CHECK — we drop and recreate the table.
+   * Repair the database if it has stale references or old CHECK constraints.
+   *
+   * Handles two scenarios:
+   * 1. Old CHECK constraint (missing 'custom') — drop + recreate models table
+   * 2. Stale foreign key in download_progress referencing models_old — drop + recreate
    */
   private migrateCheckConstraint(): void {
     try {
+      // Check for stale references to models_old (from a failed prior migration)
+      const dpInfo = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='download_progress'").get() as { sql: string } | undefined;
+      const hasStaleRef = dpInfo?.sql?.includes("models_old") ?? false;
+
+      // Check if models table needs constraint migration
       const tableInfo = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='models'").get() as { sql: string } | undefined;
-      if (!tableInfo?.sql) return; // table doesn't exist yet — SCHEMA will create it
-      if (tableInfo.sql.includes("'custom'")) return; // already migrated
+      const needsConstraintMigration = tableInfo?.sql !== undefined && !tableInfo.sql.includes("'custom'");
 
-      // Save existing data
-      const rows = this.db.prepare("SELECT * FROM models").all();
+      if (!hasStaleRef && !needsConstraintMigration) return; // all good
 
-      // Drop old tables and recreate with new constraint
+      // Save existing model data
+      let rows: unknown[] = [];
+      try {
+        rows = this.db.prepare("SELECT * FROM models").all();
+      } catch {
+        // models table may not exist if prior migration left things broken
+      }
+
+      // Nuclear option: drop ALL tables and recreate clean
       this.db.exec("DROP TABLE IF EXISTS download_progress");
+      this.db.exec("DROP TABLE IF EXISTS models_old"); // cleanup from failed prior migration
       this.db.exec("DROP TABLE IF EXISTS models");
       this.db.exec(SCHEMA);
 
-      // Restore data — insert rows back, skipping columns that might not exist in new schema
+      // Restore data
       if (rows.length > 0) {
         const insert = this.db.prepare(`
           INSERT OR IGNORE INTO models (
