@@ -282,33 +282,43 @@ export class ModelStore {
 
   /**
    * Migrate the models table if it has the old CHECK constraint (missing 'custom').
-   * SQLite doesn't support ALTER CHECK — we must recreate the table.
+   * SQLite doesn't support ALTER CHECK — we drop and recreate the table.
    */
   private migrateCheckConstraint(): void {
     try {
       const tableInfo = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='models'").get() as { sql: string } | undefined;
       if (!tableInfo?.sql) return; // table doesn't exist yet — SCHEMA will create it
+      if (tableInfo.sql.includes("'custom'")) return; // already migrated
 
-      // If the constraint already includes 'custom', no migration needed
-      if (tableInfo.sql.includes("'custom'")) return;
+      // Save existing data
+      const rows = this.db.prepare("SELECT * FROM models").all();
 
-      // Recreate table with new constraint
-      this.db.exec("PRAGMA foreign_keys = OFF");
-      this.db.exec("BEGIN TRANSACTION");
-      try {
-        this.db.exec("ALTER TABLE models RENAME TO models_old");
-        this.db.exec(SCHEMA);
-        // Copy data — the new table has extra columns that default to NULL
-        const oldCols = "id, revision, display_name, pipeline_tag, runtime_type, file_path, model_filename, file_size_bytes, quantization, status, downloaded_at, last_used_at, error, container_id, container_port, container_name";
-        this.db.exec(`INSERT INTO models (${oldCols}) SELECT ${oldCols} FROM models_old`);
-        this.db.exec("DROP TABLE models_old");
-        this.db.exec("COMMIT");
-      } catch {
-        this.db.exec("ROLLBACK");
+      // Drop old tables and recreate with new constraint
+      this.db.exec("DROP TABLE IF EXISTS download_progress");
+      this.db.exec("DROP TABLE IF EXISTS models");
+      this.db.exec(SCHEMA);
+
+      // Restore data — insert rows back, skipping columns that might not exist in new schema
+      if (rows.length > 0) {
+        const insert = this.db.prepare(`
+          INSERT OR IGNORE INTO models (
+            id, revision, display_name, pipeline_tag, runtime_type,
+            file_path, model_filename, file_size_bytes, quantization,
+            status, downloaded_at, last_used_at, error,
+            container_id, container_port, container_name
+          ) VALUES (
+            @id, @revision, @display_name, @pipeline_tag, @runtime_type,
+            @file_path, @model_filename, @file_size_bytes, @quantization,
+            @status, @downloaded_at, @last_used_at, @error,
+            @container_id, @container_port, @container_name
+          )
+        `);
+        for (const row of rows) {
+          try { insert.run(row as Record<string, unknown>); } catch { /* skip bad rows */ }
+        }
       }
-      this.db.exec("PRAGMA foreign_keys = ON");
     } catch {
-      // First run — table doesn't exist, SCHEMA will create it
+      // First run or unrecoverable — SCHEMA will create fresh tables
     }
   }
 
