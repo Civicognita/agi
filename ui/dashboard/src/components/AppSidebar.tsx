@@ -16,7 +16,7 @@ import {
   Folders, Inbox, LayoutDashboard, Link as LinkIcon, FileBarChart,
   Compass, FileText, GitBranch, Store, ScrollText, Rocket,
   SlidersHorizontal, Activity, Blocks, ShieldHalf, ShieldCheck,
-  AlertTriangle, Building2, HardDrive, Fingerprint, Sparkles,
+  AlertTriangle, Building2, HardDrive, Fingerprint, Sparkles, Cpu,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -63,6 +63,7 @@ const builtinSections: NavSectionWithPerspective[] = [
   { perspective: "backend", title: "Marketplace", items: [
     { to: "/gateway/marketplace", label: "Plugins", icon: Store },
     { to: "/magic-apps/admin", label: "MagicApps", icon: Sparkles },
+    { to: "/hf-marketplace", label: "HF Models", icon: Cpu },
   ]},
   { perspective: "backend", title: "Gateway", items: [
     { to: "/gateway/workflows", label: "Workflows", icon: GitBranch },

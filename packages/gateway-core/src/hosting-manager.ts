@@ -2005,6 +2005,14 @@ export class HostingManager {
     envArgs.push("-e", "WHODB_OLLAMA_PORT=11434");
 
     try {
+      // Pull image if not present (first run after install)
+      try {
+        execFileSync("podman", ["image", "exists", "clidey/whodb:latest"], { stdio: "pipe", timeout: 10_000 });
+      } catch {
+        this.log.info("Pulling WhoDB image (first run)...");
+        execFileSync("podman", ["pull", "clidey/whodb:latest"], { stdio: "pipe", timeout: 300_000 });
+      }
+
       execFileSync("podman", [
         "run", "-d",
         "--name", containerName,

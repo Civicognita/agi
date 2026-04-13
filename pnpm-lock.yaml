@@ -372,6 +372,16 @@ importers:
         specifier: workspace:*
         version: link:../gateway-core
 
+  packages/model-runtime:
+    dependencies:
+      better-sqlite3:
+        specifier: ^11.0.0
+        version: 11.10.0
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.0
+        version: 7.6.13
+
   packages/plugins:
     dependencies:
       '@aionima/channel-sdk':

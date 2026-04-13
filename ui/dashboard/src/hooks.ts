@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { DashboardEvent, LogEntry, AionimaConfig, ReportSummary, ReportDetail } from "./types.js";
+import type { DashboardEvent, LogEntry, AionimaConfig, ReportSummary, ReportDetail, HFModelSearchResult } from "./types.js";
 import {
   fetchOverview, fetchConfig, saveConfig,
   fetchProjects, createProject, updateProject, deleteProject,
@@ -23,6 +23,10 @@ import {
   fetchLinuxUsers, createLinuxUser, updateLinuxUser, deleteLinuxUser,
   fetchAgents, restartAgent,
   fetchReports, fetchReport,
+  fetchHFHardwareProfile,
+  searchHFModels,
+  fetchHFInstalledModels,
+  fetchHFRunningModels,
 } from "./api.js";
 
 // ---------------------------------------------------------------------------
@@ -713,6 +717,42 @@ export function useReport(coaReqId: string) {
     loading: query.isLoading,
     error: query.error?.message ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Marketplace hooks
+// ---------------------------------------------------------------------------
+
+export function useHFHardwareProfile() {
+  return useQuery({
+    queryKey: ["hf", "hardware"],
+    queryFn: fetchHFHardwareProfile,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useHFModels(params: Parameters<typeof searchHFModels>[0]) {
+  return useQuery({
+    queryKey: ["hf", "search", params],
+    queryFn: () => searchHFModels(params),
+    placeholderData: (prev: HFModelSearchResult[] | undefined) => prev,
+  });
+}
+
+export function useHFInstalledModels() {
+  return useQuery({
+    queryKey: ["hf", "installed"],
+    queryFn: fetchHFInstalledModels,
+    refetchInterval: 10_000,
+  });
+}
+
+export function useHFRunningModels() {
+  return useQuery({
+    queryKey: ["hf", "running"],
+    queryFn: fetchHFRunningModels,
+    refetchInterval: 5_000,
+  });
 }
 
 // ---------------------------------------------------------------------------

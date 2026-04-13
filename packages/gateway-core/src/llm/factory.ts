@@ -21,6 +21,7 @@ const ENV_KEYS: Record<string, string> = {
   anthropic: "ANTHROPIC_API_KEY",
   openai: "OPENAI_API_KEY",
   ollama: "", // Ollama doesn't need an API key
+  "hf-local": "", // Local model, no API key needed
 };
 
 // ---------------------------------------------------------------------------
@@ -56,6 +57,15 @@ function createSingleProvider(
         maxTokens: config.maxTokens ?? 8192,
         maxRetries: config.maxRetries ?? 3,
         baseUrl: config.baseUrl ?? "http://127.0.0.1:11434",
+      });
+
+    case "hf-local":
+      return new OpenAIProvider({
+        apiKey: "not-needed",
+        defaultModel: config.defaultModel ?? "local",
+        maxTokens: config.maxTokens ?? 4096,
+        maxRetries: config.maxRetries ?? 2,
+        baseUrl: config.baseUrl ?? "http://127.0.0.1:6000",
       });
 
     default:

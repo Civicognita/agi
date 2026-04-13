@@ -28,6 +28,12 @@ import type {
   ScanRun,
   SecurityFinding,
   SecuritySummary,
+  HFHardwareProfile,
+  HFCapabilityEntry,
+  HFModelSearchResult,
+  HFModelDetail,
+  HFInstalledModel,
+  HFRunningModel,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -2406,9 +2412,133 @@ export async function changeMagicAppMode(instanceId: string, mode: string): Prom
   if (!res.ok) throw new Error("Failed to change mode");
 }
 
-export async function closeMagicAppInstance(instanceId: string): Promise<void> {
-  const res = await fetch(`/api/magic-apps/instances/${encodeURIComponent(instanceId)}`, {
-    method: "DELETE",
+// ---------------------------------------------------------------------------
+// HuggingFace Marketplace API
+// ---------------------------------------------------------------------------
+
+function getHFAuthHeaders(): Record<string, string> {
+  const token = getDashboardToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+export async function fetchHFHardwareProfile(): Promise<HFHardwareProfile> {
+  const res = await fetch("/api/hf/hardware", { headers: getHFAuthHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<HFHardwareProfile>;
+}
+
+export async function rescanHFHardware(): Promise<HFHardwareProfile> {
+  const res = await fetch("/api/hf/hardware/rescan", { method: "POST", headers: getHFAuthHeaders() });
+  if (!res.ok) throw new Error("Hardware rescan failed");
+  return res.json() as Promise<HFHardwareProfile>;
+}
+
+export async function fetchHFCapabilities(): Promise<HFCapabilityEntry[]> {
+  const res = await fetch("/api/hf/capabilities", { headers: getHFAuthHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<HFCapabilityEntry[]>;
+}
+
+export async function searchHFModels(params: {
+  q?: string;
+  pipeline_tag?: string;
+  library?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<HFModelSearchResult[]> {
+  const sp = new URLSearchParams();
+  if (params.q) sp.set("q", params.q);
+  if (params.pipeline_tag) sp.set("pipeline_tag", params.pipeline_tag);
+  if (params.library) sp.set("library", params.library);
+  if (params.sort) sp.set("sort", params.sort);
+  if (params.limit) sp.set("limit", String(params.limit));
+  if (params.offset) sp.set("offset", String(params.offset));
+  const res = await fetch(`/api/hf/search?${sp.toString()}`, { headers: getHFAuthHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<HFModelSearchResult[]>;
+}
+
+export async function fetchHFModelDetail(modelId: string): Promise<HFModelDetail> {
+  const res = await fetch(`/api/hf/models/${encodeURIComponent(modelId)}`, { headers: getHFAuthHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<HFModelDetail>;
+}
+
+export async function installHFModel(id: string, filename: string, revision?: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch("/api/hf/models/install", {
+    method: "POST",
+    headers: { ...getHFAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ id, filename, revision }),
   });
-  if (!res.ok) throw new Error("Failed to close instance");
+  return res.json() as Promise<{ ok: boolean; error?: string }>;
+}
+
+export async function uninstallHFModel(modelId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/hf/models/${encodeURIComponent(modelId)}`, { method: "DELETE", headers: getHFAuthHeaders() });
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function fetchHFInstalledModels(): Promise<HFInstalledModel[]> {
+  const res = await fetch("/api/hf/models", { headers: getHFAuthHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<HFInstalledModel[]>;
+}
+
+export async function startHFModel(modelId: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/hf/models/${encodeURIComponent(modelId)}/start`, { method: "POST", headers: getHFAuthHeaders() });
+  return res.json() as Promise<{ ok: boolean; error?: string }>;
+}
+
+export async function stopHFModel(modelId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/hf/models/${encodeURIComponent(modelId)}/stop`, { method: "POST", headers: getHFAuthHeaders() });
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function fetchHFRunningModels(): Promise<HFRunningModel[]> {
+  const res = await fetch("/api/hf/running", { headers: getHFAuthHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<HFRunningModel[]>;
+}
+
+export async function testHFInference(modelId: string, prompt: string): Promise<{ response: string; latencyMs: number }> {
+  const start = Date.now();
+  const res = await fetch(`/api/hf/inference/${encodeURIComponent(modelId)}/chat`, {
+    method: "POST",
+    headers: { ...getHFAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ messages: [{ role: "user", content: prompt }] }),
+  });
+  const latencyMs = Date.now() - start;
+  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+  const response = data.choices?.[0]?.message?.content ?? "";
+  return { response, latencyMs };
+}
+
+export async function fetchHFAuthStatus(): Promise<{ authenticated: boolean; username?: string }> {
+  const res = await fetch("/api/hf/auth/status", { headers: getHFAuthHeaders() });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ authenticated: boolean; username?: string }>;
 }

@@ -27,6 +27,8 @@ import SettingsGatewayPage from "./routes/settings-gateway.js";
 import SettingsDynamicPage from "./routes/settings-dynamic.js";
 import { PluginPageResolver } from "./components/PluginPageResolver.js";
 import MarketplacePage from "./routes/marketplace.js";
+import HFMarketplacePage from "./routes/hf-marketplace.js";
+import SettingsHFPage from "./routes/settings-hf.js";
 import { OnboardingPage } from "./routes/onboarding.js";
 import { GatewayOnboardingPage } from "./routes/gateway-onboarding.js";
 import ReportsPage from "./routes/reports.js";
@@ -76,6 +78,7 @@ export const router = createBrowserRouter([
       { path: "gateway/workflows", element: <WorkflowsPage /> },
       { path: "gateway/logs", element: <LogsPage /> },
       { path: "gateway/marketplace", element: <MarketplacePage /> },
+      { path: "hf-marketplace", element: <HFMarketplacePage /> },
       { path: "gateway/onboarding", element: <GatewayOnboardingPage /> },
       // Redirect old settings path
       { path: "gateway/settings", element: <Navigate to="/settings/gateway" replace /> },
@@ -87,6 +90,7 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="/settings/gateway" replace /> },
           { path: "gateway", element: <SettingsGatewayPage /> },
           { path: "security", element: <SecuritySettingsPage /> },
+          { path: "hf", element: <SettingsHFPage /> },
           { path: "plugins", element: <Navigate to="/settings/gateway" replace /> },
           { path: ":pageId", element: <SettingsDynamicPage /> },
         ],

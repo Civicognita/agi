@@ -17,4 +17,12 @@ export default defineConfig([
     clean: true,
     external: ["better-sqlite3", "node-pty"],
   },
+  {
+    entry: ["packages/model-runtime/src/index.ts"],
+    outDir: "packages/model-runtime/dist",
+    format: "esm",
+    dts: true,
+    clean: true,
+    external: ["better-sqlite3"],
+  },
 ]);

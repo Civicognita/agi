@@ -31,7 +31,8 @@
       "@aionima/voice": ["./packages/voice/src/index.ts"],
       "@aionima/plugins": ["./packages/plugins/src/index.ts"],
       "@aionima/sdk": ["./packages/aion-sdk/src/index.ts"],
-      "@aionima/marketplace": ["./packages/marketplace/src/index.ts"]
+      "@aionima/marketplace": ["./packages/marketplace/src/index.ts"],
+      "@aionima/model-runtime": ["./packages/model-runtime/src/index.ts"]
     }
   },
   "include": [

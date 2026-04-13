@@ -1201,3 +1201,130 @@ export interface ScanProvider {
   scanType: string;
   description?: string;
 }
+
+// ---------------------------------------------------------------------------
+// HuggingFace Marketplace types
+// ---------------------------------------------------------------------------
+
+export type HFCompatibility = "compatible" | "limited" | "incompatible";
+export type HFModelStatus = "downloading" | "ready" | "starting" | "running" | "stopping" | "error" | "removing";
+export type HFModelFormat = "gguf" | "safetensors" | "pytorch" | "onnx" | "tensorflow";
+export type HFQuantization = "Q2_K" | "Q3_K_S" | "Q3_K_M" | "Q3_K_L" | "Q4_0" | "Q4_K_S" | "Q4_K_M" | "Q5_0" | "Q5_K_S" | "Q5_K_M" | "Q6_K" | "Q8_0" | "F16" | "F32";
+export type HFCapabilityStatus = "on" | "limited" | "off";
+export type HFHardwareTier = "minimal" | "standard" | "accelerated" | "pro";
+
+export interface HFHardwareProfile {
+  cpu: { cores: number; threads: number; model: string; arch: string; avx2: boolean; avx512: boolean };
+  ram: { totalBytes: number; availableBytes: number };
+  gpu: Array<{ index: number; name: string; vendor: string; vramBytes: number; driverVersion?: string }>;
+  disk: { modelCachePath: string; availableBytes: number; totalBytes: number };
+  podman: { available: boolean; version?: string; gpuRuntime: boolean };
+  capabilities: HFHardwareCapabilities;
+  scannedAt: string;
+}
+
+export interface HFHardwareCapabilities {
+  canRunLlm: boolean;
+  canRunDiffusion: boolean;
+  canRunEmbedding: boolean;
+  canRunAudio: boolean;
+  hasGpu: boolean;
+  totalVramBytes: number;
+  maxModelSizeBytes: number;
+  recommendedQuantization: string;
+  tier: HFHardwareTier;
+  summary: string;
+  capabilityMap: HFCapabilityEntry[];
+}
+
+export interface HFCapabilityEntry {
+  id: string;
+  label: string;
+  description: string;
+  status: HFCapabilityStatus;
+  reason: string;
+  unlockHint?: string;
+  hardwareRequired: string;
+  userOverride?: boolean;
+}
+
+export interface HFModelResourceEstimate {
+  tokensPerSec: number | null;
+  ramUsageBytes: number;
+  vramUsageBytes: number | null;
+  diskUsageBytes: number;
+  loadTimeSeconds: number | null;
+}
+
+export interface HFModelSearchResult {
+  id: string;
+  modelId: string;
+  author?: string;
+  lastModified?: string;
+  pipeline_tag?: string;
+  tags: string[];
+  downloads: number;
+  likes: number;
+  library_name?: string;
+  gated: boolean | "auto" | "manual";
+  private: boolean;
+  compatibility: HFCompatibility;
+  compatibilityReason: string;
+  estimate: HFModelResourceEstimate;
+}
+
+export interface HFModelVariant {
+  filename: string;
+  format: HFModelFormat;
+  quantization: HFQuantization | null;
+  sizeBytes: number;
+  compatibility: HFCompatibility;
+  estimate: HFModelResourceEstimate;
+}
+
+export interface HFModelDetail extends HFModelSearchResult {
+  siblings?: Array<{ rfilename: string; size?: number }>;
+  safetensors?: { total: number };
+  cardData?: Record<string, unknown>;
+  variants: HFModelVariant[];
+}
+
+export interface HFInstalledModel {
+  id: string;
+  revision: string;
+  displayName: string;
+  pipelineTag: string;
+  runtimeType: "llm" | "diffusion" | "general";
+  filePath: string;
+  modelFilename?: string;
+  fileSizeBytes: number;
+  quantization?: string;
+  status: HFModelStatus;
+  downloadedAt: string;
+  lastUsedAt?: string;
+  error?: string;
+  containerId?: string;
+  containerPort?: number;
+  containerName?: string;
+}
+
+export interface HFRunningModel {
+  modelId: string;
+  containerId: string;
+  containerName: string;
+  port: number;
+  runtimeType: "llm" | "diffusion" | "general";
+  startedAt: string;
+  status: "running" | "stopped" | "error";
+  healthCheckPassed: boolean;
+}
+
+export interface HFDownloadProgress {
+  modelId: string;
+  filename: string;
+  totalBytes: number;
+  downloadedBytes: number;
+  speedBps: number;
+  etaSeconds: number;
+  startedAt: string;
+}

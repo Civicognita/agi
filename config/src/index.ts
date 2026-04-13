@@ -24,6 +24,7 @@ export {
   type MarketplaceConfig,
   type FederationConfig,
   type IdentityConfig,
+  type HfConfig,
 } from "./schema.js";
 
 export {
