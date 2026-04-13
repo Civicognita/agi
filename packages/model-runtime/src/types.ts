@@ -200,6 +200,8 @@ export interface ModelVariant {
   sizeBytes: number;
   /** Compatibility with local hardware. */
   compatibility: "compatible" | "limited" | "incompatible";
+  /** Why this compatibility was assigned. */
+  compatibilityReason?: string;
   /** Resource estimates for this specific variant. */
   estimate: ModelResourceEstimate;
 }

@@ -1279,6 +1279,7 @@ export interface HFModelVariant {
   quantization: HFQuantization | null;
   sizeBytes: number;
   compatibility: HFCompatibility;
+  compatibilityReason?: string;
   estimate: HFModelResourceEstimate;
 }
 

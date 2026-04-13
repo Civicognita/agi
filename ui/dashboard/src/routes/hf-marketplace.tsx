@@ -204,7 +204,7 @@ const TASK_OPTIONS = [
 const SORT_OPTIONS = [
   { value: "downloads", label: "Most Downloads" },
   { value: "likes", label: "Most Likes" },
-  { value: "trending", label: "Trending" },
+  { value: "trendingScore", label: "Trending" },
   { value: "lastModified", label: "Recently Updated" },
 ];
 
@@ -274,8 +274,16 @@ function ModelsTab() {
       )}
       {modelsQuery.isError && (
         <div className="p-4 rounded-lg bg-surface0/50 text-sm text-muted-foreground">
-          <p className="font-medium text-foreground mb-1">HuggingFace Marketplace is not enabled</p>
-          <p>Add <code className="px-1 py-0.5 bg-mantle rounded text-xs">{`"hf": { "enabled": true }`}</code> to your aionima.json config and restart the gateway.</p>
+          <p className="font-medium text-foreground mb-1">
+            {modelsQuery.error?.message?.includes("not active") || modelsQuery.error?.message?.includes("not enabled")
+              ? "HuggingFace Marketplace is not enabled"
+              : "Failed to search models"}
+          </p>
+          <p>
+            {modelsQuery.error?.message?.includes("not active") || modelsQuery.error?.message?.includes("not enabled")
+              ? "Enable it in Settings > HF Marketplace."
+              : modelsQuery.error?.message ?? "Check your network connection and try again."}
+          </p>
         </div>
       )}
       {!modelsQuery.isLoading && !modelsQuery.isError && models.length === 0 && (
@@ -561,6 +569,9 @@ function ModelDetailDialog({
                               {getCompatibilityLabel(v.compatibility)}
                             </span>
                           </div>
+                          {v.compatibility !== "compatible" && v.compatibilityReason && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5">{v.compatibilityReason}</p>
+                          )}
                         </div>
 
                         {/* Install button per variant */}

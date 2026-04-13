@@ -89,6 +89,46 @@ function fileExtension(filename: string): string {
 }
 
 /**
+ * Check if a filename is an actual model file (not tokenizer, config, optimizer, etc.).
+ * Filters out auxiliary files that share model extensions.
+ */
+function isModelFile(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  const base = lower.split("/").pop() ?? lower;
+
+  // Exclude known non-model files
+  const EXCLUDE_PATTERNS = [
+    "tokenizer", "vocab", "merges", "special_tokens",
+    "optimizer", "scheduler", "training_args",
+    "rust_model", "tf_model", "flax_model",
+    "sentencepiece", "spiece",
+  ];
+  for (const pattern of EXCLUDE_PATTERNS) {
+    if (base.includes(pattern)) return false;
+  }
+
+  // For .bin files, only accept model/pytorch_model patterns
+  if (base.endsWith(".bin")) {
+    return base === "pytorch_model.bin" || base.startsWith("pytorch_model-") || base.startsWith("model-") || base === "model.bin";
+  }
+
+  // For .safetensors, accept model.safetensors and model-NNNNN-of-NNNNN.safetensors (shards)
+  if (base.endsWith(".safetensors")) {
+    return true; // safetensors files are almost always actual model weights
+  }
+
+  // GGUF files are always model files
+  if (base.endsWith(".gguf")) return true;
+
+  // ONNX files — accept model.onnx and similar, skip auxiliary onnx files
+  if (base.endsWith(".onnx")) {
+    return base.startsWith("model") || base.startsWith("decoder") || base.startsWith("encoder");
+  }
+
+  return true;
+}
+
+/**
  * Extract a GGUF quantization label from a filename.
  * Matches patterns like "model-Q4_K_M.gguf" → "Q4_K_M".
  * Returns null if no known quantization is found in the name.
@@ -333,39 +373,60 @@ export class CapabilityResolver {
     const variants: ModelVariant[] = [];
 
     for (const sibling of siblings) {
-      const ext = fileExtension(sibling.rfilename);
+      const name = sibling.rfilename;
+      const ext = fileExtension(name);
       const format = FORMAT_EXT_MAP[ext];
       if (!format) continue;
+
+      // Filter out non-model files that happen to share model extensions
+      if (!isModelFile(name)) continue;
 
       // Prefer LFS size, then direct size, fall back to 0
       const sizeBytes = sibling.lfs?.size ?? sibling.size ?? 0;
 
       const quantization: GgufQuantization | null =
-        format === "gguf" ? extractGgufQuantization(sibling.rfilename) : null;
+        format === "gguf" ? extractGgufQuantization(name) : null;
 
       const variantInput = { sizeBytes, quantization: quantization ?? undefined };
       const estimate = this.estimateResources(model, variantInput);
-      const { compatibility } = this.assessCompatibility(model, variantInput);
+      const { compatibility, reason } = this.assessCompatibility(model, variantInput);
 
       variants.push({
-        filename: sibling.rfilename,
+        filename: name,
         format,
         quantization,
         sizeBytes,
         compatibility,
+        compatibilityReason: reason,
         estimate,
       });
     }
 
+    // Deduplicate: if we have both model.safetensors and pytorch_model.bin
+    // (same model, different formats), prefer safetensors > gguf > onnx > pytorch
+    const FORMAT_PRIORITY: Record<ModelFormat, number> = {
+      safetensors: 0, gguf: 1, onnx: 2, pytorch: 3, tensorflow: 4,
+    };
+    const seen = new Map<string, ModelVariant>();
+    for (const v of variants) {
+      // Group key: quantization level (for GGUF) or format (for others)
+      const key = v.quantization ?? v.format;
+      const existing = seen.get(key);
+      if (!existing || FORMAT_PRIORITY[v.format] < FORMAT_PRIORITY[existing.format]) {
+        seen.set(key, v);
+      }
+    }
+    const deduped = [...seen.values()];
+
     // Sort: compatible first, then limited, then incompatible; within each tier by size ascending
     const ORDER = { compatible: 0, limited: 1, incompatible: 2 } as const;
-    variants.sort((a, b) => {
+    deduped.sort((a, b) => {
       const tierDiff = ORDER[a.compatibility] - ORDER[b.compatibility];
       if (tierDiff !== 0) return tierDiff;
       return a.sizeBytes - b.sizeBytes;
     });
 
-    return variants;
+    return deduped;
   }
 
   // ---------------------------------------------------------------------------
