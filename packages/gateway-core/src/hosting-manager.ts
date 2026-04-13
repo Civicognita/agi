@@ -124,6 +124,16 @@ export interface HostingManagerDeps {
   logger?: Logger;
 }
 
+/**
+ * Optional late-bound references to HuggingFace model runtime deps.
+ * Set via setModelDeps() after model runtime is initialized (Step 5i),
+ * since the HostingManager is created before Step 5i runs.
+ */
+export interface HostingManagerModelDeps {
+  modelStore: { getById(id: string): { status: string; containerPort?: number } | undefined };
+  modelContainerManager: { getStatus(modelId: string): { port: number; status: string } | undefined };
+}
+
 // ---------------------------------------------------------------------------
 // Container image and port constants
 // @deprecated — Legacy fallback for un-migrated projects. Container config
@@ -214,6 +224,8 @@ export class HostingManager {
   private onStatusChange: (() => void) | null = null;
   private statusPollTimer: ReturnType<typeof setInterval> | null = null;
   private eventsProcess: ChildProcess | null = null;
+  /** HuggingFace model runtime deps — set via setModelDeps() after Step 5i. */
+  private modelDeps: HostingManagerModelDeps | null = null;
 
   constructor(deps: HostingManagerDeps) {
     this.config = deps.config;
@@ -227,6 +239,15 @@ export class HostingManager {
     this.configMgr = deps.projectConfigManager ?? null;
     this.mappReg = deps.mappRegistry ?? null;
     this.log = createComponentLogger(deps.logger, "hosting");
+  }
+
+  /**
+   * Wire up HuggingFace model runtime deps.
+   * Called from server.ts after Step 5i creates ModelStore + ModelContainerManager.
+   * Uses optional chaining throughout so projects without aiModels are unaffected.
+   */
+  setModelDeps(deps: HostingManagerModelDeps): void {
+    this.modelDeps = deps;
   }
 
   /** Expose the project type registry. */
@@ -950,6 +971,72 @@ export class HostingManager {
     return null;
   }
 
+  /**
+   * Build extra podman run args for AI model env vars and dataset volume mounts.
+   *
+   * For each aiModels binding:
+   *   - Always injects: AIONIMA_MODEL_{ALIAS}_ID={modelId}
+   *   - If the model container is running: AIONIMA_MODEL_{ALIAS}_URL=http://host.containers.internal:{port}
+   *   - If required but not running: logs a warning (does not block start)
+   *
+   * For each aiDatasets binding:
+   *   - Mounts ~/.agi/datasets/hub/datasets--{safeId}/snapshots/main:{mountPath}:ro
+   *
+   * Returns separate arrays so each code path can splice them at the right point.
+   */
+  private buildAiBindingArgs(projectPath: string): { envArgs: string[]; volumeArgs: string[] } {
+    const envArgs: string[] = [];
+    const volumeArgs: string[] = [];
+
+    // Config manager is required to read aiModels/aiDatasets from project.json.
+    if (!this.configMgr) return { envArgs, volumeArgs };
+
+    const projectConfig = this.configMgr.read(projectPath);
+    if (!projectConfig) return { envArgs, volumeArgs };
+
+    // --- AI model bindings ---
+    for (const binding of projectConfig.aiModels ?? []) {
+      const aliasUpper = binding.alias.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+
+      // Always inject the model ID env var
+      envArgs.push("-e", `AIONIMA_MODEL_${aliasUpper}_ID=${binding.modelId}`);
+
+      // Resolve running container port
+      let port: number | undefined;
+      if (this.modelDeps) {
+        const containerState = this.modelDeps.modelContainerManager.getStatus(binding.modelId);
+        if (containerState?.status === "running") {
+          port = containerState.port;
+        } else {
+          // Fall back to port stored in ModelStore (container may have been started externally)
+          const stored = this.modelDeps.modelStore.getById(binding.modelId);
+          if (stored?.status === "running" && stored.containerPort !== undefined) {
+            port = stored.containerPort;
+          }
+        }
+      }
+
+      if (port !== undefined) {
+        envArgs.push("-e", `AIONIMA_MODEL_${aliasUpper}_URL=http://host.containers.internal:${String(port)}`);
+      } else if (binding.required) {
+        this.log.warn(
+          `[${this.slugFromPath(projectPath)}] required model "${binding.modelId}" (alias: ${binding.alias}) is not running — project will start without AIONIMA_MODEL_${aliasUpper}_URL`,
+        );
+      }
+    }
+
+    // --- AI dataset bindings ---
+    const datasetsBase = join(homedir(), ".agi", "datasets", "hub");
+    for (const binding of projectConfig.aiDatasets ?? []) {
+      const safeId = binding.datasetId.replace(/\//g, "--");
+      const hostPath = join(datasetsBase, `datasets--${safeId}`, "snapshots", "main");
+      const mountPath = binding.mountPath ?? `/data/${binding.alias}`;
+      volumeArgs.push("-v", `${hostPath}:${mountPath}:ro`);
+    }
+
+    return { envArgs, volumeArgs };
+  }
+
   private startContainer(hosted: HostedProject): void {
     if (hosted.meta.port === null) {
       hosted.status = "error";
@@ -965,6 +1052,10 @@ export class HostingManager {
     } catch {
       // Container may not exist — that's fine
     }
+
+    // Resolve AI model env vars and dataset volume mounts for this project.
+    // These are injected into every code path (magic-app, stack, legacy) before the image token.
+    const aiBindingArgs = this.buildAiBindingArgs(hosted.path);
 
     // -----------------------------------------------------------------------
     // MagicApp path: resolve container config from registered MagicApps
@@ -1003,6 +1094,10 @@ export class HostingManager {
       if (magicTunnelOrigin) {
         args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${magicTunnelOrigin}`);
       }
+
+      // Inject AI model env vars and dataset volume mounts
+      args.push(...aiBindingArgs.volumeArgs);
+      args.push(...aiBindingArgs.envArgs);
 
       args.push(magicAppConfig.image);
 
@@ -1062,6 +1157,10 @@ export class HostingManager {
         const containerPath = firstMount.split(":")[1];
         if (containerPath) args.push("-w", containerPath);
       }
+
+      // Inject AI model env vars and dataset volume mounts
+      args.push(...aiBindingArgs.volumeArgs);
+      args.push(...aiBindingArgs.envArgs);
 
       // Use runtime-selected image if available, otherwise stack's default
       const runtimeDef = hosted.meta.runtimeId
@@ -1157,6 +1256,9 @@ export class HostingManager {
       if (hosted.meta.type === "node") {
         args.push("-w", "/app");
       }
+      // Inject AI model env vars and dataset volume mounts
+      args.push(...aiBindingArgs.volumeArgs);
+      args.push(...aiBindingArgs.envArgs);
       args.push(image);
       const cmdTokens = cfg.command?.(hosted.meta);
       if (cmdTokens) {
@@ -1172,12 +1274,18 @@ export class HostingManager {
           const docRoot = hosted.meta.docRoot ?? "dist";
           const hostPath = join(hosted.path, docRoot);
           args.push("-v", `${hostPath}:/usr/share/nginx/html:ro,Z`);
+          // Inject AI model env vars and dataset volume mounts
+          args.push(...aiBindingArgs.volumeArgs);
+          args.push(...aiBindingArgs.envArgs);
           args.push(image);
           break;
         }
         case "php": {
           const docRoot = hosted.meta.docRoot ?? "public";
           args.push("-v", `${hosted.path}:/var/www/html:Z`);
+          // Inject AI model env vars and dataset volume mounts
+          args.push(...aiBindingArgs.volumeArgs);
+          args.push(...aiBindingArgs.envArgs);
           args.push(image);
           if (docRoot !== ".") {
             args.push("bash", "-c",
@@ -1197,6 +1305,9 @@ export class HostingManager {
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
           const nodeTunnelOrigin = this.computeTunnelOrigin(hosted);
           if (nodeTunnelOrigin) args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${nodeTunnelOrigin}`);
+          // Inject AI model env vars and dataset volume mounts
+          args.push(...aiBindingArgs.volumeArgs);
+          args.push(...aiBindingArgs.envArgs);
           args.push(image);
           const cmdTokens = hosted.meta.startCommand.split(/\s+/);
           args.push(...cmdTokens);
@@ -1215,6 +1326,9 @@ export class HostingManager {
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
           const defaultTunnelOrigin = this.computeTunnelOrigin(hosted);
           if (defaultTunnelOrigin) args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${defaultTunnelOrigin}`);
+          // Inject AI model env vars and dataset volume mounts
+          args.push(...aiBindingArgs.volumeArgs);
+          args.push(...aiBindingArgs.envArgs);
           args.push(image);
           args.push(...hosted.meta.startCommand.split(/\s+/));
           break;

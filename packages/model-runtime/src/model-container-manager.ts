@@ -29,12 +29,17 @@ const DEFAULT_IMAGES: Record<ModelRuntimeType, string> = {
   llm: "ghcr.io/ggerganov/llama.cpp:server",
   diffusion: "ghcr.io/civicognita/diffusion-server:latest",
   general: "ghcr.io/civicognita/transformers-server:latest",
+  // Custom runtimes have no shared default — image must be provided per-model
+  // via model.containerImage or containerConfig.image (set by CustomContainerBuilder).
+  custom: "",
 };
 
 const INTERNAL_PORTS: Record<ModelRuntimeType, number> = {
   llm: 8080,
   diffusion: 8000,
   general: 8000,
+  // Custom runtimes declare their own port via containerConfig.internalPort
+  custom: 8000,
 };
 
 // ---------------------------------------------------------------------------
@@ -137,8 +142,9 @@ export class ModelContainerManager {
       // Container did not exist — that's fine
     }
 
-    const internalPort = containerConfig.internalPort || INTERNAL_PORTS[containerConfig.runtimeType];
-    const image = containerConfig.image || DEFAULT_IMAGES[containerConfig.runtimeType];
+    const internalPort = containerConfig.internalPort || INTERNAL_PORTS[containerConfig.runtimeType] || 8000;
+    // Resolution order: per-model containerImage (from store) → containerConfig.image (from CapabilityResolver) → DEFAULT_IMAGES
+    const image = model.containerImage ?? (containerConfig.image || DEFAULT_IMAGES[containerConfig.runtimeType]);
     const modelContainerPath = containerConfig.modelContainerPath;
     const modelFilename = containerConfig.modelFilename ?? model.modelFilename ?? "";
 

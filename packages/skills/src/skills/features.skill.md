@@ -22,6 +22,13 @@ triggers:
   - download model
   - ai models
   - local models
+  - datasets
+  - fine-tune
+  - fine tune
+  - finetune
+  - build ai app
+  - ai application
+  - custom model
 priority: 5
 direct_invoke: true
 ---
@@ -105,6 +112,35 @@ You have access to the `hf_models` tool. Use it when users ask about models or w
 - `list` — list installed models on this server
 - `status` — show running models and their endpoints
 - `hardware` — report detected hardware capabilities and recommendations
+- `datasets` — search HuggingFace datasets by query
+- `endpoints` — list the API endpoints exposed by a specific running model
+
+**Building AI Applications:**
+Aionima supports building full AI applications backed by HuggingFace models. The standard pattern is a two-project setup:
+- **API backend** — a Python/FastAPI project that calls the model. Declares model dependencies via `aiModels` in `project.json`. Aionima injects `AIONIMA_MODEL_{ALIAS}_URL` env vars pointing to the running model container.
+- **Frontend** — a React or Next.js project that calls the API and renders results.
+
+Models run in their own Podman containers (managed by HF Marketplace) — projects never embed weights. If a required model is not running when a project starts, Aionima blocks the start with a clear error.
+
+Refer to the `ai-apps` skill for detailed patterns covering: financial forecasting (Kronos), RAG, image generation, and classification apps.
+
+**HuggingFace Datasets:**
+- Browse and download datasets from HuggingFace Hub via Admin > HF Models > Datasets tab.
+- Downloaded datasets are stored at `~/.agi/datasets/`.
+- Projects can mount datasets into their containers via `aiDatasets` bindings in `project.json`.
+- Use the `hf_models` tool with action `"datasets"` to search for datasets.
+
+**Custom Model Support:**
+- Models with custom Python code (not standard Transformers pipelines) are fully supported.
+- Known models like `NeoQuasar/Kronos-base` are auto-detected by the Known-Models Registry and receive dedicated custom containers built automatically during install.
+- Users can add their own custom runtime definitions by placing JSON files in `~/.agi/custom-runtimes/`.
+- The install wizard shows when a custom container build is in progress (SSE progress stream).
+
+**Fine-Tuning:**
+- Fine-tune installed models on custom datasets using PEFT/LoRA without any GPU cluster — runs locally in a container.
+- Configure and start fine-tune jobs via Settings > HF Marketplace > Fine-Tune tab.
+- Choose a base model, select a downloaded dataset, configure LoRA parameters (rank, alpha, target modules), and click Start.
+- Trained adapters are saved to `~/.agi/finetune/{job-id}/` and can be applied on top of the base model.
 
 ## Plugin Marketplace (Plugins)
 

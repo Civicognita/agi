@@ -32,10 +32,14 @@ export {
   ProjectHostingSchema,
   ProjectStackInstanceSchema,
   ProjectCategorySchema,
+  ProjectAiModelBindingSchema,
+  ProjectAiDatasetBindingSchema,
   type ProjectConfig,
   type ProjectHosting,
   type ProjectStackInstance,
   type ProjectCategory,
+  type ProjectAiModelBinding,
+  type ProjectAiDatasetBinding,
 } from "./project-schema.js";
 
 export {
@@ -53,6 +57,7 @@ export {
   MAppPermissionSchema,
   MAppContainerConfigSchema,
   MAppPanelSchema,
+  MAppModelInferenceConfigSchema,
   type MAppDefinitionJson,
 } from "./mapp-schema.js";
 

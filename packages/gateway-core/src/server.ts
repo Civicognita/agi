@@ -106,13 +106,17 @@ import {
   HardwareProfiler,
   HfHubClient,
   ModelStore,
+  DatasetStore,
   ModelContainerManager,
   CapabilityResolver,
   InferenceGateway,
   ModelAgentBridge,
+  KnownModelsRegistry,
+  CustomContainerBuilder,
 } from "@aionima/model-runtime";
 import type { ModelRuntimeEventEmitter } from "@aionima/model-runtime";
 import { registerHfRoutes } from "./hf-api.js";
+import { FineTuneManager } from "./finetune-manager.js";
 
 // ---------------------------------------------------------------------------
 // LLM-backed next-step suggestion generator
@@ -1233,6 +1237,12 @@ export async function startGatewayServer(
     apiToken: ((config as Record<string, unknown>).hf as { apiToken?: string } | undefined)?.apiToken,
   });
   const modelStore = new ModelStore(join(hfCacheDir, "index.db"));
+
+  // Dataset store lives alongside model store — separate db for datasets
+  const datasetsCacheDir = join(homedir(), ".agi", "datasets");
+  mkdirSync(join(datasetsCacheDir, "hub"), { recursive: true });
+  const datasetStore = new DatasetStore(join(datasetsCacheDir, "index.db"));
+
   const profile = hardwareProfiler.scan();
 
   const hfInitConfig = (config as Record<string, unknown>).hf as
@@ -1250,6 +1260,12 @@ export async function startGatewayServer(
     modelRuntimeEvents,
   );
 
+  // Wire model runtime deps into HostingManager so project containers can receive
+  // AI model env vars (AIONIMA_MODEL_*_URL) and dataset volume mounts.
+  // Called here because modelStore + modelContainerManager are created in Step 5i,
+  // after the HostingManager is constructed in Step 5h.
+  hostingManager.setModelDeps({ modelStore, modelContainerManager });
+
   const capabilityResolver = new CapabilityResolver(profile.capabilities);
   const inferenceGateway = new InferenceGateway(modelStore, hfInitConfig?.inferenceTimeoutMs ?? 120_000);
 
@@ -1260,15 +1276,32 @@ export async function startGatewayServer(
     profile.capabilities,
   );
 
+  // Known-models registry and custom container builder
+  const knownModelsRegistry = new KnownModelsRegistry(
+    join(homedir(), ".agi", "custom-runtimes"),
+  );
+  const customContainerBuilder = new CustomContainerBuilder(hfCacheDir);
+
+  // Fine-tune manager — jobs run in dedicated Podman containers
+  const fineTuneManager = new FineTuneManager(
+    modelStore,
+    datasetStore,
+    join(homedir(), ".agi", "finetune"),
+  );
+
   // Always store deps — routes are always registered and check hf.enabled at request time
   const hfApiDeps: Parameters<typeof registerHfRoutes>[1] = {
     hardwareProfiler,
     hfClient,
     modelStore,
+    datasetStore,
     containerManager: modelContainerManager,
     capabilityResolver,
     inferenceGateway,
     agentBridge: modelAgentBridge,
+    knownModelsRegistry,
+    customContainerBuilder,
+    fineTuneManager,
     isEnabled: () => Boolean(((config as Record<string, unknown>).hf as { enabled?: boolean } | undefined)?.enabled),
   };
 
@@ -1366,7 +1399,7 @@ export async function startGatewayServer(
   toolRegistry.register(
     {
       name: "hf_models",
-      description: "Manage HuggingFace models — search the Hub, list installed models, check hardware capabilities, start/stop model containers. Use this tool when the user asks about AI models, HuggingFace, model downloads, or local inference.",
+      description: "Manage HuggingFace models and datasets — search the Hub, list installed models, check hardware capabilities, search datasets, list model API endpoints, and check running model status. Use this tool when the user asks about AI models, HuggingFace, model downloads, local inference, datasets, or building AI apps.",
       requiresState: [],
       requiresTier: [],
     },
@@ -1394,16 +1427,33 @@ export async function startGatewayServer(
         case "status": {
           return JSON.stringify({ enabled: hfEnabled ?? false, installed: modelStore.getAll().length, running: modelContainerManager.getRunning().length, tier: hardwareProfiler.getProfile().capabilities.tier });
         }
+        case "datasets": {
+          const q = String(input.query ?? "");
+          const results = await hfClient.searchDatasets({ search: q, limit: 5 });
+          return JSON.stringify(results.map((d) => ({ id: d.id, downloads: d.downloads, likes: d.likes, tags: d.tags })));
+        }
+        case "endpoints": {
+          const modelId = String(input.modelId ?? "");
+          if (!modelId) {
+            return JSON.stringify({ error: "modelId is required for action=endpoints" });
+          }
+          const model = modelStore.getById(modelId);
+          if (!model) {
+            return JSON.stringify({ error: `Model not installed: ${modelId}` });
+          }
+          return JSON.stringify({ modelId, endpoints: model.endpoints ?? [] });
+        }
         default:
-          return JSON.stringify({ error: `Unknown action: ${action}. Available: search, list, running, hardware, status` });
+          return JSON.stringify({ error: `Unknown action: ${action}. Available: search, list, running, hardware, status, datasets, endpoints` });
       }
     },
     {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["search", "list", "running", "hardware", "status"], description: "Action to perform" },
-        query: { type: "string", description: "Search query (for action=search)" },
+        action: { type: "string", enum: ["search", "list", "running", "hardware", "status", "datasets", "endpoints"], description: "Action to perform" },
+        query: { type: "string", description: "Search query (for action=search or action=datasets)" },
         task: { type: "string", description: "Pipeline task filter (for action=search), e.g. text-generation, text-to-image" },
+        modelId: { type: "string", description: "HuggingFace model ID in author/repo format (for action=endpoints)" },
       },
       required: ["action"],
     },
@@ -1569,6 +1619,8 @@ export async function startGatewayServer(
       secrets,
       config: config as Record<string, unknown>,
       mappRegistry,
+      inferenceGateway,
+      modelStore,
       mappMarketplaceManager,
       magicAppStateStore,
       identityProvider,
@@ -3077,6 +3129,7 @@ export async function startGatewayServer(
     }
     modelAgentBridge.destroy();
     modelStore.close();
+    datasetStore.close();
 
     // Step 5g2: Stop scheduled tasks
     scheduledTaskManager.stop();

@@ -122,6 +122,92 @@ export class InferenceGateway {
     );
   }
 
+  /**
+   * Generic proxy for custom model endpoints.
+   *
+   * Forwards any request to an arbitrary path on the model's container, enabling
+   * custom runtimes (e.g. Kronos /predict) that don't follow the standard API
+   * shape to be reached through the gateway.
+   *
+   * @param modelId  The installed model ID.
+   * @param path     URL path to forward to (e.g. "/predict", "/health").
+   * @param body     Optional request body (JSON-serialized). Omit for GET requests.
+   * @param method   HTTP method (defaults to "POST" when body is provided, "GET" otherwise).
+   * @returns Parsed JSON response from the model container.
+   */
+  async proxyRequest(
+    modelId: string,
+    path: string,
+    body?: unknown,
+    method?: string,
+  ): Promise<unknown> {
+    const model = this.modelStore.getById(modelId);
+
+    if (!model) {
+      throw new Error(`Model not found: "${modelId}"`);
+    }
+
+    if (model.status !== "running") {
+      throw new Error(
+        `Model "${modelId}" is not running (status: "${model.status}") — start the model before sending requests.`,
+      );
+    }
+
+    if (model.containerPort == null) {
+      throw new Error(
+        `Model "${modelId}" has no container port assigned — container may not have started correctly.`,
+      );
+    }
+
+    const effectiveMethod = method ?? (body !== undefined ? "POST" : "GET");
+    const url = `http://localhost:${String(model.containerPort)}${path}`;
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: effectiveMethod,
+        headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (err) {
+      if (err instanceof Error && err.name === "TimeoutError") {
+        throw new Error(
+          `Proxy request to model "${modelId}" at ${path} timed out after ${String(this.timeoutMs)}ms.`,
+        );
+      }
+      throw new Error(
+        `Failed to reach model container for "${modelId}": ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const text = await response.text();
+        detail = text ? ` — ${text}` : "";
+      } catch {
+        // Body read failure is non-critical
+      }
+      throw new Error(
+        `Upstream error from model "${modelId}" at ${path}: HTTP ${String(response.status)}${detail}`,
+      );
+    }
+
+    let result: unknown;
+    try {
+      result = await response.json();
+    } catch (err) {
+      throw new Error(
+        `Failed to parse response from model "${modelId}" at ${path}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    this.modelStore.touchLastUsed(modelId);
+
+    return result;
+  }
+
   // ---------------------------------------------------------------------------
   // Private: forwardRequest
   // ---------------------------------------------------------------------------

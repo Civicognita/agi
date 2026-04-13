@@ -27,6 +27,10 @@ import {
   searchHFModels,
   fetchHFInstalledModels,
   fetchHFRunningModels,
+  searchHFDatasets,
+  fetchHFInstalledDatasets,
+  listFineTuneJobs,
+  getFineTuneStatus,
 } from "./api.js";
 
 // ---------------------------------------------------------------------------
@@ -751,6 +755,43 @@ export function useHFRunningModels() {
   return useQuery({
     queryKey: ["hf", "running"],
     queryFn: fetchHFRunningModels,
+    refetchInterval: 5_000,
+  });
+}
+
+export function useHFDatasets(params: Parameters<typeof searchHFDatasets>[0]) {
+  return useQuery({
+    queryKey: ["hf", "datasets", "search", params],
+    queryFn: () => searchHFDatasets(params),
+    placeholderData: (prev: import("./types.js").HFDatasetSearchResult[] | undefined) => prev,
+  });
+}
+
+export function useHFInstalledDatasets() {
+  return useQuery({
+    queryKey: ["hf", "datasets", "installed"],
+    queryFn: fetchHFInstalledDatasets,
+    refetchInterval: 10_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Fine-tune hooks (Phase 6)
+// ---------------------------------------------------------------------------
+
+export function useFineTuneJobs() {
+  return useQuery({
+    queryKey: ["hf", "finetune", "jobs"],
+    queryFn: listFineTuneJobs,
+    refetchInterval: 5_000,
+  });
+}
+
+export function useFineTuneJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ["hf", "finetune", "job", jobId],
+    queryFn: () => getFineTuneStatus(jobId!),
+    enabled: jobId !== null,
     refetchInterval: 5_000,
   });
 }

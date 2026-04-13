@@ -188,3 +188,268 @@ To add support for a new container runtime (e.g., vLLM, Ollama):
 3. Add `pipeline_tag` mappings in the `resolveRuntimeType()` function in `model-container-manager.ts`
 4. Update `capability-resolver.ts` if the new runtime has different RAM/VRAM characteristics
 5. Add the type to the API docs above and this file
+
+---
+
+## Custom Runtime System
+
+Models with custom Python code (not standard Transformers pipelines) are handled via the custom runtime system.
+
+### KnownModelsRegistry
+
+**File:** `packages/model-runtime/src/known-models-registry.ts`
+
+A static + JSON-driven registry that maps HuggingFace model IDs to `CustomRuntimeDefinition` objects. Loaded at boot; extended by JSON files in `~/.agi/custom-runtimes/*.json`.
+
+```ts
+interface CustomRuntimeDefinition {
+  sourceRepo: string;          // Git URL to clone
+  image: string;               // Podman image tag to build
+  internalPort: number;        // Port the container listens on
+  healthCheckPath: string;     // HTTP path for health checks
+  endpoints: Record<string, string>; // Named endpoints: { predict: "/predict" }
+  env?: Record<string, string>;      // Extra environment variables
+  extraPipDeps?: string[];           // Additional pip packages to install
+  hfModels?: string[];               // HF model files to download into the container
+}
+```
+
+`KnownModelsRegistry.get(modelId)` returns the definition if recognized, or `undefined` for standard models.
+
+**Initial known model:** `NeoQuasar/Kronos-base` — mapped to the Kronos FastAPI container with a `/predict` endpoint.
+
+**Custom runtime JSON schema** (for `~/.agi/custom-runtimes/*.json`):
+```json
+{
+  "modelId": "author/repo-name",
+  "definition": { /* CustomRuntimeDefinition fields */ }
+}
+```
+
+### CustomContainerBuilder
+
+**File:** `packages/model-runtime/src/custom-container-builder.ts`
+
+Builds a Podman container image from a `CustomRuntimeDefinition`. Steps:
+1. Clone `sourceRepo` to a temp directory.
+2. Generate a `Containerfile` from the default template (Python 3.11 + FastAPI + `extraPipDeps`).
+3. Run `podman build -t {image} .` in the cloned directory.
+4. Emit build progress events (SSE-streamed to dashboard via the wizard build-log endpoint).
+
+Image is tagged `aionima-custom-{sanitized-model-id}:latest`. If the image already exists (from a previous install), the build step is skipped.
+
+**Integration:** `CapabilityResolver.buildContainerConfig()` detects `runtimeType === "custom"` and uses the `CustomRuntimeDefinition` from the registry instead of the standard image map.
+
+**Proof-of-concept containers:**
+- `containers/Containerfile.kronos` — Python + Kronos source + FastAPI
+- `containers/entrypoint_kronos.py` — loads Kronos model, serves `/predict` and `/health`
+
+---
+
+## Dataset Integration
+
+### DatasetStore
+
+**File:** `packages/model-runtime/src/dataset-store.ts`
+
+SQLite store at `~/.agi/datasets/index.db`. Tracks installed datasets: ID, revision, local path, download status, size. Same pattern as `ModelStore`.
+
+```ts
+interface InstalledDataset {
+  id: string;
+  revision: string;
+  localPath: string;
+  status: "downloading" | "ready" | "error";
+  fileSizeBytes: number;
+  installedAt: number;
+}
+```
+
+### Dataset API Routes
+
+Mounted under `/api/hf/datasets/` in `packages/gateway-core/src/hf-api.ts`:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/hf/datasets/search` | Search HF Hub datasets. Query params: `q`, `limit` |
+| `GET` | `/api/hf/datasets` | List locally installed datasets |
+| `GET` | `/api/hf/datasets/:id` | Get a single installed dataset record |
+| `POST` | `/api/hf/datasets/install` | Start a dataset download. Body: `{ datasetId, revision? }` |
+| `DELETE` | `/api/hf/datasets/:id` | Delete a downloaded dataset |
+
+### Storage Layout
+
+```
+~/.agi/datasets/
+  index.db                          — SQLite dataset index (DatasetStore)
+  hub/
+    datasets--{author}--{repo}/     — Dataset files mirroring HF Hub cache structure
+      {revision}/
+        {filename}
+```
+
+### HF Hub Client Methods
+
+`HfHubClient` in `packages/model-runtime/src/hf-hub-client.ts` exposes dataset methods mirroring the model methods:
+
+```ts
+searchDatasets(params: HfDatasetSearchParams): Promise<HfDatasetInfo[]>
+getDatasetInfo(datasetId: string): Promise<HfDatasetInfo>
+getDatasetFiles(datasetId: string, revision?: string): Promise<string[]>
+downloadDatasetFile(datasetId: string, filename: string, destDir: string): Promise<string>
+```
+
+---
+
+## Project Model Bindings
+
+### Schema Fields
+
+**File:** `config/src/project-schema.ts`
+
+```ts
+// Added to ProjectConfigSchema
+aiModels?: Array<{
+  modelId: string;   // HF model ID: "author/repo"
+  alias: string;     // Used as env var suffix: AIONIMA_MODEL_{ALIAS}_URL
+  required: boolean; // If true, project start is blocked when model is not running
+}>;
+
+aiDatasets?: Array<{
+  datasetId: string;  // HF dataset ID: "author/repo"
+  alias: string;      // Human-readable label
+  mountPath: string;  // Mount path inside project container, e.g. "/data/docs"
+}>;
+```
+
+### Environment Variable Injection
+
+**File:** `packages/gateway-core/src/hosting-manager.ts`
+
+When `HostingManager` starts a project container:
+
+1. Reads `projectConfig.aiModels`.
+2. For each entry, calls `ModelStore.getById(modelId)` to check installation status.
+3. If installed and running (`ModelContainerManager.getRunning()` returns the container): resolves the host port and injects `AIONIMA_MODEL_{ALIAS.toUpperCase()}_URL=http://host.containers.internal:{port}`.
+4. If `required: true` and model is not running: throws an error with a user-facing message: `"Required model {modelId} is not running. Start it from Admin > HF Models."` The project container is not started.
+5. If `required: false` and model is not running: injects nothing; project starts without the env var.
+6. For each `aiDatasets` entry: mounts `~/.agi/datasets/hub/datasets--{author}--{repo}/` read-only to `mountPath` inside the container.
+
+**Auto-start behavior:** If a required model is installed but stopped, `HostingManager` automatically calls `ModelContainerManager.start(model)` before injecting the env var.
+
+---
+
+## MApp Model Dependencies
+
+### Schema Extension
+
+**File:** `config/src/mapp-schema.ts`
+
+```ts
+// Added to MAppDefinition
+modelDependencies?: Array<{
+  modelId: string;          // HF model ID
+  label: string;            // Display name in dashboard
+  required: boolean;        // Block MApp open if missing
+  pipelineTag?: string;     // Expected task type (informational)
+}>;
+```
+
+### model-inference Workflow Step
+
+MApp workflow definitions can include steps of type `"model-inference"`:
+
+```json
+{
+  "type": "model-inference",
+  "config": {
+    "modelId": "NeoQuasar/Kronos-base",
+    "endpoint": "/predict",
+    "inputTemplate": "{{ step.input }}",
+    "outputKey": "forecast"
+  }
+}
+```
+
+The workflow runner resolves the model's running container port via `ModelContainerManager`, constructs the full URL, and makes an HTTP POST with the rendered `inputTemplate`. The response body is stored under `outputKey` for use by subsequent steps.
+
+### Model Status in MApp UI
+
+When a MApp with `modelDependencies` is opened in the dashboard:
+- Each dependency is shown as a status card: green (running), yellow (installed but stopped), red (not installed).
+- Start buttons appear for stopped models.
+- If a `required` model is missing entirely, the MApp shows an install prompt rather than launching.
+
+---
+
+## Fine-Tune Manager
+
+### FineTuneManager
+
+**File:** `packages/model-runtime/src/finetune-manager.ts`
+
+Manages fine-tune job lifecycle. Jobs run inside a dedicated Podman container (`containers/Containerfile.finetune`) that includes `transformers`, `peft`, `datasets`, `accelerate`, and `trl`.
+
+```ts
+interface FineTuneConfig {
+  baseModelId: string;
+  datasetId: string;
+  method: "lora" | "qlora";
+  loraConfig: {
+    r: number;
+    alpha: number;
+    dropout: number;
+    targetModules: string[];
+  };
+  trainingConfig: {
+    epochs: number;
+    batchSize: number;
+    learningRate: number;
+  };
+}
+
+class FineTuneManager {
+  startJob(config: FineTuneConfig): Promise<string>; // returns jobId
+  getStatus(jobId: string): FineTuneStatus;
+  stopJob(jobId: string): Promise<void>;
+  listJobs(): FineTuneStatus[];
+}
+```
+
+**Job lifecycle:**
+1. Container mounts base model weights (read-only), dataset (read-only), output dir (read-write at `~/.agi/finetune/{jobId}/`).
+2. `entrypoint_finetune.py` starts a FastAPI server exposing `/finetune/start`, `/finetune/status`, `/finetune/stop`, `/finetune/adapter`.
+3. Training runs in a background thread; progress (epoch, loss) is polled via `/finetune/status`.
+4. On completion, the LoRA adapter is saved to `~/.agi/finetune/{jobId}/adapter/`.
+
+### Fine-Tune API Routes
+
+Mounted in `packages/gateway-core/src/hf-api.ts`:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/hf/finetune/start` | Start a fine-tune job. Body: `FineTuneConfig` |
+| `GET` | `/api/hf/finetune` | List all jobs with status |
+| `GET` | `/api/hf/finetune/:jobId` | Get status for a specific job |
+| `POST` | `/api/hf/finetune/:jobId/stop` | Stop a running job |
+
+### Fine-Tune Containers
+
+**`containers/Containerfile.finetune`** — Python 3.11 + `transformers peft datasets accelerate trl` + FastAPI. Base image: `python:3.11-slim`.
+
+**`containers/entrypoint_finetune.py`** — FastAPI application that:
+- On `POST /finetune/start`: validates config, starts training in a background thread using `SFTTrainer` (from `trl`) with PEFT LoRA/QLoRA config.
+- On `GET /finetune/status`: returns current epoch, loss, ETA, and completion status.
+- On `POST /finetune/stop`: interrupts training gracefully and saves any completed adapter checkpoints.
+- On `GET /finetune/adapter`: returns metadata about the saved adapter (path, parameter count, base model).
+
+### Agent Tool: `hf_models` (Updated Actions)
+
+The `hf_models` tool registered in `packages/gateway-core/src/server.ts` now includes two additional actions:
+
+| Action | Parameters | Returns |
+|--------|-----------|---------|
+| `datasets` | `query: string` | Array of matching HF datasets with id, downloads, likes, tags |
+| `endpoints` | `modelId: string` | Array of `ModelEndpoint` objects declared by the installed model |
+
+These additions let the agent search for datasets when building RAG or fine-tune workflows, and inspect a model's available API paths when constructing project bindings.

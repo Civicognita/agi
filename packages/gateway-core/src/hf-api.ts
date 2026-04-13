@@ -17,11 +17,15 @@ import type {
   HardwareProfiler,
   HfHubClient,
   ModelStore,
+  DatasetStore,
   ModelContainerManager,
   CapabilityResolver,
   InferenceGateway,
+  KnownModelsRegistry,
+  CustomContainerBuilder,
 } from "@aionima/model-runtime";
 import type { ModelAgentBridge } from "@aionima/model-runtime";
+import type { FineTuneManager } from "./finetune-manager.js";
 
 // ---------------------------------------------------------------------------
 // Deps shape
@@ -31,10 +35,14 @@ export interface HfApiDeps {
   hardwareProfiler: HardwareProfiler;
   hfClient: HfHubClient;
   modelStore: ModelStore;
+  datasetStore: DatasetStore;
   containerManager: ModelContainerManager;
   capabilityResolver: CapabilityResolver;
   inferenceGateway: InferenceGateway;
   agentBridge: ModelAgentBridge;
+  knownModelsRegistry: KnownModelsRegistry;
+  customContainerBuilder: CustomContainerBuilder;
+  fineTuneManager: FineTuneManager;
   /** Returns true if hf.enabled is set in the current (hot-reloaded) config. */
   isEnabled?: () => boolean;
 }
@@ -51,10 +59,14 @@ export function registerHfRoutes(
     hardwareProfiler,
     hfClient,
     modelStore,
+    datasetStore,
     containerManager,
     capabilityResolver,
     inferenceGateway,
     agentBridge,
+    knownModelsRegistry,
+    customContainerBuilder,
+    fineTuneManager,
     isEnabled,
   } = deps;
 
@@ -538,6 +550,255 @@ export function registerHfRoutes(
   );
 
   // -------------------------------------------------------------------------
+  // Custom model proxy + endpoints
+  // -------------------------------------------------------------------------
+
+  /**
+   * Generic proxy route for custom model containers.
+   * Forwards any path and body to the model's running container.
+   *
+   * Example: POST /api/hf/models/NeoQuasar%2FKronos-base/proxy/predict
+   *   → forwards to http://localhost:{port}/predict
+   */
+  fastify.post<{ Params: { modelId: string; "*": string } }>(
+    "/api/hf/models/:modelId/proxy/*",
+    async (request, reply) => {
+      try {
+        const modelId = decodeURIComponent(request.params.modelId);
+        const proxyPath = `/${request.params["*"] ?? ""}`;
+
+        if (!modelId) {
+          return reply.code(400).send({ error: "modelId is required" });
+        }
+
+        const model = modelStore.getById(modelId);
+        if (!model) {
+          return reply.code(404).send({ error: `Model not found: ${modelId}` });
+        }
+
+        const result = await inferenceGateway.proxyRequest(modelId, proxyPath, request.body);
+        return reply.send(result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("not running")) return reply.code(409).send({ error: msg });
+        if (msg.includes("not found")) return reply.code(404).send({ error: msg });
+        return reply.code(500).send({ error: msg });
+      }
+    },
+  );
+
+  /**
+   * Return the declared endpoints for a custom model.
+   * Returns an empty array for standard (non-custom) models.
+   */
+  fastify.get<{ Params: { modelId: string } }>(
+    "/api/hf/models/:modelId/endpoints",
+    async (request, reply) => {
+      try {
+        const modelId = decodeURIComponent(request.params.modelId);
+
+        if (!modelId) {
+          return reply.code(400).send({ error: "modelId is required" });
+        }
+
+        const model = modelStore.getById(modelId);
+        if (!model) {
+          return reply.code(404).send({ error: `Model not found: ${modelId}` });
+        }
+
+        return reply.send(model.endpoints ?? []);
+      } catch (err) {
+        return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Dataset browsing (HF Hub proxy)
+  // -------------------------------------------------------------------------
+
+  fastify.get("/api/hf/datasets/search", async (request, reply) => {
+    try {
+      const query = request.query as {
+        q?: string;
+        sort?: "downloads" | "likes" | "trendingScore" | "lastModified";
+        limit?: string;
+        offset?: string;
+        filter?: string;
+      };
+
+      const datasets = await hfClient.searchDatasets({
+        search: query.q,
+        sort: query.sort,
+        limit: query.limit !== undefined ? Number(query.limit) : undefined,
+        offset: query.offset !== undefined ? Number(query.offset) : undefined,
+        filter: query.filter,
+      });
+
+      return reply.send(datasets);
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get<{ Params: { datasetId: string } }>(
+    "/api/hf/datasets/detail/:datasetId",
+    async (request, reply) => {
+      try {
+        const datasetId = decodeURIComponent(request.params.datasetId);
+
+        if (!datasetId) {
+          return reply.code(400).send({ error: "datasetId is required" });
+        }
+
+        const [dataset, treeFiles] = await Promise.all([
+          hfClient.getDatasetInfo(datasetId),
+          hfClient.getDatasetFiles(datasetId).catch(() => []),
+        ]);
+
+        // Merge file listing into siblings
+        if (!dataset.siblings && treeFiles.length > 0) {
+          dataset.siblings = treeFiles;
+        }
+
+        return reply.send({ ...dataset, files: treeFiles });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
+          return reply.code(404).send({ error: msg });
+        }
+        return reply.code(500).send({ error: msg });
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Dataset management
+  // -------------------------------------------------------------------------
+
+  fastify.post("/api/hf/datasets/install", async (request, reply) => {
+    try {
+      const body = request.body as { id?: string; revision?: string } | undefined;
+
+      if (!body?.id) {
+        return reply.code(400).send({ error: "id is required" });
+      }
+
+      const { id, revision = "main" } = body;
+
+      // Check if already installed
+      const existing = datasetStore.getById(id);
+      if (existing && existing.status !== "error") {
+        return reply.code(409).send({ error: `Dataset already installed: ${id}` });
+      }
+
+      // Fetch dataset info and file listing from HF Hub
+      const [datasetInfo, treeFiles] = await Promise.all([
+        hfClient.getDatasetInfo(id),
+        hfClient.getDatasetFiles(id, revision).catch(() => []),
+      ]);
+
+      // Build download destination: ~/.agi/datasets/hub/datasets--{safeId}/snapshots/{revision}/
+      const hfCacheDir = hardwareProfiler.getProfile().disk.modelCachePath;
+      const datasetsBaseDir = join(hfCacheDir, "..", "datasets");
+      const safeId = id.replace(/\//g, "--");
+      const datasetDir = join(datasetsBaseDir, "hub", `datasets--${safeId}`, "snapshots", revision);
+      mkdirSync(datasetDir, { recursive: true });
+
+      const totalSize = treeFiles.reduce((acc, f) => acc + (f.size ?? f.lfs?.size ?? 0), 0);
+      const downloadedAt = new Date().toISOString();
+
+      const displayName = id.includes("/") ? id.split("/").pop() ?? id : id;
+
+      // Add to store as "downloading"
+      const datasetEntry = {
+        id,
+        revision,
+        displayName,
+        description: datasetInfo.description,
+        filePath: datasetDir,
+        fileSizeBytes: totalSize,
+        fileCount: treeFiles.length,
+        status: "downloading" as const,
+        downloadedAt,
+        tags: datasetInfo.tags ?? [],
+      };
+
+      if (existing) {
+        // Re-install after error — remove stale entry first
+        datasetStore.remove(id);
+      }
+      datasetStore.addDataset(datasetEntry);
+
+      // Fire-and-forget: download ALL dataset files
+      void (async () => {
+        try {
+          for (const file of treeFiles) {
+            const destPath = join(datasetDir, file.rfilename);
+            // Create any subdirectories inside the dataset dir
+            mkdirSync(join(datasetDir, file.rfilename).replace(/\/[^/]+$/, ""), { recursive: true });
+            await hfClient.downloadFile({
+              modelId: id,
+              revision,
+              filename: file.rfilename,
+              destPath,
+            });
+          }
+          datasetStore.updateStatus(id, "ready");
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          datasetStore.setError(id, msg);
+        }
+      })();
+
+      return reply.send({ ok: true, id, status: "downloading", fileCount: treeFiles.length, fileSizeBytes: totalSize });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get("/api/hf/datasets", async (_request, reply) => {
+    try {
+      const datasets = datasetStore.getAll();
+      return reply.send(datasets);
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.delete<{ Params: { datasetId: string } }>(
+    "/api/hf/datasets/:datasetId",
+    async (request, reply) => {
+      try {
+        const datasetId = decodeURIComponent(request.params.datasetId);
+
+        if (!datasetId) {
+          return reply.code(400).send({ error: "datasetId is required" });
+        }
+
+        const dataset = datasetStore.getById(datasetId);
+        if (!dataset) {
+          return reply.code(404).send({ error: `Dataset not found: ${datasetId}` });
+        }
+
+        datasetStore.updateStatus(datasetId, "removing");
+
+        // Remove dataset files from disk
+        if (dataset.filePath) {
+          rmSync(dataset.filePath, { recursive: true, force: true });
+        }
+
+        // Remove from store
+        datasetStore.remove(datasetId);
+
+        return reply.send({ ok: true });
+      } catch (err) {
+        return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // Auth
   // -------------------------------------------------------------------------
 
@@ -581,4 +842,280 @@ export function registerHfRoutes(
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }
   });
+
+  // -------------------------------------------------------------------------
+  // Wizard API — multi-step model install
+  // -------------------------------------------------------------------------
+
+  /**
+   * POST /api/hf/models/wizard/analyze
+   * Combines model info + variant resolution + runtime detection + hardware compat
+   * into a single call for the install wizard frontend.
+   */
+  fastify.post("/api/hf/models/wizard/analyze", async (request, reply) => {
+    try {
+      const body = request.body as { modelId?: string } | undefined;
+
+      if (!body?.modelId) {
+        return reply.code(400).send({ error: "modelId is required" });
+      }
+
+      const { modelId } = body;
+
+      const [modelInfo, treeFiles] = await Promise.all([
+        hfClient.getModelInfo(modelId),
+        hfClient.getModelFiles(modelId).catch(() => []),
+      ]);
+
+      // Merge file sizes from tree API
+      if (modelInfo.siblings && treeFiles.length > 0) {
+        const sizeMap = new Map(treeFiles.map((f) => [f.rfilename, f.size ?? 0]));
+        for (const sib of modelInfo.siblings) {
+          if (sib.size === undefined || sib.size === 0) {
+            sib.size = sizeMap.get(sib.rfilename);
+          }
+        }
+      } else if (!modelInfo.siblings && treeFiles.length > 0) {
+        modelInfo.siblings = treeFiles;
+      }
+
+      // Resolve runtime type and check for known custom definition
+      const runtimeType = capabilityResolver.resolveRuntimeType(modelInfo);
+      const customDefinition = knownModelsRegistry.lookup(modelId) ?? null;
+      const isCustom = runtimeType === "custom" || customDefinition !== null;
+
+      const variants = capabilityResolver.resolveVariants(modelInfo);
+      const { compatibility, reason } = capabilityResolver.assessCompatibility(modelInfo);
+      const estimatedResources = capabilityResolver.estimateResources(modelInfo);
+
+      return reply.send({
+        model: {
+          ...modelInfo,
+          compatibility,
+          compatibilityReason: reason,
+          estimate: estimatedResources,
+          variants,
+        },
+        runtimeType: isCustom ? "custom" : runtimeType,
+        isCustom,
+        customDefinition: customDefinition ? (customDefinition as unknown as Record<string, unknown>) : null,
+        variants,
+        hardwareCompatibility: { compatibility, reason },
+        estimatedResources,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
+        return reply.code(404).send({ error: msg });
+      }
+      return reply.code(500).send({ error: msg });
+    }
+  });
+
+  /**
+   * POST /api/hf/models/wizard/install
+   * Full install endpoint used by the wizard — supports custom models via container build.
+   */
+  fastify.post("/api/hf/models/wizard/install", async (request, reply) => {
+    try {
+      const body = request.body as {
+        modelId?: string;
+        revision?: string;
+        filename?: string;
+        runtimeType?: string;
+        containerImage?: string;
+        customConfig?: Record<string, unknown>;
+      } | undefined;
+
+      if (!body?.modelId) {
+        return reply.code(400).send({ error: "modelId is required" });
+      }
+
+      const { modelId, revision = "main", filename, containerImage } = body;
+
+      const modelInfo = await hfClient.getModelInfo(modelId);
+      const runtimeType = capabilityResolver.resolveRuntimeType(modelInfo);
+      const customDefinition = knownModelsRegistry.lookup(modelId);
+      const isCustom = runtimeType === "custom" || customDefinition !== null;
+
+      // For custom models without a specific file, trigger container build then install
+      if (isCustom && customDefinition && !filename) {
+        const cacheDir = hardwareProfiler.getProfile().disk.modelCachePath;
+
+        // Add a placeholder entry with "building" status
+        const downloadedAt = new Date().toISOString();
+        modelStore.addModel({
+          id: modelId,
+          revision,
+          displayName: customDefinition.label,
+          pipelineTag: modelInfo.pipeline_tag ?? "custom",
+          runtimeType: "custom",
+          filePath: cacheDir,
+          modelFilename: undefined,
+          fileSizeBytes: 0,
+          status: "downloading",
+          downloadedAt,
+          containerImage: containerImage ?? undefined,
+          sourceRepo: customDefinition.sourceRepo ?? undefined,
+        });
+
+        // Fire-and-forget: build container image
+        void (async () => {
+          try {
+            const imageTag = await customContainerBuilder.build(modelId, customDefinition);
+            modelStore.updateStatus(modelId, "ready");
+            // Store the built image tag so container manager uses it
+            const existing = modelStore.getById(modelId);
+            if (existing) {
+              modelStore.addModel({
+                ...existing,
+                containerImage: imageTag,
+                status: "ready",
+              });
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            modelStore.setError(modelId, msg);
+          }
+        })();
+
+        return reply.send({ ok: true, status: "building" });
+      }
+
+      // Standard install — requires filename
+      if (!filename) {
+        return reply.code(400).send({ error: "filename is required for non-custom models" });
+      }
+
+      const cacheDir = hardwareProfiler.getProfile().disk.modelCachePath;
+      const safeId = modelId.replace(/\//g, "--");
+      const modelDir = join(cacheDir, "hub", `models--${safeId}`, "snapshots", revision);
+      const destPath = join(modelDir, filename);
+      mkdirSync(modelDir, { recursive: true });
+
+      const treeFiles = await hfClient.getModelFiles(modelId, revision).catch(() => []);
+      const fileEntry = treeFiles.find((f) => f.rfilename === filename);
+      const fileSizeBytes = fileEntry?.size ?? 0;
+      const downloadedAt = new Date().toISOString();
+
+      const resolvedRuntime = (body.runtimeType as "llm" | "general" | "diffusion" | "custom" | undefined) ?? runtimeType;
+
+      modelStore.addModel({
+        id: modelId,
+        revision,
+        displayName: modelInfo.modelId ?? modelId,
+        pipelineTag: modelInfo.pipeline_tag ?? "unknown",
+        runtimeType: resolvedRuntime,
+        filePath: modelDir,
+        modelFilename: filename,
+        fileSizeBytes,
+        status: "downloading",
+        downloadedAt,
+        containerImage: containerImage ?? undefined,
+      });
+
+      const SUPPORT_FILE_MAX_SIZE = 10 * 1024 * 1024;
+      const supportFiles = treeFiles.filter((f) => {
+        if (f.rfilename === filename) return false;
+        if (!f.size || f.size > SUPPORT_FILE_MAX_SIZE) return false;
+        const ext = f.rfilename.split(".").pop()?.toLowerCase() ?? "";
+        return ["json", "txt", "model", "md"].includes(ext) || f.rfilename.includes("tokenizer") || f.rfilename.includes("config") || f.rfilename.includes("vocab") || f.rfilename.includes("merges");
+      });
+
+      void (async () => {
+        try {
+          for (const sf of supportFiles) {
+            await hfClient.downloadFile({
+              modelId,
+              revision,
+              filename: sf.rfilename,
+              destPath: join(modelDir, sf.rfilename),
+            });
+          }
+          await hfClient.downloadFile({ modelId, revision, filename, destPath });
+          modelStore.updateStatus(modelId, "ready");
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          modelStore.setError(modelId, msg);
+        }
+      })();
+
+      return reply.send({ ok: true, status: "downloading" });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // Fine-Tune API
+  // -------------------------------------------------------------------------
+
+  fastify.post("/api/hf/finetune/start", async (request, reply) => {
+    try {
+      const body = request.body as Parameters<FineTuneManager["startJob"]>[0] | undefined;
+      if (!body?.baseModelId || !body?.datasetId || !body?.outputName) {
+        return reply.code(400).send({ error: "baseModelId, datasetId, and outputName are required" });
+      }
+      const job = await fineTuneManager.startJob(body);
+      return reply.send(job);
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get("/api/hf/finetune", async (_request, reply) => {
+    try {
+      const jobs = fineTuneManager.listJobs();
+      return reply.send(jobs);
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get<{ Params: { jobId: string } }>(
+    "/api/hf/finetune/:jobId",
+    async (request, reply) => {
+      try {
+        const { jobId } = request.params;
+        const job = fineTuneManager.getJob(jobId);
+        if (!job) {
+          return reply.code(404).send({ error: `Fine-tune job not found: ${jobId}` });
+        }
+
+        // Poll container for live training status if the job is running
+        if (job.status === "training" && job.containerPort) {
+          try {
+            const res = await fetch(`http://127.0.0.1:${job.containerPort}/finetune/status`);
+            if (res.ok) {
+              const containerStatus = await res.json() as Record<string, unknown>;
+              return reply.send({ ...job, containerStatus });
+            }
+          } catch {
+            // Container not reachable — return job without live status
+          }
+        }
+
+        return reply.send(job);
+      } catch (err) {
+        return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  );
+
+  fastify.post<{ Params: { jobId: string } }>(
+    "/api/hf/finetune/:jobId/stop",
+    async (request, reply) => {
+      try {
+        const { jobId } = request.params;
+        const job = fineTuneManager.getJob(jobId);
+        if (!job) {
+          return reply.code(404).send({ error: `Fine-tune job not found: ${jobId}` });
+        }
+        await fineTuneManager.stopJob(jobId);
+        return reply.send({ ok: true });
+      } catch (err) {
+        return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  );
 }

@@ -22,6 +22,9 @@ import {
   useHFModels,
   useHFInstalledModels,
   useHFRunningModels,
+  useHFDatasets,
+  useHFInstalledDatasets,
+  useFineTuneJobs,
 } from "../hooks.js";
 import {
   installHFModel,
@@ -30,6 +33,12 @@ import {
   uninstallHFModel,
   testHFInference,
   fetchHFModelDetail,
+  installHFDataset,
+  uninstallHFDataset,
+  analyzeHFModel,
+  wizardInstallHFModel,
+  startFineTuneJob,
+  stopFineTuneJob,
 } from "../api.js";
 import type {
   HFModelSearchResult,
@@ -41,18 +50,25 @@ import type {
   HFModelVariant,
   HFHardwareTier,
   HFQuantization,
+  HFDatasetSearchResult,
+  HFInstalledDataset,
+  HFModelAnalysis,
+  HFFineTuneConfig,
+  HFFineTuneJob,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Tab setup
 // ---------------------------------------------------------------------------
 
-type Tab = "models" | "installed" | "running";
+type Tab = "models" | "installed" | "running" | "datasets" | "finetune";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "models", label: "Models" },
   { id: "installed", label: "Installed" },
   { id: "running", label: "Running" },
+  { id: "datasets", label: "Datasets" },
+  { id: "finetune", label: "Fine-Tune" },
 ];
 
 export default function HFMarketplacePage() {
@@ -82,6 +98,8 @@ export default function HFMarketplacePage() {
         {activeTab === "models" && <ModelsTab />}
         {activeTab === "installed" && <InstalledTab />}
         {activeTab === "running" && <RunningTab />}
+        {activeTab === "datasets" && <DatasetsTab />}
+        {activeTab === "finetune" && <FineTuneTab />}
       </div>
     </PageScroll>
   );
@@ -361,7 +379,360 @@ function ModelCard({ model, onSelect }: { model: HFModelSearchResult; onSelect: 
 }
 
 // ---------------------------------------------------------------------------
-// ModelDetailDialog — variant selection + download
+// ModelWizardDialog — multi-step install wizard for complex/custom models
+// ---------------------------------------------------------------------------
+
+type WizardStep = 0 | 1 | 2;
+type WizardInstallPhase = "idle" | "installing" | "done" | "error";
+
+function ModelWizardDialog({
+  model,
+  analysis,
+  onClose,
+}: {
+  model: HFModelSearchResult;
+  analysis: HFModelAnalysis;
+  onClose: () => void;
+}) {
+  const [step, setStep] = useState<WizardStep>(0);
+  const [selectedVariant, setSelectedVariant] = useState<HFModelVariant | null>(
+    analysis.variants.find((v) => v.compatibility === "compatible") ?? analysis.variants[0] ?? null,
+  );
+  const [installPhase, setInstallPhase] = useState<WizardInstallPhase>("idle");
+  const [installError, setInstallError] = useState<string | null>(null);
+
+  const sortedVariants = analysis.variants.slice().sort((a, b) => {
+    const compatOrder: Record<HFCompatibility, number> = { compatible: 0, limited: 1, incompatible: 2 };
+    return compatOrder[a.compatibility] - compatOrder[b.compatibility] || a.sizeBytes - b.sizeBytes;
+  });
+
+  const runtimeLabel = analysis.isCustom ? "Custom Runtime" : analysis.runtimeType.charAt(0).toUpperCase() + analysis.runtimeType.slice(1);
+  const runtimeColor = analysis.isCustom ? "bg-blue/15 text-blue" : "bg-green/15 text-green";
+
+  async function handleInstall(startAfter: boolean) {
+    setInstallPhase("installing");
+    setInstallError(null);
+    try {
+      const result = await wizardInstallHFModel({
+        modelId: model.id,
+        filename: selectedVariant?.filename ?? undefined,
+        runtimeType: analysis.runtimeType,
+      });
+      if (!result.ok) {
+        setInstallPhase("error");
+        setInstallError(result.error ?? "Installation failed");
+      } else {
+        setInstallPhase("done");
+        void startAfter; // start is handled from Installed tab
+      }
+    } catch (err) {
+      setInstallPhase("error");
+      setInstallError(err instanceof Error ? err.message : "Installation failed");
+    }
+  }
+
+  const stepLabels = ["Overview", "Configuration", "Review & Install"];
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
+            <span>{model.id}</span>
+            {model.pipeline_tag && (
+              <Badge variant="outline" className="text-[10px]">{model.pipeline_tag}</Badge>
+            )}
+            <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium", runtimeColor)}>
+              {runtimeLabel}
+            </span>
+          </DialogTitle>
+          {/* Step indicator */}
+          <div className="flex items-center gap-2 mt-2">
+            {stepLabels.map((label, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <span className={cn(
+                  "text-[11px] font-medium px-2 py-0.5 rounded-full",
+                  i === step ? "bg-primary text-primary-foreground" : i < step ? "bg-green/20 text-green" : "bg-muted text-muted-foreground",
+                )}>
+                  {i + 1}
+                </span>
+                <span className={cn("text-[11px]", i === step ? "text-foreground font-medium" : "text-muted-foreground")}>
+                  {label}
+                </span>
+                {i < stepLabels.length - 1 && (
+                  <span className="text-muted-foreground/50 text-[10px]">›</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          {/* Step 0: Overview */}
+          {step === 0 && (
+            <div className="space-y-4">
+              <div className="rounded-md border border-border bg-muted/20 p-4 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[13px] font-medium">{model.id}</p>
+                    {model.author && (
+                      <p className="text-[11px] text-muted-foreground">by {model.author}</p>
+                    )}
+                  </div>
+                  <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium", getCompatibilityColor(analysis.hardwareCompatibility.compatibility))}>
+                    {getCompatibilityLabel(analysis.hardwareCompatibility.compatibility)}
+                  </span>
+                </div>
+                {analysis.hardwareCompatibility.reason && (
+                  <p className="text-[11px] text-muted-foreground">{analysis.hardwareCompatibility.reason}</p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-md border border-border p-3">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Runtime Type</p>
+                  <span className={cn("text-[11px] font-medium px-1.5 py-0.5 rounded", runtimeColor)}>
+                    {runtimeLabel}
+                  </span>
+                </div>
+                <div className="rounded-md border border-border p-3">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Estimated Size</p>
+                  <p className="text-[12px] font-medium">
+                    {analysis.estimatedResources.diskUsageBytes > 0
+                      ? formatBytes(analysis.estimatedResources.diskUsageBytes)
+                      : "Unknown"}
+                  </p>
+                </div>
+              </div>
+
+              {analysis.isCustom && analysis.customDefinition && (
+                <div className="rounded-md border border-blue/30 bg-blue/5 p-3 space-y-1">
+                  <p className="text-[12px] font-medium text-blue">Custom Runtime Detected</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {(analysis.customDefinition["description"] as string | undefined) ?? "This model uses a custom container runtime."}
+                  </p>
+                  {analysis.customDefinition["sourceRepo"] && (
+                    <p className="text-[10px] text-muted-foreground">
+                      Source: <span className="font-mono">{analysis.customDefinition["sourceRepo"] as string}</span>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                {model.downloads > 0 && <span>{formatCount(model.downloads)} downloads</span>}
+                {model.likes > 0 && <span>{formatCount(model.likes)} likes</span>}
+              </div>
+            </div>
+          )}
+
+          {/* Step 1: Configuration */}
+          {step === 1 && (
+            <div className="space-y-4">
+              {analysis.isCustom ? (
+                <div className="space-y-3">
+                  <p className="text-[13px] font-medium">Custom Runtime Configuration</p>
+                  <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
+                    {analysis.customDefinition && (
+                      <>
+                        {analysis.customDefinition["sourceRepo"] && (
+                          <div>
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Source Repository</p>
+                            <p className="text-[12px] font-mono mt-0.5">{analysis.customDefinition["sourceRepo"] as string}</p>
+                          </div>
+                        )}
+                        {analysis.customDefinition["endpoints"] && (
+                          <div>
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-2">Endpoints</p>
+                            <div className="space-y-0.5 mt-0.5">
+                              {Object.entries(analysis.customDefinition["endpoints"] as Record<string, string>).map(([name, path]) => (
+                                <p key={name} className="text-[11px]">
+                                  <span className="text-muted-foreground">{name}:</span>{" "}
+                                  <span className="font-mono">{path}</span>
+                                </p>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {analysis.customDefinition["internalPort"] && (
+                          <div>
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mt-2">Container Port</p>
+                            <p className="text-[12px] mt-0.5">{analysis.customDefinition["internalPort"] as number}</p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    A container will be built from the source repository. This may take several minutes on first install.
+                  </p>
+                </div>
+              ) : sortedVariants.length > 0 ? (
+                <div className="space-y-3">
+                  <p className="text-[13px] font-medium">Select Variant</p>
+                  <div className="divide-y divide-border rounded-md border">
+                    {sortedVariants.map((v) => {
+                      const isRecommended =
+                        v.compatibility === "compatible" &&
+                        v.quantization !== null &&
+                        RECOMMENDED_QUANTS.has(v.quantization as HFQuantization);
+                      const qualityLabel = v.format === "gguf"
+                        ? getQuantLabel(v.quantization)
+                        : `Full Model (${formatBytes(v.sizeBytes)})`;
+                      return (
+                        <button
+                          key={v.filename}
+                          className={cn(
+                            "w-full text-left px-3 py-3 space-y-1 cursor-pointer hover:bg-muted/30 transition-colors",
+                            selectedVariant?.filename === v.filename && "bg-primary/5 border-l-2 border-primary",
+                          )}
+                          onClick={() => setSelectedVariant(v)}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-[12px] font-medium">{qualityLabel}</p>
+                              {isRecommended && (
+                                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-green/15 text-green">
+                                  Recommended
+                                </span>
+                              )}
+                              <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded", getCompatibilityColor(v.compatibility))}>
+                                {getCompatibilityLabel(v.compatibility)}
+                              </span>
+                            </div>
+                            <span className="text-[11px] text-muted-foreground shrink-0">{formatBytes(v.sizeBytes)}</span>
+                          </div>
+                          {v.quantization && (
+                            <p className="text-[10px] text-muted-foreground">{v.quantization}</p>
+                          )}
+                          {v.compatibility !== "compatible" && v.compatibilityReason && (
+                            <p className="text-[10px] text-muted-foreground">{v.compatibilityReason}</p>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-border bg-muted/20 px-4 py-3">
+                  <p className="text-[13px] text-muted-foreground">
+                    No compatible variants found. Aionima supports GGUF, SafeTensors, and ONNX models.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step 2: Review & Install */}
+          {step === 2 && (
+            <div className="space-y-4">
+              <p className="text-[13px] font-medium">Review & Install</p>
+
+              <div className="rounded-md border border-border bg-muted/20 p-4 space-y-3">
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="text-muted-foreground">Model</span>
+                  <span className="font-medium">{model.id}</span>
+                </div>
+                <div className="flex items-center justify-between text-[12px]">
+                  <span className="text-muted-foreground">Runtime</span>
+                  <span className={cn("font-medium px-1.5 py-0.5 rounded text-[10px]", runtimeColor)}>{runtimeLabel}</span>
+                </div>
+                {selectedVariant && (
+                  <>
+                    <div className="flex items-center justify-between text-[12px]">
+                      <span className="text-muted-foreground">File</span>
+                      <span className="font-mono text-[11px] truncate max-w-[240px]">{selectedVariant.filename}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-[12px]">
+                      <span className="text-muted-foreground">Disk space required</span>
+                      <span className="font-medium">{formatBytes(selectedVariant.sizeBytes)}</span>
+                    </div>
+                  </>
+                )}
+                {analysis.isCustom && (
+                  <div className="flex items-center justify-between text-[12px]">
+                    <span className="text-muted-foreground">Container build</span>
+                    <span className="text-blue font-medium">Required (may take minutes)</span>
+                  </div>
+                )}
+              </div>
+
+              {installPhase === "idle" && (
+                <div className="flex flex-col gap-2">
+                  <Button
+                    className="w-full cursor-pointer"
+                    onClick={() => void handleInstall(true)}
+                    disabled={!analysis.isCustom && !selectedVariant}
+                  >
+                    Install &amp; Start
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="w-full cursor-pointer"
+                    onClick={() => void handleInstall(false)}
+                    disabled={!analysis.isCustom && !selectedVariant}
+                  >
+                    Install Only
+                  </Button>
+                </div>
+              )}
+
+              {installPhase === "installing" && (
+                <div className="rounded-md bg-muted/30 border border-border px-3 py-2">
+                  <p className="text-[12px] font-medium text-foreground">
+                    {analysis.isCustom ? "Building container and preparing model..." : "Preparing download..."}
+                  </p>
+                </div>
+              )}
+
+              {installPhase === "done" && (
+                <div className="rounded-md bg-blue/10 border border-blue/30 px-3 py-2 space-y-1">
+                  <p className="text-[12px] font-medium text-blue">
+                    {analysis.isCustom ? "Container build started. This may take several minutes." : "Download started. This may take several minutes for large models."}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Check the Installed tab for progress and to start the model when ready.
+                  </p>
+                </div>
+              )}
+
+              {installPhase === "error" && installError && (
+                <p className="text-[12px] text-red">{installError}</p>
+              )}
+
+              <p className="text-[11px] text-muted-foreground text-center">
+                After installing, start the model from the Installed tab.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter className="flex items-center justify-between">
+          <div className="flex gap-2">
+            {step > 0 && installPhase === "idle" && (
+              <Button variant="ghost" size="sm" className="cursor-pointer" onClick={() => setStep((s) => (s - 1) as WizardStep)}>
+                Back
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" className="cursor-pointer" onClick={onClose}>
+              {installPhase === "done" ? "Close" : "Cancel"}
+            </Button>
+            {step < 2 && (
+              <Button size="sm" className="cursor-pointer" onClick={() => setStep((s) => (s + 1) as WizardStep)}>
+                Next
+              </Button>
+            )}
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ModelDetailDialog — variant selection + download (simple path for standard models)
 // ---------------------------------------------------------------------------
 
 type InstallPhase = "idle" | "downloading" | "done" | "error";
@@ -373,6 +744,9 @@ function ModelDetailDialog({
   model: HFModelSearchResult;
   onClose: () => void;
 }) {
+  const [analysis, setAnalysis] = useState<HFModelAnalysis | null>(null);
+  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
   const [detail, setDetail] = useState<HFModelDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   // Per-variant install state
@@ -381,6 +755,16 @@ function ModelDetailDialog({
   const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
+    setLoadingAnalysis(true);
+    setAnalyzeError(null);
+    analyzeHFModel(model.id)
+      .then(setAnalysis)
+      .catch((err) => setAnalyzeError(err instanceof Error ? err.message : "Failed to analyze model"))
+      .finally(() => setLoadingAnalysis(false));
+  }, [model.id]);
+
+  // Also fetch detailed info (for fallback) in parallel
+  useEffect(() => {
     setLoadingDetail(true);
     fetchHFModelDetail(model.id)
       .then(setDetail)
@@ -388,20 +772,27 @@ function ModelDetailDialog({
       .finally(() => setLoadingDetail(false));
   }, [model.id]);
 
-  const sortedVariants: HFModelVariant[] = detail?.variants.slice().sort((a, b) => {
+  // Once analysis is available, route to wizard for custom models, simple dialog for standard
+  if (!loadingAnalysis && analysis && (analysis.isCustom || analysis.runtimeType === "custom")) {
+    return <ModelWizardDialog model={model} analysis={analysis} onClose={onClose} />;
+  }
+
+  const sortedVariants: HFModelVariant[] = (analysis?.variants ?? detail?.variants ?? []).slice().sort((a, b) => {
     const compatOrder: Record<HFCompatibility, number> = { compatible: 0, limited: 1, incompatible: 2 };
     const diff = compatOrder[a.compatibility] - compatOrder[b.compatibility];
     if (diff !== 0) return diff;
     return a.sizeBytes - b.sizeBytes;
-  }) ?? [];
+  });
+
+  const isLoading = loadingAnalysis || loadingDetail;
 
   // Best compatible variant for recommendation callout
   const recommendedVariant = sortedVariants.find(
-    (v) => v.compatibility === "compatible" && v.quantization && RECOMMENDED_QUANTS.has(v.quantization),
+    (v) => v.compatibility === "compatible" && v.quantization && RECOMMENDED_QUANTS.has(v.quantization as HFQuantization),
   ) ?? sortedVariants.find((v) => v.compatibility === "compatible");
 
   const allIncompatible =
-    !loadingDetail &&
+    !isLoading &&
     sortedVariants.length > 0 &&
     sortedVariants.every((v) => v.compatibility === "incompatible");
 
@@ -450,7 +841,7 @@ function ModelDetailDialog({
 
         <div className="space-y-4">
           {/* Loading skeleton */}
-          {loadingDetail && (
+          {isLoading && (
             <div className="space-y-2">
               <div className="h-4 rounded bg-muted/50 animate-pulse w-3/4" />
               <div className="h-16 rounded-md border border-border bg-muted/20 animate-pulse" />
@@ -458,8 +849,15 @@ function ModelDetailDialog({
             </div>
           )}
 
+          {/* Analyze error */}
+          {analyzeError && (
+            <div className="rounded-md border border-border bg-muted/20 px-4 py-3">
+              <p className="text-[13px] text-muted-foreground">{analyzeError}</p>
+            </div>
+          )}
+
           {/* No variants at all */}
-          {!loadingDetail && detail && sortedVariants.length === 0 && (
+          {!isLoading && sortedVariants.length === 0 && !analyzeError && (
             <div className="rounded-md border border-border bg-muted/20 px-4 py-3">
               <p className="text-[13px] text-muted-foreground">
                 This model format is not yet supported. Aionima supports GGUF, SafeTensors, and ONNX models.
@@ -478,8 +876,8 @@ function ModelDetailDialog({
           )}
 
           {/* Single-variant: simplified summary card */}
-          {!loadingDetail && sortedVariants.length === 1 && !allIncompatible && (() => {
-            const v = sortedVariants[0];
+          {!isLoading && sortedVariants.length === 1 && !allIncompatible && (() => {
+            const v = sortedVariants[0]!;
             const isInstalling = installingVariant === v.filename;
             return (
               <div className="space-y-3">
@@ -527,7 +925,7 @@ function ModelDetailDialog({
           })()}
 
           {/* Multi-variant list */}
-          {!loadingDetail && sortedVariants.length > 1 && !allIncompatible && (
+          {!isLoading && sortedVariants.length > 1 && !allIncompatible && (
             <div className="space-y-3">
               {/* Recommendation callout */}
               {recommendedVariant && installPhase === "idle" && (
@@ -908,6 +1306,649 @@ function RunningModelCard({ model }: { model: HFRunningModel }) {
             <p className="text-[10px] text-muted-foreground">{inferResult.latencyMs}ms</p>
           </div>
         )}
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DatasetsTab — browse HF Hub datasets and manage installed datasets
+// ---------------------------------------------------------------------------
+
+const DATASET_SORT_OPTIONS = [
+  { value: "downloads", label: "Most Downloads" },
+  { value: "likes", label: "Most Likes" },
+  { value: "trendingScore", label: "Trending" },
+  { value: "lastModified", label: "Recently Updated" },
+];
+
+function DatasetsTab() {
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState("downloads");
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
+
+  const datasetsQuery = useHFDatasets({
+    q: search || undefined,
+    sort,
+    limit: 30,
+  });
+  const datasets = datasetsQuery.data ?? [];
+
+  const installedQuery = useHFInstalledDatasets();
+  const installedDatasets = installedQuery.data ?? [];
+
+  const installedIds = new Set(installedDatasets.map((d) => d.id));
+
+  async function handleInstall(dataset: HFDatasetSearchResult) {
+    setInstalling(dataset.id);
+    setInstallError(null);
+    try {
+      const result = await installHFDataset(dataset.id);
+      if (!result.ok) {
+        setInstallError(result.error ?? "Installation failed");
+      } else {
+        await installedQuery.refetch();
+      }
+    } catch (err) {
+      setInstallError(err instanceof Error ? err.message : "Installation failed");
+    } finally {
+      setInstalling(null);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Search + sort */}
+      <div className="flex flex-col sm:flex-row gap-2">
+        <Input
+          placeholder="Search datasets..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 text-[13px]"
+        />
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value)}
+          className="text-[13px] rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+        >
+          {DATASET_SORT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </div>
+
+      {installError && (
+        <p className="text-[12px] text-red">{installError}</p>
+      )}
+
+      {datasetsQuery.isLoading && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="rounded-lg border border-border bg-muted/20 h-32 animate-pulse" />
+          ))}
+        </div>
+      )}
+      {datasetsQuery.isError && (
+        <div className="p-4 rounded-lg bg-surface0/50 text-sm text-muted-foreground">
+          <p className="font-medium text-foreground mb-1">Failed to search datasets</p>
+          <p>{datasetsQuery.error?.message ?? "Check your network connection and try again."}</p>
+        </div>
+      )}
+      {!datasetsQuery.isLoading && !datasetsQuery.isError && datasets.length === 0 && (
+        <p className="text-[13px] text-muted-foreground">No datasets found.</p>
+      )}
+
+      {!datasetsQuery.isLoading && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {datasets.map((dataset) => (
+            <DatasetCard
+              key={dataset.id}
+              dataset={dataset}
+              isInstalled={installedIds.has(dataset.id)}
+              isInstalling={installing === dataset.id}
+              onInstall={() => void handleInstall(dataset)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Installed datasets section */}
+      {installedDatasets.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-[13px] font-semibold">Installed Datasets</h3>
+          {installedDatasets.map((dataset) => (
+            <InstalledDatasetCard
+              key={dataset.id}
+              dataset={dataset}
+              onDeleted={() => void installedQuery.refetch()}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DatasetCard({
+  dataset,
+  isInstalled,
+  isInstalling,
+  onInstall,
+}: {
+  dataset: HFDatasetSearchResult;
+  isInstalled: boolean;
+  isInstalling: boolean;
+  onInstall: () => void;
+}) {
+  return (
+    <Card className="p-4 flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[13px] font-semibold truncate">{dataset.id}</p>
+          {dataset.author && (
+            <p className="text-[11px] text-muted-foreground truncate">{dataset.author}</p>
+          )}
+        </div>
+        {dataset.gated && (
+          <Badge variant="outline" className="text-[10px] shrink-0">Gated</Badge>
+        )}
+      </div>
+
+      {dataset.description && (
+        <p className="text-[11px] text-muted-foreground line-clamp-2">{dataset.description}</p>
+      )}
+
+      <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+        <span>{formatCount(dataset.downloads)} downloads</span>
+        <span>{formatCount(dataset.likes)} likes</span>
+      </div>
+
+      {dataset.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {dataset.tags.slice(0, 3).map((tag) => (
+            <Badge key={tag} variant="outline" className="text-[10px]">{tag}</Badge>
+          ))}
+          {dataset.tags.length > 3 && (
+            <span className="text-[10px] text-muted-foreground">+{dataset.tags.length - 3}</span>
+          )}
+        </div>
+      )}
+
+      <div className="mt-auto pt-1">
+        <Button
+          size="sm"
+          variant="outline"
+          className="w-full text-[12px] cursor-pointer"
+          disabled={isInstalled || isInstalling}
+          onClick={onInstall}
+        >
+          {isInstalled ? "Installed" : isInstalling ? "Installing..." : "Install"}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function InstalledDatasetCard({
+  dataset,
+  onDeleted,
+}: {
+  dataset: HFInstalledDataset;
+  onDeleted: () => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  async function handleDelete() {
+    setDeleting(true);
+    setDeleteError(null);
+    setConfirmDelete(false);
+    try {
+      await uninstallHFDataset(dataset.id);
+      onDeleted();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  const isDownloading = dataset.status === "downloading";
+  const isRemoving = dataset.status === "removing";
+  const isBusy = deleting || isDownloading || isRemoving;
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[13px] font-semibold truncate">{dataset.displayName}</p>
+          <p className="text-[11px] text-muted-foreground truncate">{dataset.id}</p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span
+            className={cn(
+              "inline-block w-2 h-2 rounded-full",
+              dataset.status === "ready" ? "bg-green" : dataset.status === "downloading" ? "bg-yellow animate-pulse" : dataset.status === "error" ? "bg-red" : "bg-muted-foreground",
+            )}
+          />
+          <span className="text-[11px] text-muted-foreground capitalize">
+            {dataset.status === "downloading" ? "Downloading..." : dataset.status === "removing" ? "Removing..." : dataset.status}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+        <span>{formatBytes(dataset.fileSizeBytes)}</span>
+        <span>{dataset.fileCount} files</span>
+      </div>
+
+      {dataset.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {dataset.tags.slice(0, 4).map((tag) => (
+            <Badge key={tag} variant="outline" className="text-[10px]">{tag}</Badge>
+          ))}
+        </div>
+      )}
+
+      {dataset.error && (
+        <p className="text-[11px] text-red">{dataset.error}</p>
+      )}
+
+      {deleteError && (
+        <p className="text-[11px] text-red">{deleteError}</p>
+      )}
+
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-[12px] text-destructive hover:text-destructive cursor-pointer"
+          disabled={isBusy}
+          onClick={() => setConfirmDelete(true)}
+        >
+          Delete
+        </Button>
+      </div>
+
+      {confirmDelete && (
+        <Dialog open onOpenChange={(open) => { if (!open) setConfirmDelete(false); }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Delete dataset?</DialogTitle>
+            </DialogHeader>
+            <p className="text-[13px] text-muted-foreground">
+              This will permanently delete{" "}
+              <span className="font-medium text-foreground">{dataset.displayName}</span>{" "}
+              and recover{" "}
+              <span className="font-medium text-foreground">{formatBytes(dataset.fileSizeBytes)}</span>{" "}
+              of disk space.
+            </p>
+            <DialogFooter>
+              <Button variant="ghost" size="sm" className="cursor-pointer" onClick={() => setConfirmDelete(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="cursor-pointer"
+                onClick={() => void handleDelete()}
+              >
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// FineTuneTab — PEFT/LoRA fine-tuning (Phase 6)
+// ---------------------------------------------------------------------------
+
+const DEFAULT_FINETUNE_CONFIG: Omit<HFFineTuneConfig, "baseModelId" | "datasetId" | "outputName"> = {
+  method: "lora",
+  loraR: 8,
+  loraAlpha: 32,
+  loraDropout: 0.1,
+  targetModules: ["q_proj", "v_proj"],
+  epochs: 3,
+  batchSize: 4,
+  learningRate: 2e-5,
+};
+
+function FineTuneTab() {
+  const installedModelsQuery = useHFInstalledModels();
+  const installedDatasetsQuery = useHFInstalledDatasets();
+  const jobsQuery = useFineTuneJobs();
+
+  const installedModels = (installedModelsQuery.data ?? []).filter((m) => m.status === "ready" || m.status === "running");
+  const installedDatasets = (installedDatasetsQuery.data ?? []).filter((d) => d.status === "ready");
+  const jobs = jobsQuery.data ?? [];
+
+  const [baseModelId, setBaseModelId] = useState("");
+  const [datasetId, setDatasetId] = useState("");
+  const [outputName, setOutputName] = useState("");
+  const [method, setMethod] = useState<"lora" | "qlora">("lora");
+  const [loraR, setLoraR] = useState(DEFAULT_FINETUNE_CONFIG.loraR);
+  const [loraAlpha, setLoraAlpha] = useState(DEFAULT_FINETUNE_CONFIG.loraAlpha);
+  const [loraDropout, setLoraDropout] = useState(DEFAULT_FINETUNE_CONFIG.loraDropout);
+  const [targetModulesStr, setTargetModulesStr] = useState("q_proj,v_proj");
+  const [epochs, setEpochs] = useState(DEFAULT_FINETUNE_CONFIG.epochs);
+  const [batchSize, setBatchSize] = useState(DEFAULT_FINETUNE_CONFIG.batchSize);
+  const [learningRate, setLearningRate] = useState(DEFAULT_FINETUNE_CONFIG.learningRate);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  async function handleStartTraining() {
+    if (!baseModelId || !datasetId || !outputName.trim()) return;
+    setStarting(true);
+    setStartError(null);
+    try {
+      const config: HFFineTuneConfig = {
+        baseModelId,
+        datasetId,
+        outputName: outputName.trim(),
+        method,
+        loraR,
+        loraAlpha,
+        loraDropout,
+        targetModules: targetModulesStr.split(",").map((s) => s.trim()).filter(Boolean),
+        epochs,
+        batchSize,
+        learningRate,
+      };
+      await startFineTuneJob(config);
+      await jobsQuery.refetch();
+      setOutputName("");
+    } catch (err) {
+      setStartError(err instanceof Error ? err.message : "Failed to start training");
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function handleStop(jobId: string) {
+    try {
+      await stopFineTuneJob(jobId);
+      await jobsQuery.refetch();
+    } catch {
+      // Silently ignore stop errors
+    }
+  }
+
+  const canStart = Boolean(baseModelId && datasetId && outputName.trim()) && !starting;
+
+  return (
+    <div className="space-y-6">
+      {/* Configuration form */}
+      <Card className="p-4 space-y-4">
+        <p className="text-[13px] font-semibold">Start Fine-Tuning Job</p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Base model selector */}
+          <div className="space-y-1">
+            <label className="text-[11px] text-muted-foreground uppercase tracking-wide">Base Model</label>
+            <select
+              value={baseModelId}
+              onChange={(e) => setBaseModelId(e.target.value)}
+              className="w-full text-[13px] rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="">Select an installed model...</option>
+              {installedModels.map((m) => (
+                <option key={m.id} value={m.id}>{m.displayName}</option>
+              ))}
+            </select>
+            {installedModels.length === 0 && (
+              <p className="text-[10px] text-muted-foreground">No ready models. Install a model first.</p>
+            )}
+          </div>
+
+          {/* Dataset selector */}
+          <div className="space-y-1">
+            <label className="text-[11px] text-muted-foreground uppercase tracking-wide">Dataset</label>
+            <select
+              value={datasetId}
+              onChange={(e) => setDatasetId(e.target.value)}
+              className="w-full text-[13px] rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="">Select an installed dataset...</option>
+              {installedDatasets.map((d) => (
+                <option key={d.id} value={d.id}>{d.displayName}</option>
+              ))}
+            </select>
+            {installedDatasets.length === 0 && (
+              <p className="text-[10px] text-muted-foreground">No ready datasets. Install a dataset first.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Output name */}
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground uppercase tracking-wide">Output Adapter Name</label>
+          <Input
+            placeholder="my-adapter"
+            value={outputName}
+            onChange={(e) => setOutputName(e.target.value)}
+            className="text-[13px]"
+          />
+        </div>
+
+        {/* Method */}
+        <div className="space-y-1">
+          <label className="text-[11px] text-muted-foreground uppercase tracking-wide">Method</label>
+          <select
+            value={method}
+            onChange={(e) => setMethod(e.target.value as "lora" | "qlora")}
+            className="w-full text-[13px] rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="lora">LoRA</option>
+            <option value="qlora">QLoRA (4-bit quantized, lower VRAM)</option>
+          </select>
+        </div>
+
+        {/* LoRA config */}
+        <div className="space-y-2">
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wide">LoRA Configuration</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">Rank (r)</label>
+              <Input
+                type="number"
+                min="1"
+                max="64"
+                value={loraR}
+                onChange={(e) => setLoraR(Number(e.target.value))}
+                className="text-[13px]"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">Alpha</label>
+              <Input
+                type="number"
+                min="1"
+                value={loraAlpha}
+                onChange={(e) => setLoraAlpha(Number(e.target.value))}
+                className="text-[13px]"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">Dropout</label>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                max="1"
+                value={loraDropout}
+                onChange={(e) => setLoraDropout(Number(e.target.value))}
+                className="text-[13px]"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">Target Modules</label>
+              <Input
+                placeholder="q_proj,v_proj"
+                value={targetModulesStr}
+                onChange={(e) => setTargetModulesStr(e.target.value)}
+                className="text-[13px]"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Training config */}
+        <div className="space-y-2">
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wide">Training Configuration</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">Epochs</label>
+              <Input
+                type="number"
+                min="1"
+                value={epochs}
+                onChange={(e) => setEpochs(Number(e.target.value))}
+                className="text-[13px]"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">Batch Size</label>
+              <Input
+                type="number"
+                min="1"
+                value={batchSize}
+                onChange={(e) => setBatchSize(Number(e.target.value))}
+                className="text-[13px]"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] text-muted-foreground">Learning Rate</label>
+              <Input
+                type="number"
+                step="1e-6"
+                value={learningRate}
+                onChange={(e) => setLearningRate(Number(e.target.value))}
+                className="text-[13px]"
+              />
+            </div>
+          </div>
+        </div>
+
+        {startError && (
+          <p className="text-[12px] text-red">{startError}</p>
+        )}
+
+        <Button
+          className="w-full cursor-pointer"
+          disabled={!canStart}
+          onClick={() => void handleStartTraining()}
+        >
+          {starting ? "Starting..." : "Start Training"}
+        </Button>
+      </Card>
+
+      {/* Running jobs */}
+      {jobs.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-[13px] font-semibold">Fine-Tune Jobs</h3>
+          {jobs.map((job) => (
+            <FineTuneJobCard key={job.id} job={job} onStop={() => void handleStop(job.id)} />
+          ))}
+        </div>
+      )}
+
+      {jobs.length === 0 && !starting && (
+        <div className="py-8 text-center">
+          <p className="text-[13px] text-muted-foreground">
+            No fine-tuning jobs yet. Configure and start a training job above.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FineTuneJobCard({ job, onStop }: { job: HFFineTuneJob; onStop: () => void }) {
+  const cs = job.containerStatus;
+  const epochDisplay = cs
+    ? `${typeof cs.epoch === "number" ? cs.epoch.toFixed(1) : "0"} / ${cs.total_epochs}`
+    : "—";
+  const lossDisplay = cs?.loss !== null && cs?.loss !== undefined ? cs.loss.toFixed(4) : "—";
+  const etaDisplay = cs?.eta_seconds !== null && cs?.eta_seconds !== undefined
+    ? cs.eta_seconds > 60
+      ? `${Math.floor(cs.eta_seconds / 60)}m ${cs.eta_seconds % 60}s`
+      : `${cs.eta_seconds}s`
+    : "—";
+
+  const statusColor: Record<HFFineTuneJob["status"], string> = {
+    pending: "bg-muted-foreground",
+    building: "bg-yellow animate-pulse",
+    training: "bg-blue animate-pulse",
+    complete: "bg-green",
+    error: "bg-red",
+  };
+
+  const isActive = job.status === "pending" || job.status === "building" || job.status === "training";
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-[13px] font-semibold truncate">{job.config.outputName}</p>
+            <Badge variant="outline" className="text-[10px]">{job.config.method.toUpperCase()}</Badge>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+            {job.config.baseModelId} + {job.config.datasetId}
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className={cn("inline-block w-2 h-2 rounded-full", statusColor[job.status])} />
+          <span className="text-[11px] text-muted-foreground capitalize">{job.status}</span>
+        </div>
+      </div>
+
+      {(job.status === "training" || job.status === "complete") && (
+        <div className="grid grid-cols-3 gap-3 text-[11px]">
+          <div>
+            <p className="text-muted-foreground">Epoch</p>
+            <p className="font-medium">{epochDisplay}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Loss</p>
+            <p className="font-medium">{lossDisplay}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">ETA</p>
+            <p className="font-medium">{etaDisplay}</p>
+          </div>
+        </div>
+      )}
+
+      {job.error && (
+        <p className="text-[11px] text-red">{job.error}</p>
+      )}
+
+      {job.status === "complete" && (
+        <p className="text-[11px] text-green">
+          Adapter saved to ~/.agi/finetune/{job.id}/{job.config.outputName}/
+        </p>
+      )}
+
+      <div className="flex items-center gap-2">
+        {isActive && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-[12px] cursor-pointer"
+            onClick={onStop}
+          >
+            Stop
+          </Button>
+        )}
+        <span className="text-[10px] text-muted-foreground">Job {job.id}</span>
       </div>
     </Card>
   );

@@ -212,7 +212,58 @@ export interface ModelVariant {
 
 export type ModelStatus = "downloading" | "ready" | "starting" | "running" | "stopping" | "error" | "removing";
 
-export type ModelRuntimeType = "llm" | "diffusion" | "general";
+export type ModelRuntimeType = "llm" | "diffusion" | "general" | "custom";
+
+// ---------------------------------------------------------------------------
+// Custom runtime definitions
+// ---------------------------------------------------------------------------
+
+/**
+ * Describes how to build and run a custom (non-standard HF) model container.
+ * Stored in the known-models registry and in user JSON files.
+ */
+export interface CustomRuntimeDefinition {
+  /** Unique identifier, typically the HF model ID. */
+  id: string;
+  /** Human-readable label for display. */
+  label: string;
+  /** What this runtime does. */
+  description: string;
+  /** Git repository to clone for custom model code. */
+  sourceRepo?: string;
+  /** Git ref (branch/tag/sha) to checkout from sourceRepo. */
+  sourceRef?: string;
+  /** Pre-built container image to use instead of building from sourceRepo. */
+  image?: string;
+  /** Dockerfile template string (overrides default if provided). */
+  dockerfileTemplate?: string;
+  /** Port the container's HTTP server listens on internally. */
+  internalPort: number;
+  /** Path to poll for container readiness. */
+  healthCheckPath: string;
+  /** Named endpoints exposed by this runtime (name → path). */
+  endpoints: Record<string, string>;
+  /** Extra environment variables to inject into the container. */
+  env: Record<string, string>;
+  /** Additional pip packages to install beyond the repo requirements. */
+  extraPipDeps?: string[];
+  /** HF model IDs this runtime is compatible with. */
+  hfModels?: string[];
+}
+
+/**
+ * Describes a single HTTP endpoint exposed by a custom model container.
+ */
+export interface ModelEndpoint {
+  /** URL path relative to container root, e.g. "/predict". */
+  path: string;
+  /** HTTP method. */
+  method: "GET" | "POST" | "PUT";
+  /** Human-readable description of what this endpoint does. */
+  description: string;
+  /** JSON schema describing the request body (optional, for tooling). */
+  requestSchema?: Record<string, unknown>;
+}
 
 export interface InstalledModel {
   /** Full model ID, e.g. "meta-llama/Llama-3.1-8B-Instruct". */
@@ -246,6 +297,14 @@ export interface InstalledModel {
   containerId?: string;
   containerPort?: number;
   containerName?: string;
+
+  // Custom runtime fields (populated for "custom" runtimeType)
+  /** Pre-built or builder-produced container image tag. */
+  containerImage?: string;
+  /** Source repository that was cloned to build this model's container. */
+  sourceRepo?: string;
+  /** Declared endpoints for this model's container API. */
+  endpoints?: ModelEndpoint[];
 }
 
 export interface DownloadProgress {
@@ -440,6 +499,50 @@ export type ModelRuntimeEventEmitter = EventEmitter & {
   on<K extends keyof ModelRuntimeEvents>(event: K, listener: ModelRuntimeEvents[K]): ModelRuntimeEventEmitter;
   off<K extends keyof ModelRuntimeEvents>(event: K, listener: ModelRuntimeEvents[K]): ModelRuntimeEventEmitter;
 };
+
+// ---------------------------------------------------------------------------
+// HuggingFace Dataset types
+// ---------------------------------------------------------------------------
+
+export interface HfDatasetInfo {
+  id: string;
+  author?: string;
+  sha?: string;
+  lastModified?: string;
+  description?: string;
+  tags: string[];
+  downloads: number;
+  likes: number;
+  gated: boolean | "auto" | "manual";
+  private: boolean;
+  cardData?: Record<string, unknown>;
+  siblings?: HfFileSibling[];
+}
+
+export interface HfDatasetSearchParams {
+  search?: string;
+  sort?: "downloads" | "likes" | "trendingScore" | "lastModified";
+  direction?: "asc" | "desc";
+  limit?: number;
+  offset?: number;
+  filter?: string;
+}
+
+export type DatasetStatus = "downloading" | "ready" | "error" | "removing";
+
+export interface InstalledDataset {
+  id: string;
+  revision: string;
+  displayName: string;
+  description?: string;
+  filePath: string;
+  fileSizeBytes: number;
+  fileCount: number;
+  status: DatasetStatus;
+  downloadedAt: string;
+  tags: string[];
+  error?: string;
+}
 
 // ---------------------------------------------------------------------------
 // Configuration (mirrors HfConfigSchema from @aionima/config)

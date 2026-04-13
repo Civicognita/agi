@@ -29,6 +29,9 @@ export type {
   ModelStatus,
   ModelRuntimeType,
   DownloadProgress,
+  // Custom runtimes
+  CustomRuntimeDefinition,
+  ModelEndpoint,
   // Containers
   ModelContainerConfig,
   ModelContainerState,
@@ -48,6 +51,11 @@ export type {
   ModelRuntimeEventEmitter,
   // Config
   HfRuntimeConfig,
+  // Datasets
+  HfDatasetInfo,
+  HfDatasetSearchParams,
+  DatasetStatus,
+  InstalledDataset,
 } from "./types.js";
 
 export { PIPELINE_TAG_TO_TOOL, LLM_PIPELINE_TAGS } from "./types.js";
@@ -61,6 +69,9 @@ export { HfHubClient } from "./hf-hub-client.js";
 // Model Store
 export { ModelStore } from "./model-store.js";
 
+// Dataset Store
+export { DatasetStore } from "./dataset-store.js";
+
 // Model Container Manager
 export { ModelContainerManager } from "./model-container-manager.js";
 
@@ -69,6 +80,12 @@ export { CapabilityResolver } from "./capability-resolver.js";
 
 // Inference Gateway
 export { InferenceGateway } from "./inference-gateway.js";
+
+// Known-Models Registry
+export { KnownModelsRegistry } from "./known-models-registry.js";
+
+// Custom Container Builder
+export { CustomContainerBuilder } from "./custom-container-builder.js";
 
 // Agent Bridge
 export { ModelAgentBridge } from "./agent-bridge.js";

@@ -34,6 +34,11 @@ import type {
   HFModelDetail,
   HFInstalledModel,
   HFRunningModel,
+  HFDatasetSearchResult,
+  HFInstalledDataset,
+  HFModelAnalysis,
+  HFFineTuneConfig,
+  HFFineTuneJob,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -2525,4 +2530,110 @@ export async function testHFInference(modelId: string, prompt: string): Promise<
 
 export async function fetchHFAuthStatus(): Promise<{ authenticated: boolean; username?: string }> {
   return hfGet<{ authenticated: boolean; username?: string }>("/api/hf/auth/status");
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Dataset API
+// ---------------------------------------------------------------------------
+
+export async function searchHFDatasets(params: {
+  q?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+  filter?: string;
+}): Promise<HFDatasetSearchResult[]> {
+  const sp = new URLSearchParams();
+  if (params.q) sp.set("q", params.q);
+  if (params.sort) sp.set("sort", params.sort);
+  if (params.limit) sp.set("limit", String(params.limit));
+  if (params.offset) sp.set("offset", String(params.offset));
+  if (params.filter) sp.set("filter", params.filter);
+  return hfGet<HFDatasetSearchResult[]>(`/api/hf/datasets/search?${sp.toString()}`);
+}
+
+export async function fetchHFInstalledDatasets(): Promise<HFInstalledDataset[]> {
+  return hfGet<HFInstalledDataset[]>("/api/hf/datasets");
+}
+
+export async function installHFDataset(id: string, revision?: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch("/api/hf/datasets/install", {
+    method: "POST",
+    headers: { ...getHFAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ id, revision }),
+  });
+  return res.json() as Promise<{ ok: boolean; error?: string }>;
+}
+
+export async function uninstallHFDataset(datasetId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/hf/datasets/${encodeURIComponent(datasetId)}`, {
+    method: "DELETE",
+    headers: getHFAuthHeaders(),
+  });
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Wizard API (Phase 5)
+// ---------------------------------------------------------------------------
+
+export async function analyzeHFModel(modelId: string): Promise<HFModelAnalysis> {
+  const res = await fetch("/api/hf/models/wizard/analyze", {
+    method: "POST",
+    headers: { ...getHFAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ modelId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<HFModelAnalysis>;
+}
+
+export async function wizardInstallHFModel(params: {
+  modelId: string;
+  revision?: string;
+  filename?: string;
+  runtimeType?: string;
+  containerImage?: string;
+}): Promise<{ ok: boolean; status: string; error?: string }> {
+  const res = await fetch("/api/hf/models/wizard/install", {
+    method: "POST",
+    headers: { ...getHFAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return res.json() as Promise<{ ok: boolean; status: string; error?: string }>;
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Fine-Tune API (Phase 6)
+// ---------------------------------------------------------------------------
+
+export async function startFineTuneJob(config: HFFineTuneConfig): Promise<HFFineTuneJob> {
+  const res = await fetch("/api/hf/finetune/start", {
+    method: "POST",
+    headers: { ...getHFAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<HFFineTuneJob>;
+}
+
+export async function listFineTuneJobs(): Promise<HFFineTuneJob[]> {
+  return hfGet<HFFineTuneJob[]>("/api/hf/finetune");
+}
+
+export async function getFineTuneStatus(jobId: string): Promise<HFFineTuneJob> {
+  return hfGet<HFFineTuneJob>(`/api/hf/finetune/${encodeURIComponent(jobId)}`);
+}
+
+export async function stopFineTuneJob(jobId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/hf/finetune/${encodeURIComponent(jobId)}/stop`, {
+    method: "POST",
+    headers: getHFAuthHeaders(),
+  });
+  return res.json() as Promise<{ ok: boolean }>;
 }

@@ -19,6 +19,7 @@ import type {
   ModelFormat,
   GgufQuantization,
 } from "./types.js";
+import type { KnownModelsRegistry } from "./known-models-registry.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -73,6 +74,8 @@ const DEFAULT_IMAGES: Record<ModelRuntimeType, string> = {
   llm: "ghcr.io/ggerganov/llama.cpp:server",
   diffusion: "ghcr.io/huggingface/diffusers-api:latest",
   general: "ghcr.io/huggingface/text-generation-inference:latest",
+  // Custom runtimes have no shared image — resolved per-model via the registry or model.containerImage
+  custom: "",
 };
 
 // ---------------------------------------------------------------------------
@@ -187,7 +190,10 @@ function estimateParamCountFromTags(tags: string[]): number | null {
 // ---------------------------------------------------------------------------
 
 export class CapabilityResolver {
-  constructor(private readonly capabilities: HardwareCapabilities) {}
+  constructor(
+    private readonly capabilities: HardwareCapabilities,
+    private readonly knownModels?: KnownModelsRegistry,
+  ) {}
 
   // ---------------------------------------------------------------------------
   // resolveRuntimeType
@@ -197,12 +203,18 @@ export class CapabilityResolver {
    * Determine which runtime type to use for a model based on its pipeline tag
    * and file contents.
    *
+   * - Known-models registry match → "custom"
    * - LLM tags with GGUF files → "llm" (uses llama.cpp server)
    * - LLM tags with transformers library → "general"
    * - Diffusion tags → "diffusion"
    * - Everything else → "general"
    */
   resolveRuntimeType(model: HfModelInfo): ModelRuntimeType {
+    // Check known-models registry first — custom models take priority
+    if (this.knownModels?.lookup(model.id)) {
+      return "custom";
+    }
+
     const tag = model.pipeline_tag ?? "";
 
     if (LLM_PIPELINE_TAGS.has(tag)) {
@@ -490,6 +502,32 @@ export class CapabilityResolver {
             HF_TASK: model.pipelineTag,
             MODEL_PATH: "/models",
           },
+          gpuPassthrough,
+          memoryLimit,
+          runtimeArgs: [],
+        };
+      }
+
+      case "custom": {
+        // Resolve the known-models definition for this model.
+        // Falls back to a minimal config if the model is somehow not in the registry.
+        const def = this.knownModels?.lookup(model.id);
+        const image = model.containerImage ?? def?.image ?? "";
+        const internalPort = def?.internalPort ?? 8000;
+        const env: Record<string, string> = {
+          MODEL_ID: model.id,
+          MODEL_PATH: "/models",
+          ...(def?.env ?? {}),
+        };
+
+        return {
+          runtimeType: "custom",
+          image,
+          internalPort,
+          modelHostPath: model.filePath,
+          modelContainerPath: "/models",
+          modelFilename: model.modelFilename,
+          env,
           gpuPassthrough,
           memoryLimit,
           runtimeArgs: [],

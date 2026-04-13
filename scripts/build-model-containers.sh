@@ -46,4 +46,12 @@ podman pull docker.io/ghcr.io/ggerganov/llama.cpp:server 2>/dev/null || \
   podman pull ghcr.io/ggerganov/llama.cpp:server 2>/dev/null || \
   warn "Could not pull llama.cpp server image — LLM runtime will not be available"
 
+# Fine-tune runtime (PEFT/LoRA via trl + transformers)
+info "Building fine-tune runtime image..."
+podman build \
+  -t aionima-finetune:latest \
+  -f "${CONTAINERS_DIR}/Containerfile.finetune" \
+  "${CONTAINERS_DIR}"
+ok "aionima-finetune:latest built"
+
 ok "Model runtime container images ready"

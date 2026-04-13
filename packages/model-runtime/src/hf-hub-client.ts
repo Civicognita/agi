@@ -17,6 +17,8 @@ import type {
   HfSearchParams,
   HfFileSibling,
   DownloadProgress,
+  HfDatasetInfo,
+  HfDatasetSearchParams,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -365,6 +367,84 @@ export class HfHubClient {
         startedAt,
       });
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // searchDatasets
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Search the HuggingFace Hub dataset catalog.
+   *
+   * Maps HfDatasetSearchParams to query string parameters and returns parsed results.
+   */
+  async searchDatasets(params: HfDatasetSearchParams): Promise<HfDatasetInfo[]> {
+    const qs = new URLSearchParams();
+    if (params.search) qs.set("search", params.search);
+    if (params.sort) qs.set("sort", params.sort);
+    if (params.direction) qs.set("direction", params.direction);
+    if (params.filter) qs.set("filter", params.filter);
+    qs.set("limit", String(params.limit ?? 20));
+    qs.set("offset", String(params.offset ?? 0));
+
+    const url = `${this.baseUrl}/api/datasets?${qs.toString()}`;
+    const resp = await this.fetchWithRetry(url);
+    return (await resp.json()) as HfDatasetInfo[];
+  }
+
+  // ---------------------------------------------------------------------------
+  // getDatasetInfo
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Fetch full dataset metadata including file siblings.
+   *
+   * datasetId contains slashes (e.g. "HuggingFaceH4/ultrachat_200k") and
+   * must be URL-encoded to avoid the path being split by the slash.
+   */
+  async getDatasetInfo(datasetId: string): Promise<HfDatasetInfo> {
+    const encodedId = datasetId.split("/").map(encodeURIComponent).join("/");
+    const url = `${this.baseUrl}/api/datasets/${encodedId}`;
+    const resp = await this.fetchWithRetry(url);
+    return (await resp.json()) as HfDatasetInfo;
+  }
+
+  // ---------------------------------------------------------------------------
+  // getDatasetFiles
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Return the full file listing for a dataset repository.
+   *
+   * The tree endpoint is paginated. This method follows Link headers to collect
+   * all pages before returning. Same tree API as models but /api/datasets/ prefix.
+   */
+  async getDatasetFiles(datasetId: string, revision?: string): Promise<HfFileSibling[]> {
+    const encodedId = datasetId.split("/").map(encodeURIComponent).join("/");
+    const rev = revision ?? "main";
+    const startUrl = `${this.baseUrl}/api/datasets/${encodedId}/tree/${encodeURIComponent(rev)}`;
+
+    const files: HfFileSibling[] = [];
+    let nextUrl: string | null = startUrl;
+
+    while (nextUrl !== null) {
+      const resp = await this.fetchWithRetry(nextUrl);
+      // Tree API returns { path, size, type, ... } — map `path` to `rfilename`
+      const raw = (await resp.json()) as Array<{ path?: string; rfilename?: string; size?: number; blobId?: string; lfs?: { sha256: string; size: number; pointerSize: number } }>;
+      const page: HfFileSibling[] = raw.map((f) => ({
+        rfilename: f.rfilename ?? f.path ?? "",
+        size: f.size ?? f.lfs?.size,
+        blobId: f.blobId,
+        lfs: f.lfs,
+      }));
+      files.push(...page);
+
+      // Follow pagination via Link header: <url>; rel="next"
+      const linkHeader = resp.headers.get("Link");
+      nextUrl = parseLinkNext(linkHeader);
+    }
+
+    return files;
   }
 
   // ---------------------------------------------------------------------------

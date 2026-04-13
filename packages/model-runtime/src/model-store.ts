@@ -7,7 +7,7 @@
 
 import Database from "better-sqlite3";
 import type { Database as DatabaseType, Statement } from "better-sqlite3";
-import type { InstalledModel, ModelStatus, ModelRuntimeType, DownloadProgress } from "./types.js";
+import type { InstalledModel, ModelEndpoint, ModelStatus, ModelRuntimeType, DownloadProgress } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // DB row types — snake_case as returned by better-sqlite3
@@ -30,6 +30,9 @@ interface ModelRow {
   container_id: string | null;
   container_port: number | null;
   container_name: string | null;
+  container_image: string | null;
+  source_repo: string | null;
+  endpoints_json: string | null;
 }
 
 interface DownloadProgressRow {
@@ -59,6 +62,9 @@ interface InsertModelParams {
   downloaded_at: string;
   last_used_at: string | null;
   error: string | null;
+  container_image: string | null;
+  source_repo: string | null;
+  endpoints_json: string | null;
 }
 
 interface UpdateStatusParams {
@@ -97,7 +103,7 @@ CREATE TABLE IF NOT EXISTS models (
   revision TEXT NOT NULL,
   display_name TEXT NOT NULL,
   pipeline_tag TEXT NOT NULL,
-  runtime_type TEXT NOT NULL CHECK(runtime_type IN ('llm', 'diffusion', 'general')),
+  runtime_type TEXT NOT NULL CHECK(runtime_type IN ('llm', 'diffusion', 'general', 'custom')),
   file_path TEXT NOT NULL,
   model_filename TEXT,
   file_size_bytes INTEGER NOT NULL,
@@ -108,7 +114,10 @@ CREATE TABLE IF NOT EXISTS models (
   error TEXT,
   container_id TEXT,
   container_port INTEGER,
-  container_name TEXT
+  container_name TEXT,
+  container_image TEXT,
+  source_repo TEXT,
+  endpoints_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS download_progress (
@@ -120,6 +129,14 @@ CREATE TABLE IF NOT EXISTS download_progress (
   started_at TEXT NOT NULL,
   FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
 );
+`;
+
+// Migration: add new columns to existing databases that pre-date this schema.
+// Using a separate exec block so existing installs are not broken.
+const MIGRATIONS = `
+ALTER TABLE models ADD COLUMN container_image TEXT;
+ALTER TABLE models ADD COLUMN source_repo TEXT;
+ALTER TABLE models ADD COLUMN endpoints_json TEXT;
 `;
 
 // ---------------------------------------------------------------------------
@@ -151,17 +168,27 @@ export class ModelStore {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SCHEMA);
+    // Run each migration statement individually so a failed one (column exists) does not abort the rest.
+    for (const stmt of MIGRATIONS.split(";").map((s) => s.trim()).filter(Boolean)) {
+      try {
+        this.db.exec(stmt);
+      } catch {
+        // Column already exists — safe to ignore.
+      }
+    }
 
     this.stmts = {
       insertModel: this.db.prepare<[InsertModelParams]>(`
         INSERT INTO models (
           id, revision, display_name, pipeline_tag, runtime_type,
           file_path, model_filename, file_size_bytes, quantization,
-          status, downloaded_at, last_used_at, error
+          status, downloaded_at, last_used_at, error,
+          container_image, source_repo, endpoints_json
         ) VALUES (
           @id, @revision, @display_name, @pipeline_tag, @runtime_type,
           @file_path, @model_filename, @file_size_bytes, @quantization,
-          @status, @downloaded_at, @last_used_at, @error
+          @status, @downloaded_at, @last_used_at, @error,
+          @container_image, @source_repo, @endpoints_json
         )
       `),
 
@@ -248,6 +275,14 @@ export class ModelStore {
   // ---------------------------------------------------------------------------
 
   private mapRow(row: ModelRow): InstalledModel {
+    let endpoints: ModelEndpoint[] | undefined;
+    if (row.endpoints_json) {
+      try {
+        endpoints = JSON.parse(row.endpoints_json) as ModelEndpoint[];
+      } catch {
+        // Malformed JSON — treat as absent
+      }
+    }
     return {
       id: row.id,
       revision: row.revision,
@@ -265,6 +300,9 @@ export class ModelStore {
       containerId: row.container_id ?? undefined,
       containerPort: row.container_port ?? undefined,
       containerName: row.container_name ?? undefined,
+      containerImage: row.container_image ?? undefined,
+      sourceRepo: row.source_repo ?? undefined,
+      endpoints,
     };
   }
 
@@ -301,6 +339,9 @@ export class ModelStore {
       downloaded_at: model.downloadedAt,
       last_used_at: model.lastUsedAt ?? null,
       error: model.error ?? null,
+      container_image: model.containerImage ?? null,
+      source_repo: model.sourceRepo ?? null,
+      endpoints_json: model.endpoints ? JSON.stringify(model.endpoints) : null,
     });
   }
 

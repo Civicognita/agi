@@ -1329,3 +1329,85 @@ export interface HFDownloadProgress {
   etaSeconds: number;
   startedAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// HuggingFace Dataset types
+// ---------------------------------------------------------------------------
+
+export interface HFDatasetSearchResult {
+  id: string;
+  author?: string;
+  description?: string;
+  tags: string[];
+  downloads: number;
+  likes: number;
+  lastModified?: string;
+  gated: boolean | "auto" | "manual";
+  private: boolean;
+}
+
+export interface HFInstalledDataset {
+  id: string;
+  revision: string;
+  displayName: string;
+  description?: string;
+  filePath: string;
+  fileSizeBytes: number;
+  fileCount: number;
+  status: "downloading" | "ready" | "error" | "removing";
+  downloadedAt: string;
+  tags: string[];
+  error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Wizard types (Phase 5)
+// ---------------------------------------------------------------------------
+
+export interface HFModelAnalysis {
+  model: HFModelDetail;
+  runtimeType: string;
+  isCustom: boolean;
+  customDefinition: Record<string, unknown> | null;
+  variants: HFModelVariant[];
+  hardwareCompatibility: { compatibility: HFCompatibility; reason: string };
+  estimatedResources: HFModelResourceEstimate;
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Fine-Tune types (Phase 6)
+// ---------------------------------------------------------------------------
+
+export interface HFFineTuneConfig {
+  baseModelId: string;
+  datasetId: string;
+  method: "lora" | "qlora";
+  loraR: number;
+  loraAlpha: number;
+  loraDropout: number;
+  targetModules: string[];
+  epochs: number;
+  batchSize: number;
+  learningRate: number;
+  maxSteps?: number;
+  outputName: string;
+}
+
+export interface HFFineTuneJob {
+  id: string;
+  config: HFFineTuneConfig;
+  status: "pending" | "building" | "training" | "complete" | "error";
+  containerId?: string;
+  containerPort?: number;
+  startedAt: string;
+  completedAt?: string;
+  error?: string;
+  containerStatus?: {
+    status: string;
+    epoch: number;
+    total_epochs: number;
+    loss: number | null;
+    learning_rate: number | null;
+    eta_seconds: number | null;
+  };
+}
