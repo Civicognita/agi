@@ -284,6 +284,8 @@ export interface ModelContainerConfig {
   memoryLimit?: string;
   /** Additional runtime args (e.g. --ctx-size 4096). */
   runtimeArgs: string[];
+  /** Estimated RAM required in bytes (used for budget enforcement). */
+  estimatedRamBytes?: number;
 }
 
 export interface ModelContainerState {
@@ -295,6 +297,8 @@ export interface ModelContainerState {
   startedAt: string;
   status: "running" | "stopped" | "error";
   healthCheckPassed: boolean;
+  /** Estimated RAM committed by this container (for budget tracking). */
+  estimatedRamBytes?: number;
 }
 
 // ---------------------------------------------------------------------------

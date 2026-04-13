@@ -395,6 +395,44 @@ export class ModelStore {
     return row.total;
   }
 
+  /**
+   * Return installed models sorted by least recently used first.
+   * Cumulative size is tracked as models are added to the result list.
+   * Useful for LRU eviction when disk usage exceeds a budget.
+   *
+   * Only models with status "ready" (not running or downloading) are included
+   * since evicting running/active models would break inference.
+   *
+   * @param budgetBytes Disk budget in bytes. Models are returned until their
+   *   cumulative size exceeds budgetBytes above the limit.
+   * @returns Array of models that are candidates for eviction, LRU-first.
+   */
+  getModelsForEviction(budgetBytes: number): InstalledModel[] {
+    // Fetch all non-active models sorted by last_used_at ASC (nulls first = never used)
+    const rows = this.db
+      .prepare<[], ModelRow>(
+        `SELECT * FROM models
+         WHERE status = 'ready'
+         ORDER BY COALESCE(last_used_at, downloaded_at) ASC`,
+      )
+      .all() as ModelRow[];
+
+    const totalUsage = this.getTotalDiskUsage();
+    if (totalUsage <= budgetBytes) return [];
+
+    const excess = totalUsage - budgetBytes;
+    let accumulated = 0;
+    const candidates: InstalledModel[] = [];
+
+    for (const row of rows) {
+      candidates.push(this.mapRow(row));
+      accumulated += row.file_size_bytes;
+      if (accumulated >= excess) break;
+    }
+
+    return candidates;
+  }
+
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------

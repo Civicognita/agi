@@ -266,6 +266,15 @@ export function registerHfRoutes(
             destPath,
           });
           modelStore.updateStatus(id, "ready");
+
+          // Check if total disk usage exceeds the available disk space (warn only — no auto-delete)
+          const totalUsage = modelStore.getTotalDiskUsage();
+          const diskInfo = hardwareProfiler.getProfile().disk;
+          if (diskInfo.availableBytes > 0 && totalUsage > diskInfo.availableBytes * 0.9) {
+            const usedGB = (totalUsage / (1024 ** 3)).toFixed(1);
+            const availGB = (diskInfo.availableBytes / (1024 ** 3)).toFixed(1);
+            fastify.log.warn(`HF model cache (${usedGB} GB) is using >90% of available disk space (${availGB} GB free). Consider removing unused models.`);
+          }
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           modelStore.setError(id, msg);
@@ -414,6 +423,44 @@ export function registerHfRoutes(
 
         const containerStatus = containerManager.getStatus(modelId);
         return reply.send({ model, containerStatus: containerStatus ?? null });
+      } catch (err) {
+        return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Model update detection
+  // -------------------------------------------------------------------------
+
+  fastify.get<{ Params: { modelId: string } }>(
+    "/api/hf/models/:modelId/check-update",
+    async (request, reply) => {
+      try {
+        const modelId = decodeURIComponent(request.params.modelId);
+
+        if (!modelId) {
+          return reply.code(400).send({ error: "modelId is required" });
+        }
+
+        const model = modelStore.getById(modelId);
+        if (!model) {
+          return reply.code(404).send({ error: `Model not found: ${modelId}` });
+        }
+
+        // Fetch the latest model info from HF Hub — sha is the latest commit revision
+        const remoteInfo = await hfClient.getModelInfo(modelId);
+        const latestRevision = remoteInfo.sha ?? "unknown";
+        const installedRevision = model.revision;
+
+        // A revision of "main" means we downloaded from the default branch
+        // without pinning — we cannot reliably compare it, so just return false
+        const updateAvailable =
+          installedRevision !== "main" &&
+          latestRevision !== "unknown" &&
+          latestRevision !== installedRevision;
+
+        return reply.send({ updateAvailable, installedRevision, latestRevision });
       } catch (err) {
         return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
       }

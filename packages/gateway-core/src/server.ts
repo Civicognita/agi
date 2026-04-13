@@ -2979,6 +2979,21 @@ export async function startGatewayServer(
         });
       }
 
+      // Hot-reload HF config section — enable/disable takes effect immediately because
+      // isEnabled() reads from the live in-memory config object which was already updated above.
+      // The API token cannot be changed without restarting (HfHubClient is constructed at boot),
+      // but that edge case is documented and uncommon.
+      if (event.changedKeys.some((k) => k === "hf")) {
+        const freshHf = (freshConfig as Record<string, unknown>).hf as { apiToken?: string } | undefined;
+        if (freshHf?.apiToken !== undefined) {
+          // HfHubClient reads token at construction time — log a notice so users know
+          // a restart is needed to pick up a new API token.
+          log.info("HF config hot-reloaded (note: API token changes require a restart to take effect)");
+        } else {
+          log.info("HF config hot-reloaded");
+        }
+      }
+
       // Broadcast config change to connected dashboard clients
       wsServer.broadcast("config_reloaded", {
         changedKeys: event.changedKeys,

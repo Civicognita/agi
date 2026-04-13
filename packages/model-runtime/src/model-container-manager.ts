@@ -47,6 +47,8 @@ interface ManagerConfig {
   gpuMode: "auto" | "nvidia" | "amd" | "cpu-only";
   images?: { llm?: string; diffusion?: string; general?: string };
   statePath: string;
+  /** RAM budget in bytes. 0 = unlimited. */
+  ramBudgetBytes?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +80,8 @@ export class ModelContainerManager {
       gpuMode: "auto" | "nvidia" | "amd" | "cpu-only";
       images?: { llm?: string; diffusion?: string; general?: string };
       statePath: string;
+      /** RAM budget in bytes. 0 = unlimited. */
+      ramBudgetBytes?: number;
     },
     events: ModelRuntimeEventEmitter,
   ) {
@@ -99,6 +103,24 @@ export class ModelContainerManager {
       throw new Error(
         `Cannot start model "${model.id}": maxConcurrentModels limit (${String(this.config.maxConcurrentModels)}) reached`,
       );
+    }
+
+    // RAM budget enforcement — skip when ramBudgetBytes is 0 (unlimited)
+    const ramBudget = this.config.ramBudgetBytes ?? 0;
+    if (ramBudget > 0) {
+      // Sum RAM already committed by running containers (each estimated as its memory limit or 4 GB fallback)
+      const usedBytes = Array.from(this.activeContainers.values()).reduce((acc, state) => {
+        // We don't store the memory limit on the state — use fileSizeBytes as a proxy (model in memory ≈ file size)
+        return acc + (state.estimatedRamBytes ?? 4 * 1024 * 1024 * 1024);
+      }, 0);
+      const newModelRam = containerConfig.estimatedRamBytes ?? model.fileSizeBytes ?? 4 * 1024 * 1024 * 1024;
+      if (usedBytes + newModelRam > ramBudget) {
+        const usedGB = (usedBytes / (1024 ** 3)).toFixed(1);
+        const limitGB = (ramBudget / (1024 ** 3)).toFixed(1);
+        throw new Error(
+          `Cannot start model: would exceed RAM budget (${usedGB} GB used of ${limitGB} GB limit)`,
+        );
+      }
     }
 
     const port = this.allocatePort();
@@ -154,6 +176,7 @@ export class ModelContainerManager {
       "-p", `${String(port)}:${String(internalPort)}`,
       "-v", `${containerConfig.modelHostPath}:${modelContainerPath}:ro`,
       ...(containerConfig.memoryLimit ? ["--memory", containerConfig.memoryLimit] : []),
+      "--restart", "on-failure:3",
       "--label", "aionima.model=true",
       "--label", `aionima.model.id=${model.id}`,
       "--label", `aionima.model.runtime=${containerConfig.runtimeType}`,
@@ -189,6 +212,7 @@ export class ModelContainerManager {
       startedAt: new Date().toISOString(),
       status: healthy ? "running" : "error",
       healthCheckPassed: healthy,
+      estimatedRamBytes: containerConfig.estimatedRamBytes ?? model.fileSizeBytes,
     };
 
     this.activeContainers.set(model.id, state);
