@@ -21,6 +21,7 @@ import { fetchMagicApps } from "@/api.js";
 import type { MagicAppInfo, MagicAppInstance } from "@/types.js";
 import { DnsSetupBanner } from "@/components/DnsSetupBanner.js";
 import { ActivityDot } from "@/components/ActivityDot.js";
+import { ActiveDownloads } from "@/components/ActiveDownloads.js";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator.js";
 import { NotificationBell } from "@/components/NotificationBell.js";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover.js";
@@ -544,6 +545,8 @@ export default function RootLayout() {
             {!isMobile && contributingEnabled && (
               <Badge className="text-xs bg-indigo-600 text-white">Contributing</Badge>
             )}
+            {/* Active downloads indicator */}
+            <ActiveDownloads />
             {/* Upgrade status with step log */}
             {upgradePhase !== null && (
               <div className="relative" ref={upgradePhase !== "complete" && upgradePhase !== "error" ? dropdownRef : undefined}>
