@@ -168,12 +168,24 @@ export class ModelStore {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
 
-    // Migrate existing tables: SQLite CHECK constraints are baked at CREATE time
-    // and cannot be altered. If the old constraint exists (no 'custom'), we must
-    // recreate the table.
-    this.migrateCheckConstraint();
+    // If the database is corrupt or has stale schema artifacts, nuke and recreate.
+    // This is just an index — model files on disk are unaffected.
+    try {
+      this.migrateCheckConstraint();
+      this.db.exec(SCHEMA);
+    } catch {
+      // Schema setup failed — wipe and recreate
+      this.db.close();
+      const { unlinkSync } = require("node:fs") as typeof import("node:fs");
+      try { unlinkSync(dbPath); } catch { /* may not exist */ }
+      try { unlinkSync(dbPath + "-wal"); } catch { /* may not exist */ }
+      try { unlinkSync(dbPath + "-shm"); } catch { /* may not exist */ }
+      this.db = new Database(dbPath);
+      this.db.pragma("journal_mode = WAL");
+      this.db.pragma("foreign_keys = ON");
+      this.db.exec(SCHEMA);
+    }
 
-    this.db.exec(SCHEMA);
     // Run each migration statement individually so a failed one (column exists) does not abort the rest.
     for (const stmt of MIGRATIONS.split(";").map((s) => s.trim()).filter(Boolean)) {
       try {
