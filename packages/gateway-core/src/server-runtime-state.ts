@@ -3939,10 +3939,13 @@ export async function createGatewayRuntimeState(
       // Fallback: look for SDK docs in the docs/sdk/ directory (already in tree)
     }
 
-    // Append plugin-provided knowledge namespaces as virtual folders under plugin-docs/.
-    // Only include documentation files — not raw system dirs or binaries.
+    // Append plugin-provided knowledge namespaces as virtual folders grouped under a
+    // single "Plugins" parent folder. Only include documentation files — not raw system
+    // dirs or binaries. Note: pluginRegistry.getKnowledge() already only returns
+    // namespaces from currently loaded (active) plugins, so no extra filtering is needed.
     const DOC_EXTS = new Set([".md", ".txt", ".html", ".rst", ".adoc"]);
     const knowledgeEntries = deps.pluginRegistry?.getKnowledge() ?? [];
+    const pluginDocFolders: FileNode[] = [];
     for (const { namespace } of knowledgeEntries) {
       if (!namespace.contentDir || !existsSync(namespace.contentDir)) continue;
       // If namespace has explicit topics, use those instead of scanning the directory
@@ -3958,7 +3961,7 @@ export async function createGatewayRuntimeState(
             ext: t.path.includes(".") ? t.path.slice(t.path.lastIndexOf(".")) : undefined,
           }));
         if (topicNodes.length > 0) {
-          tree.push({ name: namespace.label, path: `plugin-docs/${namespace.id}`, type: "dir", children: topicNodes });
+          pluginDocFolders.push({ name: namespace.label, path: `plugin-docs/${namespace.id}`, type: "dir", children: topicNodes });
         }
       } else {
         // No explicit topics — scan directory but only include doc files
@@ -3971,9 +3974,19 @@ export async function createGatewayRuntimeState(
             return node.ext ? DOC_EXTS.has(node.ext) : false;
           });
         if (subtree.length > 0) {
-          tree.push({ name: namespace.label, path: `plugin-docs/${namespace.id}`, type: "dir", children: subtree });
+          pluginDocFolders.push({ name: namespace.label, path: `plugin-docs/${namespace.id}`, type: "dir", children: subtree });
         }
       }
+    }
+    // Group all plugin doc namespaces under a single "Plugins" parent folder so they
+    // don't appear at the same level as built-in sections (agents, human, sdk, etc.).
+    if (pluginDocFolders.length > 0) {
+      tree.push({
+        name: "Plugins",
+        path: "plugin-docs",
+        type: "dir",
+        children: pluginDocFolders,
+      });
     }
     return reply.send({ tree });
   });
