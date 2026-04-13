@@ -40,6 +40,7 @@ import type {
   HFModelDetail,
   HFModelVariant,
   HFHardwareTier,
+  HFQuantization,
 } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -97,11 +98,25 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
 function getCompatibilityColor(c: HFCompatibility): string {
   switch (c) {
     case "compatible": return "bg-green/15 text-green";
     case "limited": return "bg-yellow/15 text-yellow";
     case "incompatible": return "bg-red/15 text-red";
+  }
+}
+
+function getCompatibilityLabel(c: HFCompatibility): string {
+  switch (c) {
+    case "compatible": return "Compatible";
+    case "limited": return "Limited";
+    case "incompatible": return "Incompatible";
   }
 }
 
@@ -148,6 +163,30 @@ function formatUptime(startedAt: string): string {
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}m`;
 }
+
+/** Returns a plain-English quality label for a quantization level. */
+function getQuantLabel(q: HFQuantization | null): string {
+  if (!q) return "Full Model";
+  switch (q) {
+    case "Q2_K":
+    case "Q3_K_S":
+    case "Q3_K_M": return "Smallest — fastest, lower quality";
+    case "Q3_K_L":
+    case "Q4_0":
+    case "Q4_K_S":
+    case "Q4_K_M": return "Balanced — good quality, reasonable size";
+    case "Q5_0":
+    case "Q5_K_S":
+    case "Q5_K_M": return "High quality — larger, slower";
+    case "Q6_K":
+    case "Q8_0": return "Very high quality — large file";
+    case "F16":
+    case "F32": return "Full precision — largest, requires GPU";
+  }
+}
+
+/** Balanced quant levels that should get a "Recommended" badge. */
+const RECOMMENDED_QUANTS = new Set<HFQuantization>(["Q4_0", "Q4_K_S", "Q4_K_M"]);
 
 // ---------------------------------------------------------------------------
 // ModelsTab — browse HF Hub
@@ -227,7 +266,11 @@ function ModelsTab() {
       </div>
 
       {modelsQuery.isLoading && (
-        <p className="text-[13px] text-muted-foreground">Loading models...</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="rounded-lg border border-border bg-muted/20 h-36 animate-pulse" />
+          ))}
+        </div>
       )}
       {modelsQuery.isError && (
         <div className="p-4 rounded-lg bg-surface0/50 text-sm text-muted-foreground">
@@ -239,11 +282,13 @@ function ModelsTab() {
         <p className="text-[13px] text-muted-foreground">No models found.</p>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {models.map((model) => (
-          <ModelCard key={model.id} model={model} onSelect={() => setSelectedModel(model)} />
-        ))}
-      </div>
+      {!modelsQuery.isLoading && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {models.map((model) => (
+            <ModelCard key={model.id} model={model} onSelect={() => setSelectedModel(model)} />
+          ))}
+        </div>
+      )}
 
       {selectedModel && (
         <ModelDetailDialog
@@ -257,9 +302,9 @@ function ModelsTab() {
 
 function ModelCard({ model, onSelect }: { model: HFModelSearchResult; onSelect: () => void }) {
   const est = model.estimate;
-  const perfParts: string[] = [];
-  if (est.tokensPerSec !== null) perfParts.push(`~${est.tokensPerSec} tok/s`);
-  if (est.diskUsageBytes > 0) perfParts.push(formatBytes(est.diskUsageBytes));
+  const sizePart = est.diskUsageBytes > 0 ? `~${formatBytes(est.diskUsageBytes)}` : null;
+  const toksPart = est.tokensPerSec !== null ? `~${est.tokensPerSec} tok/s` : null;
+  const resourceLine = [sizePart, toksPart].filter(Boolean).join(" · ");
 
   return (
     <Card
@@ -280,28 +325,24 @@ function ModelCard({ model, onSelect }: { model: HFModelSearchResult; onSelect: 
 
       <div className="flex items-center gap-2 flex-wrap">
         <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded", getCompatibilityColor(model.compatibility))}>
-          {model.compatibility === "compatible"
-            ? "Compatible"
-            : model.compatibility === "limited"
-              ? "Limited"
-              : model.compatibilityReason || "Incompatible"}
+          {getCompatibilityLabel(model.compatibility)}
         </span>
       </div>
 
-      <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
-        <span>{model.downloads.toLocaleString()} downloads</span>
-        <span>{model.likes.toLocaleString()} likes</span>
+      <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+        <span>{formatCount(model.downloads)} downloads</span>
+        <span>{formatCount(model.likes)} likes</span>
       </div>
 
-      {perfParts.length > 0 && (
-        <p className="text-[11px] text-muted-foreground">{perfParts.join(", ")}</p>
+      {resourceLine && (
+        <p className="text-[11px] text-muted-foreground">{resourceLine}</p>
       )}
 
       <div className="mt-auto pt-1">
         <Button
           size="sm"
           variant="outline"
-          className="w-full text-[12px]"
+          className="w-full text-[12px] cursor-pointer"
           onClick={(e) => { e.stopPropagation(); onSelect(); }}
         >
           Install
@@ -315,6 +356,8 @@ function ModelCard({ model, onSelect }: { model: HFModelSearchResult; onSelect: 
 // ModelDetailDialog — variant selection + download
 // ---------------------------------------------------------------------------
 
+type InstallPhase = "idle" | "downloading" | "done" | "error";
+
 function ModelDetailDialog({
   model,
   onClose,
@@ -324,7 +367,9 @@ function ModelDetailDialog({
 }) {
   const [detail, setDetail] = useState<HFModelDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
-  const [installing, setInstalling] = useState<string | null>(null);
+  // Per-variant install state
+  const [installPhase, setInstallPhase] = useState<InstallPhase>("idle");
+  const [installingVariant, setInstallingVariant] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -342,22 +387,35 @@ function ModelDetailDialog({
     return a.sizeBytes - b.sizeBytes;
   }) ?? [];
 
+  // Best compatible variant for recommendation callout
+  const recommendedVariant = sortedVariants.find(
+    (v) => v.compatibility === "compatible" && v.quantization && RECOMMENDED_QUANTS.has(v.quantization),
+  ) ?? sortedVariants.find((v) => v.compatibility === "compatible");
+
+  const allIncompatible =
+    !loadingDetail &&
+    sortedVariants.length > 0 &&
+    sortedVariants.every((v) => v.compatibility === "incompatible");
+
   async function handleInstall(variant: HFModelVariant) {
-    setInstalling(variant.filename);
+    setInstallingVariant(variant.filename);
+    setInstallPhase("downloading");
     setInstallError(null);
     try {
       const result = await installHFModel(model.id, variant.filename);
       if (!result.ok) {
+        setInstallPhase("error");
         setInstallError(result.error ?? "Installation failed");
       } else {
-        onClose();
+        setInstallPhase("done");
       }
     } catch (err) {
+      setInstallPhase("error");
       setInstallError(err instanceof Error ? err.message : "Installation failed");
-    } finally {
-      setInstalling(null);
     }
   }
+
+  const isBusy = installPhase === "downloading";
 
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -369,71 +427,199 @@ function ModelDetailDialog({
               <Badge variant="outline" className="text-[10px]">{model.pipeline_tag}</Badge>
             )}
             <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-medium", getCompatibilityColor(model.compatibility))}>
-              {model.compatibility}
+              {getCompatibilityLabel(model.compatibility)}
             </span>
           </DialogTitle>
-          {model.author && (
-            <p className="text-[12px] text-muted-foreground">by {model.author}</p>
-          )}
+          {/* Author + stats line */}
+          <p className="text-[12px] text-muted-foreground">
+            {[
+              model.author && `by ${model.author}`,
+              model.downloads > 0 && `${formatCount(model.downloads)} downloads`,
+              model.likes > 0 && `${formatCount(model.likes)} likes`,
+            ].filter(Boolean).join(" · ")}
+          </p>
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Loading skeleton */}
           {loadingDetail && (
-            <p className="text-[13px] text-muted-foreground">Loading variants...</p>
-          )}
-
-          {!loadingDetail && sortedVariants.length === 0 && (
-            <p className="text-[13px] text-muted-foreground">
-              No downloadable variants found for this model.
-            </p>
-          )}
-
-          {sortedVariants.length > 0 && (
             <div className="space-y-2">
-              <p className="text-[12px] font-medium text-muted-foreground uppercase tracking-wide">
-                Available Variants
-              </p>
-              <div className="divide-y divide-border rounded-md border">
-                {sortedVariants.map((v) => (
-                  <div key={v.filename} className="flex items-center gap-3 px-3 py-2.5">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-medium truncate">{v.filename}</p>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <span className="text-[10px] text-muted-foreground">{v.format.toUpperCase()}</span>
-                        {v.quantization && (
-                          <span className="text-[10px] text-muted-foreground">{v.quantization}</span>
-                        )}
-                        <span className="text-[10px] text-muted-foreground">{formatBytes(v.sizeBytes)}</span>
-                      </div>
-                    </div>
-                    <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0", getCompatibilityColor(v.compatibility))}>
-                      {v.compatibility}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-[11px] shrink-0"
-                      disabled={installing !== null || v.compatibility === "incompatible"}
-                      onClick={() => void handleInstall(v)}
-                    >
-                      {installing === v.filename ? "..." : "Download"}
-                    </Button>
-                  </div>
-                ))}
-              </div>
+              <div className="h-4 rounded bg-muted/50 animate-pulse w-3/4" />
+              <div className="h-16 rounded-md border border-border bg-muted/20 animate-pulse" />
+              <div className="h-16 rounded-md border border-border bg-muted/20 animate-pulse" />
             </div>
           )}
 
-          {installError && (
-            <p className="text-[12px] text-red">{installError}</p>
+          {/* No variants at all */}
+          {!loadingDetail && detail && sortedVariants.length === 0 && (
+            <div className="rounded-md border border-border bg-muted/20 px-4 py-3">
+              <p className="text-[13px] text-muted-foreground">
+                This model format is not yet supported. Aionima supports GGUF, SafeTensors, and ONNX models.
+              </p>
+            </div>
+          )}
+
+          {/* All variants incompatible */}
+          {allIncompatible && (
+            <div className="rounded-md border border-border bg-muted/20 px-4 py-3">
+              <p className="text-[13px] text-muted-foreground">
+                This model requires more resources than your hardware can provide.
+                Check <span className="text-foreground font-medium">Settings &gt; HF Marketplace &gt; Hardware</span> for details.
+              </p>
+            </div>
+          )}
+
+          {/* Single-variant: simplified summary card */}
+          {!loadingDetail && sortedVariants.length === 1 && !allIncompatible && (() => {
+            const v = sortedVariants[0];
+            const isInstalling = installingVariant === v.filename;
+            return (
+              <div className="space-y-3">
+                <div className="rounded-md border border-border bg-muted/20 px-4 py-3">
+                  <p className="text-[13px] text-foreground">
+                    This model is{" "}
+                    <span className="font-medium">{formatBytes(v.sizeBytes)}</span>{" "}
+                    and is{" "}
+                    <span className={cn("font-medium", v.compatibility === "compatible" ? "text-green" : v.compatibility === "limited" ? "text-yellow" : "text-red")}>
+                      {getCompatibilityLabel(v.compatibility).toLowerCase()}
+                    </span>{" "}
+                    with your hardware.
+                  </p>
+                </div>
+
+                {installPhase === "idle" && (
+                  <Button
+                    className="w-full cursor-pointer"
+                    disabled={v.compatibility === "incompatible"}
+                    onClick={() => void handleInstall(v)}
+                  >
+                    Install Model
+                  </Button>
+                )}
+
+                {isInstalling && installPhase === "downloading" && (
+                  <DownloadingNotice />
+                )}
+
+                {isInstalling && installPhase === "done" && (
+                  <DoneNotice />
+                )}
+
+                {isInstalling && installPhase === "error" && installError && (
+                  <p className="text-[12px] text-red">{installError}</p>
+                )}
+
+                {installPhase === "idle" && (
+                  <p className="text-[11px] text-muted-foreground text-center">
+                    After installing, start the model from the Installed tab to use it in your apps.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Multi-variant list */}
+          {!loadingDetail && sortedVariants.length > 1 && !allIncompatible && (
+            <div className="space-y-3">
+              {/* Recommendation callout */}
+              {recommendedVariant && installPhase === "idle" && (
+                <div className="rounded-md border border-green/30 bg-green/5 px-4 py-2.5">
+                  <p className="text-[12px] text-green font-medium">
+                    Recommended: {recommendedVariant.filename} ({formatBytes(recommendedVariant.sizeBytes)}) — best balance of quality and speed for your hardware
+                  </p>
+                </div>
+              )}
+
+              <div className="divide-y divide-border rounded-md border">
+                {sortedVariants.map((v) => {
+                  const isGguf = v.format === "gguf";
+                  const qualityLabel = isGguf
+                    ? getQuantLabel(v.quantization)
+                    : `Full Model (${formatBytes(v.sizeBytes)})`;
+                  const isRecommended =
+                    recommendedVariant?.filename === v.filename;
+                  const isInstalling = installingVariant === v.filename;
+
+                  return (
+                    <div key={v.filename} className="px-3 py-3 space-y-2">
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-[12px] font-medium">{qualityLabel}</p>
+                            {isRecommended && (
+                              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-green/15 text-green">
+                                Recommended
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            <span className="text-[11px] text-muted-foreground">{formatBytes(v.sizeBytes)}</span>
+                            {isGguf && v.quantization && (
+                              <span className="text-[10px] text-muted-foreground/60">{v.quantization}</span>
+                            )}
+                            <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded", getCompatibilityColor(v.compatibility))}>
+                              {getCompatibilityLabel(v.compatibility)}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Install button per variant */}
+                        {isInstalling && installPhase === "downloading" ? (
+                          <span className="text-[11px] text-muted-foreground shrink-0 pt-0.5">Downloading...</span>
+                        ) : isInstalling && installPhase === "done" ? (
+                          <span className="text-[11px] text-green shrink-0 pt-0.5">Installed</span>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant={isRecommended ? "default" : "outline"}
+                            className="text-[11px] shrink-0 cursor-pointer"
+                            disabled={isBusy || v.compatibility === "incompatible"}
+                            onClick={() => void handleInstall(v)}
+                          >
+                            Install
+                          </Button>
+                        )}
+                      </div>
+
+                      {isInstalling && installPhase === "downloading" && (
+                        <DownloadingNotice />
+                      )}
+                      {isInstalling && installPhase === "done" && (
+                        <DoneNotice />
+                      )}
+                      {isInstalling && installPhase === "error" && installError && (
+                        <p className="text-[12px] text-red">{installError}</p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+          <Button variant="ghost" size="sm" className="cursor-pointer" onClick={onClose}>Close</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function DownloadingNotice() {
+  return (
+    <div className="rounded-md bg-muted/30 border border-border px-3 py-2 space-y-1">
+      <p className="text-[12px] font-medium text-foreground">Downloading... This may take a few minutes for large models.</p>
+      <p className="text-[11px] text-muted-foreground">You can close this dialog. The download continues in the background.</p>
+    </div>
+  );
+}
+
+function DoneNotice() {
+  return (
+    <div className="rounded-md bg-green/10 border border-green/30 px-3 py-2">
+      <p className="text-[12px] font-medium text-green">Model installed! Go to the Installed tab to start it.</p>
+    </div>
   );
 }
 
@@ -549,7 +735,7 @@ function InstalledTab() {
               <Button
                 size="sm"
                 variant={isRunning ? "outline" : "default"}
-                className="text-[12px]"
+                className="text-[12px] cursor-pointer"
                 disabled={isBusy || !canToggle}
                 onClick={() => void handleToggle(model)}
               >
@@ -558,7 +744,7 @@ function InstalledTab() {
               <Button
                 size="sm"
                 variant="ghost"
-                className="text-[12px] text-destructive hover:text-destructive"
+                className="text-[12px] text-destructive hover:text-destructive cursor-pointer"
                 disabled={isBusy}
                 onClick={() => setPendingDelete(model)}
               >
@@ -583,12 +769,13 @@ function InstalledTab() {
               of disk space.
             </p>
             <DialogFooter>
-              <Button variant="ghost" size="sm" onClick={() => setPendingDelete(null)}>
+              <Button variant="ghost" size="sm" className="cursor-pointer" onClick={() => setPendingDelete(null)}>
                 Cancel
               </Button>
               <Button
                 variant="destructive"
                 size="sm"
+                className="cursor-pointer"
                 onClick={() => void handleDelete(pendingDelete)}
               >
                 Delete
@@ -692,6 +879,7 @@ function RunningModelCard({ model }: { model: HFRunningModel }) {
           />
           <Button
             size="sm"
+            className="cursor-pointer"
             disabled={inferRunning || !prompt.trim()}
             onClick={() => void handleInfer()}
           >
