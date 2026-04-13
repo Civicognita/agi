@@ -2403,6 +2403,13 @@ export async function saveMagicAppState(instanceId: string, state: Record<string
   if (!res.ok) throw new Error("Failed to save state");
 }
 
+export async function closeMagicAppInstance(instanceId: string): Promise<void> {
+  const res = await fetch(`/api/magic-apps/instances/${encodeURIComponent(instanceId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to close instance");
+}
+
 export async function changeMagicAppMode(instanceId: string, mode: string): Promise<void> {
   const res = await fetch(`/api/magic-apps/instances/${encodeURIComponent(instanceId)}/mode`, {
     method: "PUT",

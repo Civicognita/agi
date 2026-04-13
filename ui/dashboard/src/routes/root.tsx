@@ -75,6 +75,8 @@ function getPageTitle(pathname: string): string {
   // Settings
   if (pathname.startsWith("/settings")) return "Settings";
   // System
+  if (pathname === "/admin") return "Admin Dashboard";
+  if (pathname === "/hf-marketplace") return "HF Models";
   if (pathname === "/system") return "Resources";
   if (pathname === "/system/services") return "Services";
   if (pathname === "/system/admin") return "Admin";

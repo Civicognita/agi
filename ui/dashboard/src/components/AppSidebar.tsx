@@ -1,22 +1,22 @@
 /**
- * AppSidebar — perspective-based sidebar navigation using react-fancy.
+ * AppSidebar — unified sidebar navigation with Admin button.
  *
- * Two perspectives: Frontend (user-facing) and Backend (admin/config).
+ * All sections are visible at once (no perspective switching).
+ * Admin button at the bottom opens the Admin Dashboard.
  * Collapsible sidebar with icon-only mode. Mobile uses MobileMenu flyout.
  * Plugin-registered sidebar sections are merged at their configured positions.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
-import { Sidebar, MobileMenu, MultiSwitch } from "@particle-academy/react-fancy";
+import { Sidebar, MobileMenu } from "@particle-academy/react-fancy";
 import { cn } from "@/lib/utils";
 import { fetchPluginSidebar, fetchPluginDashboardPages, fetchPluginDashboardDomains } from "../api.js";
 import type { PluginSidebarSection, PluginDashboardPage, PluginDashboardDomain } from "../types.js";
 import {
   Folders, Inbox, LayoutDashboard, Link as LinkIcon, FileBarChart,
   Compass, FileText, GitBranch, Store, ScrollText, Rocket,
-  SlidersHorizontal, Activity, Blocks, ShieldHalf, ShieldCheck,
-  AlertTriangle, Building2, HardDrive, Fingerprint, Sparkles, Cpu,
+  SlidersHorizontal, Sparkles, Cpu, Shield,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -33,68 +33,39 @@ interface NavSection {
   position?: number;
 }
 
-type Perspective = "frontend" | "backend";
-
-interface NavSectionWithPerspective extends NavSection {
-  perspective: Perspective;
-}
-
-const builtinSections: NavSectionWithPerspective[] = [
-  // ── FRONTEND ──
-  { perspective: "frontend", title: "Projects", items: [
-    { to: "/projects", label: "All Projects", icon: Folders },
-  ]},
-  { perspective: "frontend", title: "MagicApps", items: [
-    { to: "/magic-apps", label: "All Apps", icon: Sparkles },
-  ]},
-  { perspective: "frontend", title: "Communication", items: [
-    { to: "/comms", label: "All Messages", exact: true, icon: Inbox },
-  ]},
-  { perspective: "frontend", title: "Impactinomics", items: [
-    { to: "/", label: "Overview", exact: true, icon: LayoutDashboard },
+const builtinSections: NavSection[] = [
+  { title: "Overview", items: [
+    { to: "/", label: "Dashboard", exact: true, icon: LayoutDashboard },
     { to: "/coa", label: "COA Explorer", icon: LinkIcon },
     { to: "/reports", label: "Reports", icon: FileBarChart },
   ]},
-  { perspective: "frontend", title: "Knowledge", items: [
+  { title: "Projects", items: [
+    { to: "/projects", label: "All Projects", icon: Folders },
+  ]},
+  { title: "MagicApps", items: [
+    { to: "/magic-apps", label: "All Apps", icon: Sparkles },
+  ]},
+  { title: "Communication", items: [
+    { to: "/comms", label: "All Messages", exact: true, icon: Inbox },
+  ]},
+  { title: "Knowledge", items: [
     { to: "/knowledge", label: "Browse", icon: Compass },
     { to: "/docs", label: "Documentation", icon: FileText },
   ]},
-  // ── BACKEND ──
-  { perspective: "backend", title: "Marketplace", items: [
+  { title: "Marketplace", items: [
     { to: "/gateway/marketplace", label: "Plugins", icon: Store },
     { to: "/magic-apps/admin", label: "MagicApps", icon: Sparkles },
     { to: "/hf-marketplace", label: "HF Models", icon: Cpu },
   ]},
-  { perspective: "backend", title: "Gateway", items: [
+  { title: "Gateway", items: [
     { to: "/gateway/workflows", label: "Workflows", icon: GitBranch },
     { to: "/gateway/logs", label: "Logs", icon: ScrollText },
     { to: "/gateway/onboarding", label: "Onboarding", icon: Rocket },
   ]},
-  { perspective: "backend", title: "Settings", items: [
+  { title: "Settings", items: [
     { to: "/settings", label: "Settings", icon: SlidersHorizontal },
   ]},
-  { perspective: "backend", title: "System", items: [
-    { to: "/system", label: "Resources", exact: true, icon: Activity },
-    { to: "/system/services", label: "Services", icon: Blocks },
-    { to: "/system/admin", label: "Admin", icon: ShieldHalf },
-    { to: "/system/changelog", label: "Changelog", icon: ScrollText },
-    { to: "/system/incidents", label: "Incidents", icon: AlertTriangle },
-    { to: "/system/vendors", label: "Vendors", icon: Building2 },
-    { to: "/system/backups", label: "Backups", icon: HardDrive },
-    { to: "/system/security", label: "Security", icon: ShieldCheck },
-    { to: "/system/identity", label: "Identity", icon: Fingerprint },
-  ]},
 ];
-
-const BACKEND_PREFIXES = ["/gateway", "/settings", "/system"];
-
-function detectPerspective(pathname: string): Perspective {
-  for (const prefix of BACKEND_PREFIXES) {
-    if (pathname === prefix || pathname.startsWith(prefix + "/")) return "backend";
-  }
-  if (pathname.startsWith("/magic-apps/admin") || pathname.startsWith("/magic-apps/editor")) return "backend";
-  return "frontend";
-}
 
 const domainRouteMap: Record<string, string> = {
   impactinomics: "", projects: "/projects", comms: "/comms",
@@ -102,7 +73,7 @@ const domainRouteMap: Record<string, string> = {
 };
 
 const domainTitleMap: Record<string, string> = {
-  impactinomics: "Impactinomics", projects: "Projects", comms: "Communication",
+  impactinomics: "Overview", projects: "Projects", comms: "Communication",
   knowledge: "Knowledge", gateway: "Gateway", settings: "Settings", system: "System",
 };
 
@@ -120,12 +91,6 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
   const [pluginPages, setPluginPages] = useState<PluginDashboardPage[]>([]);
   const [pluginDomains, setPluginDomains] = useState<PluginDashboardDomain[]>([]);
 
-  const detected = detectPerspective(currentPath);
-  const [manualPerspective, setManualPerspective] = useState<Perspective | null>(null);
-  const perspective = manualPerspective ?? detected;
-
-  useEffect(() => { setManualPerspective(null); }, [detected]);
-
   useEffect(() => {
     fetchPluginSidebar().then(setPluginSections).catch(() => {});
     fetchPluginDashboardPages().then(setPluginPages).catch(() => {});
@@ -133,16 +98,14 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
   }, []);
 
   const sections = useMemo(() => {
-    const baseSections: NavSectionWithPerspective[] = [
+    const baseSections: (NavSection & { position: number })[] = [
       ...builtinSections.map((s, i) => ({ ...s, position: (i + 1) * 10 })),
       ...pluginSections.map((ps) => ({
-        perspective: "backend" as Perspective,
         title: ps.title,
         items: ps.items.map((item) => ({ to: item.to, label: item.label, exact: item.exact })),
         position: ps.position ?? 50,
       })),
       ...pluginDomains.map((d) => ({
-        perspective: "frontend" as Perspective,
         title: d.title,
         items: d.pages
           .sort((a, b) => (a.position ?? 100) - (b.position ?? 100))
@@ -173,24 +136,10 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
         if (extraItems) items = [...items, ...extraItems];
       }
       return { ...section, items };
-    }).sort((a, b) => (a.position ?? 100) - (b.position ?? 100));
+    }).sort((a, b) => a.position - b.position);
   }, [pluginSections, pluginDomains, pluginPages]);
 
-  const visibleSections = sections.filter((s) => s.perspective === perspective);
-
-  // Shared perspective switcher
-  const perspectiveSwitcher = (
-    <div className="px-2 py-2">
-      <MultiSwitch
-        value={perspective}
-        onValueChange={(v) => setManualPerspective(v as Perspective)}
-        list={[
-          { value: "frontend", label: "Frontend" },
-          { value: "backend", label: "Backend" },
-        ]}
-      />
-    </div>
-  );
+  const isAdminActive = currentPath === "/admin" || currentPath.startsWith("/admin/");
 
   // ---------------------------------------------------------------------------
   // Mobile — MobileMenu flyout
@@ -204,8 +153,7 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
         side="left"
         title="Aionima"
       >
-        {perspectiveSwitcher}
-        {visibleSections.map((section) => (
+        {sections.map((section) => (
           <div key={section.title}>
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold px-3 pt-4 pb-1">
               {section.title}
@@ -228,6 +176,17 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
             })}
           </div>
         ))}
+
+        {/* Admin button */}
+        <div className="border-t border-border mt-4 pt-2 px-3">
+          <MobileMenu.Item
+            active={isAdminActive}
+            icon={<Shield className="w-4 h-4" />}
+            onClick={() => { navigate("/admin"); onMobileClose(); }}
+          >
+            Admin
+          </MobileMenu.Item>
+        </div>
       </MobileMenu.Flyout>
     );
   }
@@ -246,10 +205,8 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
         </Link>
       </div>
 
-      {perspectiveSwitcher}
-
       {/* Nav sections */}
-      {visibleSections.map((section) => (
+      {sections.map((section) => (
         <Sidebar.Group key={section.title} label={section.title}>
           {section.items.map((item) => {
             const isActive = item.exact
@@ -270,8 +227,15 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose }: AppSidebarPr
         </Sidebar.Group>
       ))}
 
-      {/* Collapse toggle at bottom */}
+      {/* Admin + Collapse at bottom */}
       <div className="mt-auto border-t border-border">
+        <Sidebar.Item
+          active={isAdminActive}
+          icon={<Shield className="w-4 h-4" />}
+          onClick={() => navigate("/admin")}
+        >
+          Admin
+        </Sidebar.Item>
         <Sidebar.Toggle />
       </div>
     </Sidebar>

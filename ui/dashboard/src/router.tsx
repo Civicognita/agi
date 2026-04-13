@@ -20,6 +20,7 @@ import CommsSignalPage from "./routes/comms-signal.js";
 import CommsWhatsAppPage from "./routes/comms-whatsapp.js";
 import ServicesPage from "./routes/services.js";
 import AdminPage from "./routes/admin.js";
+import AdminDashboardPage from "./routes/admin-dashboard.js";
 import KnowledgePage from "./routes/knowledge.js";
 import DocsPage from "./routes/docs.js";
 import SettingsLayout from "./routes/settings-layout.js";
@@ -96,6 +97,8 @@ export const router = createBrowserRouter([
         ],
       },
       // System (trimmed)
+      // Admin Dashboard
+      { path: "admin", element: <AdminDashboardPage /> },
       { path: "system", element: <ResourcesPage /> },
       { path: "system/services", element: <ServicesPage /> },
       { path: "system/admin", element: <AdminPage /> },
