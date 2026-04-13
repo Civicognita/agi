@@ -160,7 +160,30 @@ function handleCreate(config: ProjectToolConfig, input: Record<string, unknown>)
   }
 
   const hasGit = cloned || existsSync(join(targetDir, ".git"));
-  return JSON.stringify({ ok: true, name, slug, path: targetDir, cloned, hasGit });
+
+  // Read hosting config to provide the project URL
+  const baseDomain = "ai.on"; // TODO: read from config
+  const projectUrl = `https://${slug.replace(/_/g, "-")}.${baseDomain}`;
+
+  return JSON.stringify({
+    ok: true,
+    name,
+    slug,
+    path: targetDir,
+    cloned,
+    hasGit,
+    hosting: {
+      url: projectUrl,
+      note: "Enable hosting in the project's settings to make it accessible. The project runs in a Podman container — NEVER run it directly on the host with npm/node.",
+    },
+    nextSteps: [
+      `Write your application code to ${targetDir}`,
+      "Enable hosting in project settings (or via the dashboard)",
+      "Add a stack (e.g., stack-react-vite, stack-fastapi, stack-node-app) to define the runtime",
+      `Once hosted, the app is available at ${projectUrl}`,
+      "IMPORTANT: Projects run inside Podman containers. Do NOT run npm/node commands directly.",
+    ],
+  });
 }
 
 function handleUpdate(config: ProjectToolConfig, input: Record<string, unknown>): string {
@@ -408,9 +431,12 @@ function handleDelete(config: ProjectToolConfig, input: Record<string, unknown>)
 export const MANAGE_PROJECT_MANIFEST = {
   name: "manage_project",
   description:
-    "Manage workspace projects. Actions: list (all projects), create (new project with optional git clone), " +
-    "update (rename or set tynnToken), info (git branch, remote, status, recent commits), " +
-    "delete (permanently remove a project directory — requires confirm: true).",
+    "Manage workspace projects. Actions: list, create, update, info, delete. " +
+    "IMPORTANT: Projects run in Podman containers, NOT directly on the host. " +
+    "Never run npm/node/python commands directly — the container handles that. " +
+    "After creating a project, tell the user to enable hosting in the dashboard. " +
+    "The project URL is https://{slug}.ai.on (NOT localhost). " +
+    "Use 'info' to check hosting status and get the URL.",
   requiresState: ["ONLINE" as const],
   requiresTier: ["verified" as const, "sealed" as const],
 };
