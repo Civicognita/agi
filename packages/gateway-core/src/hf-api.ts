@@ -227,6 +227,14 @@ export function registerHfRoutes(
       const modelInfo = await hfClient.getModelInfo(id);
       const runtimeType = capabilityResolver.resolveRuntimeType(modelInfo);
 
+      // For custom models, resolve the container image from the known-models registry
+      const customDef = knownModelsRegistry.lookup(id);
+      const containerImage = customDef?.image ?? undefined;
+      const sourceRepo = customDef?.sourceRepo ?? undefined;
+      const endpoints = customDef ? Object.entries(customDef.endpoints).map(([name, path]) => ({
+        path, method: "POST" as const, description: name,
+      })) : undefined;
+
       // Get actual file size from tree API
       const treeFiles = await hfClient.getModelFiles(id, revision).catch(() => []);
       const fileEntry = treeFiles.find((f) => f.rfilename === filename);
@@ -246,6 +254,9 @@ export function registerHfRoutes(
         fileSizeBytes,
         status: "downloading",
         downloadedAt,
+        containerImage,
+        sourceRepo,
+        endpoints,
       });
 
       // Fire-and-forget download — download main model file + all small support files
@@ -357,6 +368,27 @@ export function registerHfRoutes(
         const model = await modelStore.getById(modelId);
         if (!model) {
           return reply.code(404).send({ error: `Model not found: ${modelId}` });
+        }
+
+        // For custom models without a built image, build it now
+        if (model.runtimeType === "custom" && !model.containerImage) {
+          const customDef = knownModelsRegistry.lookup(modelId);
+          if (customDef) {
+            await modelStore.updateStatus(modelId, "starting");
+            try {
+              const imageTag = await customContainerBuilder.build(modelId, customDef);
+              await modelStore.updateContainerImage(modelId, imageTag);
+              // Re-read model with the updated image
+              const updated = await modelStore.getById(modelId);
+              if (updated) Object.assign(model, updated);
+            } catch (buildErr) {
+              const msg = buildErr instanceof Error ? buildErr.message : String(buildErr);
+              await modelStore.setError(modelId, `Container build failed: ${msg}`);
+              return reply.code(500).send({ error: `Container build failed: ${msg}` });
+            }
+          } else {
+            return reply.code(400).send({ error: `No runtime definition found for custom model "${modelId}". Add one to ~/.agi/custom-runtimes/` });
+          }
         }
 
         const containerConfig = capabilityResolver.buildContainerConfig(model);
@@ -963,16 +995,8 @@ export function registerHfRoutes(
         void (async () => {
           try {
             const imageTag = await customContainerBuilder.build(modelId, customDefinition);
+            await modelStore.updateContainerImage(modelId, imageTag);
             await modelStore.updateStatus(modelId, "ready");
-            // Store the built image tag so container manager uses it
-            const existing = await modelStore.getById(modelId);
-            if (existing) {
-              await modelStore.addModel({
-                ...existing,
-                containerImage: imageTag,
-                status: "ready",
-              });
-            }
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
             await modelStore.setError(modelId, msg);

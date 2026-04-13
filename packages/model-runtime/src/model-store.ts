@@ -202,6 +202,13 @@ export class ModelStore {
     );
   }
 
+  async updateContainerImage(id: string, containerImage: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE agi.models SET container_image = $1 WHERE id = $2`,
+      [containerImage, id],
+    );
+  }
+
   async setError(id: string, error: string): Promise<void> {
     await this.pool.query(
       `UPDATE agi.models SET status = 'error', error = $1 WHERE id = $2`,
