@@ -302,7 +302,19 @@ export function registerAllTools(
       createManageProjectHandler({
         projectDirs: config.projectDirs,
         projectConfigManager: config.projectConfigManager,
-        hostingManager: hostingRef ? { getProjectHostingInfo: (p: string) => (hostingRef.current as { getProjectHostingInfo(p: string): unknown } | null)?.getProjectHostingInfo(p), getProjectDevCommands: (p: string) => (hostingRef.current as { getProjectDevCommands(p: string): Record<string, string> } | null)?.getProjectDevCommands(p) ?? {} } : undefined,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- late-bound ref
+        hostingManager: hostingRef ? (() => {
+          const mgr = () => hostingRef.current as any;
+          return {
+            getProjectHostingInfo: (p: string) => mgr()?.getProjectHostingInfo(p),
+            getProjectDevCommands: (p: string) => (mgr()?.getProjectDevCommands(p) ?? {}) as Record<string, string>,
+            detectProjectDefaults: (p: string) => mgr()?.detectProjectDefaults(p) as { projectType: string; docRoot: string; startCommand: string | null },
+            enableProject: (p: string, m: unknown) => mgr()?.enableProject(p, m) as Promise<void>,
+            disableProject: (p: string) => mgr()?.disableProject(p) as Promise<void>,
+            restartProject: (p: string) => mgr()?.restartProject(p) as { ok: boolean; error?: string },
+            regenerateCaddyfile: () => mgr()?.regenerateCaddyfile(),
+          };
+        })() : undefined,
         stackRegistry: stackRef ? { get: (id: string) => (stackRef.current as { get(id: string): unknown } | null)?.get(id) as { id: string; label: string; description: string; category: string } | undefined } : undefined,
         mappRegistry: mappRef ? { get: (id: string) => (mappRef.current as { get(id: string): unknown } | null)?.get(id) as { id: string; name: string; description: string; category: string; version: string } | undefined } : undefined,
       }),

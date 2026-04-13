@@ -26,11 +26,21 @@ export interface ProjectToolConfig {
   /** ProjectConfigManager for validated config operations. */
   projectConfigManager?: ProjectConfigManager;
   /** Late-bound hosting manager for URLs, container status, tunnels. */
-  hostingManager?: { getProjectHostingInfo(path: string): unknown; getProjectDevCommands(path: string): Record<string, string> };
+  hostingManager?: {
+    getProjectHostingInfo(path: string): unknown;
+    getProjectDevCommands(path: string): Record<string, string>;
+    detectProjectDefaults(path: string): { projectType: string; docRoot: string; startCommand: string | null };
+    enableProject(path: string, meta: unknown): Promise<void>;
+    disableProject(path: string): Promise<void>;
+    restartProject(path: string): { ok: boolean; error?: string };
+    regenerateCaddyfile(): void;
+  };
   /** Late-bound stack registry for stack definitions. */
   stackRegistry?: { get(id: string): { id: string; label: string; description: string; category: string } | undefined };
   /** Late-bound MApp registry for MagicApp definitions. */
   mappRegistry?: { get(id: string): { id: string; name: string; description: string; category: string; version: string } | undefined };
+  /** Hosting base domain (e.g. "ai.on"). */
+  baseDomain?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -56,8 +66,17 @@ export function createManageProjectHandler(config: ProjectToolConfig): ToolHandl
     if (action === "delete") {
       return handleDelete(config, input);
     }
+    if (action === "host") {
+      return handleHost(config, input);
+    }
+    if (action === "unhost") {
+      return handleUnhost(config, input);
+    }
+    if (action === "restart") {
+      return handleRestart(config, input);
+    }
 
-    return JSON.stringify({ error: `Unknown action: ${action}. Use "list", "create", "update", "info", or "delete".` });
+    return JSON.stringify({ error: `Unknown action: ${action}. Use "list", "create", "update", "info", "delete", "host", "unhost", or "restart".` });
   };
 }
 
@@ -174,15 +193,9 @@ function handleCreate(config: ProjectToolConfig, input: Record<string, unknown>)
     hasGit,
     hosting: {
       url: projectUrl,
-      note: "Enable hosting in the project's settings to make it accessible. The project runs in a Podman container — NEVER run it directly on the host with npm/node.",
+      status: "not started",
     },
-    nextSteps: [
-      `Write your application code to ${targetDir}`,
-      "Enable hosting in project settings (or via the dashboard)",
-      "Add a stack (e.g., stack-react-vite, stack-fastapi, stack-node-app) to define the runtime",
-      `Once hosted, the app is available at ${projectUrl}`,
-      "IMPORTANT: Projects run inside Podman containers. Do NOT run npm/node commands directly.",
-    ],
+    hint: `Project created. Next: write your code to ${targetDir}, then call manage_project with action "host" and path "${targetDir}" to start the container. The app will be at ${projectUrl}. NEVER run npm/node/python directly.`,
   });
 }
 
@@ -385,6 +398,23 @@ function handleInfo(config: ProjectToolConfig, input: Record<string, unknown>): 
     } catch { /* */ }
   }
 
+  // Generate a contextual hint based on container state
+  const hostingEnabled = (hosting as Record<string, unknown> | null)?.enabled === true;
+  const hostingStatus = String((hosting as Record<string, unknown> | null)?.status ?? "unconfigured");
+  let hint: string;
+  if (!hostingEnabled) {
+    hint = `Hosting is not enabled. Use manage_project action "host" with path "${targetPath}" to start the container.`;
+  } else if (hostingStatus === "running") {
+    const url = (hosting as Record<string, unknown>).localUrl as string | null;
+    hint = `Container is running. Project is live at ${url ?? "URL unavailable"}. Use "restart" after code changes.`;
+  } else if (hostingStatus === "error") {
+    hint = `Container has an error. Try manage_project action "restart" with path "${targetPath}".`;
+  } else if (hostingStatus === "stopped" || hostingStatus === "exited") {
+    hint = `Container is stopped. Use manage_project action "host" with path "${targetPath}" to start it.`;
+  } else {
+    hint = `Container status: ${hostingStatus}. Use "info" to re-check.`;
+  }
+
   return JSON.stringify({
     path: targetPath,
     config: projectConfig,
@@ -393,6 +423,7 @@ function handleInfo(config: ProjectToolConfig, input: Record<string, unknown>): 
     devCommands,
     stacks,
     magicApps,
+    hint,
   });
 }
 
@@ -425,18 +456,90 @@ function handleDelete(config: ProjectToolConfig, input: Record<string, unknown>)
 }
 
 // ---------------------------------------------------------------------------
+// Host / Unhost / Restart
+// ---------------------------------------------------------------------------
+
+async function handleHost(config: ProjectToolConfig, input: Record<string, unknown>): Promise<string> {
+  const pathStr = input.path ? String(input.path) : "";
+  if (!pathStr) return JSON.stringify({ error: "path is required" });
+  if (!config.hostingManager) return JSON.stringify({ error: "Hosting manager not available" });
+
+  const targetPath = resolvePath(pathStr);
+  const detected = config.hostingManager.detectProjectDefaults(targetPath);
+  const slug = basename(targetPath).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const baseDomain = config.baseDomain ?? "ai.on";
+
+  const meta = {
+    enabled: true,
+    type: (input.type as string) ?? detected.projectType,
+    hostname: (input.hostname as string) ?? slug,
+    docRoot: (input.docRoot as string) ?? detected.docRoot,
+    startCommand: (input.startCommand as string) ?? detected.startCommand,
+    port: null,
+    mode: ((input.mode as string) ?? "production") as "production" | "development",
+    internalPort: input.internalPort ? Number(input.internalPort) : null,
+    runtimeId: (input.runtimeId as string) ?? null,
+  };
+
+  try {
+    await config.hostingManager.enableProject(targetPath, meta);
+    config.hostingManager.regenerateCaddyfile();
+    const info = config.hostingManager.getProjectHostingInfo(targetPath) as Record<string, unknown> | null;
+    return JSON.stringify({
+      ok: true,
+      hosting: {
+        enabled: true,
+        url: `https://${meta.hostname}.${baseDomain}`,
+        status: info?.status ?? "starting",
+        containerName: info?.containerName ?? null,
+      },
+      hint: `Container is starting. The project will be available at https://${meta.hostname}.${baseDomain} once the container is ready.`,
+    });
+  } catch (err) {
+    return JSON.stringify({ error: `Failed to enable hosting: ${err instanceof Error ? err.message : String(err)}` });
+  }
+}
+
+async function handleUnhost(config: ProjectToolConfig, input: Record<string, unknown>): Promise<string> {
+  const pathStr = input.path ? String(input.path) : "";
+  if (!pathStr) return JSON.stringify({ error: "path is required" });
+  if (!config.hostingManager) return JSON.stringify({ error: "Hosting manager not available" });
+
+  try {
+    await config.hostingManager.disableProject(resolvePath(pathStr));
+    config.hostingManager.regenerateCaddyfile();
+    return JSON.stringify({ ok: true, hint: "Hosting disabled. Container stopped." });
+  } catch (err) {
+    return JSON.stringify({ error: `Failed to disable hosting: ${err instanceof Error ? err.message : String(err)}` });
+  }
+}
+
+function handleRestart(config: ProjectToolConfig, input: Record<string, unknown>): string {
+  const pathStr = input.path ? String(input.path) : "";
+  if (!pathStr) return JSON.stringify({ error: "path is required" });
+  if (!config.hostingManager) return JSON.stringify({ error: "Hosting manager not available" });
+
+  const result = config.hostingManager.restartProject(resolvePath(pathStr));
+  if (result.ok) {
+    const slug = basename(resolvePath(pathStr)).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const baseDomain = config.baseDomain ?? "ai.on";
+    return JSON.stringify({ ok: true, hint: `Container restarted. Project available at https://${slug}.${baseDomain}` });
+  }
+  return JSON.stringify({ error: result.error ?? "Restart failed" });
+}
+
+// ---------------------------------------------------------------------------
 // Manifest + Input Schema
 // ---------------------------------------------------------------------------
 
 export const MANAGE_PROJECT_MANIFEST = {
   name: "manage_project",
   description:
-    "Manage workspace projects. Actions: list, create, update, info, delete. " +
-    "IMPORTANT: Projects run in Podman containers, NOT directly on the host. " +
-    "Never run npm/node/python commands directly — the container handles that. " +
-    "After creating a project, tell the user to enable hosting in the dashboard. " +
-    "The project URL is https://{slug}.ai.on (NOT localhost). " +
-    "Use 'info' to check hosting status and get the URL.",
+    "Manage workspace projects: list, create, update, info, delete, host, unhost, restart. " +
+    "IMPORTANT: Projects run in Podman containers at https://{slug}.ai.on — NOT localhost. " +
+    "After 'create', use 'host' to start the container. Use 'restart' after code changes. " +
+    "Use 'info' to check container status and get the URL. " +
+    "NEVER run npm/node/python directly on the host.",
   requiresState: ["ONLINE" as const],
   requiresTier: ["verified" as const, "sealed" as const],
 };
@@ -446,8 +549,8 @@ export const MANAGE_PROJECT_INPUT_SCHEMA = {
   properties: {
     action: {
       type: "string",
-      enum: ["list", "create", "update", "info", "delete"],
-      description: 'Project operation: "list", "create", "update", "info", or "delete"',
+      enum: ["list", "create", "update", "info", "delete", "host", "unhost", "restart"],
+      description: 'Project operation. After create, use "host" to start the container. Use "restart" after code changes.',
     },
     name: {
       type: "string",

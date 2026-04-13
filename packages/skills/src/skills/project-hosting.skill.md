@@ -31,12 +31,26 @@ NEVER run `npm run dev`, `npm start`, `node server.js`, `python app.py`, or any 
 
 ### Project Lifecycle
 
-1. **Create** — `manage_project create` creates a folder in `~/_projects/{slug}/`
+1. **Create** — `manage_project` action `create` creates a folder in `~/_projects/{slug}/`
 2. **Write code** — Use `file_write` to add application files
-3. **Configure stack** — Add a stack via the dashboard or project settings (stack-react-vite, stack-fastapi, stack-node-app, etc.)
-4. **Enable hosting** — Toggle hosting in the project's dashboard settings
-5. **Container starts** — The hosting system builds and runs a Podman container
-6. **Access via URL** — The project is available at `https://{slug}.ai.on`
+3. **Start hosting** — `manage_project` action `host` with the project path starts the container
+4. **Container starts** — The hosting system builds and runs a Podman container with the appropriate stack
+5. **Access via URL** — The project is available at `https://{slug}.ai.on`
+6. **After code changes** — `manage_project` action `restart` to rebuild the container
+7. **Check status** — `manage_project` action `info` returns container status with hints on what to do next
+
+### manage_project Actions
+
+| Action | What it does |
+|--------|-------------|
+| `create` | Create new project folder. Returns path + hint to use `host` next. |
+| `host` | Start the project container. Enables hosting, starts Podman, sets up Caddy. |
+| `restart` | Restart the project container after code changes. |
+| `unhost` | Stop the project container and disable hosting. |
+| `info` | Get project status including container state. Returns a `hint` field with next steps. |
+| `list` | List all workspace projects. |
+| `update` | Update project metadata. |
+| `delete` | Permanently delete a project. |
 
 ### Project URLs
 
