@@ -980,7 +980,7 @@ export async function startGatewayServer(
   for (const source of marketplaceManager.getSources()) {
     const result = await marketplaceManager.syncSource(source.id);
     if (result.ok) {
-      log.info(`plugin-marketplace: synced ${String(result.pluginCount)} plugins from catalog`);
+      log.info(`plugin-marketplace: synced ${String(result.diff?.total ?? 0)} plugins from catalog`);
     }
   }
 

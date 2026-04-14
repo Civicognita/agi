@@ -10,6 +10,7 @@ import type {
   MarketplacePluginEntry,
   MarketplaceItemType,
   InstalledItem,
+  CatalogDiff,
   CatalogSearchParams,
   TrustTier,
   MAppSource,
@@ -101,9 +102,40 @@ export class MarketplaceStore {
   // Plugins (catalog)
   // -------------------------------------------------------------------------
 
-  syncPlugins(sourceId: number, plugins: MarketplacePluginEntry[], sourceRef?: string): void {
+  /**
+   * Replace the catalog for a source with the just-fetched plugins. Returns a
+   * `CatalogDiff` describing what changed relative to the previous state, so
+   * callers can report additions, updates, and removals to the user.
+   */
+  syncPlugins(sourceId: number, plugins: MarketplacePluginEntry[], sourceRef?: string): CatalogDiff {
     // Determine if this is the official Civicognita marketplace
     const isOfficial = sourceRef !== undefined && /Civicognita/i.test(sourceRef);
+
+    // Capture the previous state (name -> version) BEFORE the truncate so we
+    // can diff against the incoming catalog.
+    const prevRows = this.db
+      .prepare("SELECT name, version FROM marketplace_plugins WHERE source_id = ?")
+      .all(sourceId) as Array<{ name: string; version: string | null }>;
+    const prev = new Map<string, string>();
+    for (const row of prevRows) prev.set(row.name, row.version ?? "");
+
+    const next = new Map<string, string>();
+    for (const p of plugins) next.set(p.name, p.version ?? "");
+
+    const added: string[] = [];
+    const updated: Array<{ name: string; from: string; to: string }> = [];
+    for (const [name, toVer] of next) {
+      if (!prev.has(name)) {
+        added.push(name);
+      } else {
+        const fromVer = prev.get(name)!;
+        if (fromVer !== toVer) updated.push({ name, from: fromVer, to: toVer });
+      }
+    }
+    const removed: string[] = [];
+    for (const name of prev.keys()) {
+      if (!next.has(name)) removed.push(name);
+    }
 
     const txn = this.db.transaction(() => {
       this.db.prepare("DELETE FROM marketplace_plugins WHERE source_id = ?").run(sourceId);
@@ -139,6 +171,8 @@ export class MarketplaceStore {
       ).run(new Date().toISOString(), plugins.length, sourceId);
     });
     txn();
+
+    return { added, updated, removed, total: plugins.length };
   }
 
   searchPlugins(params: CatalogSearchParams): (MarketplacePluginEntry & { sourceId: number; sourceJson: string })[] {

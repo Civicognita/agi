@@ -15,6 +15,7 @@ import type {
   MarketplacePluginEntry,
   MarketplaceItemType,
   InstalledItem,
+  CatalogDiff,
   CatalogSearchParams,
 } from "./types.js";
 
@@ -81,7 +82,9 @@ export class MarketplaceManager {
     this.store.removeSource(id);
   }
 
-  async syncSource(id: number): Promise<{ ok: boolean; error?: string; pluginCount?: number }> {
+  async syncSource(
+    id: number,
+  ): Promise<{ ok: boolean; error?: string; diff?: CatalogDiff }> {
     const source = this.store.getSource(id);
     if (!source) return { ok: false, error: "Source not found" };
 
@@ -90,8 +93,8 @@ export class MarketplaceManager {
       return { ok: false, error: result.error };
     }
 
-    this.store.syncPlugins(id, result.catalog.plugins, source.ref);
-    return { ok: true, pluginCount: result.catalog.plugins.length };
+    const diff = this.store.syncPlugins(id, result.catalog.plugins, source.ref);
+    return { ok: true, diff };
   }
 
   /**
@@ -357,7 +360,7 @@ export class MarketplaceManager {
     let synced = 0;
     for (const source of this.store.getSources()) {
       const result = await this.syncSource(source.id);
-      if (result.ok) synced += result.pluginCount ?? 0;
+      if (result.ok) synced += result.diff?.total ?? 0;
     }
 
     // 2. Find and apply all available updates

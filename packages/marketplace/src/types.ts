@@ -106,6 +106,24 @@ export interface MarketplaceSource {
 }
 
 // ---------------------------------------------------------------------------
+// Sync diff (returned from syncPlugins / syncSource)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shape of what changed between the previous catalog state for a source and the
+ * just-synced state. `added` / `updated` / `removed` are plugin names; `updated`
+ * also carries the version transition. `total` is the count of plugins in the
+ * remote catalog after the sync. Empty arrays + `total > 0` means "catalog
+ * fetched cleanly but nothing changed since the last sync."
+ */
+export interface CatalogDiff {
+  added: string[];
+  updated: Array<{ name: string; from: string; to: string }>;
+  removed: string[];
+  total: number;
+}
+
+// ---------------------------------------------------------------------------
 // Installed items
 // ---------------------------------------------------------------------------
 

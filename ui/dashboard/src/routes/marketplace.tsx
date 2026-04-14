@@ -37,7 +37,7 @@ import {
   fetchPluginDetails,
   fetchUninstallPreview,
 } from "../api.js";
-import type { CleanupResource } from "../api.js";
+import type { CleanupResource, CatalogDiff } from "../api.js";
 import type {
   PluginMarketplaceSource,
   PluginMarketplaceCatalogItem,
@@ -1005,6 +1005,7 @@ function SourcesTab() {
   const [newName, setNewName] = useState("");
   const [adding, setAdding] = useState(false);
   const [syncing, setSyncing] = useState<number | null>(null);
+  const [lastDiffs, setLastDiffs] = useState<Record<number, CatalogDiff>>({});
 
   const load = useCallback(async () => {
     const s = await fetchPluginMarketplaceSources().catch(() => [] as PluginMarketplaceSource[]);
@@ -1033,7 +1034,17 @@ function SourcesTab() {
       const result = await syncPluginMarketplaceSource(id);
       await load();
       if (result.ok) {
-        toast({ title: "Catalog synced", description: `${result.pluginCount ?? 0} plugins from source`, variant: "success" });
+        const diff = result.diff;
+        if (!diff || (diff.added.length === 0 && diff.updated.length === 0 && diff.removed.length === 0)) {
+          toast({ title: "Already up to date", description: `${diff?.total ?? 0} plugins in catalog`, variant: "info" });
+        } else {
+          const parts: string[] = [];
+          if (diff.added.length) parts.push(`${diff.added.length} new`);
+          if (diff.updated.length) parts.push(`${diff.updated.length} updated`);
+          if (diff.removed.length) parts.push(`${diff.removed.length} removed`);
+          toast({ title: "Catalog synced", description: parts.join(", "), variant: "success" });
+        }
+        if (diff) setLastDiffs((m) => ({ ...m, [id]: diff }));
       } else {
         toast({ title: "Sync failed", description: result.error ?? "Unknown error", variant: "error" });
       }
@@ -1086,18 +1097,33 @@ function SourcesTab() {
         </Card>
       ) : (
         <div className="grid gap-3">
-          {sources.map((source) => (
+          {sources.map((source) => {
+            const diff = lastDiffs[source.id];
+            const changeCount = diff ? diff.added.length + diff.updated.length + diff.removed.length : 0;
+            return (
             <Card key={source.id} className="p-4 flex-row items-center justify-between">
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-foreground">{source.name}</span>
                   <Badge variant="outline" className="text-[10px]">{source.sourceType}</Badge>
                   <span className="text-[11px] text-muted-foreground">{source.pluginCount} plugins</span>
+                  {changeCount > 0 && (
+                    <Badge variant="default" className="text-[10px]">
+                      {changeCount} change{changeCount === 1 ? "" : "s"} last sync
+                    </Badge>
+                  )}
                 </div>
                 <p className="text-[11px] text-muted-foreground font-mono mt-1">{source.ref}</p>
                 {source.lastSyncedAt && (
                   <p className="text-[10px] text-muted-foreground mt-0.5">
                     Last synced: {new Date(source.lastSyncedAt).toLocaleString()}
+                  </p>
+                )}
+                {diff && changeCount > 0 && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {diff.added.length > 0 && <span>+{diff.added.length} new · </span>}
+                    {diff.updated.length > 0 && <span>{diff.updated.length} updated · </span>}
+                    {diff.removed.length > 0 && <span>-{diff.removed.length} removed</span>}
                   </p>
                 )}
               </div>
@@ -1108,7 +1134,7 @@ function SourcesTab() {
                   disabled={syncing === source.id}
                   onClick={() => void handleSync(source.id)}
                 >
-                  {syncing === source.id ? "Syncing..." : "Sync"}
+                  {syncing === source.id ? "Refreshing..." : "Refresh catalog"}
                 </Button>
                 <Button
                   size="sm"
@@ -1119,7 +1145,8 @@ function SourcesTab() {
                 </Button>
               </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

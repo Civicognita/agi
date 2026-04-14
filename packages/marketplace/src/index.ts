@@ -23,6 +23,7 @@ export type {
   NpmSource,
   PipSource,
   InstalledItem,
+  CatalogDiff,
   CatalogSearchParams,
   MAppSource,
   MAppCatalogEntry,

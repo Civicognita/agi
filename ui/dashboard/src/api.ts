@@ -1916,9 +1916,16 @@ export async function removePluginMarketplaceSource(id: number): Promise<void> {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
-export async function syncPluginMarketplaceSource(id: number): Promise<{ ok: boolean; pluginCount?: number; error?: string }> {
+export interface CatalogDiff {
+  added: string[];
+  updated: Array<{ name: string; from: string; to: string }>;
+  removed: string[];
+  total: number;
+}
+
+export async function syncPluginMarketplaceSource(id: number): Promise<{ ok: boolean; diff?: CatalogDiff; error?: string }> {
   const res = await fetch(`/api/marketplace/sources/${id}/sync`, { method: "POST" });
-  return res.json() as Promise<{ ok: boolean; pluginCount?: number; error?: string }>;
+  return res.json() as Promise<{ ok: boolean; diff?: CatalogDiff; error?: string }>;
 }
 
 export async function searchPluginMarketplaceCatalog(params?: { q?: string; type?: string; category?: string; provides?: string }): Promise<import("./types.js").PluginMarketplaceCatalogItem[]> {
