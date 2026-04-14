@@ -2641,3 +2641,37 @@ export async function stopFineTuneJob(jobId: string): Promise<{ ok: boolean }> {
   });
   return res.json() as Promise<{ ok: boolean }>;
 }
+
+// ---------------------------------------------------------------------------
+// Safemode + incidents (Admin)
+// ---------------------------------------------------------------------------
+
+export async function fetchSafemode(): Promise<import("./types.js").SafemodeSnapshot> {
+  const res = await fetch("/api/admin/safemode");
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").SafemodeSnapshot>;
+}
+
+export async function exitSafemode(): Promise<import("./types.js").SafemodeExitResult> {
+  const res = await fetch("/api/admin/safemode/exit", { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+    throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").SafemodeExitResult>;
+}
+
+export async function fetchAdminIncidents(): Promise<import("./types.js").IncidentSummary[]> {
+  const res = await fetch("/api/admin/incidents");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body = (await res.json()) as { incidents: import("./types.js").IncidentSummary[] };
+  return body.incidents;
+}
+
+export async function fetchAdminIncidentMarkdown(id: string): Promise<string> {
+  const res = await fetch(`/api/admin/incidents/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
+}

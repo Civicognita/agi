@@ -36,6 +36,7 @@ import { appRouter, type AppContext } from "@aionima/trpc-api";
 import type { HostingManager } from "./hosting-manager.js";
 import { registerHostingRoutes } from "./hosting-api.js";
 import { registerStackRoutes } from "./stack-api.js";
+import { safemodeState } from "./safemode-state.js";
 import type { RouteHandler, RuntimeDefinition, RuntimeInstaller, HostingExtension } from "@aionima/plugins";
 import { categoryToProvides } from "@aionima/plugins";
 import type { ServiceManager } from "./service-manager.js";
@@ -593,6 +594,30 @@ export async function createGatewayRuntimeState(
     if (!authResult.authenticated) {
       await reply.code(401).send({ error: "Unauthorized" });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // Safemode hook — block mutations when the gateway booted into safemode.
+  // Allows GET/HEAD/OPTIONS, /api/admin/*, /health, and the static dashboard.
+  // Runs after auth so unauthorized requests are already rejected.
+  // -----------------------------------------------------------------------
+
+  fastify.addHook("onRequest", async (request, reply) => {
+    if (!safemodeState.isActive()) return;
+
+    const method = request.method.toUpperCase();
+    if (method === "GET" || method === "HEAD" || method === "OPTIONS") return;
+
+    const url = request.url;
+    if (url.startsWith("/api/admin/")) return;
+    if (url === "/health" || url.startsWith("/health?")) return;
+    if (url === "/api/health" || url.startsWith("/api/health?")) return;
+
+    await reply.code(503).send({
+      error: "safemode_active",
+      message: "Gateway is in safemode — the last shutdown was a crash. Review the incident report in Admin and click Recover to exit safemode.",
+      snapshot: safemodeState.snapshot(),
+    });
   });
 
   // -----------------------------------------------------------------------

@@ -390,6 +390,25 @@ export class ModelContainerManager {
   }
 
   // -------------------------------------------------------------------------
+  // Snapshot — used by boot-recovery to record running models at shutdown
+  // -------------------------------------------------------------------------
+
+  /**
+   * Return a minimal snapshot of currently-running model containers. Used by
+   * the gateway shutdown-marker writer so the next boot can re-start exactly
+   * these containers if podman-restart missed them after a crash.
+   */
+  snapshotRunning(): Array<{ modelId: string; containerName: string }> {
+    const out: Array<{ modelId: string; containerName: string }> = [];
+    for (const [modelId, state] of this.activeContainers) {
+      if (state.status === "running") {
+        out.push({ modelId, containerName: state.containerName });
+      }
+    }
+    return out;
+  }
+
+  // -------------------------------------------------------------------------
   // State persistence
   // -------------------------------------------------------------------------
 

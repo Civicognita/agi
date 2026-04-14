@@ -243,6 +243,50 @@ cmd_stop() {
   ok "Service stopped"
 }
 
+cmd_safemode() {
+  local action="${1:-status}"
+  local gw_url
+  gw_url="http://127.0.0.1:3100"
+  case "$action" in
+    status|"")
+      echo -e "${BOLD}Safemode status${RESET}"
+      curl -s "$gw_url/api/admin/safemode" | (command -v jq >/dev/null && jq . || cat)
+      ;;
+    exit)
+      info "Exiting safemode (runs recovery)..."
+      curl -s -X POST "$gw_url/api/admin/safemode/exit" | (command -v jq >/dev/null && jq . || cat)
+      ;;
+    *)
+      err "Unknown safemode action: $action (use 'status' or 'exit')"
+      exit 1
+      ;;
+  esac
+}
+
+cmd_incidents() {
+  local action="${1:-list}"
+  local gw_url
+  gw_url="http://127.0.0.1:3100"
+  case "$action" in
+    list|"")
+      echo -e "${BOLD}Recent incidents${RESET}"
+      curl -s "$gw_url/api/admin/incidents" | (command -v jq >/dev/null && jq . || cat)
+      ;;
+    view)
+      local id="${2:-}"
+      if [ -z "$id" ]; then
+        err "usage: agi incidents view <id>"
+        exit 1
+      fi
+      curl -s "$gw_url/api/admin/incidents/$id"
+      ;;
+    *)
+      err "Unknown incidents action: $action (use 'list' or 'view <id>')"
+      exit 1
+      ;;
+  esac
+}
+
 cmd_doctor() {
   echo -e "${BOLD}Aionima Doctor${RESET}"
   echo ""
@@ -419,6 +463,8 @@ cmd_help() {
   echo "  start           Start the gateway service"
   echo "  stop            Stop the gateway service"
   echo "  doctor          Check infrastructure health"
+  echo "  safemode        Show safemode status (or: safemode exit)"
+  echo "  incidents       List incident reports (or: incidents view <id>)"
   echo "  config [key]    Read config (full or dot-path key)"
   echo "  projects        List hosted projects"
   echo "  setup           Interactive configuration wizard"
@@ -445,6 +491,8 @@ case "${1:-help}" in
   start)    cmd_start ;;
   stop)     cmd_stop ;;
   doctor)   cmd_doctor ;;
+  safemode) shift; cmd_safemode "$@" ;;
+  incidents) shift; cmd_incidents "$@" ;;
   config)   cmd_config "${2:-}" ;;
   projects) cmd_projects ;;
   setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;

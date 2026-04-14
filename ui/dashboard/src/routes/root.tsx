@@ -20,6 +20,7 @@ import { createInstanceManager } from "@/lib/magic-app-instances.js";
 import { fetchMagicApps } from "@/api.js";
 import type { MagicAppInfo, MagicAppInstance } from "@/types.js";
 import { DnsSetupBanner } from "@/components/DnsSetupBanner.js";
+import { SafemodeGuard } from "@/lib/safemode-guard.js";
 import { ActivityDot } from "@/components/ActivityDot.js";
 import { ActiveDownloads } from "@/components/ActiveDownloads.js";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator.js";
@@ -514,6 +515,7 @@ export default function RootLayout() {
 
   return (
     <div className="h-screen bg-background text-foreground font-sans flex overflow-hidden">
+      <SafemodeGuard />
       {/* Sidebar */}
       <AppSidebar
         isMobile={isMobile}

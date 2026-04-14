@@ -2144,6 +2144,29 @@ export class HostingManager {
   }
 
   // -------------------------------------------------------------------------
+  // Snapshot — used by boot-recovery to record what was running at shutdown
+  // -------------------------------------------------------------------------
+
+  /**
+   * Return a minimal snapshot of currently-running project containers. Used by
+   * the shutdown-marker writer in server.close() so the next boot can restart
+   * exactly these containers if podman-restart missed them (e.g. after a hard
+   * system crash).
+   */
+  snapshotRunning(): Array<{ slug: string; containerName: string }> {
+    const out: Array<{ slug: string; containerName: string }> = [];
+    for (const hosted of this.projects.values()) {
+      if (hosted.status === "running" && hosted.containerName !== null) {
+        out.push({
+          slug: hosted.meta.hostname,
+          containerName: hosted.containerName,
+        });
+      }
+    }
+    return out;
+  }
+
+  // -------------------------------------------------------------------------
   // Shutdown
   // -------------------------------------------------------------------------
 

@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SafemodeCallout } from "@/components/SafemodeCallout.js";
+import { IncidentsList } from "@/components/IncidentsList.js";
 import { useProjects, useSystemStats } from "../hooks.js";
 import { fetchServices, fetchHFRunningModels, fetchHFInstalledModels, fetchHFHardwareProfile, fetchHFAuthStatus } from "../api.js";
 import type { ServiceInfo, HFRunningModel, HFInstalledModel, HFHardwareProfile } from "../types.js";
@@ -104,6 +106,7 @@ export default function AdminDashboardPage() {
   return (
     <PageScroll>
       <div className="space-y-6">
+        <SafemodeCallout />
         <h1 className="text-xl font-bold text-foreground">Admin Dashboard</h1>
 
         {/* ── Row 1: Quick stats ── */}
@@ -282,6 +285,11 @@ export default function AdminDashboardPage() {
             </div>
           </Card>
         )}
+
+        <Card className="p-4 space-y-3">
+          <h2 className="text-sm font-semibold text-foreground">Recent Incidents</h2>
+          <IncidentsList />
+        </Card>
       </div>
     </PageScroll>
   );

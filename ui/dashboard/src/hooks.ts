@@ -813,3 +813,52 @@ export function useIsMobile(): boolean {
     () => false,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Safemode + incidents
+// ---------------------------------------------------------------------------
+
+import {
+  fetchSafemode as apiFetchSafemode,
+  exitSafemode as apiExitSafemode,
+  fetchAdminIncidents as apiFetchAdminIncidents,
+  fetchAdminIncidentMarkdown as apiFetchAdminIncidentMarkdown,
+} from "./api.js";
+
+export function useSafemode() {
+  return useQuery({
+    queryKey: ["safemode"],
+    queryFn: apiFetchSafemode,
+    refetchInterval: 5_000,
+    staleTime: 0,
+  });
+}
+
+export function useExitSafemode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: apiExitSafemode,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["safemode"] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["hf", "running"] });
+    },
+  });
+}
+
+export function useAdminIncidents() {
+  return useQuery({
+    queryKey: ["admin-incidents"],
+    queryFn: apiFetchAdminIncidents,
+    staleTime: 10_000,
+  });
+}
+
+export function useAdminIncidentMarkdown(id: string | null) {
+  return useQuery({
+    queryKey: ["admin-incident", id],
+    queryFn: () => apiFetchAdminIncidentMarkdown(id!),
+    enabled: id !== null && id.length > 0,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}

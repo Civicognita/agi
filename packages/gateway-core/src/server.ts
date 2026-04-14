@@ -23,6 +23,7 @@ import { createDatabase, EntityStore, MessageQueue, CommsLog, NotificationStore,
 import { BackupManager } from "./backup-manager.js";
 import { registerComplianceRoutes } from "./compliance-api.js";
 import { registerSecurityRoutes } from "./security-api.js";
+import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@aionima/security";
 import { COAChainLogger } from "@aionima/coa-chain";
 import { PairingStore } from "./pairing-store.js";
@@ -34,6 +35,17 @@ import type { AionimaConfig, ConfigReloadEvent } from "@aionima/config";
 import { ConfigWatcher } from "@aionima/config";
 
 import { SecretsManager } from "./secrets.js";
+import {
+  readAndConsumeShutdownMarker,
+  writeShutdownMarker,
+  buildShutdownMarker,
+  ensureExternals,
+  reconcileProjects,
+  reconcileModels,
+} from "./boot-recovery.js";
+import { safemodeState } from "./safemode-state.js";
+import { LocalModelRuntime, DEFAULT_LOCAL_MODEL_ID } from "./local-model-runtime.js";
+import { runInvestigator } from "./safemode-investigator.js";
 import { GatewayAuth } from "./auth.js";
 import { GatewayStateMachine } from "./state-machine.js";
 import type { StateTransition } from "./state-machine.js";
@@ -213,6 +225,69 @@ export async function startGatewayServer(
 
   const logger: Logger = createLogger(config.logging);
   const log = createComponentLogger(logger, "server");
+
+  // -------------------------------------------------------------------------
+  // Step 1b2: Boot-recovery — detect crash vs graceful shutdown
+  //
+  // Read (and delete) the shutdown marker written by the previous close().
+  // Presence of a marker = last exit was graceful → reconcile saved state.
+  // Absence = crash → enter safemode (dashboard callout + investigator).
+  // External deps (ID Postgres, aionima-id.service) are started either way
+  // because AGI's DBs live in them.
+  // -------------------------------------------------------------------------
+
+  const bootLog = createComponentLogger(logger, "boot-recovery");
+  const shutdownMarker = readAndConsumeShutdownMarker();
+  const isSafemodeBoot = shutdownMarker === null;
+
+  if (isSafemodeBoot) {
+    bootLog.warn("no shutdown marker — previous exit was UNGRACEFUL. Entering SAFEMODE.");
+    safemodeState.enter("crash_detected");
+  } else {
+    bootLog.info(
+      `graceful shutdown marker consumed (reason=${shutdownMarker.reason}, shutdownAt=${shutdownMarker.shutdownAt})`,
+    );
+  }
+
+  // Always ensure external deps (Postgres + ID service) are up — AGI needs them
+  // even in safemode for its own DB pool.
+  try {
+    const externalsReport = await ensureExternals(bootLog);
+    bootLog.info(
+      `externals: postgres=${externalsReport.postgres.action}(${externalsReport.postgres.state}) idService=${externalsReport.idService.action}(${externalsReport.idService.state}) pgReady=${String(externalsReport.postgresReady)}`,
+    );
+  } catch (err) {
+    bootLog.error(
+      `ensureExternals threw (continuing boot): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // On clean boot, also restart project + model containers that were running
+  // before. Must happen BEFORE HostingManager.initialize() and BEFORE
+  // ModelContainerManager construction — both query podman and only pick up
+  // containers currently in "running" state.
+  if (!isSafemodeBoot && shutdownMarker !== null) {
+    try {
+      const projReport = reconcileProjects(shutdownMarker.projects, bootLog);
+      bootLog.info(
+        `reconcile projects: started=${String(projReport.started)} skipped=${String(projReport.skipped)} failed=${String(projReport.failed)}`,
+      );
+    } catch (err) {
+      bootLog.error(
+        `reconcileProjects threw (continuing boot): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    try {
+      const modelReport = reconcileModels(shutdownMarker.models, bootLog);
+      bootLog.info(
+        `reconcile models: started=${String(modelReport.started)} skipped=${String(modelReport.skipped)} failed=${String(modelReport.failed)}`,
+      );
+    } catch (err) {
+      bootLog.error(
+        `reconcileModels threw (continuing boot): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Step 1c: Secrets — load TPM2-sealed credentials into process.env
@@ -1314,8 +1389,33 @@ export async function startGatewayServer(
     isEnabled: () => Boolean(((config as Record<string, unknown>).hf as { enabled?: boolean } | undefined)?.enabled),
   };
 
-  // Auto-start models if HF is enabled at boot
-  if (hfInitConfig?.enabled) {
+  // -------------------------------------------------------------------------
+  // Step 5i2: Local model runtime (small model for safemode investigator + doctor)
+  // -------------------------------------------------------------------------
+
+  const opsConfig = (config as Record<string, unknown>).ops as
+    | { localModel?: { modelId?: string } }
+    | undefined;
+  const localModelRuntime = new LocalModelRuntime(
+    modelStore,
+    inferenceGateway,
+    { modelId: opsConfig?.localModel?.modelId ?? DEFAULT_LOCAL_MODEL_ID },
+    createComponentLogger(logger, "local-model"),
+  );
+
+  // If we booted into safemode, fire the investigator async (don't block boot).
+  // The investigator writes a report to ~/.agi/incidents/ and surfaces a
+  // notification the user sees in the dashboard.
+  if (isSafemodeBoot) {
+    void runInvestigator(createComponentLogger(logger, "investigator"), {
+      localModel: localModelRuntime,
+      notificationStore,
+    });
+  }
+
+  // Auto-start models if HF is enabled at boot — but skip in safemode so a
+  // crashed container can't re-trigger whatever broke us last time.
+  if (hfInitConfig?.enabled && !isSafemodeBoot) {
     const autoStartIds = hfInitConfig.autoStart ?? [];
     for (const modelId of autoStartIds) {
       const model = await modelStore.getById(modelId);
@@ -1327,6 +1427,8 @@ export async function startGatewayServer(
       }
     }
     log.info(`HF Model Runtime enabled — hardware tier: ${profile.capabilities.tier}, cache: ${hfCacheDir}`);
+  } else if (hfInitConfig?.enabled && isSafemodeBoot) {
+    log.warn("HF Model Runtime: auto-start SKIPPED (safemode boot)");
   } else {
     log.info("HF Model Runtime initialized (disabled — enable via Settings > HF Marketplace)");
   }
@@ -1657,6 +1759,7 @@ export async function startGatewayServer(
         (f) => registerWorkerApi(f, workerRuntime, workerPromptLoader),
         (f) => registerComplianceRoutes(f, { incidentStore, vendorStore, sessionStore: complianceSessionStore, backupManager }),
         (f) => registerSecurityRoutes(f, { scanRunner, scanStore }),
+        (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api")),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
       ],
     },
@@ -3087,6 +3190,26 @@ export async function startGatewayServer(
     closed = true;
 
     log.info("shutting down...");
+
+    // Step -1: Write shutdown marker FIRST — captures running project + model
+    // containers so the next boot can tell this was a graceful exit and can
+    // restart anything that drifted (e.g. podman-restart missed it after an
+    // unrelated crash). Must run before any subsystem tears down its state.
+    try {
+      const marker = buildShutdownMarker(
+        hostingManager.snapshotRunning(),
+        modelContainerManager.snapshotRunning(),
+        "sigterm",
+      );
+      writeShutdownMarker(marker);
+      log.info(
+        `shutdown marker written: ${String(marker.projects.length)} project(s), ${String(marker.models.length)} model(s)`,
+      );
+    } catch (err) {
+      log.error(
+        `failed to write shutdown marker: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     // Step 0: Stop heartbeat scheduler
     if (heartbeatScheduler !== null) {

@@ -1411,3 +1411,40 @@ export interface HFFineTuneJob {
     eta_seconds: number | null;
   };
 }
+
+// ---------------------------------------------------------------------------
+// Safemode + incident reports (Admin only)
+// ---------------------------------------------------------------------------
+
+export interface SafemodeSnapshot {
+  active: boolean;
+  reason: "crash_detected" | "manual" | null;
+  since: string | null;
+  reportPath: string | null;
+  investigation:
+    | { status: "pending" }
+    | { status: "running"; startedAt: string }
+    | { status: "complete"; finishedAt: string; autoRecoverable: boolean }
+    | { status: "failed"; finishedAt: string; error: string };
+}
+
+export interface IncidentSummary {
+  id: string;
+  createdAt: string;
+  summary: string;
+  size: number;
+}
+
+export interface SafemodeExitResult {
+  ok: true;
+  snapshot: SafemodeSnapshot;
+  recovery: {
+    externals: {
+      postgres: { action: "none" | "started" | "failed"; state: string };
+      idService: { action: "none" | "started" | "failed"; state: string };
+      postgresReady: boolean;
+    };
+    projects: { total: number; started: number; failed: number };
+    models: { total: number; started: number; failed: number };
+  };
+}
