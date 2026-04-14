@@ -25,6 +25,7 @@ import { gateInvocation, isHumanCommand } from "./invocation-gate.js";
 import { AgentSessionManager } from "./agent-session.js";
 import { ToolRegistry } from "./tool-registry.js";
 import type { ToolExecutionContext } from "./tool-registry.js";
+import { WORKER_DISPATCH_MANIFEST } from "./tools/worker-dispatch.js";
 import type { COAChainLogger } from "@aionima/coa-chain";
 
 // ---------------------------------------------------------------------------
@@ -574,7 +575,7 @@ describe("system-prompt.ts", () => {
 
     it("includes RESPONSE_FORMAT section", () => {
       const prompt = assembleSystemPrompt(makePromptCtx());
-      // The response format section always mentions TASKMASTER shortcode
+      // The TASKMASTER section documents the q:> inline emission shortcode
       expect(prompt).toContain("q:>");
     });
 
@@ -583,6 +584,26 @@ describe("system-prompt.ts", () => {
       // At least 5 double-newline separators for 6 sections
       const separators = prompt.split("\n\n").length;
       expect(separators).toBeGreaterThanOrEqual(6);
+    });
+
+    it("includes a TASKMASTER section naming the orchestrator and WorkQueue tab", () => {
+      const prompt = assembleSystemPrompt(makePromptCtx());
+      expect(prompt).toContain("## TASKMASTER");
+      expect(prompt).toContain("WorkQueue");
+      expect(prompt).toContain("worker_dispatch");
+    });
+
+    it("TASKMASTER section precedes the final Response format section", () => {
+      const prompt = assembleSystemPrompt(makePromptCtx());
+      const tmIdx = prompt.indexOf("## TASKMASTER");
+      const rfIdx = prompt.indexOf("Response format:");
+      expect(tmIdx).toBeGreaterThan(-1);
+      expect(rfIdx).toBeGreaterThan(tmIdx);
+    });
+
+    it("worker_dispatch manifest description names TaskMaster and WorkQueue so the LLM can pick it", () => {
+      expect(WORKER_DISPATCH_MANIFEST.description).toContain("TaskMaster");
+      expect(WORKER_DISPATCH_MANIFEST.description).toContain("WorkQueue");
     });
 
     it("tool entry includes sizeCapBytes formatted as KB", () => {

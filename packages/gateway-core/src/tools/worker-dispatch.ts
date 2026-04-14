@@ -95,8 +95,17 @@ export function createWorkerDispatchHandler(
 export const WORKER_DISPATCH_MANIFEST = {
   name: "worker_dispatch",
   description:
-    "Dispatch a background worker task. " +
-    "Accepts description, domain, worker, and priority. Returns the job ID.",
+    "Queue a task with TaskMaster, the background worker orchestrator. " +
+    "TaskMaster decomposes the description into phased worker assignments " +
+    "(e.g. code.hacker\u2192code.tester, comm.writer.tech\u2192comm.editor) and runs " +
+    "them in isolated worktrees. Use when: (a) the task spans >2 files or " +
+    "multiple concerns, (b) it benefits from specialist review (code review, " +
+    "policy editing, compliance audit), (c) the user asks for research, " +
+    "documentation, or design work, (d) subtasks can run in parallel, or " +
+    "(e) the user explicitly says 'dispatch', 'queue', 'delegate', 'worker', " +
+    "or 'task'. Jobs appear live in the owner's WorkQueue dashboard tab. " +
+    "Inputs: description (required), domain, worker, priority. Returns jobId. " +
+    "Call this tool multiple times in one turn to fan out parallel work.",
   requiresState: ["ONLINE" as const],
   requiresTier: ["verified" as const, "sealed" as const],
 };

@@ -266,32 +266,49 @@ function formatBytes(bytes: number): string {
   return `${String(bytes)} bytes`;
 }
 
+function buildTaskmasterSection(): string {
+  return `## TASKMASTER — Background Work Orchestration
+
+You have a background orchestrator called **TaskMaster**. Call the \`worker_dispatch\` tool to queue a job. TaskMaster decomposes the description into phased worker assignments, runs them in isolated git worktrees, and produces reports. Queued jobs appear live in the owner's **WorkQueue** dashboard tab; the "Aionima is working" header indicator reflects active runs.
+
+### When to dispatch
+- Code changes touching >2 files, or anything reviewable (dispatch code.hacker \u2014 the runtime chains code.tester automatically)
+- Research, documentation, or policy drafts (k.analyst; comm.writer.tech\u2192editor; comm.writer.policy\u2192editor)
+- Architecture plans, backlog prioritization, compliance audits (strat.planner, strat.prioritizer, gov.auditor\u2192archivist)
+- Any phrasing from the owner like "dispatch", "queue", "delegate", "have a worker\u2026", "in the background"
+- Parallelizable subtasks \u2014 call \`worker_dispatch\` multiple times in one turn; jobs run concurrently
+
+### When NOT to dispatch
+- Quick answers, lookups, or single-file edits that take <30 seconds
+- Conversation, clarifying questions, or anything requiring owner input mid-stream
+- Tasks the owner explicitly asks you to do yourself ("you do it", "don't delegate")
+
+### Domains and workers
+- **code** \u2014 engineer (architecture), hacker (implementation), reviewer, tester
+- **k** \u2014 analyst, cryptologist, librarian, linguist
+- **ux** \u2014 designer.web, designer.cli
+- **strat** \u2014 planner, prioritizer
+- **comm** \u2014 writer.tech, writer.policy, editor
+- **ops** \u2014 deployer, custodian, syncer
+- **gov** \u2014 auditor, archivist
+- **data** \u2014 modeler, migrator
+
+**Enforced chains** (you dispatch the head, TaskMaster runs the tail): hacker\u2192tester, writer.tech\u2192editor, writer.policy\u2192editor, modeler\u2192linguist, auditor\u2192archivist.
+
+### Inline emission (\`q:>\`)
+You may emit a single \`q:> <task description>\` line on its own line in your reply. The runtime strips the line from the user-visible response and hands the task to TaskMaster with default routing. **Maximum one \`q:>\` emission per turn** (governance spec \u00a76.4). For parallel fan-out, use repeated \`worker_dispatch\` tool calls instead.
+
+### Dispatch rules
+- One task per \`worker_dispatch\` call \u2014 don't batch unrelated work into one description
+- Descriptions must be specific and self-contained \u2014 the worker doesn't see this conversation
+- If unsure of routing, default to domain="code" worker="engineer" and let TaskMaster re-route`;
+}
+
 function buildResponseFormatSection(): string {
   return `Response format:
 - Respond in the language used by the entity unless instructed otherwise.
 - Do not expose internal identifiers (entity IDs, COA fingerprints, TIDs) in responses unless the entity explicitly requests system information.
-- Do not fabricate tool results. If a tool is unavailable, state it plainly.
-
-## WORKERS — Background Worker Dispatch
-
-The \`worker_dispatch\` tool creates background worker jobs. When you use it, workers execute autonomously using their own tool loops and produce reports.
-
-Available worker domains:
-- **code** — engineer (architecture), hacker (implementation), reviewer (code review), tester (validation)
-- **k** — analyst (research), cryptologist (encoding/decoding), librarian (knowledge organization), linguist (terminology)
-- **ux** — designer.web (UI components), designer.cli (terminal interfaces)
-- **strat** — planner (architecture plans), prioritizer (backlog ordering)
-- **comm** — writer.tech (documentation), writer.policy (governance docs), editor (review/polish)
-- **ops** — deployer (releases), custodian (maintenance), syncer (data sync)
-- **gov** — auditor (compliance), archivist (record keeping)
-- **data** — modeler (schema design), migrator (data transforms)
-
-Guidelines:
-- Use \`worker_dispatch\` for tasks that benefit from focused, autonomous execution
-- Choose the appropriate domain and worker for the task
-- Workers run in isolated git worktrees and produce reports at completion
-- Reports are viewable in the dashboard under Impactinomics > Reports
-- One dispatch per tool call. Provide a clear, specific description.`;
+- Do not fabricate tool results. If a tool is unavailable, state it plainly.`;
 }
 
 /** Owner context section — tells the agent who owns this install. */
@@ -653,6 +670,7 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
     sections.push(buildPlanWorkflowSection());
   }
 
+  sections.push(buildTaskmasterSection());
   sections.push(buildResponseFormatSection());
 
   return sections.join("\n\n");
