@@ -2089,6 +2089,12 @@ export async function startGatewayServer(
 
         // Generate a runId to link all messages from this invocation.
         const runId = ulid();
+        // `currentRunId` is the runId the chat event handlers should stamp on emitted
+        // events. It starts equal to `runId`, but the post-run injection drain mutates
+        // it so each follow-up run's events carry their own injRunId (the previous
+        // closure-capture bug sent events with the outer runId and corrupted the run
+        // grouping on the client).
+        let currentRunId: string = runId;
 
         wsServer.sendTo(connectionId, "chat:thinking", {
           sessionId: chatSessionId,
@@ -2163,7 +2169,7 @@ export async function startGatewayServer(
           if (data.sessionKey !== sessionKey) return;
           wsServer.sendTo(getConnId(), "chat:tool_start", {
             sessionId: chatSessionId,
-            runId,
+            runId: currentRunId,
             toolName: data.toolName,
             toolIndex: data.toolIndex,
             loopIteration: data.loopIteration,
@@ -2185,7 +2191,7 @@ export async function startGatewayServer(
           const toolCardId = `${chatSessionId ?? "t"}-${String(data.loopIteration)}-${String(data.toolIndex)}`;
           wsServer.sendTo(getConnId(), "chat:tool_result", {
             sessionId: chatSessionId,
-            runId,
+            runId: currentRunId,
             toolName: data.toolName,
             toolIndex: data.toolIndex,
             loopIteration: data.loopIteration,
@@ -2203,7 +2209,7 @@ export async function startGatewayServer(
                 role: "tool",
                 content: data.summary ?? data.toolName,
                 timestamp: toolResultTs,
-                runId,
+                runId: currentRunId,
                 toolCard: {
                   id: toolCardId,
                   toolName: data.toolName,
@@ -2257,7 +2263,7 @@ export async function startGatewayServer(
           const thoughtTs = new Date().toISOString();
           wsServer.sendTo(getConnId(), "chat:thought", {
             sessionId: chatSessionId,
-            runId,
+            runId: currentRunId,
             content: data.content,
             timestamp: thoughtTs,
           });
@@ -2269,10 +2275,17 @@ export async function startGatewayServer(
                 role: "thought",
                 content: data.content,
                 timestamp: thoughtTs,
-                runId,
+                runId: currentRunId,
               }));
             }
           }
+        };
+        const injectionConsumedHandler = (data: { sessionKey: string; count: number }) => {
+          if (data.sessionKey !== sessionKey) return;
+          wsServer.sendTo(getConnId(), "chat:injection_consumed", {
+            sessionId: chatSessionId,
+            count: data.count,
+          });
         };
 
         // Use a getter that always resolves the CURRENT connectionId for this owner,
@@ -2284,12 +2297,14 @@ export async function startGatewayServer(
         agentInvoker.on("tool_result", toolResultHandler);
         agentInvoker.on("progress", progressHandler);
         agentInvoker.on("thought", thoughtHandler);
+        agentInvoker.on("injection_consumed", injectionConsumedHandler);
 
         const removeProgressListeners = () => {
           agentInvoker.removeListener("tool_start", toolStartHandler);
           agentInvoker.removeListener("tool_result", toolResultHandler);
           agentInvoker.removeListener("progress", progressHandler);
           agentInvoker.removeListener("thought", thoughtHandler);
+          agentInvoker.removeListener("injection_consumed", injectionConsumedHandler);
         };
 
         const chainKey = sessionKey ?? `${ownerEntityId}:web:default`;
@@ -2314,7 +2329,9 @@ export async function startGatewayServer(
             abortSignal: abortController.signal,
           });
         }).then(async (outcome) => {
-          removeProgressListeners();
+          // Listeners stay attached through the post-run drain below — final detach
+          // happens in the .finally() after drain completes. Removing them here
+          // (as the old code did) silenced tool/thought events for injection follow-ups.
           if (chatSessionId) sessionAbortControllers.delete(chatSessionId);
           // Emit invocation_complete to clear the project activity indicator.
           if (chatProjectPath !== undefined) {
@@ -2417,11 +2434,14 @@ export async function startGatewayServer(
           // Drain any remaining injected messages that weren't consumed during the
           // tool loop (e.g. when the agent responded with text only, no tools).
           // Re-invoke the agent for each so the frontend's pending counter clears.
+          // Each follow-up run reassigns `currentRunId` so the still-attached event
+          // handlers stamp events with the correct runId (prior closure-capture bug).
           if (sessionKey) {
             const remaining = agentInvoker.drainInjections(sessionKey);
             for (const injText of remaining) {
               const injRunId = ulid();
-              wsServer.sendTo(connectionId, "chat:thinking", {
+              currentRunId = injRunId;
+              wsServer.sendTo(getConnId(), "chat:thinking", {
                 sessionId: chatSessionId,
                 runId: injRunId,
                 timestamp: new Date().toISOString(),
@@ -2451,7 +2471,7 @@ export async function startGatewayServer(
                 });
                 if (injOutcome.type === "response") {
                   const injResponseText = injOutcome.text || "[No response]";
-                  wsServer.sendTo(connectionId, "chat:response", {
+                  wsServer.sendTo(getConnId(), "chat:response", {
                     sessionId: chatSessionId,
                     runId: injRunId,
                     text: injResponseText,
@@ -2471,11 +2491,23 @@ export async function startGatewayServer(
                     }
                   }
                 } else if (injOutcome.type === "error") {
-                  wsServer.sendTo(connectionId, "chat:error", { sessionId: chatSessionId, error: injOutcome.message });
+                  wsServer.sendTo(getConnId(), "chat:error", { sessionId: chatSessionId, error: injOutcome.message });
+                } else if (injOutcome.type === "rate_limited") {
+                  wsServer.sendTo(getConnId(), "chat:error", { sessionId: chatSessionId, error: injOutcome.entityNotification });
+                } else {
+                  // Default: any other outcome type (queued, human_routed, log_only) — emit
+                  // a chat:response so the client's thinking state ALWAYS clears. Without
+                  // this default the UI sticks on "thinking..." forever.
+                  wsServer.sendTo(getConnId(), "chat:response", {
+                    sessionId: chatSessionId,
+                    runId: injRunId,
+                    text: "[Follow-up processed]",
+                    timestamp: new Date().toISOString(),
+                  });
                 }
               } catch (injErr: unknown) {
                 log.error(`chat:inject follow-up error: ${injErr instanceof Error ? injErr.message : String(injErr)}`);
-                wsServer.sendTo(connectionId, "chat:error", {
+                wsServer.sendTo(getConnId(), "chat:error", {
                   sessionId: chatSessionId,
                   error: injErr instanceof Error ? injErr.message : "Follow-up processing failed",
                 });
@@ -2483,7 +2515,6 @@ export async function startGatewayServer(
             }
           }
         }).catch((err: unknown) => {
-          removeProgressListeners();
           // Emit invocation_complete even on error so the indicator doesn't get stuck.
           if (chatProjectPath !== undefined) {
             dashboardBroadcasterRef?.emitProjectActivity({
@@ -2498,6 +2529,9 @@ export async function startGatewayServer(
             error: err instanceof Error ? err.message : "Agent processing failed",
           });
         }).finally(() => {
+          // Always detach listeners regardless of success/failure — previously only the
+          // catch branch did this, leaking handlers across every chat:send on the same WS.
+          removeProgressListeners();
           if (sessionProcessingChain.get(chainKey) === current) {
             sessionProcessingChain.delete(chainKey);
           }

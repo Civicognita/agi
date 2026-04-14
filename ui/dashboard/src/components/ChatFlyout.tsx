@@ -15,6 +15,8 @@ import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
 import type { ToolCard } from "./ToolCards.js";
 import { PlanViewer } from "./PlanViewer.js";
 import { ChatHistory } from "./ChatHistory.js";
+import { applyInjectionConsumed, shouldShowLivePill, applyStallTimeout } from "./chat-flyout-reducers.js";
+import type { ChatSessionShape } from "./chat-flyout-reducers.js";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks.js";
@@ -297,6 +299,37 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   }, []);
 
   // -------------------------------------------------------------------------
+  // Stall detection — if no WS traffic arrives for STALL_MS while a session is
+  // "thinking", surface a timeout message so the UI isn't stuck until reload.
+  // -------------------------------------------------------------------------
+
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const STALL_MS = 120_000;
+
+  const clearStallTimer = useCallback(() => {
+    if (stallTimerRef.current) {
+      clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+  }, []);
+
+  const resetStallTimer = useCallback((sessionId: string) => {
+    if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
+    stallTimerRef.current = setTimeout(() => {
+      setSessions((prev) => prev.map((s) =>
+        s.id === sessionId
+          ? (applyStallTimeout(
+              s as unknown as ChatSessionShape,
+              "Response timed out \u2014 the connection may have dropped. Try sending again.",
+              new Date().toISOString(),
+            ) as unknown as ChatSession)
+          : s
+      ));
+      stallTimerRef.current = null;
+    }, STALL_MS);
+  }, []);
+
+  // -------------------------------------------------------------------------
   // WebSocket connection
   // -------------------------------------------------------------------------
 
@@ -307,6 +340,9 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     wsRef.current = ws;
 
     ws.onopen = () => {
+      // Refresh server's ownerConnectionMap for this entity — any message works,
+      // and ping is a no-side-effect handler on the server side.
+      ws.send(JSON.stringify({ type: "ping" }));
       // Flush any pending openWithContext that arrived before WS was ready
       const pending = pendingContextRef.current;
       if (pending) {
@@ -320,6 +356,21 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         const msg = JSON.parse(event.data as string) as { type: string; payload?: unknown };
         const payload = msg.payload as Record<string, unknown> | undefined;
         const sid = payload?.sessionId as string | undefined;
+
+        // Stall-timer bookkeeping: any mid-run activity resets; terminal events clear.
+        if (msg.type === "chat:response" || msg.type === "chat:error" || msg.type === "chat:cancelled") {
+          clearStallTimer();
+        } else if (sid !== undefined && (
+          msg.type === "chat:thinking" ||
+          msg.type === "chat:thought" ||
+          msg.type === "chat:tool_start" ||
+          msg.type === "chat:tool_result" ||
+          msg.type === "chat:progress" ||
+          msg.type === "chat:inject_ack" ||
+          msg.type === "chat:injection_consumed"
+        )) {
+          resetStallTimer(sid);
+        }
 
         switch (msg.type) {
           case "chat:opened": {
@@ -402,6 +453,18 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           }
           case "chat:inject_ack": {
             // Acknowledgement that injection was queued — no-op for now
+            break;
+          }
+          case "chat:injection_consumed": {
+            // Server signals that the agent has woven N queued injections into the current run.
+            // Move them from queuedMessages into messages so they appear inline in the run timeline.
+            const p = payload as { sessionId?: string; count?: number };
+            if (!p.sessionId || typeof p.count !== "number" || p.count <= 0) break;
+            setSessions((prev) => prev.map((s) =>
+              s.id === p.sessionId
+                ? (applyInjectionConsumed(s as unknown as ChatSessionShape, p.count ?? 0) as unknown as ChatSession)
+                : s
+            ));
             break;
           }
           case "chat:context_set": {
@@ -782,6 +845,14 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     createSession(openWithContext);
   }, [open, openWithContext, openWithMessage, openRequestId, createSession]);
 
+  // Reset context guards when the flyout closes so reopening with the same context re-triggers the effects above.
+  useEffect(() => {
+    if (!open) {
+      prevContextRef.current = null;
+      prevRequestRef.current = null;
+    }
+  }, [open]);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -928,95 +999,118 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             </div>
           )}
 
-          {activeSession && activeSession.messages.map((msg, idx) => {
-            // Tool messages — standalone card with label
-            if (msg.role === "tool" && msg.toolCard) {
-              return (
-                <div key={`tool-${msg.toolCard.id}-${String(idx)}`} className="flex flex-col items-start gap-1">
-                  <div className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider px-1">
-                    Tool: {msg.toolCard.toolName}
-                  </div>
-                  <div className="max-w-[85%]">
-                    <SingleToolCard card={msg.toolCard} collapsed />
-                  </div>
-                </div>
-              );
-            }
+          {activeSession && groupByRun(activeSession.messages).map((group, gIdx) => (
+            <div
+              key={`run-${group.runId ?? `noid-${String(gIdx)}`}`}
+              data-testid="run-group"
+              className="flex flex-col gap-3"
+            >
+              {gIdx > 0 && <div className="h-px bg-border/50 -my-1" aria-hidden />}
+              {group.messages.map((msg) => {
+                const idx = msg._idx;
 
-            // Thought messages — shown as a distinct message bubble (not collapsed)
-            if (msg.role === "thought") {
-              return (
-                <div key={`thought-${msg.timestamp}-${String(idx)}`} className="flex flex-col items-start gap-1">
-                  <div className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider px-1">
-                    Thinking
-                    <span className="ml-2 font-normal opacity-60">
-                      {new Date(msg.timestamp).toLocaleTimeString()}
-                    </span>
-                  </div>
-                  <div className="max-w-[85%] px-3 py-2 rounded-[10px] bg-secondary/60 border border-border text-muted-foreground text-[12px] leading-relaxed whitespace-pre-wrap">
-                    {msg.content.length > 500 ? (
-                      <details>
-                        <summary className="cursor-pointer select-none">
-                          {msg.content.slice(0, 200)}...
-                        </summary>
-                        <div className="mt-1">{msg.content}</div>
-                      </details>
-                    ) : (
-                      msg.content
+                // Tool messages — standalone card with label
+                if (msg.role === "tool" && msg.toolCard) {
+                  return (
+                    <div
+                      key={`tool-${msg.toolCard.id}-${String(idx)}`}
+                      data-role="tool"
+                      className="flex flex-col items-start gap-1"
+                    >
+                      <div className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider px-1">
+                        Tool: {msg.toolCard.toolName}
+                      </div>
+                      <div className="max-w-[85%]">
+                        <SingleToolCard card={msg.toolCard} collapsed />
+                      </div>
+                    </div>
+                  );
+                }
+
+                // Thought messages — distinct bubble with left accent; only collapse very long walls.
+                if (msg.role === "thought") {
+                  return (
+                    <div
+                      key={`thought-${msg.timestamp}-${String(idx)}`}
+                      data-role="thought"
+                      className="flex flex-col items-start gap-1"
+                    >
+                      <div className="text-[9px] text-blue/70 font-semibold uppercase tracking-wider px-1">
+                        Thinking
+                        <span className="ml-2 font-normal opacity-60">
+                          {new Date(msg.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <div className="max-w-[85%] px-3 py-2 rounded-[10px] bg-secondary/60 border border-border border-l-4 border-l-blue/60 text-muted-foreground text-[12px] leading-relaxed whitespace-pre-wrap">
+                        {msg.content.length > 2000 ? (
+                          <details>
+                            <summary className="cursor-pointer select-none">
+                              {msg.content.slice(0, 400)}...
+                            </summary>
+                            <div className="mt-1">{msg.content}</div>
+                          </details>
+                        ) : (
+                          msg.content
+                        )}
+                      </div>
+                    </div>
+                  );
+                }
+
+                // User and assistant messages
+                const isUser = msg.role === "user";
+                return (
+                  <div
+                    key={`${msg.timestamp}-${String(idx)}`}
+                    data-role={isUser ? "user" : "assistant"}
+                    className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}
+                  >
+                    {/* Role label */}
+                    <div className={cn("text-[9px] font-semibold uppercase tracking-wider px-1", isUser ? "text-primary/60" : "text-muted-foreground")}>
+                      {isUser ? "You" : "Aionima"}
+                      <span className="ml-2 font-normal opacity-60">
+                        {new Date(msg.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    {/* Legacy: frozen tool cards on old assistant messages */}
+                    {!isUser && msg.toolCards && msg.toolCards.length > 0 && (
+                      <div className="max-w-[85%] mb-0.5">
+                        <ToolCards cards={msg.toolCards} collapsed />
+                      </div>
                     )}
-                  </div>
-                </div>
-              );
-            }
-
-            // User and assistant messages
-            const isUser = msg.role === "user";
-            return (
-              <div key={`${msg.timestamp}-${String(idx)}`} className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}>
-                {/* Role label */}
-                <div className={cn("text-[9px] font-semibold uppercase tracking-wider px-1", isUser ? "text-primary/60" : "text-muted-foreground")}>
-                  {isUser ? "You" : "Aionima"}
-                  <span className="ml-2 font-normal opacity-60">
-                    {new Date(msg.timestamp).toLocaleTimeString()}
-                  </span>
-                </div>
-                {/* Legacy: frozen tool cards on old assistant messages */}
-                {!isUser && msg.toolCards && msg.toolCards.length > 0 && (
-                  <div className="max-w-[85%] mb-0.5">
-                    <ToolCards cards={msg.toolCards} collapsed />
-                  </div>
-                )}
-                <div className={cn(
-                  "max-w-[80%] px-3 py-2 rounded-[10px] text-[13px] leading-relaxed break-words",
-                  isUser
-                    ? "bg-primary text-primary-foreground whitespace-pre-wrap"
-                    : "bg-card text-card-foreground border border-border",
-                )}>
-                  {isUser ? (
-                    <>
-                      {msg.content}
-                      {msg.images && msg.images.length > 0 && (
-                        <div className="flex gap-1.5 flex-wrap mt-1.5">
-                          {msg.images.map((src, imgIdx) => (
-                            <img
-                              key={`img-${String(imgIdx)}`}
-                              src={src}
-                              alt="attachment"
-                              className="max-w-[200px] max-h-[160px] rounded-md object-cover"
-                            />
-                          ))}
-                        </div>
+                    <div className={cn(
+                      "max-w-[80%] px-3 py-2 rounded-[10px] text-[13px] leading-relaxed break-words",
+                      isUser
+                        ? "bg-primary text-primary-foreground whitespace-pre-wrap"
+                        : "bg-card text-card-foreground border border-border",
+                    )}>
+                      {isUser ? (
+                        <>
+                          {msg.content}
+                          {msg.images && msg.images.length > 0 && (
+                            <div className="flex gap-1.5 flex-wrap mt-1.5">
+                              {msg.images.map((src, imgIdx) => (
+                                <img
+                                  key={`img-${String(imgIdx)}`}
+                                  src={src}
+                                  alt="attachment"
+                                  className="max-w-[200px] max-h-[160px] rounded-md object-cover"
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                          {msg.content}
+                        </ReactMarkdown>
                       )}
-                    </>
-                  ) : (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                      {msg.content}
-                    </ReactMarkdown>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
 
           {activeSession?.activePlan && (
             <PlanViewer
@@ -1041,17 +1135,21 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             </div>
           )}
 
-          {activeSession?.thinking && (
-            <div className="flex justify-start flex-col gap-0.5 max-w-[85%]">
-              <div className="flex items-center gap-2 px-2 py-1.5 text-muted-foreground text-[11px]">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue animate-pulse" />
-                <span>{activeSession.toolActivity.some((t) => t.status === "running") ? "Working..." : "Thinking..."}</span>
-              </div>
-              {activeSession.progressText && (
-                <div className="px-2 py-1 text-[11px] text-muted-foreground italic truncate">
-                  {activeSession.progressText}
-                </div>
-              )}
+          {activeSession && shouldShowLivePill(activeSession as unknown as ChatSessionShape) && (
+            <div data-testid="chat-live-pill" className="flex items-center gap-2 px-2 py-1.5 text-muted-foreground text-[11px]">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue animate-pulse" />
+              <span>Thinking...</span>
+            </div>
+          )}
+
+          {/* Intermediate assistant text emitted between tool calls — shown as a subtle live status,
+              distinct from real thought bubbles and from the final response. */}
+          {activeSession?.progressText && activeSession.thinking && (
+            <div
+              data-testid="chat-progress-text"
+              className="text-[10px] text-muted-foreground italic px-2 max-w-[85%]"
+            >
+              {activeSession.progressText}
             </div>
           )}
 
@@ -1061,6 +1159,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
               {activeSession.queuedMessages.map((q, qi) => (
                 <div
                   key={`queued-${String(qi)}-${q.timestamp}`}
+                  data-testid="queued-card"
                   className="max-w-[75%] px-3 py-2 rounded-[10px] border-2 border-dashed border-blue/40 bg-background text-foreground text-[12px] leading-relaxed"
                 >
                   <div className="text-[9px] text-blue/60 font-semibold mb-0.5">Queued</div>
@@ -1184,7 +1283,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // Docked mode: render as inline flex child (no overlay, no backdrop)
   if (docked) {
     return (
-      <div className="flex flex-col h-full border-l border-border bg-background" style={{ width: "50%" }}>
+      <div data-testid="chat-flyout" className="flex flex-col h-full border-l border-border bg-background" style={{ width: "50%" }}>
         {panelHeader}
         {panelBody}
       </div>
@@ -1193,7 +1292,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
 
   // Overlay mode: fixed panel with backdrop
   return (
-    <div className="fixed inset-0 z-[200] flex justify-end">
+    <div data-testid="chat-flyout" className="fixed inset-0 z-[200] flex justify-end">
       {!isFullscreen && (
         <div className={cn("bg-black/30", isMobile ? "absolute inset-0" : "flex-1")} onClick={onClose} />
       )}

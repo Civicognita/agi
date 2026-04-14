@@ -26,6 +26,8 @@ import { AgentSessionManager } from "./agent-session.js";
 import { ToolRegistry } from "./tool-registry.js";
 import type { ToolExecutionContext } from "./tool-registry.js";
 import { WORKER_DISPATCH_MANIFEST } from "./tools/worker-dispatch.js";
+import { AgentInvoker } from "./agent-invoker.js";
+import type { AgentInvokerDeps } from "./agent-invoker.js";
 import type { COAChainLogger } from "@aionima/coa-chain";
 
 // ---------------------------------------------------------------------------
@@ -611,6 +613,59 @@ describe("system-prompt.ts", () => {
       const prompt = assembleSystemPrompt(makePromptCtx({ tools }));
       expect(prompt).toContain("16 KB");
     });
+  });
+});
+
+// ===========================================================================
+// 2b. agent-invoker.ts — injection queue
+// ===========================================================================
+
+describe("agent-invoker.ts \u2014 injection queue", () => {
+  function makeAgentInvoker(): AgentInvoker {
+    // Injection-queue methods touch only an internal Map; none of these deps
+    // are invoked by injectMessage / drainInjections / hasPendingInjections.
+    const deps = {
+      stateMachine: {} as never,
+      apiClient: {} as never,
+      sessionManager: {} as never,
+      toolRegistry: {} as never,
+      rateLimiter: {} as never,
+      coaLogger: {} as never,
+      resourceId: "$A0",
+      nodeId: "@A0",
+    } as unknown as AgentInvokerDeps;
+    return new AgentInvoker(deps);
+  }
+
+  it("hasPendingInjections returns false for a session with no queued messages", () => {
+    const inv = makeAgentInvoker();
+    expect(inv.hasPendingInjections("session-empty")).toBe(false);
+  });
+
+  it("hasPendingInjections returns true after injectMessage, false after drainInjections", () => {
+    const inv = makeAgentInvoker();
+    inv.injectMessage("session-1", "hello");
+    expect(inv.hasPendingInjections("session-1")).toBe(true);
+    const drained = inv.drainInjections("session-1");
+    expect(drained).toEqual(["hello"]);
+    expect(inv.hasPendingInjections("session-1")).toBe(false);
+  });
+
+  it("injection queues are scoped per session", () => {
+    const inv = makeAgentInvoker();
+    inv.injectMessage("session-a", "to-a");
+    expect(inv.hasPendingInjections("session-b")).toBe(false);
+    expect(inv.drainInjections("session-b")).toEqual([]);
+    // "a"'s queue remains intact after draining "b"
+    expect(inv.hasPendingInjections("session-a")).toBe(true);
+  });
+
+  it("drainInjections returns queued messages in insertion order", () => {
+    const inv = makeAgentInvoker();
+    inv.injectMessage("session-1", "first");
+    inv.injectMessage("session-1", "second");
+    inv.injectMessage("session-1", "third");
+    expect(inv.drainInjections("session-1")).toEqual(["first", "second", "third"]);
   });
 });
 

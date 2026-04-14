@@ -249,7 +249,7 @@ export function ProjectDetail({
           <Button size="sm" variant="outline" onClick={() => onOpenTerminal?.(project.path)}>
             Terminal
           </Button>
-          <Button size="sm" onClick={() => onOpenChat(project.path)}>
+          <Button size="sm" data-testid="project-chat-button" onClick={() => onOpenChat(project.path)}>
             Talk about this project
           </Button>
         </div>

@@ -209,6 +209,12 @@ export class AgentInvoker extends EventEmitter {
     return drained;
   }
 
+  /** Peek at injection queue size without draining. Returns true if pending messages exist. */
+  hasPendingInjections(sessionKey: string): boolean {
+    const queue = this.injectionQueues.get(sessionKey);
+    return queue !== undefined && queue.length > 0;
+  }
+
   /**
    * Process an inbound message through the full invocation pipeline.
    *
@@ -577,6 +583,10 @@ export class AgentInvoker extends EventEmitter {
       // Circuit breaker: track call hash repetitions to detect infinite loops.
       const toolCallHashes = new Map<string, number>();
 
+      // Outer continuation loop: re-enters the inner tool loop after draining any pending
+      // user injections so that a mid-run message lands on the SAME run rather than being
+      // deferred to a post-run follow-up.
+      injectionContinuation: while (loopCount < maxToolLoops) {
       while (result.toolCalls.length > 0 && loopCount < maxToolLoops) {
         // Check for cancellation before each tool iteration
         if (abortSignal?.aborted) {
@@ -675,7 +685,7 @@ export class AgentInvoker extends EventEmitter {
           for (const injMsg of injected) {
             toolResultBlocks.push({ type: "text" as const, text: `[User interjection]: ${injMsg}` });
           }
-          this.emit("injection_received", { sessionKey: sKey, count: injected.length });
+          this.emit("injection_consumed", { sessionKey: sKey, count: injected.length });
         }
 
         result = await this.apiClient.continueWithToolResults({
@@ -711,6 +721,49 @@ export class AgentInvoker extends EventEmitter {
           { role: "assistant", content: prevContentBlocks },
           { role: "user", content: toolResultBlocks },
         );
+      }
+
+      // Inner tool loop exited. If the user has queued injections while the model was
+      // finalizing, treat them as a fresh user turn and re-invoke so the injection is
+      // reflected IN THIS RUN rather than creating a post-run follow-up.
+      if (
+        result.toolCalls.length === 0
+        && this.hasPendingInjections(sKey)
+        && loopCount < maxToolLoops
+      ) {
+        if (abortSignal?.aborted) {
+          return { type: "response", text: "[Cancelled by user]", toolsUsed, coaFingerprint, taskmasterEmissions: [], model: result.model, provider: "cancelled", usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens }, toolCount: toolsUsed.length, loopCount };
+        }
+        loopCount++;
+        const injected = this.drainInjections(sKey);
+        const userText = injected.map((t) => `[User interjection]: ${t}`).join("\n\n");
+
+        accumulatedMessages.push(
+          { role: "assistant", content: result.contentBlocks },
+          { role: "user", content: userText },
+        );
+
+        result = await this.apiClient.invoke({
+          system: systemPrompt,
+          messages: accumulatedMessages,
+          tools: providerTools.length > 0 ? providerTools : undefined,
+          entityId: entity.id,
+          thinking: thinkingConfig,
+        });
+        totalInputTokens += result.usage.inputTokens;
+        totalOutputTokens += result.usage.outputTokens;
+
+        for (const block of result.thinkingBlocks) {
+          this.emit("thought", { sessionKey: sKey, content: block.thinking });
+        }
+        this.emit("injection_consumed", { sessionKey: sKey, count: injected.length });
+
+        // Re-enter the outer continuation loop — if `result` has tool calls, the inner
+        // while will pick them up again; otherwise we fall through and break out.
+        continue injectionContinuation;
+      }
+
+      break injectionContinuation;
       }
 
       // -----------------------------------------------------------------------
