@@ -312,6 +312,16 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // client stalls waiting for something the server already "sent" to a dead
   // connection.
   const lastSeqBySession = useRef<Map<string, number>>(new Map());
+
+  // WS heartbeat: we ping every HEARTBEAT_INTERVAL; if the server doesn't
+  // pong within HEARTBEAT_TIMEOUT we assume the WS is a TCP zombie (looks
+  // alive but no data flows) and force-reconnect. On reconnect chat:resume
+  // replays any missed events, so the user doesn't have to reload the page
+  // when the network glitches or the laptop sleeps.
+  const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastPongAtRef = useRef<number>(Date.now());
+  const HEARTBEAT_INTERVAL_MS = 15_000;
+  const HEARTBEAT_TIMEOUT_MS = 25_000;
   const STALL_MS = 120_000;
 
   const clearStallTimer = useCallback(() => {
@@ -351,6 +361,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
       // Refresh server's ownerConnectionMap for this entity — any message works,
       // and ping is a no-side-effect handler on the server side.
       ws.send(JSON.stringify({ type: "ping" }));
+      lastPongAtRef.current = Date.now();
       // Resume any active sessions — server will replay any chat:* events the
       // client missed while the WS was down. For first connect the map is empty
       // and nothing is sent.
@@ -366,6 +377,22 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         pendingContextRef.current = null;
         ws.send(JSON.stringify({ type: "chat:open", payload: { context: pending } }));
       }
+      // Start heartbeat. Every tick we ping; if we haven't seen a pong within
+      // HEARTBEAT_TIMEOUT_MS we declare the WS dead and force-close it so the
+      // reconnect path runs (ws.onclose -> 3s reconnect timer -> new WS).
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = setInterval(() => {
+        if (wsRef.current !== ws) return;
+        const gap = Date.now() - lastPongAtRef.current;
+        if (gap > HEARTBEAT_TIMEOUT_MS) {
+          // TCP zombie — kill it so we reconnect.
+          try { ws.close(); } catch { /* noop */ }
+          return;
+        }
+        if (ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({ type: "ping" })); } catch { /* noop */ }
+        }
+      }, HEARTBEAT_INTERVAL_MS);
     };
 
     ws.onmessage = (event) => {
@@ -373,6 +400,10 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         const msg = JSON.parse(event.data as string) as { type: string; payload?: unknown };
         const payload = msg.payload as Record<string, unknown> | undefined;
         const sid = payload?.sessionId as string | undefined;
+
+        // Any incoming message proves the WS is alive — update the heartbeat.
+        // `pong` specifically is the response to our periodic ping.
+        lastPongAtRef.current = Date.now();
 
         // Track the server's seq high-water mark per session for chat:resume on
         // the next reconnect. Only chat:* events carry a seq (via the server's
@@ -669,6 +700,10 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     };
 
     ws.onclose = () => {
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
       if (wsRef.current === ws) {
         reconnectTimer.current = setTimeout(() => {
           if (wsRef.current === ws || wsRef.current === null) connect();

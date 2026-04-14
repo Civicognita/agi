@@ -1834,10 +1834,22 @@ export class HostingManager {
       blocks.push(`    reverse_proxy ${gw}`);
       blocks.push(`}\n`);
 
-      // WhoDB database explorer — always-on infrastructure at db.{baseDomain}
+      // WhoDB database explorer — always-on infrastructure at db.{baseDomain}.
+      // WhoDB sets `X-Frame-Options: deny` and may set `Content-Security-Policy`
+      // with a restrictive `frame-ancestors` directive; both block the dashboard's
+      // WhoDB iframe. Strip them at the proxy so the dashboard can embed WhoDB
+      // while keeping it accessible standalone at https://db.{baseDomain}.
+      // Replace with a permissive CSP that still locks framing to the owner's
+      // own domain family (ai.on and any configured aliases).
       const whodbPort = this.config.whodbPort ?? 5050;
+      const whodbFrameOrigins = [this.config.baseDomain, ...(this.config.domainAliases ?? [])]
+        .map((d) => `https://${d} https://*.${d}`)
+        .join(" ");
       blocks.push(`db.${this.config.baseDomain} {`);
       blocks.push(`    tls internal`);
+      blocks.push(`    header -X-Frame-Options`);
+      blocks.push(`    header -Content-Security-Policy`);
+      blocks.push(`    header Content-Security-Policy "frame-ancestors 'self' ${whodbFrameOrigins}"`);
       blocks.push(`    reverse_proxy localhost:${String(whodbPort)}`);
       blocks.push(`}\n`);
 
