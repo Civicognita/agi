@@ -1386,6 +1386,23 @@ export async function fetchProjectDevCommands(path: string): Promise<Record<stri
   return data.commands;
 }
 
+export interface EffectiveStartCommand {
+  effective: string | null;
+  source: "override" | "stack" | "devCommands" | "image-default";
+  sourceLabel: string;
+  override: string | null;
+  stackDefault: string | null;
+}
+
+export async function fetchEffectiveStartCommand(path: string): Promise<EffectiveStartCommand> {
+  const res = await fetch(`/api/hosting/stacks/start-command?path=${encodeURIComponent(path)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return await res.json() as EffectiveStartCommand;
+}
+
 export async function removeStack(path: string, stackId: string): Promise<void> {
   const res = await fetch("/api/hosting/stacks/remove", {
     method: "POST",

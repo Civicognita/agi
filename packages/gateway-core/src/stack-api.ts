@@ -118,6 +118,20 @@ export function registerStackRoutes(app: FastifyInstance, deps: StackApiDeps): v
     reply.send({ commands });
   });
 
+  // GET /api/hosting/stacks/start-command — effective start command + source for a project.
+  // Shows the UI which command the container will actually run at boot, which tier of the
+  // precedence ladder picked it (override / stack.command / devCommands / image-default),
+  // and what the stack's default would be if the user cleared the override.
+  app.get("/api/hosting/stacks/start-command", async (request, reply) => {
+    const query = request.query as { path?: string };
+    if (!query.path) {
+      reply.code(400).send({ error: "path query parameter required" });
+      return;
+    }
+
+    reply.send(hostingManager.getEffectiveStartCommand(query.path));
+  });
+
   // GET /api/hosting/stacks — list stacks installed on a project
   app.get("/api/hosting/stacks", async (request, reply) => {
     const query = request.query as { path?: string };

@@ -9,7 +9,8 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ProjectHostingInfo, ProjectTypeTool, RuntimeInfo, StackInfo, ProjectStackInstance } from "../types.js";
-import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks } from "../api.js";
+import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks, fetchEffectiveStartCommand } from "../api.js";
+import type { EffectiveStartCommand } from "../api.js";
 import { ProjectToolbar } from "./ProjectToolbar.js";
 import { StackManager } from "./StackManager.js";
 import { TerminalArea } from "./TerminalArea.js";
@@ -106,6 +107,12 @@ export function HostingPanel({
   useEffect(() => {
     fetchProjectDevCommands(projectPath).then(setDevCommands).catch(() => setDevCommands({}));
   }, [projectPath]);
+
+  // Fetch effective start command (what will actually run at boot, and why)
+  const [effectiveStart, setEffectiveStart] = useState<EffectiveStartCommand | null>(null);
+  useEffect(() => {
+    fetchEffectiveStartCommand(projectPath).then(setEffectiveStart).catch(() => setEffectiveStart(null));
+  }, [projectPath, startCommand, hosting.status]);
 
   // Fetch available runtimes
   useEffect(() => {
@@ -290,16 +297,48 @@ export function HostingPanel({
         </div>
         <div>
           <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
-            Start Command
+            Start Command <span className="font-normal italic opacity-70">(override)</span>
           </label>
           <Input
             type="text"
             value={startCommand}
             onChange={(e) => setStartCommand(e.target.value)}
             disabled={busy}
-            placeholder="npm start"
+            placeholder={effectiveStart?.stackDefault ?? "npm start"}
             className="text-[12px] h-8"
+            data-testid="hosting-start-command-input"
           />
+          <div className="mt-0.5 text-[10px] text-muted-foreground leading-tight">
+            {effectiveStart !== null && (
+              <>
+                <span data-testid="hosting-start-command-source" className={cn(
+                  effectiveStart.source === "override" && "text-blue font-semibold",
+                )}>
+                  {effectiveStart.source === "override" && "Using your override."}
+                  {effectiveStart.source === "stack" && "Using stack default."}
+                  {effectiveStart.source === "devCommands" && "Using stack devCommands fallback."}
+                  {effectiveStart.source === "image-default" && "No command \u2014 image default CMD runs."}
+                </span>
+                {effectiveStart.source !== "override" && effectiveStart.stackDefault && (
+                  <>
+                    {" "}
+                    <span className="opacity-70">Leave empty to keep default: </span>
+                    <code className="text-[10px]">{effectiveStart.stackDefault}</code>
+                  </>
+                )}
+                {effectiveStart.source === "override" && effectiveStart.stackDefault && (
+                  <>
+                    {" "}
+                    <span className="opacity-70">Stack default (cleared by override): </span>
+                    <code className="text-[10px]">{effectiveStart.stackDefault}</code>
+                  </>
+                )}
+              </>
+            )}
+            {effectiveStart === null && (
+              <span className="opacity-70">Leave empty to use your installed stack&apos;s default; when set, this replaces the stack command and runs via sh -c.</span>
+            )}
+          </div>
         </div>
       </div>
 

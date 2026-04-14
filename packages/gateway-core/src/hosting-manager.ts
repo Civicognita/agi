@@ -36,6 +36,75 @@ const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07/g;
 function stripAnsi(text: string): string { return text.replace(ANSI_RE, ""); }
 
 /**
+ * Container start-command source — which tier of the precedence ladder
+ * produced the command tokens passed to `podman run`.
+ *
+ * Order of precedence (highest first):
+ *   override      — user's `meta.startCommand` (authoritative when set).
+ *   stack         — stack plugin's `command(ctx)` callback.
+ *   devCommands   — stack plugin's `devCommands.dev` / `.start`, mode-aware.
+ *   image-default — no tokens; the container image's default CMD runs.
+ */
+export type StartCommandSource = "override" | "stack" | "devCommands" | "image-default";
+
+export interface ResolvedStartCommand {
+  tokens: string[] | null;
+  source: StartCommandSource;
+  sourceLabel: string;
+}
+
+/**
+ * Resolve the start command for a container from the precedence ladder.
+ * Pure function — no I/O, no side effects. Exported for unit tests.
+ *
+ * The user's `userStartCommand` wins over everything else when set (trimmed,
+ * non-empty). This is how the dashboard's "Start Command" field actually
+ * takes effect — the stack-based container path previously only read
+ * `stackCommand` and `devCommands`, silently ignoring the user's override.
+ */
+export function resolveContainerStartCommand(params: {
+  userStartCommand?: string | null | undefined;
+  stackCommand?: string[] | null;
+  stackId?: string | undefined;
+  devCommands?: { dev?: string; start?: string } | undefined;
+  mode: "development" | "production";
+}): ResolvedStartCommand {
+  // 1. User override — wins over anything.
+  if (typeof params.userStartCommand === "string") {
+    const trimmed = params.userStartCommand.trim();
+    if (trimmed.length > 0) {
+      return {
+        tokens: ["sh", "-c", trimmed],
+        source: "override",
+        sourceLabel: "override (user meta.startCommand)",
+      };
+    }
+  }
+  // 2. Stack's command() callback.
+  if (params.stackCommand && params.stackCommand.length > 0) {
+    return {
+      tokens: params.stackCommand,
+      source: "stack",
+      sourceLabel: `stack (${params.stackId ?? "unknown"}.command)`,
+    };
+  }
+  // 3. Stack's devCommands, mode-aware.
+  if (params.devCommands) {
+    const key = params.mode === "development" ? "dev" : "start";
+    const cmd = params.devCommands[key];
+    if (cmd) {
+      return {
+        tokens: ["sh", "-c", cmd],
+        source: "devCommands",
+        sourceLabel: `devCommands.${key} (${params.stackId ?? "unknown"})`,
+      };
+    }
+  }
+  // 4. Fall through — image's default CMD runs.
+  return { tokens: null, source: "image-default", sourceLabel: "image default CMD" };
+}
+
+/**
  * Phase 1 container resilience wrapper.
  *
  * Wraps a command token array so the container's PID 1 outlives the user's
@@ -1127,9 +1196,17 @@ export class HostingManager {
 
       args.push(magicAppConfig.image);
 
-      // Resilience-wrap the stack's command so the container survives user-code failure.
-      // If the magic app provides no command, fall through to the image's default CMD.
-      const cmdTokens = magicAppConfig.command?.(ctx) ?? null;
+      // Resolve via the same precedence ladder as stack projects; magic apps have no
+      // devCommands, so devCommands step is skipped and the ladder collapses to
+      // override > magic-app-config.command > image default.
+      const magicResolved = resolveContainerStartCommand({
+        userStartCommand: hosted.meta.startCommand,
+        stackCommand: magicAppConfig.command?.(ctx) ?? null,
+        stackId: `magic-app:${hosted.meta.viewer ?? hosted.meta.type}`,
+        mode: hosted.meta.mode,
+      });
+      this.log.info(`[${hosted.meta.hostname}] start command source: ${magicResolved.sourceLabel}`);
+      const cmdTokens = magicResolved.tokens;
       const wrapped = this.wrapResilient(cmdTokens);
       if (wrapped) args.push(...wrapped);
 
@@ -1195,20 +1272,20 @@ export class HostingManager {
         : undefined;
       args.push(runtimeDef?.containerImage ?? stackConfig.image);
 
-      let cmdTokens = stackConfig.command?.(ctx) ?? null;
-
-      // Fallback: derive command from devCommands on the stack definition
-      if (!cmdTokens) {
-        const stackDef = this.resolveStackDefinition(hosted);
-        if (stackDef?.devCommands) {
-          const cmd = hosted.meta.mode === "development"
-            ? stackDef.devCommands.dev
-            : stackDef.devCommands.start;
-          if (cmd) {
-            cmdTokens = ["sh", "-c", cmd];
-          }
-        }
-      }
+      // Resolve the command via the precedence ladder: user override > stack.command >
+      // stack.devCommands (mode-aware) > image default. The user's Start Command field
+      // now actually takes effect here — previously it was silently ignored for stack
+      // projects.
+      const stackDef = this.resolveStackDefinition(hosted);
+      const resolved = resolveContainerStartCommand({
+        userStartCommand: hosted.meta.startCommand,
+        stackCommand: stackConfig.command?.(ctx) ?? null,
+        stackId: stackDef?.id,
+        devCommands: stackDef?.devCommands,
+        mode: hosted.meta.mode,
+      });
+      this.log.info(`[${hosted.meta.hostname}] start command source: ${resolved.sourceLabel}`);
+      let cmdTokens = resolved.tokens;
 
       // Wrap dev commands with an origin-injection shim for Next.js.
       // Next.js blocks HMR WebSocket connections from unknown origins in dev mode.
@@ -2865,6 +2942,69 @@ export class HostingManager {
     }
 
     return merged;
+  }
+
+  /**
+   * Resolve the effective container start command for a project, as it would
+   * be computed at container boot. Exposes the same precedence ladder the
+   * startContainer() path uses (override > stack.command > devCommands >
+   * image-default) so the UI can show the user which source wins and what
+   * the stack default would be.
+   */
+  getEffectiveStartCommand(projectPath: string): {
+    effective: string | null;
+    source: StartCommandSource;
+    sourceLabel: string;
+    override: string | null;
+    stackDefault: string | null;
+  } {
+    const resolved = resolvePath(projectPath);
+    const hosted = this.projects.get(resolved);
+    if (!hosted) {
+      return { effective: null, source: "image-default", sourceLabel: "image default CMD", override: null, stackDefault: null };
+    }
+    const stackDef = this.resolveStackDefinition(hosted);
+    const stackConfig = this.resolveStackContainerConfig(hosted);
+    let stackCommand: string[] | null = null;
+    if (stackConfig) {
+      const ctx: StackContainerContext = {
+        projectPath: hosted.path,
+        projectHostname: hosted.meta.hostname,
+        allocatedPort: hosted.meta.port ?? 0,
+        mode: hosted.meta.mode,
+      };
+      stackCommand = stackConfig.command?.(ctx) ?? null;
+    }
+    const result = resolveContainerStartCommand({
+      userStartCommand: hosted.meta.startCommand,
+      stackCommand,
+      stackId: stackDef?.id,
+      devCommands: stackDef?.devCommands,
+      mode: hosted.meta.mode,
+    });
+    // Collapse tokens to a human-readable shell string for UI display.
+    const asShellString = (tokens: string[] | null): string | null => {
+      if (!tokens || tokens.length === 0) return null;
+      if (tokens.length === 3 && tokens[0] === "sh" && tokens[1] === "-c") return tokens[2] ?? null;
+      return tokens.join(" ");
+    };
+    // Compute what the stack-default would be (ignoring override) for UI display.
+    const stackDefaultTokens = resolveContainerStartCommand({
+      userStartCommand: undefined,
+      stackCommand,
+      stackId: stackDef?.id,
+      devCommands: stackDef?.devCommands,
+      mode: hosted.meta.mode,
+    }).tokens;
+    return {
+      effective: asShellString(result.tokens),
+      source: result.source,
+      sourceLabel: result.sourceLabel,
+      override: hosted.meta.startCommand && hosted.meta.startCommand.trim().length > 0
+        ? hosted.meta.startCommand.trim()
+        : null,
+      stackDefault: asShellString(stackDefaultTokens),
+    };
   }
 
   /**

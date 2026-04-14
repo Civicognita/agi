@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { wrapResilientCmd } from "./hosting-manager.js";
+import { wrapResilientCmd, resolveContainerStartCommand } from "./hosting-manager.js";
 
 describe("wrapResilientCmd", () => {
   it("returns null for null/undefined/empty — caller falls back to image CMD", () => {
@@ -62,5 +62,124 @@ describe("wrapResilientCmd", () => {
     expect(script).toMatch(/\|\| true/);
     expect(script).toContain("false");
     expect(script).toContain("exec sleep infinity");
+  });
+});
+
+describe("resolveContainerStartCommand — precedence ladder", () => {
+  it("user override wins over stack.command and devCommands", () => {
+    const res = resolveContainerStartCommand({
+      userStartCommand: "node server.js",
+      stackCommand: ["sh", "-c", "npm run build && npm start"],
+      stackId: "stack-nextjs",
+      devCommands: { dev: "npm run dev", start: "npm start" },
+      mode: "production",
+    });
+    expect(res.source).toBe("override");
+    expect(res.tokens).toEqual(["sh", "-c", "node server.js"]);
+    expect(res.sourceLabel).toContain("override");
+  });
+
+  it("empty override falls through to stack.command", () => {
+    const res = resolveContainerStartCommand({
+      userStartCommand: "",
+      stackCommand: ["sh", "-c", "stack-cmd"],
+      stackId: "stack-foo",
+      devCommands: { start: "devcmd" },
+      mode: "production",
+    });
+    expect(res.source).toBe("stack");
+    expect(res.tokens).toEqual(["sh", "-c", "stack-cmd"]);
+    expect(res.sourceLabel).toContain("stack-foo.command");
+  });
+
+  it("undefined override falls through to stack.command", () => {
+    const res = resolveContainerStartCommand({
+      userStartCommand: undefined,
+      stackCommand: ["sh", "-c", "stack-cmd"],
+      mode: "production",
+    });
+    expect(res.source).toBe("stack");
+  });
+
+  it("whitespace-only override is treated as empty (no-op footgun guard)", () => {
+    const res = resolveContainerStartCommand({
+      userStartCommand: "   \t  ",
+      stackCommand: ["sh", "-c", "stack-cmd"],
+      mode: "production",
+    });
+    expect(res.source).toBe("stack");
+    expect(res.tokens).toEqual(["sh", "-c", "stack-cmd"]);
+  });
+
+  it("trims whitespace around a non-empty override", () => {
+    const res = resolveContainerStartCommand({
+      userStartCommand: "  node server.js  ",
+      stackCommand: null,
+      mode: "production",
+    });
+    expect(res.source).toBe("override");
+    expect(res.tokens).toEqual(["sh", "-c", "node server.js"]);
+  });
+
+  it("devCommands.start fallback when no override and stack has no command()", () => {
+    const res = resolveContainerStartCommand({
+      stackCommand: null,
+      stackId: "stack-foo",
+      devCommands: { dev: "npm run dev", start: "npm start" },
+      mode: "production",
+    });
+    expect(res.source).toBe("devCommands");
+    expect(res.tokens).toEqual(["sh", "-c", "npm start"]);
+    expect(res.sourceLabel).toContain("devCommands.start");
+    expect(res.sourceLabel).toContain("stack-foo");
+  });
+
+  it("devCommands.dev fallback in development mode", () => {
+    const res = resolveContainerStartCommand({
+      stackCommand: null,
+      stackId: "stack-foo",
+      devCommands: { dev: "npm run dev", start: "npm start" },
+      mode: "development",
+    });
+    expect(res.source).toBe("devCommands");
+    expect(res.tokens).toEqual(["sh", "-c", "npm run dev"]);
+    expect(res.sourceLabel).toContain("devCommands.dev");
+  });
+
+  it("falls through to image-default when nothing is provided", () => {
+    const res = resolveContainerStartCommand({
+      stackCommand: null,
+      mode: "production",
+    });
+    expect(res.source).toBe("image-default");
+    expect(res.tokens).toBeNull();
+    expect(res.sourceLabel).toContain("image default");
+  });
+
+  it("empty stackCommand array falls through to devCommands", () => {
+    const res = resolveContainerStartCommand({
+      stackCommand: [],
+      devCommands: { start: "fallback" },
+      mode: "production",
+    });
+    expect(res.source).toBe("devCommands");
+    expect(res.tokens).toEqual(["sh", "-c", "fallback"]);
+  });
+
+  it("override + resilience wrapper: the wrap is applied on top of the override tokens", () => {
+    const res = resolveContainerStartCommand({
+      userStartCommand: "node .next/standalone/server.js",
+      stackCommand: ["sh", "-c", "never-runs"],
+      mode: "production",
+    });
+    expect(res.source).toBe("override");
+    const wrapped = wrapResilientCmd(res.tokens);
+    expect(wrapped).not.toBeNull();
+    const script = wrapped![2]!;
+    // The override command ends up INSIDE the wrap, and the stack command never appears.
+    expect(script).toContain("node .next/standalone/server.js");
+    expect(script).toContain("|| true");
+    expect(script).toContain("exec sleep infinity");
+    expect(script).not.toContain("never-runs");
   });
 });
