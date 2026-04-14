@@ -335,6 +335,22 @@ Generic agents get project structure and build commands from this file. Mycelium
 
 ---
 
+## Chat Rendering Semantics
+
+The dashboard chat renders agent activity as a sequence of messages — user, assistant, thought, tool. A common bug report is **"thoughts don't appear between individual tool calls"**. This is an expectation mismatch with the Anthropic API, not a rendering bug. Document before re-chasing:
+
+- Anthropic's `messages.create` returns a single `thinking` content block per assistant response, followed by zero or more `tool_use` blocks. A response with 6 tool calls has the content layout `[thinking, tool_use, tool_use, tool_use, tool_use, tool_use, tool_use]` — **one thought, six tools**, not six thoughts.
+- The agent-invoker (`packages/gateway-core/src/agent-invoker.ts`) emits events in that exact order: `thought` first, then the `tool_start`/`tool_result` pairs for each tool.
+- To make this legible in the UI, the dashboard wraps each thought + its tool batch inside a **"Step N"** container with a left accent border (`ChatFlyout.tsx` + `groupByThoughtBoundary()` in `chat-flyout-reducers.ts`). A run's second API call produces Step 2, and so on.
+- Intermediate assistant text (the model writing a sentence in between tool rounds) is **not** a thought — it surfaces as a compact "Working: <tool-name>" pill while the tool executes.
+- True per-tool thoughts would require switching to streaming API consumption (token-by-token thinking) or breaking each tool into its own API round-trip. Both are out of scope; see the follow-up list at the top of any recent plan.
+
+Any future contributor seeing this report should confirm via `agent-invoker.ts:568-571` (thought emission order) + `anthropic-provider.ts:191-204` (one thinkingBlock per response), not try to "fix" the rendering.
+
+### Chat resume on reconnect
+
+The chat has a ring buffer of the last 500 events per session (or 5 minutes, whichever is smaller) at `packages/gateway-core/src/chat-event-buffer.ts`. Every `chat:*` event the server sends carries a monotonic `seq` per session. When the browser's WebSocket drops and reconnects, `ChatFlyout.tsx` sends `chat:resume { sessionId, lastSeq }` and the server replays anything newer. If the server restarted between boots and the buffer is empty, it replies `chat:resume_missed` and the client surfaces an error rather than waiting forever for a terminal event that will never come.
+
 ## Agent-Specific Notes
 
 ### For All Agents

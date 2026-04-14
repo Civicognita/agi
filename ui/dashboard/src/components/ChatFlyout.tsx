@@ -15,8 +15,8 @@ import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
 import type { ToolCard } from "./ToolCards.js";
 import { PlanViewer } from "./PlanViewer.js";
 import { ChatHistory } from "./ChatHistory.js";
-import { applyInjectionConsumed, shouldShowLivePill, applyStallTimeout } from "./chat-flyout-reducers.js";
-import type { ChatSessionShape } from "./chat-flyout-reducers.js";
+import { applyInjectionConsumed, shouldShowLivePill, applyStallTimeout, groupByThoughtBoundary } from "./chat-flyout-reducers.js";
+import type { ChatSessionShape, ChatMessageShape } from "./chat-flyout-reducers.js";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks.js";
@@ -304,6 +304,14 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // -------------------------------------------------------------------------
 
   const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Per-session high-water mark of the server's chat event seq numbers.
+  // Used for chat:resume on WS reconnect — we send { lastSeq } and the server
+  // replays any events newer than that. Without this, events emitted during a
+  // brief WS drop are lost (terminal chat:response in particular) and the
+  // client stalls waiting for something the server already "sent" to a dead
+  // connection.
+  const lastSeqBySession = useRef<Map<string, number>>(new Map());
   const STALL_MS = 120_000;
 
   const clearStallTimer = useCallback(() => {
@@ -343,6 +351,15 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
       // Refresh server's ownerConnectionMap for this entity — any message works,
       // and ping is a no-side-effect handler on the server side.
       ws.send(JSON.stringify({ type: "ping" }));
+      // Resume any active sessions — server will replay any chat:* events the
+      // client missed while the WS was down. For first connect the map is empty
+      // and nothing is sent.
+      for (const [sessionId, lastSeq] of lastSeqBySession.current.entries()) {
+        ws.send(JSON.stringify({
+          type: "chat:resume",
+          payload: { sessionId, lastSeq },
+        }));
+      }
       // Flush any pending openWithContext that arrived before WS was ready
       const pending = pendingContextRef.current;
       if (pending) {
@@ -356,6 +373,14 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         const msg = JSON.parse(event.data as string) as { type: string; payload?: unknown };
         const payload = msg.payload as Record<string, unknown> | undefined;
         const sid = payload?.sessionId as string | undefined;
+
+        // Track the server's seq high-water mark per session for chat:resume on
+        // the next reconnect. Only chat:* events carry a seq (via the server's
+        // recordAndSendChat helper).
+        if (sid !== undefined && msg.type.startsWith("chat:") && typeof payload?.seq === "number") {
+          const prevSeq = lastSeqBySession.current.get(sid) ?? 0;
+          if (payload.seq > prevSeq) lastSeqBySession.current.set(sid, payload.seq);
+        }
 
         // Stall-timer bookkeeping: any mid-run activity resets; terminal events clear.
         if (msg.type === "chat:response" || msg.type === "chat:error" || msg.type === "chat:cancelled") {
@@ -453,6 +478,29 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           }
           case "chat:inject_ack": {
             // Acknowledgement that injection was queued — no-op for now
+            break;
+          }
+          case "chat:resumed": {
+            // Server has replayed any missed events; nothing to do here beyond
+            // accepting the seq high-water from the server (already tracked by
+            // the seq bookkeeping above).
+            break;
+          }
+          case "chat:resume_missed": {
+            // Server can't replay — most likely a gateway restart wiped the
+            // buffer. Clear the thinking state so the UI doesn't hang waiting
+            // for a terminal event that will never come, and surface an error
+            // so the user knows to re-send if the previous turn was lost.
+            const p = payload as { sessionId?: string } | undefined;
+            if (p?.sessionId) {
+              lastSeqBySession.current.delete(p.sessionId);
+              setSessions((prev) => prev.map((s) =>
+                s.id === p.sessionId
+                  ? { ...s, thinking: false, toolActivity: [], progressText: undefined }
+                  : s
+              ));
+              setError("Session recovery unavailable — your last exchange may be incomplete. Please try again.");
+            }
             break;
           }
           case "chat:injection_consumed": {
@@ -999,18 +1047,19 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             </div>
           )}
 
-          {activeSession && groupByRun(activeSession.messages).map((group, gIdx) => (
-            <div
-              key={`run-${group.runId ?? `noid-${String(gIdx)}`}`}
-              data-testid="run-group"
-              className="flex flex-col gap-3"
-            >
-              {gIdx > 0 && <div className="h-px bg-border/50 -my-1" aria-hidden />}
-              {group.messages.map((msg) => {
-                const idx = msg._idx;
-
-                // Tool messages — standalone card with label
-                if (msg.role === "tool" && msg.toolCard) {
+          {activeSession && groupByRun(activeSession.messages).map((group, gIdx) => {
+            // Inside each run, further group by thought boundary so a thought
+            // and the tools it produced render together under a "Step N" header.
+            // Anthropic returns one thinking block per assistant response (not
+            // per tool call), so this is the cleanest way to represent reality.
+            const thoughtSections = groupByThoughtBoundary(
+              group.messages as unknown as ChatMessageShape[],
+            );
+            let stepCount = 0;
+            const renderMessage = (msg: ChatMessage & { _idx: number }) => {
+              const idx = msg._idx;
+              // Tool messages — standalone card with label
+              if (msg.role === "tool" && msg.toolCard) {
                   return (
                     <div
                       key={`tool-${msg.toolCard.id}-${String(idx)}`}
@@ -1108,9 +1157,40 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                     </div>
                   </div>
                 );
-              })}
-            </div>
-          ))}
+              };
+              return (
+                <div
+                  key={`run-${group.runId ?? `noid-${String(gIdx)}`}`}
+                  data-testid="run-group"
+                  className="flex flex-col gap-3"
+                >
+                  {gIdx > 0 && <div className="h-px bg-border/50 -my-1" aria-hidden />}
+                  {thoughtSections.map((section, sIdx) => {
+                    const isStep = section.lead?.role === "thought";
+                    if (isStep) stepCount++;
+                    const sectionKey = `section-${String(gIdx)}-${String(sIdx)}`;
+                    return (
+                      <div
+                        key={sectionKey}
+                        data-testid={isStep ? "thought-section" : undefined}
+                        className={cn(
+                          "flex flex-col gap-2",
+                          isStep && "border-l-2 border-l-blue/40 pl-3",
+                        )}
+                      >
+                        {isStep && (
+                          <div className="text-[9px] text-blue/70 font-semibold uppercase tracking-[0.15em] px-1">
+                            Step {String(stepCount)}
+                          </div>
+                        )}
+                        {section.lead !== null && renderMessage(section.lead as unknown as ChatMessage & { _idx: number })}
+                        {section.trail.map((m) => renderMessage(m as unknown as ChatMessage & { _idx: number }))}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+          })}
 
           {activeSession?.activePlan && (
             <PlanViewer
@@ -1142,14 +1222,20 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             </div>
           )}
 
-          {/* Intermediate assistant text emitted between tool calls — shown as a subtle live status,
-              distinct from real thought bubbles and from the final response. */}
-          {activeSession?.progressText && activeSession.thinking && (
+          {/* Intermediate "Working: <tool-name>" pill when a tool is running.
+              Replaces the old free-floating progressText line that looked too much
+              like a discrete thought. We derive the label from the latest running
+              tool rather than from the model's intermediate text (which is
+              captured in the next thought/response anyway). */}
+          {activeSession?.thinking && activeSession.toolActivity.some((t) => t.status === "running") && (
             <div
-              data-testid="chat-progress-text"
-              className="text-[10px] text-muted-foreground italic px-2 max-w-[85%]"
+              data-testid="chat-working-pill"
+              className="flex items-center gap-1.5 px-2 py-0.5 text-[10px] text-muted-foreground"
             >
-              {activeSession.progressText}
+              <span className="inline-block w-1 h-1 rounded-full bg-blue animate-pulse" />
+              <span className="italic">
+                Working: {activeSession.toolActivity.filter((t) => t.status === "running").map((t) => t.toolName).join(", ")}
+              </span>
             </div>
           )}
 

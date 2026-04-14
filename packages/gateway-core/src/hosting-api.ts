@@ -71,14 +71,13 @@ export function registerHostingRoutes(
   const { hostingManager, workspaceProjects } = deps;
   const log = createComponentLogger(deps.logger, "hosting-api");
 
-  // Host-based routing: db.{baseDomain} serves the DB portal at /
-  const dbHost = `db.${hostingManager.getStatus().baseDomain}`;
-  fastify.addHook("onRequest", async (request, reply) => {
-    const host = (request.headers.host ?? "").split(":")[0];
-    if (host === dbHost && (request.url === "/" || request.url === "")) {
-      return reply.redirect("/db-portal");
-    }
-  });
+  // NOTE: a legacy `onRequest` hook used to intercept requests with Host: db.{baseDomain}
+  // and redirect them to /db-portal on the gateway. That hook is gone now — db.{baseDomain}
+  // is owned by the WhoDB container (always-on infra, see hosting-manager.ensureWhoDB), and
+  // Caddy reverse-proxies the subdomain directly to port 5050. Leaving the hook in place
+  // caused a redirect loop when any request for db.{baseDomain} reached the gateway (e.g.
+  // if Caddy pointed at the gateway's port 3100 instead of WhoDB's 5050, as happens on
+  // stale Caddyfiles). The loop: gateway `/` -> `/db-portal` -> `https://db.ai.on` -> gateway -> …
 
   // Private network guard helper
   function guardPrivate(request: { raw: IncomingMessage }): string | null {
@@ -787,18 +786,59 @@ export function registerHostingRoutes(
 </html>`;
   }
 
-  // GET /db-portal — legacy route, redirects to WhoDB (the unified DB surface).
-  // The portal HTML page is retained below for any tooling that still renders it,
-  // but by default this URL sends users to https://db.ai.on which is the WhoDB
-  // container via Caddy reverse proxy. Plugins can still call the register endpoint.
+  // GET /db-portal — legacy route. Was an HTML portal listing DB tools; post-WhoDB
+  // migration, the actual database surface lives at db.{baseDomain} (reverse-proxied
+  // to the WhoDB container). This endpoint returns a static HTML notice instead of
+  // redirecting — redirecting to https://db.ai.on risks looping when Caddy misroutes.
   fastify.get("/db-portal", async (_request, reply) => {
-    return reply.redirect("https://db.ai.on", 302);
+    const dbHost = `db.${hostingManager.getStatus().baseDomain}`;
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Database Portal — moved to WhoDB</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1e1e2e; color: #cdd6f4; min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; padding: 2rem; }
+    .card { max-width: 480px; background: #181825; border: 1px solid #313244; border-radius: 12px; padding: 2rem; text-align: center; }
+    h1 { margin: 0 0 0.5rem; font-size: 1.25rem; }
+    p { color: #a6adc8; line-height: 1.5; margin: 0.5rem 0; font-size: 0.95rem; }
+    a.btn { display: inline-block; margin-top: 1rem; padding: 0.5rem 1rem; background: #89b4fa; color: #1e1e2e; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 0.9rem; }
+    code { background: #313244; padding: 0.125rem 0.375rem; border-radius: 4px; font-size: 0.85em; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Database Portal has moved</h1>
+    <p>The DB Portal is now <strong>WhoDB</strong>, a unified explorer for PostgreSQL, MariaDB/MySQL, SQLite, Redis, and MongoDB.</p>
+    <p>Open it from the <strong>WhoDB</strong> button in the dashboard header, or visit <code>https://${escapeHtml(dbHost)}</code> directly.</p>
+    <a class="btn" href="/">Go to dashboard</a>
+  </div>
+</body>
+</html>`;
+    return reply.header("Content-Type", "text/html; charset=utf-8").send(html);
   });
 
   // GET /db-portal/legacy — the original portal HTML, kept for escape-hatch access.
   fastify.get("/db-portal/legacy", async (_request, reply) => {
     const html = generatePortalHtml(portalTools);
     return reply.header("Content-Type", "text/html; charset=utf-8").send(html);
+  });
+
+  // POST /api/hosting/regenerate-caddyfile — force Caddyfile regeneration.
+  // Useful when a stale Caddyfile on disk is routing a subdomain to the wrong
+  // backend (e.g. db.{baseDomain} → gateway instead of → WhoDB on port 5050).
+  // The hostingManager regenerates + reloads Caddy atomically.
+  fastify.post("/api/hosting/regenerate-caddyfile", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+    try {
+      hostingManager.regenerateCaddyfile();
+      return reply.send({ ok: true });
+    } catch (e) {
+      log.error(`regenerate-caddyfile failed: ${e instanceof Error ? e.message : String(e)}`);
+      return reply.code(500).send({ error: e instanceof Error ? e.message : "regenerate failed" });
+    }
   });
 
   // GET /api/db-portal/tools — list registered tools

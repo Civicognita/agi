@@ -12,8 +12,9 @@ import {
   applyInjectionConsumed,
   applyStallTimeout,
   shouldShowLivePill,
+  groupByThoughtBoundary,
 } from "./chat-flyout-reducers.js";
-import type { ChatSessionShape } from "./chat-flyout-reducers.js";
+import type { ChatSessionShape, ChatMessageShape } from "./chat-flyout-reducers.js";
 
 function makeSession(overrides: Partial<ChatSessionShape> = {}): ChatSessionShape {
   return {
@@ -128,6 +129,89 @@ describe("shouldShowLivePill", () => {
       ],
     });
     expect(shouldShowLivePill(s)).toBe(true);
+  });
+});
+
+describe("groupByThoughtBoundary", () => {
+  const mkMsg = (role: ChatMessageShape["role"], content: string, runId?: string): ChatMessageShape => ({
+    role,
+    content,
+    timestamp: content,
+    runId,
+  });
+
+  it("empty input returns empty sections", () => {
+    expect(groupByThoughtBoundary([])).toEqual([]);
+  });
+
+  it("groups a thought followed by tools into one section", () => {
+    const messages: ChatMessageShape[] = [
+      mkMsg("thought", "thinking about things"),
+      mkMsg("tool", "tool-1"),
+      mkMsg("tool", "tool-2"),
+    ];
+    const sections = groupByThoughtBoundary(messages);
+    expect(sections).toHaveLength(1);
+    expect(sections[0]!.lead?.role).toBe("thought");
+    expect(sections[0]!.lead?.content).toBe("thinking about things");
+    expect(sections[0]!.trail).toHaveLength(2);
+    expect(sections[0]!.trail.map((m) => m.content)).toEqual(["tool-1", "tool-2"]);
+  });
+
+  it("multiple thoughts start separate sections, each with their own tool trail", () => {
+    const messages: ChatMessageShape[] = [
+      mkMsg("thought", "plan-1"),
+      mkMsg("tool", "t1"),
+      mkMsg("tool", "t2"),
+      mkMsg("thought", "plan-2"),
+      mkMsg("tool", "t3"),
+    ];
+    const sections = groupByThoughtBoundary(messages);
+    expect(sections).toHaveLength(2);
+    expect(sections[0]!.lead?.content).toBe("plan-1");
+    expect(sections[0]!.trail.map((m) => m.content)).toEqual(["t1", "t2"]);
+    expect(sections[1]!.lead?.content).toBe("plan-2");
+    expect(sections[1]!.trail.map((m) => m.content)).toEqual(["t3"]);
+  });
+
+  it("user and assistant messages each start their own section", () => {
+    const messages: ChatMessageShape[] = [
+      mkMsg("user", "hello"),
+      mkMsg("thought", "replying"),
+      mkMsg("tool", "t1"),
+      mkMsg("assistant", "hi"),
+    ];
+    const sections = groupByThoughtBoundary(messages);
+    expect(sections).toHaveLength(3);
+    expect(sections[0]!.lead?.role).toBe("user");
+    expect(sections[0]!.trail).toEqual([]);
+    expect(sections[1]!.lead?.role).toBe("thought");
+    expect(sections[1]!.trail.map((m) => m.content)).toEqual(["t1"]);
+    expect(sections[2]!.lead?.role).toBe("assistant");
+  });
+
+  it("a tool without a preceding thought gets a section with no lead (safety)", () => {
+    const messages: ChatMessageShape[] = [
+      mkMsg("tool", "orphan-tool"),
+      mkMsg("thought", "thinking"),
+      mkMsg("tool", "child-tool"),
+    ];
+    const sections = groupByThoughtBoundary(messages);
+    expect(sections).toHaveLength(2);
+    expect(sections[0]!.lead).toBeNull();
+    expect(sections[0]!.trail.map((m) => m.content)).toEqual(["orphan-tool"]);
+    expect(sections[1]!.lead?.role).toBe("thought");
+    expect(sections[1]!.trail.map((m) => m.content)).toEqual(["child-tool"]);
+  });
+
+  it("a lone thought (no tools) still produces a section", () => {
+    const messages: ChatMessageShape[] = [
+      mkMsg("thought", "solo-thought"),
+    ];
+    const sections = groupByThoughtBoundary(messages);
+    expect(sections).toHaveLength(1);
+    expect(sections[0]!.lead?.content).toBe("solo-thought");
+    expect(sections[0]!.trail).toEqual([]);
   });
 });
 

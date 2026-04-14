@@ -506,6 +506,17 @@ export class HostingManager {
     // Ensure WhoDB is running (always-on infrastructure)
     this.ensureWhoDB();
 
+    // Self-heal stale Caddyfiles on boot. If an install predates the WhoDB
+    // migration, the on-disk Caddyfile may still have db.{baseDomain} proxying
+    // the gateway instead of the WhoDB container — that causes the redirect
+    // loop seen in the dashboard iframe. Regenerating on startup ensures the
+    // db block always points at port 5050 on fresh boots.
+    try {
+      this.regenerateCaddyfile();
+    } catch (err) {
+      this.log.warn(`boot-time Caddyfile regenerate failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     // Discover running containers from prior gateway run — reconnect instead of recreating.
     // Containers persist across gateway restarts; only replaced when their image changes.
     const runningContainers = new Map<string, { name: string; image: string; state: string }>();

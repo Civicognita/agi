@@ -60,6 +60,7 @@ import type { LLMProvider } from "./llm/index.js";
 import { RateLimiter } from "./rate-limiter.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { AgentInvoker } from "./agent-invoker.js";
+import { ChatEventBuffer } from "./chat-event-buffer.js";
 import { registerAllTools, registerAgentTools } from "./tools/index.js";
 import { SkillRegistry } from "@aionima/skills";
 import { CompositeMemoryAdapter } from "@aionima/memory";
@@ -1826,6 +1827,35 @@ export async function startGatewayServer(
   // browser reconnected during a long tool execution (e.g., Playwright sessions).
   const ownerConnectionMap = new Map<string, string>();
 
+  // Per-session ring buffer of chat:* events. When the browser reconnects, the
+  // client sends chat:resume with its last-seen seq number and the server
+  // replays missed events from the buffer. Without this, events emitted during
+  // a brief WS drop are lost and the client stalls waiting for a terminal
+  // event that was sent to a dead connection.
+  const chatEventBuffer = new ChatEventBuffer();
+
+  /**
+   * Record + send a chat:* event for a session. Injects a monotonic `seq`
+   * number into the payload so the client can track missed events. Use
+   * instead of `wsServer.sendTo(...)` for any chat event we want replayable
+   * on reconnect.
+   */
+  const recordAndSendChat = (
+    sessionId: string | undefined,
+    targetConnId: string,
+    type: string,
+    payload: Record<string, unknown>,
+  ): void => {
+    if (!sessionId) {
+      // Without a sessionId we can't buffer; send directly and hope the
+      // connection is still alive.
+      wsServer.sendTo(targetConnId, type, payload);
+      return;
+    }
+    const enriched = { ...payload, seq: chatEventBuffer.record(sessionId, type, payload).seq };
+    wsServer.sendTo(targetConnId, type, enriched);
+  };
+
   wsServer.on("message", (connectionId: string, message: WSMessage) => {
     // Update the owner → connection mapping on every message
     if (ownerEntityId !== undefined) {
@@ -1840,6 +1870,36 @@ export async function startGatewayServer(
       case "subscribe": {
         const topics = (message.payload as { topics?: string[] })?.topics ?? [];
         subscriptions.set(connectionId, new Set(topics));
+        break;
+      }
+
+      case "chat:resume": {
+        // Client is reconnecting and wants any chat:* events it missed since
+        // the last seq it saw. We replay from the per-session ring buffer.
+        const p = message.payload as { sessionId?: string; lastSeq?: number } | undefined;
+        if (!p?.sessionId || typeof p.lastSeq !== "number") {
+          wsServer.sendTo(connectionId, "chat:resume_missed", { sessionId: p?.sessionId ?? null });
+          break;
+        }
+        const result = chatEventBuffer.since(p.sessionId, p.lastSeq);
+        if (result.missed) {
+          // Session not in the buffer — usually means the server restarted
+          // between the last emit and this reconnect. Tell the client so it
+          // can surface a clear "state may be incomplete" UI instead of
+          // hanging on a thinking indicator that will never clear.
+          wsServer.sendTo(connectionId, "chat:resume_missed", { sessionId: p.sessionId });
+          break;
+        }
+        for (const ev of result.events) {
+          // Payload already carries its own seq; the replay preserves order.
+          const payloadWithSeq = { ...(ev.payload as Record<string, unknown>), seq: ev.seq };
+          wsServer.sendTo(connectionId, ev.type, payloadWithSeq);
+        }
+        wsServer.sendTo(connectionId, "chat:resumed", {
+          sessionId: p.sessionId,
+          currentSeq: result.currentSeq,
+          replayedCount: result.events.length,
+        });
         break;
       }
 
@@ -2159,6 +2219,14 @@ export async function startGatewayServer(
           });
         }
 
+        // Local alias: every chat:* emit during this chat:send lifecycle goes
+        // through the ring buffer so it's replayable on reconnect. This is the
+        // ONLY difference from wsServer.sendTo — the buffer injects a seq field
+        // into the payload and records it for later replay by chat:resume.
+        const sendChat = (type: string, payload: Record<string, unknown>): void => {
+          recordAndSendChat(chatSessionId, getConnId(), type, payload);
+        };
+
         // Progressive chat update listeners
         const toolActivityMap: Record<string, string> = {
           manage_project: "Updating project...",
@@ -2167,7 +2235,7 @@ export async function startGatewayServer(
         };
         const toolStartHandler = (data: { sessionKey: string; toolName: string; toolIndex: number; loopIteration: number; toolInput?: Record<string, unknown> }) => {
           if (data.sessionKey !== sessionKey) return;
-          wsServer.sendTo(getConnId(), "chat:tool_start", {
+          sendChat("chat:tool_start", {
             sessionId: chatSessionId,
             runId: currentRunId,
             toolName: data.toolName,
@@ -2189,7 +2257,7 @@ export async function startGatewayServer(
           if (data.sessionKey !== sessionKey) return;
           const toolResultTs = new Date().toISOString();
           const toolCardId = `${chatSessionId ?? "t"}-${String(data.loopIteration)}-${String(data.toolIndex)}`;
-          wsServer.sendTo(getConnId(), "chat:tool_result", {
+          sendChat("chat:tool_result", {
             sessionId: chatSessionId,
             runId: currentRunId,
             toolName: data.toolName,
@@ -2232,7 +2300,7 @@ export async function startGatewayServer(
               const parsed = JSON.parse(data.resultContent) as { ok?: boolean; path?: string; name?: string; slug?: string };
               if (parsed.ok && parsed.path) {
                 chatProjectPath = parsed.path;
-                wsServer.sendTo(getConnId(), "chat:context_set", {
+                sendChat("chat:context_set", {
                   sessionId: chatSessionId,
                   context: parsed.path,
                   contextLabel: parsed.name ?? parsed.slug ?? "Project",
@@ -2251,7 +2319,7 @@ export async function startGatewayServer(
         };
         const progressHandler = (data: { sessionKey: string; text: string; phase: string }) => {
           if (data.sessionKey !== sessionKey) return;
-          wsServer.sendTo(getConnId(), "chat:progress", {
+          sendChat("chat:progress", {
             sessionId: chatSessionId,
             text: data.text,
             phase: data.phase,
@@ -2261,7 +2329,7 @@ export async function startGatewayServer(
         const thoughtHandler = (data: { sessionKey: string; content: string }) => {
           if (data.sessionKey !== sessionKey) return;
           const thoughtTs = new Date().toISOString();
-          wsServer.sendTo(getConnId(), "chat:thought", {
+          sendChat("chat:thought", {
             sessionId: chatSessionId,
             runId: currentRunId,
             content: data.content,
@@ -2282,7 +2350,7 @@ export async function startGatewayServer(
         };
         const injectionConsumedHandler = (data: { sessionKey: string; count: number }) => {
           if (data.sessionKey !== sessionKey) return;
-          wsServer.sendTo(getConnId(), "chat:injection_consumed", {
+          sendChat("chat:injection_consumed", {
             sessionId: chatSessionId,
             count: data.count,
           });
@@ -2359,7 +2427,7 @@ export async function startGatewayServer(
             } else if (!text) {
               text = "[No response]";
             }
-            wsServer.sendTo(getConnId(), "chat:response", {
+            sendChat("chat:response", {
               sessionId: chatSessionId,
               runId,
               text,
@@ -2368,7 +2436,7 @@ export async function startGatewayServer(
             // Generate contextual next-step suggestions via LLM
             const suggestions = await generateNextSteps(chatText ?? "", text, getLLMProvider());
             if (suggestions.length > 0) {
-              wsServer.sendTo(getConnId(), "chat:suggestions", {
+              sendChat("chat:suggestions", {
                 sessionId: chatSessionId,
                 suggestions,
               });
@@ -2408,23 +2476,23 @@ export async function startGatewayServer(
               }
             }
           } else if (outcome.type === "error") {
-            wsServer.sendTo(getConnId(), "chat:error", { sessionId: chatSessionId, error: outcome.message });
+            sendChat("chat:error", { sessionId: chatSessionId, error: outcome.message });
           } else if (outcome.type === "rate_limited") {
-            wsServer.sendTo(getConnId(), "chat:error", { sessionId: chatSessionId, error: outcome.entityNotification });
+            sendChat("chat:error", { sessionId: chatSessionId, error: outcome.entityNotification });
           } else if (outcome.type === "queued") {
-            wsServer.sendTo(getConnId(), "chat:response", {
+            sendChat("chat:response", {
               sessionId: chatSessionId,
               text: outcome.entityNotification || "[Message queued]",
               timestamp: new Date().toISOString(),
             });
           } else if (outcome.type === "human_routed") {
-            wsServer.sendTo(getConnId(), "chat:response", {
+            sendChat("chat:response", {
               sessionId: chatSessionId,
               text: "[Routed to human operator]",
               timestamp: new Date().toISOString(),
             });
           } else if (outcome.type === "log_only") {
-            wsServer.sendTo(getConnId(), "chat:response", {
+            sendChat("chat:response", {
               sessionId: chatSessionId,
               text: "[Logged — no response in current state]",
               timestamp: new Date().toISOString(),
@@ -2441,7 +2509,7 @@ export async function startGatewayServer(
             for (const injText of remaining) {
               const injRunId = ulid();
               currentRunId = injRunId;
-              wsServer.sendTo(getConnId(), "chat:thinking", {
+              sendChat("chat:thinking", {
                 sessionId: chatSessionId,
                 runId: injRunId,
                 timestamp: new Date().toISOString(),
@@ -2471,7 +2539,7 @@ export async function startGatewayServer(
                 });
                 if (injOutcome.type === "response") {
                   const injResponseText = injOutcome.text || "[No response]";
-                  wsServer.sendTo(getConnId(), "chat:response", {
+                  sendChat("chat:response", {
                     sessionId: chatSessionId,
                     runId: injRunId,
                     text: injResponseText,
@@ -2491,14 +2559,14 @@ export async function startGatewayServer(
                     }
                   }
                 } else if (injOutcome.type === "error") {
-                  wsServer.sendTo(getConnId(), "chat:error", { sessionId: chatSessionId, error: injOutcome.message });
+                  sendChat("chat:error", { sessionId: chatSessionId, error: injOutcome.message });
                 } else if (injOutcome.type === "rate_limited") {
-                  wsServer.sendTo(getConnId(), "chat:error", { sessionId: chatSessionId, error: injOutcome.entityNotification });
+                  sendChat("chat:error", { sessionId: chatSessionId, error: injOutcome.entityNotification });
                 } else {
                   // Default: any other outcome type (queued, human_routed, log_only) — emit
                   // a chat:response so the client's thinking state ALWAYS clears. Without
                   // this default the UI sticks on "thinking..." forever.
-                  wsServer.sendTo(getConnId(), "chat:response", {
+                  sendChat("chat:response", {
                     sessionId: chatSessionId,
                     runId: injRunId,
                     text: "[Follow-up processed]",
@@ -2507,7 +2575,7 @@ export async function startGatewayServer(
                 }
               } catch (injErr: unknown) {
                 log.error(`chat:inject follow-up error: ${injErr instanceof Error ? injErr.message : String(injErr)}`);
-                wsServer.sendTo(getConnId(), "chat:error", {
+                sendChat("chat:error", {
                   sessionId: chatSessionId,
                   error: injErr instanceof Error ? injErr.message : "Follow-up processing failed",
                 });
@@ -2524,7 +2592,7 @@ export async function startGatewayServer(
             });
           }
           log.error(`chat:send error: ${err instanceof Error ? err.message : String(err)}`);
-          wsServer.sendTo(getConnId(), "chat:error", {
+          sendChat("chat:error", {
             sessionId: chatSessionId,
             error: err instanceof Error ? err.message : "Agent processing failed",
           });
@@ -2541,8 +2609,12 @@ export async function startGatewayServer(
       }
 
       case "chat:close": {
-        // Close a chat session (no-op server-side; session stays in memory for resume)
+        // Close a chat session and drop its replay buffer. The session itself
+        // stays in memory for history recall; we just release the event ring.
         const closePayload = message.payload as { sessionId?: string } | undefined;
+        if (closePayload?.sessionId) {
+          chatEventBuffer.drop(closePayload.sessionId);
+        }
         wsServer.sendTo(connectionId, "chat:closed", { sessionId: closePayload?.sessionId });
         break;
       }
