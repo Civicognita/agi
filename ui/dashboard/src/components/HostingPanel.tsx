@@ -134,7 +134,12 @@ export function HostingPanel({
         type,
         hostname: hostname || undefined,
         docRoot: docRoot || undefined,
-        startCommand: startCommand || undefined,
+        // Intentionally send empty string when the user has cleared the field — the
+        // server treats empty/whitespace as "clear the override". Previously
+        // `startCommand || undefined` collapsed an empty string to undefined,
+        // and the server treated undefined as "don't update", so clearing the
+        // field silently did nothing and the stored override persisted.
+        startCommand: startCommand,
         mode,
         internalPort: portNum && !isNaN(portNum) ? portNum : undefined,
       });

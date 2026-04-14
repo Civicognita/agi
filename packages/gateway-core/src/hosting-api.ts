@@ -278,7 +278,13 @@ export function registerHostingRoutes(
     if (body.type !== undefined) updates.type = body.type;
     if (body.hostname !== undefined) updates.hostname = body.hostname;
     if (body.docRoot !== undefined) updates.docRoot = body.docRoot;
-    if (body.startCommand !== undefined) updates.startCommand = body.startCommand;
+    if (body.startCommand !== undefined) {
+      // Empty or whitespace-only startCommand explicitly clears the override so
+      // the container falls back to the stack's default command. Stored as null
+      // to keep type semantics consistent with ProjectHostingMeta.startCommand.
+      const trimmed = body.startCommand.trim();
+      updates.startCommand = trimmed.length === 0 ? null : trimmed;
+    }
     if (body.mode !== undefined) updates.mode = body.mode;
     if (body.internalPort !== undefined) updates.internalPort = body.internalPort;
     if (body.runtimeId !== undefined) updates.runtimeId = body.runtimeId;
