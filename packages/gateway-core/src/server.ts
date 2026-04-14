@@ -1675,6 +1675,9 @@ export async function startGatewayServer(
             for (const { stack } of pluginRegistry.getStacks()) {
               if (!stackRegistry.get(stack.id)) stackRegistry.register(stack);
             }
+            // Regenerate Caddyfile so any subdomain routes the new plugin registered
+            // land in the reverse proxy immediately.
+            hostingManager.regenerateCaddyfile();
             log.info(`hot-loaded plugin: ${pluginToLoad.manifest.id}`);
             return { loaded: true, pluginId: pluginToLoad.manifest.id };
           }
@@ -1710,6 +1713,8 @@ export async function startGatewayServer(
             for (const { stack } of pluginRegistry.getStacks()) {
               if (!stackRegistry.get(stack.id)) stackRegistry.register(stack);
             }
+            // Regenerate Caddyfile in case the updated plugin changed its subdomain route.
+            hostingManager.regenerateCaddyfile();
             log.info(`hot-reloaded plugin: ${pluginToLoad.manifest.id}`);
             return { loaded: true, pluginId: pluginToLoad.manifest.id };
           }
@@ -1737,6 +1742,10 @@ export async function startGatewayServer(
 
         // 5. Deactivate and remove all registrations
         await pluginRegistry.deactivateSingle(pluginId);
+
+        // 6. Regenerate Caddyfile so any subdomain routes the plugin had registered
+        // are removed from the reverse proxy.
+        hostingManager.regenerateCaddyfile();
 
         log.info(`deactivated plugin for update: ${pluginId}`);
       },
