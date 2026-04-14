@@ -29,7 +29,7 @@ import type { SystemConfigService } from "../system-config-service.js";
 // ---------------------------------------------------------------------------
 
 export interface AgentToolsConfig {
-  /** Path to aionima.json config file. */
+  /** Path to gateway.json config file. */
   configPath?: string;
   /** MarketplaceManager instance for catalog/install operations. */
   marketplaceManager?: MarketplaceManager;
@@ -390,7 +390,7 @@ export function createManageConfigHandler(config: AgentToolsConfig): ToolHandler
 export const MANAGE_CONFIG_MANIFEST = {
   name: "manage_config",
   description:
-    "Manage system configuration (aionima.json). Actions: read (full config or a specific key via dot-notation), " +
+    "Manage system configuration (gateway.json). Actions: read (full config or a specific key via dot-notation), " +
     "write (replace entire config), patch (update a single key using dot-notation path).",
   requiresState: ["ONLINE" as const],
   requiresTier: ["verified" as const, "sealed" as const],

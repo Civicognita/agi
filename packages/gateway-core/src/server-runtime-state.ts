@@ -114,7 +114,7 @@ export interface RuntimeStateDeps {
   wsRef?: { server: GatewayWebSocketServer | null };
   /** Callback invoked on POST /api/reload — re-indexes PRIME, re-discovers skills, etc. */
   onReload?: () => ReloadResult;
-  /** Path to the aionima.json config file — enables GET/PUT /api/config. */
+  /** Path to the gateway.json config file — enables GET/PUT /api/config. */
   configPath?: string;
   /** Directory containing built dashboard static files (e.g. ui/dashboard/dist). */
   staticDir?: string;
@@ -2288,7 +2288,7 @@ export async function createGatewayRuntimeState(
     return true;
   }
 
-  /** Read the configured update channel from aionima.json. Returns "main" or "dev". */
+  /** Read the configured update channel from gateway.json. Returns "main" or "dev". */
   function getUpdateChannel(): "main" | "dev" {
     if (!deps.configPath) return "main";
     try {

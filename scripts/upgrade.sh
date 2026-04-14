@@ -18,7 +18,7 @@ SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo w
 BRANCH="${AIONIMA_UPDATE_CHANNEL:-$(node -e "
   try {
     const c = JSON.parse(require('fs').readFileSync(
-      require('path').join(require('os').homedir(), '.agi/aionima.json'), 'utf-8'));
+      require('path').join(require('os').homedir(), '.agi/gateway.json'), 'utf-8'));
     console.log((c.gateway && c.gateway.updateChannel) || 'main');
   } catch { console.log('main'); }
 " 2>/dev/null || echo "main")}"
@@ -148,11 +148,11 @@ fi
 # 3d. Build local ID service (if enabled in config)
 # ---------------------------------------------------------------------------
 # Check if local ID service is enabled by reading the AGI config.
-# The config lives at ~/.agi/aionima.json and we check idService.local.enabled.
+# The config lives at ~/.agi/gateway.json and we check idService.local.enabled.
 ID_LOCAL_ENABLED=$(node -e "
   try {
     const c = JSON.parse(require('fs').readFileSync(
-      require('path').join(require('os').homedir(), '.agi/aionima.json'), 'utf-8'));
+      require('path').join(require('os').homedir(), '.agi/gateway.json'), 'utf-8'));
     console.log(c.idService?.local?.enabled ? '1' : '0');
   } catch { console.log('0'); }
 " 2>/dev/null || echo "0")

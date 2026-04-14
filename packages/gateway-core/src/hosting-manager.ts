@@ -2412,10 +2412,10 @@ export class HostingManager {
     }
   }
 
-  /** Read tunnel config fresh from aionima.json — picks up changes made since boot. */
+  /** Read tunnel config fresh from gateway.json — picks up changes made since boot. */
   private readTunnelConfig(): { mode: "quick" | "named"; domain: string | undefined } {
     try {
-      const cfgPath = join(homedir(), ".agi", "aionima.json");
+      const cfgPath = join(homedir(), ".agi", "gateway.json");
       const raw = readFileSync(cfgPath, "utf-8");
       const cfg = JSON.parse(raw) as { hosting?: { tunnelMode?: string; tunnelDomain?: string } };
       return {

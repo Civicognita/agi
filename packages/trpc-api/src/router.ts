@@ -4,7 +4,7 @@
  * Procedure groups:
  *   dashboard.*  — impact metrics, timeline, breakdown, leaderboard, entity, COA
  *   projects.*   — workspace project CRUD + git actions
- *   config.*     — aionima.json read/write
+ *   config.*     — gateway.json read/write
  *   system.*     — update check + upgrade trigger
  *   plans.*      — plan CRUD
  *   bots.*       — work queue

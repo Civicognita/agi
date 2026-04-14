@@ -12,7 +12,7 @@ export interface AppContext {
   workspaceProjects: string[];
   /** Workspace root path. */
   workspaceRoot: string;
-  /** Path to aionima.json config file. */
+  /** Path to gateway.json config file. */
   configPath: string | undefined;
   /** Path to the aionima source repo. */
   selfRepoPath: string | undefined;

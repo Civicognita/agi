@@ -182,7 +182,7 @@ mkdir -p "$AGI_DATA"
 chown "$AIONIMA_USER:$AIONIMA_USER" "$AGI_DATA"
 
 # Create minimal config if it doesn't exist (gateway requires it to boot)
-AGI_CONFIG="$AGI_DATA/aionima.json"
+AGI_CONFIG="$AGI_DATA/gateway.json"
 if [ ! -f "$AGI_CONFIG" ]; then
   DETECTED_IP="$(hostname -I | awk '{print $1}')"
 

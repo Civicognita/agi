@@ -20,7 +20,7 @@ set -uo pipefail
 
 DEPLOY_DIR="${AIONIMA_DIR:-/opt/aionima}"
 AGI_DIR="${HOME}/.agi"
-CONFIG_FILE="${AGI_DIR}/aionima.json"
+CONFIG_FILE="${AGI_DIR}/gateway.json"
 LOG_DIR="${AGI_DIR}/logs"
 SERVICE="aionima"
 

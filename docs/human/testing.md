@@ -43,7 +43,7 @@ The VM mounts all workspace repos so tests can access the full system:
 | PRIME repo | `/mnt/aionima-prime` | Knowledge corpus |
 | ID repo | `/mnt/aionima-local-id` | Identity service |
 
-A test config fixture at `test/fixtures/aionima-test.json` points to these VM mount paths so tests resolve repos correctly.
+A test config fixture at `test/fixtures/gateway-test.json` points to these VM mount paths so tests resolve repos correctly.
 
 If mounts become stale (e.g., after a host reboot), the VM scripts detect and re-mount automatically.
 

@@ -1,5 +1,5 @@
 /**
- * Settings — Config management UI for aionima.json.
+ * Settings — Config management UI for gateway.json.
  *
  * Sections: Owner, Channels (Telegram, Discord), Gateway, Agent.
  * Reads/writes config via GET/PUT /api/config (loopback-only).

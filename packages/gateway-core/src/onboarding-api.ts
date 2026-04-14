@@ -277,7 +277,7 @@ export function registerOnboardingRoutes(
   });
 
   // -----------------------------------------------------------------------
-  // Config read/write helper — reads/writes aionima.json
+  // Config read/write helper — reads/writes gateway.json
   // -----------------------------------------------------------------------
 
   function readConfig(): Record<string, unknown> {

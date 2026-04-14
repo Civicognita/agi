@@ -454,7 +454,7 @@ export interface GitRemoteEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Config types — mirror of aionima.json structure
+// Config types — mirror of gateway.json structure
 // ---------------------------------------------------------------------------
 
 export interface ChannelConfig {

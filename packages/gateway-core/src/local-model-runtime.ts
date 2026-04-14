@@ -5,7 +5,7 @@
  * Today: SmolLM2-360M-Instruct (360M params, Apache 2.0, Hugging Face).
  *   - Runs in the existing "general" runtime container (transformers-server).
  *   - Installed via the HF Marketplace flow like any other model.
- *   - Config: `ops.localModel.modelId` in aionima.json (swappable).
+ *   - Config: `ops.localModel.modelId` in gateway.json (swappable).
  *
  * Used by:
  *   - SafemodeInvestigator to turn collected evidence into a readable report.

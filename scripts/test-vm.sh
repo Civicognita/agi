@@ -335,7 +335,7 @@ ENVEOF
 
     # Create minimal config
     mkdir -p ~/.agi
-    cat > ~/.agi/aionima.json << CFGEOF
+    cat > ~/.agi/gateway.json << CFGEOF
 {
   "gateway": { "host": "0.0.0.0", "port": 3100, "state": "ONLINE" },
   "channels": [],
