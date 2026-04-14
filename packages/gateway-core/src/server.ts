@@ -976,12 +976,22 @@ export async function startGatewayServer(
     }
   }
 
-  // Sync marketplace catalog from GitHub (version checks happen after backfill below).
-  for (const source of marketplaceManager.getSources()) {
-    const result = await marketplaceManager.syncSource(source.id);
-    if (result.ok) {
-      log.info(`plugin-marketplace: synced ${String(result.diff?.total ?? 0)} plugins from catalog`);
+  // Sync marketplace catalog from GitHub AND auto-update any installed plugin
+  // whose catalog version is newer than its installed version. Runs BEFORE
+  // plugin discovery (line ~1170) so the loader reads freshly-updated content
+  // from ~/.agi/plugins/cache/. Without this, installed plugins stay frozen at
+  // install time forever — even after `agi upgrade` pulls the catalog.
+  try {
+    const result = await marketplaceManager.syncAndUpdateAll();
+    log.info(`plugin-marketplace: catalog synced (${String(result.synced)} plugins total)`);
+    if (result.updated.length > 0) {
+      log.info(`plugin-marketplace: auto-updated ${String(result.updated.length)} plugin(s) -> ${result.updated.join(", ")}`);
     }
+    if (result.errors.length > 0) {
+      log.warn(`plugin-marketplace: ${String(result.errors.length)} plugin update(s) failed: ${result.errors.join("; ")}`);
+    }
+  } catch (err) {
+    log.error(`plugin-marketplace: sync/update failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // Auto-install missing required plugins from the official marketplace.
