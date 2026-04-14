@@ -246,9 +246,9 @@ export function ProjectDetail({
           <Button variant="outline" size="sm">Back to Projects</Button>
         </Link>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => onOpenTerminal?.(project.path)}>
-            Terminal
-          </Button>
+          {/* The project-level (container) terminal lives in the Development tab > Terminal
+              subtab. The host-level system terminal is now a global button in the dashboard
+              header — see root.tsx. No Terminal button on the project page. */}
           <Button size="sm" data-testid="project-chat-button" onClick={() => onOpenChat(project.path)}>
             Talk about this project
           </Button>

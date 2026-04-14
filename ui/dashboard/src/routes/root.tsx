@@ -8,6 +8,7 @@ import { Outlet, useLocation, useNavigate, useOutletContext } from "react-router
 import { useQueryClient } from "@tanstack/react-query";
 import { EditorFlyout } from "@/components/EditorFlyout.js";
 import { TerminalFlyout } from "@/components/TerminalFlyout.js";
+import { WhoDBFlyout } from "@/components/WhoDBFlyout.js";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -301,6 +302,7 @@ export default function RootLayout() {
 
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalProjectPath, setTerminalProjectPath] = useState<string | null>(null);
+  const [whodbOpen, setWhodbOpen] = useState(false);
 
   // MagicApp instances — persistent floating/docked/minimized apps
   const [magicAppInstances, setMagicAppInstances] = useState<MagicAppInstance[]>([]);
@@ -620,20 +622,34 @@ export default function RootLayout() {
               </div>
             )}
 
+            {/* System Terminal — host-level shell, distinct from the per-project
+                container terminal that lives in the Development tab. */}
             <div className="hidden md:block">
-              <a
-                href="https://db.ai.on"
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                onClick={() => { setTerminalProjectPath(null); setTerminalOpen(true); }}
                 className="p-2 rounded-lg hover:bg-surface0 text-subtext0 hover:text-text transition-colors"
-                title="Database Portal"
+                title="System Terminal"
+                data-testid="system-terminal-button"
+              >
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="4 17 10 11 4 5" />
+                  <line x1="12" y1="19" x2="20" y2="19" />
+                </svg>
+              </button>
+            </div>
+            <div className="hidden md:block">
+              <button
+                onClick={() => setWhodbOpen(true)}
+                className="p-2 rounded-lg hover:bg-surface0 text-subtext0 hover:text-text transition-colors"
+                title="WhoDB"
+                data-testid="whodb-button"
               >
                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <ellipse cx="12" cy="5" rx="9" ry="3" />
                   <path d="M3 5V19A9 3 0 0 0 21 19V5" />
                   <path d="M3 12A9 3 0 0 0 21 12" />
                 </svg>
-              </a>
+              </button>
             </div>
             <button
               onClick={() => setChatOpen((p) => !p)}
@@ -758,6 +774,8 @@ export default function RootLayout() {
         initialProjectPath={terminalProjectPath}
         projects={projectsHook.projects}
       />
+
+      <WhoDBFlyout open={whodbOpen} onClose={() => setWhodbOpen(false)} />
 
       {/* MagicApp floating/docked modals */}
       {magicAppInstances

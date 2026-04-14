@@ -87,9 +87,13 @@ When a project's hosting panel is expanded, the Development tab includes databas
 
 If the database service is not running, a message prompts you to start it first.
 
-#### Database Portal
+#### WhoDB
 
-A database icon button in the header bar opens the **Database Portal** at `https://db.ai.on` in a new tab. The portal is a standalone page listing all registered database management tools (starting with Adminer). The portal is served by the Adminer plugin and requires Caddy to be configured with a `db.ai.on` reverse proxy block.
+A database icon button in the header bar (next to the System Terminal button) opens **WhoDB**, the always-on database explorer, inline as a flyout panel. WhoDB is a unified UI for PostgreSQL, MariaDB/MySQL, SQLite, Redis, and MongoDB with spreadsheet editing, schema visualization, AI-powered SQL, and data export. The WhoDB container runs as always-on infrastructure and is reverse-proxied at `https://db.ai.on` via Caddy. The legacy `/db-portal` HTML page redirects to WhoDB; plugins can still register DB tools via the existing `/api/db-portal/register` endpoint, but the primary surface is WhoDB.
+
+#### System Terminal
+
+A terminal icon button in the header bar opens a **System Terminal** — a host-level shell session that lands in the user's home directory. Distinct from the project-level container terminal (available on the project detail page under the Development tab > Terminal), which runs inside the project's Podman container via `podman exec`.
 
 ### Communication
 

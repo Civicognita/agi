@@ -781,8 +781,16 @@ export function registerHostingRoutes(
 </html>`;
   }
 
-  // GET /db-portal — portal HTML page
+  // GET /db-portal — legacy route, redirects to WhoDB (the unified DB surface).
+  // The portal HTML page is retained below for any tooling that still renders it,
+  // but by default this URL sends users to https://db.ai.on which is the WhoDB
+  // container via Caddy reverse proxy. Plugins can still call the register endpoint.
   fastify.get("/db-portal", async (_request, reply) => {
+    return reply.redirect("https://db.ai.on", 302);
+  });
+
+  // GET /db-portal/legacy — the original portal HTML, kept for escape-hatch access.
+  fastify.get("/db-portal/legacy", async (_request, reply) => {
     const html = generatePortalHtml(portalTools);
     return reply.header("Content-Type", "text/html; charset=utf-8").send(html);
   });

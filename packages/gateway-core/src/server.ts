@@ -2774,15 +2774,16 @@ export async function startGatewayServer(
 
       case "terminal:open": {
         const termPayload = message.payload as { projectPath?: string; cols?: number; rows?: number } | undefined;
-        const termProjectPath = termPayload?.projectPath;
-        if (typeof termProjectPath !== "string" || termProjectPath.length === 0) {
-          wsServer.sendTo(connectionId, "terminal:error", { error: "projectPath is required" });
-          break;
-        }
+        // When the client sends no projectPath (or an empty one), treat this as a
+        // system-level terminal and spawn in the user's home directory. This is the
+        // path used by the main-header "System Terminal" button in the dashboard.
+        const rawPath = termPayload?.projectPath;
+        const isSystem = !(typeof rawPath === "string" && rawPath.length > 0);
+        const termProjectPath = isSystem ? (process.env.HOME ?? "/") : rawPath!;
         const sessionId = `term_${ulid()}`;
         const termSession = terminalManager.open(sessionId, termProjectPath, termPayload?.cols ?? 80, termPayload?.rows ?? 24);
         if (termSession === null) {
-          wsServer.sendTo(connectionId, "terminal:error", { error: "Project directory not found" });
+          wsServer.sendTo(connectionId, "terminal:error", { error: "Terminal working directory not found" });
           break;
         }
         // Wire output to this WS connection
@@ -2800,7 +2801,13 @@ export async function startGatewayServer(
         };
         terminalManager.on("data", onData);
         terminalManager.on("exit", onExit);
-        wsServer.sendTo(connectionId, "terminal:opened", { sessionId, projectPath: termProjectPath });
+        wsServer.sendTo(connectionId, "terminal:opened", {
+          sessionId,
+          projectPath: termProjectPath,
+          // Hint to the client whether this is a system terminal so it can pick the
+          // right tab label. The label is computed client-side from this + projects.
+          scope: isSystem ? "system" : "project",
+        });
         break;
       }
 

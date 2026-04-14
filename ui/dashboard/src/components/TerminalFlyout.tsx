@@ -94,14 +94,13 @@ export function TerminalFlyout({ open, onClose, initialProjectPath, projects }: 
     wsRef.current = ws;
 
     ws.onopen = () => {
-      // Flush pending open
-      if (pendingOpenRef.current) {
+      // Flush pending open. Empty string sentinel means system-mode (no projectPath).
+      if (pendingOpenRef.current !== null) {
         const path = pendingOpenRef.current;
         pendingOpenRef.current = null;
-        ws.send(JSON.stringify({
-          type: "terminal:open",
-          payload: { projectPath: path, cols: 120, rows: 30 },
-        }));
+        const payload: Record<string, unknown> = { cols: 120, rows: 30 };
+        if (path) payload.projectPath = path;
+        ws.send(JSON.stringify({ type: "terminal:open", payload }));
       }
     };
 
@@ -110,8 +109,10 @@ export function TerminalFlyout({ open, onClose, initialProjectPath, projects }: 
         const msg = JSON.parse(event.data as string) as { type: string; payload?: Record<string, unknown> };
 
         if (msg.type === "terminal:opened") {
-          const { sessionId, projectPath } = msg.payload as { sessionId: string; projectPath: string };
-          const label = projectsRef.current.find((p) => p.path === projectPath)?.name ?? projectPath.split("/").pop() ?? "Terminal";
+          const { sessionId, projectPath, scope } = msg.payload as { sessionId: string; projectPath: string; scope?: string };
+          const label = scope === "system"
+            ? "System"
+            : (projectsRef.current.find((p) => p.path === projectPath)?.name ?? projectPath.split("/").pop() ?? "Terminal");
 
           const term = new Terminal({
             theme: TERM_THEME,
@@ -178,23 +179,29 @@ export function TerminalFlyout({ open, onClose, initialProjectPath, projects }: 
   // Open terminal for a project
   // -------------------------------------------------------------------------
 
-  const openTerminal = useCallback((projectPath: string) => {
+  const openTerminal = useCallback((projectPath: string | null) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      pendingOpenRef.current = projectPath;
+      // Empty string is the sentinel for "system terminal" in the pending queue.
+      pendingOpenRef.current = projectPath ?? "";
       return;
     }
-    ws.send(JSON.stringify({
-      type: "terminal:open",
-      payload: { projectPath, cols: 120, rows: 30 },
-    }));
+    // Omit projectPath entirely for system-mode — server opens in $HOME.
+    const payload: Record<string, unknown> = { cols: 120, rows: 30 };
+    if (projectPath) payload.projectPath = projectPath;
+    ws.send(JSON.stringify({ type: "terminal:open", payload }));
     setPickerOpen(false);
   }, []);
 
   // Handle initialProjectPath changes
   useEffect(() => {
-    if (!open || !initialProjectPath) return;
-    // Don't reopen if already have a tab for this project
+    if (!open) return;
+    // System-terminal mode: initialProjectPath is null and no tabs yet.
+    if (!initialProjectPath) {
+      if (tabs.length === 0) openTerminal(null);
+      return;
+    }
+    // Project-scoped mode: reuse existing tab for the same project when possible.
     const existing = tabs.find((t) => t.projectPath === initialProjectPath);
     if (existing) {
       setActiveTabId(existing.id);

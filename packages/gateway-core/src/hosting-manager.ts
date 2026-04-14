@@ -35,6 +35,32 @@ import type { MagicAppContainerConfig, MagicAppContainerContext } from "./magic-
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07/g;
 function stripAnsi(text: string): string { return text.replace(ANSI_RE, ""); }
 
+/**
+ * Phase 1 container resilience wrapper.
+ *
+ * Wraps a command token array so the container's PID 1 outlives the user's
+ * start command. Returns `null` when `cmdTokens` is null/undefined so the
+ * caller can fall back to the image's default CMD (e.g. nginx for static
+ * sites, apache for PHP) — those are typically benign and don't need a
+ * shell supervisor.
+ *
+ * Exported for unit tests.
+ */
+export function wrapResilientCmd(cmdTokens: string[] | null | undefined): string[] | null {
+  if (!cmdTokens || cmdTokens.length === 0) return null;
+  const aliveMsg = "[aionima] start command exited; container remains alive for development";
+  // Normalize `sh -c <cmd>` shape; otherwise shell-escape each token.
+  let cmdStr: string;
+  if (cmdTokens.length === 3 && cmdTokens[0] === "sh" && cmdTokens[1] === "-c") {
+    cmdStr = cmdTokens[2]!;
+  } else {
+    cmdStr = cmdTokens.map((t) => `'${t.replace(/'/g, "'\\''")}'`).join(" ");
+  }
+  // `(cmd) || true` swallows non-zero exits so the shell continues.
+  // `exec sleep infinity` replaces PID 1 so the container survives forever.
+  return ["sh", "-c", `(${cmdStr}) || true; echo '${aliveMsg}'; exec sleep infinity`];
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -1076,7 +1102,7 @@ export class HostingManager {
       const args: string[] = [
         "run", "-d",
         "--name", containerName,
-        "--restart=on-failure:10",
+        "--restart=always",
         "--label", "aionima.managed=true",
         "--label", `aionima.hostname=${hosted.meta.hostname}`,
         "--label", `aionima.project=${hosted.path}`,
@@ -1101,10 +1127,11 @@ export class HostingManager {
 
       args.push(magicAppConfig.image);
 
-      const cmdTokens = magicAppConfig.command?.(ctx);
-      if (cmdTokens) {
-        args.push(...cmdTokens);
-      }
+      // Resilience-wrap the stack's command so the container survives user-code failure.
+      // If the magic app provides no command, fall through to the image's default CMD.
+      const cmdTokens = magicAppConfig.command?.(ctx) ?? null;
+      const wrapped = this.wrapResilient(cmdTokens);
+      if (wrapped) args.push(...wrapped);
 
       this.execContainerStart(hosted, containerName, args, "magic-app");
       return;
@@ -1128,7 +1155,7 @@ export class HostingManager {
       const args: string[] = [
         "run", "-d",
         "--name", containerName,
-        "--restart=on-failure:10",
+        "--restart=always",
         "--label", "aionima.managed=true",
         "--label", `aionima.hostname=${hosted.meta.hostname}`,
         "--label", `aionima.project=${hosted.path}`,
@@ -1204,9 +1231,10 @@ export class HostingManager {
         cmdTokens = ["sh", "-c", shimScript];
       }
 
-      if (cmdTokens) {
-        args.push(...cmdTokens);
-      }
+      // Resilience-wrap so broken user code can't kill the container (Phase 1).
+      // If the stack doesn't specify a command, the image's default CMD runs.
+      const stackWrapped = this.wrapResilient(cmdTokens);
+      if (stackWrapped) args.push(...stackWrapped);
 
       this.execContainerStart(hosted, containerName, args, "stack");
       return;
@@ -1236,12 +1264,16 @@ export class HostingManager {
     const args: string[] = [
       "run", "-d",
       "--name", containerName,
-      "--restart=on-failure:10",
+      "--restart=always",
       "--label", "aionima.managed=true",
       "--label", `aionima.hostname=${hosted.meta.hostname}`,
       "--label", `aionima.project=${hosted.path}`,
       "-p", `${String(hosted.meta.port)}:${String(internalPort)}`,
     ];
+
+    // Collected across branches: the user-level command tokens (post-image).
+    // Resilience-wrapped once at the end so every legacy path survives failure.
+    let legacyCmdTokens: string[] | null = null;
 
     if (typeDef?.containerConfig) {
       const cfg = typeDef.containerConfig;
@@ -1262,7 +1294,7 @@ export class HostingManager {
       args.push(image);
       const cmdTokens = cfg.command?.(hosted.meta);
       if (cmdTokens) {
-        args.push(...cmdTokens);
+        legacyCmdTokens = cmdTokens;
       } else if (hosted.meta.type === "node" && !hosted.meta.startCommand) {
         hosted.status = "error";
         hosted.error = "Missing startCommand for Node.js project";
@@ -1288,8 +1320,8 @@ export class HostingManager {
           args.push(...aiBindingArgs.envArgs);
           args.push(image);
           if (docRoot !== ".") {
-            args.push("bash", "-c",
-              `sed -i 's|/var/www/html|/var/www/html/${docRoot}|g' /etc/apache2/sites-available/000-default.conf /etc/apache2/apache2.conf && a2enmod rewrite && docker-php-entrypoint apache2-foreground`);
+            legacyCmdTokens = ["bash", "-c",
+              `sed -i 's|/var/www/html|/var/www/html/${docRoot}|g' /etc/apache2/sites-available/000-default.conf /etc/apache2/apache2.conf && a2enmod rewrite && docker-php-entrypoint apache2-foreground`];
           }
           break;
         }
@@ -1309,8 +1341,7 @@ export class HostingManager {
           args.push(...aiBindingArgs.volumeArgs);
           args.push(...aiBindingArgs.envArgs);
           args.push(image);
-          const cmdTokens = hosted.meta.startCommand.split(/\s+/);
-          args.push(...cmdTokens);
+          legacyCmdTokens = hosted.meta.startCommand.split(/\s+/);
           break;
         }
         default: {
@@ -1330,11 +1361,16 @@ export class HostingManager {
           args.push(...aiBindingArgs.volumeArgs);
           args.push(...aiBindingArgs.envArgs);
           args.push(image);
-          args.push(...hosted.meta.startCommand.split(/\s+/));
+          legacyCmdTokens = hosted.meta.startCommand.split(/\s+/);
           break;
         }
       }
     }
+
+    // Resilience-wrap so the container outlives the user's start command (Phase 1).
+    // If the branch doesn't set legacyCmdTokens (e.g. static nginx), the image default runs.
+    const legacyWrapped = this.wrapResilient(legacyCmdTokens);
+    if (legacyWrapped) args.push(...legacyWrapped);
 
     this.execContainerStart(hosted, containerName, args, "legacy");
   }
@@ -1363,6 +1399,28 @@ export class HostingManager {
       hosted.error = err instanceof Error ? err.message : String(err);
       this.log.error(`[${hosted.meta.hostname}] failed to start container: ${hosted.error}`);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Container resilience (Phase 1): sleep-infinity supervisor
+  //
+  // The container's PID 1 is a resilience wrapper — the user's start command
+  // runs first, but whatever exit code it produces (or signal it crashes with)
+  // is swallowed and PID 1 exec's into `sleep infinity`. The container
+  // therefore survives broken user code, missing dependencies, bad configs,
+  // etc. — which makes it suitable as a persistent dev environment where
+  // dev commands are run on-demand via `podman exec`.
+  //
+  // This pattern mirrors VS Code devcontainers and GitHub Codespaces.
+  //
+  // If no user command is configured, PID 1 is just `sleep infinity` directly.
+  // With this in place, `--restart=always` is safe: PID 1 never exits
+  // voluntarily, so "always" never loops on a broken command.
+  // -------------------------------------------------------------------------
+
+  /** Instance method that delegates to the exported pure helper. */
+  private wrapResilient(cmdTokens: string[] | null | undefined): string[] | null {
+    return wrapResilientCmd(cmdTokens);
   }
 
   private stopContainer(hosted: HostedProject): void {
@@ -2772,19 +2830,37 @@ export class HostingManager {
     }
   }
 
-  /** Get aggregated dev commands from all installed stacks for a project. */
+  /**
+   * Get aggregated dev commands from all installed stacks for a project.
+   *
+   * First-win deduplication: the first stack that declares a given command
+   * key (e.g. "build") provides that command; later stacks declaring the
+   * same key are logged as a collision and ignored. The UI shows a single
+   * button per key.
+   */
   getProjectDevCommands(projectPath: string): Record<string, string> {
     const resolved = resolvePath(projectPath);
     if (!this.stackReg) return {};
 
     const stacks = this.getProjectStacks(resolved);
     const merged: Record<string, string> = {};
+    const providerFor: Record<string, string> = {};
 
     for (const instance of stacks) {
       const def = this.stackReg.get(instance.stackId);
       if (!def?.devCommands) continue;
       for (const [key, cmd] of Object.entries(def.devCommands)) {
-        if (cmd && !merged[key]) merged[key] = cmd;
+        if (!cmd) continue;
+        if (merged[key]) {
+          // Collision: earlier stack already provided this key. Log once per collision
+          // so stack authors / install-level conflicts are observable without spam.
+          this.log.warn(
+            `[stacks] dev-command collision on "${key}": already provided by ${providerFor[key]} (cmd="${merged[key]}"); ignoring duplicate from ${def.id} (cmd="${cmd}")`,
+          );
+          continue;
+        }
+        merged[key] = cmd;
+        providerFor[key] = def.id;
       }
     }
 
