@@ -673,6 +673,12 @@ export async function startGatewayServer(
     } : undefined,
     logger,
     imageBlobStore,
+    getMaxToolLoops: () => {
+      // Read from live config so hot-reload takes effect per turn.
+      const snap = systemConfigService?.read() ?? config;
+      const gw = (snap as { gateway?: { maxToolLoops?: number } }).gateway;
+      return gw?.maxToolLoops ?? 0;
+    },
   });
 
   // -------------------------------------------------------------------------

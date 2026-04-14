@@ -259,6 +259,40 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
         </p>
       </Card>}
 
+      {/* Agent behavior */}
+      {showGeneral && <Card className="p-6 gap-0 mb-4">
+        <SectionHeading>Agent Behavior</SectionHeading>
+        <div className="grid grid-cols-2 gap-4">
+          <FieldGroup label="Max Tool Loops per Turn">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono"
+              value={gateway.maxToolLoops ?? 0}
+              onChange={(e) => {
+                const n = Number.parseInt(e.target.value, 10);
+                const val = Number.isFinite(n) && n >= 0 ? n : 0;
+                update((prev) => ({
+                  ...prev,
+                  gateway: {
+                    ...(prev.gateway ?? { host: "127.0.0.1", port: 3100, state: "OFFLINE" as const }),
+                    maxToolLoops: val,
+                  },
+                }));
+              }}
+              data-testid="gateway-max-tool-loops"
+            />
+          </FieldGroup>
+        </div>
+        <p className="text-[12px] text-muted-foreground mt-1">
+          Maximum number of tool iterations the agent can perform in a single turn.
+          <strong> 0 = uncapped (recommended).</strong> The circuit breaker already stops
+          runaway loops on duplicate tool calls, so this is purely a per-turn cost ceiling
+          for users who want one.
+        </p>
+      </Card>}
+
       {/* Cloudflare Tunnel */}
       {showNetwork && <>
       <Card className="p-6 gap-0 mb-4">

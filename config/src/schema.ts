@@ -9,6 +9,11 @@ const GatewayConfigSchema = z
     state: GatewayStateSchema.default("OFFLINE"),
     /** Release channel: "main" (stable) or "dev" (bleeding edge). Controls which branch all repos track for updates. */
     updateChannel: z.enum(["main", "dev"]).optional(),
+    /** Max tool-loop iterations per agent turn. The circuit breaker on
+     *  duplicate tool calls (same tool + same input >3 times) already
+     *  prevents runaway loops, so this is purely a cost ceiling. Set to 0
+     *  for no cap (default). */
+    maxToolLoops: z.number().int().min(0).optional(),
   })
   .strict();
 

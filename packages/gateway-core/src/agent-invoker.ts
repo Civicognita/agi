@@ -128,6 +128,9 @@ export interface AgentInvokerDeps {
   logger?: Logger;
   /** Optional image blob store for resolving image references in history. */
   imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
+  /** Returns the configured per-turn tool-loop cap (0 = uncapped). Called per
+   *  turn so config hot-reload takes effect. Defaults to uncapped. */
+  getMaxToolLoops?: () => number;
 }
 
 export interface InvocationRequest {
@@ -573,7 +576,14 @@ export class AgentInvoker extends EventEmitter {
       // Tool use loop — execute tools and continue until no more tool calls
       const toolsUsed: string[] = [];
       let loopCount = 0;
-      const maxToolLoops = 15;
+      // No hard cap on tool-loop iterations by default. The circuit breaker
+      // below hard-aborts on duplicate tool calls (same tool + same input
+      // more than 3 times), which eliminates the only scenario a cap would
+      // genuinely protect against (runaway infinite loop). Owners who want
+      // a cost ceiling can set gateway.maxToolLoops via the dashboard's
+      // Gateway > General settings. 0 = uncapped.
+      const configuredCap = this.deps.getMaxToolLoops?.() ?? 0;
+      const maxToolLoops = configuredCap > 0 ? configuredCap : Number.MAX_SAFE_INTEGER;
       const abortSignal = request.abortSignal;
 
       // Accumulate messages across tool iterations so the model sees the full
@@ -707,12 +717,15 @@ export class AgentInvoker extends EventEmitter {
           this.emit("thought", { sessionKey: sKey, content: block.thinking });
         }
 
+        // Intermediate assistant narration — the model's "now I'll do Y" prose
+        // that Anthropic includes BEFORE the next batch of tool_use blocks.
+        // Emit it as a thought so it becomes a persistent message in the chat,
+        // not an ephemeral progress pill. Without this, the user sees several
+        // tool-call rounds with NO narration between them, because Anthropic
+        // often returns zero thinking blocks on continuation calls even when
+        // extended thinking is enabled — the narration text is all we get.
         if (result.text.trim().length > 0 && result.toolCalls.length > 0) {
-          this.emit("progress", {
-            sessionKey: sKey,
-            text: result.text,
-            phase: "tool_loop",
-          });
+          this.emit("thought", { sessionKey: sKey, content: result.text });
         }
 
         // After the call, append this iteration's turns so the NEXT iteration
@@ -879,8 +892,10 @@ export class AgentInvoker extends EventEmitter {
             this.emit("thought", { sessionKey: sKey, content: block.thinking });
           }
 
+          // Same treatment as the main tool loop: persist intermediate
+          // narration as a thought bubble, not an ephemeral progress pill.
           if (result.text.trim().length > 0 && result.toolCalls.length > 0) {
-            this.emit("progress", { sessionKey: sKey, text: result.text, phase: "tool_loop" });
+            this.emit("thought", { sessionKey: sKey, content: result.text });
           }
 
           const toolResultBlocks: LLMContentBlock[] = toolResults.map((r) => ({
@@ -909,11 +924,27 @@ export class AgentInvoker extends EventEmitter {
       // -----------------------------------------------------------------------
       // Step 9: TASKMASTER extraction + response cleanup
       // -----------------------------------------------------------------------
+      // If we exited the tool loop because we hit the maxToolLoops cap AND the
+      // model still wanted to call more tools, the user's getting a truncated
+      // turn. Tell them explicitly so they don't see a half-sentence "Let me
+      // fix that:" with no follow-up and think the chat is broken.
+      let finalText = result.text;
+      if (loopCount >= maxToolLoops && result.toolCalls.length > 0) {
+        finalText =
+          (finalText.trim().length > 0 ? `${finalText}\n\n---\n` : "") +
+          `**\u26a0 Reached the maximum of ${String(maxToolLoops)} tool iterations for this turn.** ` +
+          `I was about to take another action but stopped here to avoid runaway execution. ` +
+          `Send a follow-up message (e.g. "continue") to pick up where I left off.`;
+        this.log.warn(
+          `agent hit maxToolLoops=${String(maxToolLoops)} for session ${sKey}; surfacing cap message to user`,
+        );
+      }
+
       const emissions =
-        this.deps.toolRegistry.extractTaskmasterEmissions(result.text);
+        this.deps.toolRegistry.extractTaskmasterEmissions(finalText);
       const { text: cleanedText, strippedCount } =
         this.deps.toolRegistry.stripTaskmasterEmissions(
-          result.text,
+          finalText,
           entity.verificationTier,
         );
 
