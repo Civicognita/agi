@@ -199,7 +199,7 @@ export default {
 } satisfies AionimaPlugin;
 ```
 
-`api.getChannelConfig("<name>")` reads from `aionima.json` under the `channels` array. It returns `undefined` if the channel is not configured, and `{ enabled: false, ... }` if it is configured but disabled.
+`api.getChannelConfig("<name>")` reads from `gateway.json` under the `channels` array. It returns `undefined` if the channel is not configured, and `{ enabled: false, ... }` if it is configured but disabled.
 
 ## Step 6: Wire Inbound Messages to the Queue
 
@@ -207,9 +207,9 @@ This happens automatically. After `channelRegistry.startAll()` is called in `pac
 
 The key is that your `messaging.onMessage` callback must be called whenever the channel receives a message. The gateway assigns the handler; your `gateway.start()` must begin delivering messages to it.
 
-## Step 7: Add Channel Configuration to aionima.json
+## Step 7: Add Channel Configuration to gateway.json
 
-For the channel to be loaded, add it to the `channels` array in `aionima.json`:
+For the channel to be loaded, add it to the `channels` array in `gateway.json`:
 
 ```json
 {
@@ -286,7 +286,7 @@ import Comms<Name>Page from "./routes/comms-<name>.js";
 | `channels/<name>/src/config.ts` | Create — config type and validator |
 | `channels/<name>/src/normalizer.ts` | Create — message normalization |
 | `channels/<name>/src/outbound.ts` | Create — send logic |
-| `aionima.json` | Add channel entry to `channels[]` array |
+| `gateway.json` | Add channel entry to `channels[]` array |
 | `scripts/upgrade.sh` | Add to `BACKEND_DIRS` if channel compiles to `dist/` |
 | `ui/dashboard/src/routes/comms-<name>.tsx` | Create — thin wrapper around `ChannelPage` |
 | `ui/dashboard/src/router.tsx` | Add route for `/comms/<name>` |

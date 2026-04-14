@@ -38,7 +38,7 @@ dnsmasq:          active
 Containers:       4 running
 ```
 
-The update check compares against `origin/{channel}` where channel is read from `gateway.updateChannel` in `aionima.json` (default: `main`).
+The update check compares against `origin/{channel}` where channel is read from `gateway.updateChannel` in `gateway.json` (default: `main`).
 
 ---
 
@@ -94,7 +94,7 @@ Checks: Node.js version, pnpm, deploy directory, config file, Caddy, Podman (roo
 
 ### agi config
 
-Read configuration values from `~/.agi/aionima.json`.
+Read configuration values from `~/.agi/gateway.json`.
 
 ```bash
 agi config                    # print full config
@@ -116,7 +116,7 @@ agi projects
 
 ### agi setup
 
-Interactive configuration wizard. Generates `aionima.json` and `.env` from user input.
+Interactive configuration wizard. Generates `gateway.json` and `.env` from user input.
 
 ```bash
 agi setup

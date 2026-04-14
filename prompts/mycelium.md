@@ -27,7 +27,7 @@ LIMBO ──[memory restored]──> ONLINE
 
 ## Configuration
 
-All runtime configuration lives in `~/.agi/aionima.json` — the single source of truth. Never store config in repos or the production service directory.
+All runtime configuration lives in `~/.agi/gateway.json` — the single source of truth. Never store config in repos or the production service directory.
 
 Configuration is hot-swappable: read from disk at use time, never cached at boot. Changes take effect immediately without restart.
 
@@ -45,7 +45,7 @@ Key config sections:
 
 ```
 ~/.agi/                         → Runtime home (config, db, memory, secrets)
-├── aionima.json                → Runtime config (single source of truth)
+├── gateway.json                → Runtime config (single source of truth)
 ├── entities.db                 → SQLite entity database
 ├── chat-history/               → Chat session persistence
 ├── memory/                     → Agent memory (multi-file with _map.md index)

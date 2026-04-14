@@ -214,7 +214,7 @@ async function buildMemoryContext(memory: MemoryAdapter, entityId: string, query
 
 ## Developer Mode Context
 
-When `agent.devMode` is `true` in `aionima.json`, the agent receives additional workspace context:
+When `agent.devMode` is `true` in `gateway.json`, the agent receives additional workspace context:
 
 ```ts
 function buildDevModeContext(config: AgentConfig, workspaceRoot: string): string {

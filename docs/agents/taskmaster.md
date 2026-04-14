@@ -331,7 +331,7 @@ Jobs are persisted at `~/.agi/state/taskmaster.json`. This is runtime data — n
 
 ## Configuration
 
-The `workers` block in `aionima.json` controls the runtime:
+The `workers` block in `gateway.json` controls the runtime:
 
 ```json
 {

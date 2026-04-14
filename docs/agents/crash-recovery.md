@@ -121,7 +121,7 @@ attached, so the dashboard can render a useful error state.
 - **New `agi` CLI subcommands:** Each hits the admin API over loopback;
   no new auth needed.
 - **Fine-tuned incident model:** Swap `ops.localModel.modelId` in
-  `aionima.json` once a LoRA adapter is merged. `LocalModelRuntime` doesn't
+  `gateway.json` once a LoRA adapter is merged. `LocalModelRuntime` doesn't
   care which model backs it as long as the HF container exposes
   `/v1/chat/completions`.
 

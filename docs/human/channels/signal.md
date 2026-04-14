@@ -72,7 +72,7 @@ curl -X POST "http://localhost:8080/v2/send" \
 
 ## Configuration
 
-Add to `aionima.json`:
+Add to `gateway.json`:
 
 ```json
 {

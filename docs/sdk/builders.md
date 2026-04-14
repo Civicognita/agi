@@ -191,7 +191,7 @@ api.registerSettingsSection(settings);
 | Method | Parameter | Description |
 |--------|-----------|-------------|
 | `.description(desc)` | `string` | Section description |
-| `.configPath(path)` | `string` | Dot-path into `aionima.json` |
+| `.configPath(path)` | `string` | Dot-path into `gateway.json` |
 | `.field(field)` | `UIField` | Add a form field |
 | `.position(pos)` | `number` | Sort order |
 

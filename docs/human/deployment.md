@@ -75,11 +75,11 @@ pnpm build
 pnpm cli setup --dir /opt/aionima
 ```
 
-This creates `/opt/aionima/aionima.json` and `/opt/aionima/.env`.
+This creates `/opt/aionima/gateway.json` and `/opt/aionima/.env`.
 
 ### Step 5 -- Configure Repository Paths
 
-Add repo paths to `~/.agi/aionima.json`:
+Add repo paths to `~/.agi/gateway.json`:
 
 ```json
 {
@@ -294,7 +294,7 @@ There is no automated rollback. If a deployment breaks the service:
 1. SSH into the server.
 2. Check the service logs: `sudo journalctl -u aionima -n 50`.
 3. If the issue is in the code, revert the commit in the repo and redeploy.
-4. If the config was changed, edit `/opt/aionima/aionima.json` and restart.
+4. If the config was changed, edit `/opt/aionima/gateway.json` and restart.
 
 ---
 

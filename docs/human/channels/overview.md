@@ -158,7 +158,7 @@ Channel Adapter → Platform
 
 ## Channel Configuration Patterns
 
-Every channel entry in `aionima.json` follows the same structure:
+Every channel entry in `gateway.json` follows the same structure:
 
 ```json
 {
@@ -174,7 +174,7 @@ Every channel entry in `aionima.json` follows the same structure:
 - `enabled` — set to `false` to disable a channel without removing its config.
 - `config` — channel-specific configuration. Use `$ENV{VAR}` references for secrets.
 
-Secrets should always go in `.env`, referenced by `$ENV{VAR_NAME}` in `aionima.json`. The `aionima doctor` command checks for hardcoded secrets in the config file.
+Secrets should always go in `.env`, referenced by `$ENV{VAR_NAME}` in `gateway.json`. The `aionima doctor` command checks for hardcoded secrets in the config file.
 
 ---
 
@@ -225,7 +225,7 @@ To add support for a new messaging platform:
 2. Add a `package.json` with an `"aionima"` manifest block.
 3. Implement the `AionimaPlugin` interface, calling `api.registerChannel()` in `activate()`.
 4. Implement the `AionimaChannelPlugin` interface for the actual adapter.
-5. Add the channel to `aionima.json` under `"channels"`.
+5. Add the channel to `gateway.json` under `"channels"`.
 6. Rebuild: `pnpm build`.
 
 The channel SDK test harness in `packages/channel-sdk/src/test-harness.ts` provides utilities for testing channel adapters without connecting to the live platform.

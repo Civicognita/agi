@@ -10,7 +10,7 @@ Aionima uses a layered access model:
 
 1. **Loopback bypass** — Requests from `127.0.0.1`, `::1`, or `::ffff:127.0.0.1` skip all auth checks.
 2. **Private network gating** — Most `/api/*` routes only accept connections from RFC 1918 addresses (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and IPv6 link-local (`fe80::/10`). Non-private requests receive `403 Forbidden`.
-3. **Bearer token** — When `auth.tokens` is configured in `aionima.json`, non-loopback requests must include:
+3. **Bearer token** — When `auth.tokens` is configured in `gateway.json`, non-loopback requests must include:
 
 ```
 Authorization: Bearer <AUTH_TOKEN>
@@ -339,7 +339,7 @@ Config endpoints are only registered when a config file path is available. All r
 
 #### GET /api/config
 
-Read the current configuration (`aionima.json`).
+Read the current configuration (`gateway.json`).
 
 Response: The full parsed config object.
 

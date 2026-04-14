@@ -132,7 +132,7 @@ The dashboard connects to the gateway via WebSocket on the same port as HTTP. Re
 ### Config Flow
 
 ```
-~/.agi/aionima.json + ~/.agi/.env
+~/.agi/gateway.json + ~/.agi/.env
     |
     | $ENV{VAR} references resolved at load time
     v
@@ -168,7 +168,7 @@ Hot-reload (config.changed hook fires, relevant services update)
 
 | Path | Purpose |
 |------|---------|
-| `~/.agi/aionima.json` | Runtime config |
+| `~/.agi/gateway.json` | Runtime config |
 | `~/.agi/entities.db` | SQLite entity database |
 | `~/.agi/chat-history/` | Chat session history (JSON files per session) |
 | `~/.agi/secrets/` | TPM2-sealed credentials |
@@ -190,7 +190,7 @@ The gateway operates in one of four states. The active state gates which operati
 | OFFLINE | No outbound connections | Informs user, no remote actions |
 | UNKNOWN | State indeterminate | Logs all actions, returns null response |
 
-Set `gateway.state` in `aionima.json` to control the startup state. The dashboard can change state at runtime.
+Set `gateway.state` in `gateway.json` to control the startup state. The dashboard can change state at runtime.
 
 ---
 
@@ -198,7 +198,7 @@ Set `gateway.state` in `aionima.json` to control the startup state. The dashboar
 
 When `aionima run` executes, the gateway starts in nine steps:
 
-1. Load and validate `aionima.json`
+1. Load and validate `gateway.json`
 2. Bootstrap auth (tokens, rate limiter)
 3. Initialize state machine
 4. Create HTTP + WebSocket servers (bound to configured host:port)

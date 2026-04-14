@@ -28,7 +28,7 @@ The user ID looks like `123456789`. It is different from your username.
 
 ## Configuration
 
-Add the following to `aionima.json`:
+Add the following to `gateway.json`:
 
 ```json
 {
@@ -148,7 +148,7 @@ The adapter registers the webhook with Telegram on startup and mounts the handle
 - Verify the token is correct: `curl https://api.telegram.org/bot<TOKEN>/getMe`
 - Check the channel status in the dashboard (Communication → Telegram).
 - Check `logs/gateway.log` for error messages from the telegram adapter.
-- Ensure `"enabled": true` in `aionima.json` for the telegram channel.
+- Ensure `"enabled": true` in `gateway.json` for the telegram channel.
 
 ### "Unauthorized" Error on Startup
 

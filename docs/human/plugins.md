@@ -307,7 +307,7 @@ Provider plugins declare their supported models, API key requirements, and a fac
 
 ## Configuring Plugin Preferences
 
-Plugin behavior can be tuned in `aionima.json` under the `plugins` key:
+Plugin behavior can be tuned in `gateway.json` under the `plugins` key:
 
 ```json
 {
@@ -332,7 +332,7 @@ Plugin behavior can be tuned in `aionima.json` under the `plugins` key:
 
 ## Service Configuration Overrides
 
-Service containers can have their defaults overridden in `aionima.json` under `services.overrides`:
+Service containers can have their defaults overridden in `gateway.json` under `services.overrides`:
 
 ```json
 {

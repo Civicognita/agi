@@ -8,7 +8,7 @@ This document describes the HuggingFace model marketplace integration for AI cod
 
 The HF integration enables Aionima to browse the HuggingFace Hub, download model files locally, and serve them via Podman containers that expose OpenAI-compatible inference endpoints. MApps and the agent's `hf_models` tool consume these endpoints.
 
-The feature is opt-in: it is enabled or disabled via the `hf.enabled` flag in `aionima.json`. When disabled, all HF routes return `503` and the `hf_models` tool is unregistered.
+The feature is opt-in: it is enabled or disabled via the `hf.enabled` flag in `gateway.json`. When disabled, all HF routes return `503` and the `hf_models` tool is unregistered.
 
 ---
 
@@ -34,7 +34,7 @@ All HF-related logic lives in `packages/model-runtime/`. This package is loaded 
 
 ## Configuration
 
-The `hf` section of `~/.agi/aionima.json`:
+The `hf` section of `~/.agi/gateway.json`:
 
 ```json
 {

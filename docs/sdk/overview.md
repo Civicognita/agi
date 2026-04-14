@@ -161,7 +161,7 @@ Log().error("Unhandled exception in pipeline");
 
 #### `Config()`
 
-Returns a dot-path accessor over `aionima.json`. Always reads from the snapshot captured at `initADF()` — for live reads use `SystemConfig()`.
+Returns a dot-path accessor over `gateway.json`. Always reads from the snapshot captured at `initADF()` — for live reads use `SystemConfig()`.
 
 ```typescript
 const enabled = Config().get<boolean>("hosting.enabled");
@@ -207,7 +207,7 @@ const stacks = ProjectConfig().getStacks("/home/wishborn/temp_core/my-project");
 
 #### `SystemConfig()`
 
-Read/write access to `aionima.json`. Reads directly from disk; writes are persisted immediately. Throws if `SystemConfigService` is not initialized.
+Read/write access to `gateway.json`. Reads directly from disk; writes are persisted immediately. Throws if `SystemConfigService` is not initialized.
 
 ```typescript
 const allConfig = SystemConfig().read();

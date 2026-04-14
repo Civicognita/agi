@@ -45,7 +45,7 @@ Using the Google OAuth2 Playground:
 
 ## Configuration
 
-Add to `aionima.json`:
+Add to `gateway.json`:
 
 ```json
 {

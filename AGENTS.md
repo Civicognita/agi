@@ -206,7 +206,7 @@ Each repo has a `protocol.json` at its root. AGI checks semver compatibility at 
    - **Restarts the service only if backend changed**
    - Writes `.deployed-commit` marker for update detection
 
-Key paths: service runs from `/opt/aionima`, systemd unit at `/etc/systemd/system/aionima.service`, config at `/opt/aionima/aionima.json`, secrets in `/opt/aionima/.env`.
+Key paths: service runs from `/opt/aionima`, systemd unit at `/etc/systemd/system/aionima.service`, config at `/opt/aionima/gateway.json`, secrets in `/opt/aionima/.env`.
 
 ### Dev Mode
 
@@ -221,7 +221,7 @@ Toggle via dashboard (`POST /api/dev/switch`) or config file. Dev mode:
 |------|---------|
 | `/opt/aionima-prime/` | **PRIME knowledge corpus (production) — NEVER write runtime data here** |
 | `~/.agi/` | Runtime data root (config, db, secrets, chat history) |
-| `~/.agi/aionima.json` | Runtime config (single source — NOT in repo or service dir) |
+| `~/.agi/gateway.json` | Runtime config (single source — NOT in repo or service dir) |
 | `~/.agi/entities.db` | SQLite entity database |
 | `~/.agi/chat-history/` | Chat session history (JSON files per session) |
 | `~/.agi/secrets/` | TPM2-sealed credentials |

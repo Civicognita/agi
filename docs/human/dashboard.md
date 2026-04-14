@@ -12,7 +12,7 @@ By default, the dashboard is available at:
 http://127.0.0.1:3100
 ```
 
-If you have configured a different host or port in `aionima.json`, use that address instead. The dashboard is served from `ui/dashboard/dist/` — it must be built before it is available:
+If you have configured a different host or port in `gateway.json`, use that address instead. The dashboard is served from `ui/dashboard/dist/` — it must be built before it is available:
 
 ```bash
 pnpm build
@@ -76,7 +76,7 @@ MApp lifecycle events (mint, install, publish, execute) are tracked in the COA c
 
 The Projects section lists hosted projects — code repositories or web applications running on the local network via Caddy reverse proxy. Each project shows its hostname, status, runtime type, and quick controls (start/stop/restart container).
 
-This section is only populated if `hosting.enabled` is `true` in `aionima.json`.
+This section is only populated if `hosting.enabled` is `true` in `gateway.json`.
 
 #### Database in the Development Tab
 
@@ -113,7 +113,7 @@ Available channel pages:
 | Signal | signal-cli REST adapter |
 | WhatsApp | WhatsApp Business API adapter |
 
-Only channels that are configured in `aionima.json` appear in the sidebar.
+Only channels that are configured in `gateway.json` appear in the sidebar.
 
 ### Knowledge
 
@@ -246,4 +246,4 @@ The dashboard communicates with the gateway via two mechanisms:
 - **REST** — for file operations, system control (upgrade, restart), and log streaming.
 - **WebSocket** — for real-time event push (new messages, state transitions, resource metrics).
 
-All API requests include the `Authorization: Bearer <AUTH_TOKEN>` header. The token is read from the `auth.tokens` array in `aionima.json`, resolved from `$ENV{AUTH_TOKEN}`. Requests from loopback (`127.0.0.1`, `::1`) bypass auth when no token is configured.
+All API requests include the `Authorization: Bearer <AUTH_TOKEN>` header. The token is read from the `auth.tokens` array in `gateway.json`, resolved from `$ENV{AUTH_TOKEN}`. Requests from loopback (`127.0.0.1`, `::1`) bypass auth when no token is configured.

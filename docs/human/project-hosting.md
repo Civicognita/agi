@@ -6,7 +6,7 @@ Aionima can host local web projects and services on your LAN using Caddy as a re
 
 ## Enabling Project Hosting
 
-Project hosting is disabled by default. To enable it, set the following in `aionima.json`:
+Project hosting is disabled by default. To enable it, set the following in `gateway.json`:
 
 ```json
 {

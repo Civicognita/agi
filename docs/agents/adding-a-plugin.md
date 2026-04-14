@@ -199,7 +199,7 @@ The marketplace repo is deployed to `/opt/aionima-marketplace/`. When `upgrade.s
 | `plugins/plugin-<name>/package.json` | Create — manifest with `"aionima"` field |
 | `plugins/plugin-<name>/src/index.ts` | Create — plugin entry implementing `AionimaPlugin` |
 | `marketplace.json` | Add catalog entry |
-| `aionima.json` | Add plugin-specific config section if needed |
+| `gateway.json` | Add plugin-specific config section if needed |
 
 ## Verification Checklist
 

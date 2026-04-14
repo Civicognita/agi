@@ -1,14 +1,14 @@
 # Config Schema Changes: Extending Zod Schema + Hot-Reload
 
-This guide covers how to extend `aionima.json` — the primary runtime config file — by editing the Zod schema in `config/src/schema.ts`, and explains how hot-reload works.
+This guide covers how to extend `gateway.json` — the primary runtime config file — by editing the Zod schema in `config/src/schema.ts`, and explains how hot-reload works.
 
 ## Config Flow
 
 ```
-aionima.json  →  ConfigWatcher (file watcher)  →  Zod parse  →  AionimaConfig  →  runtime
+gateway.json  →  ConfigWatcher (file watcher)  →  Zod parse  →  AionimaConfig  →  runtime
 ```
 
-1. `aionima.json` is read from disk at startup (from `DEPLOY_DIR` in production, from `REPO_DIR` in dev)
+1. `gateway.json` is read from disk at startup (from `DEPLOY_DIR` in production, from `REPO_DIR` in dev)
 2. The file is parsed and validated by `AionimaConfigSchema.parse()` in `config/src/schema.ts`
 3. Zod provides defaults for any missing fields — you never have to set every field
 4. `ConfigWatcher` watches the file for changes and re-parses on write
@@ -40,7 +40,7 @@ export const AionimaConfigSchema = z.object({
 }).strip();
 ```
 
-The `.strip()` at the end discards any unknown keys in `aionima.json` rather than throwing.
+The `.strip()` at the end discards any unknown keys in `gateway.json` rather than throwing.
 
 ### Key Sub-schemas
 
@@ -160,14 +160,14 @@ const myFeature = rawConfig.myFeature;
 
 ## Default Values
 
-Every field in every sub-schema must have a `.default()` so that a minimal `aionima.json` (even `{}`) produces a valid `AionimaConfig`. The top-level schema uses `.default({})` on each sub-schema, which invokes the sub-schema with an empty object, triggering all nested defaults.
+Every field in every sub-schema must have a `.default()` so that a minimal `gateway.json` (even `{}`) produces a valid `AionimaConfig`. The top-level schema uses `.default({})` on each sub-schema, which invokes the sub-schema with an empty object, triggering all nested defaults.
 
 **Correct:**
 ```ts
 timeout: z.number().int().positive().default(5000),
 ```
 
-**Wrong — will error when field is missing from aionima.json:**
+**Wrong — will error when field is missing from gateway.json:**
 ```ts
 timeout: z.number().int().positive(),  // no default — breaks bare configs
 ```
@@ -227,7 +227,7 @@ resourceId: z.string().regex(/^\$[A-Z0-9]+$/).default("$A0"),
 
 ## Hot-Reload Behavior
 
-`ConfigWatcher` in `config/src/hot-reload.ts` watches `aionima.json` for changes using Node.js `fs.watch`. When the file changes:
+`ConfigWatcher` in `config/src/hot-reload.ts` watches `gateway.json` for changes using Node.js `fs.watch`. When the file changes:
 
 1. It reads the new content from disk
 2. Parses it through `AionimaConfigSchema.safeParse()`
@@ -288,7 +288,7 @@ The `agent.devMode` boolean is preserved for backward compatibility. The system 
 const devMode = config.dev?.enabled ?? config.agent?.devMode ?? false;
 ```
 
-The `POST /api/dev/switch` endpoint updates `dev.enabled` in `aionima.json` and triggers a config reload. A service restart is required for the change to take full effect (path resolution happens at boot).
+The `POST /api/dev/switch` endpoint updates `dev.enabled` in `gateway.json` and triggers a config reload. A service restart is required for the change to take full effect (path resolution happens at boot).
 
 ### API Endpoints
 
@@ -301,7 +301,7 @@ The `POST /api/dev/switch` endpoint updates `dev.enabled` in `aionima.json` and 
 |------|--------|
 | `config/src/schema.ts` | Add field to existing sub-schema OR define new sub-schema + add to root |
 | `config/src/index.ts` | Re-export new type if you added a new schema/type |
-| `aionima.json` | Add the new field with your chosen value (optional if there's a default) |
+| `gateway.json` | Add the new field with your chosen value (optional if there's a default) |
 
 ## Verification Checklist
 
@@ -309,7 +309,7 @@ The `POST /api/dev/switch` endpoint updates `dev.enabled` in `aionima.json` and 
 - [ ] Schema is still `.strict()` if applicable — no typos in field names
 - [ ] `pnpm typecheck` — `AionimaConfig` type includes the new field correctly
 - [ ] `pnpm build` — no compile errors
-- [ ] Remove the new field from `aionima.json` — gateway still starts (default applies)
-- [ ] Add an invalid value to `aionima.json` — gateway logs a Zod validation error and falls back to previous config (hot-reload path) or exits with a clear error (startup path)
-- [ ] Verify via `GET /api/config` (tRPC) or read `aionima.json` from the editor API that the config round-trips correctly
+- [ ] Remove the new field from `gateway.json` — gateway still starts (default applies)
+- [ ] Add an invalid value to `gateway.json` — gateway logs a Zod validation error and falls back to previous config (hot-reload path) or exits with a clear error (startup path)
+- [ ] Verify via `GET /api/config` (tRPC) or read `gateway.json` from the editor API that the config round-trips correctly
 - [ ] If the field affects plugin behavior, test the plugin reacts correctly on both startup and hot-reload

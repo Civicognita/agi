@@ -58,7 +58,7 @@ Your server must be publicly reachable via HTTPS for WhatsApp to deliver webhook
 
 ## Configuration
 
-Add to `aionima.json`:
+Add to `gateway.json`:
 
 ```json
 {

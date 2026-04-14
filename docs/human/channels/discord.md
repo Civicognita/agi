@@ -46,7 +46,7 @@ Your user ID is a snowflake (a large number like `123456789012345678`).
 
 ## Configuration
 
-Add to `aionima.json`:
+Add to `gateway.json`:
 
 ```json
 {

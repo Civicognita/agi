@@ -69,7 +69,7 @@ Log().error("Unhandled exception in pipeline");
 
 ### `Config()`
 
-Read-only dot-path accessor over `aionima.json`. Always reads from the snapshot captured at `initADF()` — for live reads use `SystemConfig()`.
+Read-only dot-path accessor over `gateway.json`. Always reads from the snapshot captured at `initADF()` — for live reads use `SystemConfig()`.
 
 ```typescript
 const enabled = Config().get<boolean>("hosting.enabled");
@@ -113,7 +113,7 @@ const stacks = ProjectConfig().getStacks("/path/to/project");
 
 ### `SystemConfig()`
 
-Read/write access to `aionima.json`. Reads directly from disk; writes are persisted immediately.
+Read/write access to `gateway.json`. Reads directly from disk; writes are persisted immediately.
 
 ```typescript
 const allConfig = SystemConfig().read();

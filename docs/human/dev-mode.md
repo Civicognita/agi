@@ -31,7 +31,7 @@ git clone git@github.com:wishborn/aionima.git /opt/aionima-prime_dev
 
 ### 2. Configure Custom Paths (Optional)
 
-If your contributing directory is in a non-default location, add it to `aionima.json`:
+If your contributing directory is in a non-default location, add it to `gateway.json`:
 
 ```json
 {
