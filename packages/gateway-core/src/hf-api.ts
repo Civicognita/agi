@@ -512,11 +512,48 @@ export function registerHfRoutes(
     },
   );
 
+  // GET /api/hf/running — live view of containers the ModelContainerManager
+  // currently has active. Returns the documented HFRunningModel shape
+  // (modelId, containerId, containerName, port, runtimeType, startedAt,
+  // status, healthCheckPassed) — NOT the raw installed-model row. The
+  // previous implementation filtered modelStore.getAll() by status which
+  // yielded an HFInstalledModel row whose field names didn't match what
+  // the dashboard reads; every field except runtimeType came out undefined
+  // and the Admin Dashboard running-models card rendered blank entries.
+  //
+  // For each running container we run a live /health probe so the
+  // healthCheckPassed flag reflects *now*, not the success at container
+  // start. This also enriches the response with displayName pulled from
+  // the installed-model row (ModelContainerState only carries ids).
   fastify.get("/api/hf/running", async (_request, reply) => {
     try {
-      const allModels = await modelStore.getAll();
-      const running = allModels.filter((m) => m.status === "running");
-      return reply.send(running);
+      const running = containerManager.getRunning();
+      const installedIndex = new Map(
+        (await modelStore.getAll()).map((m) => [m.id, m]),
+      );
+      const enriched = await Promise.all(
+        running.map(async (c) => {
+          const installed = installedIndex.get(c.modelId);
+          const healthCheckPassed = await containerManager.probeHealth(c.modelId);
+          return {
+            modelId: c.modelId,
+            containerId: c.containerId,
+            containerName: c.containerName,
+            port: c.port,
+            runtimeType: c.runtimeType,
+            startedAt: c.startedAt,
+            status: c.status,
+            healthCheckPassed,
+            // Enrichment from the installed-model row so the dashboard
+            // has a human-readable name + pipeline label without a second
+            // round-trip. Safe to add — the frontend HFRunningModel type
+            // already extends HTMLAttributes-like spreads at render.
+            displayName: installed?.displayName ?? c.modelId,
+            pipelineTag: installed?.pipelineTag,
+          };
+        }),
+      );
+      return reply.send(enriched);
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }

@@ -1317,7 +1317,12 @@ export interface HFRunningModel {
   runtimeType: "llm" | "diffusion" | "general";
   startedAt: string;
   status: "running" | "stopped" | "error";
+  /** Result of a live /health probe at the moment this record was fetched. */
   healthCheckPassed: boolean;
+  /** Pretty name from the installed-model row, for dashboard display. */
+  displayName?: string;
+  /** HuggingFace pipeline tag (e.g. "text-generation", "image-generation"). */
+  pipelineTag?: string;
 }
 
 export interface HFDownloadProgress {

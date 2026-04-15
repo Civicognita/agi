@@ -96,12 +96,18 @@ export default function AdminDashboardPage() {
   const stats = systemStats.data;
   const projectList = projectsHook.projects;
 
-  // Derive project stats
+  // Derive project-type breakdown for the Projects StatCard subtitle.
   const projectsByType = new Map<string, number>();
   for (const p of projectList) {
     const t = (p as Record<string, unknown>).type as string | undefined ?? "unknown";
     projectsByType.set(t, (projectsByType.get(t) ?? 0) + 1);
   }
+  const topProjectTypes = [...projectsByType.entries()]
+    .sort(([, a], [, b]) => b - a);
+  const projectTypeSub = topProjectTypes.length === 0
+    ? ""
+    : topProjectTypes.slice(0, 3).map(([type, count]) => `${type} ${String(count)}`).join(" · ")
+      + (topProjectTypes.length > 3 ? ` +${String(topProjectTypes.length - 3)} more` : "");
 
   return (
     <PageScroll>
@@ -114,7 +120,7 @@ export default function AdminDashboardPage() {
           <StatCard
             label="Projects"
             value={String(projectList.length)}
-            sub={`${String(projectsByType.size)} type${projectsByType.size === 1 ? "" : "s"}`}
+            sub={projectTypeSub}
           />
           <StatCard
             label="Uptime"
@@ -229,9 +235,16 @@ export default function AdminDashboardPage() {
                   <div key={model.modelId} className="flex items-center gap-3 p-3 rounded-lg bg-surface0/50">
                     <StatusDot status={model.healthCheckPassed ? "healthy" : "degraded"} />
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-foreground truncate">{model.modelId}</div>
-                      <div className="text-xs text-muted-foreground">
+                      <div className="text-sm font-medium text-foreground truncate">
+                        {model.displayName ?? model.modelId}
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        <span className="font-mono">{model.modelId}</span>
+                        {model.pipelineTag ? <span> &middot; {model.pipelineTag}</span> : null}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">
                         port {String(model.port)} &middot; {model.runtimeType}
+                        {model.containerName ? <span> &middot; <span className="font-mono">{model.containerName}</span></span> : null}
                       </div>
                     </div>
                     <Badge variant="outline" className="text-[10px] border-green text-green shrink-0">running</Badge>
@@ -266,23 +279,6 @@ export default function AdminDashboardPage() {
                 )}
               </div>
             )}
-          </Card>
-        )}
-
-        {/* ── Row 5: Projects breakdown ── */}
-        {projectList.length > 0 && (
-          <Card className="p-4">
-            <h2 className="text-sm font-semibold text-foreground mb-3">Projects</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {[...projectsByType.entries()]
-                .sort(([, a], [, b]) => b - a)
-                .map(([type, count]) => (
-                  <div key={type} className="p-3 rounded-lg bg-surface0/50 text-center">
-                    <div className="text-lg font-bold text-foreground">{String(count)}</div>
-                    <div className="text-xs text-muted-foreground">{type}</div>
-                  </div>
-                ))}
-            </div>
           </Card>
         )}
 

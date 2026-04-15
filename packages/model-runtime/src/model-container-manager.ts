@@ -270,6 +270,25 @@ export class ModelContainerManager {
     return Array.from(this.activeContainers.values());
   }
 
+  /**
+   * Live health probe against a single running container's /health endpoint.
+   * Returns true if the endpoint responds 2xx within 1.5s, false otherwise.
+   * Used by the `/api/hf/running` route to surface current (not cached-at-start)
+   * health status for the dashboard.
+   */
+  async probeHealth(modelId: string): Promise<boolean> {
+    const state = this.activeContainers.get(modelId);
+    if (!state) return false;
+    try {
+      const res = await fetch(`http://localhost:${String(state.port)}/health`, {
+        signal: AbortSignal.timeout(1500),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   /** Inspect a container by name and return its status. */
   inspectContainer(containerName: string): { status: string; running: boolean } {
     try {

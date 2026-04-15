@@ -76,7 +76,7 @@ All endpoints are under `/api/hf/`. Authentication follows the standard Aionima 
 | `DELETE` | `/api/hf/models/:id` | Delete an installed model (must be stopped first) |
 | `POST` | `/api/hf/models/:id/start` | Start inference container for an installed model |
 | `POST` | `/api/hf/models/:id/stop` | Stop inference container |
-| `GET` | `/api/hf/running` | List all currently running model containers |
+| `GET` | `/api/hf/running` | List all currently running model containers. Returns `HFRunningModel[]` (see `ui/dashboard/src/types.ts`): `modelId`, `containerId`, `containerName`, `port`, `runtimeType`, `startedAt`, `status`, plus a live `healthCheckPassed` boolean computed by probing each container's `/health` endpoint at request time, and `displayName` + `pipelineTag` enriched from the installed-model row. |
 | `ANY` | `/api/hf/inference/:modelId/*` | Proxy to the running model's inference endpoint |
 
 ---
