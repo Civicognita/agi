@@ -1000,9 +1000,22 @@ export class HostingManager {
 
     this.projects.set(resolved, hosted);
 
-    // Check if a container is already running from a prior gateway session
+    // Check if a container is already running from a prior gateway session.
+    //
+    // IMPORTANT: podman's `{{.State}}` format token returns the container
+    // state as one of: running | exited | paused | stopping | stopped |
+    // created | dead | removing — NEVER the string "up". The previous
+    // `state.toLowerCase().includes("up")` check therefore NEVER matched,
+    // and every boot silently fell into the "not running" branch below —
+    // which does `podman rm -f` + fresh `startContainer()`. That meant
+    // every `agi upgrade` tore down and recreated every project container
+    // even though nothing about the container had changed.
+    //
+    // The `== "running"` check aligns with the correct podman vocabulary
+    // (same one used at line ~2286 in ensureWhoDB). Non-running containers
+    // (exited, etc.) still fall through to the start-fresh branch.
     const existing = this._runningContainers.get(resolved);
-    if (existing && existing.state.toLowerCase().includes("up")) {
+    if (existing && existing.state.toLowerCase() === "running") {
       // Container is running — reconnect without restarting
       hosted.containerName = existing.name;
       hosted.status = "running";
