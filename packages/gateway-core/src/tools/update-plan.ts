@@ -110,9 +110,8 @@ export function createUpdatePlanHandler(config: UpdatePlanConfig): ToolHandler {
 export const UPDATE_PLAN_MANIFEST = {
   name: "update_plan",
   description: "Update the status of a plan or its individual steps.",
-  // See create-plan.ts — plans work in LIMBO as a local workflow. If the
-  // agent can create a plan in LIMBO, it must also be able to advance it.
-  requiresState: ["ONLINE" as const, "LIMBO" as const],
+  // State is audit metadata, not a permission gate.
+  requiresState: [],
   requiresTier: ["verified" as const, "sealed" as const],
 };
 

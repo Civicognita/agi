@@ -74,12 +74,9 @@ export const CREATE_PLAN_MANIFEST = {
   name: "create_plan",
   description:
     "Create a structured plan with steps for a multi-step task. The plan will be saved and presented to the user for review before execution.",
-  // Plans are purely local workflow — they do NOT require HIVE connectivity
-  // or 0PRIME validation. Available in both ONLINE and LIMBO so the agent
-  // can plan work during the expected steady-state (LIMBO, while 0PRIME is
-  // not yet operational). OFFLINE is still excluded since the plan store
-  // writes to disk and that path assumes local services are up.
-  requiresState: ["ONLINE" as const, "LIMBO" as const],
+  // State is audit metadata, not a permission gate (see
+  // docs/agents/state-machine.md). Empty array = no state filter.
+  requiresState: [],
   requiresTier: ["verified" as const, "sealed" as const],
 };
 

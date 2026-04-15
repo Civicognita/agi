@@ -7,20 +7,19 @@ The gateway's operational state is a **read-only status** computed from AGI's co
 | State | Meaning | Common causes |
 |-------|---------|---------------|
 | **Initial** / **Unknown** | Boot has not yet resolved the state. Transient. | Gateway just started; peer probes haven't returned. |
-| **Limbo** | Running locally, but local COA<>COI has not been validated with the **0PRIME Schema**. The gateway can read/write local memory and Tynn MCP; remote sync and HIVE-level operations are disabled. | The current expected steady state for every running Aionima — because 0PRIME (the Hive mind) is not yet operational. |
-| **Offline** | Either local-id or local-prime is unavailable. The gateway runs degraded: no identity, no PRIME lookups, no impact registration. | ID service container not running; PRIME corpus directory missing. |
+| **Limbo** | Running locally, but local COA<>COI has not been validated with the **0PRIME Schema**. | The current expected steady state for every running Aionima — because 0PRIME (the Hive mind) is not yet operational. |
+| **Offline** | Either local-id or local-prime is unavailable. Identity and PRIME lookups will surface errors downstream. | ID service container not running; PRIME corpus directory missing. |
 | **Online** | Everything aligned: local identity is HIVE-registered, local PRIME mirrors 0PRIME, COA<>COI validates against 0PRIME Schema. | Future — reachable only when 0PRIME comes up. Not achievable today. |
 
-## Capabilities by state
+## State is audit-only, NOT a permission gate
 
-| State | `remoteOps` | `tynn` | `memory` | `deletions` |
-|-------|-------------|--------|----------|-------------|
-| Online | ✓ | ✓ | ✓ | ✓ |
-| Limbo  | — | ✓ | ✓ | — |
-| Offline | — | — | ✓ | — |
-| Unknown | — | — | — | — |
+**The state value is metadata, not access control.** It is stamped onto every action in the COA<>COI log so that — when $imp is eventually minted through 0PRIME — the chain carries integrity provenance: under what conditions (HIVE-aligned Online vs local-only Limbo vs degraded Offline) was this action performed?
 
-Deletions are only allowed in `ONLINE` to prevent local deletions that then can't sync to PRIME.
+What this means in practice:
+
+- The agent's available tools are **NOT filtered by state**. `requiresState` on tool manifests is retained as a hint for logging / UI dimming, but the tool filter (`computeAvailableTools`) ignores it. Tools are filtered by `requiresTier` only.
+- There is no "capabilities per state" table. The gateway does not disable remote ops, Tynn, memory, or deletions based on state. Downstream operations may fail naturally (e.g. no local-id → auth calls error) but that's a consequence of the real subsystem being unavailable, not of a state-based block.
+- When $imp minting ships, the miner reads the logged state for each operation to weight integrity. Actions performed in Online carry more integrity than the same action in Limbo, and Offline actions require review before they're eligible for mint.
 
 ## 0PRIME
 

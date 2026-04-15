@@ -222,29 +222,17 @@ This fingerprint is the accountability anchor for this response. Any tool use, t
 
 function buildStateConstraintsSection(
   state: GatewayState,
-  caps: StateCapabilities,
+  _caps: StateCapabilities,
 ): string {
-  const lines = [
-    `Operational state: ${state}`,
-    `Remote operations: ${caps.remoteOps ? "permitted" : "NOT permitted"}`,
-    `Tynn task management: ${caps.tynn ? "available" : "NOT available"}`,
-    `Memory read/write: ${caps.memory ? "permitted (local only)" : "NOT permitted"}`,
-    `Deletions: ${caps.deletions ? "permitted after sync" : "NOT permitted"}`,
-  ];
-
-  if (state === "LIMBO") {
-    lines.push("All outputs that require remote write must be queued locally.");
-  } else if (state === "OFFLINE") {
-    lines.push(
-      "Inform the entity that processing is local-only. Do not promise remote actions.",
-    );
-  } else if (state === "UNKNOWN") {
-    lines.push(
-      "Log all actions. Do not respond to the entity. Return a null response.",
-    );
-  }
-
-  return lines.join("\n");
+  // State is audit metadata, not a permission gate. It is recorded against
+  // every action via COA<>COI logging so that when $imp is minted the chain
+  // carries provenance of the operational conditions (HIVE-aligned vs
+  // local-only). It does NOT decide what the agent is allowed to do.
+  //
+  // We still surface the current state to the agent for awareness — it may
+  // want to include that context in user-visible responses ("running in
+  // Limbo while 0PRIME is offline," etc.) — but no capability lines.
+  return `Operational state: ${state} (audit-only; every action is stamped with this value in the COA<>COI log for integrity provenance).`;
 }
 
 function buildToolsSection(tools: ToolManifestEntry[]): string {
@@ -574,13 +562,19 @@ Single-step or immediate tasks do NOT need a plan. Use your judgement. One heuri
 // ---------------------------------------------------------------------------
 
 /**
- * Compute available tools given current state and entity tier.
+ * Compute available tools given current entity tier.
  *
- * Tools are filtered by both `requiresState` and `requiresTier`.
- * Empty arrays mean "all states/tiers allowed".
+ * **State is NOT a permission gate.** The operational state
+ * (Initial / Limbo / Offline / Online) is audit metadata that gets logged
+ * into the COA<>COI chain during $imp minting for integrity provenance —
+ * it records the conditions under which an operation happened, it does
+ * NOT decide whether the operation is allowed. Filter by tier only.
+ *
+ * `requiresState` on tool manifests is retained as a hint for downstream
+ * logging / UI dimming but is intentionally ignored here.
  */
 export function computeAvailableTools(
-  state: GatewayState,
+  _state: GatewayState,
   tier: VerificationTier,
   registeredTools: ToolManifestEntry[],
 ): ToolManifestEntry[] {
@@ -589,19 +583,11 @@ export function computeAvailableTools(
   // When canUseTool is false (unverified), only allow tier-exempt tools
   // (requiresTier: [] means "available to all tiers" — e.g. verification tools)
   if (!tierCaps.canUseTool) {
-    return registeredTools.filter((tool) => {
-      const stateOk =
-        tool.requiresState.length === 0 || tool.requiresState.includes(state);
-      return stateOk && tool.requiresTier.length === 0;
-    });
+    return registeredTools.filter((tool) => tool.requiresTier.length === 0);
   }
 
   return registeredTools.filter((tool) => {
-    const stateOk =
-      tool.requiresState.length === 0 || tool.requiresState.includes(state);
-    const tierOk =
-      tool.requiresTier.length === 0 || tool.requiresTier.includes(tier);
-    return stateOk && tierOk;
+    return tool.requiresTier.length === 0 || tool.requiresTier.includes(tier);
   });
 }
 
