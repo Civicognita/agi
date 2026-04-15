@@ -4,7 +4,7 @@
  * Loads the plan from ~/.agi/{projectSlug}/plans/, applies updates, and persists.
  */
 import type { ToolHandler } from "../tool-registry.js";
-import { PlanStore } from "../plan-store.js";
+import { PlanStore, isAcceptedStatus } from "../plan-store.js";
 import type { PlanStatus, PlanStepStatus, PlanStepUpdate } from "../plan-types.js";
 
 export interface UpdatePlanConfig {
@@ -74,8 +74,28 @@ export function createUpdatePlanHandler(config: UpdatePlanConfig): ToolHandler {
       return JSON.stringify({ error: "At least one of status or stepUpdates must be provided" });
     }
 
+    // Accept-lock: once a plan enters `approved` (or later), the body,
+    // title, and step list are immutable. Only step status advances and the
+    // plan status itself may change from here on. This tool never accepts
+    // body/title/steps input today (the dashboard's PATCH endpoint does),
+    // but we still guard status transitions that would bypass the flow.
+    //
+    // Allowed post-acceptance: step status advances (pending -> running ->
+    //   complete/failed/skipped) + plan status transitions approved ->
+    //   executing -> testing -> complete/failed.
+    // Rejected post-acceptance: regressing to draft/reviewing.
     try {
       const store = new PlanStore();
+      const existing = store.get(config.projectPath, planId);
+      if (!existing) {
+        return JSON.stringify({ error: `Plan "${planId}" not found` });
+      }
+      if (isAcceptedStatus(existing.status) && (planStatus === "draft" || planStatus === "reviewing")) {
+        return JSON.stringify({
+          error: `Plan "${planId}" is ${existing.status}; cannot regress to "${planStatus}". Once accepted, plans are immutable except for step-status advances.`,
+        });
+      }
+
       const plan = store.update(config.projectPath, planId, { status: planStatus, stepUpdates });
       if (!plan) {
         return JSON.stringify({ error: `Plan "${planId}" not found` });
