@@ -1521,20 +1521,25 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     // The backdrop dim is cosmetic only — NOT click-dismissable — so the
     // modal stays open while the user navigates the rest of the UI. Close
     // via the explicit X in the header.
-    <div data-testid="chat-flyout" className="fixed inset-0 z-[200] flex justify-end pointer-events-none">
+    //
+    // Sized to sit BELOW the app header (not over it): on desktop the
+    // overlay starts at top-14 (≈56px, matching the header's py-3 layout);
+    // on mobile top-12 (≈48px, matching py-2). The header itself stays
+    // sticky at top-0 z-[100], visible + clickable above the flyout.
+    <div data-testid="chat-flyout" className="fixed inset-x-0 top-12 md:top-14 bottom-0 z-[200] flex justify-end pointer-events-none">
       {!isFullscreen && (
         <div className={cn("bg-black/10", isMobile ? "absolute inset-0" : "flex-1")} />
       )}
       {planPane !== null && !isMobile && (
-        <div className="h-screen border-l border-border bg-background shrink-0 pointer-events-auto w-[min(50vw,900px)] min-w-[520px]">
+        <div className="h-full border-l border-border bg-background shrink-0 pointer-events-auto w-[min(50vw,900px)] min-w-[520px]">
           {planPane}
         </div>
       )}
       <div className={cn(
         "flex flex-col bg-background pointer-events-auto",
         isMobile
-          ? "fixed bottom-0 left-0 right-0 h-[90dvh] border-t border-border rounded-t-2xl"
-          : cn("h-screen", isFullscreen ? "w-screen" : "w-[33vw] max-w-full border-l border-border"),
+          ? "absolute bottom-0 left-0 right-0 h-[90dvh] border-t border-border rounded-t-2xl"
+          : cn("h-full", isFullscreen ? "w-screen" : "w-[33vw] max-w-full border-l border-border"),
       )}>
         {panelHeader}
         {panelBody}
