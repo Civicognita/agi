@@ -16,7 +16,7 @@ import { homedir } from "node:os";
 
 import { JobBridge } from "./job-bridge.js";
 import { WorkerPromptLoader } from "./worker-prompt-loader.js";
-import { dispatchJobsDir } from "./dispatch-paths.js";
+import { dispatchJobsDir, loadLiveJobOverlay, mergeJobStatus } from "./dispatch-paths.js";
 import type { ToolRegistry, ToolExecutionContext } from "./tool-registry.js";
 import type { LLMProvider } from "./llm/provider.js";
 import type { LLMInvokeParams, LLMToolContinuationParams, LLMContentBlock } from "./llm/types.js";
@@ -585,25 +585,19 @@ export class WorkerRuntime extends EventEmitter {
   }
 
   /**
-   * List dispatch entries for a project, read from
-   * ~/.agi/{projectSlug}/dispatch/jobs/ and merged with the live status
-   * tracked in ~/.agi/state/taskmaster.json (which is what JobBridge updates
-   * as jobs progress). The dispatch file is written once at create time and
-   * never mutated, so without the merge every row would read "pending"
-   * forever. Read-time merge means no dual-write race.
+   * List dispatch entries for a project, merged with the live-status overlay
+   * from ~/.agi/state/taskmaster.json. The merge rule lives in
+   * `dispatch-paths.ts::mergeJobStatus` so that `taskmaster_status` (Aion's
+   * view) and the Work Queue UI cannot drift apart.
    */
   async listJobsForProject(projectPath: string): Promise<WorkerJob[]> {
     try {
       const { readdirSync } = await import("node:fs");
-      const { dispatchJobsDir: jobsDirFn } = await import("./dispatch-paths.js");
-      const dir = jobsDirFn(projectPath);
+      const dir = dispatchJobsDir(projectPath);
       if (!existsSync(dir)) return [];
       const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
 
-      // Live-status overlay from the global state index. If a job is in
-      // flight or has completed, this has the current truth.
-      const liveJobs = await this.listAllJobs();
-      const liveById = new Map<string, WorkerJob>(liveJobs.map((j) => [j.id, j]));
+      const overlay = loadLiveJobOverlay(this.config.stateDir);
 
       const jobs: WorkerJob[] = [];
       for (const file of files.sort()) {
@@ -618,12 +612,8 @@ export class WorkerRuntime extends EventEmitter {
             createdAt: string;
             handoffs?: Array<{ question: string; askedAt: string }>;
           };
-          const live = liveById.get(flat.id);
-          // Precedence: live state > handoff sentinel > dispatch-file status.
-          // Handoff writes "checkpoint" into the dispatch file and is not
-          // reflected in the state bridge, so we preserve it when present.
-          const mergedStatus = live?.status
-            ?? (flat.handoffs && flat.handoffs.length > 0 ? "checkpoint" : flat.status);
+          const live = overlay.get(flat.id);
+          const mergedStatus = mergeJobStatus(flat, live);
           jobs.push({
             id: flat.id,
             queueText: flat.description,

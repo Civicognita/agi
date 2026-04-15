@@ -1,6 +1,8 @@
 /**
  * taskmaster_status tool — read TaskMaster job status from a project's
- * dispatch dir.
+ * dispatch dir, merged with live-state overlay so Aion sees the same
+ * status the Work Queue UI sees (dispatch files are write-once; progress
+ * lives in ~/.agi/state/taskmaster.json).
  *
  * Reads from `~/.agi/{projectSlug}/dispatch/jobs/` so Aion only sees jobs
  * belonging to the project it's contextualized on. Tier-permissive (any
@@ -9,11 +11,37 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
-import { dispatchJobsDir } from "../dispatch-paths.js";
+import { dispatchJobsDir, loadLiveJobOverlay, mergeJobStatus } from "../dispatch-paths.js";
 
 export interface WorkerStatusConfig {
   /** Override the dispatch base dir. Tests use this; production leaves it unset. */
   botsDir?: string;
+  /** Override the state dir (defaults to ~/.agi/state). Tests use this. */
+  stateDir?: string;
+}
+
+interface DispatchJobFile {
+  id: string;
+  status: "pending" | "running" | "checkpoint" | "complete" | "failed";
+  handoffs?: Array<{ question: string; askedAt: string }>;
+  [key: string]: unknown;
+}
+
+/** Layer the live overlay onto the raw dispatch record. Also exposes
+ *  startedAt/completedAt/error so Aion can reason about job timing. */
+function applyOverlay(
+  job: DispatchJobFile,
+  overlay: Map<string, ReturnType<typeof loadLiveJobOverlay> extends Map<string, infer V> ? V : never>,
+): DispatchJobFile {
+  const live = overlay.get(job.id);
+  const status = mergeJobStatus(job, live);
+  return {
+    ...job,
+    status,
+    ...(live?.startedAt !== undefined ? { startedAt: live.startedAt } : {}),
+    ...(live?.completedAt !== undefined ? { completedAt: live.completedAt } : {}),
+    ...(live?.error !== undefined ? { error: live.error } : {}),
+  };
 }
 
 export function createWorkerStatusHandler(
@@ -31,12 +59,13 @@ export function createWorkerStatusHandler(
     const jobsDir = config.botsDir !== undefined
       ? join(config.botsDir, "jobs")
       : dispatchJobsDir(projectPath);
+    const overlay = loadLiveJobOverlay(config.stateDir);
 
     if (jobId !== undefined && jobId.length > 0) {
       const jobFile = join(jobsDir, `${jobId}.json`);
       try {
         const raw = readFileSync(jobFile, "utf-8");
-        const job = JSON.parse(raw) as unknown;
+        const job = applyOverlay(JSON.parse(raw) as DispatchJobFile, overlay);
         return JSON.stringify({ exitCode: 0, job });
       } catch (err) {
         const isNotFound =
@@ -67,11 +96,11 @@ export function createWorkerStatusHandler(
       });
     }
 
-    const jobs: unknown[] = [];
+    const jobs: DispatchJobFile[] = [];
     for (const file of files.sort()) {
       try {
         const raw = readFileSync(join(jobsDir, file), "utf-8");
-        jobs.push(JSON.parse(raw) as unknown);
+        jobs.push(applyOverlay(JSON.parse(raw) as DispatchJobFile, overlay));
       } catch {
         // Skip unreadable job files
       }

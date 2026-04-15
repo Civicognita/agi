@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createWorkerDispatchHandler } from "./worker-dispatch.js";
@@ -100,6 +100,67 @@ describe("taskmaster_status handler", () => {
       // Asking project B for project A's job id → not found, as expected.
       const res = parse(await createWorkerStatusHandler({})({ projectPath: PROJECT_B, jobId }));
       expect(res.error).toMatch(/Job not found/);
+    });
+  });
+
+  describe("live-state overlay (dispatch file stays 'pending' forever on disk)", () => {
+    // Regression guard: before the overlay, Aion would see "pending" even
+    // after the Work Queue UI showed "complete" because both sides were
+    // reading different sources. loadLiveJobOverlay merges ~/.agi/state/
+    // taskmaster.json onto the dispatch file so they agree.
+
+    function writeStateIndex(jobs: Record<string, { status: string }>): void {
+      const stateDir = join(tmpHome, ".agi", "state");
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(
+        join(stateDir, "taskmaster.json"),
+        JSON.stringify({ version: "1.0", wip: { jobs, next_frame: null, job_counter: Object.keys(jobs).length } }, null, 2),
+      );
+    }
+
+    it("reports 'running' when the state index says the job is in flight", async () => {
+      const created = parse(await createWorkerDispatchHandler({})({
+        projectPath: PROJECT_A,
+        description: "long task",
+      }));
+      const jobId = created.jobId as string;
+      writeStateIndex({ [jobId]: { status: "running" } });
+
+      const res = parse(await createWorkerStatusHandler({})({ projectPath: PROJECT_A, jobId }));
+      expect((res.job as { status: string }).status).toBe("running");
+    });
+
+    it("reports 'complete' when the state index says the job finished", async () => {
+      const created = parse(await createWorkerDispatchHandler({})({
+        projectPath: PROJECT_A,
+        description: "quick task",
+      }));
+      const jobId = created.jobId as string;
+      writeStateIndex({ [jobId]: { status: "complete" } });
+
+      const listed = parse(await createWorkerStatusHandler({})({ projectPath: PROJECT_A }));
+      const jobs = listed.jobs as Array<{ id: string; status: string }>;
+      expect(jobs.find((j) => j.id === jobId)!.status).toBe("complete");
+    });
+
+    it("reports 'checkpoint' when the dispatch file has an outstanding handoff", async () => {
+      // Handoff writes "checkpoint" into the dispatch file but nothing
+      // into the state index — the merge rule preserves the handoff
+      // sentinel when no live overlay exists.
+      const created = parse(await createWorkerDispatchHandler({})({
+        projectPath: PROJECT_A,
+        description: "will hand off",
+      }));
+      const jobId = created.jobId as string;
+
+      // Simulate the handoff tool stamping the dispatch file.
+      const jobFile = created.jobFile as string;
+      const job = JSON.parse(readFileSync(jobFile, "utf-8")) as Record<string, unknown>;
+      job.handoffs = [{ question: "q", askedAt: new Date().toISOString() }];
+      writeFileSync(jobFile, JSON.stringify(job, null, 2));
+
+      const res = parse(await createWorkerStatusHandler({})({ projectPath: PROJECT_A, jobId }));
+      expect((res.job as { status: string }).status).toBe("checkpoint");
     });
   });
 });
