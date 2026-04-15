@@ -42,6 +42,8 @@ interface ChatMessage {
   toolCards?: ToolCard[];
   /** Single tool card data (for role: "tool" messages). */
   toolCard?: ToolCard;
+  /** Next-step suggestions generated for this assistant turn. Persisted server-side so they survive reload. */
+  suggestions?: string[];
 }
 
 interface ChatSession {
@@ -454,14 +456,27 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                 ?? (p.context === "general"
                   ? "General"
                   : projects.find((pr) => pr.path === p.context)?.name ?? p.context.split("/").pop() ?? "Project");
+              // Hydrate session suggestions from the LAST assistant message's
+              // stored suggestions so they survive a page reload. Previously
+              // session.suggestions was reset to [] on load and the button
+              // row silently disappeared.
+              const hydratedMsgs = p.messages ?? [];
+              let hydratedSuggestions: string[] = [];
+              for (let i = hydratedMsgs.length - 1; i >= 0; i--) {
+                const m = hydratedMsgs[i]!;
+                if (m.role === "assistant") {
+                  hydratedSuggestions = m.suggestions ?? [];
+                  break;
+                }
+              }
               return [...prev, {
                 id: p.sessionId,
                 context: p.context,
                 contextLabel,
-                messages: p.messages ?? [],
+                messages: hydratedMsgs,
                 thinking: false,
                 pendingMessages: 0,
-                suggestions: [],
+                suggestions: hydratedSuggestions,
                 toolActivity: [],
                 activePlan: null,
                 progressText: undefined,
@@ -629,7 +644,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             break;
           }
           case "chat:response": {
-            const p = payload as { sessionId?: string; runId?: string; text: string; timestamp: string };
+            const p = payload as { sessionId?: string; runId?: string; text: string; timestamp: string; suggestions?: string[] };
             if (!p.sessionId) break;
             setSessions((prev) => prev.map((s) => {
               if (s.id !== p.sessionId) return s;
@@ -649,7 +664,18 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                 progressText: undefined,
                 activeRunId: undefined,
                 queuedMessages: [],
-                messages: [...s.messages, ...queuedAsMsgs, { role: "assistant" as const, content: p.text, timestamp: p.timestamp, runId: p.runId ?? s.activeRunId }],
+                // Persist suggestions onto the assistant message so a reload
+                // finds them via the chat-history fetch.
+                messages: [...s.messages, ...queuedAsMsgs, {
+                  role: "assistant" as const,
+                  content: p.text,
+                  timestamp: p.timestamp,
+                  runId: p.runId ?? s.activeRunId,
+                  suggestions: p.suggestions && p.suggestions.length > 0 ? p.suggestions : undefined,
+                }],
+                // Mirror onto the session for the suggestion-button row below
+                // the latest response.
+                suggestions: p.suggestions ?? s.suggestions,
               };
             }));
             break;

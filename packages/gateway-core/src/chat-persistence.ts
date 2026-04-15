@@ -36,6 +36,13 @@ export interface PersistedChatMessage {
   toolCards?: PersistedToolCard[];
   /** Single tool card data (for role: "tool" messages). */
   toolCard?: PersistedToolCard;
+  /**
+   * Next-step suggestions generated for this assistant response. Persisted
+   * so they survive page reloads — previously these lived only in ephemeral
+   * component state and vanished on refresh. Only meaningful on assistant
+   * messages.
+   */
+  suggestions?: string[];
 }
 
 export interface PersistedChatSession {
