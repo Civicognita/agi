@@ -268,6 +268,103 @@ git -C "$INSTALL_DIR" rev-parse HEAD > "$INSTALL_DIR/.deployed-commit"
 chown "$AIONIMA_USER:$AIONIMA_USER" "$INSTALL_DIR/.deployed-commit"
 
 # ---------------------------------------------------------------------------
+# 9. Set up local ID service (postgres + build + systemd unit)
+#
+# AGI owns the local-id lifecycle end-to-end: the local-id repo is pure
+# source code. Everything below — .env creation, PostgreSQL via Podman,
+# dependency install, drizzle migrations, systemd unit install — belongs
+# here, not in the ID repo.
+#
+# Ongoing upgrades are handled by `scripts/upgrade.sh` which reads
+# `~/.agi/gateway.json` → `idService.local.enabled` and restarts the
+# `aionima-local-id` service whenever the ID source changes.
+# ---------------------------------------------------------------------------
+if [ -d "$ID_DIR/.git" ]; then
+  echo "==> Setting up local ID service..."
+
+  # 9a. .env with encryption key + placeholder OAuth slots
+  ID_ENV="$ID_DIR/.env"
+  if [ ! -f "$ID_ENV" ]; then
+    ID_ENCRYPTION_KEY=$(openssl rand -hex 32)
+    cat > "$ID_ENV" <<IDENVEOF
+# Aionima Local ID Service — managed by AGI's install.sh / upgrade.sh
+ID_SERVICE_MODE=local
+PORT=3200
+ENCRYPTION_KEY=$ID_ENCRYPTION_KEY
+
+# DATABASE_URL is written below by the Podman PostgreSQL setup
+
+# OAuth credentials (optional — add as needed; hot-reloaded by the service)
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=
+# GITHUB_CLIENT_ID=
+# GITHUB_CLIENT_SECRET=
+# DISCORD_CLIENT_ID=
+# DISCORD_CLIENT_SECRET=
+IDENVEOF
+    chown "$AIONIMA_USER:$AIONIMA_USER" "$ID_ENV"
+    chmod 600 "$ID_ENV"
+    echo "  [OK] Generated $ID_ENV"
+  fi
+
+  # 9b. PostgreSQL via Podman — canonical container runtime for AGI infra.
+  # Uses host port 5433 to avoid colliding with any system postgres on 5432.
+  # Container is restart=unless-stopped so it survives reboots.
+  if ! grep -q "^DATABASE_URL=" "$ID_ENV"; then
+    if ! command -v podman &>/dev/null; then
+      echo "  [WARN] podman not found — skipping PostgreSQL setup."
+      echo "         Run 'agi doctor' after install to finish container infra setup,"
+      echo "         then re-run this section by adding a DATABASE_URL to $ID_ENV manually."
+    else
+      ID_DB_PASS=$(openssl rand -hex 16)
+      ID_DB_CONTAINER="aionima-id-postgres"
+      ID_DB_NAME="aionima_id"
+      ID_DB_USER="aionima_id"
+
+      echo "  Starting PostgreSQL container ($ID_DB_CONTAINER)..."
+      podman rm -f "$ID_DB_CONTAINER" 2>/dev/null || true
+      podman volume create aionima-id-pgdata 2>/dev/null || true
+      podman run -d \
+        --name "$ID_DB_CONTAINER" \
+        --restart unless-stopped \
+        -e POSTGRES_DB="$ID_DB_NAME" \
+        -e POSTGRES_USER="$ID_DB_USER" \
+        -e POSTGRES_PASSWORD="$ID_DB_PASS" \
+        -v aionima-id-pgdata:/var/lib/postgresql/data \
+        -p 5433:5432 \
+        docker.io/postgres:16-alpine
+
+      echo "DATABASE_URL=postgres://$ID_DB_USER:$ID_DB_PASS@localhost:5433/$ID_DB_NAME" >> "$ID_ENV"
+      echo "  [OK] PostgreSQL running on host port 5433"
+    fi
+  fi
+
+  # 9c. Install deps + build
+  echo "  Building ID service..."
+  run_as "cd '$ID_DIR' && npm install --omit=dev 2>&1 | tail -1"
+  run_as "cd '$ID_DIR' && npm run build 2>&1 | tail -1"
+
+  # 9d. Run database migrations (safe no-op if already applied)
+  if grep -q "^DATABASE_URL=" "$ID_ENV"; then
+    echo "  Running ID database migrations..."
+    run_as "cd '$ID_DIR' && set -a && source .env && set +a && npx drizzle-kit migrate 2>&1 | tail -3" || \
+      echo "  [WARN] Migrations skipped or failed — see logs"
+  fi
+
+  # 9e. Install + enable systemd unit
+  ID_SERVICE_FILE="$INSTALL_DIR/scripts/aionima-local-id.service"
+  ID_DEST_SERVICE="/etc/systemd/system/aionima-local-id.service"
+  if [ -f "$ID_SERVICE_FILE" ]; then
+    sed "s/%AIONIMA_USER%/$AIONIMA_USER/g" "$ID_SERVICE_FILE" > "$ID_DEST_SERVICE"
+    systemctl daemon-reload
+    systemctl enable aionima-local-id 2>/dev/null || true
+    echo "  [OK] aionima-local-id.service installed and enabled"
+  else
+    echo "  [WARN] $ID_SERVICE_FILE missing — skipping systemd unit install"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 10. Install systemd service
 # ---------------------------------------------------------------------------
 echo "==> Installing systemd service..."
