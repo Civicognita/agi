@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useIsMobile, useConfig } from "@/hooks.js";
 import { ContentRenderer } from "@particle-academy/react-fancy";
+import { Copy as CopyIcon, Check as CheckIcon } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1187,38 +1188,28 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                         <ToolCards cards={msg.toolCards} collapsed />
                       </div>
                     )}
-                    <div className={cn(
-                      "max-w-[80%] px-3 py-2 rounded-[10px] text-[13px] leading-relaxed break-words",
-                      isUser
-                        ? "bg-primary text-primary-foreground whitespace-pre-wrap"
-                        : "bg-card text-card-foreground border border-border",
-                    )}>
-                      {isUser ? (
-                        <>
-                          {msg.content}
-                          {msg.images && msg.images.length > 0 && (
-                            <div className="flex gap-1.5 flex-wrap mt-1.5">
-                              {msg.images.map((src, imgIdx) => (
-                                <img
-                                  key={`img-${String(imgIdx)}`}
-                                  src={src}
-                                  alt="attachment"
-                                  className="max-w-[200px] max-h-[160px] rounded-md object-cover"
-                                />
-                              ))}
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        // ContentRenderer handles markdown + our registered
-                        // custom tags (thinking, question, callout, highlight)
-                        // so the agent can emit inline widgets without per-
-                        // callsite wiring. Streaming: ContentRenderer re-parses
-                        // on `value` change, which matches how we mutate the
-                        // growing assistant-message buffer.
-                        <ContentRenderer value={msg.content} format="auto" />
-                      )}
-                    </div>
+                    {isUser ? (
+                      <div className="max-w-[80%] px-3 py-2 rounded-[10px] text-[13px] leading-relaxed break-words bg-primary text-primary-foreground whitespace-pre-wrap">
+                        {msg.content}
+                        {msg.images && msg.images.length > 0 && (
+                          <div className="flex gap-1.5 flex-wrap mt-1.5">
+                            {msg.images.map((src, imgIdx) => (
+                              <img
+                                key={`img-${String(imgIdx)}`}
+                                src={src}
+                                alt="attachment"
+                                className="max-w-[200px] max-h-[160px] rounded-md object-cover"
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      // Assistant bubble gets a floating copy button top-right.
+                      // Click copies styled HTML + plain-text fallback; Ctrl/Cmd+Click
+                      // copies the raw markdown. See AgentBubble below.
+                      <AgentBubble content={msg.content} />
+                    )}
                   </div>
                 );
               };
@@ -1660,6 +1651,80 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: 
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AgentBubble — assistant message bubble with a floating copy button.
+//
+// Click:          copy styled (text/html + text/plain fallback), so pasting
+//                 into a rich-text target (Notion, Word, GitHub issue editor)
+//                 keeps code blocks, formatting, and custom-tag styling.
+// Ctrl/Cmd+Click: copy raw markdown source (the msg.content string as-is).
+//
+// The button sits above the bubble at the top-right — opposite the Aion label
+// at the top-left — and transitions to a checkmark for ~1.2s after a copy
+// lands so the user gets feedback without a toast.
+// ---------------------------------------------------------------------------
+function AgentBubble({ content }: { content: string }) {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
+    const raw = e.ctrlKey || e.metaKey;
+    try {
+      if (raw) {
+        await navigator.clipboard.writeText(content);
+      } else {
+        const html = contentRef.current?.innerHTML ?? "";
+        const plain = contentRef.current?.innerText ?? content;
+        if (typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
+          const item = new ClipboardItem({
+            "text/html": new Blob([html], { type: "text/html" }),
+            "text/plain": new Blob([plain], { type: "text/plain" }),
+          });
+          await navigator.clipboard.write([item]);
+        } else {
+          // Older browser fallback — plain text only.
+          await navigator.clipboard.writeText(plain);
+        }
+      }
+      setCopied(true);
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+      resetTimer.current = setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // Clipboard permission denied or navigator.clipboard unavailable —
+      // silently no-op. No fallback to document.execCommand("copy") because
+      // the raw content could be large and synchronous DOM selection is
+      // jarring; the user can re-click.
+    }
+  }, [content]);
+
+  return (
+    <div className="relative max-w-[80%]">
+      <button
+        type="button"
+        onClick={handleCopy}
+        title="Copy styled · Ctrl/Cmd+Click for raw markdown"
+        aria-label="Copy message"
+        className={cn(
+          "absolute -top-2 right-2 z-10",
+          "w-6 h-6 rounded-md flex items-center justify-center",
+          "bg-card border border-border text-muted-foreground",
+          "hover:text-foreground hover:border-primary/40 transition-colors cursor-pointer",
+          "shadow-sm",
+        )}
+      >
+        {copied ? <CheckIcon className="w-3.5 h-3.5 text-green" /> : <CopyIcon className="w-3.5 h-3.5" />}
+      </button>
+      <div
+        ref={contentRef}
+        className="px-3 py-2 rounded-[10px] text-[13px] leading-relaxed break-words bg-card text-card-foreground border border-border"
+      >
+        <ContentRenderer value={content} format="markdown" />
+      </div>
     </div>
   );
 }
