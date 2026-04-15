@@ -539,9 +539,11 @@ export const MANAGE_PROJECT_MANIFEST = {
     "IMPORTANT: Projects run in Podman containers at https://{slug}.ai.on — NOT localhost. " +
     "After 'create', use 'host' to start the container. Use 'restart' after code changes. " +
     "Use 'info' to check container status and get the URL. " +
-    "NEVER run npm/node/python directly on the host.",
+    "NEVER run npm/node/python directly on the host. " +
+    "Aion-only: workers cannot mutate project configuration and must request changes via taskmaster_handoff.",
   requiresState: ["ONLINE" as const],
   requiresTier: ["verified" as const, "sealed" as const],
+  agentOnly: true as const,
 };
 
 export const MANAGE_PROJECT_INPUT_SCHEMA = {

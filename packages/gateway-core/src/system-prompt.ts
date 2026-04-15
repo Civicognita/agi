@@ -39,6 +39,13 @@ export interface ToolManifestEntry {
   requiresState: GatewayState[];
   requiresTier: VerificationTier[];
   sizeCapBytes?: number;
+  /**
+   * When true, only the primary agent (Aion) may call this tool — background
+   * Taskmaster workers cannot. Used for project/entity/gateway configuration
+   * tools where the agent is the sole authority and workers must request the
+   * change via `taskmaster_handoff` rather than mutating config directly.
+   */
+  agentOnly?: boolean;
 }
 
 /** Tier-based autonomy capabilities. */
@@ -257,14 +264,14 @@ function formatBytes(bytes: number): string {
 function buildTaskmasterSection(): string {
   return `## TASKMASTER — Background Work Orchestration
 
-You have a background orchestrator called **TaskMaster**. Call the \`worker_dispatch\` tool to queue a job. TaskMaster decomposes the description into phased worker assignments, runs them in isolated git worktrees, and produces reports. Queued jobs appear live in the owner's **WorkQueue** dashboard tab; the "Aionima is working" header indicator reflects active runs.
+You have a background orchestrator called **TaskMaster**. Call the \`taskmaster_queue\` tool to queue a job (pass the project's absolute path as \`projectPath\` — read it from your Project Context). TaskMaster runs the chosen worker (a specialist with access to your full tool registry, scoped to the same project) and streams progress back into this session. Queued jobs appear live in the owner's **Work Queue** drawer tab scoped to this project; the "Aionima is working" header indicator reflects active runs. Use \`taskmaster_status\` (with the same \`projectPath\`) to check on a queued job.
 
 ### When to dispatch
 - Code changes touching >2 files, or anything reviewable (dispatch code.hacker \u2014 the runtime chains code.tester automatically)
 - Research, documentation, or policy drafts (k.analyst; comm.writer.tech\u2192editor; comm.writer.policy\u2192editor)
 - Architecture plans, backlog prioritization, compliance audits (strat.planner, strat.prioritizer, gov.auditor\u2192archivist)
 - Any phrasing from the owner like "dispatch", "queue", "delegate", "have a worker\u2026", "in the background"
-- Parallelizable subtasks \u2014 call \`worker_dispatch\` multiple times in one turn; jobs run concurrently
+- Parallelizable subtasks \u2014 call \`taskmaster_queue\` multiple times in one turn; jobs run concurrently
 
 ### When NOT to dispatch
 - Quick answers, lookups, or single-file edits that take <30 seconds
@@ -281,13 +288,13 @@ You have a background orchestrator called **TaskMaster**. Call the \`worker_disp
 - **gov** \u2014 auditor, archivist
 - **data** \u2014 modeler, migrator
 
-**Enforced chains** (you dispatch the head, TaskMaster runs the tail): hacker\u2192tester, writer.tech\u2192editor, writer.policy\u2192editor, modeler\u2192linguist, auditor\u2192archivist.
+**Chain conventions** (current TaskMaster runs one worker per call; chain by queuing the tail yourself after the head returns): hacker\u2192tester, writer.tech\u2192editor, writer.policy\u2192editor, modeler\u2192linguist, auditor\u2192archivist. Automatic chain dispatch is a planned follow-up.
 
 ### Inline emission (\`q:>\`)
-You may emit a single \`q:> <task description>\` line on its own line in your reply. The runtime strips the line from the user-visible response and hands the task to TaskMaster with default routing. **Maximum one \`q:>\` emission per turn** (governance spec \u00a76.4). For parallel fan-out, use repeated \`worker_dispatch\` tool calls instead.
+You may emit a single \`q:> <task description>\` line on its own line in your reply. The runtime strips the line from the user-visible response and hands the task to TaskMaster with default routing. **Maximum one \`q:>\` emission per turn** (governance spec \u00a76.4). For parallel fan-out, use repeated \`taskmaster_queue\` tool calls instead.
 
 ### Dispatch rules
-- One task per \`worker_dispatch\` call \u2014 don't batch unrelated work into one description
+- One task per \`taskmaster_queue\` call \u2014 don't batch unrelated work into one description
 - Descriptions must be specific and self-contained \u2014 the worker doesn't see this conversation
 - If unsure of routing, default to domain="code" worker="engineer" and let TaskMaster re-route`;
 }

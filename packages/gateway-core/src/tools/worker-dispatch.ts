@@ -1,17 +1,30 @@
 /**
- * worker_dispatch tool — write a worker job file to the .dispatch/jobs/ directory.
+ * taskmaster_queue tool — queue a TaskMaster job by writing a dispatch file
+ * to the project's dispatch dir and notifying the worker runtime.
  *
- * Requires state ONLINE, tier verified/sealed.
+ * Dispatch files land under `~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json`.
+ * Per-project scoping prevents Aion (in one project's chat) from ever picking
+ * up a job dispatched from another project.
+ *
+ * Tier-gated (verified/sealed). State is audit metadata only — see
+ * compute-available-tools.ts + its test: `requiresState` is preserved on
+ * manifests for logging/UI dimming but never filters availability.
+ *
+ * Orchestration note (2026-04-15): TaskMaster is currently single-phase
+ * single-worker. Phase decomposition + enforced chain auto-dispatch are
+ * documented in `prompts/taskmaster.md` and listed as follow-ups in
+ * `docs/agents/taskmaster.md`; this tool queues one worker at a time.
  */
 import { writeFileSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
+import { dispatchJobsDir } from "../dispatch-paths.js";
+import { join } from "node:path";
 
 export interface WorkerDispatchConfig {
-  workspaceRoot: string;
+  /** Override the dispatch base dir. Tests use this; production leaves it unset. */
   botsDir?: string;
   /** Callback fired after a job file is written. Used by WorkerRuntime to pick up jobs. */
-  onJobCreated?: (jobId: string, coaReqId: string) => void;
+  onJobCreated?: (jobId: string, coaReqId: string, projectPath: string) => void;
   /** COA request ID from the invocation context. */
   coaReqId?: string;
 }
@@ -20,6 +33,14 @@ export function createWorkerDispatchHandler(
   config: WorkerDispatchConfig,
 ): ToolHandler {
   return async (input: Record<string, unknown>): Promise<string> => {
+    const projectPath = String(input.projectPath ?? "").trim();
+    if (projectPath.length === 0) {
+      return JSON.stringify({
+        error: "projectPath is required — pass the absolute path of the project the task belongs to (visible in your Project Context section).",
+        exitCode: -1,
+      });
+    }
+
     const description = String(input.description ?? "").trim();
     if (description.length === 0) {
       return JSON.stringify({ error: "description is required", exitCode: -1 });
@@ -29,7 +50,6 @@ export function createWorkerDispatchHandler(
     const worker = String(input.worker ?? "engineer");
     const priority = String(input.priority ?? "normal");
 
-    // Validate priority
     const validPriorities = ["low", "normal", "high", "critical"];
     if (!validPriorities.includes(priority)) {
       return JSON.stringify({
@@ -38,7 +58,9 @@ export function createWorkerDispatchHandler(
       });
     }
 
-    const jobsDir = resolve(config.botsDir ?? join(config.workspaceRoot, ".dispatch"), "jobs");
+    const jobsDir = config.botsDir !== undefined
+      ? join(config.botsDir, "jobs")
+      : dispatchJobsDir(projectPath);
 
     try {
       mkdirSync(jobsDir, { recursive: true });
@@ -62,6 +84,7 @@ export function createWorkerDispatchHandler(
       priority,
       status: "pending",
       coaReqId,
+      projectPath,
       createdAt: new Date().toISOString(),
     };
 
@@ -74,10 +97,9 @@ export function createWorkerDispatchHandler(
       });
     }
 
-    // Notify the runtime that a job was created
     if (config.onJobCreated) {
       try {
-        config.onJobCreated(jobId, coaReqId);
+        config.onJobCreated(jobId, coaReqId, projectPath);
       } catch {
         // Don't fail the tool if the callback throws
       }
@@ -93,26 +115,31 @@ export function createWorkerDispatchHandler(
 }
 
 export const WORKER_DISPATCH_MANIFEST = {
-  name: "worker_dispatch",
+  name: "taskmaster_queue",
   description:
     "Queue a task with TaskMaster, the background worker orchestrator. " +
-    "TaskMaster decomposes the description into phased worker assignments " +
-    "(e.g. code.hacker\u2192code.tester, comm.writer.tech\u2192comm.editor) and runs " +
-    "them in isolated worktrees. Use when: (a) the task spans >2 files or " +
-    "multiple concerns, (b) it benefits from specialist review (code review, " +
-    "policy editing, compliance audit), (c) the user asks for research, " +
-    "documentation, or design work, (d) subtasks can run in parallel, or " +
-    "(e) the user explicitly says 'dispatch', 'queue', 'delegate', 'worker', " +
-    "or 'task'. Jobs appear live in the owner's WorkQueue dashboard tab. " +
-    "Inputs: description (required), domain, worker, priority. Returns jobId. " +
-    "Call this tool multiple times in one turn to fan out parallel work.",
-  requiresState: ["ONLINE" as const],
+    "TaskMaster picks up the job from the project's dispatch dir and runs the " +
+    "specified worker (a specialist agent with access to Aion's full tool registry). " +
+    "Use when: (a) the task spans >2 files or multiple concerns, (b) it benefits " +
+    "from specialist review (code review, policy editing, compliance audit), " +
+    "(c) the user asks for research, documentation, or design work, (d) subtasks " +
+    "can run in parallel, or (e) the user explicitly says 'dispatch', 'queue', " +
+    "'delegate', 'worker', or 'task'. Jobs appear live in the owner's Work Queue " +
+    "drawer tab scoped to this project. Inputs: projectPath (required, absolute), " +
+    "description (required), domain, worker, priority. Returns jobId. Call this " +
+    "tool multiple times in one turn to fan out parallel work.",
+  requiresState: [],
   requiresTier: ["verified" as const, "sealed" as const],
 };
 
 export const WORKER_DISPATCH_INPUT_SCHEMA = {
   type: "object",
   properties: {
+    projectPath: {
+      type: "string",
+      description:
+        "Absolute path of the project the task belongs to. Read it from your Project Context section of the system prompt. Required.",
+    },
     description: {
       type: "string",
       description: "Human-readable description of the task to dispatch",
@@ -131,5 +158,5 @@ export const WORKER_DISPATCH_INPUT_SCHEMA = {
       description: 'Task priority level. Defaults to "normal".',
     },
   },
-  required: ["description"],
+  required: ["projectPath", "description"],
 };

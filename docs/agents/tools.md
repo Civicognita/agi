@@ -329,42 +329,44 @@ Step statuses: `"pending"`, `"running"`, `"complete"`, `"failed"`, `"skipped"`.
 
 ## Worker Tools
 
-### `worker_dispatch`
+### `taskmaster_queue`
 
-Dispatch a background task to a Taskmaster worker.
+Queue a background task with TaskMaster. The worker runs with Aion's full tool registry, scoped to the same project.
 
 | Field | Value |
 |-------|-------|
-| States | `ONLINE` |
+| States | *(audit-only — see compute-available-tools.ts)* |
 | Tiers | `verified`, `sealed` |
 
 **Key parameters:**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `projectPath` | string (required) | Absolute path of the project the task belongs to. Read from Project Context. |
 | `description` | string (required) | Human-readable task description |
 | `domain` | string | Worker domain: `"code"`, `"k"`, `"ux"`, `"strat"`, `"comm"`, `"ops"`, `"gov"`, `"data"` (defaults to `"code"`) |
 | `worker` | string | Worker role within the domain (defaults to `"engineer"`) |
 | `priority` | string | One of `"low"`, `"normal"`, `"high"`, `"critical"` (defaults to `"normal"`) |
 
-Writes a job file to `.dispatch/jobs/{jobId}.json` and notifies `WorkerRuntime` via callback. Returns the `jobId`.
+Writes a job file to `~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json` and notifies `WorkerRuntime` via callback. Returns the `jobId`.
 
 ---
 
-### `worker_status`
+### `taskmaster_status`
 
-Check the status of background jobs.
+Check the status of the current project's background jobs.
 
 | Field | Value |
 |-------|-------|
-| States | `ONLINE` |
+| States | *(audit-only)* |
 | Tiers | `unverified`, `verified`, `sealed` |
 
 **Key parameters:**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `jobId` | string | If provided, returns details for that job. If omitted, lists all jobs. |
+| `projectPath` | string (required) | Absolute path of the project whose jobs to list. |
+| `jobId` | string | If provided, returns details for that job. If omitted, lists all jobs for the project. |
 
 Reads from `.dispatch/jobs/`. This is a read-only tool — it does not modify job state.
 

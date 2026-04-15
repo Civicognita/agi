@@ -619,9 +619,23 @@ export async function startGatewayServer(
     hostingManagerRef,
     stackRegistryRef,
     mappRegistryRef,
-    onJobCreated: (jobId: string, coaReqId: string) => {
-      workerRuntimeRef.current?.executeJob(jobId, coaReqId).catch((err: unknown) => {
+    onJobCreated: (jobId: string, coaReqId: string, projectPath: string) => {
+      const projectContext = projectPath.length > 0
+        ? { path: projectPath, name: projectPath.split("/").filter(Boolean).pop() ?? projectPath }
+        : undefined;
+      workerRuntimeRef.current?.executeJob(jobId, coaReqId, projectContext).catch((err: unknown) => {
         log.error(`workerRuntime.executeJob error: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    },
+    onHandoff: (args) => {
+      // Re-emit as a runtime event so the dashboardBroadcaster routing
+      // (server.ts:3055-ish) surfaces the handoff to Work Queue + chat.
+      workerRuntimeRef.current?.emit("runtime:event", {
+        type: "worker_handoff",
+        jobId: args.jobId,
+        question: args.question,
+        projectPath: args.projectPath,
+        coaReqId: args.coaReqId,
       });
     },
   });
@@ -700,8 +714,15 @@ export async function startGatewayServer(
       promptDir: resolvePath(workspaceRoot, "prompts", "workers"),
       stateDir: join(homedir(), ".agi", "state"),
       workspaceRoot,
+      resourceId,
+      nodeId,
+      workerTier: "verified",
     },
-    { llmProvider: getLLMProvider() },
+    {
+      llmProvider: getLLMProvider(),
+      toolRegistry,
+      getState: () => stateMachine.getState(),
+    },
   );
 
   // Wire the late-bound ref so onJobCreated callbacks reach the runtime.
@@ -3100,6 +3121,27 @@ export async function startGatewayServer(
           jobId: event.jobId,
           status: "complete",
           description: String(event.gist ?? "Job completed"),
+          currentPhase: null,
+          workers: [],
+        });
+      } else if (event.type === "worker_handoff") {
+        // A worker is asking Aion for a decision. Surface it as a checkpoint
+        // on the Work Queue row; the chat transcript gets the same signal via
+        // the chat session WS routing below.
+        dashboardBroadcaster.emitTmJobUpdate({
+          jobId: event.jobId,
+          status: "checkpoint",
+          description: `Worker handoff: ${String(event.question ?? "decision requested")}`,
+          currentPhase: null,
+          workers: [],
+        });
+      } else if (event.type === "worker_tool_call") {
+        // Live tool-call trace — lets the UI animate a tool name under the
+        // job row without a full status change.
+        dashboardBroadcaster.emitTmJobUpdate({
+          jobId: event.jobId,
+          status: "running",
+          description: `Tool: ${String(event.tool ?? "?")}`,
           currentPhase: null,
           workers: [],
         });

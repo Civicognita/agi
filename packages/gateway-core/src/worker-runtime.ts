@@ -10,15 +10,18 @@
  */
 
 import { EventEmitter } from "node:events";
-import { join, resolve } from "node:path";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { execSync } from "node:child_process";
 
 import { JobBridge } from "./job-bridge.js";
 import { WorkerPromptLoader } from "./worker-prompt-loader.js";
+import { dispatchJobsDir } from "./dispatch-paths.js";
+import type { ToolRegistry, ToolExecutionContext } from "./tool-registry.js";
 import type { LLMProvider } from "./llm/provider.js";
 import type { LLMInvokeParams, LLMToolContinuationParams, LLMContentBlock } from "./llm/types.js";
+import type { VerificationTier } from "@aionima/entity-model";
+import type { GatewayState } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Runtime types
@@ -104,10 +107,25 @@ export interface WorkerRuntimeConfig {
   stateDir?: string;
   /** Workspace root for resolving dispatch files. */
   workspaceRoot?: string;
+  /** Resource entity ID used when constructing the worker's ToolExecutionContext. */
+  resourceId?: string;
+  /** Node ID used when constructing the worker's ToolExecutionContext. */
+  nodeId?: string;
+  /** Tier the worker runs at when invoking the shared ToolRegistry. Defaults to "verified". */
+  workerTier?: VerificationTier;
 }
 
 export interface WorkerRuntimeDeps {
   llmProvider: LLMProvider;
+  /**
+   * Shared tool registry. When provided, workers call the same tools as Aion
+   * (filtered by workerTier). Without it, the runtime emits a job_failed
+   * event explaining the misconfiguration — workers no longer silently fall
+   * back to the retired 5-tool mini-sandbox.
+   */
+  toolRegistry?: ToolRegistry;
+  /** Optional getter so the runtime reads the current gateway state when building ToolExecutionContext. Defaults to "ONLINE". */
+  getState?: () => GatewayState;
 }
 
 // ---------------------------------------------------------------------------
@@ -203,113 +221,6 @@ function resolveModel(
 }
 
 // ---------------------------------------------------------------------------
-// Worker tool definitions (sandboxed subset)
-// ---------------------------------------------------------------------------
-
-function getWorkerTools(): RuntimeToolDef[] {
-  return [
-    {
-      name: "read_file",
-      description: "Read a file from the project directory.",
-      input_schema: {
-        type: "object",
-        properties: {
-          path: { type: "string", description: "File path relative to project root" },
-        },
-        required: ["path"],
-      },
-    },
-    {
-      name: "write_file",
-      description: "Write content to a file in the project directory.",
-      input_schema: {
-        type: "object",
-        properties: {
-          path: { type: "string", description: "File path relative to project root" },
-          content: { type: "string", description: "File content to write" },
-        },
-        required: ["path", "content"],
-      },
-    },
-    {
-      name: "list_files",
-      description: "List files in a directory.",
-      input_schema: {
-        type: "object",
-        properties: {
-          path: { type: "string", description: "Directory path relative to project root" },
-          pattern: { type: "string", description: "Glob pattern to filter (optional)" },
-        },
-        required: ["path"],
-      },
-    },
-    {
-      name: "search_files",
-      description: "Search file contents for a pattern using grep.",
-      input_schema: {
-        type: "object",
-        properties: {
-          pattern: { type: "string", description: "Search pattern (regex)" },
-          path: { type: "string", description: "Directory to search in (default: project root)" },
-        },
-        required: ["pattern"],
-      },
-    },
-    {
-      name: "run_command",
-      description: "Run a shell command in the project directory. Only for build/test commands.",
-      input_schema: {
-        type: "object",
-        properties: {
-          command: { type: "string", description: "Shell command to execute" },
-        },
-        required: ["command"],
-      },
-    },
-  ];
-}
-
-function executeWorkerTool(toolName: string, input: Record<string, unknown>, projectRoot: string): string {
-  try {
-    switch (toolName) {
-      case "read_file": {
-        const filePath = resolve(projectRoot, String(input.path ?? ""));
-        if (!existsSync(filePath)) return JSON.stringify({ error: "File not found" });
-        return readFileSync(filePath, "utf-8");
-      }
-      case "write_file": {
-        const filePath = resolve(projectRoot, String(input.path ?? ""));
-        const dir = resolve(filePath, "..");
-        if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-        writeFileSync(filePath, String(input.content ?? ""), "utf-8");
-        return JSON.stringify({ ok: true, path: filePath });
-      }
-      case "list_files": {
-        const dirPath = resolve(projectRoot, String(input.path ?? "."));
-        if (!existsSync(dirPath)) return JSON.stringify({ error: "Directory not found" });
-        const out = execSync(`find ${JSON.stringify(dirPath)} -maxdepth 2 -type f | head -100`, { timeout: 10000 }).toString();
-        return out || "(empty)";
-      }
-      case "search_files": {
-        const searchPath = resolve(projectRoot, String(input.path ?? "."));
-        const pattern = String(input.pattern ?? "");
-        const out = execSync(`grep -rn --include='*.ts' --include='*.tsx' --include='*.md' ${JSON.stringify(pattern)} ${JSON.stringify(searchPath)} | head -50`, { timeout: 10000 }).toString();
-        return out || "(no matches)";
-      }
-      case "run_command": {
-        const cmd = String(input.command ?? "");
-        const out = execSync(cmd, { cwd: projectRoot, timeout: 60000, stdio: "pipe" }).toString();
-        return out.slice(0, 10000);
-      }
-      default:
-        return JSON.stringify({ error: `Unknown tool: ${toolName}` });
-    }
-  } catch (err) {
-    return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Active job tracking
 // ---------------------------------------------------------------------------
 
@@ -345,6 +256,8 @@ export class WorkerRuntime extends EventEmitter {
   private config: WorkerRuntimeConfig;
   private invoker: RuntimeInvoker;
   private promptLoader: WorkerPromptLoader | null = null;
+  private toolRegistry: ToolRegistry | null = null;
+  private getState: () => GatewayState;
 
   constructor(config: WorkerRuntimeConfig, deps: WorkerRuntimeDeps) {
     super();
@@ -353,6 +266,13 @@ export class WorkerRuntime extends EventEmitter {
     if (config.promptDir) {
       this.promptLoader = new WorkerPromptLoader(config.promptDir);
     }
+    this.toolRegistry = deps.toolRegistry ?? null;
+    this.getState = deps.getState ?? (() => "ONLINE" as GatewayState);
+  }
+
+  /** Late-bind the tool registry (used when the registry is constructed after the runtime). */
+  setToolRegistry(registry: ToolRegistry): void {
+    this.toolRegistry = registry;
   }
 
   /** Hot-reload config without interrupting running jobs. */
@@ -365,7 +285,7 @@ export class WorkerRuntime extends EventEmitter {
   }
 
   /**
-   * Execute a worker job. Fire-and-forget — called after worker_dispatch.
+   * Execute a worker job. Fire-and-forget — called after taskmaster_queue.
    */
   async executeJob(
     jobId: string,
@@ -381,8 +301,11 @@ export class WorkerRuntime extends EventEmitter {
       return;
     }
 
-    // Read dispatch file to get job details
-    const jobsDir = join(this.config.workspaceRoot ?? ".", ".dispatch", "jobs");
+    // Read dispatch file to get job details. When a projectContext is provided
+    // we read from that project's dispatch dir (~/.agi/{projectSlug}/dispatch/jobs/).
+    // When it isn't (legacy paths, bridged jobs without a project), fall back
+    // to the "general" bucket.
+    const jobsDir = dispatchJobsDir(projectContext?.path ?? "");
     const dispatchFile = join(jobsDir, `${jobId}.json`);
     let dispatch: { description: string; domain: string; worker: string; priority: string } | null = null;
 
@@ -472,10 +395,44 @@ export class WorkerRuntime extends EventEmitter {
       systemPrompt = `You are ${workerSpec}, a Taskmaster worker. Domain: ${dispatch.domain}. Role: ${dispatch.worker}.\n\nComplete the dispatched task.`;
     }
 
-    const tools = getWorkerTools();
+    // Workers use Aion's shared ToolRegistry filtered by the worker's tier.
+    // This replaces the retired 5-tool mini-sandbox — a worker dispatched to
+    // "fix the failing git test" can now call git_status/git_diff/etc., the
+    // same tools Aion has at the same tier.
+    if (this.toolRegistry === null) {
+      const msg = "WorkerRuntime has no ToolRegistry bound — cannot execute workers. (Call setToolRegistry() during boot.)";
+      this.emit("runtime:event", { type: "worker_done", jobId, worker: workerSpec, status: "failed" });
+      return { jobId, status: "failed", text: "", totalInputTokens: 0, totalOutputTokens: 0, toolLoops: 0, errors: [msg] };
+    }
+    const toolRegistry = this.toolRegistry;
+    const workerTier: VerificationTier = this.config.workerTier ?? "verified";
+    const workerState = this.getState();
+
+    // Workers inherit Aion's tool registry EXCEPT for tools marked agentOnly
+    // (project/entity/settings configuration). If a worker needs one of those,
+    // it must call taskmaster_handoff and ask Aion to make the change.
+    const agentOnlyNames = new Set(
+      toolRegistry.getAvailable(workerState, workerTier)
+        .filter((m) => m.agentOnly === true)
+        .map((m) => m.name),
+    );
+    const tools: RuntimeToolDef[] = toolRegistry
+      .toProviderTools(workerState, workerTier)
+      .filter((t) => !agentOnlyNames.has(t.name));
+
     const messages: RuntimeMessage[] = [
-      { role: "user", content: `## Dispatch\n\n**Task:** ${dispatch.description}\n**Priority:** ${dispatch.priority}\n**Project:** ${projectRoot}\n\nExecute this task. Use the available tools to read, write, and search project files. When done, summarize what you accomplished.` },
+      { role: "user", content: `## Dispatch\n\n**Task:** ${dispatch.description}\n**Priority:** ${dispatch.priority}\n**Project:** ${projectRoot}\n**Your jobId:** ${jobId}\n\nExecute this task. You have access to the same tool registry as the dispatching agent, scoped to this project. Tools that accept a \`projectPath\` argument should receive \`${projectRoot}\`.\n\nIf you need a decision you can't make yourself (design choice, config change you can't perform, ambiguous scope), call \`taskmaster_handoff\` with your \`jobId\` and a specific question — then finish your turn with a summary. You will not be auto-resumed; Aion will re-dispatch with clarification if needed.\n\nWhen done, summarize what you accomplished.` },
     ];
+
+    const executionCtx: ToolExecutionContext = {
+      state: workerState,
+      tier: workerTier,
+      entityId: coaReqId,
+      entityAlias: workerSpec,
+      coaChainBase: coaReqId,
+      resourceId: this.config.resourceId ?? "aionima",
+      nodeId: this.config.nodeId ?? "local",
+    };
 
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
@@ -501,11 +458,33 @@ export class WorkerRuntime extends EventEmitter {
       while (response.toolCalls.length > 0 && toolLoops < maxToolLoops) {
         toolLoops++;
 
-        // Execute each tool call
+        // Execute each tool call via the shared registry. Emit a per-call
+        // progress event so the dashboard + chat transcript see live activity.
         const toolResults: RuntimeToolResult[] = [];
         for (const tc of response.toolCalls) {
-          const result = executeWorkerTool(tc.name, tc.input, projectRoot);
-          toolResults.push({ tool_use_id: tc.id, content: result });
+          // Auto-fill projectPath when the tool accepts it and the worker didn't
+          // pass one — saves every prompt from having to remember.
+          const tcInput: Record<string, unknown> = { ...tc.input };
+          if (!("projectPath" in tcInput) || !tcInput.projectPath) {
+            tcInput.projectPath = projectRoot;
+          }
+          let resultContent: string;
+          if (agentOnlyNames.has(tc.name)) {
+            // Defense in depth: block agent-only tools at execute time even if
+            // the model somehow called one that wasn't in the list.
+            resultContent = JSON.stringify({
+              error: `${tc.name} is Aion-only. Use taskmaster_handoff to request this change from Aion.`,
+            });
+          } else {
+            try {
+              const execResult = await toolRegistry.execute(tc.name, tcInput, executionCtx);
+              resultContent = execResult.content;
+            } catch (err) {
+              resultContent = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+            }
+          }
+          toolResults.push({ tool_use_id: tc.id, content: resultContent });
+          this.emit("runtime:event", { type: "worker_tool_call", jobId, worker: workerSpec, tool: tc.name });
         }
 
         const prevBlocks = response.contentBlocks;
@@ -593,6 +572,59 @@ export class WorkerRuntime extends EventEmitter {
       const state = JSON.parse(content) as { wip?: { jobs?: Record<string, WorkerJob> } };
       if (!state.wip?.jobs) return [];
       return Object.values(state.wip.jobs);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * List dispatch entries for a project, read directly from
+   * ~/.agi/{projectSlug}/dispatch/jobs/. Returns a minimal WorkerJob shape
+   * synthesized from the flat dispatch file (per-phase structure isn't
+   * exercised today — one worker per job).
+   */
+  async listJobsForProject(projectPath: string): Promise<WorkerJob[]> {
+    try {
+      const { readdirSync } = await import("node:fs");
+      const { dispatchJobsDir: jobsDirFn } = await import("./dispatch-paths.js");
+      const dir = jobsDirFn(projectPath);
+      if (!existsSync(dir)) return [];
+      const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+      const jobs: WorkerJob[] = [];
+      for (const file of files.sort()) {
+        try {
+          const raw = readFileSync(join(dir, file), "utf-8");
+          const flat = JSON.parse(raw) as {
+            id: string;
+            description: string;
+            domain?: string;
+            worker?: string;
+            status: "pending" | "running" | "checkpoint" | "complete" | "failed";
+            createdAt: string;
+          };
+          jobs.push({
+            id: flat.id,
+            queueText: flat.description,
+            route: flat.domain && flat.worker ? `${flat.domain}.${flat.worker}` : null,
+            entryWorker: flat.domain && flat.worker ? `$W.${flat.domain}.${flat.worker}` : "$W.code.engineer",
+            worktree: ".",
+            branch: "dev",
+            phases: [{
+              id: "phase-1",
+              name: `${flat.domain ?? "code"}/${flat.worker ?? "engineer"}`,
+              workers: [flat.domain && flat.worker ? `$W.${flat.domain}.${flat.worker}` : "$W.code.engineer"],
+              gate: "terminal",
+              status: flat.status === "checkpoint" ? "running" : flat.status,
+            }],
+            currentPhase: "phase-1",
+            status: flat.status,
+            createdAt: flat.createdAt,
+          });
+        } catch {
+          // Skip unreadable files.
+        }
+      }
+      return jobs;
     } catch {
       return [];
     }

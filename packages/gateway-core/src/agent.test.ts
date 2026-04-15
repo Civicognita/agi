@@ -597,11 +597,11 @@ describe("system-prompt.ts", () => {
       expect(separators).toBeGreaterThanOrEqual(6);
     });
 
-    it("includes a TASKMASTER section naming the orchestrator and WorkQueue tab", () => {
+    it("includes a TASKMASTER section naming the orchestrator and Work Queue tab", () => {
       const prompt = assembleSystemPrompt(makePromptCtx());
       expect(prompt).toContain("## TASKMASTER");
-      expect(prompt).toContain("WorkQueue");
-      expect(prompt).toContain("worker_dispatch");
+      expect(prompt).toContain("Work Queue");
+      expect(prompt).toContain("taskmaster_queue");
     });
 
     it("TASKMASTER section precedes the final Response format section", () => {
@@ -612,9 +612,10 @@ describe("system-prompt.ts", () => {
       expect(rfIdx).toBeGreaterThan(tmIdx);
     });
 
-    it("worker_dispatch manifest description names TaskMaster and WorkQueue so the LLM can pick it", () => {
+    it("taskmaster_queue manifest names TaskMaster and Work Queue so the LLM can pick it", () => {
+      expect(WORKER_DISPATCH_MANIFEST.name).toBe("taskmaster_queue");
       expect(WORKER_DISPATCH_MANIFEST.description).toContain("TaskMaster");
-      expect(WORKER_DISPATCH_MANIFEST.description).toContain("WorkQueue");
+      expect(WORKER_DISPATCH_MANIFEST.description).toContain("Work Queue");
     });
 
     it("tool entry includes sizeCapBytes formatted as KB", () => {

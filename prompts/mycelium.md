@@ -88,8 +88,8 @@ Additional context injected as available:
 
 Background work is dispatched through the Taskmaster system:
 
-- Workers execute in isolated git worktrees via `worker_dispatch` tool
-- Job files live in `.dispatch/jobs/` with state tracked at `~/.agi/state/taskmaster.json`
+- Workers execute via the `taskmaster_queue` tool, using Aion's tool registry scoped to the dispatching project
+- Job files live in `~/.agi/{projectSlug}/dispatch/jobs/` with a global state index at `~/.agi/state/taskmaster.json`
 - Workers have domain-specific roles: `code`, `k`, `ux`, `strat`, `comm`, `ops`, `gov`, `data`
 - Checkpoints enable human-in-the-loop approval for critical decisions
 - Reports are stored and accessible through the dashboard

@@ -34,9 +34,10 @@ export function createUpdateUserContextHandler(config: UpdateUserContextConfig):
 
 export const UPDATE_USER_CONTEXT_MANIFEST = {
   name: "update_user_context",
-  description: "Update relationship notes for the current entity. Content is stored as markdown and injected into your system prompt on future interactions.",
+  description: "Update relationship notes for the current entity. Content is stored as markdown and injected into your system prompt on future interactions. Aion-only: background workers do not own entity context and must ask Aion via taskmaster_handoff to update it.",
   requiresState: ["ONLINE" as const, "LIMBO" as const],
   requiresTier: ["verified" as const, "sealed" as const],
+  agentOnly: true as const,
 };
 
 export const UPDATE_USER_CONTEXT_INPUT_SCHEMA = {

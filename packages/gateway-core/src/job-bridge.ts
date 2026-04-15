@@ -1,10 +1,10 @@
 /**
- * JobBridge — translates worker_dispatch job files into taskmaster state.
+ * JobBridge — translates taskmaster_queue job files into taskmaster state.
  *
- * The worker_dispatch tool writes flat JSON to .bots/jobs/{id}.json, but the
- * .bots/lib/runtime.ts:runJob() orchestrator reads structured state from
- * taskmaster.json. This bridge ensures jobs created via dispatch are
- * represented in the taskmaster state file so the runtime can execute them.
+ * The taskmaster_queue tool writes flat JSON to
+ * ~/.agi/{projectSlug}/dispatch/jobs/{id}.json (per-project), and this bridge
+ * ensures each such job is represented in the global state index at
+ * ~/.agi/state/taskmaster.json so WorkerRuntime can execute it.
  *
  * State file location: ~/.agi/state/taskmaster.json (runtime data, not in repo).
  */
