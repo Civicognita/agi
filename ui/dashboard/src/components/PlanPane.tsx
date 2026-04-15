@@ -156,11 +156,18 @@ export function PlanPane({ projectPath, planId, onClose, onApprove, onReject }: 
               </div>
               {isEditable ? (
                 <div className="rounded-md border border-border overflow-hidden">
+                  {/* Editor is a compound component — Toolbar + Content must
+                      be rendered as children or the editable surface isn't
+                      drawn at all (the bug that made the body area blank). */}
                   <Editor
                     value={editedBody ?? plan.body}
                     onChange={(next: string) => setEditedBody(next)}
                     outputFormat="markdown"
-                  />
+                    className="min-h-[300px]"
+                  >
+                    <Editor.Toolbar />
+                    <Editor.Content />
+                  </Editor>
                 </div>
               ) : (
                 <div className="text-[13px] leading-relaxed">

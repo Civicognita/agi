@@ -686,6 +686,15 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             setSessions((prev) => prev.map((s) =>
               s.id === p.sessionId ? { ...s, activePlan: p.plan } : s
             ));
+            // Auto-open the PlanPane when a new plan arrives for the
+            // currently-active session. This is the piece the previous
+            // Plans-tab shipment left as a follow-up; without it the
+            // user has to hunt for the plan manually. Suppressed for
+            // background sessions to avoid surprise drawer flips.
+            if (p.sessionId === activeSessionId && open) {
+              setSelectedPlanId(p.plan.id);
+              setActiveDrawer("plans");
+            }
             break;
           }
           case "chat:plan_status": {
@@ -1467,7 +1476,10 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
       data-testid="plan-pane"
       className={cn(
         "flex-1 min-w-0 h-full",
-        !docked && !isMobile && "w-[420px] max-w-[420px] flex-none",
+        // Width: ~50% of viewport capped at 900px on large screens, with a
+        // 520px minimum so markdown with code blocks doesn't horizontal-scroll.
+        // Plans can be long documents — narrow pane was a real problem.
+        !docked && !isMobile && "w-[min(50vw,900px)] min-w-[520px] flex-none",
       )}
     >
       <PlanPane
@@ -1513,7 +1525,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         <div className={cn("bg-black/10", isMobile ? "absolute inset-0" : "flex-1")} />
       )}
       {planPane !== null && !isMobile && (
-        <div className="h-screen border-l border-border bg-background w-[420px] shrink-0 pointer-events-auto">
+        <div className="h-screen border-l border-border bg-background shrink-0 pointer-events-auto w-[min(50vw,900px)] min-w-[520px]">
           {planPane}
         </div>
       )}
