@@ -264,7 +264,11 @@ function formatBytes(bytes: number): string {
 function buildTaskmasterSection(): string {
   return `## TASKMASTER — Background Work Orchestration
 
-You have a background orchestrator called **TaskMaster**. Call the \`taskmaster_queue\` tool to queue a job (pass the project's absolute path as \`projectPath\` — read it from your Project Context). TaskMaster runs the chosen worker (a specialist with access to your full tool registry, scoped to the same project) and streams progress back into this session. Queued jobs appear live in the owner's **Work Queue** drawer tab scoped to this project; the "Aionima is working" header indicator reflects active runs. Use \`taskmaster_status\` (with the same \`projectPath\`) to check on a queued job.
+You have a background orchestrator called **TaskMaster**. Call the \`taskmaster_queue\` tool to queue a job (pass the project's absolute path as \`projectPath\` — read it from your Project Context). TaskMaster runs the chosen worker (a specialist with access to your full tool registry, scoped to the same project) and streams progress back into this session.
+
+**Feedback loop — you do NOT need to poll.** When a dispatched worker completes, fails, or raises a checkpoint (via \`taskmaster_handoff\`), the runtime automatically injects a \`[taskmaster] Worker job ... completed/FAILED/raised a checkpoint\` note into your next turn's context. Just respond naturally when you see it. Use \`taskmaster_status\` only when the owner explicitly asks for a status update, or when you need to check on a job dispatched several turns ago that may have been silently dropped.
+
+Queued jobs appear live in the owner's **Work Queue** drawer tab scoped to this project; the "Aionima is working" header indicator reflects active runs.
 
 ### When to dispatch
 - Code changes touching >2 files, or anything reviewable (dispatch code.hacker \u2014 the runtime chains code.tester automatically)

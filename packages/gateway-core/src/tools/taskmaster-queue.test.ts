@@ -126,17 +126,42 @@ describe("taskmaster_queue handler", () => {
   });
 
   describe("onJobCreated callback", () => {
-    it("fires with (jobId, coaReqId, projectPath) so the runtime knows the project scope", async () => {
-      const calls: Array<[string, string, string]> = [];
+    it("fires with {jobId, coaReqId, projectPath, sessionKey?, chatSessionId?} so the server can route completion back to the origin session", async () => {
+      const calls: Array<Record<string, unknown>> = [];
       const res = parse(await createWorkerDispatchHandler({
         coaReqId: "coa-xyz",
-        onJobCreated: (jobId, coaReqId, projectPath) => calls.push([jobId, coaReqId, projectPath]),
+        onJobCreated: (args) => calls.push(args as unknown as Record<string, unknown>),
       })({ projectPath: PROJECT_PATH, description: "x" }));
       expect(res.exitCode).toBe(0);
       expect(calls).toHaveLength(1);
-      expect(calls[0]![0]).toBe(res.jobId);
-      expect(calls[0]![1]).toBe("coa-xyz");
-      expect(calls[0]![2]).toBe(PROJECT_PATH);
+      expect(calls[0]!.jobId).toBe(res.jobId);
+      expect(calls[0]!.coaReqId).toBe("coa-xyz");
+      expect(calls[0]!.projectPath).toBe(PROJECT_PATH);
+    });
+
+    it("carries sessionKey + chatSessionId from ToolExecutionContext when provided", async () => {
+      const calls: Array<Record<string, unknown>> = [];
+      const handler = createWorkerDispatchHandler({
+        onJobCreated: (args) => calls.push(args as unknown as Record<string, unknown>),
+      });
+      await handler(
+        { projectPath: PROJECT_PATH, description: "task" },
+        {
+          state: "ONLINE",
+          tier: "verified",
+          entityId: "#E0",
+          entityAlias: "Test",
+          coaChainBase: "coa-live-123",
+          resourceId: "aionima",
+          nodeId: "local",
+          sessionKey: "#E0",
+          chatSessionId: "chat-abc",
+        },
+      );
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.coaReqId).toBe("coa-live-123");
+      expect(calls[0]!.sessionKey).toBe("#E0");
+      expect(calls[0]!.chatSessionId).toBe("chat-abc");
     });
   });
 });

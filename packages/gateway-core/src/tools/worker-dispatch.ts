@@ -23,16 +23,26 @@ import { join } from "node:path";
 export interface WorkerDispatchConfig {
   /** Override the dispatch base dir. Tests use this; production leaves it unset. */
   botsDir?: string;
-  /** Callback fired after a job file is written. Used by WorkerRuntime to pick up jobs. */
-  onJobCreated?: (jobId: string, coaReqId: string, projectPath: string) => void;
-  /** COA request ID from the invocation context. */
+  /**
+   * Callback fired after a job file is written. Used by WorkerRuntime to
+   * pick up jobs, and by the server to remember which chat session spawned
+   * the job so worker progress can be re-injected as a system turn.
+   */
+  onJobCreated?: (args: {
+    jobId: string;
+    coaReqId: string;
+    projectPath: string;
+    sessionKey?: string;
+    chatSessionId?: string;
+  }) => void;
+  /** COA request ID fallback when no execution context is supplied. */
   coaReqId?: string;
 }
 
 export function createWorkerDispatchHandler(
   config: WorkerDispatchConfig,
 ): ToolHandler {
-  return async (input: Record<string, unknown>): Promise<string> => {
+  return async (input: Record<string, unknown>, ctx): Promise<string> => {
     const projectPath = String(input.projectPath ?? "").trim();
     if (projectPath.length === 0) {
       return JSON.stringify({
@@ -74,7 +84,11 @@ export function createWorkerDispatchHandler(
     const jobId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const jobFile = join(jobsDir, `${jobId}.json`);
 
-    const coaReqId = config.coaReqId ?? `unknown-${Date.now()}`;
+    // Prefer the live invocation COA fingerprint over the register-time
+    // config fallback so log attribution stays accurate.
+    const coaReqId = ctx?.coaChainBase ?? config.coaReqId ?? `unknown-${Date.now()}`;
+    const sessionKey = ctx?.sessionKey;
+    const chatSessionId = ctx?.chatSessionId;
 
     const job = {
       id: jobId,
@@ -85,6 +99,8 @@ export function createWorkerDispatchHandler(
       status: "pending",
       coaReqId,
       projectPath,
+      sessionKey,
+      chatSessionId,
       createdAt: new Date().toISOString(),
     };
 
@@ -99,7 +115,7 @@ export function createWorkerDispatchHandler(
 
     if (config.onJobCreated) {
       try {
-        config.onJobCreated(jobId, coaReqId, projectPath);
+        config.onJobCreated({ jobId, coaReqId, projectPath, sessionKey, chatSessionId });
       } catch {
         // Don't fail the tool if the callback throws
       }

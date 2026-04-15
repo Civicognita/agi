@@ -646,6 +646,8 @@ export class AgentInvoker extends EventEmitter {
             entity,
             coaFingerprint,
             state,
+            sKey,
+            request.chatSessionId,
           );
           toolsUsed.push(toolCall.name);
 
@@ -853,7 +855,7 @@ export class AgentInvoker extends EventEmitter {
           for (let i = 0; i < result.toolCalls.length; i++) {
             const toolCall = result.toolCalls[i]!;
             this.emit("tool_start", { sessionKey: sKey, toolName: toolCall.name, toolIndex: i, loopIteration: loopCount, toolInput: sanitizeToolInput(toolCall.input ?? {}) });
-            const execResult = await this.executeToolSafe(toolCall, entity, coaFingerprint, state);
+            const execResult = await this.executeToolSafe(toolCall, entity, coaFingerprint, state, sKey, request.chatSessionId);
             toolsUsed.push(toolCall.name);
             // Merge result data into detail for tools that return structured output
             let acDetail = extractToolDetail(toolCall.name, toolCall.input ?? {});
@@ -1009,6 +1011,8 @@ export class AgentInvoker extends EventEmitter {
     entity: Entity,
     coaChainBase: string,
     state: GatewayState,
+    sessionKey?: string,
+    chatSessionId?: string,
   ): Promise<ToolExecutionResult> {
     try {
       return await this.deps.toolRegistry.execute(
@@ -1022,6 +1026,8 @@ export class AgentInvoker extends EventEmitter {
           coaChainBase,
           resourceId: this.deps.resourceId,
           nodeId: this.deps.nodeId,
+          sessionKey,
+          chatSessionId,
         },
       );
     } catch (err) {

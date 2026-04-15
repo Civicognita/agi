@@ -160,7 +160,13 @@ export interface ToolRegistrationConfig {
   /** Optional override for the TaskMaster dispatch base dir. Production leaves this unset (defaults to ~/.agi/{projectSlug}/dispatch/). */
   botsDir?: string;
   /** Callback fired when taskmaster_queue creates a job. */
-  onJobCreated?: (jobId: string, coaReqId: string, projectPath: string) => void;
+  onJobCreated?: (args: {
+    jobId: string;
+    coaReqId: string;
+    projectPath: string;
+    sessionKey?: string;
+    chatSessionId?: string;
+  }) => void;
   /** Callback fired when a worker calls taskmaster_handoff. Wired to WorkerRuntime runtime:event. */
   onHandoff?: (args: { jobId: string; question: string; projectPath: string; coaReqId?: string }) => void;
   /** COA request ID for the current invocation context. */

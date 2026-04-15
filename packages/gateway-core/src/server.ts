@@ -588,6 +588,17 @@ export async function startGatewayServer(
   // In-flight session data for persistence — maps sessionId → PersistedChatSession
   const chatSessionData = new Map<string, PersistedChatSession>();
   const canvasDocuments: CanvasDocument[] = [];
+  /**
+   * Tracks which chat session dispatched each Taskmaster job, so worker
+   * completion / handoff events can inject a synthetic user turn back into
+   * the originating session via AgentInvoker.injectMessage. Populated in
+   * the taskmaster_queue onJobCreated callback, consumed in the runtime:event
+   * handler below registerAllTools.
+   */
+  const jobOriginBySessionKey = new Map<
+    string,
+    { sessionKey?: string; chatSessionId?: string; projectPath: string }
+  >();
   // Late-bound worker runtime ref — populated after workerRuntime is created below.
   // The onJobCreated callback is only invoked during agent tool execution (after boot),
   // so workerRuntimeRef.current is always set by the time it is first called.
@@ -619,7 +630,11 @@ export async function startGatewayServer(
     hostingManagerRef,
     stackRegistryRef,
     mappRegistryRef,
-    onJobCreated: (jobId: string, coaReqId: string, projectPath: string) => {
+    onJobCreated: (args) => {
+      const { jobId, coaReqId, projectPath, sessionKey, chatSessionId } = args;
+      // Remember which chat session dispatched this job so the runtime:event
+      // handler below can inject worker reports back into Aion's next turn.
+      jobOriginBySessionKey.set(jobId, { sessionKey, chatSessionId, projectPath });
       const projectContext = projectPath.length > 0
         ? { path: projectPath, name: projectPath.split("/").filter(Boolean).pop() ?? projectPath }
         : undefined;
@@ -2480,14 +2495,21 @@ export async function startGatewayServer(
             } else if (!text) {
               text = "[No response]";
             }
+            // Generate next-step suggestions before emitting so they can
+            // ride on the chat:response payload AND get persisted onto the
+            // assistant message. Previously they lived only in ephemeral
+            // client state and vanished on page reload.
+            const suggestions = await generateNextSteps(chatText ?? "", text, getLLMProvider());
             sendChat("chat:response", {
               sessionId: chatSessionId,
               runId,
               text,
               timestamp: new Date().toISOString(),
+              suggestions,
             });
-            // Generate contextual next-step suggestions via LLM
-            const suggestions = await generateNextSteps(chatText ?? "", text, getLLMProvider());
+            // Keep emitting the legacy chat:suggestions frame for backwards
+            // compatibility with any client that still listens for it
+            // separately. No-op once the client reads from chat:response.
             if (suggestions.length > 0) {
               sendChat("chat:suggestions", {
                 sessionId: chatSessionId,
@@ -2514,7 +2536,8 @@ export async function startGatewayServer(
               }
             }
 
-            // Persist session to disk
+            // Persist session to disk — include suggestions on the assistant
+            // message so they survive reload.
             if (chatSessionId) {
               const existing = chatSessionData.get(chatSessionId);
               if (existing) {
@@ -2523,6 +2546,7 @@ export async function startGatewayServer(
                   content: text,
                   timestamp: new Date().toISOString(),
                   runId,
+                  suggestions: suggestions.length > 0 ? suggestions : undefined,
                 });
                 chatSessionData.set(chatSessionId, updated);
                 try { chatPersistence.save(updated); } catch { /* non-fatal */ }
@@ -3072,6 +3096,37 @@ export async function startGatewayServer(
 
   // Populate the late-bound ref so the chat:send handler can emit project activity.
   dashboardBroadcasterRef = dashboardBroadcaster;
+
+  // Inject worker-completion / handoff reports back into Aion's chat session.
+  // Without this, a dispatched worker was fire-and-forget from Aion's
+  // perspective — it had no way to notice the job finished.
+  workerRuntime.on("runtime:event", (event: { type: string; jobId: string; [key: string]: unknown }) => {
+    const origin = jobOriginBySessionKey.get(event.jobId);
+    if (!origin?.sessionKey) return;
+
+    let note: string | null = null;
+    if (event.type === "report_ready") {
+      const gist = typeof event.gist === "string" ? event.gist : "(no gist)";
+      note = `[taskmaster] Worker job \`${event.jobId}\` completed. Report:\n\n${gist}`;
+    } else if (event.type === "job_failed") {
+      const err = typeof event.error === "string" ? event.error : "(no detail)";
+      note = `[taskmaster] Worker job \`${event.jobId}\` FAILED. Error: ${err}`;
+    } else if (event.type === "worker_handoff") {
+      const question = typeof event.question === "string" ? event.question : "(no question)";
+      note = `[taskmaster] Worker job \`${event.jobId}\` raised a checkpoint:\n\n${question}\n\nThe worker has paused — decide how to answer and re-dispatch with clarification if needed.`;
+    }
+    if (note !== null) {
+      try {
+        agentInvoker.injectMessage(origin.sessionKey, note);
+      } catch (err) {
+        log.warn(`failed to inject worker event into session ${origin.sessionKey}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    // Terminal states free the map entry so we don't leak memory on long runs.
+    if (event.type === "report_ready" || event.type === "job_failed") {
+      jobOriginBySessionKey.delete(event.jobId);
+    }
+  });
 
   // Wire worker runtime events to the dashboard broadcaster.
   if (dashboardBroadcaster !== null) {
