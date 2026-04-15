@@ -308,7 +308,16 @@ function buildResponseFormatSection(): string {
   return `Response format:
 - Respond in the language used by the entity unless instructed otherwise.
 - Do not expose internal identifiers (entity IDs, COA fingerprints, TIDs) in responses unless the entity explicitly requests system information.
-- Do not fabricate tool results. If a tool is unavailable, state it plainly.`;
+- Do not fabricate tool results. If a tool is unavailable, state it plainly.
+
+Chat content markup — the dashboard chat renders your responses through ContentRenderer (react-fancy), which understands standard Markdown plus four custom tags. Use them to give the user a clearer, more structured surface than plain text allows. Do NOT nest them more than one level deep.
+
+- <thinking>...</thinking> — reasoning the user can expand if curious. Render it inline WITHIN your final response when you want the reader to have optional insight into your working; the UI collapses it by default. Do not emit a thinking block for every answer — only when the reasoning is non-obvious, contested, or load-bearing on the conclusion.
+- <question title="Short Title">...</question> — structured questions or quizzes. Use when you want the user to choose between specific options or when you need a grouped answer; plain bullets are fine for single questions. Markdown inside is supported.
+- <callout variant="warn|info|error|success">...</callout> — attention banner. "warn" (default) for risks or caveats, "info" for relevant context, "error" for failures you want to surface without stopping the conversation, "success" for confirmation. One per response is usually the right dose.
+- <highlight>...</highlight> — inline span highlight (cyan). For drawing attention to a phrase within a paragraph. Do not use for whole sentences — Markdown bold or italics is better for that.
+
+Emit these tags raw in your response. Do NOT wrap them in code fences — that hides them from the renderer. Do not escape the angle brackets. If you're not sure whether a tag fits, plain Markdown always works as a fallback.`;
 }
 
 /** Owner context section — tells the agent who owns this install. */

@@ -6,9 +6,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { markdownComponents } from "@/lib/markdown.js";
+// Chat content now renders via react-fancy's ContentRenderer (see imports
+// below). The legacy ReactMarkdown + markdownComponents path was retired
+// in favor of ContentRenderer + registered extensions (thinking, question,
+// callout, highlight). See src/lib/content-renderer-setup.tsx.
 import type { WorkerJobSummary, Plan, PlanStatus, PlanStep, ProjectInfo } from "../types.js";
 import { approveTaskmasterJob, fetchTaskmasterJobs, rejectTaskmasterJob } from "../api.js";
 import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
@@ -19,7 +20,8 @@ import { applyInjectionConsumed, shouldShowLivePill, applyStallTimeout, groupByT
 import type { ChatSessionShape, ChatMessageShape } from "./chat-flyout-reducers.js";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { useIsMobile } from "@/hooks.js";
+import { useIsMobile, useConfig } from "@/hooks.js";
+import { ContentRenderer } from "@particle-academy/react-fancy";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -171,6 +173,13 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const isMobile = useIsMobile();
+
+  // Display names for chat bubbles. User name comes from the gateway config's
+  // owner.displayName; falls back to "You". Agent name is "Aion" for now —
+  // agent.displayName is a future config knob.
+  const configHook = useConfig();
+  const userLabel = (configHook.data?.owner as { displayName?: string } | undefined)?.displayName?.trim() || "You";
+  const agentLabel = "Aion";
 
   // File attachments
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
@@ -949,20 +958,12 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   }, [activeSessionId]);
 
   // -------------------------------------------------------------------------
-  // Markdown rendering components (shared module, chat-size variant)
+  // (Markdown rendering lives in ContentRenderer now — see the rendering
+  // section below. The legacy markdownComponents form-answer handler was
+  // retired; interactive <question> submissions via the new extension are
+  // a follow-up once the extension accepts a sendMessage callback through
+  // a context bridge.)
   // -------------------------------------------------------------------------
-
-  const mdComponents = useMemo(() => markdownComponents({
-    onQuestionSubmit: (answers) => {
-      // Send answered questions as a formatted message
-      const lines = Object.entries(answers)
-        .filter(([, v]) => v.trim().length > 0)
-        .map(([k, v]) => `**${k}:** ${v}`);
-      if (lines.length > 0) {
-        sendMessage(lines.join("\n"));
-      }
-    },
-  }), [sendMessage]);
 
   // -------------------------------------------------------------------------
   // Derived send-button state
@@ -1113,29 +1114,26 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
 
                 // Thought messages — distinct bubble with left accent; only collapse very long walls.
                 if (msg.role === "thought") {
+                  // Thought content is wrapped in a <thinking> tag and passed
+                  // through ContentRenderer; the registered extension renders
+                  // it as a collapsed purple panel. This unifies the visual
+                  // language — the bubble is just another agent post, labeled
+                  // with the agent's name like any other assistant message.
+                  const wrapped = `<thinking>${msg.content}</thinking>`;
                   return (
                     <div
                       key={`thought-${msg.timestamp}-${String(idx)}`}
                       data-role="thought"
                       className="flex flex-col items-start gap-1"
                     >
-                      <div className="text-[9px] text-blue/70 font-semibold uppercase tracking-wider px-1">
-                        Thinking
+                      <div className="text-[9px] font-semibold uppercase tracking-wider px-1 text-muted-foreground">
+                        {agentLabel}
                         <span className="ml-2 font-normal opacity-60">
                           {new Date(msg.timestamp).toLocaleTimeString()}
                         </span>
                       </div>
-                      <div className="max-w-[85%] px-3 py-2 rounded-[10px] bg-secondary/60 border border-border border-l-4 border-l-blue/60 text-muted-foreground text-[12px] leading-relaxed whitespace-pre-wrap">
-                        {msg.content.length > 2000 ? (
-                          <details>
-                            <summary className="cursor-pointer select-none">
-                              {msg.content.slice(0, 400)}...
-                            </summary>
-                            <div className="mt-1">{msg.content}</div>
-                          </details>
-                        ) : (
-                          msg.content
-                        )}
+                      <div className="max-w-[85%] px-3 py-2 rounded-[10px] bg-card text-card-foreground border border-border text-[13px] leading-relaxed break-words">
+                        <ContentRenderer value={wrapped} format="html" />
                       </div>
                     </div>
                   );
@@ -1151,7 +1149,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                   >
                     {/* Role label */}
                     <div className={cn("text-[9px] font-semibold uppercase tracking-wider px-1", isUser ? "text-primary/60" : "text-muted-foreground")}>
-                      {isUser ? "You" : "Aionima"}
+                      {isUser ? userLabel : agentLabel}
                       <span className="ml-2 font-normal opacity-60">
                         {new Date(msg.timestamp).toLocaleTimeString()}
                       </span>
@@ -1185,9 +1183,13 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                           )}
                         </>
                       ) : (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                          {msg.content}
-                        </ReactMarkdown>
+                        // ContentRenderer handles markdown + our registered
+                        // custom tags (thinking, question, callout, highlight)
+                        // so the agent can emit inline widgets without per-
+                        // callsite wiring. Streaming: ContentRenderer re-parses
+                        // on `value` change, which matches how we mutate the
+                        // growing assistant-message buffer.
+                        <ContentRenderer value={msg.content} format="auto" />
                       )}
                     </div>
                   </div>
