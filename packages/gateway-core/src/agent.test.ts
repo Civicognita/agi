@@ -427,13 +427,19 @@ describe("system-prompt.ts", () => {
       expect(result).toHaveLength(2);
     });
 
-    it("filters by requiresState when tool has state constraints", () => {
+    it("does NOT filter by requiresState (state is audit-only, not a permission gate)", () => {
+      // State is audit metadata that gets stamped onto COA<>COI log entries
+      // for $imp minting provenance — it does NOT decide tool availability.
+      // `requiresState` on a manifest is retained as metadata for logging / UI
+      // dimming but `computeAvailableTools` ignores it.
       const tools = [
         makeTool("online-only", { requiresState: ["ONLINE"] }),
         makeTool("any-state", { requiresState: [] }),
       ];
       const result = computeAvailableTools("LIMBO", "verified", tools);
-      expect(result.map((t) => t.name)).not.toContain("online-only");
+      // Both tools are returned even though one declared `requiresState: ["ONLINE"]`
+      // and the current state is LIMBO.
+      expect(result.map((t) => t.name)).toContain("online-only");
       expect(result.map((t) => t.name)).toContain("any-state");
     });
 
@@ -447,10 +453,13 @@ describe("system-prompt.ts", () => {
       expect(result.map((t) => t.name)).toContain("any-tier");
     });
 
-    it("includes tool when current state matches requiresState", () => {
+    it("returns tools regardless of state value — state is audit-only", () => {
       const tools = [makeTool("limbo-tool", { requiresState: ["LIMBO"] })];
-      const result = computeAvailableTools("LIMBO", "verified", tools);
-      expect(result).toHaveLength(1);
+      // Same tool returned in every state, because state does not filter.
+      expect(computeAvailableTools("LIMBO", "verified", tools)).toHaveLength(1);
+      expect(computeAvailableTools("ONLINE", "verified", tools)).toHaveLength(1);
+      expect(computeAvailableTools("OFFLINE", "verified", tools)).toHaveLength(1);
+      expect(computeAvailableTools("UNKNOWN", "verified", tools)).toHaveLength(1);
     });
 
     it("includes tool when current tier matches requiresTier for sealed", () => {
@@ -1366,7 +1375,10 @@ describe("tool-registry.ts", () => {
       expect(registry.getAvailable("ONLINE", "verified")).toHaveLength(2);
     });
 
-    it("filters by state constraint", () => {
+    it("does NOT filter by state constraint (state is audit-only)", () => {
+      // See the computeAvailableTools suite above for the full rationale —
+      // `requiresState` is metadata, not a permission gate. The registry's
+      // getAvailable() must surface the tool even when the state differs.
       registry.register(
         makeTool("online-only", { requiresState: ["ONLINE"] }),
         async () => "x",
@@ -1374,7 +1386,7 @@ describe("tool-registry.ts", () => {
       );
       registry.register(makeTool("any", { requiresState: [] }), async () => "y", {});
       const available = registry.getAvailable("LIMBO", "verified");
-      expect(available.map((t) => t.name)).not.toContain("online-only");
+      expect(available.map((t) => t.name)).toContain("online-only");
       expect(available.map((t) => t.name)).toContain("any");
     });
 
@@ -1412,13 +1424,16 @@ describe("tool-registry.ts", () => {
       expect(registry.toProviderTools("ONLINE", "unverified")).toHaveLength(0);
     });
 
-    it("respects state filtering in toProviderTools", () => {
+    it("does NOT filter by state in toProviderTools (state is audit-only)", () => {
       registry.register(
         makeTool("online-only", { requiresState: ["ONLINE"] }),
         async () => "x",
         {},
       );
-      expect(registry.toProviderTools("LIMBO", "verified")).toHaveLength(0);
+      // Tool surfaces to the provider regardless of state.
+      expect(registry.toProviderTools("LIMBO", "verified")).toHaveLength(1);
+      expect(registry.toProviderTools("OFFLINE", "verified")).toHaveLength(1);
+      expect(registry.toProviderTools("ONLINE", "verified")).toHaveLength(1);
     });
   });
 

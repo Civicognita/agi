@@ -36,7 +36,15 @@ const EXPECTED_TYPES: Record<string, string> = {
   "sample-node-api": "api-service",
   "sample-php": "web-app",
   "sample-static": "static-site",
-  "sample-python-django": "api-service",
+  // Updated 2026-04-15: detectProjectDefaults() heuristic evolved to
+  // classify Flask/Django as web-app (ship an HTTP view layer) and plain
+  // Go/Rust/FastAPI as api-service (no template layer, just routes). The
+  // earlier expected values pre-dated that evolution and were drifting.
+  "sample-python-django": "web-app",
+  "sample-python-flask": "web-app",
+  "sample-python-fastapi": "api-service",
+  "sample-go": "api-service",
+  "sample-rust": "api-service",
   "sample-vite-only": "static-site",
   "sample-literature": "writing",
   "sample-media": "art",
