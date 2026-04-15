@@ -68,8 +68,13 @@ export function registerWorkerApi(
   });
 
   // Returns bare array — frontend calls .map() on this.
-  app.get("/api/taskmaster/jobs", async () => {
-    const jobs = await runtime.listAllJobs();
+  // Supports ?projectPath= to scope the list to jobs dispatched from that
+  // project (reads ~/.agi/{projectSlug}/dispatch/jobs/). Omit to list globally.
+  app.get<{ Querystring: { projectPath?: string } }>("/api/taskmaster/jobs", async (request) => {
+    const projectPath = request.query.projectPath;
+    const jobs = projectPath !== undefined && projectPath.length > 0
+      ? await runtime.listJobsForProject(projectPath)
+      : await runtime.listAllJobs();
     return jobs.map(toSummary);
   });
 
