@@ -23,6 +23,8 @@ import { Button } from "@/components/ui/button";
 import { useIsMobile, useConfig } from "@/hooks.js";
 import { ContentRenderer } from "@particle-academy/react-fancy";
 import { Copy as CopyIcon, Check as CheckIcon } from "lucide-react";
+import { PlansDrawer } from "./PlansDrawer.js";
+import { PlanPane } from "./PlanPane.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,7 +60,7 @@ interface ChatSession {
   queuedMessages: Array<{ text: string; timestamp: string }>;
 }
 
-type DrawerTab = "work-queue" | "project-info";
+type DrawerTab = "work-queue" | "project-info" | "plans";
 
 // ---------------------------------------------------------------------------
 // Run grouping — groups consecutive messages sharing the same runId
@@ -171,6 +173,9 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   const [input, setInput] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [activeDrawer, setActiveDrawer] = useState<DrawerTab | null>(null);
+  // When a plan is selected from the Plans drawer, its id is held here so
+  // the PlanPane renders to the left of the chat. Cleared by the pane's X.
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const isMobile = useIsMobile();
@@ -1358,6 +1363,11 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             suggestions={activeSession.suggestions}
             onSendSuggestion={sendMessage}
             context={activeSession.context}
+            selectedPlanId={selectedPlanId}
+            onSelectPlan={(planId) => {
+              setSelectedPlanId(planId);
+              setActiveDrawer("plans");
+            }}
           />
         )}
 
@@ -1449,12 +1459,43 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     </div>
   );
 
-  // Docked mode: render as inline flex child (no overlay, no backdrop)
+  // PlanPane — renders as a peer panel to the LEFT of the chat when a plan
+  // has been selected from the Plans drawer. Same height as the chat column.
+  // Approve/reject route through the same WS events PlanViewer uses.
+  const planPane = (selectedPlanId !== null && activeSession) ? (
+    <div
+      data-testid="plan-pane"
+      className={cn(
+        "flex-1 min-w-0 h-full",
+        !docked && !isMobile && "w-[420px] max-w-[420px] flex-none",
+      )}
+    >
+      <PlanPane
+        projectPath={activeSession.context}
+        planId={selectedPlanId}
+        onClose={() => setSelectedPlanId(null)}
+        onApprove={(id) => {
+          approvePlan(id);
+          setSelectedPlanId(null);
+        }}
+        onReject={(id) => {
+          rejectPlan(id);
+          setSelectedPlanId(null);
+        }}
+      />
+    </div>
+  ) : null;
+
+  // Docked mode: render as inline flex child (no overlay, no backdrop).
+  // When a plan is selected, it slides in on the left as a peer panel.
   if (docked) {
     return (
-      <div data-testid="chat-flyout" className="flex flex-col h-full border-l border-border bg-background" style={{ width: "50%" }}>
-        {panelHeader}
-        {panelBody}
+      <div data-testid="chat-flyout" className="flex h-full border-l border-border bg-background" style={{ width: "50%" }}>
+        {planPane}
+        <div className={cn("flex flex-col h-full min-w-0", selectedPlanId ? "flex-1" : "w-full")}>
+          {panelHeader}
+          {panelBody}
+        </div>
       </div>
     );
   }
@@ -1464,6 +1505,11 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     <div data-testid="chat-flyout" className="fixed inset-0 z-[200] flex justify-end">
       {!isFullscreen && (
         <div className={cn("bg-black/30", isMobile ? "absolute inset-0" : "flex-1")} onClick={onClose} />
+      )}
+      {planPane !== null && !isMobile && (
+        <div className="h-screen border-l border-border bg-background w-[420px] shrink-0">
+          {planPane}
+        </div>
       )}
       <div className={cn(
         "flex flex-col bg-background",
@@ -1488,14 +1534,17 @@ interface DrawerSystemProps {
   suggestions: string[];
   onSendSuggestion: (text: string) => void;
   context: string;
+  selectedPlanId: string | null;
+  onSelectPlan: (planId: string) => void;
 }
 
 const DRAWER_TABS: { key: DrawerTab; label: string }[] = [
   { key: "work-queue", label: "Work Queue" },
   { key: "project-info", label: "Project" },
+  { key: "plans", label: "Plans" },
 ];
 
-function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: DrawerSystemProps) {
+function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context, selectedPlanId, onSelectPlan }: DrawerSystemProps) {
   const [taskmasterJobs, setTaskmasterJobs] = useState<WorkerJobSummary[]>([]);
   const [taskmasterError, setTaskmasterError] = useState<string | null>(null);
   const [taskmasterLoading, setTaskmasterLoading] = useState(false);
@@ -1555,7 +1604,12 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: 
     <div className="shrink-0">
       {/* Drawer tab row */}
       <div className="flex gap-0.5 px-3 py-1 border-t border-border bg-card overflow-x-auto">
-        {DRAWER_TABS.filter((t) => t.key !== "project-info" || context !== "general").map((t) => (
+        {DRAWER_TABS.filter((t) => {
+          // "plans" + "project-info" require a project context. "work-queue"
+          // is always available.
+          if (t.key === "project-info" || t.key === "plans") return context !== "general";
+          return true;
+        }).map((t) => (
           <button
             key={t.key}
             onClick={() => onSetDrawer(activeDrawer === t.key ? null : t.key)}
@@ -1648,6 +1702,14 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: 
                 ))}
               </div>
             </div>
+          )}
+
+          {activeDrawer === "plans" && context !== "general" && (
+            <PlansDrawer
+              projectPath={context}
+              selectedPlanId={selectedPlanId}
+              onSelect={onSelectPlan}
+            />
           )}
         </div>
       )}

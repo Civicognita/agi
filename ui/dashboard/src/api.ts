@@ -233,15 +233,37 @@ export async function fetchProjectInfo(path: string): Promise<ProjectGitInfo> {
 // Plans API — /api/plans
 // ---------------------------------------------------------------------------
 
-export async function fetchPlans(projectPath: string): Promise<Plan[]> {
+export async function fetchPlans(projectPath: string, options?: { excludeDone?: boolean }): Promise<Plan[]> {
   const url = new URL("/api/plans", window.location.origin);
   url.searchParams.set("projectPath", projectPath);
+  if (options?.excludeDone) url.searchParams.set("exclude", "done");
   const res = await fetch(url.toString());
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<Plan[]>;
+}
+
+/**
+ * Edit a plan's body/title while it's still in draft/reviewing state.
+ * Backend returns 409 if the plan is approved or later.
+ */
+export async function updatePlanBody(
+  planId: string,
+  projectPath: string,
+  patch: { title?: string; body?: string },
+): Promise<Plan> {
+  const res = await fetch(`/api/plans/${planId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectPath, ...patch }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<Plan>;
 }
 
 export async function fetchPlan(planId: string, projectPath: string): Promise<Plan> {
