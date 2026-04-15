@@ -48,6 +48,11 @@ import {
   TASKMASTER_HANDOFF_MANIFEST,
   TASKMASTER_HANDOFF_INPUT_SCHEMA,
 } from "./taskmaster-handoff.js";
+import {
+  createTaskmasterCancelHandler,
+  TASKMASTER_CANCEL_MANIFEST,
+  TASKMASTER_CANCEL_INPUT_SCHEMA,
+} from "./taskmaster-cancel.js";
 
 // GitHub CLI tool
 import {
@@ -169,6 +174,8 @@ export interface ToolRegistrationConfig {
   }) => void;
   /** Callback fired when a worker calls taskmaster_handoff. Wired to WorkerRuntime runtime:event. */
   onHandoff?: (args: { jobId: string; question: string; projectPath: string; coaReqId?: string }) => void;
+  /** Callback fired when Aion calls taskmaster_cancel. Wired to WorkerRuntime.cancelJob. */
+  onCancel?: (args: { jobId: string; projectPath: string; reason: string }) => void;
   /** COA request ID for the current invocation context. */
   coaReqId?: string;
   /** Image blob store for screenshot storage (visual-inspect tool). */
@@ -263,6 +270,14 @@ export function registerAllTools(
       onHandoff: config.onHandoff,
     }),
     TASKMASTER_HANDOFF_INPUT_SCHEMA,
+  );
+  register(
+    TASKMASTER_CANCEL_MANIFEST as ToolManifestEntry,
+    createTaskmasterCancelHandler({
+      ...tmToolConfig,
+      onCancel: config.onCancel,
+    }),
+    TASKMASTER_CANCEL_INPUT_SCHEMA,
   );
 
   // GitHub CLI tool

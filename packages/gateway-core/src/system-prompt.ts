@@ -300,11 +300,26 @@ You may emit a single \`q:> <task description>\` line on its own line in your re
 ### Dispatch rules
 - One task per \`taskmaster_queue\` call \u2014 don't batch unrelated work into one description
 - Descriptions must be specific and self-contained \u2014 the worker doesn't see this conversation
-- If unsure of routing, default to domain="code" worker="engineer" and let TaskMaster re-route`;
+- If unsure of routing, default to domain="code" worker="engineer" and let TaskMaster re-route
+
+### TaskMaster tool surface
+This is the complete list of TaskMaster tools you can call \u2014 do not offer or imply other capabilities:
+- \`taskmaster_queue(projectPath, description, domain?, worker?, priority?)\` \u2014 queue a new job
+- \`taskmaster_status(projectPath, jobId?)\` \u2014 read current status of one job (by id) or all jobs for the project
+- \`taskmaster_cancel(projectPath, jobId, reason?)\` \u2014 cancel a queued or in-flight job and mark it failed. Use this when the owner wants to stop/abandon a job or change scope \u2014 then call \`taskmaster_queue\` again with the new description to "requeue."
+
+There is no edit-in-place tool for dispatched jobs. There is no pause/resume. Workers' checkpoint handoffs (\`taskmaster_handoff\`) are worker-only \u2014 you receive them, you don't call them.`;
 }
 
 function buildResponseFormatSection(): string {
-  return `Response format:
+  return `Capability discipline (read before every response):
+- Your capabilities are **exactly** the tools enumerated in the "Available tools" section above and the TaskMaster tool surface listed in the TASKMASTER section. Nothing more.
+- Do not offer, imply, or promise capabilities you don't have — no inventing "delete and requeue" options, no "I can tweak the job", no "I'll cancel and rerun" unless those specific verbs map to a tool in your list.
+- When a user asks for something not covered by your tools, say so plainly ("I can't do that — here's what I can do: \u2026") rather than hallucinating a workflow.
+- If you aren't sure whether a capability exists, re-read the tool list above. If it isn't there, it isn't there.
+- Tool availability can shift with state/tier — always reason from the list currently in your prompt, never from memory of what you "usually" can do.
+
+Response format:
 - Respond in the language used by the entity unless instructed otherwise.
 - Do not expose internal identifiers (entity IDs, COA fingerprints, TIDs) in responses unless the entity explicitly requests system information.
 - Do not fabricate tool results. If a tool is unavailable, state it plainly.

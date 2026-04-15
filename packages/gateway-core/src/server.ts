@@ -653,6 +653,12 @@ export async function startGatewayServer(
         coaReqId: args.coaReqId,
       });
     },
+    onCancel: (args) => {
+      // Flip state to failed + drop from active jobs + emit job_failed so
+      // Work Queue + chat injection see it uniformly with other terminals.
+      workerRuntimeRef.current?.cancelJob(args.jobId, args.reason);
+      jobOriginBySessionKey.delete(args.jobId);
+    },
   });
   log.info(`registered ${String(toolCount)} tools`);
 

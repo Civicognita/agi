@@ -558,6 +558,22 @@ export class WorkerRuntime extends EventEmitter {
     this.activeJobs.delete(jobId);
   }
 
+  /**
+   * Cancel a job by flipping its state-index status to "failed" and dropping
+   * it from the active map. Best-effort: a worker that's already mid-tool-
+   * call will finish that call before stopping — a full AbortController
+   * integration is a planned follow-up. Emits a job_failed runtime:event so
+   * the Work Queue + chat feedback loop pick it up uniformly.
+   */
+  cancelJob(jobId: string, reason: string): void {
+    try {
+      const bridge = new JobBridge(this.config.stateDir);
+      bridge.updateJobStatus(jobId, "failed", reason);
+    } catch { /* non-fatal */ }
+    this.activeJobs.delete(jobId);
+    this.emit("runtime:event", { type: "job_failed", jobId, error: reason });
+  }
+
   getActiveJobs(): ActiveJobStatus[] {
     const now = Date.now();
     return Array.from(this.activeJobs.values()).map((j) => ({
