@@ -345,6 +345,13 @@ export class WorkerRuntime extends EventEmitter {
       workers: [`$W.${dispatch.domain}.${dispatch.worker}`],
     });
 
+    // Stamp "running" into the state bridge as soon as we start, so the
+    // Work Queue merge shows the in-flight transition (pending → running).
+    try {
+      const bridge = new JobBridge(this.config.stateDir);
+      bridge.updateJobStatus(jobId, "running");
+    } catch { /* non-fatal */ }
+
     const promise = this.runWorker(jobId, dispatch, coaReqId, projectContext?.path ?? ".");
 
     this.activeJobs.set(jobId, { jobId, coaReqId, startedAt: Date.now(), promise });
@@ -578,10 +585,12 @@ export class WorkerRuntime extends EventEmitter {
   }
 
   /**
-   * List dispatch entries for a project, read directly from
-   * ~/.agi/{projectSlug}/dispatch/jobs/. Returns a minimal WorkerJob shape
-   * synthesized from the flat dispatch file (per-phase structure isn't
-   * exercised today — one worker per job).
+   * List dispatch entries for a project, read from
+   * ~/.agi/{projectSlug}/dispatch/jobs/ and merged with the live status
+   * tracked in ~/.agi/state/taskmaster.json (which is what JobBridge updates
+   * as jobs progress). The dispatch file is written once at create time and
+   * never mutated, so without the merge every row would read "pending"
+   * forever. Read-time merge means no dual-write race.
    */
   async listJobsForProject(projectPath: string): Promise<WorkerJob[]> {
     try {
@@ -590,6 +599,12 @@ export class WorkerRuntime extends EventEmitter {
       const dir = jobsDirFn(projectPath);
       if (!existsSync(dir)) return [];
       const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+
+      // Live-status overlay from the global state index. If a job is in
+      // flight or has completed, this has the current truth.
+      const liveJobs = await this.listAllJobs();
+      const liveById = new Map<string, WorkerJob>(liveJobs.map((j) => [j.id, j]));
+
       const jobs: WorkerJob[] = [];
       for (const file of files.sort()) {
         try {
@@ -601,7 +616,14 @@ export class WorkerRuntime extends EventEmitter {
             worker?: string;
             status: "pending" | "running" | "checkpoint" | "complete" | "failed";
             createdAt: string;
+            handoffs?: Array<{ question: string; askedAt: string }>;
           };
+          const live = liveById.get(flat.id);
+          // Precedence: live state > handoff sentinel > dispatch-file status.
+          // Handoff writes "checkpoint" into the dispatch file and is not
+          // reflected in the state bridge, so we preserve it when present.
+          const mergedStatus = live?.status
+            ?? (flat.handoffs && flat.handoffs.length > 0 ? "checkpoint" : flat.status);
           jobs.push({
             id: flat.id,
             queueText: flat.description,
@@ -614,11 +636,14 @@ export class WorkerRuntime extends EventEmitter {
               name: `${flat.domain ?? "code"}/${flat.worker ?? "engineer"}`,
               workers: [flat.domain && flat.worker ? `$W.${flat.domain}.${flat.worker}` : "$W.code.engineer"],
               gate: "terminal",
-              status: flat.status === "checkpoint" ? "running" : flat.status,
+              status: mergedStatus === "checkpoint" ? "running" : mergedStatus,
             }],
             currentPhase: "phase-1",
-            status: flat.status,
+            status: mergedStatus,
             createdAt: flat.createdAt,
+            startedAt: live?.startedAt,
+            completedAt: live?.completedAt,
+            error: live?.error,
           });
         } catch {
           // Skip unreadable files.
