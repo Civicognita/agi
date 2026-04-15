@@ -30,8 +30,12 @@ type ExtProps = { content: string; attributes?: Record<string, string> };
 // markdown so nested formatting works.
 
 function ThinkingBlock({ content }: ExtProps) {
+  // `open` by default — users prefer to see reasoning inline rather than
+  // having to click to expand every turn. Clicking the summary still
+  // collapses it when the reader wants to skim past.
   return (
     <details
+      open
       className={cn(
         "my-2 rounded-lg border border-purple-500/30 bg-purple-500/5 overflow-hidden",
         "[&[open]>summary]:border-b [&[open]>summary]:border-purple-500/20",
@@ -43,7 +47,7 @@ function ThinkingBlock({ content }: ExtProps) {
           "text-purple-400 flex items-center gap-2 list-none",
         )}
       >
-        <span aria-hidden>▶</span>
+        <span aria-hidden className="transition-transform [details[open]_&]:rotate-90">▶</span>
         <span>Thinking</span>
       </summary>
       <div className="px-3 py-2 text-[12px] text-muted-foreground leading-relaxed">

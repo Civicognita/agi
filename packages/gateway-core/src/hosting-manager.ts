@@ -1267,6 +1267,30 @@ export class HostingManager {
   }
 
   private async startContainer(hosted: HostedProject): Promise<void> {
+    // Refresh meta from disk before starting. Without this, any user hand-edit
+    // to `<project>/project.json` (startCommand, internalPort, mode, type,
+    // stackId, viewer) is invisible to the container until a gateway restart
+    // — the cached `hosted.meta` snapshot was captured at enableProject() time
+    // and never re-synced. The agent flagged this one via its reasoning log
+    // after looping on a startCommand change that appeared to apply in the
+    // file but never in the running container.
+    //
+    // Merge semantics: disk values (user's source of truth) win; fields not
+    // present on disk fall back to the cached in-memory meta (e.g. `enabled`
+    // + `port` are gateway-managed fields that live in ~/.agi/{slug}/project.json
+    // via ProjectConfigManager, not the project's own project.json).
+    try {
+      const diskMeta = this.readHostingMeta(hosted.path);
+      if (diskMeta) {
+        hosted.meta = { ...hosted.meta, ...diskMeta };
+        this.projects.set(hosted.path, hosted);
+      }
+    } catch (err) {
+      this.log.warn(
+        `[${hosted.meta.hostname}] meta refresh from disk failed, using cached values: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     if (hosted.meta.port === null) {
       hosted.status = "error";
       hosted.error = "No port allocated";

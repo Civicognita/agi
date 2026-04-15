@@ -886,15 +886,42 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     }));
   }, [activeSession]);
 
-  // Auto-scroll
+  // Auto-scroll + unread counter for the jump-to-bottom button.
+  // lastSeenCountRef captures the message count at the moment the user was
+  // last pinned to the bottom. `unreadCount` = current - lastSeen while the
+  // user is scrolled up. Clearing: auto-resets whenever the user scrolls
+  // back to within 60px of the bottom OR clicks the Jump button.
+  const lastSeenCountRef = useRef(0);
+  const [unreadCount, setUnreadCount] = useState(0);
+
   const handleScroll = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
-    setAutoScroll(el.scrollHeight - el.scrollTop - el.clientHeight < 60);
-  }, []);
+    const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    setAutoScroll(pinned);
+    if (pinned) {
+      lastSeenCountRef.current = activeSession?.messages.length ?? 0;
+      setUnreadCount(0);
+    }
+  }, [activeSession?.messages.length]);
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    setAutoScroll(true);
+    lastSeenCountRef.current = activeSession?.messages.length ?? 0;
+    setUnreadCount(0);
+  }, [activeSession?.messages.length]);
 
   useEffect(() => {
-    if (autoScroll) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const count = activeSession?.messages.length ?? 0;
+    if (autoScroll) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      lastSeenCountRef.current = count;
+      setUnreadCount(0);
+    } else {
+      // Messages arrived while scrolled up — surface how many we haven't seen.
+      setUnreadCount(Math.max(0, count - lastSeenCountRef.current));
+    }
   }, [activeSession?.messages, activeSession?.thinking, autoScroll]);
 
   // Create first session on open if none exist (skip when openWithContext will handle it)
@@ -1303,6 +1330,34 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
 
           <div ref={messagesEndRef} />
         </div>
+
+        {/* Jump-to-bottom button — floats over the message list when the user
+            is scrolled up. Shows an unread count when new messages arrived
+            while detached. Clicking scrolls to bottom and re-pins. */}
+        {!autoScroll && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className={cn(
+              "absolute left-1/2 -translate-x-1/2 bottom-24 z-20",
+              "flex items-center gap-2 px-3 py-1.5 rounded-full",
+              "bg-primary text-primary-foreground text-[12px] font-medium",
+              "shadow-lg hover:opacity-90 transition-opacity cursor-pointer",
+            )}
+          >
+            {unreadCount > 0 ? (
+              <>
+                <span>{unreadCount} new</span>
+                <span aria-hidden>↓</span>
+              </>
+            ) : (
+              <>
+                <span>Jump to bottom</span>
+                <span aria-hidden>↓</span>
+              </>
+            )}
+          </button>
+        )}
 
         {/* Drawer system */}
         {activeSession && (
