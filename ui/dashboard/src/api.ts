@@ -2699,3 +2699,32 @@ export async function fetchAdminIncidentMarkdown(id: string): Promise<string> {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.text();
 }
+
+// ---------------------------------------------------------------------------
+// Gateway control + state
+// ---------------------------------------------------------------------------
+
+export interface GatewayStateResponse {
+  state: "ONLINE" | "LIMBO" | "OFFLINE" | "UNKNOWN";
+  capabilities: {
+    remoteOps: boolean;
+    tynn: boolean;
+    memory: boolean;
+    deletions: boolean;
+  };
+}
+
+export async function fetchGatewayState(): Promise<GatewayStateResponse> {
+  const res = await fetch("/api/gateway/state");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<GatewayStateResponse>;
+}
+
+export async function restartGateway(): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch("/api/gateway/restart", { method: "POST" });
+  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string; error?: string };
+  if (!res.ok || !body.ok) {
+    throw new Error(body.error ?? body.message ?? `HTTP ${res.status}`);
+  }
+  return body as { ok: boolean; message?: string };
+}

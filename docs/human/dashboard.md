@@ -140,7 +140,7 @@ The Settings section is a sidebar group with dynamically injected pages from plu
 - **Settings > PostgreSQL** — install/uninstall PostgreSQL container images (17, 16, 15); configure default credentials and port
 - **Settings > MySQL / MariaDB** — install/uninstall MariaDB container images (11.4, 10.11, 10.6); configure default credentials and port
 - **Settings > Adminer** — start/stop the Adminer database management service
-- **Settings > Gateway** — core gateway configuration
+- **Settings > Gateway** — core gateway configuration. The General tab shows host/port, a read-only **Operational State** pill (Initial / Limbo / Offline / Online — see the [state machine docs](../agents/state-machine.md)), a **Restart gateway** button (graceful SIGTERM + service supervisor auto-restart), and the release channel selector.
 
 #### Onboarding
 

@@ -1,5 +1,11 @@
 /**
- * GatewayNetworkSettings — Host, port, initial state, release channel, and Cloudflare tunnel management.
+ * GatewayNetworkSettings — Host, port, release channel, Cloudflare tunnels,
+ * plus a read-only operational-state pill and a Restart button.
+ *
+ * The gateway `state` field is NOT a user setting — it reflects AGI's
+ * connection to Aionima-prime + Hive-ID (see docs/agents/state-machine.md).
+ * Initial / Limbo / Offline / Online are computed; the dashboard exposes
+ * them as a status, not a select.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -14,8 +20,11 @@ import {
   cloudflaredLogout,
   fetchMachineNetwork,
   setMachineNetwork,
+  fetchGatewayState,
+  restartGateway,
   type CloudflaredStatus,
   type MachineNetworkInfo,
+  type GatewayStateResponse,
 } from "../../api.js";
 import type { AionimaConfig, GatewayConfig } from "../../types.js";
 
@@ -71,6 +80,55 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
       setNetSaving(false);
     }
   }, [netMethod, netIp, netSubnet, netGateway]);
+
+  // Live operational state (read-only, polled) + restart button state
+  const [liveState, setLiveState] = useState<GatewayStateResponse | null>(null);
+  const [restarting, setRestarting] = useState(false);
+  const [restartError, setRestartError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const s = await fetchGatewayState();
+        if (!cancelled) setLiveState(s);
+      } catch {
+        /* best-effort */
+      }
+    };
+    void poll();
+    const t = setInterval(() => void poll(), 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  const handleRestart = useCallback(async () => {
+    setRestartError(null);
+    setRestarting(true);
+    try {
+      await restartGateway();
+      // Expect a ~3–5s gap while systemd brings the service back up.
+      // Keep the button in "Restarting..." state and poll /api/gateway/state
+      // until it answers again; restore the button on reconnect.
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1000));
+        try {
+          const s = await fetchGatewayState();
+          setLiveState(s);
+          break;
+        } catch {
+          /* still restarting */
+        }
+      }
+    } catch (err) {
+      setRestartError(err instanceof Error ? err.message : "Restart failed");
+    } finally {
+      setRestarting(false);
+    }
+  }, []);
 
   // Cloudflared state
   const [cfStatus, setCfStatus] = useState<CloudflaredStatus | null>(null);
@@ -214,21 +272,25 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
               }))}
             />
           </FieldGroup>
-          <FieldGroup label="Initial State">
-            <select
-              className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
-              value={gateway.state}
-              onChange={(e) => update((prev) => ({
-                ...prev,
-                gateway: { ...gateway, state: e.target.value as GatewayConfig["state"] },
-              }))}
-            >
-              <option value="ONLINE">ONLINE</option>
-              <option value="LIMBO">LIMBO</option>
-              <option value="OFFLINE">OFFLINE</option>
-            </select>
+          <FieldGroup label="Operational State">
+            <div className="flex items-center gap-3 h-9">
+              <GatewayStatePill state={liveState?.state ?? "UNKNOWN"} />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={restarting}
+                onClick={() => void handleRestart()}
+                title="Graceful restart: writes the shutdown marker, exits, and lets the service supervisor bring the gateway back up."
+              >
+                {restarting ? "Restarting..." : "Restart gateway"}
+              </Button>
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Read-only. Reflects AGI's connection to Aionima-prime + Hive-ID.
+            </p>
           </FieldGroup>
         </div>
+        {restartError && <p className="text-xs text-red mt-2">{restartError}</p>}
       </Card>}
 
       {/* Release Channel */}
@@ -453,5 +515,57 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
       </Card>
       </>}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// GatewayStatePill — read-only indicator for the operational state.
+// Semantics (see docs/agents/state-machine.md):
+//   INITIAL / UNKNOWN — boot not yet complete
+//   LIMBO             — running but local COA<>COI not validated with 0PRIME
+//                       Schema; expected steady state until 0PRIME is live
+//   OFFLINE           — local-id or local-prime unavailable
+//   ONLINE            — future; requires 0PRIME Hive mind
+// ---------------------------------------------------------------------------
+
+function GatewayStatePill({ state }: { state: string }) {
+  const info: Record<string, { label: string; classes: string; title: string }> = {
+    ONLINE: {
+      label: "Online",
+      classes: "border-green text-green",
+      title: "HIVE-aligned: local COA<>COI validates against 0PRIME Schema",
+    },
+    LIMBO: {
+      label: "Limbo",
+      classes: "border-yellow text-yellow",
+      title: "Local running; COA<>COI not yet validated with 0PRIME Schema (0PRIME Hive mind is not operational yet)",
+    },
+    OFFLINE: {
+      label: "Offline",
+      classes: "border-red text-red",
+      title: "local-id or local-prime is unavailable",
+    },
+    INITIAL: {
+      label: "Initial",
+      classes: "border-overlay0 text-overlay0",
+      title: "Gateway is booting; state has not yet resolved",
+    },
+    UNKNOWN: {
+      label: "Initial",
+      classes: "border-overlay0 text-overlay0",
+      title: "Gateway is booting; state has not yet resolved",
+    },
+  };
+  const i = info[state] ?? info.UNKNOWN!;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center h-7 px-3 rounded-full border text-xs font-mono",
+        i.classes,
+      )}
+      title={i.title}
+    >
+      {i.label}
+    </span>
   );
 }

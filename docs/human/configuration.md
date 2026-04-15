@@ -68,14 +68,14 @@ chmod 0600 /opt/aionima/.env
 
 ### gateway
 
-Controls the HTTP server binding and gateway operational state.
+Controls the HTTP server binding and release channel.
 
 ```json
 {
   "gateway": {
     "host": "127.0.0.1",
     "port": 3100,
-    "state": "ONLINE"
+    "updateChannel": "dev"
   }
 }
 ```
@@ -84,7 +84,11 @@ Controls the HTTP server binding and gateway operational state.
 |-------|------|---------|-------------|
 | `host` | string | `"127.0.0.1"` | Listen address. Use `"0.0.0.0"` to expose on all interfaces. |
 | `port` | number | `3100` | HTTP port |
-| `state` | enum | `"OFFLINE"` | Starting state: `ONLINE`, `LIMBO`, `OFFLINE`, or `UNKNOWN` |
+| `updateChannel` | `"main" \| "dev"` | `"main"` | Which branch `agi upgrade` pulls from |
+
+> **Operational state is not a config field.** `ONLINE` / `LIMBO` / `OFFLINE` / `UNKNOWN` are computed at runtime from AGI's connection to Aionima-prime + Hive-ID and exposed read-only at `GET /api/gateway/state`. See the [state machine docs](../agents/state-machine.md).
+>
+> A `gateway.state` value in `gateway.json` from an earlier version is accepted and ignored. Remove it next time you edit the file.
 
 ### auth
 

@@ -635,6 +635,46 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // POST /api/gateway/restart — request a graceful restart (private only).
+  //
+  // Sends SIGTERM to our own process after flushing the response. The signal
+  // handler in cli/src/commands/run.ts runs server.close(), which writes the
+  // graceful-shutdown marker (see feedback_agi_self_heals.md). systemd
+  // restart=always brings the service back up; boot resumes state from the
+  // marker. Equivalent to `agi restart` — no sudo required because we only
+  // signal ourselves.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/gateway/restart", async (request, reply) => {
+    if (!isPrivateNetwork(getClientIp(request.raw))) {
+      return reply.code(403).send({ error: "Gateway restart only allowed from private network" });
+    }
+    const log = createComponentLogger(deps.logger, "restart-api");
+    log.info("gateway restart requested via POST /api/gateway/restart");
+    // Flush the response before exiting. setTimeout ensures the Fastify reply
+    // leaves the wire before SIGTERM tears down the process.
+    setTimeout(() => {
+      process.kill(process.pid, "SIGTERM");
+    }, 100);
+    return reply.send({ ok: true, message: "Gateway restart queued; service will be back up in a few seconds." });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/gateway/state — current computed operational state.
+  //
+  // This is a READ-ONLY status, not a setting. States:
+  //   INITIAL — boot not yet complete
+  //   LIMBO   — local COA<>COI not yet validated with 0PRIME Schema (the
+  //             expected steady state until 0PRIME Hive mind is operational)
+  //   OFFLINE — local-id or local-prime unavailable
+  //   ONLINE  — future; requires 0PRIME (not yet operational)
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/gateway/state", async () => {
+    return { state: stateMachine.getState(), capabilities: stateMachine.getCapabilities() };
+  });
+
+  // -----------------------------------------------------------------------
   // GET /api/system/connections — AGI / PRIME / workspace status (private)
   // -----------------------------------------------------------------------
 
