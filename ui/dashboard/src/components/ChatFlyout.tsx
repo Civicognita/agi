@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // callout, highlight). See src/lib/content-renderer-setup.tsx.
 import type { WorkerJobSummary, Plan, PlanStatus, PlanStep, ProjectInfo } from "../types.js";
 import { approveTaskmasterJob, fetchTaskmasterJobs, rejectTaskmasterJob } from "../api.js";
+import { useDashboardWS } from "../hooks.js";
 import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
 import type { ToolCard } from "./ToolCards.js";
 import { PlanViewer } from "./PlanViewer.js";
@@ -1568,23 +1569,41 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context, se
   const [taskmasterLoading, setTaskmasterLoading] = useState(false);
   const [actionPending, setActionPending] = useState<string | null>(null);
 
+  // Scope the Work Queue view to the chat's current project. In "general" mode
+  // (no project context) the scoped arg is null and the endpoint falls back to
+  // the global list.
+  const scopedProjectPath = context === "general" ? null : context;
+
   const loadJobs = useCallback(async () => {
     try {
-      const jobs = await fetchTaskmasterJobs();
+      const jobs = await fetchTaskmasterJobs(scopedProjectPath);
       setTaskmasterJobs(jobs);
       setTaskmasterError(null);
     } catch (err) {
       setTaskmasterError(err instanceof Error ? err.message : "Failed to load jobs");
     }
-  }, []);
+  }, [scopedProjectPath]);
 
   useEffect(() => {
     if (activeDrawer !== "work-queue") return;
     setTaskmasterLoading(true);
     void loadJobs().finally(() => setTaskmasterLoading(false));
-    const interval = setInterval(() => { void loadJobs(); }, 5000);
+    // Keep a low-frequency poll as a safety net in case the WS connection drops
+    // between reconnects. Primary refresh driver is the WS subscription below.
+    const interval = setInterval(() => { void loadJobs(); }, 30_000);
     return () => clearInterval(interval);
   }, [activeDrawer, loadJobs]);
+
+  // Live Work Queue updates — refresh on any tm:job_update or tm:report_ready
+  // frame from the dashboard broadcaster. Replaces the old 5s poll.
+  useDashboardWS(
+    useCallback((event) => {
+      if (activeDrawer !== "work-queue") return;
+      if (event.type === "tm:job_update" || event.type === "tm:report_ready") {
+        void loadJobs();
+      }
+    }, [activeDrawer, loadJobs]),
+  );
 
   const handleApprove = useCallback(async (jobId: string) => {
     setActionPending(jobId);

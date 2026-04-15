@@ -509,8 +509,11 @@ export async function fetchModels(provider: string): Promise<ModelEntry[]> {
 // Work Queue API — /api/taskmaster
 // ---------------------------------------------------------------------------
 
-export async function fetchTaskmasterJobs(): Promise<WorkerJobSummary[]> {
-  const res = await fetch("/api/taskmaster/jobs");
+export async function fetchTaskmasterJobs(projectPath?: string | null): Promise<WorkerJobSummary[]> {
+  const url = projectPath != null && projectPath !== "" && projectPath !== "general"
+    ? `/api/taskmaster/jobs?projectPath=${encodeURIComponent(projectPath)}`
+    : "/api/taskmaster/jobs";
+  const res = await fetch(url);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
