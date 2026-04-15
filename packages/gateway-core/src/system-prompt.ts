@@ -531,14 +531,42 @@ function buildProjectContextSection(projectPath: string): string {
 function buildPlanWorkflowSection(): string {
   return `## Plan Workflow
 
-When asked to perform multi-step work on this project:
-1. First create a plan using the create_plan tool with a clear title, steps, and detailed body
-2. Present the plan to the user for review
-3. Wait for explicit approval before executing
-4. When approved, execute step-by-step, updating each step's status via update_plan
-5. After all steps complete, mark the plan as "complete"
+**When the user asks you to plan anything, use the create_plan tool — do NOT write the plan as markdown in the chat.** Plans written as chat markdown don't surface the Plans tab, the Approval gate, the Plan drawer, or any of the tracking UX the user relies on. They're invisible to the system. Use the tool.
 
-Available plan step types: plan, implement, test, review, deploy`;
+### When to use create_plan
+
+- The user says "plan," "propose a plan," "how would you approach," "draft an implementation," "break this down," or any near-synonym.
+- You're about to do multi-step work (three or more distinct steps) and you want the user to approve the approach before you execute.
+- You want to persist your approach across sessions — plans are saved to disk, chat bubbles are not.
+
+Single-step or immediate tasks do NOT need a plan. Use your judgement. One heuristic: if you'd naturally write numbered "I'll do X, then Y, then Z," you're describing a plan — emit it via create_plan instead of as prose.
+
+### How to use create_plan
+
+- \`title\` — short (under 60 chars), descriptive. "Add auth to the API" not "Plan to add authentication".
+- \`body\` — full markdown. Context, rationale, alternatives you considered, risks, verification. This is what the user reads in the Plan pane. Write it as if you were writing a design doc, because you are.
+- \`steps[]\` — each step has \`title\`, \`type\` (one of: plan, implement, test, review, deploy), and optional \`dependsOn\` (array of earlier step ids like ["step_01"]). Keep step titles action-oriented ("Write the auth middleware," not "Auth middleware").
+
+### After create_plan returns
+
+- The plan is saved as a .mdc file under ~/.agi/{projectSlug}/plans/.
+- It appears in the chat's Plans drawer with status "proposed" — the user can open it in a left-side editor pane, edit the body, and Approve or Reject.
+- You do NOT execute yet. Wait for the user to click Approve (status transitions to "approved") or give you explicit verbal approval in chat.
+- Once approved, you may begin executing steps. Mark the overall plan as "executing" via update_plan, then advance each step's status through pending → running → complete (or failed / skipped) using update_plan's stepUpdates array.
+- After the final step completes, set the plan's overall status to "complete".
+- Accepted plans are IMMUTABLE — you cannot edit the body, title, or step list once the user approves. Only step-status advances are permitted. If the plan needs a redraft, delete it and create_plan again.
+
+### State transitions
+
+| From | To | Via |
+|------|-----|-----|
+| draft | reviewing | create_plan presents the plan; the user reviews |
+| reviewing | approved | user clicks Approve in the Plan pane |
+| reviewing | (deleted) | user clicks Reject |
+| approved | executing | update_plan status: "executing" — you start work |
+| executing | testing | update_plan status: "testing" — verification phase |
+| testing | complete | update_plan status: "complete" |
+| any | failed | update_plan status: "failed" — something blocked completion |`;
 }
 
 // ---------------------------------------------------------------------------
