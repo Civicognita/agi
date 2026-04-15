@@ -1371,14 +1371,25 @@ export async function startGatewayServer(
   const pgUrl = idServiceConfig?.local?.databaseUrl ?? "postgres://aionima_id:0a117a24fd397009f19dd7146e348f54@localhost:5433/aionima_id";
   const pgPool = new Pool({ connectionString: pgUrl });
 
+  // ModelStore + DatasetStore require the ID service's Postgres to be
+  // reachable. Degrade gracefully when it isn't — a gateway with HF models
+  // unavailable is better than a gateway that refuses to boot. Test VMs
+  // and fresh installs (before `agi-local-id` is up) hit this path.
   const modelStore = new ModelStore(pgPool);
-  await modelStore.initialize(); // creates agi schema + tables
+  try {
+    await modelStore.initialize();
+  } catch (err) {
+    log.warn(`ModelStore (HF models) disabled — Postgres unreachable at ${pgUrl}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
-  // Dataset store lives in the same PostgreSQL instance, agi schema
   const datasetsCacheDir = join(homedir(), ".agi", "datasets");
   mkdirSync(join(datasetsCacheDir, "hub"), { recursive: true });
   const datasetStore = new DatasetStore(pgPool);
-  await datasetStore.initialize(); // creates agi.datasets table
+  try {
+    await datasetStore.initialize();
+  } catch (err) {
+    log.warn(`DatasetStore disabled — Postgres unreachable: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   const profile = hardwareProfiler.scan();
 

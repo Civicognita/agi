@@ -16,6 +16,7 @@
     "@aionima/entity-model": "workspace:*",
     "@aionima/marketplace": "workspace:*",
     "@aionima/memory": "workspace:*",
+    "@aionima/model-runtime": "workspace:*",
     "@aionima/plugins": "workspace:*",
     "@aionima/skills": "workspace:*",
     "@aionima/trpc-api": "workspace:*",

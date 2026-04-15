@@ -309,6 +309,9 @@ importers:
       '@aionima/memory':
         specifier: workspace:*
         version: link:../memory
+      '@aionima/model-runtime':
+        specifier: workspace:*
+        version: link:../model-runtime
       '@aionima/plugins':
         specifier: workspace:*
         version: link:../plugins
