@@ -96,7 +96,7 @@ import { ProjectConfigManager } from "./project-config-manager.js";
 import { SystemConfigService } from "./system-config-service.js";
 import { createProjectTypeRegistry } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
-import { discoverPlugins, getDefaultSearchPaths, loadPlugins, PluginRegistry, HookBus } from "@aionima/plugins";
+import { discoverPlugins, getDefaultSearchPaths, loadPlugins, tryLoadManifest, PluginRegistry, HookBus } from "@aionima/plugins";
 import { ServiceManager } from "./service-manager.js";
 import { bridgePluginCapabilities, unbridgePluginCapabilities } from "./plugin-bridges.js";
 import { ScheduledTaskManager } from "./scheduled-task-manager.js";
@@ -1657,11 +1657,14 @@ export async function startGatewayServer(
       marketplaceManager,
       onPluginInstalled: async (installPath: string) => {
         try {
-          const newDiscovery = discoverPlugins([installPath]);
-          if (newDiscovery.plugins.length === 0) {
-            return { loaded: false, error: "No plugin found at install path" };
+          // installPath is the plugin's own directory (e.g. ~/.agi/plugins/cache/<id>).
+          // Use tryLoadManifest directly — discoverPlugins expects parent dirs
+          // and silently returns empty when given a plugin dir.
+          const discovery = tryLoadManifest(installPath);
+          if ("error" in discovery) {
+            return { loaded: false, error: `manifest load failed: ${discovery.error}` };
           }
-          const pluginToLoad = newDiscovery.plugins[0]!;
+          const pluginToLoad = discovery;
           if (pluginRegistry.has(pluginToLoad.manifest.id)) {
             return { loaded: true, pluginId: pluginToLoad.manifest.id };
           }
@@ -1698,11 +1701,15 @@ export async function startGatewayServer(
       },
       onPluginUpdated: async (installPath: string) => {
         try {
-          const newDiscovery = discoverPlugins([installPath]);
-          if (newDiscovery.plugins.length === 0) {
-            return { loaded: false, error: "No plugin found at install path" };
+          // installPath is the plugin's own directory. Use tryLoadManifest
+          // directly — discoverPlugins silently returns empty when given a
+          // plugin dir instead of a parent, which caused every hot-reload
+          // to report success while actually doing nothing.
+          const discovery = tryLoadManifest(installPath);
+          if ("error" in discovery) {
+            return { loaded: false, error: `manifest load failed: ${discovery.error}` };
           }
-          const pluginToLoad = newDiscovery.plugins[0]!;
+          const pluginToLoad = discovery;
           // Do NOT check pluginRegistry.has() — the plugin was just deactivated for update
           const result = await loadPlugins([pluginToLoad], {
             pluginRegistry,

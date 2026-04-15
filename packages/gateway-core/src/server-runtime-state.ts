@@ -3397,28 +3397,47 @@ export async function createGatewayRuntimeState(
       // 1. Sync catalog from GitHub sources + update all installed plugins
       const result = await mp.syncAndUpdateAll();
 
-      // 2. Hot-reload any updated plugins
+      // 2. Hot-reload any updated plugins. onPluginUpdated returns
+      //    { loaded, error? } per plugin — we must honour the flag AND log
+      //    failures, or the pull endpoint will lie about how many reloaded
+      //    (as the earlier implementation did, silently miscounting every
+      //    silent-failure as a success).
       const reloaded: string[] = [];
+      const reloadErrors: string[] = [];
       if (deps.onPluginUpdated && deps.onPluginDeactivating) {
         for (const name of result.updated) {
           const installed = mp.getInstalled().find(i => i.name === name);
-          if (!installed) continue;
+          if (!installed) {
+            reloadErrors.push(`${name}: not found in installed list`);
+            continue;
+          }
           try {
             await deps.onPluginDeactivating(name);
-            await deps.onPluginUpdated(installed.installPath);
-            reloaded.push(name);
+            const res = await deps.onPluginUpdated(installed.installPath);
+            if (res.loaded) {
+              reloaded.push(name);
+            } else {
+              const msg = res.error ?? "unknown error";
+              reloadErrors.push(`${name}: ${msg}`);
+              log.warn(`hot-reload failed for "${name}": ${msg}`);
+            }
           } catch (err) {
-            log.warn(`hot-reload failed for "${name}": ${err instanceof Error ? err.message : String(err)}`);
+            const msg = err instanceof Error ? err.message : String(err);
+            reloadErrors.push(`${name}: ${msg}`);
+            log.warn(`hot-reload threw for "${name}": ${msg}`);
           }
         }
       }
 
-      log.info(`plugin-marketplace pull: synced=${String(result.synced)}, updated=${result.updated.length}, reloaded=${reloaded.length}`);
+      log.info(
+        `plugin-marketplace pull: synced=${String(result.synced)}, updated=${result.updated.length}, reloaded=${reloaded.length}, reloadErrors=${reloadErrors.length}`,
+      );
       return reply.send({
         ok: true,
         catalogSynced: result.synced,
         updated: result.updated,
         reloaded,
+        reloadErrors,
         errors: result.errors,
       });
     });

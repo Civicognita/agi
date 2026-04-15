@@ -28,8 +28,15 @@ const PACKAGE_JSON = "package.json";
 /**
  * Try loading manifest from package.json `aionima` field first,
  * then fall back to aionima-plugin.json.
+ *
+ * Exported so lifecycle callbacks (hot-install, hot-update) can load a
+ * single plugin directly by its own directory path, without invoking the
+ * parent-scan logic of `discoverPlugins`. `discoverPlugins` expects search
+ * paths that CONTAIN plugin directories — passing the plugin's own dir
+ * silently returns zero plugins, which was the root of a plugin-hot-reload
+ * bug where updated plugins appeared to reload but never did.
  */
-function tryLoadManifest(dir: string): DiscoveredPlugin | { error: string } {
+export function tryLoadManifest(dir: string): DiscoveredPlugin | { error: string } {
   // 1. Try package.json with aionima field
   const pkgPath = join(dir, PACKAGE_JSON);
   if (existsSync(pkgPath)) {

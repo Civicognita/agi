@@ -63,7 +63,7 @@ export { HookBus } from "./hooks.js";
 export { validatePermissions, validateManifest, validatePluginId, hasPermission } from "./security.js";
 
 // Discovery
-export { discoverPlugins, discoverMarketplacePlugins, discoverPrefixedPlugins, discoverChannelPlugins, getDefaultSearchPaths } from "./discovery.js";
+export { discoverPlugins, discoverMarketplacePlugins, discoverPrefixedPlugins, discoverChannelPlugins, getDefaultSearchPaths, tryLoadManifest } from "./discovery.js";
 export type { DiscoveredPlugin, DiscoveryResult, SearchPathOptions } from "./discovery.js";
 
 // Registry
