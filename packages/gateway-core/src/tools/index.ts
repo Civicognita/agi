@@ -148,8 +148,6 @@ export interface ToolRegistrationConfig {
   userContextStore?: UserContextStore;
   /** Optional PRIME knowledge loader — enables search_prime and lookup_knowledge tools. */
   primeLoader?: PrimeLoader;
-  /** Optional project path — enables create_plan and update_plan tools. */
-  projectPath?: string;
   /** Workspace project directories — enables manage_project tool. */
   projectDirs?: string[];
   /** ProjectConfigManager for validated project config I/O. */
@@ -275,20 +273,24 @@ export function registerAllTools(
     );
   }
 
-  // Plan tools (only registered if projectPath is provided)
-  if (config.projectPath !== undefined) {
-    const planConfig = { projectPath: config.projectPath };
-    register(
-      CREATE_PLAN_MANIFEST as ToolManifestEntry,
-      createCreatePlanHandler(planConfig),
-      CREATE_PLAN_INPUT_SCHEMA,
-    );
-    register(
-      UPDATE_PLAN_MANIFEST as ToolManifestEntry,
-      createUpdatePlanHandler(planConfig),
-      UPDATE_PLAN_INPUT_SCHEMA,
-    );
-  }
+  // Plan tools — unconditionally registered. They take `projectPath` from
+  // the tool INPUT (same pattern as file_read / grep_search taking a path
+  // argument) so they can live in the global tool registry regardless of
+  // which chat session invokes them. The agent reads the path from its
+  // Project Context section of the system prompt and passes it per-call.
+  // The old "conditional on config.projectPath" guard meant the tools
+  // were NEVER registered (registerAllTools is called once at server boot
+  // without a session context) — create_plan never reached Aion's menu.
+  register(
+    CREATE_PLAN_MANIFEST as ToolManifestEntry,
+    createCreatePlanHandler(),
+    CREATE_PLAN_INPUT_SCHEMA,
+  );
+  register(
+    UPDATE_PLAN_MANIFEST as ToolManifestEntry,
+    createUpdatePlanHandler(),
+    UPDATE_PLAN_INPUT_SCHEMA,
+  );
 
   // Project tools (only registered if projectDirs configured)
   if (config.projectDirs !== undefined && config.projectDirs.length > 0) {

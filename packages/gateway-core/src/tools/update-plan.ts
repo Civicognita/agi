@@ -7,10 +7,6 @@ import type { ToolHandler } from "../tool-registry.js";
 import { PlanStore, isAcceptedStatus } from "../plan-store.js";
 import type { PlanStatus, PlanStepStatus, PlanStepUpdate } from "../plan-types.js";
 
-export interface UpdatePlanConfig {
-  projectPath: string;
-}
-
 const VALID_PLAN_STATUSES: PlanStatus[] = [
   "draft",
   "reviewing",
@@ -29,8 +25,15 @@ const VALID_STEP_STATUSES: PlanStepStatus[] = [
   "skipped",
 ];
 
-export function createUpdatePlanHandler(config: UpdatePlanConfig): ToolHandler {
+export function createUpdatePlanHandler(): ToolHandler {
   return async (input: Record<string, unknown>): Promise<string> => {
+    const projectPath = String(input.projectPath ?? "").trim();
+    if (projectPath.length === 0) {
+      return JSON.stringify({
+        error: "projectPath is required — pass the absolute path of the project the plan belongs to (visible in your Project Context section).",
+      });
+    }
+
     const planId = String(input.planId ?? "").trim();
     if (planId.length === 0) {
       return JSON.stringify({ error: "planId is required" });
@@ -86,7 +89,7 @@ export function createUpdatePlanHandler(config: UpdatePlanConfig): ToolHandler {
     // Rejected post-acceptance: regressing to draft/reviewing.
     try {
       const store = new PlanStore();
-      const existing = store.get(config.projectPath, planId);
+      const existing = store.get(projectPath, planId);
       if (!existing) {
         return JSON.stringify({ error: `Plan "${planId}" not found` });
       }
@@ -96,7 +99,7 @@ export function createUpdatePlanHandler(config: UpdatePlanConfig): ToolHandler {
         });
       }
 
-      const plan = store.update(config.projectPath, planId, { status: planStatus, stepUpdates });
+      const plan = store.update(projectPath, planId, { status: planStatus, stepUpdates });
       if (!plan) {
         return JSON.stringify({ error: `Plan "${planId}" not found` });
       }
@@ -118,6 +121,11 @@ export const UPDATE_PLAN_MANIFEST = {
 export const UPDATE_PLAN_INPUT_SCHEMA = {
   type: "object",
   properties: {
+    projectPath: {
+      type: "string",
+      description:
+        "Absolute path of the project the plan belongs to. Read it from your Project Context section of the system prompt. Required.",
+    },
     planId: {
       type: "string",
       description: "The plan ID to update (e.g. \"plan-1234567890-abc123\")",
@@ -144,5 +152,5 @@ export const UPDATE_PLAN_INPUT_SCHEMA = {
       },
     },
   },
-  required: ["planId"],
+  required: ["projectPath", "planId"],
 };
