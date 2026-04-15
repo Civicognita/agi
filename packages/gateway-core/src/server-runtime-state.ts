@@ -8,7 +8,7 @@
  * Uses Fastify v5 instead of raw http.createServer.
  */
 
-import { readFileSync, writeFileSync, appendFileSync, existsSync, statSync, mkdirSync, readdirSync, rmSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, statSync, mkdirSync, readdirSync, rmSync, realpathSync, cpSync, renameSync } from "node:fs";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import { homedir } from "node:os";
 import { execSync, execFile, execFileSync, spawn } from "node:child_process";
@@ -36,6 +36,7 @@ import { appRouter, type AppContext } from "@aionima/trpc-api";
 import type { HostingManager } from "./hosting-manager.js";
 import { registerHostingRoutes } from "./hosting-api.js";
 import { registerStackRoutes } from "./stack-api.js";
+import { safemodeState } from "./safemode-state.js";
 import type { RouteHandler, RuntimeDefinition, RuntimeInstaller, HostingExtension } from "@aionima/plugins";
 import { categoryToProvides } from "@aionima/plugins";
 import type { ServiceManager } from "./service-manager.js";
@@ -113,7 +114,7 @@ export interface RuntimeStateDeps {
   wsRef?: { server: GatewayWebSocketServer | null };
   /** Callback invoked on POST /api/reload — re-indexes PRIME, re-discovers skills, etc. */
   onReload?: () => ReloadResult;
-  /** Path to the aionima.json config file — enables GET/PUT /api/config. */
+  /** Path to the gateway.json config file — enables GET/PUT /api/config. */
   configPath?: string;
   /** Directory containing built dashboard static files (e.g. ui/dashboard/dist). */
   staticDir?: string;
@@ -201,6 +202,20 @@ export interface RuntimeStateDeps {
 
   /** MAppRegistry — standalone MApp registry (NOT plugin-based). */
   mappRegistry?: import("./mapp-registry.js").MAppRegistry;
+  /** InferenceGateway — used for model-inference workflow steps. */
+  inferenceGateway?: import("@aionima/model-runtime").InferenceGateway;
+  /** ModelStore — used for model dependency status checks. */
+  modelStore?: import("@aionima/model-runtime").ModelStore;
+  mappMarketplaceManager?: {
+    getSources(): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number }[];
+    addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number };
+    removeSource(id: number): void;
+    syncSource(id: number): Promise<{ ok: boolean; error?: string; mappCount?: number }>;
+    getCatalogWithInstalled(): Array<{ id: string; sourceId: number; author: string; description?: string; category?: string; version?: string; sourcePath: string; installed: boolean }>;
+    install(appId: string, sourceId: number): Promise<{ ok: boolean; error?: string }>;
+    uninstall(appId: string, author: string): { ok: boolean; error?: string };
+    syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
+  };
   /** MagicAppStateStore — persistent MApp instance state. */
   magicAppStateStore?: import("./magic-app-state-store.js").MagicAppStateStore;
 
@@ -226,6 +241,9 @@ export interface RuntimeStateDeps {
     getInstalled(): { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }[];
     checkUpdates(): { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[];
     syncLocalCatalog(marketplaceDir: string): { ok: boolean; error?: string; pluginCount?: number };
+    reconcileInstalled(marketplaceDir: string): Promise<{ updated: string[]; errors: string[] }>;
+    syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
+    backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): void;
     updatePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }>;
   };
   /** Callback to hot-load a newly installed plugin (discover, activate, bridge). */
@@ -579,6 +597,30 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // Safemode hook — block mutations when the gateway booted into safemode.
+  // Allows GET/HEAD/OPTIONS, /api/admin/*, /health, and the static dashboard.
+  // Runs after auth so unauthorized requests are already rejected.
+  // -----------------------------------------------------------------------
+
+  fastify.addHook("onRequest", async (request, reply) => {
+    if (!safemodeState.isActive()) return;
+
+    const method = request.method.toUpperCase();
+    if (method === "GET" || method === "HEAD" || method === "OPTIONS") return;
+
+    const url = request.url;
+    if (url.startsWith("/api/admin/")) return;
+    if (url === "/health" || url.startsWith("/health?")) return;
+    if (url === "/api/health" || url.startsWith("/api/health?")) return;
+
+    await reply.code(503).send({
+      error: "safemode_active",
+      message: "Gateway is in safemode — the last shutdown was a crash. Review the incident report in Admin and click Recover to exit safemode.",
+      snapshot: safemodeState.snapshot(),
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // GET /health
   // -----------------------------------------------------------------------
 
@@ -590,6 +632,46 @@ export async function createGatewayRuntimeState(
       channels: channelRegistry.getRunningChannels().length,
       sessions: agentSessionManager.count,
     });
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/gateway/restart — request a graceful restart (private only).
+  //
+  // Sends SIGTERM to our own process after flushing the response. The signal
+  // handler in cli/src/commands/run.ts runs server.close(), which writes the
+  // graceful-shutdown marker (see feedback_agi_self_heals.md). systemd
+  // restart=always brings the service back up; boot resumes state from the
+  // marker. Equivalent to `agi restart` — no sudo required because we only
+  // signal ourselves.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/gateway/restart", async (request, reply) => {
+    if (!isPrivateNetwork(getClientIp(request.raw))) {
+      return reply.code(403).send({ error: "Gateway restart only allowed from private network" });
+    }
+    const log = createComponentLogger(deps.logger, "restart-api");
+    log.info("gateway restart requested via POST /api/gateway/restart");
+    // Flush the response before exiting. setTimeout ensures the Fastify reply
+    // leaves the wire before SIGTERM tears down the process.
+    setTimeout(() => {
+      process.kill(process.pid, "SIGTERM");
+    }, 100);
+    return reply.send({ ok: true, message: "Gateway restart queued; service will be back up in a few seconds." });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/gateway/state — current computed operational state.
+  //
+  // This is a READ-ONLY status, not a setting. States:
+  //   INITIAL — boot not yet complete
+  //   LIMBO   — local COA<>COI not yet validated with 0PRIME Schema (the
+  //             expected steady state until 0PRIME Hive mind is operational)
+  //   OFFLINE — local-id or local-prime unavailable
+  //   ONLINE  — future; requires 0PRIME (not yet operational)
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/gateway/state", async () => {
+    return { state: stateMachine.getState(), capabilities: stateMachine.getCapabilities() };
   });
 
   // -----------------------------------------------------------------------
@@ -2246,7 +2328,7 @@ export async function createGatewayRuntimeState(
     return true;
   }
 
-  /** Read the configured update channel from aionima.json. Returns "main" or "dev". */
+  /** Read the configured update channel from gateway.json. Returns "main" or "dev". */
   function getUpdateChannel(): "main" | "dev" {
     if (!deps.configPath) return "main";
     try {
@@ -2499,7 +2581,10 @@ export async function createGatewayRuntimeState(
 
     child.on("close", (code) => {
       upgradeInProgress = false;
-      if (code === 0) {
+      // code === null means the process was killed by a signal (SIGPIPE) — expected
+      // when upgrade.sh calls `systemctl restart aionima` which kills this Node process.
+      // The .upgrade-pending sentinel file handles post-restart completion.
+      if (code === 0 || (code === null && lastStep === "restart")) {
         // Sync marketplace catalog as the final upgrade step — plugin updates run last
         const mp = deps.marketplaceManager;
         if (mp) {
@@ -3301,6 +3386,61 @@ export async function createGatewayRuntimeState(
         newVersion: updateResult.newVersion,
       });
     });
+
+    // POST /api/marketplace/pull — sync catalog from GitHub, update all installed plugins, hot-reload
+    fastify.post("/api/marketplace/pull", async (_request, reply) => {
+      const clientIp = getClientIp(_request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
+      }
+
+      // 1. Sync catalog from GitHub sources + update all installed plugins
+      const result = await mp.syncAndUpdateAll();
+
+      // 2. Hot-reload any updated plugins. onPluginUpdated returns
+      //    { loaded, error? } per plugin — we must honour the flag AND log
+      //    failures, or the pull endpoint will lie about how many reloaded
+      //    (as the earlier implementation did, silently miscounting every
+      //    silent-failure as a success).
+      const reloaded: string[] = [];
+      const reloadErrors: string[] = [];
+      if (deps.onPluginUpdated && deps.onPluginDeactivating) {
+        for (const name of result.updated) {
+          const installed = mp.getInstalled().find(i => i.name === name);
+          if (!installed) {
+            reloadErrors.push(`${name}: not found in installed list`);
+            continue;
+          }
+          try {
+            await deps.onPluginDeactivating(name);
+            const res = await deps.onPluginUpdated(installed.installPath);
+            if (res.loaded) {
+              reloaded.push(name);
+            } else {
+              const msg = res.error ?? "unknown error";
+              reloadErrors.push(`${name}: ${msg}`);
+              log.warn(`hot-reload failed for "${name}": ${msg}`);
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            reloadErrors.push(`${name}: ${msg}`);
+            log.warn(`hot-reload threw for "${name}": ${msg}`);
+          }
+        }
+      }
+
+      log.info(
+        `plugin-marketplace pull: synced=${String(result.synced)}, updated=${result.updated.length}, reloaded=${reloaded.length}, reloadErrors=${reloadErrors.length}`,
+      );
+      return reply.send({
+        ok: true,
+        catalogSynced: result.synced,
+        updated: result.updated,
+        reloaded,
+        reloadErrors,
+        errors: result.errors,
+      });
+    });
   }
 
   // -----------------------------------------------------------------------
@@ -3880,12 +4020,61 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Built-in file tree only serves docs/" });
     }
     const tree = buildFileTree(docsRoot, "docs");
-    // Append plugin-provided knowledge namespaces as virtual folders under plugin-docs/
+
+    // Append SDK docs as a top-level section
+    const sdkDocsDir = join(docsRoot, "..", "packages", "aion-sdk", "docs");
+    if (!existsSync(sdkDocsDir)) {
+      // Fallback: look for SDK docs in the docs/sdk/ directory (already in tree)
+    }
+
+    // Append plugin-provided knowledge namespaces as virtual folders grouped under a
+    // single "Plugins" parent folder. Only include documentation files — not raw system
+    // dirs or binaries. Note: pluginRegistry.getKnowledge() already only returns
+    // namespaces from currently loaded (active) plugins, so no extra filtering is needed.
+    const DOC_EXTS = new Set([".md", ".txt", ".html", ".rst", ".adoc"]);
     const knowledgeEntries = deps.pluginRegistry?.getKnowledge() ?? [];
+    const pluginDocFolders: FileNode[] = [];
     for (const { namespace } of knowledgeEntries) {
       if (!namespace.contentDir || !existsSync(namespace.contentDir)) continue;
-      const subtree = buildFileTree(namespace.contentDir, `plugin-docs/${namespace.id}`);
-      tree.push({ name: namespace.label, path: `plugin-docs/${namespace.id}`, type: "dir", children: subtree });
+      // If namespace has explicit topics, use those instead of scanning the directory
+      if (namespace.topics && namespace.topics.length > 0) {
+        const topicNodes: FileNode[] = namespace.topics
+          .filter((t) => {
+            try { return existsSync(join(namespace.contentDir!, t.path)); } catch { return false; }
+          })
+          .map((t) => ({
+            name: t.title,
+            path: `plugin-docs/${namespace.id}/${t.path}`,
+            type: "file" as const,
+            ext: t.path.includes(".") ? t.path.slice(t.path.lastIndexOf(".")) : undefined,
+          }));
+        if (topicNodes.length > 0) {
+          pluginDocFolders.push({ name: namespace.label, path: `plugin-docs/${namespace.id}`, type: "dir", children: topicNodes });
+        }
+      } else {
+        // No explicit topics — scan directory but only include doc files
+        const subtree = buildFileTree(namespace.contentDir, `plugin-docs/${namespace.id}`)
+          .filter(function filterDocs(node: FileNode): boolean {
+            if (node.type === "dir") {
+              node.children = node.children?.filter(filterDocs);
+              return (node.children?.length ?? 0) > 0;
+            }
+            return node.ext ? DOC_EXTS.has(node.ext) : false;
+          });
+        if (subtree.length > 0) {
+          pluginDocFolders.push({ name: namespace.label, path: `plugin-docs/${namespace.id}`, type: "dir", children: subtree });
+        }
+      }
+    }
+    // Group all plugin doc namespaces under a single "Plugins" parent folder so they
+    // don't appear at the same level as built-in sections (agents, human, sdk, etc.).
+    if (pluginDocFolders.length > 0) {
+      tree.push({
+        name: "Plugins",
+        path: "plugin-docs",
+        type: "dir",
+        children: pluginDocFolders,
+      });
     }
     return reply.send({ tree });
   });
@@ -3986,6 +4175,77 @@ export async function createGatewayRuntimeState(
     const resolved = resolvePath(body.path);
     try {
       writeFileSync(resolved, body.content, "utf-8");
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/files/project-create — create a file or directory
+  fastify.post("/api/files/project-create", async (request, reply) => {
+    const body = request.body as { path?: string; type?: "file" | "directory"; content?: string };
+    if (!body.path) return reply.code(400).send({ error: "path is required" });
+    if (!isInsideWorkspace(body.path)) return reply.code(403).send({ error: "Path is not inside a configured workspace directory" });
+
+    const resolved = resolvePath(body.path);
+    try {
+      if (body.type === "directory") {
+        mkdirSync(resolved, { recursive: true });
+      } else {
+        mkdirSync(dirname(resolved), { recursive: true });
+        writeFileSync(resolved, body.content ?? "", "utf-8");
+      }
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // DELETE /api/files/project-delete — delete a file or directory
+  fastify.delete("/api/files/project-delete", async (request, reply) => {
+    const body = request.body as { path?: string };
+    if (!body.path) return reply.code(400).send({ error: "path is required" });
+    if (!isInsideWorkspace(body.path)) return reply.code(403).send({ error: "Path is not inside a configured workspace directory" });
+
+    const resolved = resolvePath(body.path);
+    try {
+      rmSync(resolved, { recursive: true, force: true });
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/files/project-copy — copy a file or directory
+  fastify.post("/api/files/project-copy", async (request, reply) => {
+    const body = request.body as { sourcePath?: string; destPath?: string };
+    if (!body.sourcePath || !body.destPath) return reply.code(400).send({ error: "sourcePath and destPath are required" });
+    if (!isInsideWorkspace(body.sourcePath) || !isInsideWorkspace(body.destPath)) {
+      return reply.code(403).send({ error: "Paths must be inside a configured workspace directory" });
+    }
+
+    const src = resolvePath(body.sourcePath);
+    const dest = resolvePath(body.destPath);
+    try {
+      cpSync(src, dest, { recursive: true });
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/files/project-rename — rename/move a file or directory
+  fastify.post("/api/files/project-rename", async (request, reply) => {
+    const body = request.body as { oldPath?: string; newPath?: string };
+    if (!body.oldPath || !body.newPath) return reply.code(400).send({ error: "oldPath and newPath are required" });
+    if (!isInsideWorkspace(body.oldPath) || !isInsideWorkspace(body.newPath)) {
+      return reply.code(403).send({ error: "Paths must be inside a configured workspace directory" });
+    }
+
+    const src = resolvePath(body.oldPath);
+    const dest = resolvePath(body.newPath);
+    try {
+      renameSync(src, dest);
       return reply.send({ ok: true });
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
@@ -4116,6 +4376,64 @@ export async function createGatewayRuntimeState(
       values: body.values,
     });
     return reply.send(result);
+  });
+
+  // POST /api/mapps/workflow/run — run a named workflow from a MApp
+  fastify.post("/api/mapps/workflow/run", async (request, reply) => {
+    const body = request.body as {
+      mappId?: string;
+      workflowId?: string;
+      context?: Record<string, unknown>;
+    } | undefined;
+
+    if (!body?.mappId || !body?.workflowId) {
+      return reply.code(400).send({ error: "mappId and workflowId required" });
+    }
+
+    if (!deps.mappRegistry) return reply.code(500).send({ error: "MApp registry not available" });
+    const def = deps.mappRegistry.get(body.mappId);
+    if (!def) return reply.code(404).send({ error: `MApp "${body.mappId}" not found` });
+
+    const { runWorkflow } = await import("./mapp-executor.js");
+    const result = await runWorkflow(
+      def,
+      body.workflowId,
+      body.context ?? {},
+      deps.inferenceGateway,
+    );
+    return reply.send(result);
+  });
+
+  // GET /api/mapps/:id/model-status — check model dependency status for a MApp
+  fastify.get<{ Params: { id: string } }>("/api/mapps/:id/model-status", async (request, reply) => {
+    const { id } = request.params;
+    if (!deps.mappRegistry) return reply.code(500).send({ error: "MApp registry not available" });
+    const def = deps.mappRegistry.get(id);
+    if (!def) return reply.code(404).send({ error: `MApp "${id}" not found` });
+
+    const dependencies = def.modelDependencies ?? [];
+    const statuses = await Promise.all(dependencies.map(async (dep) => {
+      const model = await deps.modelStore?.getById(dep.modelId);
+      return {
+        modelId: dep.modelId,
+        label: dep.label,
+        required: dep.required ?? false,
+        pipelineTag: dep.pipelineTag,
+        installed: !!model,
+        running: model?.status === "running",
+        status: model?.status ?? "not-installed",
+      };
+    }));
+
+    const allRequiredRunning = statuses
+      .filter((s) => s.required)
+      .every((s) => s.running);
+
+    return reply.send({
+      mappId: id,
+      modelDependencies: statuses,
+      ready: allRequiredRunning,
+    });
   });
 
   // MApp instance state persistence
@@ -4287,207 +4605,118 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
-  // MApp Marketplace — browse and install MApps from the marketplace repo
+  // MApp Marketplace — browse, install, and manage MApp sources
   // -----------------------------------------------------------------------
 
-  const mappsInstallDir = join(homedir(), ".agi", "mapps");
+  if (deps.mappMarketplaceManager) {
+    const mappMp = deps.mappMarketplaceManager;
 
-  /** Official MApp marketplace GitHub source — hardcoded. */
-  const OFFICIAL_MAPP_MARKETPLACE = "Civicognita/aionima-mapp-marketplace";
-
-  /**
-   * Fetch a file from the MApp marketplace GitHub repo.
-   * Uses the GitHub Contents API (works for public and private repos with token).
-   * Falls back to raw.githubusercontent.com for public repos.
-   */
-  async function fetchFromMAppMarketplace(path: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {
-    // Try GitHub Contents API first (works with auth tokens for private repos)
-    const apiUrl = `https://api.github.com/repos/${OFFICIAL_MAPP_MARKETPLACE}/contents/${path}?ref=main`;
-    try {
-      const headers: Record<string, string> = { Accept: "application/vnd.github.raw+json" };
-      // Use GITHUB_TOKEN if available (for private repos)
-      const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
-      if (token) headers.Authorization = `token ${token}`;
-
-      const res = await fetch(apiUrl, { headers, signal: AbortSignal.timeout(15_000) });
-      if (res.ok) {
-        const data = await res.json() as unknown;
-        return { ok: true, data };
-      }
-
-      // Fallback to raw.githubusercontent.com (public repos only)
-      const rawUrl = `https://raw.githubusercontent.com/${OFFICIAL_MAPP_MARKETPLACE}/main/${path}`;
-      const rawRes = await fetch(rawUrl, {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!rawRes.ok) return { ok: false, error: `HTTP ${rawRes.status}` };
-      const rawData = await rawRes.json() as unknown;
-      return { ok: true, data: rawData };
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    }
-  }
-
-  async function fetchMAppCatalog(): Promise<{ ok: boolean; mapps: Array<Record<string, unknown>>; error?: string }> {
-    const result = await fetchFromMAppMarketplace("marketplace.json");
-    if (!result.ok) return { ok: false, mapps: [], error: result.error };
-    const data = result.data as { mapps?: Array<Record<string, unknown>> };
-    return { ok: true, mapps: data.mapps ?? [] };
-  }
-
-  // GET /api/mapp-marketplace/catalog — fetch catalog from GitHub + mark installed status
-  fastify.get("/api/mapp-marketplace/catalog", async (request, reply) => {
-    const clientIp = getClientIp(request.raw);
-    if (!isPrivateNetwork(clientIp)) {
-      return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
-    }
-
-    const result = await fetchMAppCatalog();
-    const entries = result.mapps.map((m) => {
-      const author = (m.author as string) ?? "civicognita";
-      const id = m.id as string;
-      const installedPath = join(mappsInstallDir, author, `${id}.json`);
-      return {
-        definition: m,
-        source: m.source as string,
-        installed: existsSync(installedPath),
-      };
+    // Source management
+    fastify.get("/api/mapp-marketplace/sources", async (_request, reply) => {
+      return reply.send(mappMp.getSources());
     });
-    return reply.send({ apps: entries });
-  });
 
-  // POST /api/mapp-marketplace/install — fetch MApp JSON from GitHub and install
-  fastify.post("/api/mapp-marketplace/install", async (request, reply) => {
-    const clientIp = getClientIp(request.raw);
-    if (!isPrivateNetwork(clientIp)) {
-      return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
-    }
+    fastify.post("/api/mapp-marketplace/sources", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "MApp Marketplace API only allowed from private network" });
+      const body = request.body as { ref?: string; name?: string };
+      if (!body.ref) return reply.code(400).send({ error: "ref is required (e.g. 'owner/repo')" });
+      const source = mappMp.addSource(body.ref, body.name);
+      return reply.send(source);
+    });
 
-    const body = request.body as { appId?: string; author?: string; source?: string } | undefined;
-    if (!body?.appId || !body?.author) {
-      return reply.code(400).send({ error: "appId and author are required" });
-    }
+    fastify.delete<{ Params: { id: string } }>("/api/mapp-marketplace/sources/:id", async (request, reply) => {
+      mappMp.removeSource(Number(request.params.id));
+      return reply.send({ ok: true });
+    });
 
-    const sourcePath = body.source ?? `./mapps/${body.author}/${body.appId}.json`;
-    const relativePath = sourcePath.replace(/^\.\//, "");
+    fastify.post<{ Params: { id: string } }>("/api/mapp-marketplace/sources/:id/sync", async (request, reply) => {
+      const result = await mappMp.syncSource(Number(request.params.id));
+      if (!result.ok) return reply.code(400).send(result);
+      return reply.send(result);
+    });
 
-    try {
-      // Fetch the MApp JSON from GitHub
-      const result = await fetchFromMAppMarketplace(relativePath);
-      if (!result.ok) {
-        return reply.code(404).send({ error: `MApp "${body.appId}" not found in marketplace: ${result.error}` });
+    // Catalog
+    fastify.get("/api/mapp-marketplace/catalog", async (_request, reply) => {
+      const catalog = mappMp.getCatalogWithInstalled();
+      // Wrap in { apps } for backward compatibility with dashboard
+      return reply.send({ apps: catalog.map((entry) => ({
+        definition: { id: entry.id, author: entry.author, description: entry.description, category: entry.category, version: entry.version, source: entry.sourcePath },
+        source: entry.sourcePath,
+        installed: entry.installed,
+        sourceId: entry.sourceId,
+      })) });
+    });
+
+    // Install
+    fastify.post("/api/mapp-marketplace/install", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "MApp Marketplace API only allowed from private network" });
+      const body = request.body as { appId?: string; sourceId?: number } | undefined;
+      if (!body?.appId || body.sourceId === undefined) {
+        return reply.code(400).send({ error: "appId and sourceId are required" });
       }
-      const raw = result.data as Record<string, unknown>;
 
-      // Validate before writing
-      const { MAppDefinitionSchema } = await import("@aionima/config");
-      const parsed = MAppDefinitionSchema.safeParse(raw);
-      if (!parsed.success) {
-        return reply.code(400).send({ error: "Invalid MApp definition", issues: parsed.error.issues });
-      }
-
-      // Write to install directory
-      const destDir = join(mappsInstallDir, body.author);
-      mkdirSync(destDir, { recursive: true });
-      const destPath = join(destDir, `${body.appId}.json`);
-      writeFileSync(destPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
+      const result = await mappMp.install(body.appId, body.sourceId);
+      if (!result.ok) return reply.code(400).send(result);
 
       // Register in live registry
-      if (deps.mappRegistry) {
-        deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+      const { MAppDefinitionSchema } = await import("@aionima/config");
+      const catalog = mappMp.getCatalogWithInstalled();
+      const entry = catalog.find((e) => e.id === body.appId);
+      if (entry && deps.mappRegistry) {
+        const mappsDir = join(homedir(), ".agi", "mapps");
+        const filePath = join(mappsDir, entry.author, `${body.appId}.json`);
+        try {
+          const raw = JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, unknown>;
+          const parsed = MAppDefinitionSchema.safeParse(raw);
+          if (parsed.success) {
+            deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+          }
+        } catch { /* non-fatal */ }
       }
 
       return reply.send({ ok: true, id: body.appId });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return reply.code(500).send({ error: msg });
-    }
-  });
+    });
 
-  // DELETE /api/mapp-marketplace/installed/:id — uninstall a MApp
-  fastify.delete("/api/mapp-marketplace/installed/:id", async (request, reply) => {
-    const clientIp = getClientIp(request.raw);
-    if (!isPrivateNetwork(clientIp)) {
-      return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
-    }
+    // Uninstall
+    fastify.delete<{ Params: { id: string } }>("/api/mapp-marketplace/installed/:id", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "MApp Marketplace API only allowed from private network" });
+      const { id } = request.params;
+      const def = deps.mappRegistry?.get(id);
+      if (!def) return reply.code(404).send({ error: `MApp "${id}" is not installed` });
+      mappMp.uninstall(id, def.author);
+      deps.mappRegistry?.unregister(id);
+      return reply.send({ ok: true });
+    });
 
-    const { id } = request.params as { id: string };
+    // Pull — sync all sources + update installed MApps
+    fastify.post("/api/mapp-marketplace/pull", async (_request, reply) => {
+      const clientIp = getClientIp(_request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "MApp Marketplace API only allowed from private network" });
+      const result = await mappMp.syncAndUpdateAll();
 
-    // Find the installed MApp to determine its author directory
-    const def = deps.mappRegistry?.get(id);
-    if (!def) {
-      return reply.code(404).send({ error: `MApp "${id}" is not installed` });
-    }
-
-    const filePath = join(mappsInstallDir, def.author, `${id}.json`);
-    if (existsSync(filePath)) {
-      rmSync(filePath);
-    }
-
-    // Unregister from live registry
-    deps.mappRegistry?.unregister(id);
-
-    return reply.send({ ok: true });
-  });
-
-  // POST /api/mapp-marketplace/sync — update already-installed MApps to latest marketplace versions
-  fastify.post("/api/mapp-marketplace/sync", async (request, reply) => {
-    const clientIp = getClientIp(request.raw);
-    if (!isPrivateNetwork(clientIp)) {
-      return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
-    }
-
-    const catalog = await fetchMAppCatalog();
-    if (!catalog.ok) {
-      return reply.code(502).send({ error: `Failed to fetch catalog: ${catalog.error}` });
-    }
-
-    const { MAppDefinitionSchema } = await import("@aionima/config");
-    const updated: string[] = [];
-    const errors: string[] = [];
-
-    for (const entry of catalog.mapps) {
-      const id = entry.id as string;
-      const author = (entry.author as string) ?? "civicognita";
-      const marketplaceVersion = entry.version as string;
-      const sourcePath = (entry.source as string)?.replace(/^\.\//, "") ?? `mapps/${author}/${id}.json`;
-
-      // Only update MApps that are already installed — never auto-install
-      const installedPath = join(mappsInstallDir, author, `${id}.json`);
-      if (!existsSync(installedPath)) continue;
-
-      // Skip if already at current version
-      try {
-        const local = JSON.parse(readFileSync(installedPath, "utf-8")) as { version?: string };
-        if (local.version === marketplaceVersion) continue;
-      } catch { /* re-fetch on parse error */ }
-
-      // Fetch updated version from GitHub
-      const result = await fetchFromMAppMarketplace(sourcePath);
-      if (!result.ok) {
-        errors.push(`${id}: ${result.error}`);
-        continue;
+      // Re-register updated MApps in live registry
+      if (deps.mappRegistry && result.updated.length > 0) {
+        const { MAppDefinitionSchema } = await import("@aionima/config");
+        const mappsDir = join(homedir(), ".agi", "mapps");
+        for (const appId of result.updated) {
+          const catalog = mappMp.getCatalogWithInstalled();
+          const entry = catalog.find((e) => e.id === appId);
+          if (!entry) continue;
+          try {
+            const raw = JSON.parse(readFileSync(join(mappsDir, entry.author, `${appId}.json`), "utf-8")) as Record<string, unknown>;
+            const parsed = MAppDefinitionSchema.safeParse(raw);
+            if (parsed.success) deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+          } catch { /* non-fatal */ }
+        }
       }
 
-      const raw = result.data as Record<string, unknown>;
-      const parsed = MAppDefinitionSchema.safeParse(raw);
-      if (!parsed.success) {
-        errors.push(`${id}: invalid definition`);
-        continue;
-      }
-
-      writeFileSync(installedPath, JSON.stringify(raw, null, 2) + "\n", "utf-8");
-
-      if (deps.mappRegistry) {
-        deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
-      }
-
-      updated.push(id);
-    }
-
-    return reply.send({ ok: true, updated, errors });
-  });
+      log.info(`mapp-marketplace pull: synced=${String(result.synced)}, updated=${result.updated.length}`);
+      return reply.send({ ok: true, ...result });
+    });
+  }
 
   // -----------------------------------------------------------------------
   // Pre-listen hooks — register additional routes before the server starts

@@ -23,6 +23,7 @@ import { createDatabase, EntityStore, MessageQueue, CommsLog, NotificationStore,
 import { BackupManager } from "./backup-manager.js";
 import { registerComplianceRoutes } from "./compliance-api.js";
 import { registerSecurityRoutes } from "./security-api.js";
+import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@aionima/security";
 import { COAChainLogger } from "@aionima/coa-chain";
 import { PairingStore } from "./pairing-store.js";
@@ -34,6 +35,17 @@ import type { AionimaConfig, ConfigReloadEvent } from "@aionima/config";
 import { ConfigWatcher } from "@aionima/config";
 
 import { SecretsManager } from "./secrets.js";
+import {
+  readAndConsumeShutdownMarker,
+  writeShutdownMarker,
+  buildShutdownMarker,
+  ensureExternals,
+  reconcileProjects,
+  reconcileModels,
+} from "./boot-recovery.js";
+import { safemodeState } from "./safemode-state.js";
+import { LocalModelRuntime, DEFAULT_LOCAL_MODEL_ID } from "./local-model-runtime.js";
+import { runInvestigator } from "./safemode-investigator.js";
 import { GatewayAuth } from "./auth.js";
 import { GatewayStateMachine } from "./state-machine.js";
 import type { StateTransition } from "./state-machine.js";
@@ -48,6 +60,7 @@ import type { LLMProvider } from "./llm/index.js";
 import { RateLimiter } from "./rate-limiter.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { AgentInvoker } from "./agent-invoker.js";
+import { ChatEventBuffer } from "./chat-event-buffer.js";
 import { registerAllTools, registerAgentTools } from "./tools/index.js";
 import { SkillRegistry } from "@aionima/skills";
 import { CompositeMemoryAdapter } from "@aionima/memory";
@@ -83,7 +96,7 @@ import { ProjectConfigManager } from "./project-config-manager.js";
 import { SystemConfigService } from "./system-config-service.js";
 import { createProjectTypeRegistry } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
-import { discoverPlugins, getDefaultSearchPaths, loadPlugins, PluginRegistry, HookBus } from "@aionima/plugins";
+import { discoverPlugins, getDefaultSearchPaths, loadPlugins, tryLoadManifest, PluginRegistry, HookBus } from "@aionima/plugins";
 import { ServiceManager } from "./service-manager.js";
 import { bridgePluginCapabilities, unbridgePluginCapabilities } from "./plugin-bridges.js";
 import { ScheduledTaskManager } from "./scheduled-task-manager.js";
@@ -101,6 +114,23 @@ import { ReportsStore } from "./reports-store.js";
 import { registerReportsApi } from "./reports-api.js";
 import { registerWorkerApi } from "./worker-api.js";
 import { appendUpgradeLog } from "./upgrade-log.js";
+import { EventEmitter } from "node:events";
+import { Pool } from "pg";
+import {
+  HardwareProfiler,
+  HfHubClient,
+  ModelStore,
+  DatasetStore,
+  ModelContainerManager,
+  CapabilityResolver,
+  InferenceGateway,
+  ModelAgentBridge,
+  KnownModelsRegistry,
+  CustomContainerBuilder,
+} from "@aionima/model-runtime";
+import type { ModelRuntimeEventEmitter } from "@aionima/model-runtime";
+import { registerHfRoutes } from "./hf-api.js";
+import { FineTuneManager } from "./finetune-manager.js";
 
 // ---------------------------------------------------------------------------
 // LLM-backed next-step suggestion generator
@@ -196,6 +226,69 @@ export async function startGatewayServer(
 
   const logger: Logger = createLogger(config.logging);
   const log = createComponentLogger(logger, "server");
+
+  // -------------------------------------------------------------------------
+  // Step 1b2: Boot-recovery — detect crash vs graceful shutdown
+  //
+  // Read (and delete) the shutdown marker written by the previous close().
+  // Presence of a marker = last exit was graceful → reconcile saved state.
+  // Absence = crash → enter safemode (dashboard callout + investigator).
+  // External deps (ID Postgres, aionima-id.service) are started either way
+  // because AGI's DBs live in them.
+  // -------------------------------------------------------------------------
+
+  const bootLog = createComponentLogger(logger, "boot-recovery");
+  const shutdownMarker = readAndConsumeShutdownMarker();
+  const isSafemodeBoot = shutdownMarker === null;
+
+  if (isSafemodeBoot) {
+    bootLog.warn("no shutdown marker — previous exit was UNGRACEFUL. Entering SAFEMODE.");
+    safemodeState.enter("crash_detected");
+  } else {
+    bootLog.info(
+      `graceful shutdown marker consumed (reason=${shutdownMarker.reason}, shutdownAt=${shutdownMarker.shutdownAt})`,
+    );
+  }
+
+  // Always ensure external deps (Postgres + ID service) are up — AGI needs them
+  // even in safemode for its own DB pool.
+  try {
+    const externalsReport = await ensureExternals(bootLog);
+    bootLog.info(
+      `externals: postgres=${externalsReport.postgres.action}(${externalsReport.postgres.state}) idService=${externalsReport.idService.action}(${externalsReport.idService.state}) pgReady=${String(externalsReport.postgresReady)}`,
+    );
+  } catch (err) {
+    bootLog.error(
+      `ensureExternals threw (continuing boot): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // On clean boot, also restart project + model containers that were running
+  // before. Must happen BEFORE HostingManager.initialize() and BEFORE
+  // ModelContainerManager construction — both query podman and only pick up
+  // containers currently in "running" state.
+  if (!isSafemodeBoot && shutdownMarker !== null) {
+    try {
+      const projReport = reconcileProjects(shutdownMarker.projects, bootLog);
+      bootLog.info(
+        `reconcile projects: started=${String(projReport.started)} skipped=${String(projReport.skipped)} failed=${String(projReport.failed)}`,
+      );
+    } catch (err) {
+      bootLog.error(
+        `reconcileProjects threw (continuing boot): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    try {
+      const modelReport = reconcileModels(shutdownMarker.models, bootLog);
+      bootLog.info(
+        `reconcile models: started=${String(modelReport.started)} skipped=${String(modelReport.skipped)} failed=${String(modelReport.failed)}`,
+      );
+    } catch (err) {
+      bootLog.error(
+        `reconcileModels threw (continuing boot): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Step 1c: Secrets — load TPM2-sealed credentials into process.env
@@ -580,6 +673,12 @@ export async function startGatewayServer(
     } : undefined,
     logger,
     imageBlobStore,
+    getMaxToolLoops: () => {
+      // Read from live config so hot-reload takes effect per turn.
+      const snap = systemConfigService?.read() ?? config;
+      const gw = (snap as { gateway?: { maxToolLoops?: number } }).gateway;
+      return gw?.maxToolLoops ?? 0;
+    },
   });
 
   // -------------------------------------------------------------------------
@@ -859,30 +958,40 @@ export async function startGatewayServer(
   });
 
   // Seed default marketplace source if none exist yet.
+  // The branch matches the gateway's update channel so plugin catalog
+  // versions align with the subscribed release track.
+  const updateChannel = config.gateway?.updateChannel ?? "main";
+  const marketplaceRef = `Civicognita/aionima-marketplace#${updateChannel}`;
   const existingSources = marketplaceManager.getSources();
   if (existingSources.length === 0) {
-    marketplaceManager.addSource("Civicognita/aionima-marketplace", "Aionima");
-    log.info("marketplace: seeded default source (Civicognita/aionima-marketplace)");
+    marketplaceManager.addSource(marketplaceRef, "Aionima");
+    log.info(`plugin-marketplace: seeded default source (${marketplaceRef})`);
+  } else {
+    // Ensure the source ref matches the current update channel
+    const defaultSource = existingSources[0]!;
+    if (defaultSource.ref !== marketplaceRef) {
+      marketplaceManager.removeSource(defaultSource.id);
+      marketplaceManager.addSource(marketplaceRef, "Aionima");
+      log.info(`plugin-marketplace: updated source to ${marketplaceRef}`);
+    }
   }
 
-  // Sync the local marketplace catalog into the DB so version checks are current.
-  const marketplaceDir = config.marketplace?.dir ?? "/opt/aionima-marketplace";
-  if (existsSync(marketplaceDir)) {
-    const syncResult = marketplaceManager.syncLocalCatalog(marketplaceDir);
-    if (syncResult.ok) {
-      log.info(`marketplace: synced ${String(syncResult.pluginCount)} plugins from local catalog`);
-    } else {
-      log.warn(`marketplace: local catalog sync failed: ${syncResult.error}`);
+  // Sync marketplace catalog from GitHub AND auto-update any installed plugin
+  // whose catalog version is newer than its installed version. Runs BEFORE
+  // plugin discovery (line ~1170) so the loader reads freshly-updated content
+  // from ~/.agi/plugins/cache/. Without this, installed plugins stay frozen at
+  // install time forever — even after `agi upgrade` pulls the catalog.
+  try {
+    const result = await marketplaceManager.syncAndUpdateAll();
+    log.info(`plugin-marketplace: catalog synced (${String(result.synced)} plugins total)`);
+    if (result.updated.length > 0) {
+      log.info(`plugin-marketplace: auto-updated ${String(result.updated.length)} plugin(s) -> ${result.updated.join(", ")}`);
     }
-
-    // Reconcile installed plugins — re-install any whose source files changed
-    const reconcileResult = await marketplaceManager.reconcileInstalled(marketplaceDir);
-    if (reconcileResult.updated.length > 0) {
-      log.info(`marketplace: updated ${String(reconcileResult.updated.length)} plugin(s): ${reconcileResult.updated.join(", ")}`);
+    if (result.errors.length > 0) {
+      log.warn(`plugin-marketplace: ${String(result.errors.length)} plugin update(s) failed: ${result.errors.join("; ")}`);
     }
-    for (const err of reconcileResult.errors) {
-      log.warn(`marketplace: reconcile error: ${err}`);
-    }
+  } catch (err) {
+    log.error(`plugin-marketplace: sync/update failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // Auto-install missing required plugins from the official marketplace.
@@ -924,6 +1033,24 @@ export async function startGatewayServer(
           }
         }
       }
+
+      // Auto-uninstall plugins that were previously required but removed.
+      // If a plugin is installed, came from the default source, is no longer required,
+      // AND is no longer in the synced catalog, clean it up.
+      const requiredIds = new Set(reqData.plugins.map((p) => p.id));
+      const installed = marketplaceManager.getInstalled();
+      const catalogEntries = marketplaceManager.searchCatalog({});
+      const catalogNames = new Set(catalogEntries.map((c) => c.name));
+      for (const item of installed) {
+        if (!requiredIds.has(item.name) && !catalogNames.has(item.name)) {
+          log.info(`auto-uninstalling removed plugin: ${item.name} (not in catalog or required list)`);
+          try {
+            marketplaceManager.uninstall(item.name, true);
+          } catch (err) {
+            log.warn(`failed to auto-uninstall ${item.name}: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+      }
     } catch (err) {
       log.warn(`failed to load required-plugins.json: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -948,7 +1075,47 @@ export async function startGatewayServer(
   }
   discovered.errors.push(...installedDiscovery.errors);
   if (installedDiscovery.plugins.length > 0) {
-    log.info(`plugins: ${String(installedDiscovery.plugins.length)} installed from marketplace cache`);
+    log.info(`plugin-marketplace: ${String(installedDiscovery.plugins.length)} installed from cache`);
+  }
+
+  // Ensure all cached plugins have marketplace DB records so version updates work.
+  // Plugins installed before DB tracking existed may be in cache but not in the DB.
+  {
+    const sources = marketplaceManager.getSources();
+    const defaultSourceId = sources[0]?.id;
+    if (defaultSourceId !== undefined) {
+      let backfilled = 0;
+      for (const ip of installedDiscovery.plugins) {
+        if (!marketplaceManager.isInstalled(ip.manifest.id)) {
+          const catalog = marketplaceManager.searchCatalog({ q: ip.manifest.id });
+          const match = catalog.find(c => c.name === ip.manifest.id);
+          marketplaceManager.backfillInstalled({
+            name: ip.manifest.id,
+            sourceId: match?.sourceId ?? defaultSourceId,
+            type: "plugin",
+            version: ip.manifest.version ?? "0.0.0",
+            installedAt: new Date().toISOString(),
+            installPath: join(pluginCacheDir, ip.manifest.id),
+            sourceJson: match ? JSON.stringify(match.source) : "{}",
+          });
+          backfilled++;
+        }
+      }
+      if (backfilled > 0) {
+        log.info(`plugin-marketplace: backfilled ${String(backfilled)} DB records for cached plugins`);
+      }
+    }
+  }
+
+  // Now that all cached plugins are tracked in the DB, check for version updates.
+  {
+    const syncResult = await marketplaceManager.syncAndUpdateAll();
+    if (syncResult.updated.length > 0) {
+      log.info(`plugin-marketplace: updated ${String(syncResult.updated.length)} plugin(s): ${syncResult.updated.join(", ")}`);
+    }
+    for (const err of syncResult.errors) {
+      log.warn(`plugin-marketplace: update error: ${err}`);
+    }
   }
 
   // Channel plugins are installed from the marketplace like all other plugins.
@@ -1082,6 +1249,28 @@ export async function startGatewayServer(
   const mappDiscoveryResult = discoverMApps(mappsDir, mappRegistry, logger);
   log.info(`MApps: ${String(mappDiscoveryResult.loaded)} loaded, ${String(mappDiscoveryResult.skipped)} skipped`);
 
+  // MApp Marketplace Manager — multi-source MApp catalog, install, and updates
+  const { MAppMarketplaceManager } = await import("@aionima/marketplace");
+  const mappMarketplaceManager = new MAppMarketplaceManager({
+    store: marketplaceManager.getStore(),
+    mappsDir,
+    updateChannel,
+  });
+
+  // Seed official MApp Marketplace source if none exist
+  {
+    const mappSources = mappMarketplaceManager.getSources();
+    const mappRef = `Civicognita/aionima-mapp-marketplace#${updateChannel}`;
+    if (mappSources.length === 0) {
+      mappMarketplaceManager.addSource(mappRef, "Aionima MApps");
+      log.info(`mapp-marketplace: seeded default source (${mappRef})`);
+    } else if (mappSources[0]!.ref !== mappRef) {
+      mappMarketplaceManager.removeSource(mappSources[0]!.id);
+      mappMarketplaceManager.addSource(mappRef, "Aionima MApps");
+      log.info(`mapp-marketplace: updated source to ${mappRef}`);
+    }
+  }
+
   const hostingManager = new HostingManager({
     config: {
       enabled: hostingConfig?.enabled ?? false,
@@ -1123,6 +1312,143 @@ export async function startGatewayServer(
   const terminalManager = new TerminalManager();
 
   // MarketplaceManager created earlier (Step 5f) for required plugin auto-install.
+
+  // -------------------------------------------------------------------------
+  // Step 5i: Model Runtime — HuggingFace model serving (always initialized,
+  //          config-gated at request time so hf.enabled can be hot-swapped)
+  // -------------------------------------------------------------------------
+
+  const hfCacheDir = (() => {
+    const hfConf = (config as Record<string, unknown>).hf as { cacheDir?: string } | undefined;
+    return (hfConf?.cacheDir ?? "~/.agi/models").replace(/^~/, homedir());
+  })();
+  mkdirSync(join(hfCacheDir, "hub"), { recursive: true });
+
+  const modelRuntimeEvents = new EventEmitter() as ModelRuntimeEventEmitter;
+  const hardwareProfiler = new HardwareProfiler(hfCacheDir);
+  const hfClient = new HfHubClient({
+    apiToken: ((config as Record<string, unknown>).hf as { apiToken?: string } | undefined)?.apiToken,
+  });
+
+  // Build PostgreSQL connection from ID service config
+  const idServiceConfig = (config as Record<string, unknown>).idService as { local?: { databaseUrl?: string } } | undefined;
+  const pgUrl = idServiceConfig?.local?.databaseUrl ?? "postgres://aionima_id:0a117a24fd397009f19dd7146e348f54@localhost:5433/aionima_id";
+  const pgPool = new Pool({ connectionString: pgUrl });
+
+  const modelStore = new ModelStore(pgPool);
+  await modelStore.initialize(); // creates agi schema + tables
+
+  // Dataset store lives in the same PostgreSQL instance, agi schema
+  const datasetsCacheDir = join(homedir(), ".agi", "datasets");
+  mkdirSync(join(datasetsCacheDir, "hub"), { recursive: true });
+  const datasetStore = new DatasetStore(pgPool);
+  await datasetStore.initialize(); // creates agi.datasets table
+
+  const profile = hardwareProfiler.scan();
+
+  const hfInitConfig = (config as Record<string, unknown>).hf as
+    { portRangeStart?: number; maxConcurrentModels?: number; gpuMode?: "auto" | "nvidia" | "amd" | "cpu-only"; images?: { llm?: string; diffusion?: string; general?: string }; inferenceTimeoutMs?: number; autoStart?: string[]; enabled?: boolean }
+    | undefined;
+
+  const modelContainerManager = new ModelContainerManager(
+    {
+      portRangeStart: hfInitConfig?.portRangeStart ?? 6000,
+      maxConcurrentModels: hfInitConfig?.maxConcurrentModels ?? 3,
+      gpuMode: hfInitConfig?.gpuMode ?? "auto",
+      images: hfInitConfig?.images,
+      statePath: join(homedir(), ".agi", "model-containers.json"),
+    },
+    modelRuntimeEvents,
+  );
+
+  // Wire model runtime deps into HostingManager so project containers can receive
+  // AI model env vars (AIONIMA_MODEL_*_URL) and dataset volume mounts.
+  // Called here because modelStore + modelContainerManager are created in Step 5i,
+  // after the HostingManager is constructed in Step 5h.
+  hostingManager.setModelDeps({ modelStore, modelContainerManager });
+
+  const capabilityResolver = new CapabilityResolver(profile.capabilities);
+  const inferenceGateway = new InferenceGateway(modelStore, hfInitConfig?.inferenceTimeoutMs ?? 120_000);
+
+  const modelAgentBridge = new ModelAgentBridge(
+    modelRuntimeEvents,
+    modelStore,
+    inferenceGateway,
+    profile.capabilities,
+  );
+
+  // Known-models registry and custom container builder
+  const knownModelsRegistry = new KnownModelsRegistry(
+    join(homedir(), ".agi", "custom-runtimes"),
+  );
+  const customContainerBuilder = new CustomContainerBuilder(hfCacheDir);
+
+  // Fine-tune manager — jobs run in dedicated Podman containers
+  const fineTuneManager = new FineTuneManager(
+    modelStore,
+    datasetStore,
+    join(homedir(), ".agi", "finetune"),
+  );
+
+  // Always store deps — routes are always registered and check hf.enabled at request time
+  const hfApiDeps: Parameters<typeof registerHfRoutes>[1] = {
+    hardwareProfiler,
+    hfClient,
+    modelStore,
+    datasetStore,
+    containerManager: modelContainerManager,
+    capabilityResolver,
+    inferenceGateway,
+    agentBridge: modelAgentBridge,
+    knownModelsRegistry,
+    customContainerBuilder,
+    fineTuneManager,
+    isEnabled: () => Boolean(((config as Record<string, unknown>).hf as { enabled?: boolean } | undefined)?.enabled),
+  };
+
+  // -------------------------------------------------------------------------
+  // Step 5i2: Local model runtime (small model for safemode investigator + doctor)
+  // -------------------------------------------------------------------------
+
+  const opsConfig = (config as Record<string, unknown>).ops as
+    | { localModel?: { modelId?: string } }
+    | undefined;
+  const localModelRuntime = new LocalModelRuntime(
+    modelStore,
+    inferenceGateway,
+    { modelId: opsConfig?.localModel?.modelId ?? DEFAULT_LOCAL_MODEL_ID },
+    createComponentLogger(logger, "local-model"),
+  );
+
+  // If we booted into safemode, fire the investigator async (don't block boot).
+  // The investigator writes a report to ~/.agi/incidents/ and surfaces a
+  // notification the user sees in the dashboard.
+  if (isSafemodeBoot) {
+    void runInvestigator(createComponentLogger(logger, "investigator"), {
+      localModel: localModelRuntime,
+      notificationStore,
+    });
+  }
+
+  // Auto-start models if HF is enabled at boot — but skip in safemode so a
+  // crashed container can't re-trigger whatever broke us last time.
+  if (hfInitConfig?.enabled && !isSafemodeBoot) {
+    const autoStartIds = hfInitConfig.autoStart ?? [];
+    for (const modelId of autoStartIds) {
+      const model = await modelStore.getById(modelId);
+      if (model !== undefined && model.status === "ready") {
+        const containerConfig = capabilityResolver.buildContainerConfig(model, hfInitConfig.images);
+        modelContainerManager.start(model, containerConfig).catch((err) => {
+          log.error(`HF auto-start failed for ${modelId}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+    }
+    log.info(`HF Model Runtime enabled — hardware tier: ${profile.capabilities.tier}, cache: ${hfCacheDir}`);
+  } else if (hfInitConfig?.enabled && isSafemodeBoot) {
+    log.warn("HF Model Runtime: auto-start SKIPPED (safemode boot)");
+  } else {
+    log.info("HF Model Runtime initialized (disabled — enable via Settings > HF Marketplace)");
+  }
 
   // -------------------------------------------------------------------------
   // Step 3f: Federation & Identity subsystems
@@ -1197,6 +1523,76 @@ export async function startGatewayServer(
   });
   log.info(`registered ${String(agentToolCount)} agent tools`);
 
+  // Register HF model management tool for the agent
+  toolRegistry.register(
+    {
+      name: "hf_models",
+      description: "Manage HuggingFace models and datasets — search the Hub, list installed models, check hardware capabilities, search datasets, list model API endpoints, and check running model status. Use this tool when the user asks about AI models, HuggingFace, model downloads, local inference, datasets, or building AI apps.",
+      requiresState: [],
+      requiresTier: [],
+    },
+    async (input: Record<string, unknown>) => {
+      const action = String(input.action ?? "list");
+      const hfEnabled = ((config as Record<string, unknown>).hf as { enabled?: boolean } | undefined)?.enabled;
+
+      if (!hfEnabled && action !== "hardware" && action !== "status") {
+        return JSON.stringify({ error: "HF Marketplace is not enabled. Ask the user to enable it in Settings > HF Marketplace." });
+      }
+
+      switch (action) {
+        case "search": {
+          const q = String(input.query ?? "");
+          const task = input.task as string | undefined;
+          const results = await hfClient.searchModels({ search: q, pipeline_tag: task, limit: 5 });
+          return JSON.stringify(results.map((m) => ({ id: m.id, task: m.pipeline_tag, downloads: m.downloads, likes: m.likes })));
+        }
+        case "list": {
+          const allModels = await modelStore.getAll();
+          return JSON.stringify(allModels.map((m) => ({ id: m.id, status: m.status, runtime: m.runtimeType, size: m.fileSizeBytes })));
+        }
+        case "running": {
+          const runningModels = (await modelStore.getAll()).filter((m) => m.status === "running");
+          return JSON.stringify(runningModels.map((m) => ({ id: m.id, displayName: m.displayName, runtime: m.runtimeType, port: m.containerPort, pipeline: m.pipelineTag })));
+        }
+        case "hardware":
+          return JSON.stringify(hardwareProfiler.getProfile().capabilities);
+        case "status": {
+          const allInstalled = await modelStore.getAll();
+          const runningCount = allInstalled.filter((m) => m.status === "running").length;
+          return JSON.stringify({ enabled: hfEnabled ?? false, installed: allInstalled.length, running: runningCount, tier: hardwareProfiler.getProfile().capabilities.tier });
+        }
+        case "datasets": {
+          const q = String(input.query ?? "");
+          const results = await hfClient.searchDatasets({ search: q, limit: 5 });
+          return JSON.stringify(results.map((d) => ({ id: d.id, downloads: d.downloads, likes: d.likes, tags: d.tags })));
+        }
+        case "endpoints": {
+          const modelId = String(input.modelId ?? "");
+          if (!modelId) {
+            return JSON.stringify({ error: "modelId is required for action=endpoints" });
+          }
+          const model = await modelStore.getById(modelId);
+          if (!model) {
+            return JSON.stringify({ error: `Model not installed: ${modelId}` });
+          }
+          return JSON.stringify({ modelId, endpoints: model.endpoints ?? [] });
+        }
+        default:
+          return JSON.stringify({ error: `Unknown action: ${action}. Available: search, list, running, hardware, status, datasets, endpoints` });
+      }
+    },
+    {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["search", "list", "running", "hardware", "status", "datasets", "endpoints"], description: "Action to perform" },
+        query: { type: "string", description: "Search query (for action=search or action=datasets)" },
+        task: { type: "string", description: "Pipeline task filter (for action=search), e.g. text-generation, text-to-image" },
+        modelId: { type: "string", description: "HuggingFace model ID in author/repo format (for action=endpoints)" },
+      },
+      required: ["action"],
+    },
+  );
+
   // -------------------------------------------------------------------------
   // Step 4: Runtime state creation (HTTP + WS servers)
   //
@@ -1261,11 +1657,14 @@ export async function startGatewayServer(
       marketplaceManager,
       onPluginInstalled: async (installPath: string) => {
         try {
-          const newDiscovery = discoverPlugins([installPath]);
-          if (newDiscovery.plugins.length === 0) {
-            return { loaded: false, error: "No plugin found at install path" };
+          // installPath is the plugin's own directory (e.g. ~/.agi/plugins/cache/<id>).
+          // Use tryLoadManifest directly — discoverPlugins expects parent dirs
+          // and silently returns empty when given a plugin dir.
+          const discovery = tryLoadManifest(installPath);
+          if ("error" in discovery) {
+            return { loaded: false, error: `manifest load failed: ${discovery.error}` };
           }
-          const pluginToLoad = newDiscovery.plugins[0]!;
+          const pluginToLoad = discovery;
           if (pluginRegistry.has(pluginToLoad.manifest.id)) {
             return { loaded: true, pluginId: pluginToLoad.manifest.id };
           }
@@ -1289,6 +1688,9 @@ export async function startGatewayServer(
             for (const { stack } of pluginRegistry.getStacks()) {
               if (!stackRegistry.get(stack.id)) stackRegistry.register(stack);
             }
+            // Regenerate Caddyfile so any subdomain routes the new plugin registered
+            // land in the reverse proxy immediately.
+            hostingManager.regenerateCaddyfile();
             log.info(`hot-loaded plugin: ${pluginToLoad.manifest.id}`);
             return { loaded: true, pluginId: pluginToLoad.manifest.id };
           }
@@ -1299,11 +1701,15 @@ export async function startGatewayServer(
       },
       onPluginUpdated: async (installPath: string) => {
         try {
-          const newDiscovery = discoverPlugins([installPath]);
-          if (newDiscovery.plugins.length === 0) {
-            return { loaded: false, error: "No plugin found at install path" };
+          // installPath is the plugin's own directory. Use tryLoadManifest
+          // directly — discoverPlugins silently returns empty when given a
+          // plugin dir instead of a parent, which caused every hot-reload
+          // to report success while actually doing nothing.
+          const discovery = tryLoadManifest(installPath);
+          if ("error" in discovery) {
+            return { loaded: false, error: `manifest load failed: ${discovery.error}` };
           }
-          const pluginToLoad = newDiscovery.plugins[0]!;
+          const pluginToLoad = discovery;
           // Do NOT check pluginRegistry.has() — the plugin was just deactivated for update
           const result = await loadPlugins([pluginToLoad], {
             pluginRegistry,
@@ -1324,6 +1730,8 @@ export async function startGatewayServer(
             for (const { stack } of pluginRegistry.getStacks()) {
               if (!stackRegistry.get(stack.id)) stackRegistry.register(stack);
             }
+            // Regenerate Caddyfile in case the updated plugin changed its subdomain route.
+            hostingManager.regenerateCaddyfile();
             log.info(`hot-reloaded plugin: ${pluginToLoad.manifest.id}`);
             return { loaded: true, pluginId: pluginToLoad.manifest.id };
           }
@@ -1352,14 +1760,18 @@ export async function startGatewayServer(
         // 5. Deactivate and remove all registrations
         await pluginRegistry.deactivateSingle(pluginId);
 
+        // 6. Regenerate Caddyfile so any subdomain routes the plugin had registered
+        // are removed from the reverse proxy.
+        hostingManager.regenerateCaddyfile();
+
         log.info(`deactivated plugin for update: ${pluginId}`);
       },
       secrets,
       config: config as Record<string, unknown>,
       mappRegistry,
-      mappMarketplaceDir: (config as Record<string, unknown>).mappMarketplace
-        ? ((config as Record<string, unknown>).mappMarketplace as Record<string, string>).dir
-        : undefined,
+      inferenceGateway,
+      modelStore,
+      mappMarketplaceManager,
       magicAppStateStore,
       identityProvider,
       oauthHandler,
@@ -1380,6 +1792,8 @@ export async function startGatewayServer(
         (f) => registerWorkerApi(f, workerRuntime, workerPromptLoader),
         (f) => registerComplianceRoutes(f, { incidentStore, vendorStore, sessionStore: complianceSessionStore, backupManager }),
         (f) => registerSecurityRoutes(f, { scanRunner, scanStore }),
+        (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api")),
+        (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
       ],
     },
     { host, port },
@@ -1445,6 +1859,35 @@ export async function startGatewayServer(
   // browser reconnected during a long tool execution (e.g., Playwright sessions).
   const ownerConnectionMap = new Map<string, string>();
 
+  // Per-session ring buffer of chat:* events. When the browser reconnects, the
+  // client sends chat:resume with its last-seen seq number and the server
+  // replays missed events from the buffer. Without this, events emitted during
+  // a brief WS drop are lost and the client stalls waiting for a terminal
+  // event that was sent to a dead connection.
+  const chatEventBuffer = new ChatEventBuffer();
+
+  /**
+   * Record + send a chat:* event for a session. Injects a monotonic `seq`
+   * number into the payload so the client can track missed events. Use
+   * instead of `wsServer.sendTo(...)` for any chat event we want replayable
+   * on reconnect.
+   */
+  const recordAndSendChat = (
+    sessionId: string | undefined,
+    targetConnId: string,
+    type: string,
+    payload: Record<string, unknown>,
+  ): void => {
+    if (!sessionId) {
+      // Without a sessionId we can't buffer; send directly and hope the
+      // connection is still alive.
+      wsServer.sendTo(targetConnId, type, payload);
+      return;
+    }
+    const enriched = { ...payload, seq: chatEventBuffer.record(sessionId, type, payload).seq };
+    wsServer.sendTo(targetConnId, type, enriched);
+  };
+
   wsServer.on("message", (connectionId: string, message: WSMessage) => {
     // Update the owner → connection mapping on every message
     if (ownerEntityId !== undefined) {
@@ -1459,6 +1902,36 @@ export async function startGatewayServer(
       case "subscribe": {
         const topics = (message.payload as { topics?: string[] })?.topics ?? [];
         subscriptions.set(connectionId, new Set(topics));
+        break;
+      }
+
+      case "chat:resume": {
+        // Client is reconnecting and wants any chat:* events it missed since
+        // the last seq it saw. We replay from the per-session ring buffer.
+        const p = message.payload as { sessionId?: string; lastSeq?: number } | undefined;
+        if (!p?.sessionId || typeof p.lastSeq !== "number") {
+          wsServer.sendTo(connectionId, "chat:resume_missed", { sessionId: p?.sessionId ?? null });
+          break;
+        }
+        const result = chatEventBuffer.since(p.sessionId, p.lastSeq);
+        if (result.missed) {
+          // Session not in the buffer — usually means the server restarted
+          // between the last emit and this reconnect. Tell the client so it
+          // can surface a clear "state may be incomplete" UI instead of
+          // hanging on a thinking indicator that will never clear.
+          wsServer.sendTo(connectionId, "chat:resume_missed", { sessionId: p.sessionId });
+          break;
+        }
+        for (const ev of result.events) {
+          // Payload already carries its own seq; the replay preserves order.
+          const payloadWithSeq = { ...(ev.payload as Record<string, unknown>), seq: ev.seq };
+          wsServer.sendTo(connectionId, ev.type, payloadWithSeq);
+        }
+        wsServer.sendTo(connectionId, "chat:resumed", {
+          sessionId: p.sessionId,
+          currentSeq: result.currentSeq,
+          replayedCount: result.events.length,
+        });
         break;
       }
 
@@ -1708,6 +2181,12 @@ export async function startGatewayServer(
 
         // Generate a runId to link all messages from this invocation.
         const runId = ulid();
+        // `currentRunId` is the runId the chat event handlers should stamp on emitted
+        // events. It starts equal to `runId`, but the post-run injection drain mutates
+        // it so each follow-up run's events carry their own injRunId (the previous
+        // closure-capture bug sent events with the outer runId and corrupted the run
+        // grouping on the client).
+        let currentRunId: string = runId;
 
         wsServer.sendTo(connectionId, "chat:thinking", {
           sessionId: chatSessionId,
@@ -1772,6 +2251,14 @@ export async function startGatewayServer(
           });
         }
 
+        // Local alias: every chat:* emit during this chat:send lifecycle goes
+        // through the ring buffer so it's replayable on reconnect. This is the
+        // ONLY difference from wsServer.sendTo — the buffer injects a seq field
+        // into the payload and records it for later replay by chat:resume.
+        const sendChat = (type: string, payload: Record<string, unknown>): void => {
+          recordAndSendChat(chatSessionId, getConnId(), type, payload);
+        };
+
         // Progressive chat update listeners
         const toolActivityMap: Record<string, string> = {
           manage_project: "Updating project...",
@@ -1780,9 +2267,9 @@ export async function startGatewayServer(
         };
         const toolStartHandler = (data: { sessionKey: string; toolName: string; toolIndex: number; loopIteration: number; toolInput?: Record<string, unknown> }) => {
           if (data.sessionKey !== sessionKey) return;
-          wsServer.sendTo(getConnId(), "chat:tool_start", {
+          sendChat("chat:tool_start", {
             sessionId: chatSessionId,
-            runId,
+            runId: currentRunId,
             toolName: data.toolName,
             toolIndex: data.toolIndex,
             loopIteration: data.loopIteration,
@@ -1802,9 +2289,9 @@ export async function startGatewayServer(
           if (data.sessionKey !== sessionKey) return;
           const toolResultTs = new Date().toISOString();
           const toolCardId = `${chatSessionId ?? "t"}-${String(data.loopIteration)}-${String(data.toolIndex)}`;
-          wsServer.sendTo(getConnId(), "chat:tool_result", {
+          sendChat("chat:tool_result", {
             sessionId: chatSessionId,
-            runId,
+            runId: currentRunId,
             toolName: data.toolName,
             toolIndex: data.toolIndex,
             loopIteration: data.loopIteration,
@@ -1822,7 +2309,7 @@ export async function startGatewayServer(
                 role: "tool",
                 content: data.summary ?? data.toolName,
                 timestamp: toolResultTs,
-                runId,
+                runId: currentRunId,
                 toolCard: {
                   id: toolCardId,
                   toolName: data.toolName,
@@ -1845,7 +2332,7 @@ export async function startGatewayServer(
               const parsed = JSON.parse(data.resultContent) as { ok?: boolean; path?: string; name?: string; slug?: string };
               if (parsed.ok && parsed.path) {
                 chatProjectPath = parsed.path;
-                wsServer.sendTo(getConnId(), "chat:context_set", {
+                sendChat("chat:context_set", {
                   sessionId: chatSessionId,
                   context: parsed.path,
                   contextLabel: parsed.name ?? parsed.slug ?? "Project",
@@ -1864,7 +2351,7 @@ export async function startGatewayServer(
         };
         const progressHandler = (data: { sessionKey: string; text: string; phase: string }) => {
           if (data.sessionKey !== sessionKey) return;
-          wsServer.sendTo(getConnId(), "chat:progress", {
+          sendChat("chat:progress", {
             sessionId: chatSessionId,
             text: data.text,
             phase: data.phase,
@@ -1874,9 +2361,9 @@ export async function startGatewayServer(
         const thoughtHandler = (data: { sessionKey: string; content: string }) => {
           if (data.sessionKey !== sessionKey) return;
           const thoughtTs = new Date().toISOString();
-          wsServer.sendTo(getConnId(), "chat:thought", {
+          sendChat("chat:thought", {
             sessionId: chatSessionId,
-            runId,
+            runId: currentRunId,
             content: data.content,
             timestamp: thoughtTs,
           });
@@ -1888,10 +2375,17 @@ export async function startGatewayServer(
                 role: "thought",
                 content: data.content,
                 timestamp: thoughtTs,
-                runId,
+                runId: currentRunId,
               }));
             }
           }
+        };
+        const injectionConsumedHandler = (data: { sessionKey: string; count: number }) => {
+          if (data.sessionKey !== sessionKey) return;
+          sendChat("chat:injection_consumed", {
+            sessionId: chatSessionId,
+            count: data.count,
+          });
         };
 
         // Use a getter that always resolves the CURRENT connectionId for this owner,
@@ -1903,12 +2397,14 @@ export async function startGatewayServer(
         agentInvoker.on("tool_result", toolResultHandler);
         agentInvoker.on("progress", progressHandler);
         agentInvoker.on("thought", thoughtHandler);
+        agentInvoker.on("injection_consumed", injectionConsumedHandler);
 
         const removeProgressListeners = () => {
           agentInvoker.removeListener("tool_start", toolStartHandler);
           agentInvoker.removeListener("tool_result", toolResultHandler);
           agentInvoker.removeListener("progress", progressHandler);
           agentInvoker.removeListener("thought", thoughtHandler);
+          agentInvoker.removeListener("injection_consumed", injectionConsumedHandler);
         };
 
         const chainKey = sessionKey ?? `${ownerEntityId}:web:default`;
@@ -1933,7 +2429,9 @@ export async function startGatewayServer(
             abortSignal: abortController.signal,
           });
         }).then(async (outcome) => {
-          removeProgressListeners();
+          // Listeners stay attached through the post-run drain below — final detach
+          // happens in the .finally() after drain completes. Removing them here
+          // (as the old code did) silenced tool/thought events for injection follow-ups.
           if (chatSessionId) sessionAbortControllers.delete(chatSessionId);
           // Emit invocation_complete to clear the project activity indicator.
           if (chatProjectPath !== undefined) {
@@ -1961,7 +2459,7 @@ export async function startGatewayServer(
             } else if (!text) {
               text = "[No response]";
             }
-            wsServer.sendTo(getConnId(), "chat:response", {
+            sendChat("chat:response", {
               sessionId: chatSessionId,
               runId,
               text,
@@ -1970,7 +2468,7 @@ export async function startGatewayServer(
             // Generate contextual next-step suggestions via LLM
             const suggestions = await generateNextSteps(chatText ?? "", text, getLLMProvider());
             if (suggestions.length > 0) {
-              wsServer.sendTo(getConnId(), "chat:suggestions", {
+              sendChat("chat:suggestions", {
                 sessionId: chatSessionId,
                 suggestions,
               });
@@ -2010,23 +2508,23 @@ export async function startGatewayServer(
               }
             }
           } else if (outcome.type === "error") {
-            wsServer.sendTo(getConnId(), "chat:error", { sessionId: chatSessionId, error: outcome.message });
+            sendChat("chat:error", { sessionId: chatSessionId, error: outcome.message });
           } else if (outcome.type === "rate_limited") {
-            wsServer.sendTo(getConnId(), "chat:error", { sessionId: chatSessionId, error: outcome.entityNotification });
+            sendChat("chat:error", { sessionId: chatSessionId, error: outcome.entityNotification });
           } else if (outcome.type === "queued") {
-            wsServer.sendTo(getConnId(), "chat:response", {
+            sendChat("chat:response", {
               sessionId: chatSessionId,
               text: outcome.entityNotification || "[Message queued]",
               timestamp: new Date().toISOString(),
             });
           } else if (outcome.type === "human_routed") {
-            wsServer.sendTo(getConnId(), "chat:response", {
+            sendChat("chat:response", {
               sessionId: chatSessionId,
               text: "[Routed to human operator]",
               timestamp: new Date().toISOString(),
             });
           } else if (outcome.type === "log_only") {
-            wsServer.sendTo(getConnId(), "chat:response", {
+            sendChat("chat:response", {
               sessionId: chatSessionId,
               text: "[Logged — no response in current state]",
               timestamp: new Date().toISOString(),
@@ -2036,11 +2534,14 @@ export async function startGatewayServer(
           // Drain any remaining injected messages that weren't consumed during the
           // tool loop (e.g. when the agent responded with text only, no tools).
           // Re-invoke the agent for each so the frontend's pending counter clears.
+          // Each follow-up run reassigns `currentRunId` so the still-attached event
+          // handlers stamp events with the correct runId (prior closure-capture bug).
           if (sessionKey) {
             const remaining = agentInvoker.drainInjections(sessionKey);
             for (const injText of remaining) {
               const injRunId = ulid();
-              wsServer.sendTo(connectionId, "chat:thinking", {
+              currentRunId = injRunId;
+              sendChat("chat:thinking", {
                 sessionId: chatSessionId,
                 runId: injRunId,
                 timestamp: new Date().toISOString(),
@@ -2070,7 +2571,7 @@ export async function startGatewayServer(
                 });
                 if (injOutcome.type === "response") {
                   const injResponseText = injOutcome.text || "[No response]";
-                  wsServer.sendTo(connectionId, "chat:response", {
+                  sendChat("chat:response", {
                     sessionId: chatSessionId,
                     runId: injRunId,
                     text: injResponseText,
@@ -2090,11 +2591,23 @@ export async function startGatewayServer(
                     }
                   }
                 } else if (injOutcome.type === "error") {
-                  wsServer.sendTo(connectionId, "chat:error", { sessionId: chatSessionId, error: injOutcome.message });
+                  sendChat("chat:error", { sessionId: chatSessionId, error: injOutcome.message });
+                } else if (injOutcome.type === "rate_limited") {
+                  sendChat("chat:error", { sessionId: chatSessionId, error: injOutcome.entityNotification });
+                } else {
+                  // Default: any other outcome type (queued, human_routed, log_only) — emit
+                  // a chat:response so the client's thinking state ALWAYS clears. Without
+                  // this default the UI sticks on "thinking..." forever.
+                  sendChat("chat:response", {
+                    sessionId: chatSessionId,
+                    runId: injRunId,
+                    text: "[Follow-up processed]",
+                    timestamp: new Date().toISOString(),
+                  });
                 }
               } catch (injErr: unknown) {
                 log.error(`chat:inject follow-up error: ${injErr instanceof Error ? injErr.message : String(injErr)}`);
-                wsServer.sendTo(connectionId, "chat:error", {
+                sendChat("chat:error", {
                   sessionId: chatSessionId,
                   error: injErr instanceof Error ? injErr.message : "Follow-up processing failed",
                 });
@@ -2102,7 +2615,6 @@ export async function startGatewayServer(
             }
           }
         }).catch((err: unknown) => {
-          removeProgressListeners();
           // Emit invocation_complete even on error so the indicator doesn't get stuck.
           if (chatProjectPath !== undefined) {
             dashboardBroadcasterRef?.emitProjectActivity({
@@ -2112,11 +2624,14 @@ export async function startGatewayServer(
             });
           }
           log.error(`chat:send error: ${err instanceof Error ? err.message : String(err)}`);
-          wsServer.sendTo(getConnId(), "chat:error", {
+          sendChat("chat:error", {
             sessionId: chatSessionId,
             error: err instanceof Error ? err.message : "Agent processing failed",
           });
         }).finally(() => {
+          // Always detach listeners regardless of success/failure — previously only the
+          // catch branch did this, leaking handlers across every chat:send on the same WS.
+          removeProgressListeners();
           if (sessionProcessingChain.get(chainKey) === current) {
             sessionProcessingChain.delete(chainKey);
           }
@@ -2126,8 +2641,12 @@ export async function startGatewayServer(
       }
 
       case "chat:close": {
-        // Close a chat session (no-op server-side; session stays in memory for resume)
+        // Close a chat session and drop its replay buffer. The session itself
+        // stays in memory for history recall; we just release the event ring.
         const closePayload = message.payload as { sessionId?: string } | undefined;
+        if (closePayload?.sessionId) {
+          chatEventBuffer.drop(closePayload.sessionId);
+        }
         wsServer.sendTo(connectionId, "chat:closed", { sessionId: closePayload?.sessionId });
         break;
       }
@@ -2359,15 +2878,16 @@ export async function startGatewayServer(
 
       case "terminal:open": {
         const termPayload = message.payload as { projectPath?: string; cols?: number; rows?: number } | undefined;
-        const termProjectPath = termPayload?.projectPath;
-        if (typeof termProjectPath !== "string" || termProjectPath.length === 0) {
-          wsServer.sendTo(connectionId, "terminal:error", { error: "projectPath is required" });
-          break;
-        }
+        // When the client sends no projectPath (or an empty one), treat this as a
+        // system-level terminal and spawn in the user's home directory. This is the
+        // path used by the main-header "System Terminal" button in the dashboard.
+        const rawPath = termPayload?.projectPath;
+        const isSystem = !(typeof rawPath === "string" && rawPath.length > 0);
+        const termProjectPath = isSystem ? (process.env.HOME ?? "/") : rawPath!;
         const sessionId = `term_${ulid()}`;
         const termSession = terminalManager.open(sessionId, termProjectPath, termPayload?.cols ?? 80, termPayload?.rows ?? 24);
         if (termSession === null) {
-          wsServer.sendTo(connectionId, "terminal:error", { error: "Project directory not found" });
+          wsServer.sendTo(connectionId, "terminal:error", { error: "Terminal working directory not found" });
           break;
         }
         // Wire output to this WS connection
@@ -2385,7 +2905,13 @@ export async function startGatewayServer(
         };
         terminalManager.on("data", onData);
         terminalManager.on("exit", onExit);
-        wsServer.sendTo(connectionId, "terminal:opened", { sessionId, projectPath: termProjectPath });
+        wsServer.sendTo(connectionId, "terminal:opened", {
+          sessionId,
+          projectPath: termProjectPath,
+          // Hint to the client whether this is a system terminal so it can pick the
+          // right tab label. The label is computed client-side from this + projects.
+          scope: isSystem ? "system" : "project",
+        });
         break;
       }
 
@@ -2768,6 +3294,21 @@ export async function startGatewayServer(
         });
       }
 
+      // Hot-reload HF config section — enable/disable takes effect immediately because
+      // isEnabled() reads from the live in-memory config object which was already updated above.
+      // The API token cannot be changed without restarting (HfHubClient is constructed at boot),
+      // but that edge case is documented and uncommon.
+      if (event.changedKeys.some((k) => k === "hf")) {
+        const freshHf = (freshConfig as Record<string, unknown>).hf as { apiToken?: string } | undefined;
+        if (freshHf?.apiToken !== undefined) {
+          // HfHubClient reads token at construction time — log a notice so users know
+          // a restart is needed to pick up a new API token.
+          log.info("HF config hot-reloaded (note: API token changes require a restart to take effect)");
+        } else {
+          log.info("HF config hot-reloaded");
+        }
+      }
+
       // Broadcast config change to connected dashboard clients
       wsServer.broadcast("config_reloaded", {
         changedKeys: event.changedKeys,
@@ -2794,6 +3335,26 @@ export async function startGatewayServer(
     closed = true;
 
     log.info("shutting down...");
+
+    // Step -1: Write shutdown marker FIRST — captures running project + model
+    // containers so the next boot can tell this was a graceful exit and can
+    // restart anything that drifted (e.g. podman-restart missed it after an
+    // unrelated crash). Must run before any subsystem tears down its state.
+    try {
+      const marker = buildShutdownMarker(
+        hostingManager.snapshotRunning(),
+        modelContainerManager.snapshotRunning(),
+        "sigterm",
+      );
+      writeShutdownMarker(marker);
+      log.info(
+        `shutdown marker written: ${String(marker.projects.length)} project(s), ${String(marker.models.length)} model(s)`,
+      );
+    } catch (err) {
+      log.error(
+        `failed to write shutdown marker: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     // Step 0: Stop heartbeat scheduler
     if (heartbeatScheduler !== null) {
@@ -2842,6 +3403,15 @@ export async function startGatewayServer(
 
     // Step 5g: Shut down service manager
     await serviceManager.shutdown();
+
+    // Step 5i: Shut down model runtime (stop all model containers)
+    try {
+      await modelContainerManager.stopAll();
+    } catch (err) {
+      log.error(`error stopping model containers: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    modelAgentBridge.destroy();
+    await pgPool.end();
 
     // Step 5g2: Stop scheduled tasks
     scheduledTaskManager.stop();

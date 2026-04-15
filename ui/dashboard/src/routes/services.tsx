@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { PageScroll } from "@/components/PageScroll.js";
 import { fetchServices, startService, stopService, restartService } from "@/api.js";
 import type { ServiceInfo } from "@/types.js";
 
@@ -38,15 +39,16 @@ export default function ServicesPage() {
   }
 
   if (loading) {
-    return <div className="text-[12px] text-muted-foreground py-8">Loading services...</div>;
+    return <PageScroll><div className="text-[12px] text-muted-foreground py-8">Loading services...</div></PageScroll>;
   }
 
   if (error) {
-    return <div className="text-[12px] text-red py-8">Failed to load services: {error}</div>;
+    return <PageScroll><div className="text-[12px] text-red py-8">Failed to load services: {error}</div></PageScroll>;
   }
 
   if (services.length === 0) {
     return (
+      <PageScroll>
       <div className="text-center py-12">
         <div className="text-[13px] text-muted-foreground mb-2">No services registered</div>
         <div className="text-[11px] text-muted-foreground">
@@ -54,11 +56,13 @@ export default function ServicesPage() {
           to see them here.
         </div>
       </div>
+      </PageScroll>
     );
   }
 
   return (
-    <div className="grid gap-3">
+    <PageScroll>
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       {services.map((svc) => {
         const statusColor = {
           running: "bg-green",
@@ -73,61 +77,57 @@ export default function ServicesPage() {
         }[svc.status];
 
         return (
-          <div key={svc.id} className="rounded-xl bg-card border border-border p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span className={cn("inline-block w-2 h-2 rounded-full", statusColor)} />
-                <span className="text-[13px] font-semibold text-foreground">{svc.name}</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-medium">
-                  service
-                </span>
-              </div>
-              <div className="flex gap-1.5 flex-wrap">
-                {svc.status === "stopped" ? (
+          <div key={svc.id} className="rounded-xl bg-card border border-border p-4 flex flex-col">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className={cn("inline-block w-2 h-2 rounded-full shrink-0", statusColor)} />
+              <span className="text-[14px] font-semibold text-foreground">{svc.name}</span>
+              <span className={cn("text-[10px] font-semibold capitalize ml-auto shrink-0", statusText)}>{svc.status}</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground mb-3">{svc.description}</p>
+            <div className="text-[10px] text-muted-foreground mb-3 flex flex-col gap-0.5 mt-auto">
+              <span>Image: <code className="text-foreground">{svc.image.split("/").pop()}</code></span>
+              {svc.port !== null && (
+                <span>Port: <code className="text-foreground">{svc.port}</code></span>
+              )}
+            </div>
+            <div className="flex gap-1.5 border-t border-border pt-2">
+              {svc.status === "stopped" ? (
+                <Button
+                  size="sm"
+                  variant="default"
+                  disabled={busy === svc.id}
+                  onClick={() => void handleAction(svc.id, "start")}
+                  className="text-[11px] h-7 flex-1"
+                >
+                  {busy === svc.id ? "Starting..." : "Start"}
+                </Button>
+              ) : (
+                <>
                   <Button
                     size="sm"
                     variant="outline"
                     disabled={busy === svc.id}
-                    onClick={() => void handleAction(svc.id, "start")}
-                    className="text-[11px] h-7"
+                    onClick={() => void handleAction(svc.id, "restart")}
+                    className="text-[11px] h-7 flex-1"
                   >
-                    Start
+                    Restart
                   </Button>
-                ) : (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy === svc.id}
-                      onClick={() => void handleAction(svc.id, "restart")}
-                      className="text-[11px] h-7"
-                    >
-                      Restart
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy === svc.id}
-                      onClick={() => void handleAction(svc.id, "stop")}
-                      className="text-[11px] h-7"
-                    >
-                      Stop
-                    </Button>
-                  </>
-                )}
-              </div>
-            </div>
-            <div className="text-[12px] text-muted-foreground mb-2">{svc.description}</div>
-            <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-              <span className={cn("font-semibold capitalize", statusText)}>{svc.status}</span>
-              <span>Image: <code className="text-foreground">{svc.image}</code></span>
-              {svc.port !== null && (
-                <span>Port: <code className="text-foreground">{svc.port}</code></span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy === svc.id}
+                    onClick={() => void handleAction(svc.id, "stop")}
+                    className="text-[11px] h-7 flex-1"
+                  >
+                    Stop
+                  </Button>
+                </>
               )}
             </div>
           </div>
         );
       })}
     </div>
+    </PageScroll>
   );
 }

@@ -7,13 +7,24 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { AionimaConfigSchema, type AionimaConfig } from "@aionima/config";
 
-/** Default config file search paths (first found wins) */
+/** Default config file search paths (first found wins). The primary path is
+ * `~/.agi/gateway.json`; the in-project paths are kept as fallbacks for dev
+ * repos that ship a local config. The primary path used to be `aionima.json`
+ * and is auto-migrated on first boot — see `findConfigFile()`. */
 const DEFAULT_PATHS = [
+  join(homedir(), ".agi", "gateway.json"),
+  "./gateway.json",
+  "./gateway.yaml",
+  "./config/gateway.json",
+];
+
+/** Legacy paths from before the rename to gateway.json (v0 → v1 transition). */
+const LEGACY_PATHS = [
   join(homedir(), ".agi", "aionima.json"),
   "./aionima.json",
   "./aionima.yaml",
@@ -34,7 +45,7 @@ export async function loadConfig(configPath?: string): Promise<ConfigResult> {
 
   if (!path) {
     throw new Error(
-      "No config file found. Create ~/.agi/aionima.json or use --config <path>",
+      "No config file found. Create ~/.agi/gateway.json or use --config <path>",
     );
   }
 
@@ -79,7 +90,28 @@ export async function validateConfigFile(
 }
 
 function findConfigFile(): string | undefined {
-  return DEFAULT_PATHS.find((p) => existsSync(p));
+  const found = DEFAULT_PATHS.find((p) => existsSync(p));
+  if (found) return found;
+
+  // Legacy migration: if a pre-rename `aionima.json` exists at the same
+  // location as a new-name path would, rename it in place and return the
+  // new path. Runs once; after the rename, DEFAULT_PATHS wins.
+  for (let i = 0; i < LEGACY_PATHS.length; i++) {
+    const legacy = LEGACY_PATHS[i]!;
+    const target = DEFAULT_PATHS[i]!;
+    if (existsSync(legacy) && !existsSync(target)) {
+      try {
+        renameSync(legacy, target);
+        // eslint-disable-next-line no-console
+        console.warn(`[aionima] renamed ${legacy} → ${target} (aionima.json → gateway.json)`);
+        return target;
+      } catch {
+        // Permission denied or cross-device: fall back to reading legacy in place.
+        return legacy;
+      }
+    }
+  }
+  return undefined;
 }
 
 /**

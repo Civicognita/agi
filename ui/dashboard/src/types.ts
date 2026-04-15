@@ -454,7 +454,7 @@ export interface GitRemoteEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Config types — mirror of aionima.json structure
+// Config types — mirror of gateway.json structure
 // ---------------------------------------------------------------------------
 
 export interface ChannelConfig {
@@ -997,10 +997,10 @@ export interface PluginDashboardDomain {
 // Marketplace types
 // ---------------------------------------------------------------------------
 
-export type MarketplaceItemType =
+export type PluginMarketplaceItemType =
   | "plugin" | "skill" | "knowledge" | "theme" | "workflow" | "agent-tool" | "channel";
 
-export interface MarketplaceSource {
+export interface PluginMarketplaceSource {
   id: number;
   /** Original reference (e.g. "owner/repo" or URL). */
   ref: string;
@@ -1011,10 +1011,10 @@ export interface MarketplaceSource {
   pluginCount: number;
 }
 
-export interface MarketplaceCatalogItem {
+export interface PluginMarketplaceCatalogItem {
   name: string;
   description?: string;
-  type?: MarketplaceItemType;
+  type?: PluginMarketplaceItemType;
   version?: string;
   author?: { name: string; email?: string };
   category?: string;
@@ -1034,16 +1034,16 @@ export interface MarketplaceCatalogItem {
   integrityHash?: string;
 }
 
-export interface MarketplaceInstalledItem {
+export interface PluginMarketplaceInstalledItem {
   name: string;
   sourceId: number;
-  type: MarketplaceItemType;
+  type: PluginMarketplaceItemType;
   version: string;
   installedAt: string;
   installPath: string;
 }
 
-export interface MarketplaceUpdate {
+export interface PluginMarketplaceUpdate {
   pluginName: string;
   currentVersion: string;
   availableVersion: string;
@@ -1200,4 +1200,256 @@ export interface ScanProvider {
   name: string;
   scanType: string;
   description?: string;
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Marketplace types
+// ---------------------------------------------------------------------------
+
+export type HFCompatibility = "compatible" | "limited" | "incompatible";
+export type HFModelStatus = "downloading" | "ready" | "starting" | "running" | "stopping" | "error" | "removing";
+export type HFModelFormat = "gguf" | "safetensors" | "pytorch" | "onnx" | "tensorflow";
+export type HFQuantization = "Q2_K" | "Q3_K_S" | "Q3_K_M" | "Q3_K_L" | "Q4_0" | "Q4_K_S" | "Q4_K_M" | "Q5_0" | "Q5_K_S" | "Q5_K_M" | "Q6_K" | "Q8_0" | "F16" | "F32";
+export type HFCapabilityStatus = "on" | "limited" | "off";
+export type HFHardwareTier = "minimal" | "standard" | "accelerated" | "pro";
+
+export interface HFHardwareProfile {
+  cpu: { cores: number; threads: number; model: string; arch: string; avx2: boolean; avx512: boolean };
+  ram: { totalBytes: number; availableBytes: number };
+  gpu: Array<{ index: number; name: string; vendor: string; vramBytes: number; driverVersion?: string }>;
+  disk: { modelCachePath: string; availableBytes: number; totalBytes: number };
+  podman: { available: boolean; version?: string; gpuRuntime: boolean };
+  capabilities: HFHardwareCapabilities;
+  scannedAt: string;
+}
+
+export interface HFHardwareCapabilities {
+  canRunLlm: boolean;
+  canRunDiffusion: boolean;
+  canRunEmbedding: boolean;
+  canRunAudio: boolean;
+  hasGpu: boolean;
+  totalVramBytes: number;
+  maxModelSizeBytes: number;
+  recommendedQuantization: string;
+  tier: HFHardwareTier;
+  summary: string;
+  capabilityMap: HFCapabilityEntry[];
+}
+
+export interface HFCapabilityEntry {
+  id: string;
+  label: string;
+  description: string;
+  status: HFCapabilityStatus;
+  reason: string;
+  unlockHint?: string;
+  hardwareRequired: string;
+  userOverride?: boolean;
+}
+
+export interface HFModelResourceEstimate {
+  tokensPerSec: number | null;
+  ramUsageBytes: number;
+  vramUsageBytes: number | null;
+  diskUsageBytes: number;
+  loadTimeSeconds: number | null;
+}
+
+export interface HFModelSearchResult {
+  id: string;
+  modelId: string;
+  author?: string;
+  lastModified?: string;
+  pipeline_tag?: string;
+  tags: string[];
+  downloads: number;
+  likes: number;
+  library_name?: string;
+  gated: boolean | "auto" | "manual";
+  private: boolean;
+  compatibility: HFCompatibility;
+  compatibilityReason: string;
+  estimate: HFModelResourceEstimate;
+}
+
+export interface HFModelVariant {
+  filename: string;
+  format: HFModelFormat;
+  quantization: HFQuantization | null;
+  sizeBytes: number;
+  compatibility: HFCompatibility;
+  compatibilityReason?: string;
+  estimate: HFModelResourceEstimate;
+}
+
+export interface HFModelDetail extends HFModelSearchResult {
+  siblings?: Array<{ rfilename: string; size?: number }>;
+  safetensors?: { total: number };
+  cardData?: Record<string, unknown>;
+  variants: HFModelVariant[];
+}
+
+export interface HFInstalledModel {
+  id: string;
+  revision: string;
+  displayName: string;
+  pipelineTag: string;
+  runtimeType: "llm" | "diffusion" | "general";
+  filePath: string;
+  modelFilename?: string;
+  fileSizeBytes: number;
+  quantization?: string;
+  status: HFModelStatus;
+  downloadedAt: string;
+  lastUsedAt?: string;
+  error?: string;
+  containerId?: string;
+  containerPort?: number;
+  containerName?: string;
+}
+
+export interface HFRunningModel {
+  modelId: string;
+  containerId: string;
+  containerName: string;
+  port: number;
+  runtimeType: "llm" | "diffusion" | "general";
+  startedAt: string;
+  status: "running" | "stopped" | "error";
+  /** Result of a live /health probe at the moment this record was fetched. */
+  healthCheckPassed: boolean;
+  /** Pretty name from the installed-model row, for dashboard display. */
+  displayName?: string;
+  /** HuggingFace pipeline tag (e.g. "text-generation", "image-generation"). */
+  pipelineTag?: string;
+}
+
+export interface HFDownloadProgress {
+  modelId: string;
+  filename: string;
+  totalBytes: number;
+  downloadedBytes: number;
+  speedBps: number;
+  etaSeconds: number;
+  startedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Dataset types
+// ---------------------------------------------------------------------------
+
+export interface HFDatasetSearchResult {
+  id: string;
+  author?: string;
+  description?: string;
+  tags: string[];
+  downloads: number;
+  likes: number;
+  lastModified?: string;
+  gated: boolean | "auto" | "manual";
+  private: boolean;
+}
+
+export interface HFInstalledDataset {
+  id: string;
+  revision: string;
+  displayName: string;
+  description?: string;
+  filePath: string;
+  fileSizeBytes: number;
+  fileCount: number;
+  status: "downloading" | "ready" | "error" | "removing";
+  downloadedAt: string;
+  tags: string[];
+  error?: string;
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Wizard types (Phase 5)
+// ---------------------------------------------------------------------------
+
+export interface HFModelAnalysis {
+  model: HFModelDetail;
+  runtimeType: string;
+  isCustom: boolean;
+  customDefinition: Record<string, unknown> | null;
+  variants: HFModelVariant[];
+  hardwareCompatibility: { compatibility: HFCompatibility; reason: string };
+  estimatedResources: HFModelResourceEstimate;
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Fine-Tune types (Phase 6)
+// ---------------------------------------------------------------------------
+
+export interface HFFineTuneConfig {
+  baseModelId: string;
+  datasetId: string;
+  method: "lora" | "qlora";
+  loraR: number;
+  loraAlpha: number;
+  loraDropout: number;
+  targetModules: string[];
+  epochs: number;
+  batchSize: number;
+  learningRate: number;
+  maxSteps?: number;
+  outputName: string;
+}
+
+export interface HFFineTuneJob {
+  id: string;
+  config: HFFineTuneConfig;
+  status: "pending" | "building" | "training" | "complete" | "error";
+  containerId?: string;
+  containerPort?: number;
+  startedAt: string;
+  completedAt?: string;
+  error?: string;
+  containerStatus?: {
+    status: string;
+    epoch: number;
+    total_epochs: number;
+    loss: number | null;
+    learning_rate: number | null;
+    eta_seconds: number | null;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Safemode + incident reports (Admin only)
+// ---------------------------------------------------------------------------
+
+export interface SafemodeSnapshot {
+  active: boolean;
+  reason: "crash_detected" | "manual" | null;
+  since: string | null;
+  reportPath: string | null;
+  investigation:
+    | { status: "pending" }
+    | { status: "running"; startedAt: string }
+    | { status: "complete"; finishedAt: string; autoRecoverable: boolean }
+    | { status: "failed"; finishedAt: string; error: string };
+}
+
+export interface IncidentSummary {
+  id: string;
+  createdAt: string;
+  summary: string;
+  size: number;
+}
+
+export interface SafemodeExitResult {
+  ok: true;
+  snapshot: SafemodeSnapshot;
+  recovery: {
+    externals: {
+      postgres: { action: "none" | "started" | "failed"; state: string };
+      idService: { action: "none" | "started" | "failed"; state: string };
+      postgresReady: boolean;
+    };
+    projects: { total: number; started: number; failed: number };
+    models: { total: number; started: number; failed: number };
+  };
 }

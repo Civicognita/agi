@@ -16,7 +16,7 @@ Every Aionima node can be a sovereign identity provider. The system has five lay
 
 ## Enabling Federation
 
-Add to `aionima.json`:
+Add to `gateway.json`:
 
 ```json
 {
@@ -249,7 +249,7 @@ SCRIPT
 
 ```bash
 # Create config with federation enabled
-multipass exec aionima-test -- sudo -u aionima tee /home/aionima/_projects/agi/aionima.json << 'EOF'
+multipass exec aionima-test -- sudo -u aionima tee /home/aionima/_projects/agi/gateway.json << 'EOF'
 {
   "gateway": { "host": "0.0.0.0", "port": 3000 },
   "owner": { "displayName": "Test Owner" },

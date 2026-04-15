@@ -214,7 +214,7 @@ async function buildMemoryContext(memory: MemoryAdapter, entityId: string, query
 
 ## Developer Mode Context
 
-When `agent.devMode` is `true` in `aionima.json`, the agent receives additional workspace context:
+When `agent.devMode` is `true` in `gateway.json`, the agent receives additional workspace context:
 
 ```ts
 function buildDevModeContext(config: AgentConfig, workspaceRoot: string): string {
@@ -230,6 +230,19 @@ function buildDevModeContext(config: AgentConfig, workspaceRoot: string): string
   ].join("\n");
 }
 ```
+
+## Chat Content Markup
+
+The dashboard chat renders agent responses through react-fancy's `ContentRenderer`, which supports Markdown plus four custom tags defined in `ui/dashboard/src/lib/content-renderer-setup.tsx`:
+
+| Tag | Use when |
+|-----|----------|
+| `<thinking>...</thinking>` | Non-obvious reasoning the user can expand if curious (collapsed by default, purple rail). |
+| `<question title="...">...</question>` | Grouped questions / quizzes. Blue rail + title row. |
+| `<callout variant="warn\|info\|error\|success">...</callout>` | Attention banner — caveats, context, failures, confirmations. |
+| `<highlight>...</highlight>` | Inline highlight (cyan) for drawing attention to a phrase. |
+
+`buildResponseFormatSection()` in `packages/gateway-core/src/system-prompt.ts` tells the agent when to emit each tag, what nesting limits apply, and that tags must not be wrapped in code fences. Update BOTH sides together — if you add a new tag to `content-renderer-setup.tsx`, extend the response-format instructions so the agent knows it exists.
 
 ## Prompt Section Ordering
 

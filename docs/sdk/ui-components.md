@@ -1,10 +1,17 @@
 # UI Components
 
-Available UI components for MApps and plugins. All come from `@particle-academy/react-fancy` and `@particle-academy/react-echarts`.
+Three packages provide UI components for MApps, plugins, and the dashboard:
+
+- **`@particle-academy/react-fancy`** (v1.9.1) — Core component library
+- **`@particle-academy/fancy-code`** (v0.4.2) — Code editor with syntax highlighting
+- **`@particle-academy/fancy-sheets`** (v0.4.5) — Spreadsheet / data grid
+- **`@particle-academy/react-echarts`** (v1.0.0) — Chart components (ECharts wrapper)
+
+---
 
 ## ContentRenderer
 
-The primary component for rendering markdown and HTML content. Use this instead of raw ReactMarkdown.
+The primary component for rendering markdown and HTML content.
 
 ```tsx
 import { ContentRenderer } from "@particle-academy/react-fancy";
@@ -20,111 +27,170 @@ import { ContentRenderer } from "@particle-academy/react-fancy";
 | `className` | `string` | — | CSS class |
 | `extensions` | `RenderExtension[]` | — | Custom tag renderers |
 
-### Custom Extensions
+---
 
-Register custom tags that render as React components:
+## CodeEditor
+
+Full-featured code editor with syntax highlighting, toolbar, and status bar.
 
 ```tsx
-const extensions = [{
-  tag: "questions",
-  component: ({ innerHTML }) => <QuestionForm json={innerHTML} />,
-  block: true,
-}];
+import { CodeEditor } from "@particle-academy/fancy-code";
 
-<ContentRenderer value={content} extensions={extensions} />
+<CodeEditor
+  value={code}
+  onChange={setCode}
+  language="typescript"
+  theme="auto"
+  className="h-full"
+>
+  <CodeEditor.Toolbar />
+  <CodeEditor.Panel />
+  <CodeEditor.StatusBar />
+</CodeEditor>
 ```
+
+Supported languages: `typescript`, `javascript`, `html`, `css`, `json`, `markdown`, `yaml`, `php`, `python`, `go`, `rust`, `sql`, `shell`, `toml`, `plaintext`.
+
+---
+
+## Spreadsheet
+
+Data grid component for tabular data editing and display.
+
+```tsx
+import { Spreadsheet } from "@particle-academy/fancy-sheets";
+
+<Spreadsheet
+  data={rows}
+  columns={columns}
+  onChange={setRows}
+/>
+```
+
+---
+
+## TreeNav
+
+Hierarchical file/folder tree with expand/collapse, selection, context menus, and extension-based icons.
+
+```tsx
+import { TreeNav } from "@particle-academy/react-fancy";
+
+<TreeNav
+  nodes={treeData}
+  selectedId={selected}
+  onSelect={(id, node) => { /* handle selection */ }}
+  onNodeContextMenu={(e, node) => { /* right-click menu */ }}
+  showIcons
+  indentSize={14}
+  defaultExpandAll
+/>
+```
+
+---
+
+## ContextMenu
+
+Right-click context menu with items and separators.
+
+```tsx
+import { ContextMenu } from "@particle-academy/react-fancy";
+
+<ContextMenu>
+  <ContextMenu.Trigger>
+    <div>Right-click me</div>
+  </ContextMenu.Trigger>
+  <ContextMenu.Content>
+    <ContextMenu.Item onClick={handleNew}>New File</ContextMenu.Item>
+    <ContextMenu.Separator />
+    <ContextMenu.Item danger onClick={handleDelete}>Delete</ContextMenu.Item>
+  </ContextMenu.Content>
+</ContextMenu>
+```
+
+---
+
+## Toast
+
+Notification toasts with variants.
+
+```tsx
+import { useToast } from "@particle-academy/react-fancy";
+
+const { toast } = useToast();
+toast({ title: "Saved", description: "Changes saved successfully.", variant: "success" });
+```
+
+Variants: `"success"`, `"error"`, `"info"`, `"warning"`.
+
+---
+
+## Component Categories
+
+### Layout
+`Card`, `Separator`, `Tabs`, `Accordion`, `Sidebar`, `Modal`, `Portal`, `Pillbox`
+
+### Content
+`ContentRenderer`, `Heading`, `Text`, `Callout`, `Badge`, `Icon`, `Emoji`, `EmojiSelect`, `Profile`, `Brand`, `Avatar`, `Skeleton`
+
+### Forms
+`Input`, `Textarea`, `Select`, `Autocomplete`, `MultiSwitch`, `Checkbox`, `CheckboxGroup`, `RadioGroup`, `Switch`, `Slider`, `ColorPicker`, `DatePicker`, `TimePicker`, `OtpInput`, `Field`, `FileUpload`
+
+### Data
+`Table`, `Diagram`, `Timeline`, `Kanban`, `Progress`, `Calendar`, `Canvas`
+
+### Navigation
+`TreeNav`, `Navbar`, `MobileMenu`, `Breadcrumbs`, `Pagination`, `Menu`, `Sidebar`
+
+### Overlay
+`Modal`, `Popover`, `Dropdown`, `Tooltip`, `Toast`, `Command`, `ContextMenu`
+
+### Media
+`Carousel`, `Canvas`, `Composer`, `Editor`
+
+### Code & Data
+`CodeEditor` (fancy-code), `Spreadsheet` (fancy-sheets)
+
+### Charts (ECharts)
+`Chart.Line`, `Chart.Bar`, `Chart.Area`, `Chart.Pie`, `Chart.Donut`, `Chart.Sparkline`, `Chart.StackedBar`, `Chart.HorizontalBar`
+
+---
 
 ## MApp Widget Types
 
 These widget types are available in MApp `panel.widgets` arrays:
 
-| Widget Type | Renders With | Key Props |
-|-------------|-------------|-----------|
-| `markdown` | ContentRenderer | `content` |
-| `iframe` | Native iframe | `src`, `height` |
-| `status-display` | Fetch → Card grid | `statusEndpoint`, `title` |
-| `field-group` | Field + Input | `fields` |
-| `action-bar` | Action buttons | `actionIds` |
-| `table` | Table | `dataEndpoint`, `columns` |
-| `metric` | Card + fetch | `label`, `valueEndpoint`, `unit` |
-| `chart` | EChart | `chartType`, `dataEndpoint` |
-| `log-stream` | Fetch + pre | `logSource`, `lines` |
-| `timeline` | Timeline | `dataEndpoint` |
-| `kanban` | Kanban | `dataEndpoint`, `columns` |
-| `editor` | Editor | `title`, `defaultValue` |
-| `diagram` | Diagram | `dataEndpoint`, `diagramType` |
+| Widget Type | Key Props |
+|-------------|-----------|
+| `markdown` | `content` |
+| `iframe` | `src`, `height` |
+| `status-display` | `statusEndpoint`, `title` |
+| `field-group` | `fields` |
+| `action-bar` | `actionIds` |
+| `table` | `dataEndpoint`, `columns` |
+| `metric` | `label`, `valueEndpoint`, `unit` |
+| `chart` | `chartType`, `dataEndpoint` |
+| `log-stream` | `logSource`, `lines` |
+| `timeline` | `dataEndpoint` |
+| `kanban` | `dataEndpoint`, `columns` |
+| `editor` | `title`, `defaultValue` |
+| `diagram` | `dataEndpoint`, `diagramType` |
 
-## Component Categories
-
-### Layout
-`Card`, `Separator`, `Tabs`, `Accordion`, `Sidebar`, `Modal`, `Portal`
-
-### Content
-`ContentRenderer`, `Heading`, `Text`, `Callout`, `Badge`, `Icon`, `Emoji`, `EmojiSelect`, `Profile`, `Brand`
-
-### Forms
-`Input`, `Textarea`, `Select`, `MultiSwitch`, `Checkbox`, `CheckboxGroup`, `RadioGroup`, `Switch`, `Slider`, `ColorPicker`, `DatePicker`, `TimePicker`, `EmojiSelect`, `Field`, `FileUpload`, `OtpInput`, `Autocomplete`
-
-### Data
-`Table`, `Chart`, `Diagram`, `Timeline`, `Kanban`, `Progress`, `Skeleton`
-
-### Navigation
-`Navbar`, `MobileMenu`, `Breadcrumbs`, `Pagination`, `Menu`, `ContextMenu`
-
-### Overlay
-`Modal`, `Popover`, `Dropdown`, `Tooltip`, `Toast`, `Command`
-
-### Media
-`Avatar`, `Carousel`, `Canvas`, `Composer`, `Editor`
-
-### Charts (ECharts)
-`EChart`, `EChart3D`, `BarChart`, `LineChart`, `PieChart`, `RadarChart`, `ScatterChart`, `HeatmapChart`, `TreemapChart`, `SunburstChart`, `GaugeChart`, `FunnelChart`, `SankeyChart`, `GraphChart`, `BoxplotChart`, `CandlestickChart`, `MapChart`
-
-## Usage in MApps
-
-MApps define widgets declaratively in JSON:
-
-```json
-{
-  "panel": {
-    "label": "My App",
-    "widgets": [
-      { "type": "markdown", "content": "## Welcome\n\nThis is rendered with ContentRenderer." },
-      { "type": "chart", "chartType": "bar", "dataEndpoint": "/api/data" }
-    ]
-  }
-}
-```
-
-## Usage in Plugins
-
-Plugins import components directly:
-
-```tsx
-import { ContentRenderer, Card, Table } from "@particle-academy/react-fancy";
-import { EChart } from "@particle-academy/react-echarts";
-
-api.registerProjectPanel({
-  id: "my-panel",
-  label: "Analytics",
-  projectTypes: ["web-app"],
-  widgets: [
-    { type: "markdown", content: "## Analytics Dashboard" },
-    { type: "chart", chartType: "line", dataEndpoint: "/api/plugins/my-plugin/metrics" },
-  ],
-});
-```
+---
 
 ## Import Paths
 
 ```tsx
-// UI components
-import { ContentRenderer, Card, Table, ... } from "@particle-academy/react-fancy";
+// Core UI components
+import { ContentRenderer, Card, Table, TreeNav, ContextMenu, ... } from "@particle-academy/react-fancy";
 import "@particle-academy/react-fancy/styles.css";
 
-// Charts
-import { EChart, BarChart, LineChart, ... } from "@particle-academy/react-echarts";
+// Code editor
+import { CodeEditor } from "@particle-academy/fancy-code";
 
-// SDK catalog (for programmatic discovery)
-import { UI_COMPONENTS, WIDGET_COMPONENT_MAP } from "@aionima/sdk";
+// Spreadsheet
+import { Spreadsheet } from "@particle-academy/fancy-sheets";
+
+// Charts
+import { Chart } from "@particle-academy/react-echarts";
 ```

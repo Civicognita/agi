@@ -17,7 +17,7 @@ TTS is optional. If the channel does not support voice responses or if TTS is no
 
 ## Enabling Voice
 
-Enable the voice pipeline in `aionima.json`:
+Enable the voice pipeline in `gateway.json`:
 
 ```json
 {

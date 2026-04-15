@@ -5,8 +5,9 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router";
+import { PageScroll } from "@/components/PageScroll.js";
 import { ContextMenu } from "@particle-academy/react-fancy";
-import { fetchMagicApps, fetchMAppCatalog, installMApp, uninstallMApp } from "@/api.js";
+import { fetchMagicApps, fetchMAppCatalog, installMApp, uninstallMApp, fetchMAppSources, addMAppSource, removeMAppSource, pullMAppMarketplace } from "@/api.js";
 import type { MagicAppInfo, MAppCatalogEntry } from "@/types.js";
 import { Button } from "@/components/ui/button.js";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card.js";
@@ -30,13 +31,17 @@ export default function MagicAppsAdminPage() {
   const [loading, setLoading] = useState(true);
   const [installing, setInstalling] = useState<string | null>(null);
   const [tab, setTab] = useState<"marketplace" | "installed">("marketplace");
+  const [sources, setSources] = useState<Array<{ id: number; ref: string; name: string; lastSyncedAt: string | null; mappCount: number }>>([]);
+  const [newSourceRef, setNewSourceRef] = useState("");
+  const [pulling, setPulling] = useState(false);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [apps, cat] = await Promise.all([fetchMagicApps(), fetchMAppCatalog()]);
+      const [apps, cat, srcs] = await Promise.all([fetchMagicApps(), fetchMAppCatalog(), fetchMAppSources()]);
       setInstalled(apps);
       setCatalog(cat.apps);
+      setSources(srcs);
     } catch {
       // Silently handle
     } finally {
@@ -51,12 +56,41 @@ export default function MagicAppsAdminPage() {
   const handleInstall = async (entry: MAppCatalogEntry) => {
     setInstalling(entry.definition.id);
     try {
-      await installMApp(entry.definition.id, entry.definition.author ?? DEFAULT_AUTHOR, entry.source);
+      const sourceId = (entry as unknown as { sourceId?: number }).sourceId ?? sources[0]?.id ?? 1;
+      await installMApp(entry.definition.id, sourceId);
       await load();
     } catch (err) {
       console.error("Install failed:", err);
     } finally {
       setInstalling(null);
+    }
+  };
+
+  const handleAddSource = async () => {
+    if (!newSourceRef.trim()) return;
+    try {
+      await addMAppSource(newSourceRef.trim());
+      setNewSourceRef("");
+      await load();
+    } catch (err) {
+      console.error("Add source failed:", err);
+    }
+  };
+
+  const handleRemoveSource = async (id: number) => {
+    await removeMAppSource(id);
+    await load();
+  };
+
+  const handlePull = async () => {
+    setPulling(true);
+    try {
+      await pullMAppMarketplace();
+      await load();
+    } catch (err) {
+      console.error("Pull failed:", err);
+    } finally {
+      setPulling(false);
     }
   };
 
@@ -73,6 +107,7 @@ export default function MagicAppsAdminPage() {
   const defaultApps = installed.filter((a) => a.author === DEFAULT_AUTHOR);
 
   return (
+    <PageScroll>
     <div>
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -87,6 +122,41 @@ export default function MagicAppsAdminPage() {
             ctx.onOpenChatWithMessage("builder:create", "I want to create a new MagicApp. Help me design it.");
           }}>
             Create with AI
+          </Button>
+        </div>
+      </div>
+
+      {/* Sources section */}
+      <div className="mb-4 p-3 rounded-lg border border-border bg-card">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Sources</span>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handlePull()} disabled={pulling}>
+            {pulling ? "Checking..." : "Check for Updates"}
+          </Button>
+        </div>
+        {sources.map((s) => (
+          <div key={s.id} className="flex items-center justify-between py-1.5 text-[11px]">
+            <div>
+              <span className="text-foreground font-medium">{s.name}</span>
+              <span className="text-muted-foreground ml-2">{s.ref}</span>
+              {s.lastSyncedAt && <span className="text-muted-foreground ml-2">({s.mappCount} MApps)</span>}
+            </div>
+            {sources.length > 1 && (
+              <button onClick={() => void handleRemoveSource(s.id)} className="text-[10px] text-red hover:underline">Remove</button>
+            )}
+          </div>
+        ))}
+        <div className="flex gap-2 mt-2">
+          <input
+            type="text"
+            value={newSourceRef}
+            onChange={(e) => setNewSourceRef(e.target.value)}
+            placeholder="owner/repo (e.g. myorg/my-mapps)"
+            className="flex-1 h-7 px-2 rounded border border-border bg-background text-foreground text-[11px]"
+            onKeyDown={(e) => { if (e.key === "Enter") void handleAddSource(); }}
+          />
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleAddSource()} disabled={!newSourceRef.trim()}>
+            Add Source
           </Button>
         </div>
       </div>
@@ -262,5 +332,6 @@ export default function MagicAppsAdminPage() {
         </>
       )}
     </div>
+    </PageScroll>
   );
 }

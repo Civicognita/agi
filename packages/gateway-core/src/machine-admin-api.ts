@@ -60,7 +60,7 @@ export interface MachineAdminDeps {
   localIdAuthProvider?: LocalIdAuthProvider;
   /** Local-ID base URL — if provided, enables proxying admin CRUD to Local-ID. */
   idBaseUrl?: string;
-  /** Path to aionima.json — used to update hosting.lanIp when network changes. */
+  /** Path to gateway.json — used to update hosting.lanIp when network changes. */
   configPath?: string;
 }
 
@@ -284,7 +284,7 @@ export function registerMachineAdminRoutes(
       // Apply changes
       execFileSync("sudo", ["nmcli", "con", "up", conName], { stdio: "pipe", timeout: 15_000 });
 
-      // Update hosting.lanIp in aionima.json to match
+      // Update hosting.lanIp in gateway.json to match
       const newIp = body.method === "static"
         ? body.ip!
         : execFileSync("hostname", ["-I"], { stdio: "pipe", timeout: 5_000 }).toString().trim().split(" ")[0] ?? "";

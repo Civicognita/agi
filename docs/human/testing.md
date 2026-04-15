@@ -43,7 +43,7 @@ The VM mounts all workspace repos so tests can access the full system:
 | PRIME repo | `/mnt/aionima-prime` | Knowledge corpus |
 | ID repo | `/mnt/aionima-local-id` | Identity service |
 
-A test config fixture at `test/fixtures/aionima-test.json` points to these VM mount paths so tests resolve repos correctly.
+A test config fixture at `test/fixtures/gateway-test.json` points to these VM mount paths so tests resolve repos correctly.
 
 If mounts become stale (e.g., after a host reboot), the VM scripts detect and re-mount automatically.
 
@@ -114,6 +114,8 @@ CI steps:
 | After adding or modifying API endpoints | `pnpm test:e2e` |
 | After changing the onboarding flow | `pnpm test:e2e` |
 | After changing dashboard UI | `pnpm test:e2e:ui` |
+| After changing plugin image refs or stack dependencies | `pnpm test` (plugin tests) |
+| After changing `required-plugins.json` | `pnpm test` |
 | Before shipping a release | `pnpm test:all` |
 
 ---

@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { PageScroll } from "@/components/PageScroll.js";
 import { fetchBackups, triggerBackup } from "../api.js";
 
 interface Backup {
@@ -44,6 +45,7 @@ export default function BackupsPage() {
   }, [refresh]);
 
   return (
+    <PageScroll>
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
@@ -81,5 +83,6 @@ export default function BackupsPage() {
         )}
       </div>
     </div>
+    </PageScroll>
   );
 }

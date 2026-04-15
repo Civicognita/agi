@@ -10,14 +10,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes } from "../api.js";
+import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes } from "../api.js";
 import type { FileNode } from "../api.js";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
 import { HostingPanel } from "./HostingPanel.js";
+import { EnvManager } from "./EnvManager.js";
 import { ProjectManagement } from "./ProjectManagement.js";
 import type { HostingStatus } from "../api.js";
-import { TreeNav } from "@particle-academy/react-fancy";
+import { TreeNav, ContextMenu, useToast } from "@particle-academy/react-fancy";
 import { CodeEditor } from "@particle-academy/fancy-code";
 import "@particle-academy/fancy-code/styles.css";
 import { projectSlug } from "./Projects.js";
@@ -85,6 +86,7 @@ export function ProjectDetail({
   const [fileDraft, setFileDraft] = useState("");
   const [fileLoading, setFileLoading] = useState(false);
   const [fileSaving, setFileSaving] = useState(false);
+  const [contextTargetPath, setContextTargetPath] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
   const fileDirty = openFilePath !== null && fileDraft !== fileContent;
 
@@ -206,7 +208,16 @@ export function ProjectDetail({
 
   const handleRefreshFiles = useCallback(() => {
     setFileTreeGen((g) => g + 1);
-  }, []);
+    // Also reload the currently open file from disk
+    if (openFilePath) {
+      fetchProjectFile(openFilePath)
+        .then((result) => {
+          setFileContent(result.content);
+          setFileDraft(result.content);
+        })
+        .catch(() => { /* file may have been deleted */ });
+    }
+  }, [openFilePath]);
 
   const handleRefreshRepo = useCallback(() => {
     repoPanelRef.current?.refresh();
@@ -228,24 +239,24 @@ export function ProjectDetail({
   }
 
   return (
-    <div>
+    <div className="flex flex-col flex-1 min-h-0 overflow-hidden p-3 md:p-6">
       {/* Header row */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 shrink-0">
         <Link to="/projects" className="no-underline">
           <Button variant="outline" size="sm">Back to Projects</Button>
         </Link>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={() => onOpenTerminal?.(project.path)}>
-            Terminal
-          </Button>
-          <Button size="sm" onClick={() => onOpenChat(project.path)}>
+          {/* The project-level (container) terminal lives in the Development tab > Terminal
+              subtab. The host-level system terminal is now a global button in the dashboard
+              header — see root.tsx. No Terminal button on the project page. */}
+          <Button size="sm" data-testid="project-chat-button" onClick={() => onOpenChat(project.path)}>
             Talk about this project
           </Button>
         </div>
       </div>
 
       {/* Project heading */}
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex items-center gap-3 mb-6 shrink-0">
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         {isSacred && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">sacred</span>
@@ -281,13 +292,16 @@ export function ProjectDetail({
         )}
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
         <TabsList variant="line">
           <TabsTrigger value="details">Details</TabsTrigger>
           <TabsTrigger value="files">Editor</TabsTrigger>
           <TabsTrigger value="repository">Repository</TabsTrigger>
           {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
             <TabsTrigger value="hosting">Development</TabsTrigger>
+          )}
+          {project.projectType?.hasCode && (
+            <TabsTrigger value="environment">Environment</TabsTrigger>
           )}
           <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>
           {pluginPanels.map((p) => (
@@ -298,7 +312,7 @@ export function ProjectDetail({
           )}
         </TabsList>
 
-        <TabsContent value="details" className="mt-4">
+        <TabsContent value="details" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <div className="rounded-xl bg-card border border-border p-4">
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
@@ -445,7 +459,7 @@ export function ProjectDetail({
           )}
         </TabsContent>
 
-        <TabsContent value="files" className="mt-4">
+        <TabsContent value="files" className="mt-4 flex-1 min-h-0 overflow-hidden">
           <div className="rounded-xl bg-card border border-border overflow-hidden">
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-border">
@@ -466,26 +480,77 @@ export function ProjectDetail({
               </div>
             </div>
             {/* Panes — CSS grid with fixed height; both columns always visible */}
-            <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", flex: 1, minHeight: 0 }}>
-              {/* TreeNav pane */}
+            <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "calc(100vh - 280px)", minHeight: "400px" }}>
+              {/* TreeNav pane with context menu */}
               <div style={{ overflow: "auto", borderRight: "1px solid var(--border)" }}>
-                {treeLoading ? (
-                  <div className="text-[12px] text-muted-foreground p-4">Loading files...</div>
-                ) : fileTree.length === 0 ? (
-                  <div className="text-[12px] text-muted-foreground p-4">No files found.</div>
-                ) : (
-                  <TreeNav
-                    nodes={fileTree.map(function mapNode(n: FileNode): { id: string; label: string; type: "file" | "folder"; ext?: string; children?: { id: string; label: string; type: "file" | "folder"; ext?: string; children?: unknown[] }[] } {
-                      return { id: n.path.startsWith(project.path) ? n.path.slice(project.path.length + 1) : n.path, label: n.name, type: n.type === "dir" ? "folder" : "file", ext: n.ext, children: n.children?.map(mapNode) };
-                    }) as never}
-                    selectedId={openFilePath ? openFilePath.replace(`${project.path}/`, "") : undefined}
-                    onSelect={(id: string, node: { type?: string }) => {
-                      if (node.type === "file") handleSelectFile(id);
-                    }}
-                    showIcons
-                    indentSize={14}
-                  />
-                )}
+                <ContextMenu>
+                  <ContextMenu.Trigger className="w-full min-h-full">
+                    {treeLoading ? (
+                      <div className="text-[12px] text-muted-foreground p-4">Loading files...</div>
+                    ) : fileTree.length === 0 ? (
+                      <div className="text-[12px] text-muted-foreground p-4">No files found.</div>
+                    ) : (
+                      <TreeNav
+                        nodes={fileTree.map(function mapNode(n: FileNode): { id: string; label: string; type: "file" | "folder"; ext?: string; children?: { id: string; label: string; type: "file" | "folder"; ext?: string; children?: unknown[] }[] } {
+                          return { id: n.path.startsWith(project.path) ? n.path.slice(project.path.length + 1) : n.path, label: n.name, type: n.type === "dir" ? "folder" : "file", ext: n.ext, children: n.children?.map(mapNode) };
+                        }) as never}
+                        selectedId={openFilePath ? openFilePath.replace(`${project.path}/`, "") : undefined}
+                        onSelect={(id: string, node: { type?: string }) => {
+                          if (node.type === "file") handleSelectFile(id);
+                        }}
+                        onNodeContextMenu={(_e: React.MouseEvent, node: { id?: string }) => {
+                          setContextTargetPath(typeof node.id === "string" ? node.id : "");
+                        }}
+                        showIcons
+                        indentSize={14}
+                      />
+                    )}
+                  </ContextMenu.Trigger>
+                  <ContextMenu.Content>
+                    <ContextMenu.Item onClick={() => {
+                      const name = prompt("File name:");
+                      if (!name) return;
+                      const dir = contextTargetPath && contextTargetPath.includes("/") ? contextTargetPath.replace(/\/[^/]+$/, "") : contextTargetPath;
+                      const fullPath = `${project.path}/${dir ? dir + "/" : ""}${name}`;
+                      void createProjectFile(fullPath, "file").then(() => void handleRefreshFiles());
+                    }}>
+                      New File
+                    </ContextMenu.Item>
+                    <ContextMenu.Item onClick={() => {
+                      const name = prompt("Folder name:");
+                      if (!name) return;
+                      const dir = contextTargetPath && contextTargetPath.includes("/") ? contextTargetPath.replace(/\/[^/]+$/, "") : contextTargetPath;
+                      const fullPath = `${project.path}/${dir ? dir + "/" : ""}${name}`;
+                      void createProjectFile(fullPath, "directory").then(() => void handleRefreshFiles());
+                    }}>
+                      New Folder
+                    </ContextMenu.Item>
+                    {contextTargetPath && (
+                      <>
+                        <ContextMenu.Separator />
+                        <ContextMenu.Item onClick={() => {
+                          const newName = prompt("New name:", contextTargetPath.split("/").pop());
+                          if (!newName) return;
+                          const oldFull = `${project.path}/${contextTargetPath}`;
+                          const dir = contextTargetPath.includes("/") ? contextTargetPath.replace(/\/[^/]+$/, "") : "";
+                          const newFull = `${project.path}/${dir ? dir + "/" : ""}${newName}`;
+                          void renameProjectFile(oldFull, newFull).then(() => void handleRefreshFiles());
+                        }}>
+                          Rename
+                        </ContextMenu.Item>
+                        <ContextMenu.Item danger onClick={() => {
+                          if (!confirm(`Delete "${contextTargetPath}"?`)) return;
+                          void deleteProjectFile(`${project.path}/${contextTargetPath}`).then(() => {
+                            if (openFilePath === `${project.path}/${contextTargetPath}`) setOpenFilePath(null);
+                            void handleRefreshFiles();
+                          });
+                        }}>
+                          Delete
+                        </ContextMenu.Item>
+                      </>
+                    )}
+                  </ContextMenu.Content>
+                </ContextMenu>
               </div>
               {/* CodeEditor pane */}
               {openFilePath ? (
@@ -535,13 +600,29 @@ export function ProjectDetail({
                         onChange={setFileDraft}
                         language={(() => {
                           const ext = openFilePath.split(".").pop()?.toLowerCase();
-                          if (ext === "ts" || ext === "tsx") return "typescript";
-                          if (ext === "js" || ext === "jsx") return "javascript";
-                          if (ext === "html" || ext === "htm") return "html";
-                          if (ext === "php") return "php";
-                          return "javascript";
+                          const map: Record<string, string> = {
+                            ts: "typescript", tsx: "typescript",
+                            js: "javascript", jsx: "javascript",
+                            html: "html", htm: "html",
+                            css: "css", scss: "css",
+                            json: "json",
+                            md: "markdown", mdx: "markdown",
+                            yaml: "yaml", yml: "yaml",
+                            php: "php",
+                            py: "python",
+                            go: "go",
+                            rs: "rust",
+                            sql: "sql",
+                            sh: "shell", bash: "shell",
+                            toml: "toml",
+                            xml: "html",
+                            svg: "html",
+                            env: "shell",
+                          };
+                          return map[ext ?? ""] ?? "plaintext";
                         })()}
                         theme="auto"
+                        className="h-full"
                       >
                         <CodeEditor.Toolbar />
                         <CodeEditor.Panel />
@@ -562,7 +643,7 @@ export function ProjectDetail({
           </div>
         </TabsContent>
 
-        <TabsContent value="repository" className="mt-4">
+        <TabsContent value="repository" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <div className="rounded-xl bg-card border border-border p-4">
             {project.hasGit ? (
               <>
@@ -649,7 +730,7 @@ export function ProjectDetail({
         </TabsContent>
 
         {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
-          <TabsContent value="hosting" className="mt-4">
+          <TabsContent value="hosting" className="mt-4 flex-1 min-h-0 overflow-y-auto">
             <div className="rounded-xl bg-card border border-border p-4">
               <HostingPanel
                 projectPath={project.path}
@@ -672,7 +753,15 @@ export function ProjectDetail({
           </TabsContent>
         )}
 
-        <TabsContent value="magic-apps" className="mt-4">
+        {project.projectType?.hasCode && (
+          <TabsContent value="environment" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+            <div className="rounded-xl bg-card border border-border p-4">
+              <EnvManager projectPath={project.path} />
+            </div>
+          </TabsContent>
+        )}
+
+        <TabsContent value="magic-apps" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <div className="rounded-xl bg-card border border-border p-4">
             <MagicAppPicker
               project={project}
@@ -697,7 +786,7 @@ export function ProjectDetail({
         ))}
 
         {project.projectType?.hasCode && (
-          <TabsContent value="security" className="mt-4">
+          <TabsContent value="security" className="mt-4 flex-1 min-h-0 overflow-y-auto">
             <SecurityTab projectPath={project.path} onFixFinding={onFixFinding ? (f) => onFixFinding(project.path, f) : undefined} />
           </TabsContent>
         )}

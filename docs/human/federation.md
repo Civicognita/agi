@@ -19,7 +19,7 @@ Think of it like email: anyone can run their own server, but they can all talk t
 
 ## Enabling Federation
 
-Federation is opt-in. Add this to your `aionima.json`:
+Federation is opt-in. Add this to your `gateway.json`:
 
 ```json
 {

@@ -86,7 +86,7 @@ triggers:
 
 Trigger matching is done against the full message text, not just the first word. A message like "Can you help me build a feature?" would match a trigger of `"help me build"`.
 
-Multiple skills can match a single message. Up to five skills are injected per invocation (controlled by `skills.maxSkillsPerCall` in `aionima.json`). When more than five match, skills are selected by priority (highest first), then by match confidence.
+Multiple skills can match a single message. Up to five skills are injected per invocation (controlled by `skills.maxSkillsPerCall` in `gateway.json`). When more than five match, skills are selected by priority (highest first), then by match confidence.
 
 ---
 
@@ -94,7 +94,7 @@ Multiple skills can match a single message. Up to five skills are injected per i
 
 Skills are injected subject to a token budget (default: 4000 tokens). Skills are added in priority order until the budget is exhausted. If adding a skill would exceed the budget, it is skipped.
 
-Configure the budget in `aionima.json`:
+Configure the budget in `gateway.json`:
 
 ```json
 {
@@ -162,7 +162,7 @@ A skill with `requires_tier: verified` is not injected for unverified entities. 
 
 ## Hot-Reload
 
-When `skills.watchForChanges` is `true` in `aionima.json`, the skills system watches the skills directory for file changes. Adding, modifying, or deleting a `.skill.md` file takes effect on the next agent invocation without restarting the gateway.
+When `skills.watchForChanges` is `true` in `gateway.json`, the skills system watches the skills directory for file changes. Adding, modifying, or deleting a `.skill.md` file takes effect on the next agent invocation without restarting the gateway.
 
 ```json
 {
@@ -229,7 +229,7 @@ The gateway logs which skills were matched and injected for each invocation. Che
 [skills] injecting skills: greeting, utility (tokens: 412)
 ```
 
-Increase log detail level in `aionima.json`:
+Increase log detail level in `gateway.json`:
 
 ```json
 {

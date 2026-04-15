@@ -20,7 +20,7 @@ set -uo pipefail
 
 DEPLOY_DIR="${AIONIMA_DIR:-/opt/aionima}"
 AGI_DIR="${HOME}/.agi"
-CONFIG_FILE="${AGI_DIR}/aionima.json"
+CONFIG_FILE="${AGI_DIR}/gateway.json"
 LOG_DIR="${AGI_DIR}/logs"
 SERVICE="aionima"
 
@@ -92,21 +92,24 @@ cmd_status() {
     cat "$DEPLOY_DIR/.deployed-commit"
   fi
 
-  # Remote check
+  # Remote check — use the configured update channel (dev or main)
   if [ -d "$DEPLOY_DIR/.git" ]; then
     cd "$DEPLOY_DIR"
-    git fetch --quiet origin main 2>/dev/null
+    local channel
+    channel="$(node -e "try { const c = JSON.parse(require('fs').readFileSync('${CONFIG_FILE}','utf-8')); console.log(c.gateway?.updateChannel === 'dev' ? 'dev' : 'main'); } catch { console.log('main'); }" 2>/dev/null)"
+    channel="${channel:-main}"
+    git fetch --quiet origin "$channel" 2>/dev/null
     local local_rev remote_rev
     local_rev="$(git rev-parse HEAD 2>/dev/null)"
-    remote_rev="$(git rev-parse origin/main 2>/dev/null)"
+    remote_rev="$(git rev-parse "origin/${channel}" 2>/dev/null)"
     if [ "$local_rev" != "$remote_rev" ]; then
       local behind
-      behind="$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "?")"
+      behind="$(git rev-list --count "HEAD..origin/${channel}" 2>/dev/null || echo "?")"
       label "Update:"
-      echo -e "${YELLOW}${behind} commit(s) behind${RESET}"
+      echo -e "${YELLOW}${behind} commit(s) behind (${channel})${RESET}"
     else
       label "Update:"
-      echo -e "${GREEN}up to date${RESET}"
+      echo -e "${GREEN}up to date (${channel})${RESET}"
     fi
   fi
 
@@ -177,6 +180,7 @@ cmd_upgrade() {
     exit 1
   fi
 
+  local upgrade_exit=0
   bash "$deploy_script" 2>&1 | while IFS= read -r line; do
     # Parse structured JSON output from upgrade.sh
     local phase status details
@@ -196,9 +200,13 @@ cmd_upgrade() {
       echo "  $line"
     fi
   done
+  upgrade_exit=${PIPESTATUS[0]}
 
   echo ""
-  if is_running; then
+  if [ "$upgrade_exit" -ne 0 ]; then
+    err "Upgrade failed (exit code $upgrade_exit)"
+    warn "Check: agi logs 30"
+  elif is_running; then
     ok "Upgrade complete — service is running"
   else
     err "Upgrade finished but service is not running"
@@ -233,6 +241,50 @@ cmd_stop() {
   info "Stopping $SERVICE..."
   sudo systemctl stop "$SERVICE"
   ok "Service stopped"
+}
+
+cmd_safemode() {
+  local action="${1:-status}"
+  local gw_url
+  gw_url="http://127.0.0.1:3100"
+  case "$action" in
+    status|"")
+      echo -e "${BOLD}Safemode status${RESET}"
+      curl -s "$gw_url/api/admin/safemode" | (command -v jq >/dev/null && jq . || cat)
+      ;;
+    exit)
+      info "Exiting safemode (runs recovery)..."
+      curl -s -X POST "$gw_url/api/admin/safemode/exit" | (command -v jq >/dev/null && jq . || cat)
+      ;;
+    *)
+      err "Unknown safemode action: $action (use 'status' or 'exit')"
+      exit 1
+      ;;
+  esac
+}
+
+cmd_incidents() {
+  local action="${1:-list}"
+  local gw_url
+  gw_url="http://127.0.0.1:3100"
+  case "$action" in
+    list|"")
+      echo -e "${BOLD}Recent incidents${RESET}"
+      curl -s "$gw_url/api/admin/incidents" | (command -v jq >/dev/null && jq . || cat)
+      ;;
+    view)
+      local id="${2:-}"
+      if [ -z "$id" ]; then
+        err "usage: agi incidents view <id>"
+        exit 1
+      fi
+      curl -s "$gw_url/api/admin/incidents/$id"
+      ;;
+    *)
+      err "Unknown incidents action: $action (use 'list' or 'view <id>')"
+      exit 1
+      ;;
+  esac
 }
 
 cmd_doctor() {
@@ -411,8 +463,13 @@ cmd_help() {
   echo "  start           Start the gateway service"
   echo "  stop            Stop the gateway service"
   echo "  doctor          Check infrastructure health"
+  echo "  safemode        Show safemode status (or: safemode exit)"
+  echo "  incidents       List incident reports (or: incidents view <id>)"
   echo "  config [key]    Read config (full or dot-path key)"
   echo "  projects        List hosted projects"
+  echo "  setup           Interactive configuration wizard"
+  echo "  setup-prompts   Configure persona and heartbeat prompts"
+  echo "  channels        Manage channel adapters"
   echo "  help            Show this help"
 }
 
@@ -434,8 +491,13 @@ case "${1:-help}" in
   start)    cmd_start ;;
   stop)     cmd_stop ;;
   doctor)   cmd_doctor ;;
+  safemode) shift; cmd_safemode "$@" ;;
+  incidents) shift; cmd_incidents "$@" ;;
   config)   cmd_config "${2:-}" ;;
   projects) cmd_projects ;;
+  setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;
+  setup-prompts) node "$DEPLOY_DIR/cli/dist/index.js" setup-prompts ;;
+  channels) shift; node "$DEPLOY_DIR/cli/dist/index.js" channels "$@" ;;
   help|--help|-h) cmd_help ;;
   *)
     err "Unknown command: $1"

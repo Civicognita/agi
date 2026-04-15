@@ -15,6 +15,7 @@ import type {
   MarketplacePluginEntry,
   MarketplaceItemType,
   InstalledItem,
+  CatalogDiff,
   CatalogSearchParams,
 } from "./types.js";
 
@@ -38,6 +39,11 @@ export class MarketplaceManager {
     this.workspaceRoot = options.workspaceRoot;
     this.cacheDir = options.cacheDir;
     this.requiredPluginIds = this.loadRequiredPluginIds(options.installDir);
+  }
+
+  /** Expose the underlying store for shared access (e.g. MApp Marketplace Manager). */
+  getStore(): MarketplaceStore {
+    return this.store;
   }
 
   private loadRequiredPluginIds(installDir?: string): Set<string> {
@@ -76,7 +82,9 @@ export class MarketplaceManager {
     this.store.removeSource(id);
   }
 
-  async syncSource(id: number): Promise<{ ok: boolean; error?: string; pluginCount?: number }> {
+  async syncSource(
+    id: number,
+  ): Promise<{ ok: boolean; error?: string; diff?: CatalogDiff }> {
     const source = this.store.getSource(id);
     if (!source) return { ok: false, error: "Source not found" };
 
@@ -85,8 +93,8 @@ export class MarketplaceManager {
       return { ok: false, error: result.error };
     }
 
-    this.store.syncPlugins(id, result.catalog.plugins, source.ref);
-    return { ok: true, pluginCount: result.catalog.plugins.length };
+    const diff = this.store.syncPlugins(id, result.catalog.plugins, source.ref);
+    return { ok: true, diff };
   }
 
   /**
@@ -140,7 +148,7 @@ export class MarketplaceManager {
       const freshHash = computePluginIntegrityHash(srcDir);
       if (freshHash === item.integrityHash) continue; // No changes
 
-      // Re-install: remove old, install fresh
+      // Re-install from GitHub source and rebuild in cache
       try {
         this.store.removeInstalled(item.name);
         const result = await this.install(item.name, item.sourceId);
@@ -273,6 +281,19 @@ export class MarketplaceManager {
     return this.store.isInstalled(name);
   }
 
+  /** Add an installed record for a plugin already in cache but missing from the DB. */
+  backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): void {
+    this.store.addInstalled({
+      name: item.name,
+      sourceId: item.sourceId,
+      type: item.type as import("./types.js").MarketplaceItemType,
+      version: item.version,
+      installedAt: item.installedAt,
+      installPath: item.installPath,
+      sourceJson: item.sourceJson,
+    });
+  }
+
   getInstalled(): InstalledItem[] {
     return this.store.getInstalled();
   }
@@ -328,6 +349,35 @@ export class MarketplaceManager {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err), oldVersion, newVersion };
     }
+  }
+
+  /**
+   * Sync catalog from all GitHub sources, then update every installed plugin
+   * that has a newer version available. Returns what changed.
+   */
+  async syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }> {
+    // 1. Sync catalog from all configured sources (GitHub)
+    let synced = 0;
+    for (const source of this.store.getSources()) {
+      const result = await this.syncSource(source.id);
+      if (result.ok) synced += result.diff?.total ?? 0;
+    }
+
+    // 2. Find and apply all available updates
+    const updates = this.checkUpdates();
+    const updated: string[] = [];
+    const errors: string[] = [];
+
+    for (const { pluginName, sourceId } of updates) {
+      const result = await this.updatePlugin(pluginName, sourceId);
+      if (result.ok) {
+        updated.push(pluginName);
+      } else {
+        errors.push(`${pluginName}: ${result.error ?? "unknown"}`);
+      }
+    }
+
+    return { synced, updated, errors };
   }
 
   checkUpdates(): { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[] {

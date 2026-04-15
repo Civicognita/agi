@@ -9,10 +9,10 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ProjectHostingInfo, ProjectTypeTool, RuntimeInfo, StackInfo, ProjectStackInstance } from "../types.js";
-import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks } from "../api.js";
+import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks, fetchEffectiveStartCommand } from "../api.js";
+import type { EffectiveStartCommand } from "../api.js";
 import { ProjectToolbar } from "./ProjectToolbar.js";
 import { StackManager } from "./StackManager.js";
-import { EnvManager } from "./EnvManager.js";
 import { TerminalArea } from "./TerminalArea.js";
 
 export interface HostingPanelProps {
@@ -108,6 +108,12 @@ export function HostingPanel({
     fetchProjectDevCommands(projectPath).then(setDevCommands).catch(() => setDevCommands({}));
   }, [projectPath]);
 
+  // Fetch effective start command (what will actually run at boot, and why)
+  const [effectiveStart, setEffectiveStart] = useState<EffectiveStartCommand | null>(null);
+  useEffect(() => {
+    fetchEffectiveStartCommand(projectPath).then(setEffectiveStart).catch(() => setEffectiveStart(null));
+  }, [projectPath, startCommand, hosting.status]);
+
   // Fetch available runtimes
   useEffect(() => {
     fetchRuntimes().then(setRuntimes).catch(() => setRuntimes([]));
@@ -128,7 +134,12 @@ export function HostingPanel({
         type,
         hostname: hostname || undefined,
         docRoot: docRoot || undefined,
-        startCommand: startCommand || undefined,
+        // Intentionally send empty string when the user has cleared the field — the
+        // server treats empty/whitespace as "clear the override". Previously
+        // `startCommand || undefined` collapsed an empty string to undefined,
+        // and the server treated undefined as "don't update", so clearing the
+        // field silently did nothing and the stored override persisted.
+        startCommand: startCommand,
         mode,
         internalPort: portNum && !isNaN(portNum) ? portNum : undefined,
       });
@@ -180,6 +191,38 @@ export function HostingPanel({
           Hosting infrastructure not configured. Run setup first.
         </div>
       )}
+
+      {/* Container status + actions — at the top */}
+      <div className="mb-3 pb-2 border-b border-border">
+        {stickyError && (
+          <div className="rounded-lg bg-red/10 border border-red/30 px-3 py-2 mb-2">
+            <div className="flex items-center justify-between mb-0.5">
+              <span className="text-[11px] font-semibold text-red">Container Error</span>
+              <button onClick={() => setStickyError(null)} className="text-[10px] text-red/60 hover:text-red">Dismiss</button>
+            </div>
+            <div className="text-[11px] text-red/80 whitespace-pre-wrap break-words">{stickyError}</div>
+          </div>
+        )}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className={cn("inline-block w-2 h-2 rounded-full", statusDot)} />
+            <span className={cn("text-[12px] font-semibold capitalize", statusColor)}>{hosting.status}</span>
+            {hosting.url && (
+              <a href={hosting.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue underline">{hosting.url}</a>
+            )}
+          </div>
+          <div className="flex gap-1.5">
+            <Button size="sm" variant="outline" onClick={() => { void onRestart(projectPath).catch((err: unknown) => { setStickyError(err instanceof Error ? err.message : String(err)); }); }} disabled={busy} className="text-[11px] h-7">Restart</Button>
+            <Button size="sm" onClick={() => void handleSaveConfig()} disabled={saving || busy} className="text-[11px] h-7">{saving ? "Saving..." : "Save Config"}</Button>
+          </div>
+        </div>
+        {(hosting.containerName || hosting.image) && (
+          <div className="flex gap-3 mt-1.5 text-[11px] text-muted-foreground">
+            {hosting.containerName && <span>Container: <code className="text-foreground">{hosting.containerName}</code></span>}
+            {hosting.image && <span>Image: <code className="text-foreground">{hosting.image}</code></span>}
+          </div>
+        )}
+      </div>
 
       {/* Config fields */}
       <div className="grid grid-cols-2 gap-2 mb-2">
@@ -259,16 +302,48 @@ export function HostingPanel({
         </div>
         <div>
           <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
-            Start Command
+            Start Command <span className="font-normal italic opacity-70">(override)</span>
           </label>
           <Input
             type="text"
             value={startCommand}
             onChange={(e) => setStartCommand(e.target.value)}
             disabled={busy}
-            placeholder="npm start"
+            placeholder={effectiveStart?.stackDefault ?? "npm start"}
             className="text-[12px] h-8"
+            data-testid="hosting-start-command-input"
           />
+          <div className="mt-0.5 text-[10px] text-muted-foreground leading-tight">
+            {effectiveStart !== null && (
+              <>
+                <span data-testid="hosting-start-command-source" className={cn(
+                  effectiveStart.source === "override" && "text-blue font-semibold",
+                )}>
+                  {effectiveStart.source === "override" && "Using your override."}
+                  {effectiveStart.source === "stack" && "Using stack default."}
+                  {effectiveStart.source === "devCommands" && "Using stack devCommands fallback."}
+                  {effectiveStart.source === "image-default" && "No command \u2014 image default CMD runs."}
+                </span>
+                {effectiveStart.source !== "override" && effectiveStart.stackDefault && (
+                  <>
+                    {" "}
+                    <span className="opacity-70">Leave empty to keep default: </span>
+                    <code className="text-[10px]">{effectiveStart.stackDefault}</code>
+                  </>
+                )}
+                {effectiveStart.source === "override" && effectiveStart.stackDefault && (
+                  <>
+                    {" "}
+                    <span className="opacity-70">Stack default (cleared by override): </span>
+                    <code className="text-[10px]">{effectiveStart.stackDefault}</code>
+                  </>
+                )}
+              </>
+            )}
+            {effectiveStart === null && (
+              <span className="opacity-70">Leave empty to use your installed stack&apos;s default; when set, this replaces the stack command and runs via sh -c.</span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -302,7 +377,7 @@ export function HostingPanel({
         </div>
       </div>
 
-      {/* Stack Manager — always visible so stacks can be configured before enabling hosting */}
+      {/* Stack Manager */}
       <div className="mb-3 pt-2 border-t border-border">
         <StackManager
           projectPath={projectPath}
@@ -312,180 +387,46 @@ export function HostingPanel({
         />
       </div>
 
-      {/* Environment Variables — always visible */}
-      <div className="mb-3 pt-2 border-t border-border">
-        <EnvManager projectPath={projectPath} />
-      </div>
+      {/* Public tunnel */}
+      {hosting.status === "running" && onTunnelEnable && onTunnelDisable && (
+        <div className="mb-3 pt-2 border-t border-border">
+          <div className="flex items-center justify-between">
+            <div className="text-[10px] font-semibold text-muted-foreground">Public Tunnel</div>
+            {hosting.tunnelUrl ? (
+              <Button size="sm" variant="outline" onClick={() => { setTunnelLoading(true); void onTunnelDisable(projectPath).finally(() => setTunnelLoading(false)); }} disabled={tunnelLoading || busy} className="text-[11px] h-7 text-red">Stop Tunnel</Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => { setTunnelLoading(true); void onTunnelEnable(projectPath).finally(() => setTunnelLoading(false)); }} disabled={tunnelLoading || busy} className="text-[11px] h-7">{tunnelLoading ? "Starting..." : "Share"}</Button>
+            )}
+          </div>
+          {hosting.tunnelUrl && (
+            <div className="flex items-center gap-1.5 mt-1.5">
+              <a href={hosting.tunnelUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] text-green underline truncate">{hosting.tunnelUrl}</a>
+              <button onClick={() => { void navigator.clipboard.writeText(hosting.tunnelUrl!); setTunnelCopied(true); setTimeout(() => setTunnelCopied(false), 2000); }} className="text-[10px] text-muted-foreground hover:text-foreground shrink-0" title="Copy URL">{tunnelCopied ? "Copied!" : "Copy"}</button>
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* Stack dev commands — visible as soon as stacks are added */}
+      {/* Dev Commands — above logs */}
       {Object.keys(devCommands).length > 0 && onToolExecute && (
-        <div className="mt-3 pt-2 border-t border-border">
+        <div className="mb-3 pt-2 border-t border-border">
           <div className="text-[10px] font-semibold text-muted-foreground mb-1.5">Dev Commands</div>
-          <ProjectToolbar
-            tools={Object.entries(devCommands).map(([key, cmd]) => ({
-              id: `dev-cmd-${key}`,
-              label: key,
-              description: cmd,
-              action: "shell" as const,
-              command: cmd,
-            }))}
-            projectPath={projectPath}
-            onExecute={onToolExecute}
-            onToolComplete={() => setLogRefreshKey((k) => k + 1)}
-            compact
-          />
+          <ProjectToolbar tools={Object.entries(devCommands).map(([key, cmd]) => ({ id: `dev-cmd-${key}`, label: key, description: cmd, action: "shell" as const, command: cmd }))} projectPath={projectPath} onExecute={onToolExecute} onToolComplete={() => setLogRefreshKey((k) => k + 1)} compact />
         </div>
       )}
 
       {/* Stack tools */}
       {tools && tools.length > 0 && onToolExecute && (
-        <div className="mt-3 pt-2 border-t border-border">
+        <div className="mb-3 pt-2 border-t border-border">
           <div className="text-[10px] font-semibold text-muted-foreground mb-1.5">Tools</div>
-          <ProjectToolbar
-            tools={tools}
-            projectPath={projectPath}
-            onExecute={onToolExecute}
-            onToolComplete={() => setLogRefreshKey((k) => k + 1)}
-            compact
-          />
+          <ProjectToolbar tools={tools} projectPath={projectPath} onExecute={onToolExecute} onToolComplete={() => setLogRefreshKey((k) => k + 1)} compact />
         </div>
       )}
 
-      {/* Status + actions — always visible (all projects are auto-hosted) */}
-        <div className="mt-3 pt-2 border-t border-border">
-          {/* Error banner — sticky until status becomes running or dismissed */}
-          {stickyError && (
-            <div className="rounded-lg bg-red/10 border border-red/30 px-3 py-2 mb-2">
-              <div className="flex items-center justify-between mb-0.5">
-                <span className="text-[11px] font-semibold text-red">Container Error</span>
-                <button
-                  onClick={() => setStickyError(null)}
-                  className="text-[10px] text-red/60 hover:text-red"
-                >
-                  Dismiss
-                </button>
-              </div>
-              <div className="text-[11px] text-red/80 whitespace-pre-wrap break-words">{stickyError}</div>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className={cn("inline-block w-2 h-2 rounded-full", statusDot)} />
-              <span className={cn("text-[12px] font-semibold capitalize", statusColor)}>
-                {hosting.status}
-              </span>
-              {hosting.url && (
-                <a
-                  href={hosting.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[11px] text-blue underline"
-                >
-                  {hosting.url}
-                </a>
-              )}
-            </div>
-            <div className="flex gap-1.5">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  void onRestart(projectPath).catch((err: unknown) => {
-                    setStickyError(err instanceof Error ? err.message : String(err));
-                  });
-                }}
-                disabled={busy}
-                className="text-[11px] h-7"
-              >
-                Restart
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => void handleSaveConfig()}
-                disabled={saving || busy}
-                className="text-[11px] h-7"
-              >
-                {saving ? "Saving..." : "Save Config"}
-              </Button>
-            </div>
-          </div>
-          {/* Container info */}
-          {(hosting.containerName || hosting.image) && (
-            <div className="flex gap-3 mt-1.5 text-[11px] text-muted-foreground">
-              {hosting.containerName && (
-                <span>Container: <code className="text-foreground">{hosting.containerName}</code></span>
-              )}
-              {hosting.image && (
-                <span>Image: <code className="text-foreground">{hosting.image}</code></span>
-              )}
-            </div>
-          )}
-
-          {/* Public tunnel */}
-          {hosting.status === "running" && onTunnelEnable && onTunnelDisable && (
-            <div className="mt-3 pt-2 border-t border-border">
-              <div className="flex items-center justify-between">
-                <div className="text-[10px] font-semibold text-muted-foreground">Public Tunnel</div>
-                {hosting.tunnelUrl ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setTunnelLoading(true);
-                      void onTunnelDisable(projectPath).finally(() => setTunnelLoading(false));
-                    }}
-                    disabled={tunnelLoading || busy}
-                    className="text-[11px] h-7 text-red"
-                  >
-                    Stop Tunnel
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setTunnelLoading(true);
-                      void onTunnelEnable(projectPath).finally(() => setTunnelLoading(false));
-                    }}
-                    disabled={tunnelLoading || busy}
-                    className="text-[11px] h-7"
-                  >
-                    {tunnelLoading ? "Starting..." : "Share"}
-                  </Button>
-                )}
-              </div>
-              {hosting.tunnelUrl && (
-                <div className="flex items-center gap-1.5 mt-1.5">
-                  <a
-                    href={hosting.tunnelUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[11px] text-green underline truncate"
-                  >
-                    {hosting.tunnelUrl}
-                  </a>
-                  <button
-                    onClick={() => {
-                      void navigator.clipboard.writeText(hosting.tunnelUrl!);
-                      setTunnelCopied(true);
-                      setTimeout(() => setTunnelCopied(false), 2000);
-                    }}
-                    className="text-[10px] text-muted-foreground hover:text-foreground shrink-0"
-                    title="Copy URL"
-                  >
-                    {tunnelCopied ? "Copied!" : "Copy"}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Project Logs + Container Terminal — always visible when hosting is enabled */}
-          <div className="mt-3 pt-2 border-t border-border">
-            <TerminalArea projectPath={projectPath} refreshKey={logRefreshKey} />
-          </div>
-        </div>
+      {/* Logs + Terminal */}
+      <div className="pt-2 border-t border-border">
+        <TerminalArea projectPath={projectPath} refreshKey={logRefreshKey} />
+      </div>
     </div>
   );
 }

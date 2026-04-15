@@ -131,9 +131,38 @@ fi
 # Pre-pull base images as the target user (rootless)
 echo "[...] Pre-pulling container images (rootless, as $SUDO_USER)..."
 su - "$SUDO_USER" -c "podman pull docker.io/library/nginx:alpine" 2>/dev/null || echo "[WARN] Failed to pull nginx:alpine"
-su - "$SUDO_USER" -c "podman pull docker.io/library/php:8.3-apache" 2>/dev/null || echo "[WARN] Failed to pull php:8.3-apache"
-su - "$SUDO_USER" -c "podman pull docker.io/library/node:22-alpine" 2>/dev/null || echo "[WARN] Failed to pull node:22-alpine"
+su - "$SUDO_USER" -c "podman pull ghcr.io/civicognita/php-apache:8.4" 2>/dev/null || echo "[WARN] Failed to pull php-apache:8.4"
+su - "$SUDO_USER" -c "podman pull ghcr.io/civicognita/node:22" 2>/dev/null || echo "[WARN] Failed to pull node:22"
+su - "$SUDO_USER" -c "podman pull ghcr.io/civicognita/postgres:17" 2>/dev/null || echo "[WARN] Failed to pull postgres:17"
+su - "$SUDO_USER" -c "podman pull ghcr.io/civicognita/python:3.12" 2>/dev/null || echo "[WARN] Failed to pull python:3.12"
+su - "$SUDO_USER" -c "podman pull ghcr.io/civicognita/go:1.24" 2>/dev/null || echo "[WARN] Failed to pull go:1.24"
 echo "[OK] Container images pulled"
+
+# ---------------------------------------------------------------------------
+# 5b. WhoDB — always-on database explorer at db.ai.on
+# ---------------------------------------------------------------------------
+
+WHODB_CONTAINER="aionima-whodb"
+WHODB_PORT=5050
+
+echo "[...] Setting up WhoDB database explorer..."
+if su - "$SUDO_USER" -c "podman ps -a --format '{{.Names}}' | grep -q '^${WHODB_CONTAINER}$'" 2>/dev/null; then
+  echo "[OK] WhoDB container already exists"
+else
+  echo "[...] Pulling WhoDB image..."
+  su - "$SUDO_USER" -c "podman pull docker.io/clidey/whodb:latest" 2>/dev/null || echo "[WARN] Failed to pull WhoDB"
+  echo "[...] Starting WhoDB container..."
+  su - "$SUDO_USER" -c "podman run -d \
+    --name ${WHODB_CONTAINER} \
+    --restart=always \
+    --label aionima.infra=true \
+    -p ${WHODB_PORT}:8080 \
+    -v whodb-data:/data \
+    -e WHODB_OLLAMA_HOST=host.containers.internal \
+    -e WHODB_OLLAMA_PORT=11434 \
+    clidey/whodb:latest" 2>/dev/null || echo "[WARN] Failed to start WhoDB"
+  echo "[OK] WhoDB running on port ${WHODB_PORT}"
+fi
 
 # ---------------------------------------------------------------------------
 # 6. Write minimal initial Caddyfile

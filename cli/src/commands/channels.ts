@@ -35,7 +35,7 @@ export function registerChannelsCommand(program: Command): void {
 
       if (config.channels.length === 0) {
         console.log(dim("  No channels configured."));
-        console.log(dim("  Add one in aionima.json under \"channels\"."));
+        console.log(dim("  Add one in gateway.json under \"channels\"."));
         console.log();
         return;
       }

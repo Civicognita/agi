@@ -9,6 +9,11 @@ const GatewayConfigSchema = z
     state: GatewayStateSchema.default("OFFLINE"),
     /** Release channel: "main" (stable) or "dev" (bleeding edge). Controls which branch all repos track for updates. */
     updateChannel: z.enum(["main", "dev"]).optional(),
+    /** Max tool-loop iterations per agent turn. The circuit breaker on
+     *  duplicate tool calls (same tool + same input >3 times) already
+     *  prevents runaway loops, so this is purely a cost ceiling. Set to 0
+     *  for no cap (default). */
+    maxToolLoops: z.number().int().min(0).optional(),
   })
   .strict();
 
@@ -494,6 +499,37 @@ const ChatConfigSchema = z
   })
   .strict();
 
+const HfConfigSchema = z
+  .object({
+    /** Enable HuggingFace model runtime. */
+    enabled: z.boolean().default(false),
+    /** HuggingFace API token for gated model access ($ENV{} reference supported). */
+    apiToken: z.string().optional(),
+    /** Model cache directory (default: ~/.agi/models). */
+    cacheDir: z.string().default("~/.agi/models"),
+    /** Port range start for model containers (default: 6000). */
+    portRangeStart: z.number().int().min(1024).default(6000),
+    /** Maximum concurrent running models (default: 3). */
+    maxConcurrentModels: z.number().int().positive().default(3),
+    /** RAM budget for all model containers in bytes. 0 = auto-detect (default). */
+    ramBudgetBytes: z.number().int().nonnegative().default(0),
+    /** Model IDs to auto-start on gateway boot. */
+    autoStart: z.array(z.string()).default([]),
+    /** Default inference request timeout in ms (default: 120000). */
+    inferenceTimeoutMs: z.number().int().positive().default(120_000),
+    /** GPU passthrough mode: auto-detect, force nvidia/amd, or cpu-only. */
+    gpuMode: z.enum(["auto", "nvidia", "amd", "cpu-only"]).default("auto"),
+    /** Override default container images per runtime type. */
+    images: z
+      .object({
+        llm: z.string().optional(),
+        diffusion: z.string().optional(),
+        general: z.string().optional(),
+      })
+      .optional(),
+  })
+  .strict();
+
 export const AionimaConfigSchema = z
   .object({
     gateway: GatewayConfigSchema.optional(),
@@ -532,11 +568,13 @@ export const AionimaConfigSchema = z
     backup: BackupConfigSchema.optional(),
     compliance: ComplianceConfigSchema.optional(),
     chat: ChatConfigSchema.optional(),
+    hf: HfConfigSchema.optional(),
   })
   .passthrough();
 
 export type AionimaConfig = z.infer<typeof AionimaConfigSchema>;
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
+export type HfConfig = z.infer<typeof HfConfigSchema>;
 export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
 export type EntityStoreConfig = z.infer<typeof EntityStoreConfigSchema>;
 export type AuthConfig = z.infer<typeof AuthConfigSchema>;

@@ -142,7 +142,7 @@ Note: The editor plugin also allows absolute paths inside the external PRIME dir
 | [upgrade-pipeline.md](upgrade-pipeline.md) | How deployment works |
 | [entity-model-extensions.md](entity-model-extensions.md) | How to extend the entity model |
 | [system-prompt-assembly.md](system-prompt-assembly.md) | How the agent system prompt is built |
-| [bots-workers.md](bots-workers.md) | Workers & Taskmaster system |
+| [taskmaster.md](taskmaster.md) | Workers & Taskmaster system |
 
 ### SDK Documentation (`docs/sdk/`)
 

@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Aionima is configured via two files: `aionima.json` (structure and behavior) and `.env` (secrets). This document covers every available configuration field, how `.env` integration works, and how hot-reload operates.
+Aionima is configured via two files: `gateway.json` (structure and behavior) and `.env` (secrets). This document covers every available configuration field, how `.env` integration works, and how hot-reload operates.
 
 ---
 
@@ -8,16 +8,18 @@ Aionima is configured via two files: `aionima.json` (structure and behavior) and
 
 | File | Location | Purpose |
 |------|---------|---------|
-| `aionima.json` | `~/.agi/aionima.json` | All configuration |
+| `gateway.json` | `~/.agi/gateway.json` | All configuration |
 | `.env` | `~/.agi/.env` | Secrets (tokens, API keys) |
 
-The gateway looks for `aionima.json` in the current working directory by default. Override with `--config <path>` on the CLI.
+The gateway looks for `gateway.json` in the current working directory by default. Override with `--config <path>` on the CLI.
+
+> **Renamed from `aionima.json`.** On first boot after upgrade, any existing `~/.agi/aionima.json` is auto-renamed to `~/.agi/gateway.json` in place (see `cli/src/config-loader.ts`). No user action required. The security scanner (`CFG-DEBUG-MODE`) still scans both filenames for one release so older dev checkouts continue to audit cleanly.
 
 ---
 
 ## Secrets Interpolation
 
-Any string value in `aionima.json` can reference an environment variable using `$ENV{VARIABLE_NAME}` syntax:
+Any string value in `gateway.json` can reference an environment variable using `$ENV{VARIABLE_NAME}` syntax:
 
 ```json
 {
@@ -29,7 +31,7 @@ Any string value in `aionima.json` can reference an environment variable using `
 
 At load time, `$ENV{AUTH_TOKEN}` is replaced with the value of the `AUTH_TOKEN` environment variable. Variables are read from the process environment, which includes values loaded from `.env` at startup.
 
-Never put raw API keys or tokens directly in `aionima.json`. The `aionima doctor` command checks for common secret patterns and warns if it finds them.
+Never put raw API keys or tokens directly in `gateway.json`. The `aionima doctor` command checks for common secret patterns and warns if it finds them.
 
 ---
 
@@ -66,14 +68,14 @@ chmod 0600 /opt/aionima/.env
 
 ### gateway
 
-Controls the HTTP server binding and gateway operational state.
+Controls the HTTP server binding and release channel.
 
 ```json
 {
   "gateway": {
     "host": "127.0.0.1",
     "port": 3100,
-    "state": "ONLINE"
+    "updateChannel": "dev"
   }
 }
 ```
@@ -82,7 +84,11 @@ Controls the HTTP server binding and gateway operational state.
 |-------|------|---------|-------------|
 | `host` | string | `"127.0.0.1"` | Listen address. Use `"0.0.0.0"` to expose on all interfaces. |
 | `port` | number | `3100` | HTTP port |
-| `state` | enum | `"OFFLINE"` | Starting state: `ONLINE`, `LIMBO`, `OFFLINE`, or `UNKNOWN` |
+| `updateChannel` | `"main" \| "dev"` | `"main"` | Which branch `agi upgrade` pulls from |
+
+> **Operational state is not a config field.** `ONLINE` / `LIMBO` / `OFFLINE` / `UNKNOWN` are computed at runtime from AGI's connection to Aionima-prime + Hive-ID and exposed read-only at `GET /api/gateway/state`. See the [state machine docs](../agents/state-machine.md).
+>
+> A `gateway.state` value in `gateway.json` from an earlier version is accepted and ignored. Remove it next time you edit the file.
 
 ### auth
 
@@ -641,7 +647,7 @@ Compliance and security controls. Enables field-level encryption for PII, MFA en
 | `encryptionKey` | string | — | Hex-encoded 32-byte encryption key (or `$ENV{}` reference) |
 | `requireMfa` | boolean | `false` | Require MFA for dashboard access |
 
-Never store the raw `encryptionKey` value in `aionima.json`. Use `$ENV{ENCRYPTION_KEY}` and put the key in `.env`.
+Never store the raw `encryptionKey` value in `gateway.json`. Use `$ENV{ENCRYPTION_KEY}` and put the key in `.env`.
 
 ### persona
 
@@ -736,7 +742,7 @@ OAuth provider credentials for local identity issuance. Used when the local ID s
 | `oauth.github.clientSecret` | string | required | GitHub OAuth client secret |
 | `oauth.github.scopes` | string[] | — | OAuth scopes to request |
 
-Store client secrets via `$ENV{}` references — never paste them directly into `aionima.json`.
+Store client secrets via `$ENV{}` references — never paste them directly into `gateway.json`.
 
 ### chat
 
@@ -758,7 +764,7 @@ Chat history configuration. Controls how long chat sessions are retained before 
 
 ## Hot-Reload
 
-The gateway watches `aionima.json` for changes using a file watcher. When the file changes:
+The gateway watches `gateway.json` for changes using a file watcher. When the file changes:
 
 1. The new config is loaded and validated against the Zod schema.
 2. If valid, the `config:changed` hook is fired for each changed key.

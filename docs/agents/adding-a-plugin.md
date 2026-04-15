@@ -22,7 +22,7 @@ Plugins receive an `AionimaPluginAPI` instance during `activate()` and can:
 - Register project panels (`api.registerProjectPanel`) — tabs with declarative widget arrays
 - Register settings sections (`api.registerSettingsSection`) — config cards with form fields
 - Register skills (`api.registerSkill`) — programmatic skill definitions for the agent
-- Register knowledge namespaces (`api.registerKnowledge`) — markdown docs under a namespace
+- Register knowledge namespaces (`api.registerKnowledge`) — markdown docs under a namespace. **Auto-registered:** if your plugin ships a `docs/` folder and does not call `api.registerKnowledge()` itself, the loader automatically registers the folder with `id = plugin id`, `label = plugin name`, and `contentDir = <basePath>/docs`. Call `api.registerKnowledge()` explicitly only when you need a custom id/label/topics list.
 - Register system services (`api.registerSystemService`) — systemd/process services with controls
 - Register themes (`api.registerTheme`) — 21 semantic CSS custom properties. Must set `dark: true/false` for react-fancy compatibility. See `docs/sdk/theming.md`
 - Register agent tools (`api.registerAgentTool`) — tools the agent can invoke
@@ -199,7 +199,7 @@ The marketplace repo is deployed to `/opt/aionima-marketplace/`. When `upgrade.s
 | `plugins/plugin-<name>/package.json` | Create — manifest with `"aionima"` field |
 | `plugins/plugin-<name>/src/index.ts` | Create — plugin entry implementing `AionimaPlugin` |
 | `marketplace.json` | Add catalog entry |
-| `aionima.json` | Add plugin-specific config section if needed |
+| `gateway.json` | Add plugin-specific config section if needed |
 
 ## Verification Checklist
 

@@ -19,7 +19,7 @@ const stack = defineStack("nextjs", "Next.js")
   .projectCategories(["web"])
   .icon("nextjs")
   .requirement({ type: "runtime", id: "node-22" })
-  .container({ image: "node:22-alpine", internalPort: 3000 })
+  .container({ image: "ghcr.io/civicognita/node:22", internalPort: 3000 })
   .devCommands({ dev: "npm run dev", build: "npm run build", start: "npm start" })
   .build();
 
@@ -55,7 +55,7 @@ import { defineRuntime } from "@aionima/sdk";
 const runtime = defineRuntime("node-22", "Node.js 22 LTS")
   .language("node")
   .version("22")
-  .containerImage("node:22-alpine")
+  .containerImage("ghcr.io/civicognita/node:22")
   .internalPort(3000)
   .projectTypes(["node"])
   .installable()
@@ -87,7 +87,7 @@ import { defineService } from "@aionima/sdk";
 
 const service = defineService("mysql", "MySQL")
   .description("Relational database")
-  .containerImage("mariadb:11.4")
+  .containerImage("ghcr.io/civicognita/mariadb:11.4")
   .defaultPort(3306)
   .env({ MARIADB_ROOT_PASSWORD: "aionima", MARIADB_DATABASE: "aionima" })
   .volume("/var/lib/mysql")
@@ -191,7 +191,7 @@ api.registerSettingsSection(settings);
 | Method | Parameter | Description |
 |--------|-----------|-------------|
 | `.description(desc)` | `string` | Section description |
-| `.configPath(path)` | `string` | Dot-path into `aionima.json` |
+| `.configPath(path)` | `string` | Dot-path into `gateway.json` |
 | `.field(field)` | `UIField` | Add a form field |
 | `.position(pos)` | `number` | Sort order |
 

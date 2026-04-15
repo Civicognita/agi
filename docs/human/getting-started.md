@@ -61,16 +61,16 @@ The wizard walks through:
 6. **Workspace** — root directory and project directories.
 
 The wizard writes two files:
-- `aionima.json` — the configuration file, with `$ENV{VAR}` references for secrets.
+- `gateway.json` — the configuration file, with `$ENV{VAR}` references for secrets.
 - `.env` — the secrets file, created with `chmod 0600` permissions.
 
 If you prefer to configure manually, copy the example config:
 
 ```bash
-cp aionima.example.json aionima.json
+cp aionima.example.json gateway.json
 ```
 
-Then edit `aionima.json` and create `.env` with your secrets.
+Then edit `gateway.json` and create `.env` with your secrets.
 
 ---
 
@@ -85,7 +85,7 @@ AUTH_TOKEN=<a-random-token-for-dashboard-access>
 
 The `AUTH_TOKEN` protects the gateway HTTP API. If you are running locally and accessing only via loopback, the loopback address is automatically exempt from auth checks. For remote access, set a strong token.
 
-In `aionima.json`, the agent section should look like:
+In `gateway.json`, the agent section should look like:
 
 ```json
 {
@@ -130,7 +130,7 @@ pnpm dev
 This starts the gateway with `tsx watch`, which restarts automatically when source files change. You will see output like:
 
 ```
-Config loaded from aionima.json
+Config loaded from gateway.json
 
   aionima gateway
   listen    127.0.0.1:3100
@@ -201,7 +201,7 @@ TELEGRAM_BOT_TOKEN=123456789:AAFxxxxxxx
 
 You need to tell Aionima which Telegram user ID belongs to the owner. Find your numeric user ID using `@userinfobot` in Telegram.
 
-### Configure aionima.json
+### Configure gateway.json
 
 ```json
 {
@@ -245,13 +245,13 @@ Check the dashboard's Communication → Telegram page to see the message log and
 
 ### Gateway Does Not Start
 
-Run `pnpm cli doctor` and follow the fix instructions for any failing checks. The most common causes are a missing or invalid `aionima.json`, a missing `ANTHROPIC_API_KEY`, or a port conflict on 3100.
+Run `pnpm cli doctor` and follow the fix instructions for any failing checks. The most common causes are a missing or invalid `gateway.json`, a missing `ANTHROPIC_API_KEY`, or a port conflict on 3100.
 
 ### Telegram Does Not Reply
 
 - Confirm the bot token is correct by visiting `https://api.telegram.org/bot<TOKEN>/getMe` in a browser.
 - Check the dashboard's Communication → Telegram page for error logs.
-- Ensure `channels[0].enabled` is `true` in `aionima.json`.
+- Ensure `channels[0].enabled` is `true` in `gateway.json`.
 
 ### Dashboard Is Blank
 
@@ -263,7 +263,7 @@ The dashboard must be built first: `pnpm build`. If you see a blank page after b
 pnpm cli config validate
 ```
 
-This prints validation errors with field paths. Fix them in `aionima.json` and restart.
+This prints validation errors with field paths. Fix them in `gateway.json` and restart.
 
 ---
 

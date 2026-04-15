@@ -16,7 +16,7 @@ describe("SystemConfigService", () => {
   beforeEach(() => {
     tmpDir = join(tmpdir(), `scs-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(tmpDir, { recursive: true });
-    configPath = join(tmpDir, "aionima.json");
+    configPath = join(tmpDir, "gateway.json");
     svc = new SystemConfigService({ configPath });
   });
 

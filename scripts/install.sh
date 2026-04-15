@@ -12,10 +12,8 @@ AIONIMA_REPO="${AIONIMA_REPO:-https://github.com/Civicognita/agi.git}"
 INSTALL_DIR="${AIONIMA_INSTALL_DIR:-/opt/aionima}"
 PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
 PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
-MARKETPLACE_REPO="${AIONIMA_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-marketplace.git}"
-MARKETPLACE_DIR="${AIONIMA_MARKETPLACE_DIR:-/opt/aionima-marketplace}"
-MAPP_MARKETPLACE_REPO="${AIONIMA_MAPP_MARKETPLACE_REPO:-https://github.com/Civicognita/aionima-mapp-marketplace.git}"
-MAPP_MARKETPLACE_DIR="${AIONIMA_MAPP_MARKETPLACE_DIR:-/opt/aionima-mapp-marketplace}"
+# Plugin and MApp marketplaces are fetched from GitHub on demand by the gateway.
+# No local clones needed.
 ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
 ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
 BRANCH="${AIONIMA_BRANCH:-main}"
@@ -70,6 +68,14 @@ else
 fi
 
 usermod -aG adm "$AIONIMA_USER" 2>/dev/null || true
+
+# Grant passwordless sudo — needed for hosting-setup.sh, Playwright browser deps,
+# and container runtime management
+if [ ! -f "/etc/sudoers.d/$AIONIMA_USER" ]; then
+  echo "$AIONIMA_USER ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/$AIONIMA_USER"
+  chmod 0440 "/etc/sudoers.d/$AIONIMA_USER"
+  echo "==> Granted passwordless sudo to '$AIONIMA_USER'"
+fi
 
 # ---------------------------------------------------------------------------
 # 2. System dependencies
@@ -148,9 +154,9 @@ clone_repo() {
 
 clone_repo "AGI"                "$AIONIMA_REPO"        "$INSTALL_DIR"
 clone_repo "PRIME"              "$PRIME_REPO"           "$PRIME_DIR"
-clone_repo "Plugin Marketplace" "$MARKETPLACE_REPO"     "$MARKETPLACE_DIR"
-clone_repo "MApp Marketplace"   "$MAPP_MARKETPLACE_REPO" "$MAPP_MARKETPLACE_DIR"
 clone_repo "ID Service"         "$ID_REPO"              "$ID_DIR"
+# Plugin and MApp marketplaces are NOT cloned locally — the gateway
+# fetches catalogs and installs plugins directly from GitHub on demand.
 
 # ---------------------------------------------------------------------------
 # 6. Install dependencies and build
@@ -176,24 +182,28 @@ mkdir -p "$AGI_DATA"
 chown "$AIONIMA_USER:$AIONIMA_USER" "$AGI_DATA"
 
 # Create minimal config if it doesn't exist (gateway requires it to boot)
-AGI_CONFIG="$AGI_DATA/aionima.json"
+AGI_CONFIG="$AGI_DATA/gateway.json"
 if [ ! -f "$AGI_CONFIG" ]; then
   DETECTED_IP="$(hostname -I | awk '{print $1}')"
 
-  echo ""
-  echo "  Detected IP: $DETECTED_IP"
-  echo ""
-  echo "  Your machine needs a fixed IP if other devices will connect to it."
-  echo "  Otherwise, it can use whatever IP your router assigns (DHCP)."
-  echo ""
-  echo "  1) Use detected IP ($DETECTED_IP)"
-  echo "  2) Use Aionima standard IP (192.168.0.144)"
-  echo "  3) Enter a custom IP"
-  echo "  4) Use DHCP (auto-assigned, may change on reboot)"
-  echo ""
-  read -p "  Choose [1]: " IP_CHOICE
+  # Allow non-interactive installs by pre-setting LAN_IP
+  if [ -n "${LAN_IP:-}" ]; then
+    echo "  Using pre-set LAN_IP: $LAN_IP"
+  else
+    echo ""
+    echo "  Detected IP: $DETECTED_IP"
+    echo ""
+    echo "  Your machine needs a fixed IP if other devices will connect to it."
+    echo "  Otherwise, it can use whatever IP your router assigns (DHCP)."
+    echo ""
+    echo "  1) Use detected IP ($DETECTED_IP)"
+    echo "  2) Use Aionima standard IP (192.168.0.144)"
+    echo "  3) Enter a custom IP"
+    echo "  4) Use DHCP (auto-assigned, may change on reboot)"
+    echo ""
+    read -p "  Choose [1]: " IP_CHOICE
 
-  case "${IP_CHOICE:-1}" in
+    case "${IP_CHOICE:-1}" in
     2)
       LAN_IP="192.168.0.144"
       # Attempt to set static IP via nmcli if available
@@ -224,7 +234,8 @@ if [ ! -f "$AGI_CONFIG" ]; then
     *)
       LAN_IP="$DETECTED_IP"
       ;;
-  esac
+    esac
+  fi
 
   cat > "$AGI_CONFIG" << CFGEOF
 {
@@ -255,6 +266,103 @@ fi
 # ---------------------------------------------------------------------------
 git -C "$INSTALL_DIR" rev-parse HEAD > "$INSTALL_DIR/.deployed-commit"
 chown "$AIONIMA_USER:$AIONIMA_USER" "$INSTALL_DIR/.deployed-commit"
+
+# ---------------------------------------------------------------------------
+# 9. Set up local ID service (postgres + build + systemd unit)
+#
+# AGI owns the local-id lifecycle end-to-end: the local-id repo is pure
+# source code. Everything below — .env creation, PostgreSQL via Podman,
+# dependency install, drizzle migrations, systemd unit install — belongs
+# here, not in the ID repo.
+#
+# Ongoing upgrades are handled by `scripts/upgrade.sh` which reads
+# `~/.agi/gateway.json` → `idService.local.enabled` and restarts the
+# `aionima-local-id` service whenever the ID source changes.
+# ---------------------------------------------------------------------------
+if [ -d "$ID_DIR/.git" ]; then
+  echo "==> Setting up local ID service..."
+
+  # 9a. .env with encryption key + placeholder OAuth slots
+  ID_ENV="$ID_DIR/.env"
+  if [ ! -f "$ID_ENV" ]; then
+    ID_ENCRYPTION_KEY=$(openssl rand -hex 32)
+    cat > "$ID_ENV" <<IDENVEOF
+# Aionima Local ID Service — managed by AGI's install.sh / upgrade.sh
+ID_SERVICE_MODE=local
+PORT=3200
+ENCRYPTION_KEY=$ID_ENCRYPTION_KEY
+
+# DATABASE_URL is written below by the Podman PostgreSQL setup
+
+# OAuth credentials (optional — add as needed; hot-reloaded by the service)
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=
+# GITHUB_CLIENT_ID=
+# GITHUB_CLIENT_SECRET=
+# DISCORD_CLIENT_ID=
+# DISCORD_CLIENT_SECRET=
+IDENVEOF
+    chown "$AIONIMA_USER:$AIONIMA_USER" "$ID_ENV"
+    chmod 600 "$ID_ENV"
+    echo "  [OK] Generated $ID_ENV"
+  fi
+
+  # 9b. PostgreSQL via Podman — canonical container runtime for AGI infra.
+  # Uses host port 5433 to avoid colliding with any system postgres on 5432.
+  # Container is restart=unless-stopped so it survives reboots.
+  if ! grep -q "^DATABASE_URL=" "$ID_ENV"; then
+    if ! command -v podman &>/dev/null; then
+      echo "  [WARN] podman not found — skipping PostgreSQL setup."
+      echo "         Run 'agi doctor' after install to finish container infra setup,"
+      echo "         then re-run this section by adding a DATABASE_URL to $ID_ENV manually."
+    else
+      ID_DB_PASS=$(openssl rand -hex 16)
+      ID_DB_CONTAINER="aionima-id-postgres"
+      ID_DB_NAME="aionima_id"
+      ID_DB_USER="aionima_id"
+
+      echo "  Starting PostgreSQL container ($ID_DB_CONTAINER)..."
+      podman rm -f "$ID_DB_CONTAINER" 2>/dev/null || true
+      podman volume create aionima-id-pgdata 2>/dev/null || true
+      podman run -d \
+        --name "$ID_DB_CONTAINER" \
+        --restart unless-stopped \
+        -e POSTGRES_DB="$ID_DB_NAME" \
+        -e POSTGRES_USER="$ID_DB_USER" \
+        -e POSTGRES_PASSWORD="$ID_DB_PASS" \
+        -v aionima-id-pgdata:/var/lib/postgresql/data \
+        -p 5433:5432 \
+        docker.io/postgres:16-alpine
+
+      echo "DATABASE_URL=postgres://$ID_DB_USER:$ID_DB_PASS@localhost:5433/$ID_DB_NAME" >> "$ID_ENV"
+      echo "  [OK] PostgreSQL running on host port 5433"
+    fi
+  fi
+
+  # 9c. Install deps + build
+  echo "  Building ID service..."
+  run_as "cd '$ID_DIR' && npm install --omit=dev 2>&1 | tail -1"
+  run_as "cd '$ID_DIR' && npm run build 2>&1 | tail -1"
+
+  # 9d. Run database migrations (safe no-op if already applied)
+  if grep -q "^DATABASE_URL=" "$ID_ENV"; then
+    echo "  Running ID database migrations..."
+    run_as "cd '$ID_DIR' && set -a && source .env && set +a && npx drizzle-kit migrate 2>&1 | tail -3" || \
+      echo "  [WARN] Migrations skipped or failed — see logs"
+  fi
+
+  # 9e. Install + enable systemd unit
+  ID_SERVICE_FILE="$INSTALL_DIR/scripts/aionima-local-id.service"
+  ID_DEST_SERVICE="/etc/systemd/system/aionima-local-id.service"
+  if [ -f "$ID_SERVICE_FILE" ]; then
+    sed "s/%AIONIMA_USER%/$AIONIMA_USER/g" "$ID_SERVICE_FILE" > "$ID_DEST_SERVICE"
+    systemctl daemon-reload
+    systemctl enable aionima-local-id 2>/dev/null || true
+    echo "  [OK] aionima-local-id.service installed and enabled"
+  else
+    echo "  [WARN] $ID_SERVICE_FILE missing — skipping systemd unit install"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 10. Install systemd service
@@ -365,11 +473,13 @@ echo "    agi logs       View gateway logs"
 echo "    agi doctor     Run diagnostics"
 echo ""
 
-# Ask user to star the project on GitHub
-read -p "  Would you like to show some love by starring the project on GitHub? [Y/n] " STAR_CHOICE
-if [[ "${STAR_CHOICE:-Y}" =~ ^[Yy] ]]; then
-  xdg-open "https://github.com/Civicognita/agi" 2>/dev/null \
-    || open "https://github.com/Civicognita/agi" 2>/dev/null \
-    || echo "  Visit: https://github.com/Civicognita/agi"
+# Ask user to star the project on GitHub (skip in non-interactive mode)
+if [ -t 0 ]; then
+  read -p "  Would you like to show some love by starring the project on GitHub? [Y/n] " STAR_CHOICE
+  if [[ "${STAR_CHOICE:-Y}" =~ ^[Yy] ]]; then
+    xdg-open "https://github.com/Civicognita/agi" 2>/dev/null \
+      || open "https://github.com/Civicognita/agi" 2>/dev/null \
+      || echo "  Visit: https://github.com/Civicognita/agi"
+  fi
 fi
 echo ""

@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { fetchConnectionStatus } from "@/api.js";
+import { PageScroll } from "@/components/PageScroll.js";
 import type { ConnectionStatus } from "@/types.js";
 
 export default function IdentityServicePage() {
@@ -19,15 +20,18 @@ export default function IdentityServicePage() {
 
   if (connections === null) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
+      <PageScroll>
+      <div className="flex items-center justify-center py-20">
         <div className="text-subtext0">Loading...</div>
       </div>
+      </PageScroll>
     );
   }
 
   if (!idService || idService.status === "missing" || idService.status === "error") {
     return (
-      <div className="max-w-2xl mx-auto p-6 text-center space-y-4">
+      <PageScroll>
+      <div className="max-w-2xl mx-auto text-center space-y-4">
         <h1 className="text-xl font-semibold text-foreground">Identity Service</h1>
         <p className="text-subtext0">
           {idService?.status === "error"
@@ -35,11 +39,13 @@ export default function IdentityServicePage() {
             : "Identity service is not configured. Set up the ID service in Settings \u2192 Identity."}
         </p>
       </div>
+      </PageScroll>
     );
   }
 
   return (
-    <div className="h-[calc(100vh-4rem)] w-full">
+    <PageScroll>
+    <div className="w-full" style={{ height: "calc(100vh - 10rem)" }}>
       <iframe
         src={idService.url}
         className="w-full h-full border-0 rounded-lg"
@@ -47,5 +53,6 @@ export default function IdentityServicePage() {
         allow="clipboard-write"
       />
     </div>
+    </PageScroll>
   );
 }

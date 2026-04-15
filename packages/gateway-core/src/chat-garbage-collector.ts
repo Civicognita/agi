@@ -19,7 +19,7 @@ import type { ImageBlobStore } from "./image-blob-store.js";
 export interface ChatGCDeps {
   chatPersistence: ChatPersistence;
   imageBlobStore: ImageBlobStore;
-  /** Path to aionima.json for hot-reading config.chat.retentionDays. */
+  /** Path to gateway.json for hot-reading config.chat.retentionDays. */
   configPath?: string;
 }
 
@@ -39,7 +39,7 @@ export class ChatGarbageCollector {
   constructor(deps: ChatGCDeps) {
     this.chatPersistence = deps.chatPersistence;
     this.imageBlobStore = deps.imageBlobStore;
-    this.configPath = deps.configPath ?? join(homedir(), ".agi", "aionima.json");
+    this.configPath = deps.configPath ?? join(homedir(), ".agi", "gateway.json");
   }
 
   /** Run the garbage collection sweep. */

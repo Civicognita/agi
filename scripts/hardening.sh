@@ -85,7 +85,7 @@ if command -v auditctl &>/dev/null; then
 
   cat > "$AUDIT_FILE" << EOF
 # Aionima — watch config and secrets for writes
--w $DEPLOY_DIR/aionima.json -p wa -k aionima-config
+-w $DEPLOY_DIR/gateway.json -p wa -k aionima-config
 -w $DEPLOY_DIR/.env -p wa -k aionima-secrets
 EOF
 

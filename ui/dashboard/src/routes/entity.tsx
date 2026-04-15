@@ -5,6 +5,7 @@
 import { Link, useParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { EntityProfile } from "@/components/EntityProfile.js";
+import { PageScroll } from "@/components/PageScroll.js";
 
 export default function EntityPage() {
   const { id } = useParams<{ id: string }>();
@@ -12,6 +13,7 @@ export default function EntityPage() {
   if (!id) return null;
 
   return (
+    <PageScroll>
     <div>
       <Link to="/" className="inline-block mb-4 no-underline">
         <Button variant="outline" size="sm">
@@ -20,5 +22,6 @@ export default function EntityPage() {
       </Link>
       <EntityProfile entityId={id} />
     </div>
+    </PageScroll>
   );
 }

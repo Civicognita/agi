@@ -198,6 +198,11 @@ export function Projects({
                       tynn
                     </span>
                   )}
+                  {(p.category ?? p.projectType?.category) && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface1 text-muted-foreground font-medium capitalize">
+                      {p.category ?? p.projectType?.category}
+                    </span>
+                  )}
                   {p.hosting && (
                     <span className={cn(
                       "text-[10px] px-1.5 py-0.5 rounded font-semibold",
@@ -210,15 +215,28 @@ export function Projects({
                   )}
                 </div>
                 {p.hosting?.hostname && (
-                  <a
-                    href={`https://${p.hosting.hostname}.${hostingStatus?.baseDomain ?? "ai.on"}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="text-[11px] text-blue underline mt-0.5 inline-block"
-                  >
-                    {p.hosting.hostname}.{hostingStatus?.baseDomain ?? "ai.on"}
-                  </a>
+                  <div className="flex flex-col gap-0.5 mt-0.5">
+                    <a
+                      href={`https://${p.hosting.hostname}.${hostingStatus?.baseDomain ?? "ai.on"}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-[11px] text-blue underline inline-block"
+                    >
+                      {p.hosting.hostname}.{hostingStatus?.baseDomain ?? "ai.on"}
+                    </a>
+                    {p.hosting.tunnelUrl && (
+                      <a
+                        href={p.hosting.tunnelUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-[10px] text-green underline inline-block"
+                      >
+                        {p.hosting.tunnelUrl.replace(/^https?:\/\//, "")}
+                      </a>
+                    )}
+                  </div>
                 )}
                 {projectActivity?.[p.path] && (
                   <div

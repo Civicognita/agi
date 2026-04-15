@@ -48,6 +48,39 @@ export interface UpdatePlanInput {
   status?: PlanStatus;
   stepUpdates?: PlanStepUpdate[];
   tynnRefs?: Partial<PlanTynnRefs>;
+  /** New plan body (user-editable pre-acceptance; rejected by tool guard after). */
+  body?: string;
+  /** New plan title (user-editable pre-acceptance; rejected by tool guard after). */
+  title?: string;
+  /** Replace the full step list (user-editable pre-acceptance; rejected by tool guard after). */
+  steps?: PlanStep[];
+}
+
+/**
+ * UI-facing status view. The internal 7-status enum (PlanStatus) maps
+ * onto these four lanes:
+ *
+ *   draft | reviewing    -> proposed    (editable; shown in Plans tab)
+ *   approved             -> accepted    (locked body; shown; step status still advances)
+ *   executing | testing  -> in-progress (locked body; shown; step status advances live)
+ *   complete | failed    -> done        (hidden from default Plans-tab list)
+ */
+export type PlanView = "proposed" | "accepted" | "in-progress" | "done";
+
+export function planViewFromStatus(status: PlanStatus): PlanView {
+  switch (status) {
+    case "draft":
+    case "reviewing":
+      return "proposed";
+    case "approved":
+      return "accepted";
+    case "executing":
+    case "testing":
+      return "in-progress";
+    case "complete":
+    case "failed":
+      return "done";
+  }
 }
 
 /** Input shape for a single step when creating a plan. */

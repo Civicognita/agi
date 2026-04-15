@@ -8,14 +8,28 @@ import type { ToolHandler } from "../tool-registry.js";
 import { PlanStore } from "../plan-store.js";
 import type { PlanStepInput, PlanStepType } from "../plan-types.js";
 
-export interface CreatePlanConfig {
-  projectPath: string;
-}
-
 const VALID_STEP_TYPES: PlanStepType[] = ["plan", "implement", "test", "review", "deploy"];
 
-export function createCreatePlanHandler(config: CreatePlanConfig): ToolHandler {
+/**
+ * Create-plan handler.
+ *
+ * The `projectPath` comes from the tool INPUT (not a bound-at-registration
+ * config). That way the tool can be registered once at server boot and is
+ * always available to the agent — regardless of whether the current chat
+ * session has a project context baked in. The agent reads its project path
+ * from the system prompt's project-context section and passes it on each
+ * call. Sessions without a project context simply won't invoke this tool
+ * (there's nothing to plan against).
+ */
+export function createCreatePlanHandler(): ToolHandler {
   return async (input: Record<string, unknown>): Promise<string> => {
+    const projectPath = String(input.projectPath ?? "").trim();
+    if (projectPath.length === 0) {
+      return JSON.stringify({
+        error: "projectPath is required — pass the absolute path of the project you are planning against (visible in your Project Context section).",
+      });
+    }
+
     const title = String(input.title ?? "").trim();
     if (title.length === 0) {
       return JSON.stringify({ error: "title is required" });
@@ -59,7 +73,7 @@ export function createCreatePlanHandler(config: CreatePlanConfig): ToolHandler {
       const store = new PlanStore();
       const plan = store.create({
         title,
-        projectPath: config.projectPath,
+        projectPath,
         steps,
         body,
       });
@@ -74,13 +88,20 @@ export const CREATE_PLAN_MANIFEST = {
   name: "create_plan",
   description:
     "Create a structured plan with steps for a multi-step task. The plan will be saved and presented to the user for review before execution.",
-  requiresState: ["ONLINE" as const],
+  // State is audit metadata, not a permission gate (see
+  // docs/agents/state-machine.md). Empty array = no state filter.
+  requiresState: [],
   requiresTier: ["verified" as const, "sealed" as const],
 };
 
 export const CREATE_PLAN_INPUT_SCHEMA = {
   type: "object",
   properties: {
+    projectPath: {
+      type: "string",
+      description:
+        "Absolute path of the project this plan is for. Read it from your Project Context section of the system prompt (e.g. /home/user/_projects/myapp). Required.",
+    },
     title: {
       type: "string",
       description: "Short, descriptive plan title",
@@ -111,5 +132,5 @@ export const CREATE_PLAN_INPUT_SCHEMA = {
       description: "Full markdown plan body with context, rationale, and details",
     },
   },
-  required: ["title", "steps", "body"],
+  required: ["projectPath", "title", "steps", "body"],
 };

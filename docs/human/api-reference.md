@@ -10,7 +10,7 @@ Aionima uses a layered access model:
 
 1. **Loopback bypass** — Requests from `127.0.0.1`, `::1`, or `::ffff:127.0.0.1` skip all auth checks.
 2. **Private network gating** — Most `/api/*` routes only accept connections from RFC 1918 addresses (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) and IPv6 link-local (`fe80::/10`). Non-private requests receive `403 Forbidden`.
-3. **Bearer token** — When `auth.tokens` is configured in `aionima.json`, non-loopback requests must include:
+3. **Bearer token** — When `auth.tokens` is configured in `gateway.json`, non-loopback requests must include:
 
 ```
 Authorization: Bearer <AUTH_TOKEN>
@@ -339,7 +339,7 @@ Config endpoints are only registered when a config file path is available. All r
 
 #### GET /api/config
 
-Read the current configuration (`aionima.json`).
+Read the current configuration (`gateway.json`).
 
 Response: The full parsed config object.
 
@@ -894,7 +894,7 @@ Get details for a specific stack definition.
 Response:
 
 ```json
-{ "stack": { "id": "postgres-16", "name": "PostgreSQL 16", "category": "database", "image": "postgres:16" } }
+{ "stack": { "id": "postgres-17", "name": "PostgreSQL 17", "category": "database", "image": "ghcr.io/civicognita/postgres:17" } }
 ```
 
 Returns `404` if the stack is not found.
@@ -947,7 +947,7 @@ List all running shared containers (stacks used across multiple projects).
 Response:
 
 ```json
-{ "containers": [{ "key": "postgres-16", "image": "postgres:16", "status": "running", "projects": 3 }] }
+{ "containers": [{ "key": "postgres-17", "image": "ghcr.io/civicognita/postgres:17", "status": "running", "projects": 3 }] }
 ```
 
 #### GET /api/shared-containers/:key/connection
@@ -1316,7 +1316,7 @@ List all registered runtime definitions.
 Response:
 
 ```json
-{ "runtimes": [{ "id": "node-22", "language": "nodejs", "version": "22", "image": "node:22" }] }
+{ "runtimes": [{ "id": "node-22", "language": "nodejs", "version": "22", "image": "ghcr.io/civicognita/node:22" }] }
 ```
 
 #### GET /api/runtimes/:projectType

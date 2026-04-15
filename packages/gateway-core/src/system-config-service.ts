@@ -1,6 +1,6 @@
 /**
  * SystemConfigService — single service that owns ALL reads and writes
- * to the system config file (~/.agi/aionima.json).
+ * to the system config file (~/.agi/gateway.json, formerly aionima.json).
  *
  * Replaces scattered raw readFileSync/writeFileSync across:
  *   - tools/agent-tools.ts (manage_config, manage_plugins)

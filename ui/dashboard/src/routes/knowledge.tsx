@@ -85,7 +85,7 @@ export default function KnowledgePage() {
 
   if (isMobile) {
     return (
-      <div style={{ height: "calc(100dvh - 57px)", overflow: "hidden", margin: "-12px" }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
         {showTree || !selectedPath ? (
           <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--color-card)" }}>
             <div style={{ padding: "10px 12px", fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--color-muted-foreground)", borderBottom: "1px solid var(--color-border)", flexShrink: 0 }}>
@@ -143,8 +143,8 @@ export default function KnowledgePage() {
     <div
       style={{
         display: "flex",
-        margin: "-24px",
-        height: "calc(100dvh - 57px)",
+        flex: 1,
+        minHeight: 0,
         overflow: "hidden",
       }}
     >

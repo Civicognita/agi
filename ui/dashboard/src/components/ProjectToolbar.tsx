@@ -66,6 +66,9 @@ export function ProjectToolbar({
           disabled={runningTool !== null}
           onClick={() => void handleRun(tool)}
           title={tool.description}
+          data-testid="project-action-button"
+          data-command={tool.command ?? tool.description}
+          data-tool-id={tool.id}
         >
           {runningTool === tool.id ? "..." : tool.label}
         </Button>

@@ -1,338 +1,158 @@
-# CLI Commands Reference
+# CLI Reference
 
-The `aionima` CLI provides commands for starting the gateway, checking health, managing channels, and running the configuration wizard.
+The `agi` command is the single entry point for managing the Aionima gateway from the terminal.
+
+```bash
+agi <command> [args]
+```
+
+Installed as a symlink: `/usr/local/bin/agi` → `/opt/aionima/scripts/agi-cli.sh`
 
 ---
 
-## Invoking the CLI
+## Commands
 
-In the repository, use `pnpm cli <command>`:
+### agi status
+
+Show service state, deployed commit, update status, and infrastructure health.
 
 ```bash
-pnpm cli run
-pnpm cli status
-pnpm cli doctor
+agi status
 ```
 
-In production (installed to `/opt/aionima`), use `aionima <command>` directly if the CLI is in your PATH, or `node /opt/aionima/cli/dist/index.js <command>`.
+```
+Aionima Gateway Status
+
+Service:          running
+PID:              12345
+Since:            Sat 2026-04-11 10:00:51 CDT
+Memory:           478MB
+Commit:           abc1234...
+Update:           up to date (dev)
+Port:             3100
+
+Infrastructure
+Caddy:            active
+Podman:           installed (podman version 4.9.3)
+dnsmasq:          active
+Containers:       4 running
+```
+
+The update check compares against `origin/{channel}` where channel is read from `gateway.updateChannel` in `gateway.json` (default: `main`).
 
 ---
 
-## Global Options
+### agi logs
 
-These options apply to all commands:
+Tail gateway logs.
 
-| Option | Description |
-|--------|-------------|
-| `-c, --config <path>` | Path to `aionima.json`. Default: `aionima.json` in the current directory. |
-| `--host <host>` | Gateway host for commands that query the running gateway. Default: `127.0.0.1`. |
-| `--port <port>` | Gateway port. Default: `3100`. |
-| `-v, --verbose` | Enable verbose output. |
-| `-q, --quiet` | Suppress non-essential output. |
-| `--version` | Print the CLI version. |
-| `--help` | Print help for the current command. |
+```bash
+agi logs        # last 50 lines
+agi logs 100    # last 100 lines
+agi logs -f     # follow (live tail)
+```
+
+Reads from `~/.agi/logs/aionima.log`, falls back to `journalctl -u aionima` if the log file doesn't exist.
 
 ---
 
-## aionima run
+### agi upgrade
 
-Start the gateway.
-
-```bash
-aionima run
-aionima run --config /opt/aionima/aionima.json
-```
-
-Reads `aionima.json`, starts the HTTP server, WebSocket server, channel adapters, and queue consumer. Serves the built dashboard from `ui/dashboard/dist/` if it exists.
-
-Output:
-
-```
-Config loaded from aionima.json
-
-  aionima gateway
-  listen    127.0.0.1:3100
-  state     ONLINE
-  channels  2 configured
-  dashboard http://127.0.0.1:3100
-```
-
-The process stays alive until `SIGINT` (Ctrl+C) or `SIGTERM` is received, at which point it shuts down gracefully: drains the message queue, stops channel adapters, closes the HTTP server.
-
-**Environment variables used at startup:**
-
-All `$ENV{VAR}` references in `aionima.json` are resolved from the environment. Load `.env` before running:
+Pull latest code, build, and restart the gateway.
 
 ```bash
-# Manual load
-set -a; source .env; set +a
-aionima run
+agi upgrade
 ```
 
-The gateway automatically loads `.env` from the same directory as `aionima.json`.
+Runs `scripts/upgrade.sh` and parses its structured JSON output into human-readable progress lines. Checks service health after completion.
 
 ---
 
-## aionima status
+### agi restart / start / stop
 
-Show the current gateway state and key metrics.
-
-```bash
-aionima status
-aionima status --host 192.168.0.144 --port 3100
-```
-
-Queries the running gateway at `http://host:port/api/status`. Requires the gateway to be running.
-
-Output:
-
-```
-  aionima status
-
-  State       ONLINE
-  Uptime      2h 14m
-  Channels    3
-  Entities    47
-  Queue Depth 0
-  WS Clients  2
-```
-
-Exits with code 1 if the gateway is unreachable.
-
----
-
-## aionima doctor
-
-Run self-diagnostics and print pass/fail results with fix instructions.
+Service lifecycle commands.
 
 ```bash
-aionima doctor
-```
-
-Runs ten checks:
-
-| Check | What It Verifies |
-|-------|----------------|
-| Config file | `aionima.json` exists and passes Zod validation |
-| Data directory | `./data/` exists and is writable |
-| Gateway reachable | HTTP ping to `host:port/api/ping` succeeds |
-| Node.js version | Node.js 22+ |
-| .env file | `/opt/aionima/.env` exists with mode `0600` |
-| Primary API key | `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set |
-| Auth token | `AUTH_TOKEN` is set |
-| Systemd service | `/etc/systemd/system/aionima.service` exists |
-| Deploy directory | `/opt/aionima` exists |
-| No secrets in config | Config does not contain raw API key patterns |
-
-Output:
-
-```
-  aionima doctor
-
-  ✓ Config file
-  ✓ Data directory
-  ✓ Gateway reachable
-  ✓ Node.js (v22.14.0)
-  ✗ .env file
-    Create .env: touch /opt/aionima/.env && chmod 0600 /opt/aionima/.env
-  ✗ Primary API key
-    Set ANTHROPIC_API_KEY or OPENAI_API_KEY in /opt/aionima/.env
-
-  2 issue(s) — 8/10 passed
-```
-
-Exits with code 1 if any check fails.
-
----
-
-## aionima setup
-
-Interactive configuration wizard. Generates `aionima.json` and `.env` from user input.
-
-```bash
-aionima setup
-aionima setup --dir /opt/aionima
-```
-
-**Options:**
-
-| Option | Description |
-|--------|-------------|
-| `-d, --dir <path>` | Target directory for the generated files. Default: current directory. |
-
-The wizard runs nine phases:
-
-1. Detect context (current directory vs deploy directory)
-2. Owner identity (display name, DM policy)
-3. Gateway settings (listen address, port)
-4. LLM provider (Anthropic, OpenAI, or Ollama) and API key
-5. Channel selection and per-channel secrets
-6. Optional features (project hosting, voice, dashboard auth)
-7. Workspace configuration
-8. Generate and write files (with validation)
-9. Print next steps
-
-If `aionima.json` already exists in the target directory, the wizard offers to use it as a starting point (migrating existing values).
-
-The `.env` file is created with `chmod 0600`. If `.env` already exists, new variables are appended and existing ones are preserved.
-
-**Example session:**
-
-```
-  aionima setup
-  Interactive configuration wizard
-
-  Working directory: /home/user/aionima
-
-  Owner Identity
-  Display name [Owner]: Alice
-  DM policy [1=Pairing (default), 2=Open]: 1
-
-  Gateway
-  Listen address [127.0.0.1]: 127.0.0.1
-  Port [3100]: 3100
-    Generated AUTH_TOKEN (saved to .env)
-
-  LLM Provider
-  Primary LLM provider [1=Anthropic (default), 2=OpenAI, 3=Ollama]: 1
-  ANTHROPIC_API_KEY: [hidden]
-  Model [claude-sonnet-4-6]: claude-sonnet-4-6
-  Reply mode [1=Autonomous (default), 2=Human-in-loop]: 1
-
-  Channels
-  Which channels to enable? (space to toggle, enter to confirm)
-  > [x] Telegram
-    [ ] Discord
-    [ ] Email (Gmail)
-    [ ] Signal
-    [ ] WhatsApp
-
-  Telegram bot token: [hidden]
-  Your Telegram user ID (numeric): 123456789
-
-  ...
-
-  Written: /home/user/aionima/aionima.json
-  Written: /home/user/aionima/.env
-  Set .env permissions to 0600
-
-  Setup complete!
-
-  Config:  /home/user/aionima/aionima.json
-  Secrets: /home/user/aionima/.env
-
-  Next steps:
-    1. Review config:  cat aionima.json
-    2. Start locally:  aionima run
-    3. Check health:   aionima doctor
+agi restart     # restart the aionima systemd service
+agi start       # start the service
+agi stop        # stop the service
 ```
 
 ---
 
-## aionima channels
+### agi doctor
 
-Subcommands for managing channel adapters.
-
-### aionima channels list
-
-List channels configured in `aionima.json`.
+Run infrastructure health checks.
 
 ```bash
-aionima channels list
+agi doctor
 ```
 
-Output:
+Checks: Node.js version, pnpm, deploy directory, config file, Caddy, Podman (rootless), dnsmasq, gateway HTTP response, disk usage.
 
-```
-  Configured Channels
+---
 
-  Channel   Status    Config
-  telegram  enabled   custom
-  discord   disabled  default
-```
+### agi config
 
-### aionima channels test \<id\>
-
-Send a test message through a channel (Phase 2 — not yet wired in the current build).
+Read configuration values from `~/.agi/gateway.json`.
 
 ```bash
-aionima channels test telegram
+agi config                    # print full config
+agi config hosting.enabled    # read a specific dot-path key
+agi config gateway.port       # nested keys work
 ```
 
 ---
 
-## aionima config
+### agi projects
 
-Subcommands for configuration management.
-
-### aionima config validate
-
-Validate `aionima.json` against the Zod schema and print any errors.
+List all hosted projects with their type, status, hostname, and port.
 
 ```bash
-aionima config validate
-aionima config validate --config /path/to/aionima.json
+agi projects
 ```
 
-Output on success:
+---
 
-```
-  Config Validation
+### agi setup
 
-  File: /home/user/aionima/aionima.json
-
-  ✓ Valid configuration
-```
-
-Output on failure:
-
-```
-  Config Validation
-
-  File: /home/user/aionima/aionima.json
-
-  ✗ Invalid configuration:
-    • agent.model: Required
-    • channels.0.id: String must contain at least 1 character(s)
-```
-
-Exits with code 1 on validation failure.
-
-### aionima config show
-
-Print the resolved configuration (with `$ENV{}` references expanded).
+Interactive configuration wizard. Generates `gateway.json` and `.env` from user input.
 
 ```bash
-aionima config show
+agi setup
 ```
 
-Output:
+Delegates to the Node.js setup wizard (`cli/dist/index.js setup`). Runs nine phases: owner identity, gateway settings, LLM provider, channels, optional features, workspace config, file generation, and next steps.
 
-```
-  Resolved Configuration
-  Source: aionima.json
+---
 
-  {
-    "gateway": {
-      "host": "127.0.0.1",
-      "port": 3100,
-      "state": "ONLINE"
-    },
-    ...
-  }
+### agi setup-prompts
+
+Configure the agent persona (SOUL.md, IDENTITY.md) and heartbeat prompt.
+
+```bash
+agi setup-prompts
 ```
 
-Note: `config show` resolves `$ENV{}` references. The output may contain actual token values — handle it with care.
+---
+
+### agi channels
+
+Manage channel adapters.
+
+```bash
+agi channels list     # list configured channels
+agi channels test <id>  # test a channel (future)
+```
 
 ---
 
 ## Environment Variables
 
-The CLI and gateway read these environment variables:
+The gateway reads these from `~/.agi/.env` (loaded automatically at startup):
 
 | Variable | Description |
 |---------|-------------|
-| `AUTH_TOKEN` | Bearer token for gateway API auth |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API key |
 | `OPENAI_API_KEY` | OpenAI API key (also used for Whisper STT) |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
@@ -345,24 +165,12 @@ The CLI and gateway read these environment variables:
 | `WHATSAPP_ACCESS_TOKEN` | WhatsApp Business API access token |
 | `WHATSAPP_PHONE_NUMBER_ID` | WhatsApp phone number ID |
 | `WHATSAPP_VERIFY_TOKEN` | WhatsApp webhook verification token |
-| `JWT_SECRET` | Dashboard session JWT signing secret |
-| `AIONIMA_USER` | Linux user for upgrade.sh (default: owner of `/opt/aionima`) |
-| `AIONIMA_REPO_DIR` | Repository directory for upgrade.sh |
-
----
-
-## Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| `0` | Success |
-| `1` | Error (config invalid, gateway unreachable, checks failed) |
 
 ---
 
 ## Development Commands
 
-These are npm scripts in `package.json`, not `aionima` CLI commands:
+These are npm scripts in `package.json`, used during development only:
 
 | Command | Description |
 |---------|-------------|
@@ -371,9 +179,7 @@ These are npm scripts in `package.json`, not `aionima` CLI commands:
 | `pnpm build` | Build dashboard + backend |
 | `pnpm typecheck` | Type-check the full monorepo |
 | `pnpm lint` | Run oxlint |
-| `pnpm format` | Run oxfmt (format in place) |
+| `pnpm format` | Run oxfmt |
 | `pnpm check` | typecheck + lint |
-| `pnpm test` | Run Vitest |
+| `pnpm test` | Run Vitest (in VM) |
 | `pnpm test:e2e` | Run Playwright e2e tests |
-| `pnpm tm status` | Show Taskmaster job status |
-| `pnpm tm jobs` | List Taskmaster jobs |

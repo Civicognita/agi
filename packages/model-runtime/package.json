@@ -1,0 +1,14 @@
+{
+  "name": "@aionima/model-runtime",
+  "version": "0.1.0",
+  "description": "HuggingFace model runtime — download, serve, and manage ML models via Podman containers",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.20.0"
+  }
+}

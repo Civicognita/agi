@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { PageScroll } from "@/components/PageScroll.js";
 import { fetchChangelog } from "../api.js";
 import type { ChangelogCommit } from "../api.js";
 
@@ -170,6 +171,7 @@ export default function ChangelogPage() {
   const hasMore = commits.length < total;
 
   return (
+    <PageScroll>
     <div className="space-y-4">
       <p className="text-[13px] text-muted-foreground">
         Commit history — each entry is a change that was pulled and deployed.
@@ -213,5 +215,6 @@ export default function ChangelogPage() {
         </>
       )}
     </div>
+    </PageScroll>
   );
 }

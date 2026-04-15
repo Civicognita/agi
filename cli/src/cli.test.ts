@@ -306,7 +306,7 @@ describe("loadConfig", () => {
   });
 
   it("returns parsed AionimaConfig for a valid JSON file", async () => {
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, VALID_CONFIG, "utf-8");
 
     const result = await loadConfig(configPath);
@@ -319,7 +319,7 @@ describe("loadConfig", () => {
   });
 
   it("returns config with defaults applied for minimal config", async () => {
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, MINIMAL_CONFIG, "utf-8");
 
     const result = await loadConfig(configPath);
@@ -329,7 +329,7 @@ describe("loadConfig", () => {
   });
 
   it("throws on invalid JSON syntax", async () => {
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, "{ this is not json }", "utf-8");
 
     await expect(loadConfig(configPath)).rejects.toThrow();
@@ -345,7 +345,7 @@ describe("loadConfig", () => {
       gateway: { host: "127.0.0.1", port: "not-a-number", state: "ONLINE" },
       channels: [],
     });
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, bad, "utf-8");
 
     await expect(loadConfig(configPath)).rejects.toThrow();
@@ -356,7 +356,7 @@ describe("loadConfig", () => {
       gateway: { host: "localhost", port: 3100, state: "RUNNING" },
       channels: [],
     });
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, bad, "utf-8");
 
     await expect(loadConfig(configPath)).rejects.toThrow();
@@ -367,7 +367,7 @@ describe("loadConfig", () => {
       channels: [],
       unknownField: true,
     });
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, extra, "utf-8");
 
     // Schema uses .passthrough() — extra fields are allowed, not rejected
@@ -397,7 +397,7 @@ describe("validateConfigFile", () => {
   });
 
   it("returns null errors for a valid config file", async () => {
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, VALID_CONFIG, "utf-8");
 
     const result = await validateConfigFile(configPath);
@@ -407,7 +407,7 @@ describe("validateConfigFile", () => {
   });
 
   it("returns null errors for a minimal valid config", async () => {
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, MINIMAL_CONFIG, "utf-8");
 
     const result = await validateConfigFile(configPath);
@@ -420,7 +420,7 @@ describe("validateConfigFile", () => {
       gateway: { host: "localhost", port: 99999, state: "ONLINE" },
       channels: [],
     });
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, bad, "utf-8");
 
     const result = await validateConfigFile(configPath);
@@ -434,7 +434,7 @@ describe("validateConfigFile", () => {
       gateway: { host: "localhost", port: 3100, state: "RUNNING" },
       channels: [],
     });
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, bad, "utf-8");
 
     const result = await validateConfigFile(configPath);
@@ -444,7 +444,7 @@ describe("validateConfigFile", () => {
   });
 
   it("returns error messages for invalid JSON", async () => {
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, "not json at all", "utf-8");
 
     const result = await validateConfigFile(configPath);
@@ -477,7 +477,7 @@ describe("validateConfigFile", () => {
       gateway: { host: 12345, port: 3100, state: "ONLINE" },
       channels: [],
     });
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, bad, "utf-8");
 
     const result = await validateConfigFile(configPath);
@@ -490,7 +490,7 @@ describe("validateConfigFile", () => {
 
   it("passes through unknown top-level fields in validation (passthrough schema)", async () => {
     const extra = JSON.stringify({ channels: [], extraKey: "bad" });
-    const configPath = join(tmpDir, "aionima.json");
+    const configPath = join(tmpDir, "gateway.json");
     await writeFile(configPath, extra, "utf-8");
 
     // Schema uses .passthrough() — extra fields do NOT produce validation errors

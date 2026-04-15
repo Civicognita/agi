@@ -10,7 +10,7 @@ The gateway HTTP API requires authentication on all routes except loopback reque
 
 ### Bearer Token Auth
 
-The primary auth method. Set one or more tokens in `aionima.json`:
+The primary auth method. Set one or more tokens in `gateway.json`:
 
 ```json
 {
@@ -58,7 +58,7 @@ Failed authentication attempts are tracked per IP address:
 
 After 10 failed attempts within 60 seconds, the IP is locked out for 5 minutes. Lockout state is in-memory and resets on gateway restart.
 
-Configure in `aionima.json`:
+Configure in `gateway.json`:
 
 ```json
 {
@@ -193,7 +193,7 @@ The owner entity (sealed tier) is subject to the same rate limits in the current
 
 ### Never Commit Secrets
 
-All secrets (API keys, bot tokens, OAuth credentials) must go in `.env`, referenced in `aionima.json` via `$ENV{VAR_NAME}`. The `aionima doctor` command checks for common secret patterns in `aionima.json` and fails if any are found.
+All secrets (API keys, bot tokens, OAuth credentials) must go in `.env`, referenced in `gateway.json` via `$ENV{VAR_NAME}`. The `aionima doctor` command checks for common secret patterns in `gateway.json` and fails if any are found.
 
 Common patterns checked:
 - `sk-ant-` (Anthropic API key prefix)
@@ -290,7 +290,7 @@ The COA Explorer in the dashboard provides a searchable view of this audit trail
 
 ### Log Retention
 
-Configure log retention in `aionima.json`:
+Configure log retention in `gateway.json`:
 
 ```json
 {

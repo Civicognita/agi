@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { DashboardEvent, LogEntry, AionimaConfig, ReportSummary, ReportDetail } from "./types.js";
+import type { DashboardEvent, LogEntry, AionimaConfig, ReportSummary, ReportDetail, HFModelSearchResult } from "./types.js";
 import {
   fetchOverview, fetchConfig, saveConfig,
   fetchProjects, createProject, updateProject, deleteProject,
@@ -23,6 +23,14 @@ import {
   fetchLinuxUsers, createLinuxUser, updateLinuxUser, deleteLinuxUser,
   fetchAgents, restartAgent,
   fetchReports, fetchReport,
+  fetchHFHardwareProfile,
+  searchHFModels,
+  fetchHFInstalledModels,
+  fetchHFRunningModels,
+  searchHFDatasets,
+  fetchHFInstalledDatasets,
+  listFineTuneJobs,
+  getFineTuneStatus,
 } from "./api.js";
 
 // ---------------------------------------------------------------------------
@@ -716,6 +724,79 @@ export function useReport(coaReqId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// HuggingFace Marketplace hooks
+// ---------------------------------------------------------------------------
+
+export function useHFHardwareProfile() {
+  return useQuery({
+    queryKey: ["hf", "hardware"],
+    queryFn: fetchHFHardwareProfile,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useHFModels(params: Parameters<typeof searchHFModels>[0]) {
+  return useQuery({
+    queryKey: ["hf", "search", params],
+    queryFn: () => searchHFModels(params),
+    placeholderData: (prev: HFModelSearchResult[] | undefined) => prev,
+  });
+}
+
+export function useHFInstalledModels() {
+  return useQuery({
+    queryKey: ["hf", "installed"],
+    queryFn: fetchHFInstalledModels,
+    refetchInterval: 10_000,
+  });
+}
+
+export function useHFRunningModels() {
+  return useQuery({
+    queryKey: ["hf", "running"],
+    queryFn: fetchHFRunningModels,
+    refetchInterval: 5_000,
+  });
+}
+
+export function useHFDatasets(params: Parameters<typeof searchHFDatasets>[0]) {
+  return useQuery({
+    queryKey: ["hf", "datasets", "search", params],
+    queryFn: () => searchHFDatasets(params),
+    placeholderData: (prev: import("./types.js").HFDatasetSearchResult[] | undefined) => prev,
+  });
+}
+
+export function useHFInstalledDatasets() {
+  return useQuery({
+    queryKey: ["hf", "datasets", "installed"],
+    queryFn: fetchHFInstalledDatasets,
+    refetchInterval: 10_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Fine-tune hooks (Phase 6)
+// ---------------------------------------------------------------------------
+
+export function useFineTuneJobs() {
+  return useQuery({
+    queryKey: ["hf", "finetune", "jobs"],
+    queryFn: listFineTuneJobs,
+    refetchInterval: 5_000,
+  });
+}
+
+export function useFineTuneJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ["hf", "finetune", "job", jobId],
+    queryFn: () => getFineTuneStatus(jobId!),
+    enabled: jobId !== null,
+    refetchInterval: 5_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // useIsMobile — reactive mobile breakpoint (≤767px)
 // ---------------------------------------------------------------------------
 
@@ -731,4 +812,53 @@ export function useIsMobile(): boolean {
     () => window.matchMedia("(max-width: 767px)").matches,
     () => false,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Safemode + incidents
+// ---------------------------------------------------------------------------
+
+import {
+  fetchSafemode as apiFetchSafemode,
+  exitSafemode as apiExitSafemode,
+  fetchAdminIncidents as apiFetchAdminIncidents,
+  fetchAdminIncidentMarkdown as apiFetchAdminIncidentMarkdown,
+} from "./api.js";
+
+export function useSafemode() {
+  return useQuery({
+    queryKey: ["safemode"],
+    queryFn: apiFetchSafemode,
+    refetchInterval: 5_000,
+    staleTime: 0,
+  });
+}
+
+export function useExitSafemode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: apiExitSafemode,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["safemode"] });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["hf", "running"] });
+    },
+  });
+}
+
+export function useAdminIncidents() {
+  return useQuery({
+    queryKey: ["admin-incidents"],
+    queryFn: apiFetchAdminIncidents,
+    staleTime: 10_000,
+  });
+}
+
+export function useAdminIncidentMarkdown(id: string | null) {
+  return useQuery({
+    queryKey: ["admin-incident", id],
+    queryFn: () => apiFetchAdminIncidentMarkdown(id!),
+    enabled: id !== null && id.length > 0,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
 }

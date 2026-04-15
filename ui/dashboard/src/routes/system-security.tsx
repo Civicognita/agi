@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
+import { PageScroll } from "@/components/PageScroll.js";
 import {
   fetchSecuritySummary,
   fetchSecurityScans,
@@ -74,7 +75,8 @@ export default function SystemSecurityPage() {
     : findings.filter(f => f.severity === selectedSeverity);
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-6">
+    <PageScroll>
+    <div className="max-w-6xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-zinc-100">System Security</h1>
         <button
@@ -237,5 +239,6 @@ export default function SystemSecurityPage() {
         </div>
       )}
     </div>
+    </PageScroll>
   );
 }

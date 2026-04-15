@@ -11,7 +11,7 @@
  * const node24 = defineRuntime("node-24", "Node.js 24 LTS")
  *   .language("node")
  *   .version("24")
- *   .containerImage("node:24-alpine")
+ *   .containerImage("ghcr.io/civicognita/node:24")
  *   .internalPort(3000)
  *   .projectTypes(["app", "web"])
  *   .dependency({ name: "npm", version: "11", type: "bundled" })

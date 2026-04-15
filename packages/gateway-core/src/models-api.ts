@@ -59,7 +59,7 @@ interface ProviderCredential {
 }
 
 export interface ModelsRouteDeps {
-  /** Path to aionima.json — read at request time for fresh credentials. */
+  /** Path to gateway.json — read at request time for fresh credentials. */
   configPath: string;
 }
 

@@ -8,13 +8,17 @@ Aionima's plugin system allows extending the gateway with new runtimes, services
 
 ### Discovery
 
-The gateway discovers plugins from three sources:
+The gateway discovers plugins from multiple sources at startup:
 
-1. **Marketplace plugins** (`marketplace/plugins/plugin-*`) — all plugins, including built-in ones, come from the marketplace repo. Discovered via `discoverMarketplacePlugins()`.
+1. **Plugin cache** (`~/.agi/plugins/cache/`) — installed marketplace plugins. The marketplace installer downloads, builds, and places plugins here. This is the primary source for all stack, runtime, and service plugins.
 
-2. **Channel plugins** (`channels/*`) — channel adapters treated as plugins. Discovered via `discoverChannelPlugins()`, which scans `channels/` for directories with an `"aionima"` block in `package.json`.
+2. **Auto-install** — plugins listed in `config/required-plugins.json` are automatically installed from the marketplace catalog on every startup if missing. This ensures core functionality (runtimes, stacks, services) is always available.
 
-3. **User plugins** — third-party plugins installed separately and placed in configured plugin directories.
+3. **Default search paths** (`{workspace}/.plugins/`, `{workspace}/.aionima/plugins/`) — for development or user-installed plugins.
+
+4. **Channel plugins** (`channels/*`) — channel adapters treated as plugins. Discovered via `discoverChannelPlugins()`.
+
+Plugins are never loaded directly from the marketplace repo — they are fetched from GitHub, built, and cached locally.
 
 ### Loading
 
@@ -226,42 +230,58 @@ Plugins can register hooks to respond to gateway and agent events:
 
 ---
 
-## Built-in Plugins
+## Required Plugins
 
-Built-in plugins are pre-installed from the marketplace during onboarding. They cannot be uninstalled but can be disabled (unless `disableable: false`). All built-in plugins live in the marketplace repo alongside third-party plugins.
+Required plugins are auto-installed on gateway startup from the marketplace catalog. They cannot be uninstalled. The list is defined in `config/required-plugins.json`. All plugins live in the Plugin Marketplace repo alongside third-party plugins.
+
+### Project Type Plugins
+
+Project type plugins register categories like Web App, API Service, Static Site, Literature, etc. These define what appears in the New Project dialog and determine which stacks are available.
+
+### Runtime Plugins
+
+Runtime plugins register container images for programming languages. All runtimes use custom GHCR images (`ghcr.io/civicognita/*`) with common extensions and tools pre-installed.
+
+| Plugin | Runtimes | Container Image | Pre-installed |
+|--------|----------|----------------|---------------|
+| `aionima-node-runtime` | Node.js 24, 22, 20 LTS | `ghcr.io/civicognita/node:{version}` | python3, make, g++, git, corepack |
+| `aionima-php-runtime` | PHP 8.5, 8.4, 8.3, 8.2 | `ghcr.io/civicognita/php-apache:{version}` | All common extensions (gd, intl, pdo_pgsql, pdo_mysql, redis, imagick, zip, bcmath, opcache, etc.), Composer, mod_rewrite |
+
+### Service Plugins
+
+Service plugins register shared database and cache containers. Each service uses a custom GHCR image with common extensions pre-installed — no runtime compilation needed.
+
+| Plugin | Versions | Container Image | Pre-installed |
+|--------|----------|----------------|---------------|
+| `aionima-postgres` | PostgreSQL 17, 16, 15 | `ghcr.io/civicognita/postgres:{version}` | pgvector, PostGIS, pg_trgm, uuid-ossp, hstore |
+| `aionima-mysql` | MariaDB 11.4, 10.11, 10.6 | `ghcr.io/civicognita/mariadb:{version}` | utf8mb4, dev-friendly defaults |
+| `aionima-redis` | Redis 7.4, 7.2, 6.2 | `ghcr.io/civicognita/redis:{version}` | append-only persistence, LRU eviction |
+
+Each service plugin includes a **Settings page** for installing/uninstalling container images and configuring default credentials.
+
+### Stack Plugins
+
+Stack plugins register framework-specific configurations that projects can add. Stacks compose with runtimes and services — for example, a TALL project uses the PHP runtime, the Laravel stack, the TALL stack, and a PostgreSQL service stack.
+
+| Plugin | Stack | Category | Dependencies |
+|--------|-------|----------|-------------|
+| `stack-laravel` | Laravel | framework | PHP runtime |
+| `stack-tall` | TALL Stack | framework | Laravel stack (Livewire, Alpine.js, Tailwind layered on top) |
+| `stack-nextjs` | Next.js | framework | Node runtime |
+| `stack-nuxt` | Nuxt | framework | Node runtime |
+| `stack-node-app` | Node.js App | framework | Node runtime |
+| `stack-php-app` | PHP App | framework | PHP runtime |
+| `stack-react-vite` | React (Vite) | framework | Node runtime |
+| `stack-static-hosting` | Static Hosting | framework | — |
+| `stack-hono` | Hono API | framework | Node runtime |
 
 ### plugin-editor
 
 The editor plugin provides the file editing API used by the dashboard Settings page and Knowledge editor. It exposes read/write/tree endpoints for config files and project files.
 
-- Config files: `GET/POST /api/files/read`, `/api/files/write`, `/api/files/tree`
-- Project files: `GET/POST /api/files/project-read`, `/api/files/project-write`, `/api/files/project-tree`
+### WhoDB
 
-The editor API enforces path restrictions: config endpoints allow access to `.aionima/`, `.claude/`, `.ai/`, and `docs/` subtrees (relative to workspace root), plus absolute paths inside the external PRIME directory (resolved from `prime.dir` config). Project endpoints only allow access to paths under `workspace.projects`.
-
-### plugin-mysql
-
-Provides MariaDB as a project service. Registers three MariaDB versions (11.4 LTS, 10.11 LTS, 10.6 LTS) as selectable services on port 3306. Includes a **Settings page** (`/settings/mysql`) for installing/uninstalling container images and configuring default credentials. Version availability is determined by which container images are installed. Default credentials: `root/aionima`, database `aionima`.
-
-### plugin-postgres
-
-Provides PostgreSQL as a project service. Registers three PostgreSQL versions (17, 16, 15) as selectable services on port 5432. Includes a **Settings page** (`/settings/postgres`) for installing/uninstalling container images and configuring default credentials. Version availability is determined by which container images are installed. Default credentials: `postgres/aionima`, database `aionima`.
-
-### plugin-adminer
-
-Provides a database management portal at `/db-portal` aggregating all registered DB tools. Ships with Adminer — a lightweight database management UI that supports PostgreSQL, MariaDB, SQLite, and more. The Adminer container runs on port 5050 and is reverse-proxied through the gateway at `/adminer/*`.
-
-### plugin-redis
-
-Provides Redis as a project service. Registers three Redis versions (7.4, 7.2, 6.2 LTS) as selectable services on port 6379.
-
-### plugin-node-runtime
-
-Provides Node.js container runtimes for project hosting. Registers Node.js 20 LTS and Node.js 22 LTS runtime definitions. The plugin handles `npm install` and optional `npm run build` steps before starting the project container.
-
-### plugin-php-runtime
-
-Provides PHP-FPM container runtimes for project hosting. Registers PHP 8.5 as a runtime definition. The plugin handles `composer install` before starting the container. Static files are served directly by Caddy; PHP files are proxied to FPM.
+Modern database explorer accessible at `https://db.ai.on`. Supports PostgreSQL, MariaDB, SQLite, Redis, and MongoDB with spreadsheet editing, schema visualization, AI-powered SQL (via configured Claude/GPT/Ollama), and data export. The Aion agent can query databases directly via the `query_database` tool.
 
 ### Channel Plugins
 
@@ -287,7 +307,7 @@ Provider plugins declare their supported models, API key requirements, and a fac
 
 ## Configuring Plugin Preferences
 
-Plugin behavior can be tuned in `aionima.json` under the `plugins` key:
+Plugin behavior can be tuned in `gateway.json` under the `plugins` key:
 
 ```json
 {
@@ -312,7 +332,7 @@ Plugin behavior can be tuned in `aionima.json` under the `plugins` key:
 
 ## Service Configuration Overrides
 
-Service containers can have their defaults overridden in `aionima.json` under `services.overrides`:
+Service containers can have their defaults overridden in `gateway.json` under `services.overrides`:
 
 ```json
 {

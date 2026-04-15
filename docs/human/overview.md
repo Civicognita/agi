@@ -31,7 +31,7 @@ Every inbound message enters a queue, where it is processed by the agent pipelin
 3. The Claude API (or OpenAI/Ollama) is invoked.
 4. The response is dispatched back to the originating channel.
 
-The pipeline is gated by the gateway state (ONLINE / LIMBO / OFFLINE / UNKNOWN), rate limits per entity, and the entity's verification tier.
+The pipeline is gated by the gateway state (Initial / Limbo / Offline / Online — see below), rate limits per entity, and the entity's verification tier.
 
 ### 3. Entity Model
 
@@ -132,7 +132,7 @@ The dashboard connects to the gateway via WebSocket on the same port as HTTP. Re
 ### Config Flow
 
 ```
-~/.agi/aionima.json + ~/.agi/.env
+~/.agi/gateway.json + ~/.agi/.env
     |
     | $ENV{VAR} references resolved at load time
     v
@@ -168,7 +168,7 @@ Hot-reload (config.changed hook fires, relevant services update)
 
 | Path | Purpose |
 |------|---------|
-| `~/.agi/aionima.json` | Runtime config |
+| `~/.agi/gateway.json` | Runtime config |
 | `~/.agi/entities.db` | SQLite entity database |
 | `~/.agi/chat-history/` | Chat session history (JSON files per session) |
 | `~/.agi/secrets/` | TPM2-sealed credentials |
@@ -181,16 +181,16 @@ Hot-reload (config.changed hook fires, relevant services update)
 
 ## Gateway States
 
-The gateway operates in one of four states. The active state gates which operations are permitted.
+The gateway operates in one of four states. **State is a read-only status, not a user setting** — it reflects AGI's connection to Aionima-prime + Hive-ID and is computed at runtime from peer reachability and the 0PRIME Schema validation outcome.
 
 | State | Meaning | Agent Behavior |
 |-------|---------|---------------|
-| ONLINE | Fully operational, cloud APIs available | Full responses, tool use, remote ops |
-| LIMBO | Local only, no remote writes | Queues remote actions, limited responses |
-| OFFLINE | No outbound connections | Informs user, no remote actions |
-| UNKNOWN | State indeterminate | Logs all actions, returns null response |
+| Initial / Unknown | Boot not yet resolved; peer probes haven't returned | Logs all actions, returns null response |
+| Limbo | Running locally; local COA<>COI not yet validated with the 0PRIME Schema | Local memory + Tynn MCP only; no remote writes, deletions disabled. Expected steady state until 0PRIME Hive mind is operational. |
+| Offline | local-id or local-prime is unavailable | No outbound connections; informs user |
+| Online | HIVE-aligned; local COA<>COI validates against 0PRIME Schema | Full responses, tool use, remote ops, deletions. Future — not reachable until 0PRIME is live. |
 
-Set `gateway.state` in `aionima.json` to control the startup state. The dashboard can change state at runtime.
+Read the current state via `GET /api/gateway/state` or check the **Operational State** pill on Settings → Gateway in the dashboard. See [state machine docs](../agents/state-machine.md) for the full semantics, capabilities table, and the 0PRIME relationship (Hive mind / distributed AI / Impactium blockchain).
 
 ---
 
@@ -198,7 +198,7 @@ Set `gateway.state` in `aionima.json` to control the startup state. The dashboar
 
 When `aionima run` executes, the gateway starts in nine steps:
 
-1. Load and validate `aionima.json`
+1. Load and validate `gateway.json`
 2. Bootstrap auth (tokens, rate limiter)
 3. Initialize state machine
 4. Create HTTP + WebSocket servers (bound to configured host:port)

@@ -113,7 +113,7 @@ export interface AgentInvokerDeps {
   /** Optional memory adapter for context injection (CompositeMemoryAdapter). */
   memoryAdapter?: { query(params: { entityId?: string; category?: string; limit?: number }): Promise<Array<{ content: string; category: string }>>; store(entry: unknown): Promise<void> };
   /** Optional skill registry for skill-based prompt injection. */
-  skillRegistry?: { getAll(): Array<{ definition: { name: string; description: string; domain: string } }> };
+  skillRegistry?: { getAll(): Array<{ definition: { name: string; description: string; domain: string; content: string; triggers: string[]; compiledTriggers: RegExp[]; requiresState?: string[]; requiresTier?: string; priority: number } }>; getValid(): Array<{ definition: { name: string; description: string; domain: string; content: string; triggers: string[]; compiledTriggers: RegExp[]; requiresState?: string[]; requiresTier?: string; priority: number } }> };
   /** Optional per-entity relationship context store (USER.md files). */
   userContextStore?: UserContextStore;
   /** Optional PRIME knowledge loader — loads corpus for system prompt injection. */
@@ -128,6 +128,9 @@ export interface AgentInvokerDeps {
   logger?: Logger;
   /** Optional image blob store for resolving image references in history. */
   imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
+  /** Returns the configured per-turn tool-loop cap (0 = uncapped). Called per
+   *  turn so config hot-reload takes effect. Defaults to uncapped. */
+  getMaxToolLoops?: () => number;
 }
 
 export interface InvocationRequest {
@@ -207,6 +210,12 @@ export class AgentInvoker extends EventEmitter {
     const drained = [...queue];
     queue.length = 0;
     return drained;
+  }
+
+  /** Peek at injection queue size without draining. Returns true if pending messages exist. */
+  hasPendingInjections(sessionKey: string): boolean {
+    const queue = this.injectionQueues.get(sessionKey);
+    return queue !== undefined && queue.length > 0;
   }
 
   /**
@@ -327,15 +336,38 @@ export class AgentInvoker extends EventEmitter {
       }
     }
 
-    // Inject matched skills (if skill registry is wired)
+    // Inject matched skills — match user input against skill triggers
     let skills: Array<{ name: string; description: string; content: string }> | undefined;
     if (this.deps.skillRegistry !== undefined) {
-      const allSkills = this.deps.skillRegistry.getAll();
-      if (allSkills.length > 0) {
-        skills = allSkills.map((s) => ({
+      const validSkills = this.deps.skillRegistry.getValid();
+      const matched: Array<{ definition: typeof validSkills[number]["definition"]; confidence: number }> = [];
+      const inputText = typeof content === "string" ? content : JSON.stringify(content);
+
+      for (const registered of validSkills) {
+        const def = registered.definition;
+        // Filter by gateway state
+        if (def.requiresState !== undefined && def.requiresState.length > 0) {
+          if (!def.requiresState.includes(state)) continue;
+        }
+        // Check trigger patterns against user message
+        for (const regex of def.compiledTriggers) {
+          if (regex.test(inputText)) {
+            matched.push({ definition: def, confidence: 1.0 });
+            break;
+          }
+        }
+      }
+
+      // Sort by priority descending
+      matched.sort((a, b) => b.definition.priority - a.definition.priority);
+
+      // Limit to top 5 matched skills to stay within token budget
+      const topSkills = matched.slice(0, 5);
+      if (topSkills.length > 0) {
+        skills = topSkills.map((s) => ({
           name: s.definition.name,
           description: s.definition.description,
-          content: s.definition.domain,
+          content: s.definition.content,
         }));
       }
     }
@@ -544,7 +576,14 @@ export class AgentInvoker extends EventEmitter {
       // Tool use loop — execute tools and continue until no more tool calls
       const toolsUsed: string[] = [];
       let loopCount = 0;
-      const maxToolLoops = 15;
+      // No hard cap on tool-loop iterations by default. The circuit breaker
+      // below hard-aborts on duplicate tool calls (same tool + same input
+      // more than 3 times), which eliminates the only scenario a cap would
+      // genuinely protect against (runaway infinite loop). Owners who want
+      // a cost ceiling can set gateway.maxToolLoops via the dashboard's
+      // Gateway > General settings. 0 = uncapped.
+      const configuredCap = this.deps.getMaxToolLoops?.() ?? 0;
+      const maxToolLoops = configuredCap > 0 ? configuredCap : Number.MAX_SAFE_INTEGER;
       const abortSignal = request.abortSignal;
 
       // Accumulate messages across tool iterations so the model sees the full
@@ -554,6 +593,10 @@ export class AgentInvoker extends EventEmitter {
       // Circuit breaker: track call hash repetitions to detect infinite loops.
       const toolCallHashes = new Map<string, number>();
 
+      // Outer continuation loop: re-enters the inner tool loop after draining any pending
+      // user injections so that a mid-run message lands on the SAME run rather than being
+      // deferred to a post-run follow-up.
+      injectionContinuation: while (loopCount < maxToolLoops) {
       while (result.toolCalls.length > 0 && loopCount < maxToolLoops) {
         // Check for cancellation before each tool iteration
         if (abortSignal?.aborted) {
@@ -652,7 +695,7 @@ export class AgentInvoker extends EventEmitter {
           for (const injMsg of injected) {
             toolResultBlocks.push({ type: "text" as const, text: `[User interjection]: ${injMsg}` });
           }
-          this.emit("injection_received", { sessionKey: sKey, count: injected.length });
+          this.emit("injection_consumed", { sessionKey: sKey, count: injected.length });
         }
 
         result = await this.apiClient.continueWithToolResults({
@@ -674,12 +717,15 @@ export class AgentInvoker extends EventEmitter {
           this.emit("thought", { sessionKey: sKey, content: block.thinking });
         }
 
+        // Intermediate assistant narration — the model's "now I'll do Y" prose
+        // that Anthropic includes BEFORE the next batch of tool_use blocks.
+        // Emit it as a thought so it becomes a persistent message in the chat,
+        // not an ephemeral progress pill. Without this, the user sees several
+        // tool-call rounds with NO narration between them, because Anthropic
+        // often returns zero thinking blocks on continuation calls even when
+        // extended thinking is enabled — the narration text is all we get.
         if (result.text.trim().length > 0 && result.toolCalls.length > 0) {
-          this.emit("progress", {
-            sessionKey: sKey,
-            text: result.text,
-            phase: "tool_loop",
-          });
+          this.emit("thought", { sessionKey: sKey, content: result.text });
         }
 
         // After the call, append this iteration's turns so the NEXT iteration
@@ -688,6 +734,49 @@ export class AgentInvoker extends EventEmitter {
           { role: "assistant", content: prevContentBlocks },
           { role: "user", content: toolResultBlocks },
         );
+      }
+
+      // Inner tool loop exited. If the user has queued injections while the model was
+      // finalizing, treat them as a fresh user turn and re-invoke so the injection is
+      // reflected IN THIS RUN rather than creating a post-run follow-up.
+      if (
+        result.toolCalls.length === 0
+        && this.hasPendingInjections(sKey)
+        && loopCount < maxToolLoops
+      ) {
+        if (abortSignal?.aborted) {
+          return { type: "response", text: "[Cancelled by user]", toolsUsed, coaFingerprint, taskmasterEmissions: [], model: result.model, provider: "cancelled", usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens }, toolCount: toolsUsed.length, loopCount };
+        }
+        loopCount++;
+        const injected = this.drainInjections(sKey);
+        const userText = injected.map((t) => `[User interjection]: ${t}`).join("\n\n");
+
+        accumulatedMessages.push(
+          { role: "assistant", content: result.contentBlocks },
+          { role: "user", content: userText },
+        );
+
+        result = await this.apiClient.invoke({
+          system: systemPrompt,
+          messages: accumulatedMessages,
+          tools: providerTools.length > 0 ? providerTools : undefined,
+          entityId: entity.id,
+          thinking: thinkingConfig,
+        });
+        totalInputTokens += result.usage.inputTokens;
+        totalOutputTokens += result.usage.outputTokens;
+
+        for (const block of result.thinkingBlocks) {
+          this.emit("thought", { sessionKey: sKey, content: block.thinking });
+        }
+        this.emit("injection_consumed", { sessionKey: sKey, count: injected.length });
+
+        // Re-enter the outer continuation loop — if `result` has tool calls, the inner
+        // while will pick them up again; otherwise we fall through and break out.
+        continue injectionContinuation;
+      }
+
+      break injectionContinuation;
       }
 
       // -----------------------------------------------------------------------
@@ -803,8 +892,10 @@ export class AgentInvoker extends EventEmitter {
             this.emit("thought", { sessionKey: sKey, content: block.thinking });
           }
 
+          // Same treatment as the main tool loop: persist intermediate
+          // narration as a thought bubble, not an ephemeral progress pill.
           if (result.text.trim().length > 0 && result.toolCalls.length > 0) {
-            this.emit("progress", { sessionKey: sKey, text: result.text, phase: "tool_loop" });
+            this.emit("thought", { sessionKey: sKey, content: result.text });
           }
 
           const toolResultBlocks: LLMContentBlock[] = toolResults.map((r) => ({
@@ -833,11 +924,27 @@ export class AgentInvoker extends EventEmitter {
       // -----------------------------------------------------------------------
       // Step 9: TASKMASTER extraction + response cleanup
       // -----------------------------------------------------------------------
+      // If we exited the tool loop because we hit the maxToolLoops cap AND the
+      // model still wanted to call more tools, the user's getting a truncated
+      // turn. Tell them explicitly so they don't see a half-sentence "Let me
+      // fix that:" with no follow-up and think the chat is broken.
+      let finalText = result.text;
+      if (loopCount >= maxToolLoops && result.toolCalls.length > 0) {
+        finalText =
+          (finalText.trim().length > 0 ? `${finalText}\n\n---\n` : "") +
+          `**\u26a0 Reached the maximum of ${String(maxToolLoops)} tool iterations for this turn.** ` +
+          `I was about to take another action but stopped here to avoid runaway execution. ` +
+          `Send a follow-up message (e.g. "continue") to pick up where I left off.`;
+        this.log.warn(
+          `agent hit maxToolLoops=${String(maxToolLoops)} for session ${sKey}; surfacing cap message to user`,
+        );
+      }
+
       const emissions =
-        this.deps.toolRegistry.extractTaskmasterEmissions(result.text);
+        this.deps.toolRegistry.extractTaskmasterEmissions(finalText);
       const { text: cleanedText, strippedCount } =
         this.deps.toolRegistry.stripTaskmasterEmissions(
-          result.text,
+          finalText,
           entity.verificationTier,
         );
 

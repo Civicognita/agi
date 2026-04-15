@@ -81,6 +81,32 @@ export const ProjectHostingSchema = z
   .strict();
 
 // ---------------------------------------------------------------------------
+// AI model binding — declared per-project in project.json
+// ---------------------------------------------------------------------------
+
+export const ProjectAiModelBindingSchema = z.object({
+  /** HuggingFace model ID (e.g. "NeoQuasar/Kronos-base"). */
+  modelId: z.string(),
+  /** Alias for environment variable naming (e.g. "kronos" → AIONIMA_MODEL_KRONOS_URL). */
+  alias: z.string(),
+  /** Whether the model must be running for the project to start. */
+  required: z.boolean().default(false),
+});
+
+// ---------------------------------------------------------------------------
+// AI dataset binding — declared per-project in project.json
+// ---------------------------------------------------------------------------
+
+export const ProjectAiDatasetBindingSchema = z.object({
+  /** HuggingFace dataset ID. */
+  datasetId: z.string(),
+  /** Alias for documentation. */
+  alias: z.string(),
+  /** Mount path inside the project container (default: /data/{alias}). */
+  mountPath: z.string().optional(),
+});
+
+// ---------------------------------------------------------------------------
 // Root project config — the full ~/.agi/{slug}/project.json shape
 // ---------------------------------------------------------------------------
 
@@ -102,6 +128,10 @@ export const ProjectConfigSchema = z
     hosting: ProjectHostingSchema.optional(),
     /** Attached MagicApp IDs (apps available for this project). */
     magicApps: z.array(z.string()).optional(),
+    /** AI model dependencies this project uses. Models must be installed via HF Marketplace. */
+    aiModels: z.array(ProjectAiModelBindingSchema).optional(),
+    /** AI dataset dependencies. Datasets are mounted as read-only volumes. */
+    aiDatasets: z.array(ProjectAiDatasetBindingSchema).optional(),
   })
   .passthrough(); // Plugins can store custom keys at the root level
 
@@ -113,3 +143,5 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 export type ProjectHosting = z.infer<typeof ProjectHostingSchema>;
 export type ProjectStackInstance = z.infer<typeof ProjectStackInstanceSchema>;
 export type ProjectCategory = z.infer<typeof ProjectCategorySchema>;
+export type ProjectAiModelBinding = z.infer<typeof ProjectAiModelBindingSchema>;
+export type ProjectAiDatasetBinding = z.infer<typeof ProjectAiDatasetBindingSchema>;

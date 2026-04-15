@@ -41,6 +41,9 @@ const CONFIG_CHECKS: ConfigCheck[] = [
     title: "Debug mode enabled in configuration",
     check(targetPath) {
       const configPaths = [
+        join(targetPath, "gateway.json"),
+        join(targetPath, ".gateway.json"),
+        // Legacy names kept for one release — pre-rename projects still use these.
         join(targetPath, "aionima.json"),
         join(targetPath, ".aionima.json"),
       ];

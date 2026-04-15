@@ -111,7 +111,7 @@ All runtime data lives in `~/.agi/` — never in repos or `/opt/`.
 
 | Path | Purpose |
 |------|---------|
-| `~/.agi/aionima.json` | Runtime config (single source of truth) |
+| `~/.agi/gateway.json` | Runtime config (single source of truth) |
 | `~/.agi/entities.db` | Entity database |
 | `~/.agi/plugins/cache/` | Installed plugins |
 | `~/.agi/secrets/` | TPM2-sealed credentials (API keys, tokens) |

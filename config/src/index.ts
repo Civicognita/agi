@@ -24,6 +24,7 @@ export {
   type MarketplaceConfig,
   type FederationConfig,
   type IdentityConfig,
+  type HfConfig,
 } from "./schema.js";
 
 export {
@@ -31,10 +32,14 @@ export {
   ProjectHostingSchema,
   ProjectStackInstanceSchema,
   ProjectCategorySchema,
+  ProjectAiModelBindingSchema,
+  ProjectAiDatasetBindingSchema,
   type ProjectConfig,
   type ProjectHosting,
   type ProjectStackInstance,
   type ProjectCategory,
+  type ProjectAiModelBinding,
+  type ProjectAiDatasetBinding,
 } from "./project-schema.js";
 
 export {
@@ -52,6 +57,7 @@ export {
   MAppPermissionSchema,
   MAppContainerConfigSchema,
   MAppPanelSchema,
+  MAppModelInferenceConfigSchema,
   type MAppDefinitionJson,
 } from "./mapp-schema.js";
 

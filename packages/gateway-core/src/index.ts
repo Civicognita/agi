@@ -493,3 +493,7 @@ export type { VisitorChallenge, VisitorSession, VisitorAuthConfig } from "./visi
 // Phase 5 — Sub-User API
 export { registerSubUserRoutes } from "./sub-user-api.js";
 export type { SubUserApiDeps } from "./sub-user-api.js";
+
+// HuggingFace Model Runtime API
+export { registerHfRoutes } from "./hf-api.js";
+export type { HfApiDeps } from "./hf-api.js";

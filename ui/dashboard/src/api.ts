@@ -28,6 +28,17 @@ import type {
   ScanRun,
   SecurityFinding,
   SecuritySummary,
+  HFHardwareProfile,
+  HFCapabilityEntry,
+  HFModelSearchResult,
+  HFModelDetail,
+  HFInstalledModel,
+  HFRunningModel,
+  HFDatasetSearchResult,
+  HFInstalledDataset,
+  HFModelAnalysis,
+  HFFineTuneConfig,
+  HFFineTuneJob,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -222,15 +233,37 @@ export async function fetchProjectInfo(path: string): Promise<ProjectGitInfo> {
 // Plans API — /api/plans
 // ---------------------------------------------------------------------------
 
-export async function fetchPlans(projectPath: string): Promise<Plan[]> {
+export async function fetchPlans(projectPath: string, options?: { excludeDone?: boolean }): Promise<Plan[]> {
   const url = new URL("/api/plans", window.location.origin);
   url.searchParams.set("projectPath", projectPath);
+  if (options?.excludeDone) url.searchParams.set("exclude", "done");
   const res = await fetch(url.toString());
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<Plan[]>;
+}
+
+/**
+ * Edit a plan's body/title while it's still in draft/reviewing state.
+ * Backend returns 409 if the plan is approved or later.
+ */
+export async function updatePlanBody(
+  planId: string,
+  projectPath: string,
+  patch: { title?: string; body?: string },
+): Promise<Plan> {
+  const res = await fetch(`/api/plans/${planId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectPath, ...patch }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<Plan>;
 }
 
 export async function fetchPlan(planId: string, projectPath: string): Promise<Plan> {
@@ -647,11 +680,11 @@ export async function fetchMAppCatalog(): Promise<{ apps: import("./types.js").M
   return res.json() as Promise<{ apps: import("./types.js").MAppCatalogEntry[] }>;
 }
 
-export async function installMApp(appId: string, author: string, source?: string): Promise<{ ok: boolean }> {
+export async function installMApp(appId: string, sourceId: number): Promise<{ ok: boolean }> {
   const res = await fetch("/api/mapp-marketplace/install", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ appId, author, source }),
+    body: JSON.stringify({ appId, sourceId }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
@@ -669,6 +702,37 @@ export async function uninstallMApp(appId: string): Promise<{ ok: boolean }> {
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<{ ok: boolean }>;
+}
+
+// MApp Marketplace source management
+
+export async function fetchMAppSources(): Promise<Array<{ id: number; ref: string; name: string; lastSyncedAt: string | null; mappCount: number }>> {
+  const res = await fetch("/api/mapp-marketplace/sources");
+  if (!res.ok) return [];
+  return res.json() as Promise<Array<{ id: number; ref: string; name: string; lastSyncedAt: string | null; mappCount: number }>>;
+}
+
+export async function addMAppSource(ref: string, name?: string): Promise<{ id: number; ref: string; name: string }> {
+  const res = await fetch("/api/mapp-marketplace/sources", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ref, name }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ id: number; ref: string; name: string }>;
+}
+
+export async function removeMAppSource(id: number): Promise<void> {
+  await fetch(`/api/mapp-marketplace/sources/${id}`, { method: "DELETE" });
+}
+
+export async function pullMAppMarketplace(): Promise<{ ok: boolean; synced: number; updated: string[]; errors: string[] }> {
+  const res = await fetch("/api/mapp-marketplace/pull", { method: "POST" });
+  if (!res.ok) return { ok: false, synced: 0, updated: [], errors: ["Pull failed"] };
+  return res.json() as Promise<{ ok: boolean; synced: number; updated: string[]; errors: string[] }>;
 }
 
 export async function restartHosting(path: string): Promise<{ ok: boolean; hosting: unknown }> {
@@ -914,6 +978,58 @@ export async function saveProjectFile(path: string, content: string): Promise<{ 
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path, content }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function createProjectFile(path: string, type: "file" | "directory" = "file", content?: string): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/files/project-create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, type, content }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function deleteProjectFile(path: string): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/files/project-delete", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function copyProjectFile(sourcePath: string, destPath: string): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/files/project-copy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sourcePath, destPath }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function renameProjectFile(oldPath: string, newPath: string): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/files/project-rename", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ oldPath, newPath }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
@@ -1290,6 +1406,23 @@ export async function fetchProjectDevCommands(path: string): Promise<Record<stri
   }
   const data = await res.json() as { commands: Record<string, string> };
   return data.commands;
+}
+
+export interface EffectiveStartCommand {
+  effective: string | null;
+  source: "override" | "stack" | "devCommands" | "image-default";
+  sourceLabel: string;
+  override: string | null;
+  stackDefault: string | null;
+}
+
+export async function fetchEffectiveStartCommand(path: string): Promise<EffectiveStartCommand> {
+  const res = await fetch(`/api/hosting/stacks/start-command?path=${encodeURIComponent(path)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return await res.json() as EffectiveStartCommand;
 }
 
 export async function removeStack(path: string, stackId: string): Promise<void> {
@@ -1781,13 +1914,13 @@ export async function fetchPluginDashboardDomains(): Promise<import("./types.js"
 // Marketplace API
 // ---------------------------------------------------------------------------
 
-export async function fetchMarketplaceSources(): Promise<import("./types.js").MarketplaceSource[]> {
+export async function fetchPluginMarketplaceSources(): Promise<import("./types.js").PluginMarketplaceSource[]> {
   const res = await fetch("/api/marketplace/sources");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<import("./types.js").MarketplaceSource[]>;
+  return res.json() as Promise<import("./types.js").PluginMarketplaceSource[]>;
 }
 
-export async function addMarketplaceSource(ref: string, name?: string): Promise<import("./types.js").MarketplaceSource> {
+export async function addPluginMarketplaceSource(ref: string, name?: string): Promise<import("./types.js").PluginMarketplaceSource> {
   const res = await fetch("/api/marketplace/sources", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1797,20 +1930,27 @@ export async function addMarketplaceSource(ref: string, name?: string): Promise<
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
-  return res.json() as Promise<import("./types.js").MarketplaceSource>;
+  return res.json() as Promise<import("./types.js").PluginMarketplaceSource>;
 }
 
-export async function removeMarketplaceSource(id: number): Promise<void> {
+export async function removePluginMarketplaceSource(id: number): Promise<void> {
   const res = await fetch(`/api/marketplace/sources/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
-export async function syncMarketplaceSource(id: number): Promise<{ ok: boolean; pluginCount?: number; error?: string }> {
-  const res = await fetch(`/api/marketplace/sources/${id}/sync`, { method: "POST" });
-  return res.json() as Promise<{ ok: boolean; pluginCount?: number; error?: string }>;
+export interface CatalogDiff {
+  added: string[];
+  updated: Array<{ name: string; from: string; to: string }>;
+  removed: string[];
+  total: number;
 }
 
-export async function searchMarketplaceCatalog(params?: { q?: string; type?: string; category?: string; provides?: string }): Promise<import("./types.js").MarketplaceCatalogItem[]> {
+export async function syncPluginMarketplaceSource(id: number): Promise<{ ok: boolean; diff?: CatalogDiff; error?: string }> {
+  const res = await fetch(`/api/marketplace/sources/${id}/sync`, { method: "POST" });
+  return res.json() as Promise<{ ok: boolean; diff?: CatalogDiff; error?: string }>;
+}
+
+export async function searchPluginMarketplaceCatalog(params?: { q?: string; type?: string; category?: string; provides?: string }): Promise<import("./types.js").PluginMarketplaceCatalogItem[]> {
   const url = new URL("/api/marketplace/catalog", window.location.origin);
   if (params?.q) url.searchParams.set("q", params.q);
   if (params?.type) url.searchParams.set("type", params.type);
@@ -1818,10 +1958,10 @@ export async function searchMarketplaceCatalog(params?: { q?: string; type?: str
   if (params?.provides) url.searchParams.set("provides", params.provides);
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<import("./types.js").MarketplaceCatalogItem[]>;
+  return res.json() as Promise<import("./types.js").PluginMarketplaceCatalogItem[]>;
 }
 
-export async function installMarketplacePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; autoInstalled?: string[] }> {
+export async function installFromPluginMarketplace(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; autoInstalled?: string[] }> {
   const res = await fetch("/api/marketplace/install", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1846,7 +1986,7 @@ export async function fetchUninstallPreview(pluginName: string): Promise<{ resou
   return res.json() as Promise<{ resources: CleanupResource[] }>;
 }
 
-export async function uninstallMarketplacePlugin(
+export async function uninstallFromPluginMarketplace(
   pluginName: string,
   cleanupIds?: string[],
 ): Promise<{ ok: boolean; error?: string }> {
@@ -1858,19 +1998,19 @@ export async function uninstallMarketplacePlugin(
   return res.json() as Promise<{ ok: boolean; error?: string }>;
 }
 
-export async function fetchMarketplaceInstalled(): Promise<import("./types.js").MarketplaceInstalledItem[]> {
+export async function fetchPluginMarketplaceInstalled(): Promise<import("./types.js").PluginMarketplaceInstalledItem[]> {
   const res = await fetch("/api/marketplace/installed");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<import("./types.js").MarketplaceInstalledItem[]>;
+  return res.json() as Promise<import("./types.js").PluginMarketplaceInstalledItem[]>;
 }
 
-export async function fetchMarketplaceUpdates(): Promise<import("./types.js").MarketplaceUpdate[]> {
+export async function fetchPluginMarketplaceUpdates(): Promise<import("./types.js").PluginMarketplaceUpdate[]> {
   const res = await fetch("/api/marketplace/updates");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<import("./types.js").MarketplaceUpdate[]>;
+  return res.json() as Promise<import("./types.js").PluginMarketplaceUpdate[]>;
 }
 
-export async function updateMarketplacePlugin(
+export async function updateFromPluginMarketplace(
   pluginName: string,
   sourceId?: number,
 ): Promise<{ ok: boolean; error?: string; oldVersion?: string; newVersion?: string }> {
@@ -1880,6 +2020,13 @@ export async function updateMarketplacePlugin(
     body: JSON.stringify({ sourceId }),
   });
   const data = await res.json() as { ok: boolean; error?: string; oldVersion?: string; newVersion?: string };
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
+export async function pullPluginMarketplace(): Promise<{ ok: boolean; catalogSynced: number; updated: string[]; reloaded: string[]; errors: string[] }> {
+  const res = await fetch("/api/marketplace/pull", { method: "POST" });
+  const data = await res.json() as { ok: boolean; catalogSynced: number; updated: string[]; reloaded: string[]; errors: string[]; error?: string };
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
   return data;
 }
@@ -2307,6 +2454,13 @@ export async function saveMagicAppState(instanceId: string, state: Record<string
   if (!res.ok) throw new Error("Failed to save state");
 }
 
+export async function closeMagicAppInstance(instanceId: string): Promise<void> {
+  const res = await fetch(`/api/magic-apps/instances/${encodeURIComponent(instanceId)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to close instance");
+}
+
 export async function changeMagicAppMode(instanceId: string, mode: string): Promise<void> {
   const res = await fetch(`/api/magic-apps/instances/${encodeURIComponent(instanceId)}/mode`, {
     method: "PUT",
@@ -2316,9 +2470,283 @@ export async function changeMagicAppMode(instanceId: string, mode: string): Prom
   if (!res.ok) throw new Error("Failed to change mode");
 }
 
-export async function closeMagicAppInstance(instanceId: string): Promise<void> {
-  const res = await fetch(`/api/magic-apps/instances/${encodeURIComponent(instanceId)}`, {
-    method: "DELETE",
+// ---------------------------------------------------------------------------
+// HuggingFace Marketplace API
+// ---------------------------------------------------------------------------
+
+function getHFAuthHeaders(): Record<string, string> {
+  const token = getDashboardToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+/** Fetch an HF API endpoint, throwing a clear error if the route doesn't exist (returns HTML). */
+async function hfGet<T>(path: string): Promise<T> {
+  const res = await fetch(path, { headers: getHFAuthHeaders() });
+  const ct = res.headers.get("content-type") ?? "";
+  if (!ct.includes("application/json")) {
+    throw new Error("HF Marketplace is not active. Restart the gateway after enabling.");
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${String(res.status)}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export async function fetchHFHardwareProfile(): Promise<HFHardwareProfile> {
+  return hfGet<HFHardwareProfile>("/api/hf/hardware");
+}
+
+export async function rescanHFHardware(): Promise<HFHardwareProfile> {
+  return hfGet<HFHardwareProfile>("/api/hf/hardware/rescan");
+}
+
+export async function fetchHFCapabilities(): Promise<HFCapabilityEntry[]> {
+  return hfGet<HFCapabilityEntry[]>("/api/hf/capabilities");
+}
+
+export async function searchHFModels(params: {
+  q?: string;
+  pipeline_tag?: string;
+  library?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<HFModelSearchResult[]> {
+  const sp = new URLSearchParams();
+  if (params.q) sp.set("q", params.q);
+  if (params.pipeline_tag) sp.set("pipeline_tag", params.pipeline_tag);
+  if (params.library) sp.set("library", params.library);
+  if (params.sort) sp.set("sort", params.sort);
+  if (params.limit) sp.set("limit", String(params.limit));
+  if (params.offset) sp.set("offset", String(params.offset));
+  return hfGet<HFModelSearchResult[]>(`/api/hf/search?${sp.toString()}`);
+}
+
+export async function fetchHFModelDetail(modelId: string): Promise<HFModelDetail> {
+  return hfGet<HFModelDetail>(`/api/hf/models/detail/${encodeURIComponent(modelId)}`);
+}
+
+export async function installHFModel(id: string, filename: string, revision?: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch("/api/hf/models/install", {
+    method: "POST",
+    headers: { ...getHFAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ id, filename, revision }),
   });
-  if (!res.ok) throw new Error("Failed to close instance");
+  return res.json() as Promise<{ ok: boolean; error?: string }>;
+}
+
+export async function uninstallHFModel(modelId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/hf/models/${encodeURIComponent(modelId)}`, { method: "DELETE", headers: getHFAuthHeaders() });
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function fetchHFInstalledModels(): Promise<HFInstalledModel[]> {
+  return hfGet<HFInstalledModel[]>("/api/hf/models");
+}
+
+export async function startHFModel(modelId: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/hf/models/${encodeURIComponent(modelId)}/start`, { method: "POST", headers: getHFAuthHeaders() });
+  return res.json() as Promise<{ ok: boolean; error?: string }>;
+}
+
+export async function stopHFModel(modelId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/hf/models/${encodeURIComponent(modelId)}/stop`, { method: "POST", headers: getHFAuthHeaders() });
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export async function fetchHFBuildLog(modelId: string): Promise<{ modelId: string; lines: string[] }> {
+  return hfGet<{ modelId: string; lines: string[] }>(`/api/hf/models/${encodeURIComponent(modelId)}/build-log`);
+}
+
+export async function fetchHFRunningModels(): Promise<HFRunningModel[]> {
+  return hfGet<HFRunningModel[]>("/api/hf/running");
+}
+
+export async function testHFInference(modelId: string, prompt: string): Promise<{ response: string; latencyMs: number }> {
+  const start = Date.now();
+  const res = await fetch(`/api/hf/inference/${encodeURIComponent(modelId)}/chat`, {
+    method: "POST",
+    headers: { ...getHFAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ messages: [{ role: "user", content: prompt }] }),
+  });
+  const latencyMs = Date.now() - start;
+  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+  const response = data.choices?.[0]?.message?.content ?? "";
+  return { response, latencyMs };
+}
+
+export async function fetchHFAuthStatus(): Promise<{ authenticated: boolean; username?: string }> {
+  return hfGet<{ authenticated: boolean; username?: string }>("/api/hf/auth/status");
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Dataset API
+// ---------------------------------------------------------------------------
+
+export async function searchHFDatasets(params: {
+  q?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+  filter?: string;
+}): Promise<HFDatasetSearchResult[]> {
+  const sp = new URLSearchParams();
+  if (params.q) sp.set("q", params.q);
+  if (params.sort) sp.set("sort", params.sort);
+  if (params.limit) sp.set("limit", String(params.limit));
+  if (params.offset) sp.set("offset", String(params.offset));
+  if (params.filter) sp.set("filter", params.filter);
+  return hfGet<HFDatasetSearchResult[]>(`/api/hf/datasets/search?${sp.toString()}`);
+}
+
+export async function fetchHFInstalledDatasets(): Promise<HFInstalledDataset[]> {
+  return hfGet<HFInstalledDataset[]>("/api/hf/datasets");
+}
+
+export async function installHFDataset(id: string, revision?: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch("/api/hf/datasets/install", {
+    method: "POST",
+    headers: { ...getHFAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ id, revision }),
+  });
+  return res.json() as Promise<{ ok: boolean; error?: string }>;
+}
+
+export async function uninstallHFDataset(datasetId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/hf/datasets/${encodeURIComponent(datasetId)}`, {
+    method: "DELETE",
+    headers: getHFAuthHeaders(),
+  });
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Wizard API (Phase 5)
+// ---------------------------------------------------------------------------
+
+export async function analyzeHFModel(modelId: string): Promise<HFModelAnalysis> {
+  const res = await fetch("/api/hf/models/wizard/analyze", {
+    method: "POST",
+    headers: { ...getHFAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ modelId }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<HFModelAnalysis>;
+}
+
+export async function wizardInstallHFModel(params: {
+  modelId: string;
+  revision?: string;
+  filename?: string;
+  runtimeType?: string;
+  containerImage?: string;
+}): Promise<{ ok: boolean; status: string; error?: string }> {
+  const res = await fetch("/api/hf/models/wizard/install", {
+    method: "POST",
+    headers: { ...getHFAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return res.json() as Promise<{ ok: boolean; status: string; error?: string }>;
+}
+
+// ---------------------------------------------------------------------------
+// HuggingFace Fine-Tune API (Phase 6)
+// ---------------------------------------------------------------------------
+
+export async function startFineTuneJob(config: HFFineTuneConfig): Promise<HFFineTuneJob> {
+  const res = await fetch("/api/hf/finetune/start", {
+    method: "POST",
+    headers: { ...getHFAuthHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<HFFineTuneJob>;
+}
+
+export async function listFineTuneJobs(): Promise<HFFineTuneJob[]> {
+  return hfGet<HFFineTuneJob[]>("/api/hf/finetune");
+}
+
+export async function getFineTuneStatus(jobId: string): Promise<HFFineTuneJob> {
+  return hfGet<HFFineTuneJob>(`/api/hf/finetune/${encodeURIComponent(jobId)}`);
+}
+
+export async function stopFineTuneJob(jobId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/hf/finetune/${encodeURIComponent(jobId)}/stop`, {
+    method: "POST",
+    headers: getHFAuthHeaders(),
+  });
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+// ---------------------------------------------------------------------------
+// Safemode + incidents (Admin)
+// ---------------------------------------------------------------------------
+
+export async function fetchSafemode(): Promise<import("./types.js").SafemodeSnapshot> {
+  const res = await fetch("/api/admin/safemode");
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").SafemodeSnapshot>;
+}
+
+export async function exitSafemode(): Promise<import("./types.js").SafemodeExitResult> {
+  const res = await fetch("/api/admin/safemode/exit", { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+    throw new Error(body.message ?? body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").SafemodeExitResult>;
+}
+
+export async function fetchAdminIncidents(): Promise<import("./types.js").IncidentSummary[]> {
+  const res = await fetch("/api/admin/incidents");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body = (await res.json()) as { incidents: import("./types.js").IncidentSummary[] };
+  return body.incidents;
+}
+
+export async function fetchAdminIncidentMarkdown(id: string): Promise<string> {
+  const res = await fetch(`/api/admin/incidents/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.text();
+}
+
+// ---------------------------------------------------------------------------
+// Gateway control + state
+// ---------------------------------------------------------------------------
+
+export interface GatewayStateResponse {
+  state: "ONLINE" | "LIMBO" | "OFFLINE" | "UNKNOWN";
+  capabilities: {
+    remoteOps: boolean;
+    tynn: boolean;
+    memory: boolean;
+    deletions: boolean;
+  };
+}
+
+export async function fetchGatewayState(): Promise<GatewayStateResponse> {
+  const res = await fetch("/api/gateway/state");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<GatewayStateResponse>;
+}
+
+export async function restartGateway(): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch("/api/gateway/restart", { method: "POST" });
+  const body = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string; error?: string };
+  if (!res.ok || !body.ok) {
+    throw new Error(body.error ?? body.message ?? `HTTP ${res.status}`);
+  }
+  return body as { ok: boolean; message?: string };
 }

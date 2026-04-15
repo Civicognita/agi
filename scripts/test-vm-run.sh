@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VM_SCRIPT="$SCRIPT_DIR/test-vm.sh"
 E2E_SCRIPT="$SCRIPT_DIR/test-e2e-vm.sh"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-FIXTURE_CONFIG="$REPO_DIR/test/fixtures/aionima-test.json"
+FIXTURE_CONFIG="$REPO_DIR/test/fixtures/gateway-test.json"
 
 VM_NAME="aionima-test"
 
@@ -77,7 +77,7 @@ run_unit() {
 
   # Copy test config fixture to VM
   multipass exec "$VM_NAME" -- mkdir -p /home/ubuntu/.agi
-  multipass transfer "$FIXTURE_CONFIG" "$VM_NAME":/home/ubuntu/.agi/aionima.json
+  multipass transfer "$FIXTURE_CONFIG" "$VM_NAME":/home/ubuntu/.agi/gateway.json
 
   multipass exec "$VM_NAME" -- bash -c \
     'cd /mnt/agi && AIONIMA_TEST_VM=1 npx vitest run'

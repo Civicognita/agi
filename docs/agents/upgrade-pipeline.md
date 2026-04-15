@@ -68,7 +68,7 @@ The script emits structured JSON to stdout for each phase:
 
 #### ID Service Build
 
-When `idService.local.enabled` is `true` in `~/.agi/aionima.json`, upgrade.sh builds the ID service:
+When `idService.local.enabled` is `true` in `~/.agi/gateway.json`, upgrade.sh builds the ID service:
 
 1. `npm install` — installs **all** dependencies (not `--omit=dev`) because `tsc` is a devDependency
 2. `npm run build` — compiles TypeScript to `dist/`

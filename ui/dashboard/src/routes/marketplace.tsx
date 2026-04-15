@@ -7,7 +7,9 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { useToast } from "@particle-academy/react-fancy";
 import { cn } from "@/lib/utils";
+import { PageScroll } from "@/components/PageScroll.js";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,25 +23,26 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  fetchMarketplaceSources,
-  addMarketplaceSource,
-  removeMarketplaceSource,
-  syncMarketplaceSource,
-  searchMarketplaceCatalog,
-  installMarketplacePlugin,
-  uninstallMarketplacePlugin,
-  updateMarketplacePlugin,
-  fetchMarketplaceInstalled,
-  fetchMarketplaceUpdates,
+  fetchPluginMarketplaceSources,
+  addPluginMarketplaceSource,
+  removePluginMarketplaceSource,
+  syncPluginMarketplaceSource,
+  searchPluginMarketplaceCatalog,
+  installFromPluginMarketplace,
+  uninstallFromPluginMarketplace,
+  updateFromPluginMarketplace,
+  pullPluginMarketplace,
+  fetchPluginMarketplaceInstalled,
+  fetchPluginMarketplaceUpdates,
   fetchPluginDetails,
   fetchUninstallPreview,
 } from "../api.js";
-import type { CleanupResource } from "../api.js";
+import type { CleanupResource, CatalogDiff } from "../api.js";
 import type {
-  MarketplaceSource,
-  MarketplaceCatalogItem,
-  MarketplaceInstalledItem,
-  MarketplaceUpdate,
+  PluginMarketplaceSource,
+  PluginMarketplaceCatalogItem,
+  PluginMarketplaceInstalledItem,
+  PluginMarketplaceUpdate,
   PluginDetails,
 } from "../types.js";
 
@@ -55,6 +58,7 @@ export default function MarketplacePage() {
   const [activeTab, setActiveTab] = useState<Tab>("browse");
 
   return (
+    <PageScroll>
     <div>
       {/* Tab bar */}
       <div className="flex gap-1 mb-6 border-b border-border">
@@ -78,6 +82,7 @@ export default function MarketplacePage() {
       {activeTab === "installed" && <InstalledTab />}
       {activeTab === "sources" && <SourcesTab />}
     </div>
+    </PageScroll>
   );
 }
 
@@ -120,7 +125,7 @@ const PROVIDES_LABELS: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 interface PluginDetailDialogProps {
-  plugin: MarketplaceCatalogItem | null;
+  plugin: PluginMarketplaceCatalogItem | null;
   sourceName?: string;
   onClose: () => void;
   onAction?: () => void;
@@ -430,16 +435,16 @@ function BrowseTab() {
   const [query, setQuery] = useState("");
   const [providesFilter, setProvidesFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState<number | "">("");
-  const [sources, setSources] = useState<MarketplaceSource[]>([]);
-  const [items, setItems] = useState<MarketplaceCatalogItem[]>([]);
+  const [sources, setSources] = useState<PluginMarketplaceSource[]>([]);
+  const [items, setItems] = useState<PluginMarketplaceCatalogItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
   const [installNotice, setInstallNotice] = useState<string | null>(null);
-  const [selectedPlugin, setSelectedPlugin] = useState<MarketplaceCatalogItem | null>(null);
+  const [selectedPlugin, setSelectedPlugin] = useState<PluginMarketplaceCatalogItem | null>(null);
 
   useEffect(() => {
-    fetchMarketplaceSources().then(setSources).catch(() => {});
+    fetchPluginMarketplaceSources().then(setSources).catch(() => {});
   }, []);
 
   const sourceMap = Object.fromEntries(sources.map((s) => [s.id, s.name]));
@@ -447,7 +452,7 @@ function BrowseTab() {
   const doSearch = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await searchMarketplaceCatalog({
+      const result = await searchPluginMarketplaceCatalog({
         q: query || undefined,
         provides: providesFilter || undefined,
       });
@@ -455,7 +460,7 @@ function BrowseTab() {
       if (sourceFilter !== "") {
         filtered = filtered.filter((item) => item.sourceId === sourceFilter);
       }
-      setItems(filtered);
+      setItems(filtered.sort((a, b) => a.name.localeCompare(b.name)));
     } catch {
       setItems([]);
     } finally {
@@ -465,17 +470,16 @@ function BrowseTab() {
 
   useEffect(() => { void doSearch(); }, [doSearch]);
 
-  const handleInstall = useCallback(async (item: MarketplaceCatalogItem) => {
+  const handleInstall = useCallback(async (item: PluginMarketplaceCatalogItem) => {
     setActing(item.name);
     setInstallError(null);
     setInstallNotice(null);
     try {
-      const result = await installMarketplacePlugin(item.name, item.sourceId);
+      const result = await installFromPluginMarketplace(item.name, item.sourceId);
       if (result.autoInstalled && result.autoInstalled.length > 0) {
         setInstallNotice(`Installed ${item.name} + dependencies: ${result.autoInstalled.join(", ")}`);
       }
-      setSelectedPlugin(null);
-      void doSearch();
+      window.location.reload();
     } catch (err) {
       setInstallError(err instanceof Error ? err.message : "Install failed");
     } finally { setActing(null); }
@@ -640,13 +644,15 @@ function BrowseTab() {
 // ---------------------------------------------------------------------------
 
 function InstalledTab() {
-  const [items, setItems] = useState<MarketplaceInstalledItem[]>([]);
-  const [updates, setUpdates] = useState<MarketplaceUpdate[]>([]);
-  const [catalog, setCatalog] = useState<MarketplaceCatalogItem[]>([]);
-  const [sources, setSources] = useState<MarketplaceSource[]>([]);
+  const { toast } = useToast();
+  const [items, setItems] = useState<PluginMarketplaceInstalledItem[]>([]);
+  const [updates, setUpdates] = useState<PluginMarketplaceUpdate[]>([]);
+  const [catalog, setCatalog] = useState<PluginMarketplaceCatalogItem[]>([]);
+  const [sources, setSources] = useState<PluginMarketplaceSource[]>([]);
   const [uninstalling, setUninstalling] = useState<string | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
-  const [selectedPlugin, setSelectedPlugin] = useState<MarketplaceCatalogItem | null>(null);
+  const [pulling, setPulling] = useState(false);
+  const [selectedPlugin, setSelectedPlugin] = useState<PluginMarketplaceCatalogItem | null>(null);
 
   // Cleanup preview state
   const [cleanupTarget, setCleanupTarget] = useState<string | null>(null);
@@ -656,12 +662,12 @@ function InstalledTab() {
 
   const load = useCallback(async () => {
     const [installed, avail, catalogItems, srcs] = await Promise.all([
-      fetchMarketplaceInstalled().catch(() => [] as MarketplaceInstalledItem[]),
-      fetchMarketplaceUpdates().catch(() => [] as MarketplaceUpdate[]),
-      searchMarketplaceCatalog().catch(() => [] as MarketplaceCatalogItem[]),
-      fetchMarketplaceSources().catch(() => [] as MarketplaceSource[]),
+      fetchPluginMarketplaceInstalled().catch(() => [] as PluginMarketplaceInstalledItem[]),
+      fetchPluginMarketplaceUpdates().catch(() => [] as PluginMarketplaceUpdate[]),
+      searchPluginMarketplaceCatalog().catch(() => [] as PluginMarketplaceCatalogItem[]),
+      fetchPluginMarketplaceSources().catch(() => [] as PluginMarketplaceSource[]),
     ]);
-    setItems(installed);
+    setItems(installed.sort((a, b) => a.name.localeCompare(b.name)));
     setUpdates(avail);
     setCatalog(catalogItems);
     setSources(srcs);
@@ -670,6 +676,21 @@ function InstalledTab() {
   useEffect(() => { void load(); }, [load]);
 
   const sourceMap = Object.fromEntries(sources.map((s) => [s.id, s.name]));
+
+  // Installed tab filters
+  const [installedQuery, setInstalledQuery] = useState("");
+  const [installedProvidesFilter, setInstalledProvidesFilter] = useState("");
+  const [installedSourceFilter, setInstalledSourceFilter] = useState<number | "">(""  );
+
+  const filteredItems = items.filter((item) => {
+    if (installedQuery && !item.name.toLowerCase().includes(installedQuery.toLowerCase())) return false;
+    if (installedSourceFilter !== "" && item.sourceId !== installedSourceFilter) return false;
+    if (installedProvidesFilter) {
+      const catalogItem = catalog.find((c) => c.name === item.name);
+      if (!catalogItem?.provides?.includes(installedProvidesFilter)) return false;
+    }
+    return true;
+  });
 
   // Two-step uninstall: preview cleanup resources, then confirm
   const handleUninstallRequest = useCallback(async (name: string) => {
@@ -688,13 +709,17 @@ function InstalledTab() {
     // No cleanup resources — uninstall directly
     setUninstalling(name);
     try {
-      await uninstallMarketplacePlugin(name);
-      setSelectedPlugin(null);
-      void load();
+      const result = await uninstallFromPluginMarketplace(name);
+      if (!result.ok) {
+        toast({ title: "Cannot uninstall", description: result.error ?? "Uninstall rejected", variant: "error" });
+        return;
+      }
+      toast({ title: `Uninstalled ${name}`, variant: "success" });
+      window.location.reload();
     } catch (err) {
-      console.error("Uninstall failed:", err);
+      toast({ title: "Uninstall failed", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
     } finally { setUninstalling(null); }
-  }, [load]);
+  }, [load, toast]);
 
   const handleConfirmUninstall = useCallback(async () => {
     if (!cleanupTarget) return;
@@ -703,21 +728,27 @@ function InstalledTab() {
     setUninstalling(name);
     try {
       const ids = selectedCleanupIds.size > 0 ? [...selectedCleanupIds] : undefined;
-      await uninstallMarketplacePlugin(name, ids);
-      setSelectedPlugin(null);
-      void load();
+      const result = await uninstallFromPluginMarketplace(name, ids);
+      if (!result.ok) {
+        toast({ title: "Cannot uninstall", description: result.error ?? "Uninstall rejected", variant: "error" });
+        return;
+      }
+      toast({ title: `Uninstalled ${name}`, variant: "success" });
+      window.location.reload();
     } catch (err) {
-      console.error("Uninstall failed:", err);
+      toast({ title: "Uninstall failed", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
     } finally { setUninstalling(null); }
-  }, [cleanupTarget, selectedCleanupIds, load]);
+  }, [cleanupTarget, selectedCleanupIds, load, toast]);
 
   const handleUpdate = useCallback(async (pluginName: string, sourceId: number) => {
     setUpdating(pluginName);
     try {
-      await updateMarketplacePlugin(pluginName, sourceId);
-      void load();
-    } catch { /* ignore */ }
-    finally { setUpdating(null); }
+      await updateFromPluginMarketplace(pluginName, sourceId);
+      await load();
+      toast({ title: `Updated ${pluginName}`, variant: "success" });
+    } catch (err) {
+      toast({ title: `Failed to update ${pluginName}`, description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
+    } finally { setUpdating(null); }
   }, [load]);
 
   if (items.length === 0) {
@@ -730,16 +761,92 @@ function InstalledTab() {
 
   return (
     <div className="space-y-4">
-      {updates.length > 0 && (
-        <Card className="p-4 border-blue/30 bg-blue/5">
-          <p className="text-sm font-medium text-foreground">
-            {updates.length} update{updates.length > 1 ? "s" : ""} available
-          </p>
-        </Card>
-      )}
+      <Card className="p-4 flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          {updates.length > 0
+            ? `${updates.length} update${updates.length > 1 ? "s" : ""} available`
+            : "All plugins up to date"}
+        </p>
+        <Button
+          size="sm"
+          variant={updates.length > 0 ? "default" : "outline"}
+          disabled={pulling}
+          onClick={async () => {
+            setPulling(true);
+            try {
+              if (updates.length > 0) {
+                // Update each detected plugin individually (don't re-sync catalog)
+                const updated: string[] = [];
+                const errors: string[] = [];
+                for (const u of updates) {
+                  try {
+                    await updateFromPluginMarketplace(u.pluginName, u.sourceId);
+                    updated.push(u.pluginName);
+                  } catch (err) {
+                    errors.push(`${u.pluginName}: ${err instanceof Error ? err.message : "failed"}`);
+                  }
+                }
+                await load();
+                if (updated.length > 0) {
+                  toast({ title: `Updated ${updated.length} plugin(s)`, description: updated.join(", "), variant: "success" });
+                }
+                if (errors.length > 0) {
+                  toast({ title: `${errors.length} update(s) failed`, description: errors.join("; "), variant: "error" });
+                }
+              } else {
+                // No updates detected — sync catalog to check for new ones
+                const result = await pullPluginMarketplace();
+                await load();
+                if (result.updated.length > 0) {
+                  toast({ title: `Updated ${result.updated.length} plugin(s)`, description: result.updated.join(", "), variant: "success" });
+                } else {
+                  toast({ title: "All plugins up to date", description: `Synced ${result.catalogSynced} plugins from catalog`, variant: "info" });
+                }
+                if (result.errors.length > 0) {
+                  toast({ title: "Some updates failed", description: result.errors.join("; "), variant: "error" });
+                }
+              }
+            } catch (err) {
+              toast({ title: "Plugin update failed", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
+            } finally { setPulling(false); }
+          }}
+        >
+          {pulling ? "Updating..." : updates.length > 0 ? "Update All" : "Check for Updates"}
+        </Button>
+      </Card>
+
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <Input
+          placeholder="Search installed..."
+          value={installedQuery}
+          onChange={(e) => setInstalledQuery(e.target.value)}
+          className="flex-1"
+        />
+        <select
+          className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm cursor-pointer"
+          value={installedProvidesFilter}
+          onChange={(e) => setInstalledProvidesFilter(e.target.value)}
+        >
+          <option value="">All capabilities</option>
+          {Object.entries(PROVIDES_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
+        <select
+          className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm cursor-pointer"
+          value={installedSourceFilter}
+          onChange={(e) => setInstalledSourceFilter(e.target.value === "" ? "" : Number(e.target.value))}
+        >
+          <option value="">All sources</option>
+          {sources.map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {items.map((item) => {
+        {filteredItems.map((item) => {
           const update = updates.find((u) => u.pluginName === item.name);
           const catalogItem = catalog.find((c) => c.name === item.name);
           const provides = catalogItem?.provides ?? [];
@@ -892,14 +999,16 @@ function InstalledTab() {
 // ---------------------------------------------------------------------------
 
 function SourcesTab() {
-  const [sources, setSources] = useState<MarketplaceSource[]>([]);
+  const { toast } = useToast();
+  const [sources, setSources] = useState<PluginMarketplaceSource[]>([]);
   const [newRef, setNewRef] = useState("");
   const [newName, setNewName] = useState("");
   const [adding, setAdding] = useState(false);
   const [syncing, setSyncing] = useState<number | null>(null);
+  const [lastDiffs, setLastDiffs] = useState<Record<number, CatalogDiff>>({});
 
   const load = useCallback(async () => {
-    const s = await fetchMarketplaceSources().catch(() => [] as MarketplaceSource[]);
+    const s = await fetchPluginMarketplaceSources().catch(() => [] as PluginMarketplaceSource[]);
     setSources(s);
   }, []);
 
@@ -909,29 +1018,50 @@ function SourcesTab() {
     if (!newRef) return;
     setAdding(true);
     try {
-      await addMarketplaceSource(newRef, newName || undefined);
+      await addPluginMarketplaceSource(newRef, newName || undefined);
       setNewRef("");
       setNewName("");
-      void load();
-    } catch { /* ignore */ }
-    finally { setAdding(false); }
-  }, [newRef, newName, load]);
+      toast({ title: "Source added", variant: "success" });
+      await load();
+    } catch (err) {
+      toast({ title: "Failed to add source", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
+    } finally { setAdding(false); }
+  }, [newRef, newName, load, toast]);
 
   const handleSync = useCallback(async (id: number) => {
     setSyncing(id);
     try {
-      await syncMarketplaceSource(id);
-      void load();
-    } catch { /* ignore */ }
-    finally { setSyncing(null); }
-  }, [load]);
+      const result = await syncPluginMarketplaceSource(id);
+      await load();
+      if (result.ok) {
+        const diff = result.diff;
+        if (!diff || (diff.added.length === 0 && diff.updated.length === 0 && diff.removed.length === 0)) {
+          toast({ title: "Already up to date", description: `${diff?.total ?? 0} plugins in catalog`, variant: "info" });
+        } else {
+          const parts: string[] = [];
+          if (diff.added.length) parts.push(`${diff.added.length} new`);
+          if (diff.updated.length) parts.push(`${diff.updated.length} updated`);
+          if (diff.removed.length) parts.push(`${diff.removed.length} removed`);
+          toast({ title: "Catalog synced", description: parts.join(", "), variant: "success" });
+        }
+        if (diff) setLastDiffs((m) => ({ ...m, [id]: diff }));
+      } else {
+        toast({ title: "Sync failed", description: result.error ?? "Unknown error", variant: "error" });
+      }
+    } catch (err) {
+      toast({ title: "Sync failed", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
+    } finally { setSyncing(null); }
+  }, [load, toast]);
 
   const handleRemove = useCallback(async (id: number) => {
     try {
-      await removeMarketplaceSource(id);
-      void load();
-    } catch { /* ignore */ }
-  }, [load]);
+      await removePluginMarketplaceSource(id);
+      toast({ title: "Source removed", variant: "success" });
+      await load();
+    } catch (err) {
+      toast({ title: "Failed to remove source", description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
+    }
+  }, [load, toast]);
 
   return (
     <div className="space-y-4">
@@ -967,18 +1097,33 @@ function SourcesTab() {
         </Card>
       ) : (
         <div className="grid gap-3">
-          {sources.map((source) => (
+          {sources.map((source) => {
+            const diff = lastDiffs[source.id];
+            const changeCount = diff ? diff.added.length + diff.updated.length + diff.removed.length : 0;
+            return (
             <Card key={source.id} className="p-4 flex-row items-center justify-between">
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-foreground">{source.name}</span>
                   <Badge variant="outline" className="text-[10px]">{source.sourceType}</Badge>
                   <span className="text-[11px] text-muted-foreground">{source.pluginCount} plugins</span>
+                  {changeCount > 0 && (
+                    <Badge variant="default" className="text-[10px]">
+                      {changeCount} change{changeCount === 1 ? "" : "s"} last sync
+                    </Badge>
+                  )}
                 </div>
                 <p className="text-[11px] text-muted-foreground font-mono mt-1">{source.ref}</p>
                 {source.lastSyncedAt && (
                   <p className="text-[10px] text-muted-foreground mt-0.5">
                     Last synced: {new Date(source.lastSyncedAt).toLocaleString()}
+                  </p>
+                )}
+                {diff && changeCount > 0 && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {diff.added.length > 0 && <span>+{diff.added.length} new · </span>}
+                    {diff.updated.length > 0 && <span>{diff.updated.length} updated · </span>}
+                    {diff.removed.length > 0 && <span>-{diff.removed.length} removed</span>}
                   </p>
                 )}
               </div>
@@ -989,7 +1134,7 @@ function SourcesTab() {
                   disabled={syncing === source.id}
                   onClick={() => void handleSync(source.id)}
                 >
-                  {syncing === source.id ? "Syncing..." : "Sync"}
+                  {syncing === source.id ? "Refreshing..." : "Refresh catalog"}
                 </Button>
                 <Button
                   size="sm"
@@ -1000,7 +1145,8 @@ function SourcesTab() {
                 </Button>
               </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

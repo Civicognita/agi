@@ -12,7 +12,7 @@ By default, the dashboard is available at:
 http://127.0.0.1:3100
 ```
 
-If you have configured a different host or port in `aionima.json`, use that address instead. The dashboard is served from `ui/dashboard/dist/` — it must be built before it is available:
+If you have configured a different host or port in `gateway.json`, use that address instead. The dashboard is served from `ui/dashboard/dist/` — it must be built before it is available:
 
 ```bash
 pnpm build
@@ -76,7 +76,7 @@ MApp lifecycle events (mint, install, publish, execute) are tracked in the COA c
 
 The Projects section lists hosted projects — code repositories or web applications running on the local network via Caddy reverse proxy. Each project shows its hostname, status, runtime type, and quick controls (start/stop/restart container).
 
-This section is only populated if `hosting.enabled` is `true` in `aionima.json`.
+This section is only populated if `hosting.enabled` is `true` in `gateway.json`.
 
 #### Database in the Development Tab
 
@@ -87,9 +87,13 @@ When a project's hosting panel is expanded, the Development tab includes databas
 
 If the database service is not running, a message prompts you to start it first.
 
-#### Database Portal
+#### WhoDB
 
-A database icon button in the header bar opens the **Database Portal** at `https://db.ai.on` in a new tab. The portal is a standalone page listing all registered database management tools (starting with Adminer). The portal is served by the Adminer plugin and requires Caddy to be configured with a `db.ai.on` reverse proxy block.
+A database icon button in the header bar (next to the System Terminal button) opens **WhoDB**, the always-on database explorer, inline as a flyout panel. WhoDB is a unified UI for PostgreSQL, MariaDB/MySQL, SQLite, Redis, and MongoDB with spreadsheet editing, schema visualization, AI-powered SQL, and data export. The WhoDB container runs as always-on infrastructure and is reverse-proxied at `https://db.ai.on` via Caddy. The legacy `/db-portal` HTML page redirects to WhoDB; plugins can still register DB tools via the existing `/api/db-portal/register` endpoint, but the primary surface is WhoDB.
+
+#### System Terminal
+
+A terminal icon button in the header bar opens a **System Terminal** — a host-level shell session that lands in the user's home directory. Distinct from the project-level container terminal (available on the project detail page under the Development tab > Terminal), which runs inside the project's Podman container via `podman exec`.
 
 ### Communication
 
@@ -109,7 +113,7 @@ Available channel pages:
 | Signal | signal-cli REST adapter |
 | WhatsApp | WhatsApp Business API adapter |
 
-Only channels that are configured in `aionima.json` appear in the sidebar.
+Only channels that are configured in `gateway.json` appear in the sidebar.
 
 ### Knowledge
 
@@ -136,7 +140,7 @@ The Settings section is a sidebar group with dynamically injected pages from plu
 - **Settings > PostgreSQL** — install/uninstall PostgreSQL container images (17, 16, 15); configure default credentials and port
 - **Settings > MySQL / MariaDB** — install/uninstall MariaDB container images (11.4, 10.11, 10.6); configure default credentials and port
 - **Settings > Adminer** — start/stop the Adminer database management service
-- **Settings > Gateway** — core gateway configuration
+- **Settings > Gateway** — core gateway configuration. The General tab shows host/port, a read-only **Operational State** pill (Initial / Limbo / Offline / Online — see the [state machine docs](../agents/state-machine.md)), a **Restart gateway** button (graceful SIGTERM + service supervisor auto-restart), and the release channel selector.
 
 #### Onboarding
 
@@ -242,4 +246,4 @@ The dashboard communicates with the gateway via two mechanisms:
 - **REST** — for file operations, system control (upgrade, restart), and log streaming.
 - **WebSocket** — for real-time event push (new messages, state transitions, resource metrics).
 
-All API requests include the `Authorization: Bearer <AUTH_TOKEN>` header. The token is read from the `auth.tokens` array in `aionima.json`, resolved from `$ENV{AUTH_TOKEN}`. Requests from loopback (`127.0.0.1`, `::1`) bypass auth when no token is configured.
+All API requests include the `Authorization: Bearer <AUTH_TOKEN>` header. The token is read from the `auth.tokens` array in `gateway.json`, resolved from `$ENV{AUTH_TOKEN}`. Requests from loopback (`127.0.0.1`, `::1`) bypass auth when no token is configured.

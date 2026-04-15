@@ -1,12 +1,20 @@
 /**
- * Plan Store — file-based CRUD for ~/.agi/{projectSlug}/plans/{planId}.md
+ * Plan Store — file-based CRUD for ~/.agi/{projectSlug}/plans/{planId}.mdc
  *
- * Each plan is stored as a markdown file with YAML frontmatter.
- * The frontmatter contains the plan metadata, and the body is the
- * full markdown plan content.
+ * Each plan is stored as a `.mdc` file (markdown + YAML frontmatter) at
  *
- * Plans are stored centrally in the owner's home directory, NOT inside
- * project directories. This prevents writing runtime data into deployed
+ *     ~/.agi/{projectSlug}/plans/{planId}.mdc
+ *
+ * Frontmatter sits between YAML `---` fences and carries all plan metadata
+ * (id, title, status, projectPath, steps, tynnRefs, timestamps). The body
+ * after the closing fence is the plan's free-form markdown content.
+ *
+ * Legacy: prior revisions used `.md` with JSON-in-YAML frontmatter. On read,
+ * any legacy `.md` plan is parsed, rewritten as a proper `.mdc` file with
+ * YAML frontmatter, and the original `.md` is removed. Idempotent.
+ *
+ * Plans live centrally under the operator's home directory, NEVER inside
+ * project directories — that prevents writing runtime data into deployed
  * codebases or user repos.
  */
 
@@ -14,14 +22,25 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, unlink
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { ulid } from "ulid";
+import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import type { Plan, PlanStep, CreatePlanInput, UpdatePlanInput, PlanStatus, PlanStepStatus, PlanTynnRefs } from "./plan-types.js";
 
 // ---------------------------------------------------------------------------
-// YAML frontmatter helpers (minimal — no external dependency)
+// Frontmatter helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Plans are immutable after acceptance except for step-status advances. The
+ * server-side guard lives in `update-plan.ts`; this flag is what that guard
+ * checks. Kept alongside the persistence layer so the contract is obvious
+ * at read-time.
+ */
+export function isAcceptedStatus(status: PlanStatus): boolean {
+  return status === "approved" || status === "executing" || status === "testing" || status === "complete" || status === "failed";
+}
+
 function serializeFrontmatter(plan: Plan): string {
-  const fm: Record<string, unknown> = {
+  const fm = {
     id: plan.id,
     title: plan.title,
     status: plan.status,
@@ -32,13 +51,30 @@ function serializeFrontmatter(plan: Plan): string {
     tynnRefs: plan.tynnRefs,
     steps: plan.steps,
   };
-  // Simple YAML serialization (JSON-compatible subset)
-  const yaml = JSON.stringify(fm, null, 2);
-  return `---\n${yaml}\n---\n\n${plan.body}`;
+  const yaml = yamlStringify(fm, { indent: 2, lineWidth: 0 });
+  return `---\n${yaml}---\n\n${plan.body}`;
 }
 
-function parseFrontmatter(raw: string): { meta: Record<string, unknown>; body: string } | null {
-  const match = /^---\n([\s\S]*?)\n---\n\n?([\s\S]*)$/.exec(raw);
+type ParsedFrontmatter = { meta: Record<string, unknown>; body: string };
+
+function parseYamlFrontmatter(raw: string): ParsedFrontmatter | null {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n\r?\n?([\s\S]*)$/.exec(raw);
+  if (!match) return null;
+  try {
+    const meta = yamlParse(match[1]!) as Record<string, unknown>;
+    if (meta === null || typeof meta !== "object") return null;
+    return { meta, body: match[2]! };
+  } catch {
+    return null;
+  }
+}
+
+function parseLegacyJsonFrontmatter(raw: string): ParsedFrontmatter | null {
+  // Older plans used `JSON.stringify` inside the fences. YAML is a superset
+  // of JSON so the YAML parser above usually handles them; this is a
+  // belt-and-braces fallback for edge cases where yaml-parse rejects a
+  // particular JSON quoting style.
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n\r?\n?([\s\S]*)$/.exec(raw);
   if (!match) return null;
   try {
     const meta = JSON.parse(match[1]!) as Record<string, unknown>;
@@ -46,6 +82,10 @@ function parseFrontmatter(raw: string): { meta: Record<string, unknown>; body: s
   } catch {
     return null;
   }
+}
+
+function parseFrontmatter(raw: string): ParsedFrontmatter | null {
+  return parseYamlFrontmatter(raw) ?? parseLegacyJsonFrontmatter(raw);
 }
 
 function metaToPlan(meta: Record<string, unknown>, body: string): Plan {
@@ -78,6 +118,10 @@ export class PlanStore {
   }
 
   private planPath(projectPath: string, planId: string): string {
+    return join(this.plansDir(projectPath), `${planId}.mdc`);
+  }
+
+  private legacyPlanPath(projectPath: string, planId: string): string {
     return join(this.plansDir(projectPath), `${planId}.md`);
   }
 
@@ -86,6 +130,36 @@ export class PlanStore {
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
     }
+  }
+
+  /**
+   * Read a plan from disk, preferring `.mdc` and falling back to legacy
+   * `.md`. When a legacy file is found, it's rewritten as `.mdc` with YAML
+   * frontmatter and the old file is removed so the migration runs exactly
+   * once per plan.
+   */
+  private readAndMigrate(projectPath: string, planId: string): Plan | null {
+    const mdcPath = this.planPath(projectPath, planId);
+    if (existsSync(mdcPath)) {
+      const parsed = parseFrontmatter(readFileSync(mdcPath, "utf-8"));
+      return parsed ? metaToPlan(parsed.meta, parsed.body) : null;
+    }
+
+    const mdPath = this.legacyPlanPath(projectPath, planId);
+    if (!existsSync(mdPath)) return null;
+    const parsed = parseFrontmatter(readFileSync(mdPath, "utf-8"));
+    if (!parsed) return null;
+
+    const plan = metaToPlan(parsed.meta, parsed.body);
+    try {
+      writeFileSync(mdcPath, serializeFrontmatter(plan), "utf-8");
+      unlinkSync(mdPath);
+    } catch {
+      // If the rewrite fails (permissions, disk full), we still return the
+      // parsed plan so the caller isn't blocked; the migration will retry
+      // next read.
+    }
+    return plan;
   }
 
   create(input: CreatePlanInput): Plan {
@@ -119,29 +193,49 @@ export class PlanStore {
   }
 
   get(projectPath: string, planId: string): Plan | null {
-    const path = this.planPath(projectPath, planId);
-    if (!existsSync(path)) return null;
-    const raw = readFileSync(path, "utf-8");
-    const parsed = parseFrontmatter(raw);
-    if (!parsed) return null;
-    return metaToPlan(parsed.meta, parsed.body);
+    return this.readAndMigrate(projectPath, planId);
   }
 
   list(projectPath: string): Plan[] {
     const dir = this.plansDir(projectPath);
     if (!existsSync(dir)) return [];
-    const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
+    const seen = new Set<string>();
     const plans: Plan[] = [];
+
+    // Prefer `.mdc` entries; fall through to `.md` if no `.mdc` shadows it.
+    const files = readdirSync(dir);
     for (const file of files) {
-      const raw = readFileSync(join(dir, file), "utf-8");
-      const parsed = parseFrontmatter(raw);
-      if (parsed) {
-        plans.push(metaToPlan(parsed.meta, parsed.body));
+      const mdcMatch = /^(plan_[^.]+)\.mdc$/.exec(file);
+      if (mdcMatch) {
+        const planId = mdcMatch[1]!;
+        if (seen.has(planId)) continue;
+        const plan = this.readAndMigrate(projectPath, planId);
+        if (plan) {
+          plans.push(plan);
+          seen.add(planId);
+        }
+      }
+    }
+    for (const file of files) {
+      const mdMatch = /^(plan_[^.]+)\.md$/.exec(file);
+      if (mdMatch) {
+        const planId = mdMatch[1]!;
+        if (seen.has(planId)) continue;
+        const plan = this.readAndMigrate(projectPath, planId);
+        if (plan) {
+          plans.push(plan);
+          seen.add(planId);
+        }
       }
     }
     return plans.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
+  /**
+   * Update a plan. Callers that need to enforce the accept-lock (no body /
+   * step-list edits after `approved`) should pass `lockAfterAccept: true`
+   * — see update-plan.ts for the server-side tool guard.
+   */
   update(projectPath: string, planId: string, input: UpdatePlanInput): Plan | null {
     const plan = this.get(projectPath, planId);
     if (!plan) return null;
@@ -159,6 +253,18 @@ export class PlanStore {
       }
     }
 
+    if (input.body !== undefined) {
+      plan.body = input.body;
+    }
+
+    if (input.title !== undefined) {
+      plan.title = input.title;
+    }
+
+    if (input.steps !== undefined) {
+      plan.steps = input.steps;
+    }
+
     if (input.tynnRefs !== undefined) {
       if (input.tynnRefs.versionId !== undefined) plan.tynnRefs.versionId = input.tynnRefs.versionId;
       if (input.tynnRefs.storyIds !== undefined) plan.tynnRefs.storyIds = input.tynnRefs.storyIds;
@@ -171,9 +277,11 @@ export class PlanStore {
   }
 
   delete(projectPath: string, planId: string): boolean {
-    const path = this.planPath(projectPath, planId);
-    if (!existsSync(path)) return false;
-    unlinkSync(path);
-    return true;
+    let removed = false;
+    const mdcPath = this.planPath(projectPath, planId);
+    if (existsSync(mdcPath)) { unlinkSync(mdcPath); removed = true; }
+    const mdPath = this.legacyPlanPath(projectPath, planId);
+    if (existsSync(mdPath)) { unlinkSync(mdPath); removed = true; }
+    return removed;
   }
 }

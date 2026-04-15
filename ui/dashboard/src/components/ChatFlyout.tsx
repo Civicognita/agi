@@ -6,18 +6,25 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { markdownComponents } from "@/lib/markdown.js";
+// Chat content now renders via react-fancy's ContentRenderer (see imports
+// below). The legacy ReactMarkdown + markdownComponents path was retired
+// in favor of ContentRenderer + registered extensions (thinking, question,
+// callout, highlight). See src/lib/content-renderer-setup.tsx.
 import type { WorkerJobSummary, Plan, PlanStatus, PlanStep, ProjectInfo } from "../types.js";
 import { approveTaskmasterJob, fetchTaskmasterJobs, rejectTaskmasterJob } from "../api.js";
 import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
 import type { ToolCard } from "./ToolCards.js";
 import { PlanViewer } from "./PlanViewer.js";
 import { ChatHistory } from "./ChatHistory.js";
+import { applyInjectionConsumed, shouldShowLivePill, applyStallTimeout, groupByThoughtBoundary } from "./chat-flyout-reducers.js";
+import type { ChatSessionShape, ChatMessageShape } from "./chat-flyout-reducers.js";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { useIsMobile } from "@/hooks.js";
+import { useIsMobile, useConfig } from "@/hooks.js";
+import { ContentRenderer } from "@particle-academy/react-fancy";
+import { Copy as CopyIcon, Check as CheckIcon } from "lucide-react";
+import { PlansDrawer } from "./PlansDrawer.js";
+import { PlanPane } from "./PlanPane.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,7 +60,7 @@ interface ChatSession {
   queuedMessages: Array<{ text: string; timestamp: string }>;
 }
 
-type DrawerTab = "work-queue" | "project-info";
+type DrawerTab = "work-queue" | "project-info" | "plans";
 
 // ---------------------------------------------------------------------------
 // Run grouping — groups consecutive messages sharing the same runId
@@ -166,9 +173,19 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   const [input, setInput] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [activeDrawer, setActiveDrawer] = useState<DrawerTab | null>(null);
+  // When a plan is selected from the Plans drawer, its id is held here so
+  // the PlanPane renders to the left of the chat. Cleared by the pane's X.
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const isMobile = useIsMobile();
+
+  // Display names for chat bubbles. User name comes from the gateway config's
+  // owner.displayName; falls back to "You". Agent name is "Aion" for now —
+  // agent.displayName is a future config knob.
+  const configHook = useConfig();
+  const userLabel = (configHook.data?.owner as { displayName?: string } | undefined)?.displayName?.trim() || "You";
+  const agentLabel = "Aion";
 
   // File attachments
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
@@ -297,6 +314,55 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   }, []);
 
   // -------------------------------------------------------------------------
+  // Stall detection — if no WS traffic arrives for STALL_MS while a session is
+  // "thinking", surface a timeout message so the UI isn't stuck until reload.
+  // -------------------------------------------------------------------------
+
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Per-session high-water mark of the server's chat event seq numbers.
+  // Used for chat:resume on WS reconnect — we send { lastSeq } and the server
+  // replays any events newer than that. Without this, events emitted during a
+  // brief WS drop are lost (terminal chat:response in particular) and the
+  // client stalls waiting for something the server already "sent" to a dead
+  // connection.
+  const lastSeqBySession = useRef<Map<string, number>>(new Map());
+
+  // WS heartbeat: we ping every HEARTBEAT_INTERVAL; if the server doesn't
+  // pong within HEARTBEAT_TIMEOUT we assume the WS is a TCP zombie (looks
+  // alive but no data flows) and force-reconnect. On reconnect chat:resume
+  // replays any missed events, so the user doesn't have to reload the page
+  // when the network glitches or the laptop sleeps.
+  const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastPongAtRef = useRef<number>(Date.now());
+  const HEARTBEAT_INTERVAL_MS = 15_000;
+  const HEARTBEAT_TIMEOUT_MS = 25_000;
+  const STALL_MS = 120_000;
+
+  const clearStallTimer = useCallback(() => {
+    if (stallTimerRef.current) {
+      clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+  }, []);
+
+  const resetStallTimer = useCallback((sessionId: string) => {
+    if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
+    stallTimerRef.current = setTimeout(() => {
+      setSessions((prev) => prev.map((s) =>
+        s.id === sessionId
+          ? (applyStallTimeout(
+              s as unknown as ChatSessionShape,
+              "Response timed out \u2014 the connection may have dropped. Try sending again.",
+              new Date().toISOString(),
+            ) as unknown as ChatSession)
+          : s
+      ));
+      stallTimerRef.current = null;
+    }, STALL_MS);
+  }, []);
+
+  // -------------------------------------------------------------------------
   // WebSocket connection
   // -------------------------------------------------------------------------
 
@@ -307,12 +373,41 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     wsRef.current = ws;
 
     ws.onopen = () => {
+      // Refresh server's ownerConnectionMap for this entity — any message works,
+      // and ping is a no-side-effect handler on the server side.
+      ws.send(JSON.stringify({ type: "ping" }));
+      lastPongAtRef.current = Date.now();
+      // Resume any active sessions — server will replay any chat:* events the
+      // client missed while the WS was down. For first connect the map is empty
+      // and nothing is sent.
+      for (const [sessionId, lastSeq] of lastSeqBySession.current.entries()) {
+        ws.send(JSON.stringify({
+          type: "chat:resume",
+          payload: { sessionId, lastSeq },
+        }));
+      }
       // Flush any pending openWithContext that arrived before WS was ready
       const pending = pendingContextRef.current;
       if (pending) {
         pendingContextRef.current = null;
         ws.send(JSON.stringify({ type: "chat:open", payload: { context: pending } }));
       }
+      // Start heartbeat. Every tick we ping; if we haven't seen a pong within
+      // HEARTBEAT_TIMEOUT_MS we declare the WS dead and force-close it so the
+      // reconnect path runs (ws.onclose -> 3s reconnect timer -> new WS).
+      if (heartbeatIntervalRef.current) clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = setInterval(() => {
+        if (wsRef.current !== ws) return;
+        const gap = Date.now() - lastPongAtRef.current;
+        if (gap > HEARTBEAT_TIMEOUT_MS) {
+          // TCP zombie — kill it so we reconnect.
+          try { ws.close(); } catch { /* noop */ }
+          return;
+        }
+        if (ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({ type: "ping" })); } catch { /* noop */ }
+        }
+      }, HEARTBEAT_INTERVAL_MS);
     };
 
     ws.onmessage = (event) => {
@@ -320,6 +415,33 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         const msg = JSON.parse(event.data as string) as { type: string; payload?: unknown };
         const payload = msg.payload as Record<string, unknown> | undefined;
         const sid = payload?.sessionId as string | undefined;
+
+        // Any incoming message proves the WS is alive — update the heartbeat.
+        // `pong` specifically is the response to our periodic ping.
+        lastPongAtRef.current = Date.now();
+
+        // Track the server's seq high-water mark per session for chat:resume on
+        // the next reconnect. Only chat:* events carry a seq (via the server's
+        // recordAndSendChat helper).
+        if (sid !== undefined && msg.type.startsWith("chat:") && typeof payload?.seq === "number") {
+          const prevSeq = lastSeqBySession.current.get(sid) ?? 0;
+          if (payload.seq > prevSeq) lastSeqBySession.current.set(sid, payload.seq);
+        }
+
+        // Stall-timer bookkeeping: any mid-run activity resets; terminal events clear.
+        if (msg.type === "chat:response" || msg.type === "chat:error" || msg.type === "chat:cancelled") {
+          clearStallTimer();
+        } else if (sid !== undefined && (
+          msg.type === "chat:thinking" ||
+          msg.type === "chat:thought" ||
+          msg.type === "chat:tool_start" ||
+          msg.type === "chat:tool_result" ||
+          msg.type === "chat:progress" ||
+          msg.type === "chat:inject_ack" ||
+          msg.type === "chat:injection_consumed"
+        )) {
+          resetStallTimer(sid);
+        }
 
         switch (msg.type) {
           case "chat:opened": {
@@ -402,6 +524,41 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           }
           case "chat:inject_ack": {
             // Acknowledgement that injection was queued — no-op for now
+            break;
+          }
+          case "chat:resumed": {
+            // Server has replayed any missed events; nothing to do here beyond
+            // accepting the seq high-water from the server (already tracked by
+            // the seq bookkeeping above).
+            break;
+          }
+          case "chat:resume_missed": {
+            // Server can't replay — most likely a gateway restart wiped the
+            // buffer. Clear the thinking state so the UI doesn't hang waiting
+            // for a terminal event that will never come, and surface an error
+            // so the user knows to re-send if the previous turn was lost.
+            const p = payload as { sessionId?: string } | undefined;
+            if (p?.sessionId) {
+              lastSeqBySession.current.delete(p.sessionId);
+              setSessions((prev) => prev.map((s) =>
+                s.id === p.sessionId
+                  ? { ...s, thinking: false, toolActivity: [], progressText: undefined }
+                  : s
+              ));
+              setError("Session recovery unavailable — your last exchange may be incomplete. Please try again.");
+            }
+            break;
+          }
+          case "chat:injection_consumed": {
+            // Server signals that the agent has woven N queued injections into the current run.
+            // Move them from queuedMessages into messages so they appear inline in the run timeline.
+            const p = payload as { sessionId?: string; count?: number };
+            if (!p.sessionId || typeof p.count !== "number" || p.count <= 0) break;
+            setSessions((prev) => prev.map((s) =>
+              s.id === p.sessionId
+                ? (applyInjectionConsumed(s as unknown as ChatSessionShape, p.count ?? 0) as unknown as ChatSession)
+                : s
+            ));
             break;
           }
           case "chat:context_set": {
@@ -529,6 +686,15 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             setSessions((prev) => prev.map((s) =>
               s.id === p.sessionId ? { ...s, activePlan: p.plan } : s
             ));
+            // Auto-open the PlanPane when a new plan arrives for the
+            // currently-active session. This is the piece the previous
+            // Plans-tab shipment left as a follow-up; without it the
+            // user has to hunt for the plan manually. Suppressed for
+            // background sessions to avoid surprise drawer flips.
+            if (p.sessionId === activeSessionId && open) {
+              setSelectedPlanId(p.plan.id);
+              setActiveDrawer("plans");
+            }
             break;
           }
           case "chat:plan_status": {
@@ -558,6 +724,10 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     };
 
     ws.onclose = () => {
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current);
+        heartbeatIntervalRef.current = null;
+      }
       if (wsRef.current === ws) {
         reconnectTimer.current = setTimeout(() => {
           if (wsRef.current === ws || wsRef.current === null) connect();
@@ -731,15 +901,42 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     }));
   }, [activeSession]);
 
-  // Auto-scroll
+  // Auto-scroll + unread counter for the jump-to-bottom button.
+  // lastSeenCountRef captures the message count at the moment the user was
+  // last pinned to the bottom. `unreadCount` = current - lastSeen while the
+  // user is scrolled up. Clearing: auto-resets whenever the user scrolls
+  // back to within 60px of the bottom OR clicks the Jump button.
+  const lastSeenCountRef = useRef(0);
+  const [unreadCount, setUnreadCount] = useState(0);
+
   const handleScroll = useCallback(() => {
     const el = listRef.current;
     if (!el) return;
-    setAutoScroll(el.scrollHeight - el.scrollTop - el.clientHeight < 60);
-  }, []);
+    const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    setAutoScroll(pinned);
+    if (pinned) {
+      lastSeenCountRef.current = activeSession?.messages.length ?? 0;
+      setUnreadCount(0);
+    }
+  }, [activeSession?.messages.length]);
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    setAutoScroll(true);
+    lastSeenCountRef.current = activeSession?.messages.length ?? 0;
+    setUnreadCount(0);
+  }, [activeSession?.messages.length]);
 
   useEffect(() => {
-    if (autoScroll) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const count = activeSession?.messages.length ?? 0;
+    if (autoScroll) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      lastSeenCountRef.current = count;
+      setUnreadCount(0);
+    } else {
+      // Messages arrived while scrolled up — surface how many we haven't seen.
+      setUnreadCount(Math.max(0, count - lastSeenCountRef.current));
+    }
   }, [activeSession?.messages, activeSession?.thinking, autoScroll]);
 
   // Create first session on open if none exist (skip when openWithContext will handle it)
@@ -782,6 +979,14 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     createSession(openWithContext);
   }, [open, openWithContext, openWithMessage, openRequestId, createSession]);
 
+  // Reset context guards when the flyout closes so reopening with the same context re-triggers the effects above.
+  useEffect(() => {
+    if (!open) {
+      prevContextRef.current = null;
+      prevRequestRef.current = null;
+    }
+  }, [open]);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -795,20 +1000,12 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   }, [activeSessionId]);
 
   // -------------------------------------------------------------------------
-  // Markdown rendering components (shared module, chat-size variant)
+  // (Markdown rendering lives in ContentRenderer now — see the rendering
+  // section below. The legacy markdownComponents form-answer handler was
+  // retired; interactive <question> submissions via the new extension are
+  // a follow-up once the extension accepts a sendMessage callback through
+  // a context bridge.)
   // -------------------------------------------------------------------------
-
-  const mdComponents = useMemo(() => markdownComponents({
-    onQuestionSubmit: (answers) => {
-      // Send answered questions as a formatted message
-      const lines = Object.entries(answers)
-        .filter(([, v]) => v.trim().length > 0)
-        .map(([k, v]) => `**${k}:** ${v}`);
-      if (lines.length > 0) {
-        sendMessage(lines.join("\n"));
-      }
-    },
-  }), [sendMessage]);
 
   // -------------------------------------------------------------------------
   // Derived send-button state
@@ -928,94 +1125,140 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             </div>
           )}
 
-          {activeSession && activeSession.messages.map((msg, idx) => {
-            // Tool messages — standalone card with label
-            if (msg.role === "tool" && msg.toolCard) {
-              return (
-                <div key={`tool-${msg.toolCard.id}-${String(idx)}`} className="flex flex-col items-start gap-1">
-                  <div className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider px-1">
-                    Tool: {msg.toolCard.toolName}
-                  </div>
-                  <div className="max-w-[85%]">
-                    <SingleToolCard card={msg.toolCard} collapsed />
-                  </div>
-                </div>
-              );
-            }
+          {activeSession && groupByRun(activeSession.messages).map((group, gIdx) => {
+            // Inside each run, further group by thought boundary so a thought
+            // and the tools it produced render together under a "Step N" header.
+            // Anthropic returns one thinking block per assistant response (not
+            // per tool call), so this is the cleanest way to represent reality.
+            const thoughtSections = groupByThoughtBoundary(
+              group.messages as unknown as ChatMessageShape[],
+            );
+            let stepCount = 0;
+            const renderMessage = (msg: ChatMessage & { _idx: number }) => {
+              const idx = msg._idx;
+              // Tool messages — standalone card with label
+              if (msg.role === "tool" && msg.toolCard) {
+                  return (
+                    <div
+                      key={`tool-${msg.toolCard.id}-${String(idx)}`}
+                      data-role="tool"
+                      className="flex flex-col items-start gap-1"
+                    >
+                      <div className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider px-1">
+                        Tool: {msg.toolCard.toolName}
+                      </div>
+                      <div className="max-w-[85%]">
+                        <SingleToolCard card={msg.toolCard} collapsed />
+                      </div>
+                    </div>
+                  );
+                }
 
-            // Thought messages — shown as a distinct message bubble (not collapsed)
-            if (msg.role === "thought") {
-              return (
-                <div key={`thought-${msg.timestamp}-${String(idx)}`} className="flex flex-col items-start gap-1">
-                  <div className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider px-1">
-                    Thinking
-                    <span className="ml-2 font-normal opacity-60">
-                      {new Date(msg.timestamp).toLocaleTimeString()}
-                    </span>
-                  </div>
-                  <div className="max-w-[85%] px-3 py-2 rounded-[10px] bg-secondary/60 border border-border text-muted-foreground text-[12px] leading-relaxed whitespace-pre-wrap">
-                    {msg.content.length > 500 ? (
-                      <details>
-                        <summary className="cursor-pointer select-none">
-                          {msg.content.slice(0, 200)}...
-                        </summary>
-                        <div className="mt-1">{msg.content}</div>
-                      </details>
+                // Thought messages — distinct bubble with left accent; only collapse very long walls.
+                if (msg.role === "thought") {
+                  // Thought content is wrapped in a <thinking> tag and passed
+                  // through ContentRenderer; the registered extension renders
+                  // it as a collapsed purple panel. This unifies the visual
+                  // language — the bubble is just another agent post, labeled
+                  // with the agent's name like any other assistant message.
+                  const wrapped = `<thinking>${msg.content}</thinking>`;
+                  return (
+                    <div
+                      key={`thought-${msg.timestamp}-${String(idx)}`}
+                      data-role="thought"
+                      className="flex flex-col items-start gap-1"
+                    >
+                      <div className="text-[9px] font-semibold uppercase tracking-wider px-1 text-muted-foreground">
+                        {agentLabel}
+                        <span className="ml-2 font-normal opacity-60">
+                          {new Date(msg.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <div className="max-w-[85%] px-3 py-2 rounded-[10px] bg-card text-card-foreground border border-border text-[13px] leading-relaxed break-words">
+                        <ContentRenderer value={wrapped} format="html" />
+                      </div>
+                    </div>
+                  );
+                }
+
+                // User and assistant messages
+                const isUser = msg.role === "user";
+                return (
+                  <div
+                    key={`${msg.timestamp}-${String(idx)}`}
+                    data-role={isUser ? "user" : "assistant"}
+                    className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}
+                  >
+                    {/* Role label */}
+                    <div className={cn("text-[9px] font-semibold uppercase tracking-wider px-1", isUser ? "text-primary/60" : "text-muted-foreground")}>
+                      {isUser ? userLabel : agentLabel}
+                      <span className="ml-2 font-normal opacity-60">
+                        {new Date(msg.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    {/* Legacy: frozen tool cards on old assistant messages */}
+                    {!isUser && msg.toolCards && msg.toolCards.length > 0 && (
+                      <div className="max-w-[85%] mb-0.5">
+                        <ToolCards cards={msg.toolCards} collapsed />
+                      </div>
+                    )}
+                    {isUser ? (
+                      <div className="max-w-[80%] px-3 py-2 rounded-[10px] text-[13px] leading-relaxed break-words bg-primary text-primary-foreground whitespace-pre-wrap">
+                        {msg.content}
+                        {msg.images && msg.images.length > 0 && (
+                          <div className="flex gap-1.5 flex-wrap mt-1.5">
+                            {msg.images.map((src, imgIdx) => (
+                              <img
+                                key={`img-${String(imgIdx)}`}
+                                src={src}
+                                alt="attachment"
+                                className="max-w-[200px] max-h-[160px] rounded-md object-cover"
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     ) : (
-                      msg.content
+                      // Assistant bubble gets a floating copy button top-right.
+                      // Click copies styled HTML + plain-text fallback; Ctrl/Cmd+Click
+                      // copies the raw markdown. See AgentBubble below.
+                      <AgentBubble content={msg.content} />
                     )}
                   </div>
+                );
+              };
+              return (
+                <div
+                  key={`run-${group.runId ?? `noid-${String(gIdx)}`}`}
+                  data-testid="run-group"
+                  className="flex flex-col gap-3"
+                >
+                  {gIdx > 0 && <div className="h-px bg-border/50 -my-1" aria-hidden />}
+                  {thoughtSections.map((section, sIdx) => {
+                    const isStep = section.lead?.role === "thought";
+                    if (isStep) stepCount++;
+                    const sectionKey = `section-${String(gIdx)}-${String(sIdx)}`;
+                    return (
+                      <div
+                        key={sectionKey}
+                        data-testid={isStep ? "thought-section" : undefined}
+                        className={cn(
+                          "flex flex-col gap-2",
+                          isStep && "border-l-2 border-l-blue/40 pl-3",
+                        )}
+                      >
+                        {isStep && (
+                          <div className="text-[9px] text-blue/70 font-semibold uppercase tracking-[0.15em] px-1">
+                            Step {String(stepCount)}
+                          </div>
+                        )}
+                        {section.lead !== null && renderMessage(section.lead as unknown as ChatMessage & { _idx: number })}
+                        {section.trail.map((m) => renderMessage(m as unknown as ChatMessage & { _idx: number }))}
+                      </div>
+                    );
+                  })}
                 </div>
               );
-            }
-
-            // User and assistant messages
-            const isUser = msg.role === "user";
-            return (
-              <div key={`${msg.timestamp}-${String(idx)}`} className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}>
-                {/* Role label */}
-                <div className={cn("text-[9px] font-semibold uppercase tracking-wider px-1", isUser ? "text-primary/60" : "text-muted-foreground")}>
-                  {isUser ? "You" : "Aionima"}
-                  <span className="ml-2 font-normal opacity-60">
-                    {new Date(msg.timestamp).toLocaleTimeString()}
-                  </span>
-                </div>
-                {/* Legacy: frozen tool cards on old assistant messages */}
-                {!isUser && msg.toolCards && msg.toolCards.length > 0 && (
-                  <div className="max-w-[85%] mb-0.5">
-                    <ToolCards cards={msg.toolCards} collapsed />
-                  </div>
-                )}
-                <div className={cn(
-                  "max-w-[80%] px-3 py-2 rounded-[10px] text-[13px] leading-relaxed break-words",
-                  isUser
-                    ? "bg-primary text-primary-foreground whitespace-pre-wrap"
-                    : "bg-card text-card-foreground border border-border",
-                )}>
-                  {isUser ? (
-                    <>
-                      {msg.content}
-                      {msg.images && msg.images.length > 0 && (
-                        <div className="flex gap-1.5 flex-wrap mt-1.5">
-                          {msg.images.map((src, imgIdx) => (
-                            <img
-                              key={`img-${String(imgIdx)}`}
-                              src={src}
-                              alt="attachment"
-                              className="max-w-[200px] max-h-[160px] rounded-md object-cover"
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                      {msg.content}
-                    </ReactMarkdown>
-                  )}
-                </div>
-              </div>
-            );
           })}
 
           {activeSession?.activePlan && (
@@ -1041,17 +1284,27 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             </div>
           )}
 
-          {activeSession?.thinking && (
-            <div className="flex justify-start flex-col gap-0.5 max-w-[85%]">
-              <div className="flex items-center gap-2 px-2 py-1.5 text-muted-foreground text-[11px]">
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue animate-pulse" />
-                <span>{activeSession.toolActivity.some((t) => t.status === "running") ? "Working..." : "Thinking..."}</span>
-              </div>
-              {activeSession.progressText && (
-                <div className="px-2 py-1 text-[11px] text-muted-foreground italic truncate">
-                  {activeSession.progressText}
-                </div>
-              )}
+          {activeSession && shouldShowLivePill(activeSession as unknown as ChatSessionShape) && (
+            <div data-testid="chat-live-pill" className="flex items-center gap-2 px-2 py-1.5 text-muted-foreground text-[11px]">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue animate-pulse" />
+              <span>Thinking...</span>
+            </div>
+          )}
+
+          {/* Intermediate "Working: <tool-name>" pill when a tool is running.
+              Replaces the old free-floating progressText line that looked too much
+              like a discrete thought. We derive the label from the latest running
+              tool rather than from the model's intermediate text (which is
+              captured in the next thought/response anyway). */}
+          {activeSession?.thinking && activeSession.toolActivity.some((t) => t.status === "running") && (
+            <div
+              data-testid="chat-working-pill"
+              className="flex items-center gap-1.5 px-2 py-0.5 text-[10px] text-muted-foreground"
+            >
+              <span className="inline-block w-1 h-1 rounded-full bg-blue animate-pulse" />
+              <span className="italic">
+                Working: {activeSession.toolActivity.filter((t) => t.status === "running").map((t) => t.toolName).join(", ")}
+              </span>
             </div>
           )}
 
@@ -1061,6 +1314,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
               {activeSession.queuedMessages.map((q, qi) => (
                 <div
                   key={`queued-${String(qi)}-${q.timestamp}`}
+                  data-testid="queued-card"
                   className="max-w-[75%] px-3 py-2 rounded-[10px] border-2 border-dashed border-blue/40 bg-background text-foreground text-[12px] leading-relaxed"
                 >
                   <div className="text-[9px] text-blue/60 font-semibold mb-0.5">Queued</div>
@@ -1082,6 +1336,34 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           <div ref={messagesEndRef} />
         </div>
 
+        {/* Jump-to-bottom button — floats over the message list when the user
+            is scrolled up. Shows an unread count when new messages arrived
+            while detached. Clicking scrolls to bottom and re-pins. */}
+        {!autoScroll && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className={cn(
+              "absolute left-1/2 -translate-x-1/2 bottom-24 z-20",
+              "flex items-center gap-2 px-3 py-1.5 rounded-full",
+              "bg-primary text-primary-foreground text-[12px] font-medium",
+              "shadow-lg hover:opacity-90 transition-opacity cursor-pointer",
+            )}
+          >
+            {unreadCount > 0 ? (
+              <>
+                <span>{unreadCount} new</span>
+                <span aria-hidden>↓</span>
+              </>
+            ) : (
+              <>
+                <span>Jump to bottom</span>
+                <span aria-hidden>↓</span>
+              </>
+            )}
+          </button>
+        )}
+
         {/* Drawer system */}
         {activeSession && (
           <DrawerSystem
@@ -1090,6 +1372,11 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             suggestions={activeSession.suggestions}
             onSendSuggestion={sendMessage}
             context={activeSession.context}
+            selectedPlanId={selectedPlanId}
+            onSelectPlan={(planId) => {
+              setSelectedPlanId(planId);
+              setActiveDrawer("plans");
+            }}
           />
         )}
 
@@ -1181,24 +1468,69 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     </div>
   );
 
-  // Docked mode: render as inline flex child (no overlay, no backdrop)
+  // PlanPane — renders as a peer panel to the LEFT of the chat when a plan
+  // has been selected from the Plans drawer. Same height as the chat column.
+  // Approve/reject route through the same WS events PlanViewer uses.
+  const planPane = (selectedPlanId !== null && activeSession) ? (
+    <div
+      data-testid="plan-pane"
+      className={cn(
+        "flex-1 min-w-0 h-full",
+        // Width: ~50% of viewport capped at 900px on large screens, with a
+        // 520px minimum so markdown with code blocks doesn't horizontal-scroll.
+        // Plans can be long documents — narrow pane was a real problem.
+        !docked && !isMobile && "w-[min(50vw,900px)] min-w-[520px] flex-none",
+      )}
+    >
+      <PlanPane
+        projectPath={activeSession.context}
+        planId={selectedPlanId}
+        onClose={() => setSelectedPlanId(null)}
+        onApprove={(id) => {
+          approvePlan(id);
+          setSelectedPlanId(null);
+        }}
+        onReject={(id) => {
+          rejectPlan(id);
+          setSelectedPlanId(null);
+        }}
+      />
+    </div>
+  ) : null;
+
+  // Docked mode: render as inline flex child (no overlay, no backdrop).
+  // When a plan is selected, it slides in on the left as a peer panel.
   if (docked) {
     return (
-      <div className="flex flex-col h-full border-l border-border bg-background" style={{ width: "50%" }}>
-        {panelHeader}
-        {panelBody}
+      <div data-testid="chat-flyout" className="flex h-full border-l border-border bg-background" style={{ width: "50%" }}>
+        {planPane}
+        <div className={cn("flex flex-col h-full min-w-0", selectedPlanId ? "flex-1" : "w-full")}>
+          {panelHeader}
+          {panelBody}
+        </div>
       </div>
     );
   }
 
   // Overlay mode: fixed panel with backdrop
   return (
-    <div className="fixed inset-0 z-[200] flex justify-end">
+    // Overlay mode: the root div is pointer-events-none so the user can
+    // interact with the rest of the dashboard through the backdrop region.
+    // The chat panel and plan pane re-enable pointer events for themselves.
+    // The backdrop dim is cosmetic only — NOT click-dismissable — so the
+    // modal stays open while the user navigates the rest of the UI. Close
+    // via the explicit X in the header.
+    <div data-testid="chat-flyout" className="fixed inset-0 z-[200] flex justify-end pointer-events-none">
       {!isFullscreen && (
-        <div className={cn("bg-black/30", isMobile ? "absolute inset-0" : "flex-1")} onClick={onClose} />
+        <div className={cn("bg-black/10", isMobile ? "absolute inset-0" : "flex-1")} />
+      )}
+      {planPane !== null && !isMobile && (
+        <div className="h-screen border-l border-border bg-background shrink-0 pointer-events-auto w-[min(50vw,900px)] min-w-[520px]">
+          {planPane}
+        </div>
       )}
       <div className={cn(
-        "flex flex-col bg-background",
+        "flex flex-col bg-background pointer-events-auto",
         isMobile
           ? "fixed bottom-0 left-0 right-0 h-[90dvh] border-t border-border rounded-t-2xl"
           : cn("h-screen", isFullscreen ? "w-screen" : "w-[33vw] max-w-full border-l border-border"),
@@ -1220,14 +1552,17 @@ interface DrawerSystemProps {
   suggestions: string[];
   onSendSuggestion: (text: string) => void;
   context: string;
+  selectedPlanId: string | null;
+  onSelectPlan: (planId: string) => void;
 }
 
 const DRAWER_TABS: { key: DrawerTab; label: string }[] = [
   { key: "work-queue", label: "Work Queue" },
   { key: "project-info", label: "Project" },
+  { key: "plans", label: "Plans" },
 ];
 
-function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: DrawerSystemProps) {
+function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context, selectedPlanId, onSelectPlan }: DrawerSystemProps) {
   const [taskmasterJobs, setTaskmasterJobs] = useState<WorkerJobSummary[]>([]);
   const [taskmasterError, setTaskmasterError] = useState<string | null>(null);
   const [taskmasterLoading, setTaskmasterLoading] = useState(false);
@@ -1287,7 +1622,12 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: 
     <div className="shrink-0">
       {/* Drawer tab row */}
       <div className="flex gap-0.5 px-3 py-1 border-t border-border bg-card overflow-x-auto">
-        {DRAWER_TABS.filter((t) => t.key !== "project-info" || context !== "general").map((t) => (
+        {DRAWER_TABS.filter((t) => {
+          // "plans" + "project-info" require a project context. "work-queue"
+          // is always available.
+          if (t.key === "project-info" || t.key === "plans") return context !== "general";
+          return true;
+        }).map((t) => (
           <button
             key={t.key}
             onClick={() => onSetDrawer(activeDrawer === t.key ? null : t.key)}
@@ -1381,8 +1721,90 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context }: 
               </div>
             </div>
           )}
+
+          {activeDrawer === "plans" && context !== "general" && (
+            <PlansDrawer
+              projectPath={context}
+              selectedPlanId={selectedPlanId}
+              onSelect={onSelectPlan}
+            />
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AgentBubble — assistant message bubble with a floating copy button.
+//
+// Click:          copy styled (text/html + text/plain fallback), so pasting
+//                 into a rich-text target (Notion, Word, GitHub issue editor)
+//                 keeps code blocks, formatting, and custom-tag styling.
+// Ctrl/Cmd+Click: copy raw markdown source (the msg.content string as-is).
+//
+// The button sits above the bubble at the top-right — opposite the Aion label
+// at the top-left — and transitions to a checkmark for ~1.2s after a copy
+// lands so the user gets feedback without a toast.
+// ---------------------------------------------------------------------------
+function AgentBubble({ content }: { content: string }) {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopy = useCallback(async (e: React.MouseEvent<HTMLButtonElement>) => {
+    const raw = e.ctrlKey || e.metaKey;
+    try {
+      if (raw) {
+        await navigator.clipboard.writeText(content);
+      } else {
+        const html = contentRef.current?.innerHTML ?? "";
+        const plain = contentRef.current?.innerText ?? content;
+        if (typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
+          const item = new ClipboardItem({
+            "text/html": new Blob([html], { type: "text/html" }),
+            "text/plain": new Blob([plain], { type: "text/plain" }),
+          });
+          await navigator.clipboard.write([item]);
+        } else {
+          // Older browser fallback — plain text only.
+          await navigator.clipboard.writeText(plain);
+        }
+      }
+      setCopied(true);
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+      resetTimer.current = setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // Clipboard permission denied or navigator.clipboard unavailable —
+      // silently no-op. No fallback to document.execCommand("copy") because
+      // the raw content could be large and synchronous DOM selection is
+      // jarring; the user can re-click.
+    }
+  }, [content]);
+
+  return (
+    <div className="relative max-w-[80%]">
+      <button
+        type="button"
+        onClick={handleCopy}
+        title="Copy styled · Ctrl/Cmd+Click for raw markdown"
+        aria-label="Copy message"
+        className={cn(
+          "absolute -top-2 right-2 z-10",
+          "w-6 h-6 rounded-md flex items-center justify-center",
+          "bg-card border border-border text-muted-foreground",
+          "hover:text-foreground hover:border-primary/40 transition-colors cursor-pointer",
+          "shadow-sm",
+        )}
+      >
+        {copied ? <CheckIcon className="w-3.5 h-3.5 text-green" /> : <CopyIcon className="w-3.5 h-3.5" />}
+      </button>
+      <div
+        ref={contentRef}
+        className="px-3 py-2 rounded-[10px] text-[13px] leading-relaxed break-words bg-card text-card-foreground border border-border"
+      >
+        <ContentRenderer value={content} format="markdown" />
+      </div>
     </div>
   );
 }

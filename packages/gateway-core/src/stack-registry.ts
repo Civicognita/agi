@@ -66,5 +66,6 @@ function serializeStack(def: StackDefinition): StackInfo {
     tools: def.tools,
     icon: def.icon,
     compatibleLanguages: def.compatibleLanguages,
+    logSources: def.logSources,
   };
 }

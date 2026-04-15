@@ -1,7 +1,7 @@
 /**
  * `aionima setup` — Interactive configuration wizard.
  *
- * Generates `aionima.json` (config with $ENV{} refs) and `.env` (secrets)
+ * Generates `gateway.json` (config with $ENV{} refs) and `.env` (secrets)
  * from user input. Uses node:readline/promises — no external deps.
  */
 
@@ -109,7 +109,7 @@ async function detectContext(
 
   // Check for existing config
   let existingConfig: Record<string, unknown> | null = null;
-  const configPath = resolve(targetDir, "aionima.json");
+  const configPath = resolve(targetDir, "gateway.json");
 
   if (existsSync(configPath)) {
     console.log(yellow(`  Existing config found: ${configPath}`));
@@ -463,8 +463,8 @@ async function generateFiles(
     process.env = originalEnv;
   }
 
-  // Write aionima.json
-  const configPath = resolve(ctx.targetDir, "aionima.json");
+  // Write gateway.json
+  const configPath = resolve(ctx.targetDir, "gateway.json");
   const configJson = JSON.stringify(result.config, null, 2) + "\n";
   await writeFile(configPath, configJson, "utf-8");
   console.log(green(`  Written: ${configPath}`));
@@ -533,17 +533,17 @@ async function printPostSetup(rl: import("node:readline/promises").Interface, ct
   console.log();
   console.log(bold("  Setup complete!"));
   console.log();
-  console.log(`  ${dim("Config:")} ${resolve(ctx.targetDir, "aionima.json")}`);
+  console.log(`  ${dim("Config:")} ${resolve(ctx.targetDir, "gateway.json")}`);
   console.log(`  ${dim("Secrets:")} ${resolve(ctx.targetDir, ".env")}`);
   console.log();
   console.log(`  ${cyan("Next steps:")}`);
 
   if (ctx.isDeployDir) {
-    console.log(`    1. Review config:  ${dim("cat aionima.json")}`);
+    console.log(`    1. Review config:  ${dim("cat gateway.json")}`);
     console.log(`    2. Start service:  ${dim("sudo systemctl start aionima")}`);
     console.log(`    3. Check health:   ${dim("aionima doctor")}`);
   } else {
-    console.log(`    1. Review config:  ${dim("cat aionima.json")}`);
+    console.log(`    1. Review config:  ${dim("cat gateway.json")}`);
     console.log(`    2. Start locally:  ${dim("aionima run")}`);
     console.log(`    3. Check health:   ${dim("aionima doctor")}`);
     console.log();

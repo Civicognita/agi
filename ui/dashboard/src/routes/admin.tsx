@@ -3,7 +3,8 @@
  */
 
 import { MachineAdmin } from "@/components/MachineAdmin.js";
+import { PageScroll } from "@/components/PageScroll.js";
 
 export default function AdminPage() {
-  return <MachineAdmin />;
+  return <PageScroll><MachineAdmin /></PageScroll>;
 }

@@ -75,7 +75,7 @@ done
 CLEANED=0
 WORKSPACE_DIRS=$(node -e "
   try {
-    const c = JSON.parse(require('fs').readFileSync('${AGI_DIR}/aionima.json', 'utf-8'));
+    const c = JSON.parse(require('fs').readFileSync('${AGI_DIR}/gateway.json', 'utf-8'));
     (c.workspace?.projects ?? []).forEach(d => console.log(d));
   } catch {}
 " 2>/dev/null)

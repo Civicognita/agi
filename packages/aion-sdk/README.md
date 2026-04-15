@@ -24,7 +24,7 @@ export default createPlugin({
         .requirement({ id: "postgresql", label: "PostgreSQL 17", type: "provided" })
         .guide({ title: "Connection", content: "Use the connection URL from the stack card." })
         .container({
-          image: "postgres:17-alpine",
+          image: "ghcr.io/civicognita/postgres:17",
           internalPort: 5432,
           shared: true,
           sharedKey: "postgres-17",

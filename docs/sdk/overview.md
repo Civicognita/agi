@@ -31,7 +31,7 @@ export default createPlugin({
     // Register a service
     const redis = defineService("redis", "Redis")
       .description("In-memory data store")
-      .containerImage("redis:7.4-alpine")
+      .containerImage("ghcr.io/civicognita/redis:7.4")
       .defaultPort(6379)
       .healthCheck("redis-cli ping")
       .build();
@@ -161,7 +161,7 @@ Log().error("Unhandled exception in pipeline");
 
 #### `Config()`
 
-Returns a dot-path accessor over `aionima.json`. Always reads from the snapshot captured at `initADF()` — for live reads use `SystemConfig()`.
+Returns a dot-path accessor over `gateway.json`. Always reads from the snapshot captured at `initADF()` — for live reads use `SystemConfig()`.
 
 ```typescript
 const enabled = Config().get<boolean>("hosting.enabled");
@@ -207,7 +207,7 @@ const stacks = ProjectConfig().getStacks("/home/wishborn/temp_core/my-project");
 
 #### `SystemConfig()`
 
-Read/write access to `aionima.json`. Reads directly from disk; writes are persisted immediately. Throws if `SystemConfigService` is not initialized.
+Read/write access to `gateway.json`. Reads directly from disk; writes are persisted immediately. Throws if `SystemConfigService` is not initialized.
 
 ```typescript
 const allConfig = SystemConfig().read();
@@ -232,7 +232,9 @@ Never use ADF facades in plugin code — use `AionimaPluginAPI` instead.
 
 ## Further Reading
 
-- [Builder Reference](builders.md) — All 14 builders with methods and examples
+- [ADF Reference](adf.md) — Application Development Framework facades and initialization
+- [Builder Reference](builders.md) — All 16 builders with methods and examples
 - [Plugin API Reference](plugin-api.md) — Full `AionimaPluginAPI` interface
+- [UI Components](ui-components.md) — react-fancy, fancy-code, fancy-sheets, react-echarts
 - [Testing Plugins](testing.md) — `testActivate()` and mock API usage
 - [MagicApps (MApps)](magic-apps.md) — Declarative JSON apps: schema, builder API, form system, and widget types

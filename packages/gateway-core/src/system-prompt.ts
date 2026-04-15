@@ -222,29 +222,17 @@ This fingerprint is the accountability anchor for this response. Any tool use, t
 
 function buildStateConstraintsSection(
   state: GatewayState,
-  caps: StateCapabilities,
+  _caps: StateCapabilities,
 ): string {
-  const lines = [
-    `Operational state: ${state}`,
-    `Remote operations: ${caps.remoteOps ? "permitted" : "NOT permitted"}`,
-    `Tynn task management: ${caps.tynn ? "available" : "NOT available"}`,
-    `Memory read/write: ${caps.memory ? "permitted (local only)" : "NOT permitted"}`,
-    `Deletions: ${caps.deletions ? "permitted after sync" : "NOT permitted"}`,
-  ];
-
-  if (state === "LIMBO") {
-    lines.push("All outputs that require remote write must be queued locally.");
-  } else if (state === "OFFLINE") {
-    lines.push(
-      "Inform the entity that processing is local-only. Do not promise remote actions.",
-    );
-  } else if (state === "UNKNOWN") {
-    lines.push(
-      "Log all actions. Do not respond to the entity. Return a null response.",
-    );
-  }
-
-  return lines.join("\n");
+  // State is audit metadata, not a permission gate. It is recorded against
+  // every action via COA<>COI logging so that when $imp is minted the chain
+  // carries provenance of the operational conditions (HIVE-aligned vs
+  // local-only). It does NOT decide what the agent is allowed to do.
+  //
+  // We still surface the current state to the agent for awareness — it may
+  // want to include that context in user-visible responses ("running in
+  // Limbo while 0PRIME is offline," etc.) — but no capability lines.
+  return `Operational state: ${state} (audit-only; every action is stamped with this value in the COA<>COI log for integrity provenance).`;
 }
 
 function buildToolsSection(tools: ToolManifestEntry[]): string {
@@ -266,32 +254,58 @@ function formatBytes(bytes: number): string {
   return `${String(bytes)} bytes`;
 }
 
+function buildTaskmasterSection(): string {
+  return `## TASKMASTER — Background Work Orchestration
+
+You have a background orchestrator called **TaskMaster**. Call the \`worker_dispatch\` tool to queue a job. TaskMaster decomposes the description into phased worker assignments, runs them in isolated git worktrees, and produces reports. Queued jobs appear live in the owner's **WorkQueue** dashboard tab; the "Aionima is working" header indicator reflects active runs.
+
+### When to dispatch
+- Code changes touching >2 files, or anything reviewable (dispatch code.hacker \u2014 the runtime chains code.tester automatically)
+- Research, documentation, or policy drafts (k.analyst; comm.writer.tech\u2192editor; comm.writer.policy\u2192editor)
+- Architecture plans, backlog prioritization, compliance audits (strat.planner, strat.prioritizer, gov.auditor\u2192archivist)
+- Any phrasing from the owner like "dispatch", "queue", "delegate", "have a worker\u2026", "in the background"
+- Parallelizable subtasks \u2014 call \`worker_dispatch\` multiple times in one turn; jobs run concurrently
+
+### When NOT to dispatch
+- Quick answers, lookups, or single-file edits that take <30 seconds
+- Conversation, clarifying questions, or anything requiring owner input mid-stream
+- Tasks the owner explicitly asks you to do yourself ("you do it", "don't delegate")
+
+### Domains and workers
+- **code** \u2014 engineer (architecture), hacker (implementation), reviewer, tester
+- **k** \u2014 analyst, cryptologist, librarian, linguist
+- **ux** \u2014 designer.web, designer.cli
+- **strat** \u2014 planner, prioritizer
+- **comm** \u2014 writer.tech, writer.policy, editor
+- **ops** \u2014 deployer, custodian, syncer
+- **gov** \u2014 auditor, archivist
+- **data** \u2014 modeler, migrator
+
+**Enforced chains** (you dispatch the head, TaskMaster runs the tail): hacker\u2192tester, writer.tech\u2192editor, writer.policy\u2192editor, modeler\u2192linguist, auditor\u2192archivist.
+
+### Inline emission (\`q:>\`)
+You may emit a single \`q:> <task description>\` line on its own line in your reply. The runtime strips the line from the user-visible response and hands the task to TaskMaster with default routing. **Maximum one \`q:>\` emission per turn** (governance spec \u00a76.4). For parallel fan-out, use repeated \`worker_dispatch\` tool calls instead.
+
+### Dispatch rules
+- One task per \`worker_dispatch\` call \u2014 don't batch unrelated work into one description
+- Descriptions must be specific and self-contained \u2014 the worker doesn't see this conversation
+- If unsure of routing, default to domain="code" worker="engineer" and let TaskMaster re-route`;
+}
+
 function buildResponseFormatSection(): string {
   return `Response format:
 - Respond in the language used by the entity unless instructed otherwise.
 - Do not expose internal identifiers (entity IDs, COA fingerprints, TIDs) in responses unless the entity explicitly requests system information.
 - Do not fabricate tool results. If a tool is unavailable, state it plainly.
 
-## WORKERS — Background Worker Dispatch
+Chat content markup — the dashboard chat renders your responses through ContentRenderer (react-fancy), which understands standard Markdown plus four custom tags. Use them to give the user a clearer, more structured surface than plain text allows. Do NOT nest them more than one level deep.
 
-The \`worker_dispatch\` tool creates background worker jobs. When you use it, workers execute autonomously using their own tool loops and produce reports.
+- <thinking>...</thinking> — reasoning the user can expand if curious. Render it inline WITHIN your final response when you want the reader to have optional insight into your working; the UI collapses it by default. Do not emit a thinking block for every answer — only when the reasoning is non-obvious, contested, or load-bearing on the conclusion.
+- <question title="Short Title">...</question> — structured questions or quizzes. Use when you want the user to choose between specific options or when you need a grouped answer; plain bullets are fine for single questions. Markdown inside is supported.
+- <callout variant="warn|info|error|success">...</callout> — attention banner. "warn" (default) for risks or caveats, "info" for relevant context, "error" for failures you want to surface without stopping the conversation, "success" for confirmation. One per response is usually the right dose.
+- <highlight>...</highlight> — inline span highlight (cyan). For drawing attention to a phrase within a paragraph. Do not use for whole sentences — Markdown bold or italics is better for that.
 
-Available worker domains:
-- **code** — engineer (architecture), hacker (implementation), reviewer (code review), tester (validation)
-- **k** — analyst (research), cryptologist (encoding/decoding), librarian (knowledge organization), linguist (terminology)
-- **ux** — designer.web (UI components), designer.cli (terminal interfaces)
-- **strat** — planner (architecture plans), prioritizer (backlog ordering)
-- **comm** — writer.tech (documentation), writer.policy (governance docs), editor (review/polish)
-- **ops** — deployer (releases), custodian (maintenance), syncer (data sync)
-- **gov** — auditor (compliance), archivist (record keeping)
-- **data** — modeler (schema design), migrator (data transforms)
-
-Guidelines:
-- Use \`worker_dispatch\` for tasks that benefit from focused, autonomous execution
-- Choose the appropriate domain and worker for the task
-- Workers run in isolated git worktrees and produce reports at completion
-- Reports are viewable in the dashboard under Impactinomics > Reports
-- One dispatch per tool call. Provide a clear, specific description.`;
+Emit these tags raw in your response. Do NOT wrap them in code fences — that hides them from the renderer. Do not escape the angle brackets. If you're not sure whether a tag fits, plain Markdown always works as a fallback.`;
 }
 
 /** Owner context section — tells the agent who owns this install. */
@@ -505,14 +519,42 @@ function buildProjectContextSection(projectPath: string): string {
 function buildPlanWorkflowSection(): string {
   return `## Plan Workflow
 
-When asked to perform multi-step work on this project:
-1. First create a plan using the create_plan tool with a clear title, steps, and detailed body
-2. Present the plan to the user for review
-3. Wait for explicit approval before executing
-4. When approved, execute step-by-step, updating each step's status via update_plan
-5. After all steps complete, mark the plan as "complete"
+**When the user asks you to plan anything, use the create_plan tool — do NOT write the plan as markdown in the chat.** Plans written as chat markdown don't surface the Plans tab, the Approval gate, the Plan drawer, or any of the tracking UX the user relies on. They're invisible to the system. Use the tool.
 
-Available plan step types: plan, implement, test, review, deploy`;
+### When to use create_plan
+
+- The user says "plan," "propose a plan," "how would you approach," "draft an implementation," "break this down," or any near-synonym.
+- You're about to do multi-step work (three or more distinct steps) and you want the user to approve the approach before you execute.
+- You want to persist your approach across sessions — plans are saved to disk, chat bubbles are not.
+
+Single-step or immediate tasks do NOT need a plan. Use your judgement. One heuristic: if you'd naturally write numbered "I'll do X, then Y, then Z," you're describing a plan — emit it via create_plan instead of as prose.
+
+### How to use create_plan
+
+- \`title\` — short (under 60 chars), descriptive. "Add auth to the API" not "Plan to add authentication".
+- \`body\` — full markdown. Context, rationale, alternatives you considered, risks, verification. This is what the user reads in the Plan pane. Write it as if you were writing a design doc, because you are.
+- \`steps[]\` — each step has \`title\`, \`type\` (one of: plan, implement, test, review, deploy), and optional \`dependsOn\` (array of earlier step ids like ["step_01"]). Keep step titles action-oriented ("Write the auth middleware," not "Auth middleware").
+
+### After create_plan returns
+
+- The plan is saved as a .mdc file under ~/.agi/{projectSlug}/plans/.
+- It appears in the chat's Plans drawer with status "proposed" — the user can open it in a left-side editor pane, edit the body, and Approve or Reject.
+- You do NOT execute yet. Wait for the user to click Approve (status transitions to "approved") or give you explicit verbal approval in chat.
+- Once approved, you may begin executing steps. Mark the overall plan as "executing" via update_plan, then advance each step's status through pending → running → complete (or failed / skipped) using update_plan's stepUpdates array.
+- After the final step completes, set the plan's overall status to "complete".
+- Accepted plans are IMMUTABLE — you cannot edit the body, title, or step list once the user approves. Only step-status advances are permitted. If the plan needs a redraft, delete it and create_plan again.
+
+### State transitions
+
+| From | To | Via |
+|------|-----|-----|
+| draft | reviewing | create_plan presents the plan; the user reviews |
+| reviewing | approved | user clicks Approve in the Plan pane |
+| reviewing | (deleted) | user clicks Reject |
+| approved | executing | update_plan status: "executing" — you start work |
+| executing | testing | update_plan status: "testing" — verification phase |
+| testing | complete | update_plan status: "complete" |
+| any | failed | update_plan status: "failed" — something blocked completion |`;
 }
 
 // ---------------------------------------------------------------------------
@@ -520,13 +562,19 @@ Available plan step types: plan, implement, test, review, deploy`;
 // ---------------------------------------------------------------------------
 
 /**
- * Compute available tools given current state and entity tier.
+ * Compute available tools given current entity tier.
  *
- * Tools are filtered by both `requiresState` and `requiresTier`.
- * Empty arrays mean "all states/tiers allowed".
+ * **State is NOT a permission gate.** The operational state
+ * (Initial / Limbo / Offline / Online) is audit metadata that gets logged
+ * into the COA<>COI chain during $imp minting for integrity provenance —
+ * it records the conditions under which an operation happened, it does
+ * NOT decide whether the operation is allowed. Filter by tier only.
+ *
+ * `requiresState` on tool manifests is retained as a hint for downstream
+ * logging / UI dimming but is intentionally ignored here.
  */
 export function computeAvailableTools(
-  state: GatewayState,
+  _state: GatewayState,
   tier: VerificationTier,
   registeredTools: ToolManifestEntry[],
 ): ToolManifestEntry[] {
@@ -535,19 +583,11 @@ export function computeAvailableTools(
   // When canUseTool is false (unverified), only allow tier-exempt tools
   // (requiresTier: [] means "available to all tiers" — e.g. verification tools)
   if (!tierCaps.canUseTool) {
-    return registeredTools.filter((tool) => {
-      const stateOk =
-        tool.requiresState.length === 0 || tool.requiresState.includes(state);
-      return stateOk && tool.requiresTier.length === 0;
-    });
+    return registeredTools.filter((tool) => tool.requiresTier.length === 0);
   }
 
   return registeredTools.filter((tool) => {
-    const stateOk =
-      tool.requiresState.length === 0 || tool.requiresState.includes(state);
-    const tierOk =
-      tool.requiresTier.length === 0 || tool.requiresTier.includes(tier);
-    return stateOk && tierOk;
+    return tool.requiresTier.length === 0 || tool.requiresTier.includes(tier);
   });
 }
 
@@ -653,6 +693,7 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
     sections.push(buildPlanWorkflowSection());
   }
 
+  sections.push(buildTaskmasterSection());
   sections.push(buildResponseFormatSection());
 
   return sections.join("\n\n");

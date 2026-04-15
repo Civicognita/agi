@@ -45,9 +45,25 @@ export const MAppAgentPromptSchema = z.object({
   allowedTools: z.array(z.string()).optional(),
 }).strict();
 
+export const MAppModelInferenceConfigSchema = z.object({
+  /** HuggingFace model ID to call (must be installed and running). */
+  modelId: z.string(),
+  /** Path on the model container (e.g. "/predict", "/v1/chat/completions"). */
+  endpoint: z.string(),
+  /** HTTP method (default "POST"). */
+  method: z.enum(["GET", "POST"]).default("POST"),
+  /**
+   * JSON body template. Values may contain {{variableName}} placeholders
+   * which are resolved against the current workflow context before sending.
+   */
+  inputTemplate: z.record(z.unknown()).optional(),
+  /** Key in the workflow context where the response is stored. */
+  outputKey: z.string(),
+}).strict();
+
 export const MAppWorkflowStepSchema = z.object({
   id: z.string(),
-  type: z.enum(["shell", "api", "agent", "file-transform"]),
+  type: z.enum(["shell", "api", "agent", "file-transform", "model-inference"]),
   label: z.string(),
   config: z.record(z.unknown()),
   dependsOn: z.array(z.string()).optional(),
@@ -168,6 +184,17 @@ export const MAppDefinitionSchema = z.object({
   prompts: z.array(MAppAgentPromptSchema).optional(),
   workflows: z.array(MAppWorkflowSchema).optional(),
   tools: z.array(MAppToolSchema).optional(),
+  /** AI model dependencies this MApp requires. */
+  modelDependencies: z.array(z.object({
+    /** HuggingFace model ID (e.g. "NeoQuasar/Kronos-base"). */
+    modelId: z.string(),
+    /** Human-readable label for display. */
+    label: z.string(),
+    /** Whether the MApp can function without this model running. */
+    required: z.boolean().default(false),
+    /** Expected pipeline tag for validation (e.g. "text-generation"). */
+    pipelineTag: z.string().optional(),
+  })).optional(),
   chain: z.object({
     contentHash: z.string().optional(),
     address: z.string().optional(),

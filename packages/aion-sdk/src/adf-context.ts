@@ -28,7 +28,7 @@ export interface ADFProjectConfigContext {
   getStacks(projectPath: string): Array<{ stackId: string; addedAt: string }>;
 }
 
-/** ADF system config facade — read/write access to aionima.json. */
+/** ADF system config facade — read/write access to gateway.json. */
 export interface ADFSystemConfigContext {
   read(): Record<string, unknown>;
   readKey(dotPath: string): unknown;

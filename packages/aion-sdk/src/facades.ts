@@ -14,7 +14,7 @@ export function Log(): ADFLogger {
   return getADFContext().logger;
 }
 
-/** Dot-path config accessor over `aionima.json`. */
+/** Dot-path config accessor over `gateway.json`. */
 export function Config(): ConfigAccessor {
   return new ConfigAccessor(getADFContext().config);
 }
@@ -85,7 +85,7 @@ export function ProjectConfig(): ADFProjectConfigContext {
   return ctx.projectConfig;
 }
 
-/** Read/write access to the system config (aionima.json). */
+/** Read/write access to the system config (gateway.json). */
 export function SystemConfig(): ADFSystemConfigContext {
   const ctx = getADFContext();
   if (!ctx.systemConfig) throw new Error("SystemConfigService not initialized");

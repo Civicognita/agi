@@ -1,6 +1,7 @@
 .ai/checkpoints/
 .ai/handoff/
 .aionima/
+gateway.json
 aionima.json
 .openclaw/
 HEARTBEAT.md

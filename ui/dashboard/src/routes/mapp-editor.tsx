@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { MAppEditor } from "@/components/MAppEditor.js";
+import { PageScroll } from "@/components/PageScroll.js";
 import { fetchMagicApp } from "@/api.js";
 
 export default function MAppEditorPage() {
@@ -40,13 +41,15 @@ export default function MAppEditorPage() {
     }
   }, [navigate]);
 
-  if (loading) return <div className="p-6 text-muted-foreground">Loading...</div>;
+  if (loading) return <PageScroll><div className="text-muted-foreground">Loading...</div></PageScroll>;
 
   return (
+    <PageScroll>
     <MAppEditor
       initialDefinition={initialDef}
       onSave={(def) => void handleSave(def)}
       onClose={() => navigate("/magic-apps/admin")}
     />
+    </PageScroll>
   );
 }

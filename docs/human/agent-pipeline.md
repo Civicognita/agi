@@ -48,7 +48,7 @@ The `InboundRouter` applies several gates before accepting a message for process
 
 The router looks up the entity for `channelUserId` in the entity store. If no entity exists, one is created with `verificationTier: "unverified"` and assigned a COA alias (e.g. `#E5`).
 
-If `owner.channels.{channelId}` in `aionima.json` matches the sender's ID, the entity is treated as the owner with `verificationTier: "sealed"`.
+If `owner.channels.{channelId}` in `gateway.json` matches the sender's ID, the entity is treated as the owner with `verificationTier: "sealed"`.
 
 ### DM Policy Check
 
@@ -181,7 +181,7 @@ The assembled system prompt plus the conversation history (prior turns) are sent
 | OpenAI | `openai` | `gpt-4o` | `OPENAI_API_KEY` |
 | Ollama | `ollama` | `llama3` | (none, uses `baseUrl`) |
 
-Set `agent.provider` and `agent.model` in `aionima.json`:
+Set `agent.provider` and `agent.model` in `gateway.json`:
 
 ```json
 {

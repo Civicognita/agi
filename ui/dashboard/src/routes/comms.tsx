@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { PageScroll } from "@/components/PageScroll.js";
 import { Button } from "@/components/ui/button.js";
 import { Badge } from "@/components/ui/badge.js";
 import { fetchCommsLog } from "@/api.js";
@@ -68,6 +69,7 @@ export default function CommsPage() {
   const hasMore = offset + PAGE_SIZE < total;
 
   return (
+    <PageScroll>
     <div className="space-y-4">
       {/* Channel filter tabs */}
       <div className="flex gap-1 flex-wrap">
@@ -187,5 +189,6 @@ export default function CommsPage() {
         </div>
       )}
     </div>
+    </PageScroll>
   );
 }

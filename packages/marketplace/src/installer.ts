@@ -161,12 +161,16 @@ export async function installPlugin(
  * Clones the full marketplace repo to a temp dir, copies the subdirectory to installPath.
  */
 async function installFromMarketplaceSubdir(relativePath: string, sourceRef: string, installPath: string): Promise<void> {
-  // Extract owner/repo from sourceRef (e.g. "Civicognita/aionima-marketplace" or full GitHub URL)
+  // Extract owner/repo and optional branch from sourceRef
+  // Supports: "owner/repo", "owner/repo#branch", full GitHub URLs
   const repoMatch = sourceRef.match(/(?:github\.com\/)?([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)/);
   const repo = repoMatch?.[1];
   if (!repo) {
     throw new Error(`Cannot parse GitHub repo from marketplace source: ${sourceRef}`);
   }
+  // Extract branch from #ref suffix (e.g. "owner/repo#dev")
+  const branchMatch = sourceRef.match(/#([a-zA-Z0-9_.-]+)$/);
+  const branch = branchMatch?.[1] ?? "main";
 
   // Strip leading ./ from relative path
   const subdir = relativePath.replace(/^\.\//, "");
@@ -175,7 +179,7 @@ async function installFromMarketplaceSubdir(relativePath: string, sourceRef: str
 
   try {
     execSync(
-      `sudo git clone --depth 1 https://github.com/${shellEscape(repo)}.git ${shellEscape(tmpDir)}`,
+      `sudo git clone --depth 1 --branch ${shellEscape(branch)} https://github.com/${shellEscape(repo)}.git ${shellEscape(tmpDir)}`,
       { stdio: "pipe", timeout: 120_000 },
     );
 

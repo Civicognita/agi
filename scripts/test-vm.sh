@@ -45,6 +45,11 @@ runcmd:
   - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   - apt-get install -y nodejs
   - corepack enable pnpm
+  # Pre-create the aionima user with passwordless sudo so install.sh and
+  # Playwright browser installs work without a terminal
+  - useradd -m -s /bin/bash aionima || true
+  - echo "aionima ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/aionima
+  - chmod 0440 /etc/sudoers.d/aionima
 YAML
 )
 
@@ -330,7 +335,7 @@ ENVEOF
 
     # Create minimal config
     mkdir -p ~/.agi
-    cat > ~/.agi/aionima.json << CFGEOF
+    cat > ~/.agi/gateway.json << CFGEOF
 {
   "gateway": { "host": "0.0.0.0", "port": 3100, "state": "ONLINE" },
   "channels": [],

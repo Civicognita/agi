@@ -3,11 +3,17 @@
  * Shows True Cost per project on the Overview page.
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { EChart } from "@particle-academy/react-echarts";
 import { Card, CardContent } from "@/components/ui/card";
 import { fetchUsageSummary, fetchUsageByProject, fetchUsageHistory } from "../api.js";
 import type { UsageSummary, ProjectCost, UsageHistoryPoint } from "../api.js";
+
+/** Polling interval for live usage refresh, in milliseconds.
+ * 10s strikes a balance: fresh enough that the user can watch spend
+ * accumulate during an agent turn, cheap enough to run while the page
+ * is open without hammering the gateway. */
+const USAGE_REFRESH_MS = 10_000;
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -37,11 +43,21 @@ export function UsageSection({ days = 30 }: { days?: number }) {
   const [projects, setProjects] = useState<ProjectCost[]>([]);
   const [history, setHistory] = useState<UsageHistoryPoint[]>([]);
 
-  useEffect(() => {
+  // Refresh all three queries. Stable callback so the polling effect
+  // doesn't reinstall every render.
+  const refresh = useCallback(() => {
     fetchUsageSummary(days).then(setSummary).catch(() => {});
     fetchUsageByProject(days).then(setProjects).catch(() => {});
     fetchUsageHistory(days).then(setHistory).catch(() => {});
   }, [days]);
+
+  useEffect(() => {
+    // Initial load
+    refresh();
+    // Live refresh — lets the user watch spend climb while the agent works.
+    const t = setInterval(refresh, USAGE_REFRESH_MS);
+    return () => clearInterval(t);
+  }, [refresh]);
 
   if (!summary) return null;
 

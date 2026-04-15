@@ -42,6 +42,26 @@ CREATE TABLE IF NOT EXISTS marketplace_installed (
 
 CREATE INDEX IF NOT EXISTS idx_plugins_type ON marketplace_plugins(type);
 CREATE INDEX IF NOT EXISTS idx_plugins_source ON marketplace_plugins(source_id);
+
+CREATE TABLE IF NOT EXISTS mapp_sources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ref TEXT NOT NULL UNIQUE,
+  source_type TEXT NOT NULL DEFAULT 'github',
+  name TEXT NOT NULL,
+  last_synced_at TEXT,
+  mapp_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS mapp_catalog (
+  id TEXT NOT NULL,
+  source_id INTEGER NOT NULL REFERENCES mapp_sources(id) ON DELETE CASCADE,
+  author TEXT NOT NULL DEFAULT 'civicognita',
+  description TEXT,
+  category TEXT,
+  version TEXT,
+  source_path TEXT NOT NULL,
+  PRIMARY KEY (id, source_id)
+);
 `;
 
 /** Migration statements to add provides/depends and trust/integrity columns. Run with try/catch per statement. */

@@ -160,7 +160,27 @@ export interface MAppAgentPrompt {
 // ---------------------------------------------------------------------------
 
 /** Workflow step types. */
-export type MAppWorkflowStepType = "shell" | "api" | "agent" | "file-transform";
+export type MAppWorkflowStepType = "shell" | "api" | "agent" | "file-transform" | "model-inference";
+
+/**
+ * Configuration for a `model-inference` workflow step.
+ * The step calls an endpoint on a locally-running model container.
+ */
+export interface MAppModelInferenceConfig {
+  /** HuggingFace model ID to call (must be installed and running). */
+  modelId: string;
+  /** Path on the model container (e.g. "/predict", "/v1/chat/completions"). */
+  endpoint: string;
+  /** HTTP method (default "POST"). */
+  method?: "GET" | "POST";
+  /**
+   * JSON body template. Values may contain {{variableName}} placeholders
+   * which are resolved against the current workflow context before sending.
+   */
+  inputTemplate?: Record<string, unknown>;
+  /** Key in the workflow context where the response is stored. */
+  outputKey: string;
+}
 
 /** A single step in a workflow. */
 export interface MAppWorkflowStep {
@@ -307,6 +327,21 @@ export interface MAppPage {
 }
 
 /**
+ * AI model dependency declared by a MApp.
+ * Displayed as status cards in the dashboard when the MApp is opened.
+ */
+export interface MAppModelDependency {
+  /** HuggingFace model ID (e.g. "NeoQuasar/Kronos-base"). */
+  modelId: string;
+  /** Human-readable label for display (e.g. "Kronos Forecasting Model"). */
+  label: string;
+  /** Whether the MApp can function without this model running. Defaults to false. */
+  required?: boolean;
+  /** Expected pipeline tag for validation (e.g. "text-generation"). */
+  pipelineTag?: string;
+}
+
+/**
  * Output configuration — what happens after all pages are collected.
  */
 export interface MAppOutput {
@@ -413,6 +448,10 @@ export interface MAppDefinition {
   workflows?: MAppWorkflow[];
   /** Project toolbar tools. */
   tools?: MAppTool[];
+
+  // --- AI Model Dependencies ---
+  /** AI model dependencies this MApp requires. Shown as status cards in the dashboard. */
+  modelDependencies?: MAppModelDependency[];
 
   // --- Chain (future) ---
   /** On-chain metadata for blockchain compilation. */

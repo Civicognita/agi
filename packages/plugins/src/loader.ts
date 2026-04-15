@@ -3,6 +3,8 @@
  * Adapted from OpenClaw's loader.ts.
  */
 
+import { existsSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { createComponentLogger } from "@aionima/gateway-core";
 import { scanPluginSource } from "./scanner.js";
 import type { Logger, ComponentLogger, ProjectTypeRegistry, ProjectTypeDefinition, ProjectTypeTool } from "@aionima/gateway-core";
@@ -82,6 +84,38 @@ export async function loadPlugins(
       );
 
       deps.pluginRegistry.add({ manifest, instance, basePath });
+
+      // Auto-register plugin-provided docs. Most plugins ship a `docs/` folder
+      // with overview.md (and sometimes more topics) but forget to call
+      // api.registerKnowledge() during activate. Without explicit registration
+      // nothing surfaces in the dashboard Docs page, so only 3/57 plugins ever
+      // showed their docs. Auto-register when (1) a docs/ dir exists and
+      // (2) the plugin has not already registered its own knowledge namespace.
+      try {
+        const alreadyRegistered = deps.pluginRegistry
+          .getKnowledge()
+          .some((k) => k.pluginId === manifest.id);
+        if (!alreadyRegistered) {
+          const docsDir = join(basePath, "docs");
+          if (existsSync(docsDir) && statSync(docsDir).isDirectory()) {
+            deps.pluginRegistry.addKnowledge(manifest.id, {
+              id: manifest.id,
+              label: manifest.name,
+              description: manifest.description,
+              contentDir: docsDir,
+              // Empty topics triggers directory-scan mode in the docs API
+              // (see server-runtime-state.ts plugin-docs folder build).
+              topics: [],
+            });
+            log.info(`auto-registered docs for ${manifest.id} at ${docsDir}`);
+          }
+        }
+      } catch (err) {
+        log.warn(
+          `docs auto-register skipped for ${manifest.id}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
       loaded.push(manifest.id);
       log.info(`loaded plugin: ${manifest.name} v${manifest.version}`);
     } catch (err) {
