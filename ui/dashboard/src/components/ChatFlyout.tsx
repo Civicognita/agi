@@ -1502,17 +1502,23 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
 
   // Overlay mode: fixed panel with backdrop
   return (
-    <div data-testid="chat-flyout" className="fixed inset-0 z-[200] flex justify-end">
+    // Overlay mode: the root div is pointer-events-none so the user can
+    // interact with the rest of the dashboard through the backdrop region.
+    // The chat panel and plan pane re-enable pointer events for themselves.
+    // The backdrop dim is cosmetic only — NOT click-dismissable — so the
+    // modal stays open while the user navigates the rest of the UI. Close
+    // via the explicit X in the header.
+    <div data-testid="chat-flyout" className="fixed inset-0 z-[200] flex justify-end pointer-events-none">
       {!isFullscreen && (
-        <div className={cn("bg-black/30", isMobile ? "absolute inset-0" : "flex-1")} onClick={onClose} />
+        <div className={cn("bg-black/10", isMobile ? "absolute inset-0" : "flex-1")} />
       )}
       {planPane !== null && !isMobile && (
-        <div className="h-screen border-l border-border bg-background w-[420px] shrink-0">
+        <div className="h-screen border-l border-border bg-background w-[420px] shrink-0 pointer-events-auto">
           {planPane}
         </div>
       )}
       <div className={cn(
-        "flex flex-col bg-background",
+        "flex flex-col bg-background pointer-events-auto",
         isMobile
           ? "fixed bottom-0 left-0 right-0 h-[90dvh] border-t border-border rounded-t-2xl"
           : cn("h-screen", isFullscreen ? "w-screen" : "w-[33vw] max-w-full border-l border-border"),
