@@ -13,13 +13,15 @@ import { OwnerSettings } from "@/components/settings/OwnerSettings.js";
 import { DevSettings } from "@/components/settings/DevSettings.js";
 import { GatewayNetworkSettings } from "@/components/settings/GatewayNetworkSettings.js";
 import { IdentitySettings } from "@/components/settings/IdentitySettings.js";
+import { ProvidersSettings } from "@/components/settings/ProvidersSettings.js";
 import type { AionimaConfig } from "../types.js";
 
-type Tab = "general" | "identity" | "dev" | "network";
+type Tab = "general" | "identity" | "providers" | "dev" | "network";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "identity", label: "Identity" },
+  { id: "providers", label: "Providers" },
   { id: "dev", label: "Contributing" },
   { id: "network", label: "Network" },
 ];
@@ -91,6 +93,10 @@ export default function SettingsGatewayPage() {
       {/* Tab content */}
       {activeTab === "general" && (
         <GatewayNetworkSettings gateway={gateway} config={draft} update={update} section="general" />
+      )}
+
+      {activeTab === "providers" && (
+        <ProvidersSettings config={draft} update={update} />
       )}
 
       {activeTab === "identity" && (
