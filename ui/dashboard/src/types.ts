@@ -692,6 +692,13 @@ export interface WorkerJobSummary {
   workers: string[];
   gate: "auto" | "checkpoint" | "terminal";
   createdAt: string;
+  /** Terminal-state fields populated after the worker finishes. Surfaced by
+   *  the Taskmaster project tab's expandable summary rows. */
+  summary?: string;
+  completedAt?: string;
+  error?: string;
+  tokens?: { input: number; output: number };
+  toolCalls?: Array<{ name: string; ts: string }>;
 }
 
 // ---------------------------------------------------------------------------

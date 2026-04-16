@@ -16,6 +16,7 @@ import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "..
 import { RepoPanel } from "./RepoPanel.js";
 import { HostingPanel } from "./HostingPanel.js";
 import { EnvManager } from "./EnvManager.js";
+import { TaskmasterTab } from "./TaskmasterTab.js";
 import { ProjectManagement } from "./ProjectManagement.js";
 import type { HostingStatus } from "../api.js";
 import { TreeNav, ContextMenu, useToast } from "@particle-academy/react-fancy";
@@ -304,6 +305,7 @@ export function ProjectDetail({
             <TabsTrigger value="environment">Environment</TabsTrigger>
           )}
           <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>
+          <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>
           {pluginPanels.map((p) => (
             <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
           ))}
@@ -760,6 +762,12 @@ export function ProjectDetail({
             </div>
           </TabsContent>
         )}
+
+        <TabsContent value="taskmaster" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <div className="rounded-xl bg-card border border-border p-4">
+            <TaskmasterTab projectPath={project.path} />
+          </div>
+        </TabsContent>
 
         <TabsContent value="magic-apps" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <div className="rounded-xl bg-card border border-border p-4">

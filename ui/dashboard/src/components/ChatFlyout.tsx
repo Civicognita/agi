@@ -1696,18 +1696,26 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context, se
       {/* Drawer content */}
       {activeDrawer !== null && (
         <div className="px-3 py-2.5 bg-background border-t border-border max-h-[160px] overflow-y-auto">
-          {activeDrawer === "work-queue" && (
+          {activeDrawer === "work-queue" && (() => {
+            // Drawer shows ONLY active work so it doesn't pile up with
+            // completed rows. Full history lives in the project's Taskmaster
+            // tab (ProjectDetail → TaskMaster) where all statuses are
+            // filterable and completed jobs expand to reveal their summary.
+            const activeJobs = taskmasterJobs.filter(
+              (j) => j.status === "pending" || j.status === "running" || j.status === "checkpoint",
+            );
+            return (
             <div>
-              {taskmasterLoading && taskmasterJobs.length === 0 && (
+              {taskmasterLoading && activeJobs.length === 0 && (
                 <span className="text-[11px] text-muted-foreground">Loading...</span>
               )}
               {taskmasterError !== null && (
                 <span className="text-[11px] text-red">{taskmasterError}</span>
               )}
-              {!taskmasterLoading && taskmasterJobs.length === 0 && taskmasterError === null && (
-                <span className="text-[11px] text-muted-foreground">No active work</span>
+              {!taskmasterLoading && activeJobs.length === 0 && taskmasterError === null && (
+                <span className="text-[11px] text-muted-foreground">No active work — history is in the project's Taskmaster tab.</span>
               )}
-              {taskmasterJobs.map((job) => (
+              {activeJobs.map((job) => (
                 <div
                   key={job.id}
                   className="flex items-start gap-2 py-1.5 border-b border-border text-[11px]"
@@ -1750,7 +1758,8 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context, se
                 </div>
               ))}
             </div>
-          )}
+            );
+          })()}
 
           {activeDrawer === "project-info" && context !== "general" && (
             <div>
