@@ -597,7 +597,12 @@ export async function startGatewayServer(
    */
   const jobOriginBySessionKey = new Map<
     string,
-    { sessionKey?: string; chatSessionId?: string; projectPath: string }
+    {
+      sessionKey?: string;
+      chatSessionId?: string;
+      projectPath: string;
+      planRef?: { planId: string; stepId: string };
+    }
   >();
   // Late-bound worker runtime ref — populated after workerRuntime is created below.
   // The onJobCreated callback is only invoked during agent tool execution (after boot),
@@ -631,10 +636,21 @@ export async function startGatewayServer(
     stackRegistryRef,
     mappRegistryRef,
     onJobCreated: (args) => {
-      const { jobId, coaReqId, projectPath, sessionKey, chatSessionId } = args;
+      const { jobId, coaReqId, projectPath, sessionKey, chatSessionId, planRef } = args;
       // Remember which chat session dispatched this job so the runtime:event
       // handler below can inject worker reports back into Aion's next turn.
-      jobOriginBySessionKey.set(jobId, { sessionKey, chatSessionId, projectPath });
+      jobOriginBySessionKey.set(jobId, { sessionKey, chatSessionId, projectPath, planRef });
+      // Mark the linked plan step as running the moment we accept the job so
+      // the Plans drawer shows progress immediately, not only on completion.
+      if (planRef !== undefined) {
+        try {
+          planStore.update(projectPath, planRef.planId, {
+            stepUpdates: [{ id: planRef.stepId, status: "running" }],
+          });
+        } catch (err) {
+          log.warn(`plan step mark-running failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
       const projectContext = projectPath.length > 0
         ? { path: projectPath, name: projectPath.split("/").filter(Boolean).pop() ?? projectPath }
         : undefined;
@@ -3229,6 +3245,27 @@ export async function startGatewayServer(
   //       user to message. Without (b), the note sits in the queue forever.
   workerRuntime.on("runtime:event", (event: { type: string; jobId: string; [key: string]: unknown }) => {
     const origin = jobOriginBySessionKey.get(event.jobId);
+
+    // Auto-advance the linked plan step regardless of session presence —
+    // step status is a property of the plan, not the chat, so even
+    // background/resumed jobs should mark progress. Runs BEFORE the
+    // sessionKey guard so plan-only dispatches (no chat) still update.
+    if (origin?.planRef !== undefined) {
+      const stepStatus =
+        event.type === "report_ready" ? "complete" :
+        event.type === "job_failed" ? "failed" :
+        null;
+      if (stepStatus !== null) {
+        try {
+          planStore.update(origin.projectPath, origin.planRef.planId, {
+            stepUpdates: [{ id: origin.planRef.stepId, status: stepStatus }],
+          });
+        } catch (err) {
+          log.warn(`plan step auto-advance failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
     if (!origin?.sessionKey) return;
 
     let note: string | null = null;

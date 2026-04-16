@@ -171,6 +171,7 @@ export interface ToolRegistrationConfig {
     projectPath: string;
     sessionKey?: string;
     chatSessionId?: string;
+    planRef?: { planId: string; stepId: string };
   }) => void;
   /** Callback fired when a worker calls taskmaster_handoff. Wired to WorkerRuntime runtime:event. */
   onHandoff?: (args: { jobId: string; question: string; projectPath: string; coaReqId?: string }) => void;

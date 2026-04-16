@@ -34,9 +34,18 @@ export interface WorkerDispatchConfig {
     projectPath: string;
     sessionKey?: string;
     chatSessionId?: string;
+    planRef?: { planId: string; stepId: string };
   }) => void;
   /** COA request ID fallback when no execution context is supplied. */
   coaReqId?: string;
+}
+
+/** Link a dispatched job to a specific step in a plan so the server can
+ *  auto-mark the step as running/complete/failed as the worker progresses.
+ *  Optional — tasks that aren't plan-driven don't set this. */
+interface PlanRef {
+  planId: string;
+  stepId: string;
 }
 
 export function createWorkerDispatchHandler(
@@ -59,6 +68,23 @@ export function createWorkerDispatchHandler(
     const domain = String(input.domain ?? "code");
     const worker = String(input.worker ?? "engineer");
     const priority = String(input.priority ?? "normal");
+
+    // Optional plan linkage — when present, the server auto-marks the named
+    // step running/complete/failed as the worker progresses. Aion passes
+    // this when dispatching workers as part of executing an approved plan.
+    let planRef: PlanRef | undefined;
+    if (input.planRef !== undefined && input.planRef !== null) {
+      const pr = input.planRef as Record<string, unknown>;
+      const planId = String(pr.planId ?? "").trim();
+      const stepId = String(pr.stepId ?? "").trim();
+      if (planId.length === 0 || stepId.length === 0) {
+        return JSON.stringify({
+          error: "planRef requires both planId and stepId when provided.",
+          exitCode: -1,
+        });
+      }
+      planRef = { planId, stepId };
+    }
 
     const validPriorities = ["low", "normal", "high", "critical"];
     if (!validPriorities.includes(priority)) {
@@ -101,6 +127,7 @@ export function createWorkerDispatchHandler(
       projectPath,
       sessionKey,
       chatSessionId,
+      planRef,
       createdAt: new Date().toISOString(),
     };
 
@@ -115,7 +142,7 @@ export function createWorkerDispatchHandler(
 
     if (config.onJobCreated) {
       try {
-        config.onJobCreated({ jobId, coaReqId, projectPath, sessionKey, chatSessionId });
+        config.onJobCreated({ jobId, coaReqId, projectPath, sessionKey, chatSessionId, planRef });
       } catch {
         // Don't fail the tool if the callback throws
       }
@@ -172,6 +199,19 @@ export const WORKER_DISPATCH_INPUT_SCHEMA = {
       type: "string",
       enum: ["low", "normal", "high", "critical"],
       description: 'Task priority level. Defaults to "normal".',
+    },
+    planRef: {
+      type: "object",
+      description:
+        "Optional. Link this job to a specific step of an approved plan so " +
+        "the server auto-marks the step running on dispatch, complete on " +
+        "worker success, or failed on worker failure. Pass { planId, stepId } " +
+        "when dispatching workers as part of executing a plan.",
+      properties: {
+        planId: { type: "string", description: "The plan id from create_plan." },
+        stepId: { type: "string", description: "The step id (e.g. step_01) inside that plan." },
+      },
+      required: ["planId", "stepId"],
     },
   },
   required: ["projectPath", "description"],

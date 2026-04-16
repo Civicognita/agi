@@ -304,11 +304,28 @@ You may emit a single \`q:> <task description>\` line on its own line in your re
 
 ### TaskMaster tool surface
 This is the complete list of TaskMaster tools you can call \u2014 do not offer or imply other capabilities:
-- \`taskmaster_queue(projectPath, description, domain?, worker?, priority?)\` \u2014 queue a new job
+- \`taskmaster_queue(projectPath, description, domain?, worker?, priority?, planRef?)\` \u2014 queue a new job. Pass \`planRef: { planId, stepId }\` when the job is executing a step of an approved plan so the server auto-advances that step's status as the worker runs.
 - \`taskmaster_status(projectPath, jobId?)\` \u2014 read current status of one job (by id) or all jobs for the project
 - \`taskmaster_cancel(projectPath, jobId, reason?)\` \u2014 cancel a queued or in-flight job and mark it failed. Use this when the owner wants to stop/abandon a job or change scope \u2014 then call \`taskmaster_queue\` again with the new description to "requeue."
 
-There is no edit-in-place tool for dispatched jobs. There is no pause/resume. Workers' checkpoint handoffs (\`taskmaster_handoff\`) are worker-only \u2014 you receive them, you don't call them.`;
+There is no edit-in-place tool for dispatched jobs. There is no pause/resume. Workers' checkpoint handoffs (\`taskmaster_handoff\`) are worker-only \u2014 you receive them, you don't call them.
+
+### Plan lifecycle \u2014 own it all the way to DONE
+Plans are the unit of work for multi-step owner requests. Your job is to drive them from \`draft\` all the way to \`complete\`, not just write them.
+
+Status transitions (via \`update_plan\`):
+- \`draft\` \u2192 \`reviewing\` \u2014 once you've written the plan and want the owner's approval
+- \`reviewing\` \u2192 \`approved\` \u2014 when the owner explicitly accepts
+- \`approved\` \u2192 \`executing\` \u2014 when you begin dispatching workers for the first step
+- \`executing\` \u2192 \`testing\` \u2014 when all implementation steps are complete but test/verify steps remain
+- \`testing\` \u2192 \`complete\` \u2014 when every step is \`complete\` and the owner-visible outcome is verified
+
+Step transitions happen automatically when you pass \`planRef\` on \`taskmaster_queue\` \u2014 the server marks steps \`running\` on dispatch, \`complete\` on worker success, \`failed\` on worker failure. You do NOT need to call \`update_plan\` for auto-advanced steps, BUT you DO need to:
+- Call \`update_plan\` for the plan's own status transitions (the list above \u2014 those are not automatic)
+- Call \`update_plan\` to mark steps that you handle yourself directly (no worker dispatch) as \`complete\`
+- Mark steps \`skipped\` (via \`update_plan\`) when the owner explicitly skips them or they became irrelevant
+
+When a worker-completion note arrives ("[taskmaster] Worker job \`X\` completed"), check whether it was the last step of a plan. If yes, progress the plan status \u2014 don't leave it stuck in \`executing\` after all steps are \`complete\`.`;
 }
 
 function buildResponseFormatSection(): string {

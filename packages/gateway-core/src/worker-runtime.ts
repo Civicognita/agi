@@ -314,7 +314,7 @@ export class WorkerRuntime extends EventEmitter {
     // to the "general" bucket.
     const jobsDir = dispatchJobsDir(projectContext?.path ?? "");
     const dispatchFile = join(jobsDir, `${jobId}.json`);
-    let dispatch: { description: string; domain: string; worker: string; priority: string } | null = null;
+    let dispatch: { description: string; domain: string; worker: string; priority: string; planRef?: { planId: string; stepId: string } } | null = null;
 
     // Try dispatch file first, then state file
     if (existsSync(dispatchFile)) {
@@ -415,7 +415,7 @@ export class WorkerRuntime extends EventEmitter {
 
   private async runWorker(
     jobId: string,
-    dispatch: { description: string; domain: string; worker: string; priority: string },
+    dispatch: { description: string; domain: string; worker: string; priority: string; planRef?: { planId: string; stepId: string } },
     coaReqId: string,
     projectRoot: string,
   ): Promise<WorkerRunResult> {
@@ -458,8 +458,11 @@ export class WorkerRuntime extends EventEmitter {
       .toProviderTools(workerState, workerTier)
       .filter((t) => !agentOnlyNames.has(t.name));
 
+    const planLine = dispatch.planRef
+      ? `\n**Plan step:** \`${dispatch.planRef.planId}\` / \`${dispatch.planRef.stepId}\` — the server auto-marks this step \`complete\` when you finish successfully, \`failed\` otherwise, so you do NOT need to call \`update_plan\` yourself for this step.`
+      : "";
     const messages: RuntimeMessage[] = [
-      { role: "user", content: `## Dispatch\n\n**Task:** ${dispatch.description}\n**Priority:** ${dispatch.priority}\n**Project:** ${projectRoot}\n**Your jobId:** ${jobId}\n\nExecute this task. You have access to the same tool registry as the dispatching agent, scoped to this project. Tools that accept a \`projectPath\` argument should receive \`${projectRoot}\`.\n\nIf you need a decision you can't make yourself (design choice, config change you can't perform, ambiguous scope), call \`taskmaster_handoff\` with your \`jobId\` and a specific question — then finish your turn with a summary. You will not be auto-resumed; Aion will re-dispatch with clarification if needed.\n\nWhen done, summarize what you accomplished.` },
+      { role: "user", content: `## Dispatch\n\n**Task:** ${dispatch.description}\n**Priority:** ${dispatch.priority}\n**Project:** ${projectRoot}\n**Your jobId:** ${jobId}${planLine}\n\nExecute this task. You have access to the same tool registry as the dispatching agent, scoped to this project. Tools that accept a \`projectPath\` argument should receive \`${projectRoot}\`.\n\nIf you need a decision you can't make yourself (design choice, config change you can't perform, ambiguous scope), call \`taskmaster_handoff\` with your \`jobId\` and a specific question — then finish your turn with a summary. You will not be auto-resumed; Aion will re-dispatch with clarification if needed.\n\nWhen done, summarize what you accomplished.` },
     ];
 
     const executionCtx: ToolExecutionContext = {
