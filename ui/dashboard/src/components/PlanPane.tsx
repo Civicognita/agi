@@ -19,10 +19,25 @@
 import { useCallback, useEffect, useState } from "react";
 import { ContentRenderer, Editor } from "@particle-academy/react-fancy";
 import { X as XIcon } from "lucide-react";
+import { marked } from "marked";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { fetchPlan, updatePlanBody } from "../api.js";
 import type { Plan, PlanStatus, PlanStepStatus } from "../types.js";
+
+/**
+ * react-fancy's Editor is HTML-input-only — its `value` / `defaultValue`
+ * prop is always treated as HTML, there is no "inputFormat" switch. Plans
+ * persist as markdown, so we convert once at mount via marked and feed the
+ * HTML in as `defaultValue`. `outputFormat="markdown"` means onChange hands
+ * us markdown back, which we persist verbatim. Round-trip: markdown on
+ * disk, HTML in the DOM, markdown in our edit state.
+ */
+function markdownToHtml(md: string): string {
+  // `marked.parse` can be async with certain extensions; using the sync
+  // parser explicitly keeps this deterministic for React rendering.
+  return marked.parse(md, { async: false }) as string;
+}
 
 type PlanView = "proposed" | "accepted" | "in-progress" | "done";
 function planView(status: PlanStatus): PlanView {
@@ -158,9 +173,13 @@ export function PlanPane({ projectPath, planId, onClose, onApprove, onReject }: 
                 <div className="rounded-md border border-border overflow-hidden">
                   {/* Editor is a compound component — Toolbar + Content must
                       be rendered as children or the editable surface isn't
-                      drawn at all (the bug that made the body area blank). */}
+                      drawn at all. Plans persist as markdown but the Editor
+                      expects HTML input (see markdownToHtml + plan.body key
+                      prop above). outputFormat="markdown" ensures onChange
+                      hands us markdown back for persistence. */}
                   <Editor
-                    value={editedBody ?? plan.body}
+                    key={plan.id}
+                    defaultValue={markdownToHtml(plan.body)}
                     onChange={(next: string) => setEditedBody(next)}
                     outputFormat="markdown"
                     className="min-h-[300px]"
