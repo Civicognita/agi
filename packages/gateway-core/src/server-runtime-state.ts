@@ -4274,9 +4274,13 @@ export async function createGatewayRuntimeState(
       // Serve index.html as default
       index: "index.html",
       // Hashed assets (e.g. index-BhWVbYcJ.js) can cache forever;
-      // index.html must revalidate so the browser picks up new asset hashes after upgrades.
+      // index.html + sw.js + manifest must revalidate so the browser picks
+      // up new asset hashes and service worker updates after upgrades.
+      // Without no-cache on sw.js, the browser serves the stale SW from
+      // its HTTP cache and never picks up updated precache entries (icons, etc.).
       setHeaders(res, filePath) {
-        if (filePath.endsWith("/index.html") || filePath.endsWith("\\index.html")) {
+        const name = filePath.split(/[/\\]/).pop() ?? "";
+        if (name === "index.html" || name === "sw.js" || name === "manifest.webmanifest") {
           res.setHeader("Cache-Control", "no-cache");
         }
       },
