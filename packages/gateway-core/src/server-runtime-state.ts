@@ -239,7 +239,7 @@ export interface RuntimeStateDeps {
     install(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; missingDeps?: string[]; autoInstalled?: string[] }>;
     uninstall(pluginName: string, force?: boolean): { ok: boolean; error?: string; dependents?: string[] };
     getInstalled(): { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }[];
-    checkUpdates(): { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[];
+    checkUpdates(): { updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[]; newAvailable: { pluginName: string; version: string; description: string; sourceId: number }[] };
     syncLocalCatalog(marketplaceDir: string): { ok: boolean; error?: string; pluginCount?: number };
     reconcileInstalled(marketplaceDir: string): Promise<{ updated: string[]; errors: string[] }>;
     syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
@@ -2457,7 +2457,7 @@ export async function createGatewayRuntimeState(
         : "/opt/aionima-marketplace";
       if (existsSync(marketplaceDir)) {
         mp.syncLocalCatalog(marketplaceDir);
-        const updates = mp.checkUpdates();
+        const { updates } = mp.checkUpdates();
         if (updates.length > 0) pluginUpdates = updates;
       }
     }

@@ -56,10 +56,40 @@ const tabs: { id: Tab; label: string }[] = [
 
 export default function MarketplacePage() {
   const [activeTab, setActiveTab] = useState<Tab>("browse");
+  const [pageUpdates, setPageUpdates] = useState<{ updates: number; newAvailable: number }>({ updates: 0, newAvailable: 0 });
+
+  // Page-level update check on mount
+  useEffect(() => {
+    fetchPluginMarketplaceUpdates()
+      .then((result) => setPageUpdates({ updates: result.updates.length, newAvailable: result.newAvailable.length }))
+      .catch(() => {});
+  }, []);
+
+  const totalNotifications = pageUpdates.updates + pageUpdates.newAvailable;
 
   return (
     <PageScroll>
     <div>
+      {/* Page-level notification banner — above the tabs */}
+      {totalNotifications > 0 && (
+        <div className="mb-4 px-4 py-2.5 rounded-lg border border-blue/30 bg-blue/5 text-[12px] text-foreground flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-blue shrink-0" />
+          {pageUpdates.updates > 0 && (
+            <span>{pageUpdates.updates} plugin update{pageUpdates.updates > 1 ? "s" : ""} available</span>
+          )}
+          {pageUpdates.updates > 0 && pageUpdates.newAvailable > 0 && <span>·</span>}
+          {pageUpdates.newAvailable > 0 && (
+            <span>{pageUpdates.newAvailable} new plugin{pageUpdates.newAvailable > 1 ? "s" : ""} in the marketplace</span>
+          )}
+          <button
+            onClick={() => setActiveTab("browse")}
+            className="ml-auto text-blue text-[11px] font-medium cursor-pointer bg-transparent border-none"
+          >
+            Browse →
+          </button>
+        </div>
+      )}
+
       {/* Tab bar */}
       <div className="flex gap-1 mb-6 border-b border-border">
         {tabs.map((tab) => (
@@ -74,6 +104,12 @@ export default function MarketplacePage() {
             )}
           >
             {tab.label}
+            {tab.id === "installed" && pageUpdates.updates > 0 && (
+              <span className="ml-1.5 inline-block px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-blue text-white">{pageUpdates.updates}</span>
+            )}
+            {tab.id === "browse" && pageUpdates.newAvailable > 0 && (
+              <span className="ml-1.5 inline-block px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-green text-white">{pageUpdates.newAvailable}</span>
+            )}
           </button>
         ))}
       </div>
@@ -647,6 +683,7 @@ function InstalledTab() {
   const { toast } = useToast();
   const [items, setItems] = useState<PluginMarketplaceInstalledItem[]>([]);
   const [updates, setUpdates] = useState<PluginMarketplaceUpdate[]>([]);
+  const [newAvailable, setNewAvailable] = useState<{ pluginName: string; version: string; description: string; sourceId: number }[]>([]);
   const [catalog, setCatalog] = useState<PluginMarketplaceCatalogItem[]>([]);
   const [sources, setSources] = useState<PluginMarketplaceSource[]>([]);
   const [uninstalling, setUninstalling] = useState<string | null>(null);
@@ -661,14 +698,15 @@ function InstalledTab() {
   const [loadingPreview, setLoadingPreview] = useState(false);
 
   const load = useCallback(async () => {
-    const [installed, avail, catalogItems, srcs] = await Promise.all([
+    const [installed, updateResult, catalogItems, srcs] = await Promise.all([
       fetchPluginMarketplaceInstalled().catch(() => [] as PluginMarketplaceInstalledItem[]),
-      fetchPluginMarketplaceUpdates().catch(() => [] as PluginMarketplaceUpdate[]),
+      fetchPluginMarketplaceUpdates().catch(() => ({ updates: [] as PluginMarketplaceUpdate[], newAvailable: [] as { pluginName: string; version: string; description: string; sourceId: number }[] })),
       searchPluginMarketplaceCatalog().catch(() => [] as PluginMarketplaceCatalogItem[]),
       fetchPluginMarketplaceSources().catch(() => [] as PluginMarketplaceSource[]),
     ]);
     setItems(installed.sort((a, b) => a.name.localeCompare(b.name)));
-    setUpdates(avail);
+    setUpdates(updateResult.updates);
+    setNewAvailable(updateResult.newAvailable);
     setCatalog(catalogItems);
     setSources(srcs);
   }, []);

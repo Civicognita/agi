@@ -1282,8 +1282,54 @@ export async function startGatewayServer(
       try {
         const agentProvider = (config.agent as { provider?: string } | undefined)?.provider ?? "anthropic";
         if (!["anthropic", "openai", "ollama", "hf-local"].includes(agentProvider)) {
-          llmProvider = createLLMProvider(config);
-          log.info(`LLM provider switched to plugin-contributed "${agentProvider}"`);
+          try {
+            llmProvider = createLLMProvider(config);
+            log.info(`LLM provider switched to plugin-contributed "${agentProvider}"`);
+          } catch {
+            // Provider not registered by any loaded plugin. Check if the
+            // marketplace catalog has a matching plugin and auto-install it
+            // so the user doesn't have to manually browse Settings → Plugins.
+            const catalogName = `provider-${agentProvider}`;
+            const catalog = marketplaceManager.searchCatalog({});
+            const match = catalog.find((p) => p.name === catalogName || p.name === agentProvider);
+            if (match && !match.installed) {
+              log.info(`auto-installing provider plugin "${match.name}" from marketplace (config references "${agentProvider}")`);
+              try {
+                const installResult = await marketplaceManager.install(match.name, match.sourceId);
+                if (installResult.ok && installResult.installPath) {
+                  // Hot-load the newly installed plugin
+                  const discovery = tryLoadManifest(installResult.installPath);
+                  if (!("error" in discovery) && !pluginRegistry.has(discovery.manifest.id)) {
+                    await loadPlugins([discovery], {
+                      pluginRegistry,
+                      hookBus,
+                      projectTypeRegistry,
+                      config: config as Record<string, unknown>,
+                      logger,
+                      workspaceRoot: opts?.configPath ? dirname(resolvePath(opts.configPath)) : workspaceRoot,
+                      projectDirs: projectPaths,
+                      pluginPriorities: Object.fromEntries(
+                        Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
+                      ),
+                      channelRegistry,
+                      channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+                    });
+                    bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
+                    // Retry provider creation now that the plugin is loaded
+                    setPluginProviderRegistry(pluginRegistry as unknown as Parameters<typeof setPluginProviderRegistry>[0]);
+                    llmProvider = createLLMProvider(config);
+                    log.info(`LLM provider "${agentProvider}" auto-installed and activated from marketplace`);
+                  }
+                } else {
+                  log.warn(`auto-install of "${match.name}" failed: ${installResult.error ?? "unknown"}`);
+                }
+              } catch (installErr) {
+                log.warn(`auto-install of "${catalogName}" failed: ${installErr instanceof Error ? installErr.message : String(installErr)}`);
+              }
+            } else {
+              log.warn(`plugin provider init failed: no plugin for "${agentProvider}" in marketplace catalog`);
+            }
+          }
         }
       } catch (err) {
         log.warn(`plugin provider init failed: ${err instanceof Error ? err.message : String(err)}`);

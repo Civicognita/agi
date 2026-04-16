@@ -364,7 +364,7 @@ export class MarketplaceManager {
     }
 
     // 2. Find and apply all available updates
-    const updates = this.checkUpdates();
+    const { updates } = this.checkUpdates();
     const updated: string[] = [];
     const errors: string[] = [];
 
@@ -380,8 +380,12 @@ export class MarketplaceManager {
     return { synced, updated, errors };
   }
 
-  checkUpdates(): { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[] {
+  checkUpdates(): {
+    updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[];
+    newAvailable: { pluginName: string; version: string; description: string; sourceId: number }[];
+  } {
     const installed = this.store.getInstalled();
+    const installedNames = new Set(installed.map((i) => i.name));
     const updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[] = [];
 
     for (const item of installed) {
@@ -396,7 +400,22 @@ export class MarketplaceManager {
       }
     }
 
-    return updates;
+    // Plugins in the catalog that aren't installed — surface them so the
+    // Plugins page can show "N new plugins available" at the page level.
+    const newAvailable: { pluginName: string; version: string; description: string; sourceId: number }[] = [];
+    const allCatalog = this.searchCatalog({});
+    for (const entry of allCatalog) {
+      if (!installedNames.has(entry.name)) {
+        newAvailable.push({
+          pluginName: entry.name,
+          version: entry.version ?? "0.0.0",
+          description: entry.description ?? "",
+          sourceId: entry.sourceId,
+        });
+      }
+    }
+
+    return { updates, newAvailable };
   }
 
   close(): void {
