@@ -3114,9 +3114,119 @@ export async function startGatewayServer(
   // Populate the late-bound ref so the chat:send handler can emit project activity.
   dashboardBroadcasterRef = dashboardBroadcaster;
 
+  /**
+   * Autonomous Aion turn triggered by a TaskMaster completion/handoff event
+   * on an idle session. Drains whatever's queued via injectMessage (the
+   * note(s) plus any siblings), fires a minimal invocation, and broadcasts
+   * the resulting response into the originating chat so the user sees it
+   * land without having to message first.
+   *
+   * Light compared to the chat:send path: no image handling, no abort
+   * controllers, no tool-activity progress events. Just "agent replies to
+   * the system-injected note."
+   */
+  async function fireAutonomousTurnForTaskmaster(args: {
+    sessionKey: string;
+    chatSessionId?: string;
+    projectPath: string;
+  }): Promise<void> {
+    if (ownerEntityId === undefined) return;
+    const entity = entityStore.getEntity(ownerEntityId);
+    if (entity === null) return;
+
+    // Drain injected notes for this session — the content of this autonomous
+    // turn IS those notes, so swallowing them here prevents a double-drain
+    // on the next user turn.
+    const notes = agentInvoker.drainInjections(args.sessionKey);
+    if (notes.length === 0) return;
+    const content = notes.join("\n\n---\n\n");
+
+    const coaFingerprint = coaLogger.log({
+      resourceId,
+      entityId: entity.id,
+      entityAlias: entity.coaAlias,
+      nodeId,
+      workType: "action",
+    });
+
+    const runId = ulid();
+    const targetConnId = ownerConnectionMap.get(ownerEntityId);
+
+    const emit = (type: string, payload: Record<string, unknown>): void => {
+      if (targetConnId === undefined) return;
+      recordAndSendChat(args.chatSessionId, targetConnId, type, payload);
+    };
+
+    emit("chat:thinking", {
+      sessionId: args.chatSessionId,
+      runId,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Persist the injection as a synthetic user turn so the chat transcript
+    // shows what Aion is responding to on reload. Prefixed so the client can
+    // style it differently if desired.
+    if (args.chatSessionId !== undefined) {
+      const existing = chatSessionData.get(args.chatSessionId);
+      if (existing !== undefined) {
+        chatSessionData.set(
+          args.chatSessionId,
+          ChatPersistence.appendMessage(existing, {
+            role: "user",
+            content,
+            timestamp: new Date().toISOString(),
+            runId,
+          }),
+        );
+      }
+    }
+
+    const outcome = await agentInvoker.process({
+      entity,
+      channel: "web",
+      content,
+      coaFingerprint,
+      queueMessageId: ulid(),
+      isOwner: true,
+      sessionKey: args.sessionKey,
+      projectContext: args.projectPath.length > 0 ? args.projectPath : undefined,
+      chatSessionId: args.chatSessionId,
+    });
+
+    if (outcome.type === "response") {
+      const text = outcome.text || "[No response]";
+      emit("chat:response", {
+        sessionId: args.chatSessionId,
+        runId,
+        text,
+        timestamp: new Date().toISOString(),
+      });
+      if (args.chatSessionId !== undefined) {
+        const existing = chatSessionData.get(args.chatSessionId);
+        if (existing !== undefined) {
+          const updated = ChatPersistence.appendMessage(existing, {
+            role: "assistant",
+            content: text,
+            timestamp: new Date().toISOString(),
+            runId,
+          });
+          chatSessionData.set(args.chatSessionId, updated);
+          try { chatPersistence.save(updated); } catch { /* non-fatal */ }
+        }
+      }
+    }
+  }
+
   // Inject worker-completion / handoff reports back into Aion's chat session.
   // Without this, a dispatched worker was fire-and-forget from Aion's
   // perspective — it had no way to notice the job finished.
+  //
+  // Two delivery paths:
+  //   (a) If Aion is currently mid-turn on this session, queue the note via
+  //       injectMessage — the active tool loop drains it naturally.
+  //   (b) If the session is idle (no active invocation), fire an autonomous
+  //       follow-up turn so Aion processes the note without waiting for the
+  //       user to message. Without (b), the note sits in the queue forever.
   workerRuntime.on("runtime:event", (event: { type: string; jobId: string; [key: string]: unknown }) => {
     const origin = jobOriginBySessionKey.get(event.jobId);
     if (!origin?.sessionKey) return;
@@ -3137,6 +3247,19 @@ export async function startGatewayServer(
         agentInvoker.injectMessage(origin.sessionKey, note);
       } catch (err) {
         log.warn(`failed to inject worker event into session ${origin.sessionKey}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Path (b): session idle → fire an autonomous turn so Aion reads the
+      // note now, not on the user's next message. Fire-and-forget; errors
+      // are logged but don't propagate (this is a background flow).
+      if (!agentInvoker.isBusy(origin.sessionKey)) {
+        void fireAutonomousTurnForTaskmaster({
+          sessionKey: origin.sessionKey,
+          chatSessionId: origin.chatSessionId,
+          projectPath: origin.projectPath,
+        }).catch((err: unknown) => {
+          log.warn(`autonomous taskmaster turn failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
       }
     }
     // Terminal states free the map entry so we don't leak memory on long runs.
@@ -3219,6 +3342,19 @@ export async function startGatewayServer(
         });
       }
     });
+  }
+
+  // Boot-time reconciliation — fires AFTER the runtime:event listeners above
+  // are wired so `job_failed` events emitted during reconcile flow through
+  // the same Work Queue + chat-injection paths as runtime completions.
+  // Covers SIGKILL-on-restart zombies and crash-survivors alike.
+  try {
+    const reconciled = await workerRuntime.reconcileOrphanedJobs();
+    if (reconciled > 0) {
+      log.info(`taskmaster reconciliation: ${String(reconciled)} orphaned job(s) flipped to failed`);
+    }
+  } catch (err) {
+    log.warn(`taskmaster reconciliation failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   let heartbeatScheduler: HeartbeatScheduler | null = null;

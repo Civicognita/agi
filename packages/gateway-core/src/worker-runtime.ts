@@ -16,7 +16,7 @@ import { homedir } from "node:os";
 
 import { JobBridge } from "./job-bridge.js";
 import { WorkerPromptLoader } from "./worker-prompt-loader.js";
-import { dispatchJobsDir, loadLiveJobOverlay, mergeJobStatus } from "./dispatch-paths.js";
+import { dispatchJobsDir, finalizeDispatchFile, loadLiveJobOverlay, mergeJobStatus } from "./dispatch-paths.js";
 import type { ToolRegistry, ToolExecutionContext } from "./tool-registry.js";
 import type { LLMProvider } from "./llm/provider.js";
 import type { LLMInvokeParams, LLMToolContinuationParams, LLMContentBlock } from "./llm/types.js";
@@ -89,6 +89,10 @@ export interface WorkerJob {
   startedAt?: string;
   completedAt?: string;
   error?: string;
+  /** Post-terminal fields: populated after finalizeDispatchFile writes. */
+  summary?: string;
+  tokens?: { input: number; output: number };
+  toolCalls?: Array<{ name: string; ts: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +243,9 @@ interface WorkerRunResult {
   totalOutputTokens: number;
   toolLoops: number;
   errors: string[];
+  /** Ordered trace of tools the worker called (name + timestamp) for the
+   *  Taskmaster tab's expanded-row view. */
+  toolCalls: Array<{ name: string; ts: string }>;
 }
 
 export interface ActiveJobStatus {
@@ -359,22 +366,46 @@ export class WorkerRuntime extends EventEmitter {
     promise
       .then((result) => {
         this.activeJobs.delete(jobId);
-        // Update state
+        const finalStatus = result.status === "completed" ? "complete" : "failed";
+        const errorMsg = result.errors.length > 0 ? result.errors.join("; ") : undefined;
+        // Update the global state index.
         try {
           const bridge = new JobBridge(this.config.stateDir);
-          bridge.updateJobStatus(jobId, result.status === "completed" ? "complete" : "failed",
-            result.errors.length > 0 ? result.errors.join("; ") : undefined);
+          bridge.updateJobStatus(jobId, finalStatus, errorMsg);
         } catch { /* non-fatal */ }
+        // Finalize the per-project dispatch file with the full summary so the
+        // Taskmaster tab can render "what was done" for completed jobs.
+        if (projectContext?.path) {
+          finalizeDispatchFile(projectContext.path, jobId, {
+            status: finalStatus,
+            summary: result.text,
+            completedAt: new Date().toISOString(),
+            error: errorMsg,
+            tokens: { input: result.totalInputTokens, output: result.totalOutputTokens },
+            toolCalls: result.toolCalls,
+          });
+        }
         this.emit("runtime:event", {
           type: result.status === "completed" ? "report_ready" : "job_failed",
           jobId,
           gist: result.text.slice(0, 500),
-          error: result.errors.join("; ") || undefined,
+          summary: result.text,
+          error: errorMsg,
+          tokens: { input: result.totalInputTokens, output: result.totalOutputTokens },
+          toolCalls: result.toolCalls,
         });
       })
       .catch((err: unknown) => {
         this.activeJobs.delete(jobId);
-        this.emit("runtime:event", { type: "job_failed", jobId, error: err instanceof Error ? err.message : String(err) });
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        if (projectContext?.path) {
+          finalizeDispatchFile(projectContext.path, jobId, {
+            status: "failed",
+            completedAt: new Date().toISOString(),
+            error: errorMsg,
+          });
+        }
+        this.emit("runtime:event", { type: "job_failed", jobId, error: errorMsg });
       });
   }
 
@@ -409,7 +440,7 @@ export class WorkerRuntime extends EventEmitter {
     if (this.toolRegistry === null) {
       const msg = "WorkerRuntime has no ToolRegistry bound — cannot execute workers. (Call setToolRegistry() during boot.)";
       this.emit("runtime:event", { type: "worker_done", jobId, worker: workerSpec, status: "failed" });
-      return { jobId, status: "failed", text: "", totalInputTokens: 0, totalOutputTokens: 0, toolLoops: 0, errors: [msg] };
+      return { jobId, status: "failed", text: "", totalInputTokens: 0, totalOutputTokens: 0, toolLoops: 0, errors: [msg], toolCalls: [] };
     }
     const toolRegistry = this.toolRegistry;
     const workerTier: VerificationTier = this.config.workerTier ?? "verified";
@@ -446,6 +477,7 @@ export class WorkerRuntime extends EventEmitter {
     let toolLoops = 0;
     const maxToolLoops = 30;
     const errors: string[] = [];
+    const toolCalls: Array<{ name: string; ts: string }> = [];
 
     try {
       let response = await this.invoker.invoke({
@@ -491,6 +523,7 @@ export class WorkerRuntime extends EventEmitter {
             }
           }
           toolResults.push({ tool_use_id: tc.id, content: resultContent });
+          toolCalls.push({ name: tc.name, ts: new Date().toISOString() });
           this.emit("runtime:event", { type: "worker_tool_call", jobId, worker: workerSpec, tool: tc.name });
         }
 
@@ -530,12 +563,13 @@ export class WorkerRuntime extends EventEmitter {
         totalOutputTokens,
         toolLoops,
         errors,
+        toolCalls,
       };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       errors.push(errorMsg);
       this.emit("runtime:event", { type: "worker_done", jobId, worker: workerSpec, status: "failed" });
-      return { jobId, status: "failed", text: "", totalInputTokens, totalOutputTokens, toolLoops, errors };
+      return { jobId, status: "failed", text: "", totalInputTokens, totalOutputTokens, toolLoops, errors, toolCalls };
     }
   }
 
@@ -572,6 +606,35 @@ export class WorkerRuntime extends EventEmitter {
     } catch { /* non-fatal */ }
     this.activeJobs.delete(jobId);
     this.emit("runtime:event", { type: "job_failed", jobId, error: reason });
+  }
+
+  /**
+   * Boot-time reconciliation: any job in `running` / `pending` / `checkpoint`
+   * status in the state index at the moment WorkerRuntime boots is by
+   * definition orphaned (the process that was running it did not survive the
+   * restart). Flip each to `failed` with a restart reason and emit
+   * `job_failed` events so the chat feedback loop + Work Queue reflect
+   * reality. Call this exactly once per boot, right after construction.
+   *
+   * Returns the number of jobs that were reconciled (zero when the state
+   * file is empty or only contains terminal jobs).
+   */
+  async reconcileOrphanedJobs(): Promise<number> {
+    const jobs = await this.listAllJobs();
+    const orphaned = jobs.filter((j) =>
+      j.status === "running" || j.status === "pending" || j.status === "checkpoint",
+    );
+    if (orphaned.length === 0) return 0;
+
+    const reason = "Gateway restarted while this job was in flight — the worker process did not survive.";
+    const bridge = new JobBridge(this.config.stateDir);
+    for (const job of orphaned) {
+      try {
+        bridge.updateJobStatus(job.id, "failed", reason);
+      } catch { /* non-fatal */ }
+      this.emit("runtime:event", { type: "job_failed", jobId: job.id, error: reason });
+    }
+    return orphaned.length;
   }
 
   getActiveJobs(): ActiveJobStatus[] {
@@ -626,7 +689,12 @@ export class WorkerRuntime extends EventEmitter {
             worker?: string;
             status: "pending" | "running" | "checkpoint" | "complete" | "failed";
             createdAt: string;
+            completedAt?: string;
             handoffs?: Array<{ question: string; askedAt: string }>;
+            summary?: string;
+            error?: string;
+            tokens?: { input: number; output: number };
+            toolCalls?: Array<{ name: string; ts: string }>;
           };
           const live = overlay.get(flat.id);
           const mergedStatus = mergeJobStatus(flat, live);
@@ -648,8 +716,11 @@ export class WorkerRuntime extends EventEmitter {
             status: mergedStatus,
             createdAt: flat.createdAt,
             startedAt: live?.startedAt,
-            completedAt: live?.completedAt,
-            error: live?.error,
+            completedAt: live?.completedAt ?? flat.completedAt,
+            error: live?.error ?? flat.error,
+            summary: flat.summary,
+            tokens: flat.tokens,
+            toolCalls: flat.toolCalls,
           });
         } catch {
           // Skip unreadable files.

@@ -181,6 +181,12 @@ export class AgentInvoker extends EventEmitter {
   /** Per-session injection queues for mid-loop message injection. */
   private readonly injectionQueues = new Map<string, string[]>();
 
+  /** Set of session keys with an in-flight process() call. Used by server.ts
+   *  to decide whether a taskmaster-completion injection should kick off an
+   *  autonomous follow-up turn (idle) or just queue for the active loop to
+   *  drain (busy). */
+  private readonly activeSessions = new Set<string>();
+
   /** Resolve apiClient — supports both static LLMProvider and getter function. */
   private get apiClient(): LLMProvider {
     const c = this.deps.apiClient;
@@ -218,6 +224,14 @@ export class AgentInvoker extends EventEmitter {
     return queue !== undefined && queue.length > 0;
   }
 
+  /** True when a process() call is in flight for this sessionKey — callers
+   *  (e.g. the TaskMaster runtime:event handler) use this to decide whether
+   *  to kick off an autonomous follow-up turn or let the active loop drain
+   *  the injection on its own. */
+  isBusy(sessionKey: string): boolean {
+    return this.activeSessions.has(sessionKey);
+  }
+
   /**
    * Process an inbound message through the full invocation pipeline.
    *
@@ -225,8 +239,21 @@ export class AgentInvoker extends EventEmitter {
    * callback (replacing AgentBridge.notify for autonomous operation).
    */
   async process(request: InvocationRequest): Promise<InvocationOutcome> {
+    const sKey = request.sessionKey ?? request.entity.id;
+
+    // Track this session as busy so the TaskMaster runtime:event handler can
+    // tell whether a completion-note injection should kick off an autonomous
+    // follow-up turn (session idle) or piggyback on the active loop.
+    this.activeSessions.add(sKey);
+    try {
+      return await this.processInner(request, sKey);
+    } finally {
+      this.activeSessions.delete(sKey);
+    }
+  }
+
+  private async processInner(request: InvocationRequest, sKey: string): Promise<InvocationOutcome> {
     const { entity, channel, content, coaFingerprint } = request;
-    const sKey = request.sessionKey ?? entity.id;
 
     // -----------------------------------------------------------------------
     // Step 3: /human command check (processed in ALL states)
