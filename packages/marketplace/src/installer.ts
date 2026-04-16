@@ -346,7 +346,11 @@ await build({
   // Let plugins import gateway deps (e.g. @anthropic-ai/sdk) that aren't
   // in the plugin's own node_modules. Without this, only the explicitly
   // aliased @aionima/* packages resolve at build time.
-  nodePaths: [${JSON.stringify(resolve(agiDir, "node_modules"))}],
+  nodePaths: [
+    ${JSON.stringify(resolve(agiDir, "node_modules"))},
+    ${JSON.stringify(resolve(agiDir, "node_modules", ".pnpm", "node_modules"))},
+    ${JSON.stringify(resolve(agiDir, "packages", "gateway-core", "node_modules"))},
+  ],
   alias: {
     "@aionima/sdk": ${JSON.stringify(resolve(agiDir, "packages/aion-sdk/src/index.ts"))},
     "@aionima/plugins": ${JSON.stringify(resolve(agiDir, "packages/plugins/src/index.ts"))},
