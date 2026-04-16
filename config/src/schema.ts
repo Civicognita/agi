@@ -14,6 +14,9 @@ const GatewayConfigSchema = z
      *  prevents runaway loops, so this is purely a cost ceiling. Set to 0
      *  for no cap (default). */
     maxToolLoops: z.number().int().min(0).optional(),
+    /** Periodically sync Plugin + MApp marketplaces in the background.
+     *  When true, a scheduled task checks for catalog updates every 30 min. */
+    autoSyncMarketplace: z.boolean().default(true).optional(),
   })
   .strict();
 

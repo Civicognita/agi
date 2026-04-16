@@ -3596,6 +3596,27 @@ export async function startGatewayServer(
     enabled: true,
   });
 
+  // Register core scheduled task: marketplace auto-sync
+  const autoSyncEnabled = (config.gateway as { autoSyncMarketplace?: boolean } | undefined)?.autoSyncMarketplace !== false;
+  pluginRegistry.addScheduledTask("core", {
+    id: "marketplace-auto-sync",
+    name: "Marketplace Auto-Sync",
+    description: "Periodically syncs Plugin + MApp marketplace catalogs and auto-updates installed plugins",
+    intervalMs: 30 * 60 * 1000, // 30 minutes
+    handler: async () => {
+      try {
+        const result = await marketplaceManager.syncAndUpdateAll();
+        if (result.updated.length > 0) {
+          log.info(`marketplace auto-sync: updated ${result.updated.join(", ")}`);
+        }
+      } catch (err) {
+        log.warn(`marketplace auto-sync failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+    skipIfRunning: true,
+    enabled: autoSyncEnabled,
+  });
+
   scheduledTaskManager.start();
 
   // -------------------------------------------------------------------------

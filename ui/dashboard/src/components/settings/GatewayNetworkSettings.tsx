@@ -190,6 +190,8 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
   }, []);
 
   const channel = gateway.updateChannel ?? "main";
+  const autoSync = gateway.autoSyncMarketplace !== false;
+  const agentProvider = (config.agent as Record<string, unknown> | undefined)?.provider as string ?? "anthropic";
   const tunnelMode = (config.hosting as Record<string, unknown> | undefined)?.["tunnelMode"] as string ?? "named";
   const tunnelDomain = (config.hosting as Record<string, unknown> | undefined)?.["tunnelDomain"] as string ?? "";
 
@@ -318,6 +320,63 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
           {channel === "dev"
             ? "Tracking the dev branch. Updates may include untested changes."
             : "Tracking the main branch. Updates are manually merged and stable."}
+        </p>
+      </Card>}
+
+      {/* Marketplace auto-sync */}
+      {showGeneral && <Card className="p-6 gap-0 mb-4">
+        <SectionHeading>Marketplace</SectionHeading>
+        <div className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={autoSync}
+            onChange={(e) => update((prev) => ({
+              ...prev,
+              gateway: {
+                ...(prev.gateway ?? { host: "127.0.0.1", port: 3100, state: "OFFLINE" as const }),
+                autoSyncMarketplace: e.target.checked,
+              },
+            }))}
+            className="w-4 h-4 rounded border-input cursor-pointer"
+          />
+          <div>
+            <div className="text-[13px] font-medium text-foreground">Auto-sync marketplaces</div>
+            <div className="text-[11px] text-muted-foreground">Periodically check for new plugins and updates (every 30 min)</div>
+          </div>
+        </div>
+      </Card>}
+
+      {/* LLM Provider */}
+      {showGeneral && <Card className="p-6 gap-0 mb-4">
+        <SectionHeading>LLM Provider</SectionHeading>
+        <div className="grid grid-cols-2 gap-4">
+          <FieldGroup label="Active Provider">
+            <select
+              className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+              value={agentProvider}
+              onChange={(e) => update((prev) => ({
+                ...prev,
+                agent: {
+                  ...(prev.agent ?? {}),
+                  provider: e.target.value,
+                },
+              }))}
+            >
+              <option value="anthropic">Anthropic (API key)</option>
+              <option value="claude-max">Claude Max (subscription)</option>
+              <option value="openai">OpenAI</option>
+              <option value="ollama">Ollama (local)</option>
+            </select>
+          </FieldGroup>
+        </div>
+        <p className="text-[12px] text-muted-foreground mt-2">
+          {agentProvider === "claude-max"
+            ? "Using your Claude Max subscription. Requires Claude Code to be authenticated on this machine."
+            : agentProvider === "anthropic"
+            ? "Using the Anthropic API. Configure your API key in Settings > Anthropic."
+            : agentProvider === "ollama"
+            ? "Using a local Ollama instance."
+            : `Using provider: ${agentProvider}`}
         </p>
       </Card>}
 
