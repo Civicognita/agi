@@ -446,7 +446,8 @@ export type DashboardEvent =
   | { type: "tm:checkpoint"; data: TmCheckpointData }
   | { type: "tm:report_ready"; data: TmReportReadyData }
   | { type: "tm:job_failed"; data: TmJobFailedData }
-  | { type: "notification:new"; data: NotificationData };
+  | { type: "notification:new"; data: NotificationData }
+  | { type: "usage:recorded"; data: { source: "chat" | "worker"; projectPath: string; costUsd: number } };
 
 /** Dashboard WebSocket subscription message. */
 export interface DashboardSubscription {

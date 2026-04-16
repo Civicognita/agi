@@ -297,7 +297,8 @@ export type DashboardEvent =
   | { type: "tm:job_update"; data: WorkerJobUpdate }
   | { type: "tm:report_ready"; data: WorkerReportReady }
   | { type: "notification:new"; data: Notification }
-  | { type: "config:changed"; data: { changedKeys: string[]; timestamp: string } };
+  | { type: "config:changed"; data: { changedKeys: string[]; timestamp: string } }
+  | { type: "usage:recorded"; data: { source: "chat" | "worker"; projectPath: string; costUsd: number } };
 
 /** Structured log entry streamed from the gateway. */
 export interface LogEntry {

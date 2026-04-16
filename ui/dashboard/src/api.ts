@@ -2248,6 +2248,22 @@ export async function fetchUsageByProject(days = 30): Promise<ProjectCost[]> {
   return data.projects;
 }
 
+export interface ProjectSourceCost {
+  projectPath: string;
+  source: "chat" | "worker";
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  invocationCount: number;
+}
+
+export async function fetchUsageByProjectSource(days = 30): Promise<ProjectSourceCost[]> {
+  const res = await fetch(`/api/usage/by-project-source?days=${String(days)}`);
+  if (!res.ok) return [];
+  const data = await res.json() as { projects: ProjectSourceCost[] };
+  return data.projects;
+}
+
 export async function fetchUsageHistory(days = 30): Promise<UsageHistoryPoint[]> {
   const res = await fetch(`/api/usage/history?days=${String(days)}`);
   if (!res.ok) return [];

@@ -49,6 +49,8 @@ export interface UsageRecord {
   toolCount: number;
   loopCount: number;
   createdAt: string;
+  /** "chat" for Aion direct turns, "worker" for TaskMaster worker runs. */
+  source: "chat" | "worker";
 }
 
 export interface RecordUsageParams {
@@ -61,6 +63,8 @@ export interface RecordUsageParams {
   coaFingerprint?: string;
   toolCount?: number;
   loopCount?: number;
+  /** "chat" for Aion direct turns, "worker" for TaskMaster worker runs. Defaults to "chat". */
+  source?: "chat" | "worker";
 }
 
 export interface UsageSummary {
@@ -72,6 +76,16 @@ export interface UsageSummary {
 
 export interface ProjectCost {
   projectPath: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  invocationCount: number;
+}
+
+/** Per-project + per-source breakdown for the dual-bar chart. */
+export interface ProjectSourceCost {
+  projectPath: string;
+  source: "chat" | "worker";
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
@@ -105,22 +119,30 @@ CREATE TABLE IF NOT EXISTS usage_log (
 export class UsageStore {
   constructor(private readonly db: Database) {
     db.exec(CREATE_USAGE_LOG);
+    // Migration: add `source` column for existing installs. SQLite doesn't
+    // support ADD COLUMN IF NOT EXISTS, so catch the "duplicate column" error.
+    try {
+      db.exec(`ALTER TABLE usage_log ADD COLUMN source TEXT NOT NULL DEFAULT 'chat'`);
+    } catch {
+      // Column already exists — expected on new installs or repeated boots.
+    }
   }
 
   record(params: RecordUsageParams): UsageRecord {
     const id = ulid();
     const now = new Date().toISOString();
     const costUsd = estimateCost(params.model, params.inputTokens, params.outputTokens);
+    const source = params.source ?? "chat";
 
     this.db.prepare(`
-      INSERT INTO usage_log (id, entity_id, project_path, provider, model, input_tokens, output_tokens, cost_usd, coa_fingerprint, tool_count, loop_count, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO usage_log (id, entity_id, project_path, provider, model, input_tokens, output_tokens, cost_usd, coa_fingerprint, tool_count, loop_count, created_at, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, params.entityId, params.projectPath ?? null,
       params.provider, params.model,
       params.inputTokens, params.outputTokens, costUsd,
       params.coaFingerprint ?? null,
-      params.toolCount ?? 0, params.loopCount ?? 0, now,
+      params.toolCount ?? 0, params.loopCount ?? 0, now, source,
     );
 
     return {
@@ -129,7 +151,7 @@ export class UsageStore {
       inputTokens: params.inputTokens, outputTokens: params.outputTokens,
       costUsd, coaFingerprint: params.coaFingerprint ?? null,
       toolCount: params.toolCount ?? 0, loopCount: params.loopCount ?? 0,
-      createdAt: now,
+      createdAt: now, source,
     };
   }
 
@@ -158,6 +180,25 @@ export class UsageStore {
     `).all(cutoff) as { project_path: string; input: number; output: number; cost: number; count: number }[];
     return rows.map((r) => ({
       projectPath: r.project_path,
+      inputTokens: r.input,
+      outputTokens: r.output,
+      costUsd: Math.round(r.cost * 10000) / 10000,
+      invocationCount: r.count,
+    }));
+  }
+
+  /** Per-project + per-source breakdown for the dual-bar chart (chat vs worker). */
+  getByProjectAndSource(days = 30): ProjectSourceCost[] {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const rows = this.db.prepare(`
+      SELECT project_path, source, SUM(input_tokens) as input, SUM(output_tokens) as output,
+             SUM(cost_usd) as cost, COUNT(*) as count
+      FROM usage_log WHERE created_at >= ? AND project_path IS NOT NULL
+      GROUP BY project_path, source ORDER BY cost DESC
+    `).all(cutoff) as { project_path: string; source: string; input: number; output: number; cost: number; count: number }[];
+    return rows.map((r) => ({
+      projectPath: r.project_path,
+      source: (r.source === "worker" ? "worker" : "chat") as "chat" | "worker",
       inputTokens: r.input,
       outputTokens: r.output,
       costUsd: Math.round(r.cost * 10000) / 10000,

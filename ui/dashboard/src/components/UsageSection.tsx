@@ -1,19 +1,19 @@
 /**
  * UsageSection — LLM token usage, cost breakdown, and daily trend.
- * Shows True Cost per project on the Overview page.
+ * Shows True Cost per project on the Overview page with dual bars
+ * (chat vs TaskMaster worker) and live WS-driven refresh.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { EChart } from "@particle-academy/react-echarts";
 import { Card, CardContent } from "@/components/ui/card";
-import { fetchUsageSummary, fetchUsageByProject, fetchUsageHistory } from "../api.js";
-import type { UsageSummary, ProjectCost, UsageHistoryPoint } from "../api.js";
-
-/** Polling interval for live usage refresh, in milliseconds.
- * 10s strikes a balance: fresh enough that the user can watch spend
- * accumulate during an agent turn, cheap enough to run while the page
- * is open without hammering the gateway. */
-const USAGE_REFRESH_MS = 10_000;
+import { useDashboardWS } from "../hooks.js";
+import {
+  fetchUsageSummary,
+  fetchUsageByProjectSource,
+  fetchUsageHistory,
+} from "../api.js";
+import type { UsageSummary, UsageHistoryPoint, ProjectSourceCost } from "../api.js";
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -32,39 +32,66 @@ const COLORS = {
   yellow: "#eab308",
   mauve: "#c084fc",
   red: "#ef4444",
+  orange: "#f97316",
   text: "#8b8fa3",
   border: "#262a35",
   card: "#181b23",
   foreground: "#e1e4ea",
 };
 
+/** Build the dual-bar chart data from the flat source list. Each project
+ *  gets two thin bars: chat (blue) and worker (orange). */
+function buildDualBarData(rows: ProjectSourceCost[]): {
+  names: string[];
+  chatCosts: number[];
+  workerCosts: number[];
+} {
+  const byProject = new Map<string, { chat: number; worker: number }>();
+  for (const r of rows) {
+    const name = r.projectPath.split("/").pop() ?? r.projectPath;
+    const entry = byProject.get(name) ?? { chat: 0, worker: 0 };
+    entry[r.source] += r.costUsd;
+    byProject.set(name, entry);
+  }
+  // Sort by total descending.
+  const sorted = [...byProject.entries()].sort((a, b) => (b[1].chat + b[1].worker) - (a[1].chat + a[1].worker));
+  return {
+    names: sorted.map(([n]) => n),
+    chatCosts: sorted.map(([, v]) => Math.round(v.chat * 10000) / 10000),
+    workerCosts: sorted.map(([, v]) => Math.round(v.worker * 10000) / 10000),
+  };
+}
+
 export function UsageSection({ days = 30 }: { days?: number }) {
   const [summary, setSummary] = useState<UsageSummary | null>(null);
-  const [projects, setProjects] = useState<ProjectCost[]>([]);
+  const [projectSource, setProjectSource] = useState<ProjectSourceCost[]>([]);
   const [history, setHistory] = useState<UsageHistoryPoint[]>([]);
 
-  // Refresh all three queries. Stable callback so the polling effect
-  // doesn't reinstall every render.
   const refresh = useCallback(() => {
     fetchUsageSummary(days).then(setSummary).catch(() => {});
-    fetchUsageByProject(days).then(setProjects).catch(() => {});
+    fetchUsageByProjectSource(days).then(setProjectSource).catch(() => {});
     fetchUsageHistory(days).then(setHistory).catch(() => {});
   }, [days]);
 
   useEffect(() => {
-    // Initial load
     refresh();
-    // Live refresh — lets the user watch spend climb while the agent works.
-    const t = setInterval(refresh, USAGE_REFRESH_MS);
+    // Low-frequency safety-net poll — primary driver is the WS event below.
+    const t = setInterval(refresh, 30_000);
     return () => clearInterval(t);
   }, [refresh]);
 
+  // Live refresh on every usage:recorded WS event.
+  useDashboardWS(
+    useCallback((event) => {
+      if (event.type === "usage:recorded") {
+        refresh();
+      }
+    }, [refresh]),
+  );
+
   if (!summary) return null;
 
-  const projectNames = projects.map((p) => {
-    const parts = p.projectPath.split("/");
-    return parts[parts.length - 1] ?? p.projectPath;
-  });
+  const { names, chatCosts, workerCosts } = buildDualBarData(projectSource);
 
   return (
     <div className="space-y-4">
@@ -148,10 +175,16 @@ export function UsageSection({ days = 30 }: { days?: number }) {
         </Card>
       )}
 
-      {/* Cost by project */}
-      {projects.length > 0 && (
+      {/* Cost by Project — dual bars: chat (blue) + worker (orange) */}
+      {names.length > 0 && (
         <Card className="p-4">
-          <h4 className="text-[13px] font-semibold text-foreground mb-2">Cost by Project</h4>
+          <h4 className="text-[13px] font-semibold text-foreground mb-2">
+            Cost by Project
+            <span className="ml-3 text-[10px] font-normal text-muted-foreground">
+              <span style={{ color: COLORS.blue }}>■</span> Chat
+              <span className="ml-2" style={{ color: COLORS.orange }}>■</span> TaskMaster
+            </span>
+          </h4>
           <EChart
             option={{
               grid: { top: 8, right: 60, bottom: 8, left: 100 },
@@ -168,18 +201,30 @@ export function UsageSection({ days = 30 }: { days?: number }) {
               },
               yAxis: {
                 type: "category" as const,
-                data: projectNames,
+                data: names,
                 axisLabel: { color: COLORS.foreground, fontSize: 11 },
                 axisLine: { lineStyle: { color: COLORS.border } },
               },
-              series: [{
-                type: "bar" as const,
-                data: projects.map((p) => Math.round(p.costUsd * 10000) / 10000),
-                itemStyle: { color: COLORS.green, borderRadius: [0, 4, 4, 0] },
-                barMaxWidth: 24,
-              }],
+              series: [
+                {
+                  name: "Chat",
+                  type: "bar" as const,
+                  stack: "cost",
+                  data: chatCosts,
+                  itemStyle: { color: COLORS.blue, borderRadius: [0, 0, 0, 0] },
+                  barMaxWidth: 14,
+                },
+                {
+                  name: "TaskMaster",
+                  type: "bar" as const,
+                  stack: "cost",
+                  data: workerCosts,
+                  itemStyle: { color: COLORS.orange, borderRadius: [0, 4, 4, 0] },
+                  barMaxWidth: 14,
+                },
+              ],
             }}
-            style={{ height: Math.max(100, projects.length * 36) }}
+            style={{ height: Math.max(100, names.length * 36) }}
           />
         </Card>
       )}

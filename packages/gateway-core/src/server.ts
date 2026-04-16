@@ -2553,7 +2553,7 @@ export async function startGatewayServer(
             // Record usage (tokens + cost + project attribution)
             if (outcome.usage && outcome.model) {
               try {
-                usageStore.record({
+                const chatUsageRec = usageStore.record({
                   entityId: ownerEntityId,
                   projectPath: chatProjectPath,
                   provider: outcome.provider ?? "unknown",
@@ -2563,6 +2563,12 @@ export async function startGatewayServer(
                   coaFingerprint: outcome.coaFingerprint,
                   toolCount: outcome.toolCount ?? 0,
                   loopCount: outcome.loopCount ?? 0,
+                  source: "chat",
+                });
+                dashboardBroadcasterRef?.emitUsageRecorded({
+                  source: "chat",
+                  projectPath: chatProjectPath ?? "",
+                  costUsd: chatUsageRec.costUsd,
                 });
               } catch (usageErr) {
                 log.warn(`usage recording failed: ${usageErr instanceof Error ? usageErr.message : String(usageErr)}`);
@@ -3272,7 +3278,7 @@ export async function startGatewayServer(
       const tokens = event.tokens as { input: number; output: number } | undefined;
       if (tokens !== undefined && ownerEntityId !== undefined) {
         try {
-          usageStore.record({
+          const workerUsageRec = usageStore.record({
             entityId: ownerEntityId,
             projectPath: origin?.projectPath ?? "",
             provider: "anthropic",
@@ -3281,7 +3287,13 @@ export async function startGatewayServer(
             outputTokens: tokens.output,
             coaFingerprint: typeof event.coaReqId === "string" ? event.coaReqId : "",
             toolCount: Array.isArray(event.toolCalls) ? event.toolCalls.length : 0,
+            source: "worker",
             loopCount: typeof event.toolLoops === "number" ? event.toolLoops : 0,
+          });
+          dashboardBroadcasterRef?.emitUsageRecorded({
+            source: "worker",
+            projectPath: origin?.projectPath ?? "",
+            costUsd: workerUsageRec.costUsd,
           });
         } catch (err) {
           log.warn(`worker usage recording failed: ${err instanceof Error ? err.message : String(err)}`);

@@ -198,7 +198,7 @@ export interface RuntimeStateDeps {
   /** SecretsManager — TPM2-sealed credential store. */
   secrets?: SecretsManager;
   /** UsageStore — LLM token usage and cost tracking. */
-  usageStore?: { getSummary(days?: number): unknown; getByProject(days?: number): unknown; getHistory(days?: number, bucket?: string): unknown };
+  usageStore?: { getSummary(days?: number): unknown; getByProject(days?: number): unknown; getByProjectAndSource(days?: number): unknown; getHistory(days?: number, bucket?: string): unknown };
 
   /** MAppRegistry — standalone MApp registry (NOT plugin-based). */
   mappRegistry?: import("./mapp-registry.js").MAppRegistry;
@@ -2043,6 +2043,12 @@ export async function createGatewayRuntimeState(
       if (!isPrivateNetwork(getClientIp(request.raw))) return reply.code(403).send({ error: "Private network only" });
       const days = Number((request.query as { days?: string }).days) || 30;
       return reply.send({ projects: uStore.getByProject(days) });
+    });
+
+    fastify.get("/api/usage/by-project-source", async (request, reply) => {
+      if (!isPrivateNetwork(getClientIp(request.raw))) return reply.code(403).send({ error: "Private network only" });
+      const days = Number((request.query as { days?: string }).days) || 30;
+      return reply.send({ projects: uStore.getByProjectAndSource(days) });
     });
 
     fastify.get("/api/usage/history", async (request, reply) => {
