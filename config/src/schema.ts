@@ -50,8 +50,8 @@ const AuthConfigSchema = z
 
 const ProviderConfigSchema = z
   .object({
-    /** Provider type. */
-    type: z.enum(["anthropic", "openai", "ollama"]),
+    /** Provider type. Built-in or plugin-contributed. */
+    type: z.string(),
     /** Model identifier for this provider. */
     model: z.string(),
     /** API key (falls back to env var per provider). */
@@ -67,8 +67,9 @@ const AgentConfigSchema = z
     resourceId: z.string().default("$A0"),
     /** COA node identifier (e.g. "@A0"). */
     nodeId: z.string().default("@A0"),
-    /** LLM provider type. */
-    provider: z.enum(["anthropic", "openai", "ollama"]).default("anthropic"),
+    /** LLM provider type. Built-in: anthropic, openai, ollama. Plugins can
+     *  contribute additional types (e.g. "claude-max") via api.registerProvider(). */
+    provider: z.string().default("anthropic"),
     /** Default model identifier (provider-specific). */
     model: z.string().default("claude-sonnet-4-6"),
     /** Max response tokens. */
@@ -274,7 +275,7 @@ const OwnerConfigSchema = z
 
 const WorkerModelOverrideSchema = z
   .object({
-    provider: z.enum(["anthropic", "openai", "ollama"]),
+    provider: z.string(),
     model: z.string(),
     apiKey: z.string().optional(),
     baseUrl: z.string().optional(),
