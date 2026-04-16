@@ -383,7 +383,7 @@ export class PluginRegistry {
 
   getKnowledge(): RegisteredKnowledge[] {
     return [...this.knowledgeNamespaces].sort((a, b) =>
-      a.namespace.id.localeCompare(b.namespace.id),
+      a.namespace.label.localeCompare(b.namespace.label),
     );
   }
 
