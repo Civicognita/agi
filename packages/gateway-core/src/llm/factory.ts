@@ -68,9 +68,28 @@ function createSingleProvider(
         baseUrl: config.baseUrl ?? "http://127.0.0.1:6000",
       });
 
-    default:
-      throw new Error(`Unknown LLM provider type: ${type}`);
+    default: {
+      // Check plugin-registered providers before giving up. Plugins call
+      // api.registerProvider(def) during boot; we look them up here so
+      // setting `agent.provider: "claude-max"` (or any plugin-contributed
+      // type) just works without hardcoding every provider.
+      const pluginDef = _pluginProviderRegistry?.getProvider(type);
+      if (pluginDef) {
+        return pluginDef.factory(config as Record<string, unknown>) as LLMProvider;
+      }
+      throw new Error(`Unknown LLM provider type: ${type}. No built-in or plugin-registered provider matches.`);
+    }
   }
+}
+
+/** Late-bound plugin registry ref — set by server.ts after plugins boot. */
+interface PluginProviderLookup {
+  getProvider(id: string): { factory: (config: Record<string, unknown>) => unknown } | undefined;
+}
+let _pluginProviderRegistry: PluginProviderLookup | null = null;
+
+export function setPluginProviderRegistry(registry: PluginProviderLookup): void {
+  _pluginProviderRegistry = registry;
 }
 
 // ---------------------------------------------------------------------------

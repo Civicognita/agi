@@ -55,7 +55,7 @@ import { OutboundDispatcher } from "./outbound-dispatcher.js";
 import { QueueConsumer } from "./queue-consumer.js";
 import { AgentSessionManager } from "./agent-session.js";
 import { SessionStore } from "./session-store.js";
-import { createLLMProvider } from "./llm/index.js";
+import { createLLMProvider, setPluginProviderRegistry } from "./llm/index.js";
 import type { LLMProvider } from "./llm/index.js";
 import { RateLimiter } from "./rate-limiter.js";
 import { ToolRegistry } from "./tool-registry.js";
@@ -1254,6 +1254,25 @@ export async function startGatewayServer(
 
       // Bridge plugin-registered agent tools, skills, and knowledge into core registries
       bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
+
+      // Wire plugin-contributed LLM providers into the factory so
+      // `agent.provider: "claude-max"` (or any plugin type) resolves at
+      // config-change time without hardcoding every provider.
+      setPluginProviderRegistry(pluginRegistry as unknown as Parameters<typeof setPluginProviderRegistry>[0]);
+
+      // If the configured provider is plugin-contributed (not built-in),
+      // recreate the LLM provider now that plugins have loaded. On first
+      // boot, createLLMProvider ran before plugins — so it threw for unknown
+      // types. Recreating here picks up the plugin factory.
+      try {
+        const agentProvider = (config.agent as { provider?: string } | undefined)?.provider ?? "anthropic";
+        if (!["anthropic", "openai", "ollama", "hf-local"].includes(agentProvider)) {
+          llmProvider = createLLMProvider(config);
+          log.info(`LLM provider switched to plugin-contributed "${agentProvider}"`);
+        }
+      } catch (err) {
+        log.warn(`plugin provider init failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 
