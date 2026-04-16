@@ -243,9 +243,8 @@ interface WorkerRunResult {
   totalOutputTokens: number;
   toolLoops: number;
   errors: string[];
-  /** Ordered trace of tools the worker called (name + timestamp) for the
-   *  Taskmaster tab's expanded-row view. */
   toolCalls: Array<{ name: string; ts: string }>;
+  model: string;
 }
 
 export interface ActiveJobStatus {
@@ -393,6 +392,9 @@ export class WorkerRuntime extends EventEmitter {
           error: errorMsg,
           tokens: { input: result.totalInputTokens, output: result.totalOutputTokens },
           toolCalls: result.toolCalls,
+          toolLoops: result.toolLoops,
+          model: result.model,
+          coaReqId,
         });
       })
       .catch((err: unknown) => {
@@ -440,7 +442,7 @@ export class WorkerRuntime extends EventEmitter {
     if (this.toolRegistry === null) {
       const msg = "WorkerRuntime has no ToolRegistry bound — cannot execute workers. (Call setToolRegistry() during boot.)";
       this.emit("runtime:event", { type: "worker_done", jobId, worker: workerSpec, status: "failed" });
-      return { jobId, status: "failed", text: "", totalInputTokens: 0, totalOutputTokens: 0, toolLoops: 0, errors: [msg], toolCalls: [] };
+      return { jobId, status: "failed", text: "", totalInputTokens: 0, totalOutputTokens: 0, toolLoops: 0, errors: [msg], toolCalls: [], model: "none" };
     }
     const toolRegistry = this.toolRegistry;
     const workerTier: VerificationTier = this.config.workerTier ?? "verified";
@@ -567,12 +569,13 @@ export class WorkerRuntime extends EventEmitter {
         toolLoops,
         errors,
         toolCalls,
+        model,
       };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       errors.push(errorMsg);
       this.emit("runtime:event", { type: "worker_done", jobId, worker: workerSpec, status: "failed" });
-      return { jobId, status: "failed", text: "", totalInputTokens, totalOutputTokens, toolLoops, errors, toolCalls };
+      return { jobId, status: "failed", text: "", totalInputTokens, totalOutputTokens, toolLoops, errors, toolCalls, model };
     }
   }
 

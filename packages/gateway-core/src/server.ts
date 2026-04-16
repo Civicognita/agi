@@ -3266,6 +3266,29 @@ export async function startGatewayServer(
       }
     }
 
+    // Record worker LLM usage so it shows up in the Usage section alongside
+    // Aion's own token spend. Previously workers burned API credits silently.
+    if (event.type === "report_ready" || event.type === "job_failed") {
+      const tokens = event.tokens as { input: number; output: number } | undefined;
+      if (tokens !== undefined && ownerEntityId !== undefined) {
+        try {
+          usageStore.record({
+            entityId: ownerEntityId,
+            projectPath: origin?.projectPath ?? "",
+            provider: "anthropic",
+            model: typeof event.model === "string" ? event.model : "worker",
+            inputTokens: tokens.input,
+            outputTokens: tokens.output,
+            coaFingerprint: typeof event.coaReqId === "string" ? event.coaReqId : "",
+            toolCount: Array.isArray(event.toolCalls) ? event.toolCalls.length : 0,
+            loopCount: typeof event.toolLoops === "number" ? event.toolLoops : 0,
+          });
+        } catch (err) {
+          log.warn(`worker usage recording failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
     if (!origin?.sessionKey) return;
 
     let note: string | null = null;
