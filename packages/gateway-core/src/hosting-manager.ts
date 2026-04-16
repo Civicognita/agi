@@ -652,8 +652,15 @@ export class HostingManager {
         for (const line of out.split("\n")) {
           const [name, image, state, labels] = line.split("|");
           if (!name || !image) continue;
-          // Extract project path from labels (format: aionima.managed=true,aionima.project=/path,...)
-          const projectMatch = labels?.match(/aionima\.project=([^,]+)/);
+          // Extract project path from labels. Podman formats {{.Labels}} as
+          // map[key1:value1 key2:value2 ...] — colon between key/value,
+          // space-separated, wrapped in map[]. The old regex used `=` and `,`
+          // which never matched, causing "discovered 0" on every boot and
+          // silently recreating all containers from scratch on every restart.
+          // Match both agi.project (correct naming: AGI is the platform) and
+          // aionima.project (legacy — existing containers still carry these labels).
+          // Label creation code should be migrated to agi.* in a follow-up.
+          const projectMatch = labels?.match(/(?:agi|aionima)\.project:([^ \]]+)/);
           const projectPath = projectMatch?.[1];
           if (projectPath) {
             runningContainers.set(resolvePath(projectPath), { name, image, state: state ?? "" });
