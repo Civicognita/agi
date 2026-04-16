@@ -2009,16 +2009,16 @@ export async function fetchPluginMarketplaceInstalled(): Promise<import("./types
 
 export interface MarketplaceUpdatesResponse {
   updates: import("./types.js").PluginMarketplaceUpdate[];
-  newAvailable: { pluginName: string; version: string; description: string; sourceId: number }[];
+  newInMarketplace: { pluginName: string; version: string; description: string }[];
 }
 
 export async function fetchPluginMarketplaceUpdates(): Promise<MarketplaceUpdatesResponse> {
   const res = await fetch("/api/marketplace/updates");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json() as MarketplaceUpdatesResponse | import("./types.js").PluginMarketplaceUpdate[];
-  // Backwards-compat: old servers return a bare array, new ones return {updates, newAvailable}
+  // Backwards-compat: old servers return a bare array, new ones return {updates, newInMarketplace}
   if (Array.isArray(data)) {
-    return { updates: data, newAvailable: [] };
+    return { updates: data, newInMarketplace: [] };
   }
   return data;
 }

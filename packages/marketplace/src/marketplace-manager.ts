@@ -33,6 +33,7 @@ export class MarketplaceManager {
   private workspaceRoot: string;
   private cacheDir?: string;
   private requiredPluginIds: Set<string>;
+  // Removed — checkUpdates now diffs remote vs local live, no cached state needed.
 
   constructor(options: MarketplaceManagerOptions) {
     this.store = new MarketplaceStore(options.dbPath);
@@ -364,7 +365,7 @@ export class MarketplaceManager {
     }
 
     // 2. Find and apply all available updates
-    const { updates } = this.checkUpdates();
+    const { updates } = await this.checkUpdates();
     const updated: string[] = [];
     const errors: string[] = [];
 
@@ -380,14 +381,22 @@ export class MarketplaceManager {
     return { synced, updated, errors };
   }
 
-  checkUpdates(): {
+  /**
+   * Check for marketplace changes WITHOUT syncing. Fetches the remote
+   * catalog, diffs against the local DB, and returns:
+   * - updates: installed plugins with newer versions available
+   * - newInMarketplace: plugins in the remote catalog that aren't in the
+   *   local catalog at all (genuinely new, regardless of install status)
+   */
+  async checkUpdates(): Promise<{
     updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[];
-    newAvailable: { pluginName: string; version: string; description: string; sourceId: number }[];
-  } {
-    const installed = this.store.getInstalled();
-    const installedNames = new Set(installed.map((i) => i.name));
+    newInMarketplace: { pluginName: string; version: string; description: string }[];
+  }> {
     const updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[] = [];
+    const newInMarketplace: { pluginName: string; version: string; description: string }[] = [];
 
+    // Version-bump check for installed plugins (local-only, no fetch)
+    const installed = this.store.getInstalled();
     for (const item of installed) {
       const catalogPlugin = this.store.getPlugin(item.name, item.sourceId);
       if (catalogPlugin?.version && catalogPlugin.version !== item.version) {
@@ -400,22 +409,42 @@ export class MarketplaceManager {
       }
     }
 
-    // Plugins in the catalog that aren't installed — surface them so the
-    // Plugins page can show "N new plugins available" at the page level.
-    const newAvailable: { pluginName: string; version: string; description: string; sourceId: number }[] = [];
-    const allCatalog = this.searchCatalog({});
-    for (const entry of allCatalog) {
-      if (!installedNames.has(entry.name)) {
-        newAvailable.push({
-          pluginName: entry.name,
-          version: entry.version ?? "0.0.0",
-          description: entry.description ?? "",
-          sourceId: entry.sourceId,
-        });
+    // Fetch remote catalog and diff against local to find genuinely new plugins
+    const sources = this.store.getSources();
+    const localNames = new Set(this.searchCatalog({}).map((p) => p.name));
+    for (const source of sources) {
+      try {
+        const result = await fetchCatalog(source.ref);
+        if (result.ok && result.catalog) {
+          for (const plugin of result.catalog.plugins) {
+            if (!localNames.has(plugin.name)) {
+              newInMarketplace.push({
+                pluginName: plugin.name,
+                version: plugin.version ?? "0.0.0",
+                description: plugin.description ?? "",
+              });
+            }
+            // Also check version bumps for installed plugins from remote
+            // (catches updates that haven't been synced locally yet)
+            const installedItem = installed.find((i) => i.name === plugin.name);
+            if (installedItem && plugin.version && plugin.version !== installedItem.version) {
+              if (!updates.some((u) => u.pluginName === plugin.name)) {
+                updates.push({
+                  pluginName: plugin.name,
+                  currentVersion: installedItem.version,
+                  availableVersion: plugin.version,
+                  sourceId: source.id,
+                });
+              }
+            }
+          }
+        }
+      } catch {
+        // Remote fetch failed — fall back to local-only check (already done above)
       }
     }
 
-    return { updates, newAvailable };
+    return { updates, newInMarketplace };
   }
 
   close(): void {

@@ -136,7 +136,7 @@ export function createManageMarketplaceHandler(config: AgentToolsConfig): ToolHa
     }
 
     if (action === "check_updates") {
-      return JSON.stringify(mp.checkUpdates());
+      return JSON.stringify(await mp.checkUpdates());
     }
 
     return JSON.stringify({
