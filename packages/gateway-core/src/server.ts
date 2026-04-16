@@ -546,7 +546,22 @@ export async function startGatewayServer(
   // Step 5b: Agent pipeline services
   // -------------------------------------------------------------------------
 
-  let llmProvider = createLLMProvider(config);
+  // createLLMProvider may fail here for plugin-contributed types (e.g.
+  // "claude-max") because plugins haven't loaded yet. Defer to a stub
+  // provider that throws on first use; the post-plugin boot block below
+  // replaces it with the real provider once plugins register their factories.
+  let llmProvider: ReturnType<typeof createLLMProvider>;
+  try {
+    llmProvider = createLLMProvider(config);
+  } catch {
+    const providerType = (config.agent as { provider?: string } | undefined)?.provider ?? "unknown";
+    log.info(`LLM provider "${providerType}" deferred — will resolve after plugins load`);
+    llmProvider = {
+      async invoke() { throw new Error(`LLM provider "${providerType}" not yet initialized — waiting for plugins`); },
+      async continueWithToolResults() { throw new Error(`LLM provider "${providerType}" not yet initialized`); },
+      async summarize() { throw new Error(`LLM provider "${providerType}" not yet initialized`); },
+    };
+  }
   const getLLMProvider = () => llmProvider;
 
   const agentSessionManager = new AgentSessionManager({
