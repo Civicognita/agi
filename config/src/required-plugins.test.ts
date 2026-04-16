@@ -48,9 +48,12 @@ describe("required-plugins.json", () => {
     expect(ids).toContain("stack-rust-app");
   });
 
-  it("marks all required plugins as non-disableable", () => {
-    for (const p of data.plugins) {
-      expect(p.disableable).toBe(false);
+  it("marks core required plugins as non-disableable (optional providers may be disableable)", () => {
+    const corePlugins = data.plugins.filter(
+      (p) => !p.id.startsWith("provider-"),
+    );
+    for (const p of corePlugins) {
+      expect(p.disableable, `${p.id} should be non-disableable`).toBe(false);
     }
   });
 });
