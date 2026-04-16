@@ -12,7 +12,7 @@
  * for progress. Both readers overlay the same way so Aion and the UI never
  * disagree on what a job is doing.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -108,4 +108,44 @@ export function mergeJobStatus(
   if (live?.status) return live.status;
   if (dispatch.handoffs && dispatch.handoffs.length > 0) return "checkpoint";
   return dispatch.status;
+}
+
+/**
+ * Finalize fields written onto the dispatch file when a worker reaches a
+ * terminal state (complete/failed). Extends the previously write-once record
+ * with the full worker summary, tokens, tool-call trace, and error — the
+ * same data the Taskmaster project tab renders in expanded rows.
+ */
+export interface DispatchFinalizeFields {
+  status?: "complete" | "failed";
+  summary?: string;
+  completedAt?: string;
+  error?: string;
+  tokens?: { input: number; output: number };
+  toolCalls?: Array<{ name: string; ts: string }>;
+}
+
+/**
+ * Merge `fields` into the dispatch file at ~/.agi/{slug}/dispatch/jobs/{id}.json
+ * without touching fields we don't own (preserves `handoffs`, `createdAt`,
+ * etc.). Silently no-ops when the file doesn't exist or is malformed —
+ * caller treats finalize as advisory, not required.
+ */
+export function finalizeDispatchFile(
+  projectPath: string,
+  jobId: string,
+  fields: DispatchFinalizeFields,
+  overrideDir?: string,
+): void {
+  const dir = overrideDir ?? dispatchJobsDir(projectPath);
+  const file = join(dir, `${jobId}.json`);
+  if (!existsSync(file)) return;
+  try {
+    const raw = readFileSync(file, "utf-8");
+    const job = JSON.parse(raw) as Record<string, unknown>;
+    const updated = { ...job, ...fields };
+    writeFileSync(file, JSON.stringify(updated, null, 2), "utf-8");
+  } catch {
+    // Dispatch file is advisory state — best-effort write.
+  }
 }

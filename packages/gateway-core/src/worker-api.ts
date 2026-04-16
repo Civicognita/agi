@@ -21,6 +21,13 @@ interface JobSummary {
   workers: string[];
   gate: "auto" | "checkpoint" | "terminal";
   createdAt: string;
+  /** Terminal-state fields — populated after the worker finishes. Surfaced
+   *  to the new Taskmaster project tab's expandable summary rows. */
+  summary?: string;
+  completedAt?: string;
+  error?: string;
+  tokens?: { input: number; output: number };
+  toolCalls?: Array<{ name: string; ts: string }>;
 }
 
 function toSummary(job: WorkerJob): JobSummary {
@@ -33,6 +40,11 @@ function toSummary(job: WorkerJob): JobSummary {
     workers: activePhase?.workers ?? [],
     gate: activePhase?.gate ?? "auto",
     createdAt: job.createdAt,
+    summary: job.summary,
+    completedAt: job.completedAt,
+    error: job.error,
+    tokens: job.tokens,
+    toolCalls: job.toolCalls,
   };
 }
 
