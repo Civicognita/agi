@@ -205,18 +205,28 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Install dependencies (rebuild native modules if Node.js version changed)
+# 5. Install dependencies (only when lockfile changes)
 # ---------------------------------------------------------------------------
 NODE_VERSION_FILE="$DEPLOY_DIR/.node-version-hash"
+LOCKFILE_HASH_FILE="$DEPLOY_DIR/.lockfile-hash"
 CURRENT_NODE_VERSION="$(node -v)"
 PREVIOUS_NODE_VERSION=""
 [ -f "$NODE_VERSION_FILE" ] && PREVIOUS_NODE_VERSION="$(cat "$NODE_VERSION_FILE")"
 
-emit "install" "start"
-if NO_COLOR=1 FORCE_COLOR=0 pnpm install --frozen-lockfile 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
-  emit "install" "done" "Dependencies installed"
+CURRENT_LOCKFILE_HASH="$(md5sum "$DEPLOY_DIR/pnpm-lock.yaml" 2>/dev/null | cut -d' ' -f1)"
+PREVIOUS_LOCKFILE_HASH=""
+[ -f "$LOCKFILE_HASH_FILE" ] && PREVIOUS_LOCKFILE_HASH="$(cat "$LOCKFILE_HASH_FILE")"
+
+if [ "$CURRENT_LOCKFILE_HASH" != "$PREVIOUS_LOCKFILE_HASH" ]; then
+  emit "install" "start" "Lockfile changed — installing dependencies"
+  if NO_COLOR=1 FORCE_COLOR=0 pnpm install --frozen-lockfile 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
+    emit "install" "done" "Dependencies installed"
+  else
+    die "install" "pnpm install failed"
+  fi
+  echo "$CURRENT_LOCKFILE_HASH" > "$LOCKFILE_HASH_FILE"
 else
-  die "install" "pnpm install failed"
+  emit "install" "skip" "Dependencies up to date (lockfile unchanged)"
 fi
 
 # Ensure Playwright browser is installed (required for visual-inspect tool)
@@ -247,14 +257,30 @@ for dir in "${BACKEND_DIRS[@]}"; do
     backend_hash_before+="$(find "$DEPLOY_DIR/$dir" -type f -exec md5sum {} + 2>/dev/null | sort | md5sum)"
   fi
 done
+
 # ---------------------------------------------------------------------------
-# 7. Build
+# 7. Build (only when source files changed since last build)
 # ---------------------------------------------------------------------------
-emit "build" "start"
-if NO_COLOR=1 FORCE_COLOR=0 pnpm build 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
-  emit "build" "done" "Build complete"
+SOURCE_HASH_FILE="$DEPLOY_DIR/.source-hash"
+# Hash all TypeScript/config source that feeds the build. Excludes node_modules,
+# dist, .git, and test files so test-only changes don't trigger a rebuild.
+CURRENT_SOURCE_HASH="$(find "$DEPLOY_DIR/packages" "$DEPLOY_DIR/cli" "$DEPLOY_DIR/ui" "$DEPLOY_DIR/config" \
+  -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' -o -name '*.json' \) \
+  ! -path '*/node_modules/*' ! -path '*/dist/*' ! -path '*/.git/*' ! -path '*.test.*' \
+  -exec md5sum {} + 2>/dev/null | sort | md5sum | cut -d' ' -f1)"
+PREVIOUS_SOURCE_HASH=""
+[ -f "$SOURCE_HASH_FILE" ] && PREVIOUS_SOURCE_HASH="$(cat "$SOURCE_HASH_FILE")"
+
+if [ "$CURRENT_SOURCE_HASH" != "$PREVIOUS_SOURCE_HASH" ]; then
+  emit "build" "start" "Source changed — building"
+  if NO_COLOR=1 FORCE_COLOR=0 pnpm build 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
+    emit "build" "done" "Build complete"
+  else
+    die "build" "pnpm build failed"
+  fi
+  echo "$CURRENT_SOURCE_HASH" > "$SOURCE_HASH_FILE"
 else
-  die "build" "pnpm build failed"
+  emit "build" "skip" "Build up to date (source unchanged)"
 fi
 
 # Build HF model runtime container images (if containers/ dir exists)
