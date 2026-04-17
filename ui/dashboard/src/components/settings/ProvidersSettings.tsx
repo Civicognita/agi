@@ -58,11 +58,19 @@ export function ProvidersSettings({ config, update }: Props) {
   const agentModel = (config.agent as Record<string, unknown> | undefined)?.model as string ?? "claude-sonnet-4-6";
   const modelOverrides = ((config.workers as Record<string, unknown> | undefined)?.modelOverrides ?? {}) as Record<string, { provider?: string; model?: string }>;
 
+  const [workerError, setWorkerError] = useState<string | null>(null);
+
   useEffect(() => {
     fetch("/api/workers/catalog")
-      .then((r) => r.json())
-      .then((data) => setWorkers(data as WorkerEntry[]))
-      .catch(() => {});
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data) => {
+        setWorkers(data as WorkerEntry[]);
+        setWorkerError(null);
+      })
+      .catch((err) => setWorkerError(err instanceof Error ? err.message : "Failed to load workers"));
   }, []);
 
   const setAionProvider = useCallback((provider: string) => {
@@ -161,14 +169,19 @@ export function ProvidersSettings({ config, update }: Props) {
       </Card>
 
       {/* Worker Overrides */}
-      {workers.length > 0 && (
-        <Card className="p-6 gap-0">
-          <SectionHeading>Worker Provider Overrides</SectionHeading>
-          <p className="text-[12px] text-muted-foreground mb-4">
-            Override the LLM provider for specific TaskMaster workers.
-            "Inherited" uses Aion's provider. Workers that need cheaper/faster
-            models can use a different provider.
-          </p>
+      <Card className="p-6 gap-0">
+        <SectionHeading>Worker Provider Overrides</SectionHeading>
+        <p className="text-[12px] text-muted-foreground mb-4">
+          Override the LLM provider and model for specific TaskMaster workers.
+          "Inherited" uses Aion's provider and model. Workers that need cheaper/faster
+          models can use a different provider or model.
+        </p>
+        {workerError && (
+          <div className="text-[12px] text-red mb-3">{workerError}</div>
+        )}
+        {workers.length === 0 && !workerError && (
+          <div className="text-[12px] text-muted-foreground italic">No workers discovered. Workers load from prompts/workers/ on boot.</div>
+        )}
 
           <div className="space-y-4">
             {[...domains.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([domain, domainWorkers]) => (
@@ -220,7 +233,6 @@ export function ProvidersSettings({ config, update }: Props) {
             ))}
           </div>
         </Card>
-      )}
     </div>
   );
 }
