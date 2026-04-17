@@ -13,7 +13,6 @@ import { ServiceControlSection } from "./ServiceControlSection.js";
 import { RustDeskConnectionSection } from "./RustDeskConnectionSection.js";
 import { RustDeskLogsSection } from "./RustDeskLogsSection.js";
 import { RustDeskPasswordSection } from "./RustDeskPasswordSection.js";
-import { ClaudeMaxConnectionSection } from "./ClaudeMaxConnectionSection.js";
 import { getNestedValue, setNestedValue } from "@/lib/settings-utils.js";
 import { fetchPlugins, updatePluginEnabled, fetchModels } from "../../api.js";
 import type { AionimaConfig, PluginSettingsSection, PluginInfo, UIField } from "../../types.js";
@@ -30,7 +29,6 @@ const customSectionMap: Record<string, React.FC> = {
   "rustdesk-connection": RustDeskConnectionSection,
   "rustdesk-logs": RustDeskLogsSection,
   "rustdesk-password": RustDeskPasswordSection,
-  "claude-max-connection": ClaudeMaxConnectionSection,
 };
 
 /** Live model dropdown that fetches available models from the provider API. */

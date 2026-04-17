@@ -24,18 +24,12 @@ interface ProviderOption {
 
 const BUILTIN_PROVIDERS: ProviderOption[] = [
   { id: "anthropic", name: "Anthropic (API key)" },
-  { id: "claude-max", name: "Claude Max (subscription)" },
   { id: "openai", name: "OpenAI" },
   { id: "ollama", name: "Ollama (local)" },
 ];
 
 const MODELS_BY_PROVIDER: Record<string, { id: string; name: string }[]> = {
   anthropic: [
-    { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (balanced)" },
-    { id: "claude-opus-4-6", name: "Claude Opus 4.6 (most capable)" },
-    { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5 (fast)" },
-  ],
-  "claude-max": [
     { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (balanced)" },
     { id: "claude-opus-4-6", name: "Claude Opus 4.6 (most capable)" },
     { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5 (fast)" },
