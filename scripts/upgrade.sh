@@ -222,15 +222,19 @@ fi
 # Ensure Playwright browser is installed (required for visual-inspect tool)
 npx playwright install chromium --with-deps 2>/dev/null || true
 
-# Always rebuild native modules using the system Node (/usr/bin/node) —
-# the same binary systemd uses. Shell shims (fnm, nvm) may point to a
-# different version, causing NODE_MODULE_VERSION mismatches at runtime.
+# Only rebuild native modules when the Node.js version changes. Rebuilding
+# better-sqlite3 on every upgrade adds 10-20s for no reason when the Node
+# binary hasn't changed. The version hash file tracks the last-rebuilt version.
 SYSTEM_NODE="/usr/bin/node"
-emit "rebuild" "start" "Rebuilding native modules for $($SYSTEM_NODE -v)"
-if PATH="/usr/bin:$PATH" NO_COLOR=1 pnpm rebuild 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
-  emit "rebuild" "done" "Native modules rebuilt"
+if [ "$CURRENT_NODE_VERSION" != "$PREVIOUS_NODE_VERSION" ]; then
+  emit "rebuild" "start" "Node.js version changed ($PREVIOUS_NODE_VERSION → $CURRENT_NODE_VERSION) — rebuilding native modules"
+  if PATH="/usr/bin:$PATH" NO_COLOR=1 pnpm rebuild 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
+    emit "rebuild" "done" "Native modules rebuilt for $CURRENT_NODE_VERSION"
+  else
+    emit "rebuild" "error" "pnpm rebuild failed"
+  fi
 else
-  emit "rebuild" "error" "pnpm rebuild failed"
+  emit "rebuild" "skip" "Native modules up to date (Node $CURRENT_NODE_VERSION unchanged)"
 fi
 echo "$CURRENT_NODE_VERSION" > "$NODE_VERSION_FILE"
 
