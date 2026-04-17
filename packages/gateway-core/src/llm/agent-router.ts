@@ -199,8 +199,11 @@ export class AgentRouter implements LLMProvider {
     };
 
     // Remember which provider is serving this entity for tool continuations.
-    const cacheKey = `${route.provider}:${route.model}`;
-    this.entityProviderMap.set(params.entityId, cacheKey);
+    // Must use the same key format as getOrCreateProvider's providerCache.
+    const cred = config.providers[route.provider];
+    const baseUrl = cred?.baseUrl ?? (route.provider === config.defaultProvider ? config.baseUrl : undefined);
+    const entityCacheKey = `${route.provider}:${route.model}:${baseUrl ?? ""}`;
+    this.entityProviderMap.set(params.entityId, entityCacheKey);
 
     this.log.info(
       `route: ${costMode}/${classification.complexity} → ${route.provider}/${route.model}`,
@@ -226,7 +229,9 @@ export class AgentRouter implements LLMProvider {
         const escalatedParams: LLMInvokeParams = { ...overriddenParams, model: escalationTarget.model };
         response = await escalatedProvider.invoke(escalatedParams);
 
-        const escalatedCacheKey = `${escalationTarget.provider}:${escalationTarget.model}`;
+        const escCred = config.providers[escalationTarget.provider];
+        const escBaseUrl = escCred?.baseUrl ?? (escalationTarget.provider === config.defaultProvider ? config.baseUrl : undefined);
+        const escalatedCacheKey = `${escalationTarget.provider}:${escalationTarget.model}:${escBaseUrl ?? ""}`;
         this.entityProviderMap.set(params.entityId, escalatedCacheKey);
 
         this.lastDecision = {

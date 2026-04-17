@@ -15,7 +15,10 @@ const PRICING: Record<string, { input: number; output: number }> = {
 export { PRICING };
 
 export function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
-  const key = Object.keys(PRICING).find((k) => model.startsWith(k));
+  // Sort by key length descending so "gpt-4o-mini" matches before "gpt-4o"
+  const key = Object.keys(PRICING)
+    .sort((a, b) => b.length - a.length)
+    .find((k) => model.startsWith(k));
   if (!key) return 0;
   const p = PRICING[key]!;
   return (inputTokens / 1_000_000) * p.input + (outputTokens / 1_000_000) * p.output;

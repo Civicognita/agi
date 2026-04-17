@@ -10,8 +10,8 @@ import { describe, it, expect } from "vitest";
 import { AionimaConfigSchema } from "./schema.js";
 
 describe("RouterConfigSchema", () => {
-  it("provides defaults when no router config specified", () => {
-    const parsed = AionimaConfigSchema.parse({});
+  it("provides defaults when agent is given without router", () => {
+    const parsed = AionimaConfigSchema.parse({ agent: {} });
     expect(parsed.agent?.router?.costMode).toBe("balanced");
     expect(parsed.agent?.router?.escalation).toBe(false);
     expect(parsed.agent?.router?.maxEscalationsPerTurn).toBe(1);

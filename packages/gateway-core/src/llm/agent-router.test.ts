@@ -191,7 +191,8 @@ describe("AgentRouter", () => {
 
   describe("tool continuation", () => {
     it("uses same provider for continueWithToolResults", async () => {
-      const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
+      const config = makeRouterConfig();
+      const router = new AgentRouter(() => config, mockFactory);
       await router.invoke(makeParams({ entityId: "entity-1" }));
       const firstDecision = router.getLastDecision();
 
