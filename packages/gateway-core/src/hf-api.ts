@@ -228,9 +228,10 @@ export function registerHfRoutes(
       const modelInfo = await hfClient.getModelInfo(id);
       const runtimeType = capabilityResolver.resolveRuntimeType(modelInfo);
 
-      // For custom models, resolve the container image from the known-models registry
+      // Only custom models store a container image at install time — standard
+      // models resolve the image from CapabilityResolver defaults at start time.
       const customDef = knownModelsRegistry.lookup(id);
-      const containerImage = customDef?.image ?? undefined;
+      const containerImage = runtimeType === "custom" ? (customDef?.image ?? undefined) : undefined;
       const sourceRepo = customDef?.sourceRepo ?? undefined;
       const endpoints = customDef ? Object.entries(customDef.endpoints).map(([name, path]) => ({
         path, method: "POST" as const, description: name,

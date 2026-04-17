@@ -143,8 +143,12 @@ export class ModelContainerManager {
     }
 
     const internalPort = containerConfig.internalPort || INTERNAL_PORTS[containerConfig.runtimeType] || 8000;
-    // Resolution order: per-model containerImage (from store) → containerConfig.image (from CapabilityResolver) → DEFAULT_IMAGES
-    const image = model.containerImage ?? (containerConfig.image || DEFAULT_IMAGES[containerConfig.runtimeType]);
+    // Custom models store their built image in the DB — use it.
+    // Standard models always resolve the image from CapabilityResolver at start
+    // time so DEFAULT_IMAGES updates take effect without re-downloading.
+    const image = containerConfig.runtimeType === "custom"
+      ? (model.containerImage ?? (containerConfig.image || DEFAULT_IMAGES[containerConfig.runtimeType]))
+      : (containerConfig.image || DEFAULT_IMAGES[containerConfig.runtimeType]);
     const modelContainerPath = containerConfig.modelContainerPath;
     const modelFilename = containerConfig.modelFilename ?? model.modelFilename ?? "";
 
