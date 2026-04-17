@@ -50,7 +50,7 @@ export interface ToolExecutionContext {
   coaChainBase: string; // base fingerprint for this invocation
   resourceId: string;
   nodeId: string;
-  /** AgentSessionManager key — lets background work (e.g. taskmaster_queue)
+  /** AgentSessionManager key — lets background work (e.g. taskmaster_dispatch)
    *  mint injections back into the session that dispatched it. Optional:
    *  headless/background tool calls (like the worker runtime itself) may
    *  leave this unset. */

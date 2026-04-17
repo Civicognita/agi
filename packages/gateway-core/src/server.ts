@@ -19,6 +19,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { ulid } from "ulid";
+import { dispatchJobsDir } from "./dispatch-paths.js";
 import { createDatabase, EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@aionima/entity-model";
 import { BackupManager } from "./backup-manager.js";
 import { registerComplianceRoutes } from "./compliance-api.js";
@@ -607,7 +608,7 @@ export async function startGatewayServer(
    * Tracks which chat session dispatched each Taskmaster job, so worker
    * completion / handoff events can inject a synthetic user turn back into
    * the originating session via AgentInvoker.injectMessage. Populated in
-   * the taskmaster_queue onJobCreated callback, consumed in the runtime:event
+   * the taskmaster_dispatch onJobCreated callback, consumed in the runtime:event
    * handler below registerAllTools.
    */
   const jobOriginBySessionKey = new Map<
@@ -627,6 +628,8 @@ export async function startGatewayServer(
   const hostingManagerRef: { current: unknown | null } = { current: null };
   const stackRegistryRef: { current: unknown | null } = { current: null };
   const mappRegistryRef: { current: unknown | null } = { current: null };
+  const taskmasterOrchestratorRef: { current: import("./taskmaster-orchestrator.js").TaskmasterOrchestrator | null } = { current: null };
+  const pluginRegistryRef: { current: { getWorkers(): Array<{ pluginId: string; worker: { domain: string; role: string; name: string; description: string; modelTier?: string } }> } | null } = { current: null };
 
   // Config services — created early (no heavy dependencies) so tools can use them.
   const projectConfigManager = new ProjectConfigManager({ logger });
@@ -669,7 +672,36 @@ export async function startGatewayServer(
       const projectContext = projectPath.length > 0
         ? { path: projectPath, name: projectPath.split("/").filter(Boolean).pop() ?? projectPath }
         : undefined;
-      workerRuntimeRef.current?.executeJob(jobId, coaReqId, projectContext).catch((err: unknown) => {
+      // Orchestrator decomposes the work into worker phases, then runtime
+      // executes them sequentially. If orchestrator isn't available or fails,
+      // fall back to single-phase execution.
+      const dispatchFile = join(dispatchJobsDir(projectPath), `${jobId}.json`);
+      void (async () => {
+        let phases: import("./taskmaster-orchestrator.js").WorkPhase[] | undefined;
+        if (taskmasterOrchestratorRef.current) {
+          try {
+            const dispatchData = JSON.parse(readFileSync(dispatchFile, "utf-8")) as { description: string };
+            const workers = pluginRegistryRef.current
+              ? pluginRegistryRef.current.getWorkers().map((w) => ({
+                  domain: w.worker.domain,
+                  role: w.worker.role,
+                  name: w.worker.name,
+                  description: w.worker.description,
+                  modelTier: w.worker.modelTier,
+                }))
+              : [];
+            if (workers.length > 0) {
+              phases = await taskmasterOrchestratorRef.current.decompose(
+                dispatchData.description, workers, coaReqId,
+              );
+              log.info(`[taskmaster] decomposed "${dispatchData.description.slice(0, 60)}" into ${String(phases.length)} phase(s): ${phases.map((p) => `${p.domain}.${p.role}`).join(" → ")}`);
+            }
+          } catch (err) {
+            log.warn(`[taskmaster] orchestrator failed, falling back to single-phase: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+        await workerRuntimeRef.current?.executeJob(jobId, coaReqId, projectContext, phases);
+      })().catch((err: unknown) => {
         log.error(`workerRuntime.executeJob error: ${err instanceof Error ? err.message : String(err)}`);
       });
     },
@@ -1130,6 +1162,15 @@ export async function startGatewayServer(
   }
 
   const pluginRegistry = new PluginRegistry();
+  pluginRegistryRef.current = pluginRegistry;
+
+  // TaskMaster Orchestrator — LLM-powered work decomposition. Uses the
+  // same LLM provider as Aion to decompose work descriptions into ordered
+  // sequences of worker phases.
+  const { TaskmasterOrchestrator } = await import("./taskmaster-orchestrator.js");
+  const taskmasterOrchestrator = new TaskmasterOrchestrator(llmProvider);
+  taskmasterOrchestratorRef.current = taskmasterOrchestrator;
+
   const hookBus = new HookBus();
   const installDir = process.cwd();
   const pluginSearchPaths = getDefaultSearchPaths({ workspaceRoot, installDir });

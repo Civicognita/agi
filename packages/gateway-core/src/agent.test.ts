@@ -601,7 +601,7 @@ describe("system-prompt.ts", () => {
       const prompt = assembleSystemPrompt(makePromptCtx());
       expect(prompt).toContain("## TASKMASTER");
       expect(prompt).toContain("Work Queue");
-      expect(prompt).toContain("taskmaster_queue");
+      expect(prompt).toContain("taskmaster_dispatch");
     });
 
     it("TASKMASTER section precedes the final Response format section", () => {
@@ -612,8 +612,8 @@ describe("system-prompt.ts", () => {
       expect(rfIdx).toBeGreaterThan(tmIdx);
     });
 
-    it("taskmaster_queue manifest names TaskMaster and Work Queue so the LLM can pick it", () => {
-      expect(WORKER_DISPATCH_MANIFEST.name).toBe("taskmaster_queue");
+    it("taskmaster_dispatch manifest names TaskMaster and Work Queue so the LLM can pick it", () => {
+      expect(WORKER_DISPATCH_MANIFEST.name).toBe("taskmaster_dispatch");
       expect(WORKER_DISPATCH_MANIFEST.description).toContain("TaskMaster");
       expect(WORKER_DISPATCH_MANIFEST.description).toContain("Work Queue");
     });

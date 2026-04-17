@@ -616,8 +616,6 @@ export interface WorkerDefinition {
   modelTier?: "fast" | "balanced" | "capable";
   /** Tools this worker is allowed to use. */
   allowedTools?: string[];
-  /** Worker that must follow this one (enforced chain). */
-  chainTarget?: string;
   /** Minimum entity verification tier required to dispatch this worker. */
   requiredTier?: "verified" | "sealed";
   /** Keywords for auto-routing dispatch requests to this worker. */

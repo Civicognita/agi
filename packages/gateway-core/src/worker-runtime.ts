@@ -306,12 +306,15 @@ export class WorkerRuntime extends EventEmitter {
   }
 
   /**
-   * Execute a worker job. Fire-and-forget — called after taskmaster_queue.
+   * Execute a multi-phase worker job. Called after taskmaster_dispatch +
+   * orchestrator decomposition. Iterates through phases sequentially,
+   * passing context from each worker to the next.
    */
   async executeJob(
     jobId: string,
     coaReqId: string,
     projectContext?: { path: string; name: string },
+    phases?: import("./taskmaster-orchestrator.js").WorkPhase[],
   ): Promise<void> {
     if (this.activeJobs.size >= this.config.maxConcurrentJobs) {
       this.emit("runtime:event", { type: "job_failed", jobId, error: "Max concurrent jobs reached" });
@@ -322,15 +325,10 @@ export class WorkerRuntime extends EventEmitter {
       return;
     }
 
-    // Read dispatch file to get job details. When a projectContext is provided
-    // we read from that project's dispatch dir (~/.agi/{projectSlug}/dispatch/jobs/).
-    // When it isn't (legacy paths, bridged jobs without a project), fall back
-    // to the "general" bucket.
     const jobsDir = dispatchJobsDir(projectContext?.path ?? "");
     const dispatchFile = join(jobsDir, `${jobId}.json`);
-    let dispatch: { description: string; domain: string; worker: string; priority: string; planRef?: { planId: string; stepId: string } } | null = null;
+    let dispatch: { description: string; priority: string; planRef?: { planId: string; stepId: string }; domain?: string; worker?: string } | null = null;
 
-    // Try dispatch file first, then state file
     if (existsSync(dispatchFile)) {
       try {
         dispatch = JSON.parse(readFileSync(dispatchFile, "utf-8")) as typeof dispatch;
@@ -338,15 +336,16 @@ export class WorkerRuntime extends EventEmitter {
     }
 
     // Bridge into taskmaster state
+    const bridge = new JobBridge(this.config.stateDir);
     try {
-      const bridge = new JobBridge(this.config.stateDir);
-      if (dispatch && existsSync(dispatchFile)) {
+      if (dispatch && existsSync(dispatchFile) && phases) {
+        bridge.ensureJobWithPhases(jobId, dispatchFile, phases);
+      } else if (dispatch && existsSync(dispatchFile)) {
         bridge.ensureJob(jobId, dispatchFile);
       }
     } catch { /* non-fatal */ }
 
     if (!dispatch) {
-      // Try reading from taskmaster state
       const job = await this.getJob(jobId);
       if (job) {
         const parts = job.entryWorker.replace("$W.", "").split(".");
@@ -359,22 +358,30 @@ export class WorkerRuntime extends EventEmitter {
       return;
     }
 
+    // Build the effective phase list. If phases were passed from the
+    // orchestrator, use them. Otherwise fall back to single-phase from
+    // legacy dispatch files that still have domain/worker.
+    const effectivePhases: import("./taskmaster-orchestrator.js").WorkPhase[] = phases ?? (
+      dispatch.domain && dispatch.worker
+        ? [{ domain: dispatch.domain, role: dispatch.worker, phaseDescription: dispatch.description, gate: "auto" as const }]
+        : [{ domain: "code", role: "engineer", phaseDescription: dispatch.description, gate: "auto" as const }]
+    );
+
+    const workerSpecs = effectivePhases.map((p) => `$W.${p.domain}.${p.role}`);
     this.emit("runtime:event", {
       type: "job_started",
       jobId,
       description: dispatch.description,
-      workers: [`$W.${dispatch.domain}.${dispatch.worker}`],
+      workers: workerSpecs,
+      totalPhases: effectivePhases.length,
     });
 
-    // Stamp "running" into the state bridge as soon as we start, so the
-    // Work Queue merge shows the in-flight transition (pending → running).
     try {
-      const bridge = new JobBridge(this.config.stateDir);
       bridge.updateJobStatus(jobId, "running");
+      bridge.markPhaseRunning(jobId);
     } catch { /* non-fatal */ }
 
-    const promise = this.runWorker(jobId, dispatch, coaReqId, projectContext?.path ?? ".");
-
+    const promise = this.executePhases(jobId, dispatch, effectivePhases, coaReqId, projectContext?.path ?? ".");
     this.activeJobs.set(jobId, { jobId, coaReqId, startedAt: Date.now(), promise });
 
     promise
@@ -382,13 +389,7 @@ export class WorkerRuntime extends EventEmitter {
         this.activeJobs.delete(jobId);
         const finalStatus = result.status === "completed" ? "complete" : "failed";
         const errorMsg = result.errors.length > 0 ? result.errors.join("; ") : undefined;
-        // Update the global state index.
-        try {
-          const bridge = new JobBridge(this.config.stateDir);
-          bridge.updateJobStatus(jobId, finalStatus, errorMsg);
-        } catch { /* non-fatal */ }
-        // Finalize the per-project dispatch file with the full summary so the
-        // Taskmaster tab can render "what was done" for completed jobs.
+        try { bridge.updateJobStatus(jobId, finalStatus, errorMsg); } catch { /* non-fatal */ }
         if (projectContext?.path) {
           finalizeDispatchFile(projectContext.path, jobId, {
             status: finalStatus,
@@ -416,14 +417,114 @@ export class WorkerRuntime extends EventEmitter {
         this.activeJobs.delete(jobId);
         const errorMsg = err instanceof Error ? err.message : String(err);
         if (projectContext?.path) {
-          finalizeDispatchFile(projectContext.path, jobId, {
-            status: "failed",
-            completedAt: new Date().toISOString(),
-            error: errorMsg,
-          });
+          finalizeDispatchFile(projectContext.path, jobId, { status: "failed", completedAt: new Date().toISOString(), error: errorMsg });
         }
         this.emit("runtime:event", { type: "job_failed", jobId, error: errorMsg });
       });
+  }
+
+  /**
+   * Execute phases sequentially, passing context from each worker to the next.
+   */
+  private async executePhases(
+    jobId: string,
+    dispatch: { description: string; priority: string; planRef?: { planId: string; stepId: string } },
+    phases: import("./taskmaster-orchestrator.js").WorkPhase[],
+    coaReqId: string,
+    projectRoot: string,
+  ): Promise<WorkerRunResult> {
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalToolLoops = 0;
+    const allToolCalls: Array<{ name: string; ts: string }> = [];
+    const allErrors: string[] = [];
+    let lastModel = "unknown";
+    let previousOutput = "";
+
+    const bridge = new JobBridge(this.config.stateDir);
+
+    for (let i = 0; i < phases.length; i++) {
+      const phase = phases[i]!;
+      const isLast = i === phases.length - 1;
+
+      this.emit("runtime:event", {
+        type: "phase_started",
+        jobId,
+        phaseIndex: i,
+        totalPhases: phases.length,
+        worker: `$W.${phase.domain}.${phase.role}`,
+        description: phase.phaseDescription,
+      });
+
+      try { bridge.markPhaseRunning(jobId); } catch { /* non-fatal */ }
+
+      const phaseDispatch = {
+        description: phase.phaseDescription,
+        domain: phase.domain,
+        worker: phase.role,
+        priority: dispatch.priority,
+        planRef: isLast ? dispatch.planRef : undefined,
+      };
+
+      const result = await this.runWorker(jobId, phaseDispatch, coaReqId, projectRoot, previousOutput);
+
+      totalInputTokens += result.totalInputTokens;
+      totalOutputTokens += result.totalOutputTokens;
+      totalToolLoops += result.toolLoops;
+      allToolCalls.push(...result.toolCalls);
+      lastModel = result.model;
+
+      if (result.status === "failed") {
+        allErrors.push(...result.errors);
+        try { bridge.markPhaseFailed(jobId, result.errors.join("; ")); } catch { /* non-fatal */ }
+        this.emit("runtime:event", { type: "phase_failed", jobId, phaseIndex: i, error: result.errors.join("; ") });
+        return {
+          jobId,
+          status: "failed",
+          text: result.text || `Phase ${i + 1} (${phase.domain}.${phase.role}) failed: ${result.errors.join("; ")}`,
+          totalInputTokens,
+          totalOutputTokens,
+          toolLoops: totalToolLoops,
+          errors: allErrors,
+          toolCalls: allToolCalls,
+          model: lastModel,
+        };
+      }
+
+      previousOutput = result.text;
+
+      this.emit("runtime:event", {
+        type: "phase_completed",
+        jobId,
+        phaseIndex: i,
+        totalPhases: phases.length,
+        worker: `$W.${phase.domain}.${phase.role}`,
+        summary: result.text.slice(0, 300),
+      });
+
+      // Advance to next phase in state
+      if (!isLast) {
+        try { bridge.advancePhase(jobId); } catch { /* non-fatal */ }
+      }
+    }
+
+    // All phases complete
+    try { bridge.advancePhase(jobId); } catch { /* non-fatal */ }
+
+    const summaryParts = phases.map((p, i) => `Phase ${String(i + 1)} (${p.domain}.${p.role}): ${p.phaseDescription}`);
+    const finalSummary = previousOutput || summaryParts.join("\n");
+
+    return {
+      jobId,
+      status: "completed",
+      text: finalSummary,
+      totalInputTokens,
+      totalOutputTokens,
+      toolLoops: totalToolLoops,
+      errors: allErrors,
+      toolCalls: allToolCalls,
+      model: lastModel,
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -435,6 +536,7 @@ export class WorkerRuntime extends EventEmitter {
     dispatch: { description: string; domain: string; worker: string; priority: string; planRef?: { planId: string; stepId: string } },
     coaReqId: string,
     projectRoot: string,
+    previousPhaseOutput?: string,
   ): Promise<WorkerRunResult> {
     const workerSpec = `$W.${dispatch.domain}.${dispatch.worker}`;
     const model = this.config.modelMap[dispatch.worker] ?? this.config.modelMap["sonnet"] ?? this.config.modelMap["default"] ?? "claude-sonnet-4-6";
@@ -493,8 +595,11 @@ export class WorkerRuntime extends EventEmitter {
     const planLine = dispatch.planRef
       ? `\n**Plan step:** \`${dispatch.planRef.planId}\` / \`${dispatch.planRef.stepId}\` — the server auto-marks this step \`complete\` when you finish successfully, \`failed\` otherwise, so you do NOT need to call \`update_plan\` yourself for this step.`
       : "";
+    const contextLine = previousPhaseOutput
+      ? `\n\n## Previous Phase Output\n\nThe worker before you produced this output. Use it as context for your work:\n\n${previousPhaseOutput.slice(0, 4000)}`
+      : "";
     const messages: RuntimeMessage[] = [
-      { role: "user", content: `## Dispatch\n\n**Task:** ${dispatch.description}\n**Priority:** ${dispatch.priority}\n**Project:** ${projectRoot}\n**Your jobId:** ${jobId}${planLine}\n\nExecute this task. You have access to the same tool registry as the dispatching agent, scoped to this project. Tools that accept a \`projectPath\` argument should receive \`${projectRoot}\`.\n\nIf you need a decision you can't make yourself (design choice, config change you can't perform, ambiguous scope), call \`taskmaster_handoff\` with your \`jobId\` and a specific question — then finish your turn with a summary. You will not be auto-resumed; Aion will re-dispatch with clarification if needed.\n\nWhen done, summarize what you accomplished.` },
+      { role: "user", content: `## Dispatch\n\n**Task:** ${dispatch.description}\n**Priority:** ${dispatch.priority}\n**Project:** ${projectRoot}\n**Your jobId:** ${jobId}${planLine}${contextLine}\n\nExecute this task. You have access to the same tool registry as the dispatching agent, scoped to this project. Tools that accept a \`projectPath\` argument should receive \`${projectRoot}\`.\n\nIf you need a decision you can't make yourself (design choice, config change you can't perform, ambiguous scope), call \`taskmaster_handoff\` with your \`jobId\` and a specific question — then finish your turn with a summary. You will not be auto-resumed; Aion will re-dispatch with clarification if needed.\n\nWhen done, summarize what you accomplished.` },
     ];
 
     const executionCtx: ToolExecutionContext = {

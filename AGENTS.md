@@ -268,14 +268,9 @@ Docs are served through the editor plugin (now in the marketplace repo). The das
 | gov    | auditor, archivist |
 | data   | modeler, migrator |
 
-### Enforced Chains
+### Worker Independence
 
-| Trigger | Followed By |
-|---------|-------------|
-| hacker  | tester      |
-| writer.*| editor      |
-| modeler | linguist    |
-| auditor | archivist   |
+Workers are independent — no hardcoded chains. TaskMaster decides the sequence when decomposing a work request into phases. Common patterns (e.g., engineer → hacker → tester) emerge from TaskMaster's orchestration, not from worker definitions.
 
 ### Gate Types
 

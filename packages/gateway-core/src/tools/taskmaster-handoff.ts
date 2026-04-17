@@ -8,7 +8,7 @@
  * its current turn; the caller can re-dispatch with clarification if needed.
  * A full resume-on-response flow is a planned follow-up.
  *
- * Tier-gated (verified/sealed) — same surface as taskmaster_queue, since
+ * Tier-gated (verified/sealed) — same surface as taskmaster_dispatch, since
  * only real workers should raise handoffs.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";

@@ -13,7 +13,6 @@
  *   .prompt(hackerPrompt)
  *   .modelTier("capable")
  *   .allowedTools(["Read", "Write", "Edit", "Bash", "Glob", "Grep"])
- *   .chainTarget("code.tester")
  *   .requiredTier("verified")
  *   .keywords(["implement", "build", "code", "fix"])
  *   .build();
@@ -37,7 +36,6 @@ class WorkerBuilder {
   prompt(p: string): this { this.def.prompt = p; return this; }
   modelTier(tier: "fast" | "balanced" | "capable"): this { this.def.modelTier = tier; return this; }
   allowedTools(tools: string[]): this { this.def.allowedTools = tools; return this; }
-  chainTarget(target: string): this { this.def.chainTarget = target; return this; }
   requiredTier(tier: "verified" | "sealed"): this { this.def.requiredTier = tier; return this; }
   keywords(kw: string[]): this { this.def.keywords = kw; return this; }
 

@@ -329,7 +329,7 @@ Step statuses: `"pending"`, `"running"`, `"complete"`, `"failed"`, `"skipped"`.
 
 ## Worker Tools
 
-### `taskmaster_queue`
+### `taskmaster_dispatch`
 
 Queue a background task with TaskMaster. The worker runs with Aion's full tool registry, scoped to the same project.
 

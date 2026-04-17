@@ -1,5 +1,5 @@
 /**
- * taskmaster_queue tool — zero-config default path is the critical regression
+ * taskmaster_dispatch tool — zero-config default path is the critical regression
  * guard. If this test breaks, Aion loses the "just works" property on the
  * tool and tends to fall back to shell commands to recover.
  */
@@ -16,12 +16,12 @@ function parse(raw: string): Record<string, unknown> {
   return JSON.parse(raw) as Record<string, unknown>;
 }
 
-describe("taskmaster_queue handler", () => {
+describe("taskmaster_dispatch handler", () => {
   let tmpHome: string;
   let originalHome: string | undefined;
 
   beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), "tm-queue-"));
+    tmpHome = mkdtempSync(join(tmpdir(), "tm-dispatch-"));
     originalHome = process.env.HOME;
     process.env.HOME = tmpHome;
   });
@@ -33,8 +33,8 @@ describe("taskmaster_queue handler", () => {
   });
 
   describe("manifest contract", () => {
-    it("is named taskmaster_queue (renamed from worker_dispatch)", () => {
-      expect(WORKER_DISPATCH_MANIFEST.name).toBe("taskmaster_queue");
+    it("is named taskmaster_dispatch", () => {
+      expect(WORKER_DISPATCH_MANIFEST.name).toBe("taskmaster_dispatch");
     });
 
     it("drops the stale requiresState: [\"ONLINE\"] gate (state is audit-only)", () => {
@@ -75,7 +75,6 @@ describe("taskmaster_queue handler", () => {
       }));
       expect(res.exitCode).toBe(0);
       const jobFile = res.jobFile as string;
-      // Per-project slug: leading / stripped, remaining / → -
       expect(jobFile).toContain(join(tmpHome, ".agi", "home-test-myproject", "dispatch", "jobs"));
       expect(existsSync(jobFile)).toBe(true);
     });
@@ -109,15 +108,11 @@ describe("taskmaster_queue handler", () => {
       const res = parse(await createWorkerDispatchHandler({ coaReqId: "coa-abc" })({
         projectPath: PROJECT_PATH,
         description: "hello",
-        domain: "k",
-        worker: "analyst",
         priority: "high",
       }));
       const job = JSON.parse(readFileSync(res.jobFile as string, "utf-8")) as Record<string, unknown>;
       expect(job.projectPath).toBe(PROJECT_PATH);
       expect(job.description).toBe("hello");
-      expect(job.domain).toBe("k");
-      expect(job.worker).toBe("analyst");
       expect(job.priority).toBe("high");
       expect(job.coaReqId).toBe("coa-abc");
       expect(job.status).toBe("pending");
@@ -126,7 +121,7 @@ describe("taskmaster_queue handler", () => {
   });
 
   describe("onJobCreated callback", () => {
-    it("fires with {jobId, coaReqId, projectPath, sessionKey?, chatSessionId?} so the server can route completion back to the origin session", async () => {
+    it("fires with {jobId, coaReqId, projectPath, sessionKey?, chatSessionId?}", async () => {
       const calls: Array<Record<string, unknown>> = [];
       const res = parse(await createWorkerDispatchHandler({
         coaReqId: "coa-xyz",

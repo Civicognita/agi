@@ -164,7 +164,7 @@ export interface ToolRegistrationConfig {
   projectConfigManager?: import("../project-config-manager.js").ProjectConfigManager;
   /** Optional override for the TaskMaster dispatch base dir. Production leaves this unset (defaults to ~/.agi/{projectSlug}/dispatch/). */
   botsDir?: string;
-  /** Callback fired when taskmaster_queue creates a job. */
+  /** Callback fired when taskmaster_dispatch creates a job. */
   onJobCreated?: (args: {
     jobId: string;
     coaReqId: string;

@@ -1,19 +1,11 @@
 /**
- * taskmaster_queue tool — queue a TaskMaster job by writing a dispatch file
- * to the project's dispatch dir and notifying the worker runtime.
+ * taskmaster_dispatch tool — delegate work to TaskMaster.
+ *
+ * Aion describes WHAT needs to be done. TaskMaster decomposes the work
+ * into a sequence of workers and executes them. No domain/worker selection
+ * by Aion — TaskMaster handles orchestration.
  *
  * Dispatch files land under `~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json`.
- * Per-project scoping prevents Aion (in one project's chat) from ever picking
- * up a job dispatched from another project.
- *
- * Tier-gated (verified/sealed). State is audit metadata only — see
- * compute-available-tools.ts + its test: `requiresState` is preserved on
- * manifests for logging/UI dimming but never filters availability.
- *
- * Orchestration note (2026-04-15): TaskMaster is currently single-phase
- * single-worker. Phase decomposition + enforced chain auto-dispatch are
- * documented in `prompts/taskmaster.md` and listed as follow-ups in
- * `docs/agents/taskmaster.md`; this tool queues one worker at a time.
  */
 import { writeFileSync, mkdirSync } from "node:fs";
 import type { ToolHandler } from "../tool-registry.js";
@@ -21,13 +13,7 @@ import { dispatchJobsDir } from "../dispatch-paths.js";
 import { join } from "node:path";
 
 export interface WorkerDispatchConfig {
-  /** Override the dispatch base dir. Tests use this; production leaves it unset. */
   botsDir?: string;
-  /**
-   * Callback fired after a job file is written. Used by WorkerRuntime to
-   * pick up jobs, and by the server to remember which chat session spawned
-   * the job so worker progress can be re-injected as a system turn.
-   */
   onJobCreated?: (args: {
     jobId: string;
     coaReqId: string;
@@ -36,13 +22,9 @@ export interface WorkerDispatchConfig {
     chatSessionId?: string;
     planRef?: { planId: string; stepId: string };
   }) => void;
-  /** COA request ID fallback when no execution context is supplied. */
   coaReqId?: string;
 }
 
-/** Link a dispatched job to a specific step in a plan so the server can
- *  auto-mark the step as running/complete/failed as the worker progresses.
- *  Optional — tasks that aren't plan-driven don't set this. */
 interface PlanRef {
   planId: string;
   stepId: string;
@@ -65,13 +47,8 @@ export function createWorkerDispatchHandler(
       return JSON.stringify({ error: "description is required", exitCode: -1 });
     }
 
-    const domain = String(input.domain ?? "code");
-    const worker = String(input.worker ?? "engineer");
     const priority = String(input.priority ?? "normal");
 
-    // Optional plan linkage — when present, the server auto-marks the named
-    // step running/complete/failed as the worker progresses. Aion passes
-    // this when dispatching workers as part of executing an approved plan.
     let planRef: PlanRef | undefined;
     if (input.planRef !== undefined && input.planRef !== null) {
       const pr = input.planRef as Record<string, unknown>;
@@ -110,8 +87,6 @@ export function createWorkerDispatchHandler(
     const jobId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const jobFile = join(jobsDir, `${jobId}.json`);
 
-    // Prefer the live invocation COA fingerprint over the register-time
-    // config fallback so log attribution stays accurate.
     const coaReqId = ctx?.coaChainBase ?? config.coaReqId ?? `unknown-${Date.now()}`;
     const sessionKey = ctx?.sessionKey;
     const chatSessionId = ctx?.chatSessionId;
@@ -119,8 +94,6 @@ export function createWorkerDispatchHandler(
     const job = {
       id: jobId,
       description,
-      domain,
-      worker,
       priority,
       status: "pending",
       coaReqId,
@@ -158,19 +131,17 @@ export function createWorkerDispatchHandler(
 }
 
 export const WORKER_DISPATCH_MANIFEST = {
-  name: "taskmaster_queue",
+  name: "taskmaster_dispatch",
   description:
-    "Queue a task with TaskMaster, the background worker orchestrator. " +
-    "TaskMaster picks up the job from the project's dispatch dir and runs the " +
-    "specified worker (a specialist agent with access to Aion's full tool registry). " +
-    "Use when: (a) the task spans >2 files or multiple concerns, (b) it benefits " +
-    "from specialist review (code review, policy editing, compliance audit), " +
-    "(c) the user asks for research, documentation, or design work, (d) subtasks " +
-    "can run in parallel, or (e) the user explicitly says 'dispatch', 'queue', " +
-    "'delegate', 'worker', or 'task'. Jobs appear live in the owner's Work Queue " +
-    "drawer tab scoped to this project. Inputs: projectPath (required, absolute), " +
-    "description (required), domain, worker, priority. Returns jobId. Call this " +
-    "tool multiple times in one turn to fan out parallel work.",
+    "Delegate work to TaskMaster, the background orchestrator. Describe WHAT " +
+    "needs to be done — TaskMaster selects the right workers and execution " +
+    "sequence automatically. Use when: (a) the task spans multiple files or " +
+    "concerns, (b) it benefits from specialist work (code review, testing, " +
+    "documentation), (c) the user asks for research, design, or implementation " +
+    "work, (d) subtasks can be decomposed into phases, or (e) the user says " +
+    "'dispatch', 'queue', 'delegate', or 'task'. Jobs appear live in the Work " +
+    "Queue. After TaskMaster reports completion, verify the result before " +
+    "responding to the user.",
   requiresState: [],
   requiresTier: ["verified" as const, "sealed" as const],
 };
@@ -185,15 +156,7 @@ export const WORKER_DISPATCH_INPUT_SCHEMA = {
     },
     description: {
       type: "string",
-      description: "Human-readable description of the task to dispatch",
-    },
-    domain: {
-      type: "string",
-      description: 'Worker domain (e.g. "code", "k", "ux", "strat", "comm", "ops", "gov", "data")',
-    },
-    worker: {
-      type: "string",
-      description: 'Specific worker within the domain (e.g. "engineer", "hacker", "reviewer")',
+      description: "Human-readable description of the work to be done. Describe WHAT, not which worker to use.",
     },
     priority: {
       type: "string",
@@ -205,11 +168,10 @@ export const WORKER_DISPATCH_INPUT_SCHEMA = {
       description:
         "Optional. Link this job to a specific step of an approved plan so " +
         "the server auto-marks the step running on dispatch, complete on " +
-        "worker success, or failed on worker failure. Pass { planId, stepId } " +
-        "when dispatching workers as part of executing a plan.",
+        "success, or failed on failure.",
       properties: {
         planId: { type: "string", description: "The plan id from create_plan." },
-        stepId: { type: "string", description: "The step id (e.g. step_01) inside that plan." },
+        stepId: { type: "string", description: "The step id inside that plan." },
       },
       required: ["planId", "stepId"],
     },

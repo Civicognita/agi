@@ -59,7 +59,7 @@ export interface LiveJobOverlay {
   error?: string;
 }
 
-/** Flat shape matching what taskmaster_queue writes to disk. */
+/** Flat shape matching what taskmaster_dispatch writes to disk. */
 interface DispatchRecord {
   id: string;
   status: "pending" | "running" | "checkpoint" | "complete" | "failed";

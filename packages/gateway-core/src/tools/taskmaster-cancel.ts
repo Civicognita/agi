@@ -8,7 +8,7 @@
  * its current tool call before noticing, so the abort is best-effort (full
  * mid-run AbortController is a follow-up).
  *
- * Requeue semantics: Aion cancels then calls `taskmaster_queue` again with
+ * Requeue semantics: Aion cancels then calls `taskmaster_dispatch` again with
  * the new description. There is no "edit in place" path.
  */
 import { existsSync, unlinkSync } from "node:fs";
@@ -82,7 +82,7 @@ export const TASKMASTER_CANCEL_MANIFEST = {
     "Cancel a queued or in-flight Taskmaster job and mark it failed with the given reason. " +
     "Pending jobs are fully cleaned (dispatch file removed). Running jobs are best-effort: " +
     "the state flips to failed immediately, but an already-running worker finishes its current " +
-    "tool call before stopping. To requeue after cancel, call taskmaster_queue again. " +
+    "tool call before stopping. To requeue after cancel, call taskmaster_dispatch again. " +
     "Use when the owner changes their mind, the job is clearly stuck, or the scope needs to be edited.",
   requiresState: [],
   requiresTier: ["verified" as const, "sealed" as const],
@@ -98,7 +98,7 @@ export const TASKMASTER_CANCEL_INPUT_SCHEMA = {
     },
     jobId: {
       type: "string",
-      description: "The job id returned by taskmaster_queue.",
+      description: "The job id returned by taskmaster_dispatch.",
     },
     reason: {
       type: "string",

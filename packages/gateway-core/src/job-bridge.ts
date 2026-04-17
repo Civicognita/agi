@@ -1,23 +1,20 @@
 /**
- * JobBridge — translates taskmaster_queue job files into taskmaster state.
+ * JobBridge — manages taskmaster job state across dispatch files and the
+ * global state index.
  *
- * The taskmaster_queue tool writes flat JSON to
- * ~/.agi/{projectSlug}/dispatch/jobs/{id}.json (per-project), and this bridge
- * ensures each such job is represented in the global state index at
- * ~/.agi/state/taskmaster.json so WorkerRuntime can execute it.
- *
- * State file location: ~/.agi/state/taskmaster.json (runtime data, not in repo).
+ * State file: ~/.agi/state/taskmaster.json (runtime data, not in repo).
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
+import type { WorkPhase } from "./taskmaster-orchestrator.js";
 
 // ---------------------------------------------------------------------------
-// Types (mirrors .bots/lib/job-manager.ts — minimal subset)
+// Types
 // ---------------------------------------------------------------------------
 
-interface TaskmasterState {
+export interface TaskmasterState {
   version: string;
   wip: {
     jobs: Record<string, TaskmasterJob>;
@@ -26,7 +23,7 @@ interface TaskmasterState {
   };
 }
 
-interface TaskmasterJob {
+export interface TaskmasterJob {
   id: string;
   queueText: string;
   route: string | null;
@@ -34,7 +31,7 @@ interface TaskmasterJob {
   worktree: string;
   branch: string;
   phases: TaskmasterPhase[];
-  currentPhase: string | null;
+  currentPhase: number;
   status: "pending" | "running" | "checkpoint" | "complete" | "failed";
   createdAt: string;
   startedAt?: string;
@@ -42,9 +39,12 @@ interface TaskmasterJob {
   error?: string;
 }
 
-interface TaskmasterPhase {
+export interface TaskmasterPhase {
   id: string;
   name: string;
+  domain: string;
+  role: string;
+  description: string;
   workers: string[];
   gate: "auto" | "checkpoint" | "terminal";
   status: "pending" | "running" | "complete" | "failed";
@@ -53,12 +53,13 @@ interface TaskmasterPhase {
 interface DispatchJob {
   id: string;
   description: string;
-  domain: string;
-  worker: string;
   priority: string;
   status: string;
   coaReqId: string;
   createdAt: string;
+  // Legacy fields (pre-redesign dispatch files may still have these)
+  domain?: string;
+  worker?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -73,14 +74,14 @@ export class JobBridge {
   }
 
   /**
-   * Ensure a dispatched job exists in the taskmaster state.
-   * Reads the dispatch file from .bots/jobs/, creates/updates the
-   * corresponding entry in taskmaster.json.
-   *
-   * Returns the taskmaster job ID (same as the dispatch job ID).
+   * Create a job with phases from the orchestrator's decomposition.
+   * Called after TaskMaster decomposes the work description.
    */
-  ensureJob(jobId: string, dispatchFilePath: string): string {
-    // Read the dispatch file
+  ensureJobWithPhases(
+    jobId: string,
+    dispatchFilePath: string,
+    phases: WorkPhase[],
+  ): string {
     let dispatch: DispatchJob;
     try {
       dispatch = JSON.parse(readFileSync(dispatchFilePath, "utf-8")) as DispatchJob;
@@ -88,35 +89,33 @@ export class JobBridge {
       throw new Error(`Failed to read dispatch file: ${dispatchFilePath}`);
     }
 
-    // Load or create taskmaster state
     const state = this.loadState();
 
-    // Skip if job already exists in state
     if (state.wip.jobs[jobId]) {
       return jobId;
     }
 
-    // Map domain/worker to $W format
-    const workerSpec = `$W.${dispatch.domain}.${dispatch.worker}`;
+    const tmPhases: TaskmasterPhase[] = phases.map((p, i) => ({
+      id: `phase-${String(i + 1)}`,
+      name: `${p.domain}/${p.role}`,
+      domain: p.domain,
+      role: p.role,
+      description: p.phaseDescription,
+      workers: [`$W.${p.domain}.${p.role}`],
+      gate: i === phases.length - 1 ? "terminal" as const : p.gate,
+      status: "pending" as const,
+    }));
 
-    // Create a single-phase job (the worker handles everything)
-    const phase: TaskmasterPhase = {
-      id: "phase-1",
-      name: `${dispatch.domain}/${dispatch.worker}`,
-      workers: [workerSpec],
-      gate: "terminal",
-      status: "pending",
-    };
-
+    const firstPhase = tmPhases[0];
     const job: TaskmasterJob = {
       id: jobId,
       queueText: dispatch.description,
-      route: `${dispatch.domain}.${dispatch.worker}`,
-      entryWorker: workerSpec,
+      route: firstPhase ? `${firstPhase.domain}.${firstPhase.role}` : null,
+      entryWorker: firstPhase ? `$W.${firstPhase.domain}.${firstPhase.role}` : "$W.unknown",
       worktree: ".",
       branch: "dev",
-      phases: [phase],
-      currentPhase: "phase-1",
+      phases: tmPhases,
+      currentPhase: 0,
       status: "pending",
       createdAt: dispatch.createdAt,
     };
@@ -129,19 +128,146 @@ export class JobBridge {
   }
 
   /**
-   * Update a job's status in the taskmaster state.
+   * Legacy: create a single-phase job from old-style dispatch files
+   * that still have domain/worker fields.
    */
-  updateJobStatus(jobId: string, status: "running" | "complete" | "failed", error?: string): void {
+  ensureJob(jobId: string, dispatchFilePath: string): string {
+    let dispatch: DispatchJob;
+    try {
+      dispatch = JSON.parse(readFileSync(dispatchFilePath, "utf-8")) as DispatchJob;
+    } catch {
+      throw new Error(`Failed to read dispatch file: ${dispatchFilePath}`);
+    }
+
+    const state = this.loadState();
+    if (state.wip.jobs[jobId]) return jobId;
+
+    const domain = dispatch.domain ?? "code";
+    const worker = dispatch.worker ?? "engineer";
+    const workerSpec = `$W.${domain}.${worker}`;
+
+    const phase: TaskmasterPhase = {
+      id: "phase-1",
+      name: `${domain}/${worker}`,
+      domain,
+      role: worker,
+      description: dispatch.description,
+      workers: [workerSpec],
+      gate: "terminal",
+      status: "pending",
+    };
+
+    const job: TaskmasterJob = {
+      id: jobId,
+      queueText: dispatch.description,
+      route: `${domain}.${worker}`,
+      entryWorker: workerSpec,
+      worktree: ".",
+      branch: "dev",
+      phases: [phase],
+      currentPhase: 0,
+      status: "pending",
+      createdAt: dispatch.createdAt,
+    };
+
+    state.wip.jobs[jobId] = job;
+    state.wip.job_counter += 1;
+    this.saveState(state);
+    return jobId;
+  }
+
+  /**
+   * Update job-level status.
+   */
+  updateJobStatus(
+    jobId: string,
+    status: "running" | "complete" | "failed",
+    error?: string,
+  ): void {
     const state = this.loadState();
     const job = state.wip.jobs[jobId];
     if (!job) return;
 
     job.status = status;
     if (status === "running") job.startedAt = new Date().toISOString();
-    if (status === "complete" || status === "failed") job.completedAt = new Date().toISOString();
+    if (status === "complete" || status === "failed")
+      job.completedAt = new Date().toISOString();
     if (error) job.error = error;
 
     this.saveState(state);
+  }
+
+  /**
+   * Advance to the next phase. Returns the new phase index, or -1 if done.
+   */
+  advancePhase(jobId: string): number {
+    const state = this.loadState();
+    const job = state.wip.jobs[jobId];
+    if (!job) return -1;
+
+    const current = job.phases[job.currentPhase];
+    if (current) current.status = "complete";
+
+    const next = job.currentPhase + 1;
+    if (next >= job.phases.length) {
+      job.status = "complete";
+      job.completedAt = new Date().toISOString();
+      this.saveState(state);
+      return -1;
+    }
+
+    job.currentPhase = next;
+    const nextPhase = job.phases[next];
+    if (nextPhase) nextPhase.status = "running";
+    this.saveState(state);
+    return next;
+  }
+
+  /**
+   * Mark the current phase as running.
+   */
+  markPhaseRunning(jobId: string): void {
+    const state = this.loadState();
+    const job = state.wip.jobs[jobId];
+    if (!job) return;
+
+    const phase = job.phases[job.currentPhase];
+    if (phase) phase.status = "running";
+    this.saveState(state);
+  }
+
+  /**
+   * Mark the current phase as failed and fail the job.
+   */
+  markPhaseFailed(jobId: string, error: string): void {
+    const state = this.loadState();
+    const job = state.wip.jobs[jobId];
+    if (!job) return;
+
+    const phase = job.phases[job.currentPhase];
+    if (phase) phase.status = "failed";
+    job.status = "failed";
+    job.error = error;
+    job.completedAt = new Date().toISOString();
+    this.saveState(state);
+  }
+
+  /**
+   * Get the current phase for a job.
+   */
+  getCurrentPhase(jobId: string): TaskmasterPhase | null {
+    const state = this.loadState();
+    const job = state.wip.jobs[jobId];
+    if (!job) return null;
+    return job.phases[job.currentPhase] ?? null;
+  }
+
+  /**
+   * Get the full job state.
+   */
+  getJob(jobId: string): TaskmasterJob | null {
+    const state = this.loadState();
+    return state.wip.jobs[jobId] ?? null;
   }
 
   // -------------------------------------------------------------------------

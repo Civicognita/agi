@@ -1,10 +1,10 @@
 # Taskmaster: System Reference
 
-**Taskmaster** is the built-in job orchestration engine in Aionima. It receives background task requests via the `taskmaster_queue` tool, routes them to worker agents scoped to the dispatching project, and manages the full job lifecycle from dispatch to completion. Workers run with Aion's full tool registry.
+**Taskmaster** is the built-in job orchestration engine in Aionima. It receives background task requests via the `taskmaster_dispatch` tool, routes them to worker agents scoped to the dispatching project, and manages the full job lifecycle from dispatch to completion. Workers run with Aion's full tool registry.
 
 > **Note:** Workers are defined in plugins via `api.registerWorker()`. The engine that runs them lives entirely in `packages/gateway-core/`. Prompts for the built-in workers are loaded from `prompts/workers/` by `WorkerPromptLoader`. There is no external BOTS repo.
 
-> **Not yet implemented (2026-04-15):** multi-phase plan decomposition (described in `prompts/taskmaster.md`) and enforced-chain auto-dispatch (`hacker→tester` etc.). Both are aspirational. Today each `taskmaster_queue` call runs a single worker; chain the tail yourself in a follow-up call.
+> **Not yet implemented (2026-04-15):** multi-phase plan decomposition (described in `prompts/taskmaster.md`) and enforced-chain auto-dispatch (`hacker→tester` etc.). Both are aspirational. Today each `taskmaster_dispatch` call runs a single worker; chain the tail yourself in a follow-up call.
 
 ---
 
@@ -12,7 +12,7 @@
 
 ```
 Agent (LLM tool call)
-  └── taskmaster_queue tool           (requires projectPath)
+  └── taskmaster_dispatch tool           (requires projectPath)
         └── ~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json   (per-project dispatch file)
               └── JobBridge.ensureJob()
                     └── ~/.agi/state/taskmaster.json   (structured state index — global)
@@ -114,7 +114,7 @@ Worker identifiers use the pattern `$W.<domain>.<role>`, for example `$W.code.en
 
 ### 1. Dispatch
 
-The agent calls `taskmaster_queue` with a `projectPath` (required), `description`, `domain`, `worker`, and optional `priority`. The tool writes a flat JSON file to `~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json` and calls the `onJobCreated` callback (passing `projectPath`) to notify `WorkerRuntime`.
+The agent calls `taskmaster_dispatch` with a `projectPath` (required), `description`, `domain`, `worker`, and optional `priority`. The tool writes a flat JSON file to `~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json` and calls the `onJobCreated` callback (passing `projectPath`) to notify `WorkerRuntime`.
 
 ```json
 {
@@ -178,7 +178,7 @@ Each job phase ends with a gate that controls progression:
 | `checkpoint` | Pauses the job and notifies the operator; resumed via `POST /api/taskmaster/approve/:jobId` |
 | `terminal` | Final phase — job is complete when all workers in this phase finish |
 
-Jobs dispatched via `taskmaster_queue` receive a single phase with `gate: "terminal"`. Multi-phase plans would use `auto` or `checkpoint` gates for earlier phases — not currently implemented.
+Jobs dispatched via `taskmaster_dispatch` receive a single phase with `gate: "terminal"`. Multi-phase plans would use `auto` or `checkpoint` gates for earlier phases — not currently implemented.
 
 ---
 
@@ -364,7 +364,7 @@ Configuration is read from disk each time `WorkerRuntime.reloadConfig()` is call
 ## Verification Checklist
 
 - [ ] `GET /api/workers/catalog` lists the new worker prompt
-- [ ] `taskmaster_queue` with the new domain/role creates a job file in `~/.agi/{projectSlug}/dispatch/jobs/`
+- [ ] `taskmaster_dispatch` with the new domain/role creates a job file in `~/.agi/{projectSlug}/dispatch/jobs/`
 - [ ] `GET /api/taskmaster/jobs` shows the job with correct status
 - [ ] If the worker uses an enforced chain, `chain_next` in the handoff matches the declared target
 - [ ] Job reaches `status: "complete"` in `~/.agi/state/taskmaster.json`

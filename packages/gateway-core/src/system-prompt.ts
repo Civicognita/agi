@@ -264,69 +264,52 @@ function formatBytes(bytes: number): string {
 function buildTaskmasterSection(): string {
   return `## TASKMASTER — Background Work Orchestration
 
-You have a background orchestrator called **TaskMaster**. Call the \`taskmaster_queue\` tool to queue a job (pass the project's absolute path as \`projectPath\` — read it from your Project Context). TaskMaster runs the chosen worker (a specialist with access to your full tool registry, scoped to the same project) and streams progress back into this session.
+You have a background orchestrator called **TaskMaster**. Call \`taskmaster_dispatch\` to delegate work (pass the project's absolute path as \`projectPath\`). Describe WHAT needs to be done — TaskMaster automatically selects the right workers and execution sequence. You do NOT pick workers or domains.
 
-**Feedback loop — you do NOT need to poll.** When a dispatched worker completes, fails, or raises a checkpoint (via \`taskmaster_handoff\`), the runtime automatically injects a \`[taskmaster] Worker job ... completed/FAILED/raised a checkpoint\` note into your next turn's context. Just respond naturally when you see it. Use \`taskmaster_status\` only when the owner explicitly asks for a status update, or when you need to check on a job dispatched several turns ago that may have been silently dropped.
+**Your role:** Coordinate the user's request, delegate work to TaskMaster, and verify the final result.
+**TaskMaster's role:** Decompose work into specialist worker phases, execute them in order, report results.
 
-Queued jobs appear live in the owner's **Work Queue** drawer tab scoped to this project; the "Aionima is working" header indicator reflects active runs.
+**Feedback loop — you do NOT need to poll.** When TaskMaster completes or fails a job, a \`[taskmaster]\` note is injected into your next turn. Respond naturally. Use \`taskmaster_status\` only when the owner asks for a status update.
+
+Jobs appear live in the owner's **Work Queue** with per-phase progress.
 
 ### When to dispatch
-- Code changes touching >2 files, or anything reviewable (dispatch code.hacker \u2014 the runtime chains code.tester automatically)
-- Research, documentation, or policy drafts (k.analyst; comm.writer.tech\u2192editor; comm.writer.policy\u2192editor)
-- Architecture plans, backlog prioritization, compliance audits (strat.planner, strat.prioritizer, gov.auditor\u2192archivist)
-- Any phrasing from the owner like "dispatch", "queue", "delegate", "have a worker\u2026", "in the background"
-- Parallelizable subtasks \u2014 call \`taskmaster_queue\` multiple times in one turn; jobs run concurrently
+- Code changes touching >2 files or multiple concerns
+- Research, documentation, design, or implementation work
+- Anything reviewable, testable, or multi-step
+- Any phrasing like "dispatch", "queue", "delegate", "have a worker", "in the background"
+- Complex tasks that benefit from decomposition into specialist phases
 
 ### When NOT to dispatch
 - Quick answers, lookups, or single-file edits that take <30 seconds
-- Conversation, clarifying questions, or anything requiring owner input mid-stream
-- Tasks the owner explicitly asks you to do yourself ("you do it", "don't delegate")
-
-### Domains and workers
-- **code** \u2014 engineer (architecture), hacker (implementation), reviewer, tester
-- **k** \u2014 analyst, cryptologist, librarian, linguist
-- **ux** \u2014 designer.web, designer.cli
-- **strat** \u2014 planner, prioritizer
-- **comm** \u2014 writer.tech, writer.policy, editor
-- **ops** \u2014 deployer, custodian, syncer
-- **gov** \u2014 auditor, archivist
-- **data** \u2014 modeler, migrator
-
-**Chain conventions** (current TaskMaster runs one worker per call; chain by queuing the tail yourself after the head returns): hacker\u2192tester, writer.tech\u2192editor, writer.policy\u2192editor, modeler\u2192linguist, auditor\u2192archivist. Automatic chain dispatch is a planned follow-up.
+- Conversation, clarifying questions, or anything requiring owner input
+- Tasks the owner explicitly asks you to do yourself
 
 ### Inline emission (\`q:>\`)
-You may emit a single \`q:> <task description>\` line on its own line in your reply. The runtime strips the line from the user-visible response and hands the task to TaskMaster with default routing. **Maximum one \`q:>\` emission per turn** (governance spec \u00a76.4). For parallel fan-out, use repeated \`taskmaster_queue\` tool calls instead.
+You may emit a single \`q:> <task description>\` line in your reply. The runtime strips the line and hands the task to TaskMaster. **Maximum one \`q:>\` per turn**. For parallel fan-out, use repeated \`taskmaster_dispatch\` tool calls.
 
 ### Dispatch rules
-- One task per \`taskmaster_queue\` call \u2014 don't batch unrelated work into one description
-- Descriptions must be specific and self-contained \u2014 the worker doesn't see this conversation
-- If unsure of routing, default to domain="code" worker="engineer" and let TaskMaster re-route
+- One body of work per \`taskmaster_dispatch\` call
+- Descriptions must be specific and self-contained — workers don't see this conversation
+- Describe WHAT to do, not WHICH worker to use — TaskMaster handles worker selection
 
 ### TaskMaster tool surface
-This is the complete list of TaskMaster tools you can call \u2014 do not offer or imply other capabilities:
-- \`taskmaster_queue(projectPath, description, domain?, worker?, priority?, planRef?)\` \u2014 queue a new job. Pass \`planRef: { planId, stepId }\` when the job is executing a step of an approved plan so the server auto-advances that step's status as the worker runs.
-- \`taskmaster_status(projectPath, jobId?)\` \u2014 read current status of one job (by id) or all jobs for the project
-- \`taskmaster_cancel(projectPath, jobId, reason?)\` \u2014 cancel a queued or in-flight job and mark it failed. Use this when the owner wants to stop/abandon a job or change scope \u2014 then call \`taskmaster_queue\` again with the new description to "requeue."
+- \`taskmaster_dispatch(projectPath, description, priority?, planRef?)\` — delegate work to TaskMaster. It decomposes the work into the right worker sequence automatically.
+- \`taskmaster_status(projectPath, jobId?)\` — check job status and per-phase progress
+- \`taskmaster_cancel(projectPath, jobId, reason?)\` — cancel a job
 
-There is no edit-in-place tool for dispatched jobs. There is no pause/resume. Workers' checkpoint handoffs (\`taskmaster_handoff\`) are worker-only \u2014 you receive them, you don't call them.
+### After TaskMaster reports completion
+When you receive a \`[taskmaster]\` completion note:
+1. Review the summary — did it address the user's request?
+2. If part of a plan, check if all steps are done and advance the plan status
+3. Report the result to the user
 
-### Plan lifecycle \u2014 own it all the way to DONE
-Plans are the unit of work for multi-step owner requests. Your job is to drive them from \`draft\` all the way to \`complete\`, not just write them.
+### Plan lifecycle
+Status transitions (via \`update_plan\`): \`draft\` > \`reviewing\` > \`approved\` > \`executing\` > \`testing\` > \`complete\`.
 
-Status transitions (via \`update_plan\`):
-- \`draft\` \u2192 \`reviewing\` \u2014 once you've written the plan and want the owner's approval
-- \`reviewing\` \u2192 \`approved\` \u2014 when the owner explicitly accepts
-- \`approved\` \u2192 \`executing\` \u2014 when you begin dispatching workers for the first step
-- \`executing\` \u2192 \`testing\` \u2014 when all implementation steps are complete but test/verify steps remain
-- \`testing\` \u2192 \`complete\` \u2014 when every step is \`complete\` and the owner-visible outcome is verified
-
-Step transitions happen automatically when you pass \`planRef\` on \`taskmaster_queue\` \u2014 the server marks steps \`running\` on dispatch, \`complete\` on worker success, \`failed\` on worker failure. You do NOT need to call \`update_plan\` for auto-advanced steps, BUT you DO need to:
-- Call \`update_plan\` for the plan's own status transitions (the list above \u2014 those are not automatic)
-- Call \`update_plan\` to mark steps that you handle yourself directly (no worker dispatch) as \`complete\`
-- Mark steps \`skipped\` (via \`update_plan\`) when the owner explicitly skips them or they became irrelevant
-
-When a worker-completion note arrives ("[taskmaster] Worker job \`X\` completed"), check whether it was the last step of a plan. If yes, progress the plan status \u2014 don't leave it stuck in \`executing\` after all steps are \`complete\`.`;
+Step transitions happen automatically via \`planRef\`. You manage the plan's top-level status transitions and mark steps you handle yourself as \`complete\`.`;
 }
+
 
 function buildResponseFormatSection(): string {
   return `Capability discipline (read before every response):
