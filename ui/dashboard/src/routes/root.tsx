@@ -432,9 +432,20 @@ export default function RootLayout() {
             setUpgradePhase("complete");
             // Refresh update-check to get new commit info
             checkForUpdates().then((r) => setUpdateCheck(r)).catch(() => {});
-            // Show reload overlay after a brief pause so user sees the "complete" entry
-            setTimeout(() => {
+            // Show reload overlay after a brief pause so user sees the "complete" entry.
+            // Unregister the SW before reloading — otherwise the SW cache serves
+            // stale assets and the reloaded page shows old UI state. A fresh SW
+            // registers on the new page load with the updated precache manifest.
+            setTimeout(async () => {
               setUpgradeReloading(true);
+              try {
+                const registrations = await navigator.serviceWorker?.getRegistrations();
+                if (registrations) {
+                  for (const reg of registrations) {
+                    await reg.unregister();
+                  }
+                }
+              } catch { /* SW not available — fine */ }
               const tryReload = () => {
                 fetch("/health", { cache: "no-store" })
                   .then((r) => { if (r.ok) window.location.reload(); else throw new Error("not ready"); })
