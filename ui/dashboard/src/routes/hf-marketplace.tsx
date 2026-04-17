@@ -1141,7 +1141,7 @@ function InstalledTab() {
           model.status === "starting" ||
           model.status === "stopping" ||
           model.status === "removing";
-        const canToggle = model.status === "ready" || model.status === "running";
+        const canToggle = model.status === "ready" || model.status === "running" || model.status === "error" || model.status === "failed";
 
         return (
           <Card key={model.id} className="p-4 space-y-3">
