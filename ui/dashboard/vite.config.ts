@@ -9,15 +9,19 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: "prompt",
+      registerType: "autoUpdate",
       selfDestroying: false,
       includeAssets: ["favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png", "logo.png", "logo-small.png"],
       workbox: {
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api\//, /^\/ws/],
+        // Never precache index.html — it must always come from the network
+        // so it references the latest hashed JS/CSS filenames after an upgrade.
+        // JS/CSS files have content hashes so cached versions are naturally unique.
+        globPatterns: ["**/*.{js,css,ico,png,svg,woff2}"],
+        navigateFallback: null,
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
-        // Load echarts on demand instead of precaching (too large for SW cache)
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         globIgnores: ["**/echarts-*.js"],
         runtimeCaching: [
           {

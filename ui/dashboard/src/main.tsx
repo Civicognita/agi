@@ -12,14 +12,12 @@ import { setupContentRendererExtensions } from "./lib/content-renderer-setup.js"
 setupContentRendererExtensions();
 
 // Register PWA service worker (skip in Electron — it has its own update mechanism).
-// prompt mode with NO prompt handler: the SW registers for offline caching but
-// never auto-reloads the page. After an upgrade, the gateway restarts, the WS
-// drops, and the user reloads naturally — that page load picks up the new SW.
-// No auto-update, no polling, no banners. The upgrade header button is the
-// single notification surface.
+// autoUpdate mode: new SWs activate immediately via skipWaiting + clientsClaim.
+// index.html is never precached, so navigation always hits the network and picks
+// up fresh asset references after an upgrade. No manual unregister needed.
 if (!isElectron()) {
   import("virtual:pwa-register").then(({ registerSW }) => {
-    registerSW();
+    registerSW({ immediate: true });
   }).catch(() => {});
 }
 
