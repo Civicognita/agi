@@ -365,7 +365,7 @@ export class MarketplaceManager {
     }
 
     // 2. Find and apply all available updates
-    const { updates } = await this.checkUpdates();
+    const { updates } = this.checkUpdates();
     const updated: string[] = [];
     const errors: string[] = [];
 
@@ -382,21 +382,26 @@ export class MarketplaceManager {
   }
 
   /**
-   * Check for marketplace changes WITHOUT syncing. Fetches the remote
-   * catalog, diffs against the local DB, and returns:
-   * - updates: installed plugins with newer versions available
-   * - newInMarketplace: plugins in the remote catalog that aren't in the
-   *   local catalog at all (genuinely new, regardless of install status)
+   * Check for plugin updates. Local-only — compares installed plugin versions
+   * against the already-synced catalog. No remote fetch. The catalog sync
+   * (which runs at boot and on manual refresh) handles discovery of new
+   * plugins via CatalogDiff.added.
+   *
+   * Returns { updates, newInMarketplace } where:
+   * - updates: installed plugins whose catalog version differs from installed
+   * - newInMarketplace: catalog plugins that aren't installed (NOT "new since
+   *   last sync" — just "available to install"). The page-level banner uses
+   *   this count but it's informational, not an action prompt.
    */
-  async checkUpdates(): Promise<{
+  checkUpdates(): {
     updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[];
     newInMarketplace: { pluginName: string; version: string; description: string }[];
-  }> {
+  } {
     const updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[] = [];
-    const newInMarketplace: { pluginName: string; version: string; description: string }[] = [];
 
-    // Version-bump check for installed plugins (local-only, no fetch)
     const installed = this.store.getInstalled();
+    const installedNames = new Set(installed.map((i) => i.name));
+
     for (const item of installed) {
       const catalogPlugin = this.store.getPlugin(item.name, item.sourceId);
       if (catalogPlugin?.version && catalogPlugin.version !== item.version) {
@@ -409,38 +414,16 @@ export class MarketplaceManager {
       }
     }
 
-    // Fetch remote catalog and diff against local to find genuinely new plugins
-    const sources = this.store.getSources();
-    const localNames = new Set(this.searchCatalog({}).map((p) => p.name));
-    for (const source of sources) {
-      try {
-        const result = await fetchCatalog(source.ref);
-        if (result.ok && result.catalog) {
-          for (const plugin of result.catalog.plugins) {
-            if (!localNames.has(plugin.name)) {
-              newInMarketplace.push({
-                pluginName: plugin.name,
-                version: plugin.version ?? "0.0.0",
-                description: plugin.description ?? "",
-              });
-            }
-            // Also check version bumps for installed plugins from remote
-            // (catches updates that haven't been synced locally yet)
-            const installedItem = installed.find((i) => i.name === plugin.name);
-            if (installedItem && plugin.version && plugin.version !== installedItem.version) {
-              if (!updates.some((u) => u.pluginName === plugin.name)) {
-                updates.push({
-                  pluginName: plugin.name,
-                  currentVersion: installedItem.version,
-                  availableVersion: plugin.version,
-                  sourceId: source.id,
-                });
-              }
-            }
-          }
-        }
-      } catch {
-        // Remote fetch failed — fall back to local-only check (already done above)
+    // Catalog plugins not yet installed — informational, not "new since last sync"
+    const newInMarketplace: { pluginName: string; version: string; description: string }[] = [];
+    const allCatalog = this.searchCatalog({});
+    for (const entry of allCatalog) {
+      if (!installedNames.has(entry.name)) {
+        newInMarketplace.push({
+          pluginName: entry.name,
+          version: entry.version ?? "0.0.0",
+          description: entry.description ?? "",
+        });
       }
     }
 

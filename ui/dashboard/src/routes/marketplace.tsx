@@ -79,7 +79,7 @@ export default function MarketplacePage() {
           )}
           {pageUpdates.updates > 0 && pageUpdates.newInMarketplace > 0 && <span>·</span>}
           {pageUpdates.newInMarketplace > 0 && (
-            <span>{pageUpdates.newInMarketplace} new plugin{pageUpdates.newInMarketplace > 1 ? "s" : ""} in the marketplace</span>
+            <span>{pageUpdates.newInMarketplace} plugin{pageUpdates.newInMarketplace > 1 ? "s" : ""} available to install</span>
           )}
           <button
             onClick={() => setActiveTab("browse")}
