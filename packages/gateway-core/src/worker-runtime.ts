@@ -119,6 +119,11 @@ export interface WorkerRuntimeConfig {
   workerTier?: VerificationTier;
 }
 
+/** Minimal plugin registry interface for worker prompt resolution. */
+interface WorkerPluginLookup {
+  getWorker(id: string): { prompt: string; name: string } | undefined;
+}
+
 export interface WorkerRuntimeDeps {
   llmProvider: LLMProvider;
   /**
@@ -130,6 +135,9 @@ export interface WorkerRuntimeDeps {
   toolRegistry?: ToolRegistry;
   /** Optional getter so the runtime reads the current gateway state when building ToolExecutionContext. Defaults to "ONLINE". */
   getState?: () => GatewayState;
+  /** Plugin registry — primary source for worker system prompts. Workers are
+   *  plugins that register via api.registerWorker() with their prompt inline. */
+  pluginWorkers?: WorkerPluginLookup;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +271,7 @@ export class WorkerRuntime extends EventEmitter {
   private invoker: RuntimeInvoker;
   private promptLoader: WorkerPromptLoader | null = null;
   private toolRegistry: ToolRegistry | null = null;
+  private pluginWorkers: WorkerPluginLookup | null = null;
   private getState: () => GatewayState;
 
   constructor(config: WorkerRuntimeConfig, deps: WorkerRuntimeDeps) {
@@ -273,12 +282,18 @@ export class WorkerRuntime extends EventEmitter {
       this.promptLoader = new WorkerPromptLoader(config.promptDir);
     }
     this.toolRegistry = deps.toolRegistry ?? null;
+    this.pluginWorkers = deps.pluginWorkers ?? null;
     this.getState = deps.getState ?? (() => "ONLINE" as GatewayState);
   }
 
   /** Late-bind the tool registry (used when the registry is constructed after the runtime). */
   setToolRegistry(registry: ToolRegistry): void {
     this.toolRegistry = registry;
+  }
+
+  /** Late-bind the plugin worker registry (plugins load after the runtime). */
+  setPluginWorkers(lookup: WorkerPluginLookup): void {
+    this.pluginWorkers = lookup;
   }
 
   /** Hot-reload config without interrupting running jobs. */
@@ -424,16 +439,31 @@ export class WorkerRuntime extends EventEmitter {
     const workerSpec = `$W.${dispatch.domain}.${dispatch.worker}`;
     const model = this.config.modelMap[dispatch.worker] ?? this.config.modelMap["sonnet"] ?? this.config.modelMap["default"] ?? "claude-sonnet-4-6";
 
-    this.emit("runtime:event", { type: "worker_started", jobId, worker: workerSpec, model });
-
-    // Load worker system prompt
+    // Load worker system prompt. Workers are plugins — their prompts live in
+    // WorkerDefinition.prompt, registered via api.registerWorker(). The
+    // filesystem WorkerPromptLoader is a legacy fallback for workers that
+    // haven't been migrated to the plugin system yet.
+    const workerId = `${dispatch.domain}.${dispatch.worker}`;
+    const pluginWorker = this.pluginWorkers?.getWorker(workerId);
     let systemPrompt: string;
-    if (this.promptLoader) {
-      systemPrompt = this.promptLoader.getSystemPrompt(dispatch.domain, dispatch.worker)
-        ?? `You are ${workerSpec}, a Taskmaster worker. Domain: ${dispatch.domain}. Role: ${dispatch.worker}.\n\nComplete the dispatched task.`;
+    let promptSource: string;
+    if (pluginWorker) {
+      systemPrompt = pluginWorker.prompt;
+      promptSource = `plugin (${pluginWorker.name})`;
+    } else if (this.promptLoader) {
+      const fsPrompt = this.promptLoader.getSystemPrompt(dispatch.domain, dispatch.worker);
+      if (fsPrompt) {
+        systemPrompt = fsPrompt;
+        promptSource = "filesystem (legacy)";
+      } else {
+        systemPrompt = `You are ${workerSpec}, a Taskmaster worker. Domain: ${dispatch.domain}. Role: ${dispatch.worker}.\n\nComplete the dispatched task.`;
+        promptSource = "generic fallback";
+      }
     } else {
       systemPrompt = `You are ${workerSpec}, a Taskmaster worker. Domain: ${dispatch.domain}. Role: ${dispatch.worker}.\n\nComplete the dispatched task.`;
+      promptSource = "generic fallback";
     }
+    this.emit("runtime:event", { type: "worker_started", jobId, worker: workerSpec, model, promptSource });
 
     // Workers use Aion's shared ToolRegistry filtered by the worker's tier.
     // This replaces the retired 5-tool mini-sandbox — a worker dispatched to

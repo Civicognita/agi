@@ -1270,6 +1270,10 @@ export async function startGatewayServer(
       // Bridge plugin-registered agent tools, skills, and knowledge into core registries
       bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
 
+      // Wire plugin-registered workers into the worker runtime so TaskMaster
+      // uses plugin-contributed prompts, not the old filesystem .md files.
+      workerRuntime.setPluginWorkers(pluginRegistry);
+
       // Wire plugin-contributed LLM providers into the factory so
       // `agent.provider: "claude-max"` (or any plugin type) resolves at
       // config-change time without hardcoding every provider.
