@@ -59,13 +59,14 @@ export function registerWorkerApi(
   // via api.registerWorker(). The filesystem loader is a legacy fallback.
   app.get("/api/workers/catalog", async () => {
     const entries: Array<{ id: string; title: string; description: string; domain: string; role: string; model?: string; color?: string }> = [];
-    const seenIds = new Set<string>();
+    const seenKeys = new Set<string>();
 
     // Plugin-registered workers (primary source)
     if (pluginRegistry) {
       for (const { worker } of pluginRegistry.getWorkers()) {
-        if (!seenIds.has(worker.id)) {
-          seenIds.add(worker.id);
+        const key = `${worker.domain}.${worker.role}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
           entries.push({
             id: worker.id,
             title: worker.name,
@@ -81,8 +82,9 @@ export function registerWorkerApi(
     // Filesystem prompts (fallback for workers not registered as plugins)
     if (promptLoader) {
       for (const entry of promptLoader.discover()) {
-        if (!seenIds.has(entry.id)) {
-          seenIds.add(entry.id);
+        const key = `${entry.domain}.${entry.role}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
           entries.push({
             id: entry.id,
             title: entry.name,
