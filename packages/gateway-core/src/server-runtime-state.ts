@@ -1904,6 +1904,30 @@ export async function createGatewayRuntimeState(
               }
             }
           }
+
+          // Provision test.ai.on for Playwright UI testing (best-effort)
+          try {
+            const vmIpRaw = execSync("multipass info aionima-test --format csv 2>/dev/null", { encoding: "utf-8", stdio: "pipe", timeout: 5000 });
+            const vmIpLine = vmIpRaw.trim().split("\n").pop() ?? "";
+            const vmIp = vmIpLine.split(",")[2]?.trim();
+            if (vmIp && vmIp.length > 0) {
+              // Update host dnsmasq
+              execSync(`sudo sed -i '/test\\.ai\\.on/d' /etc/dnsmasq.d/ai-on.conf`, { stdio: "pipe" });
+              execSync(`echo 'address=/test.ai.on/${vmIp}' | sudo tee -a /etc/dnsmasq.d/ai-on.conf`, { stdio: "pipe" });
+              execSync("sudo systemctl restart dnsmasq", { stdio: "pipe", timeout: 10000 });
+
+              // Update VM Caddy — add test.ai.on site
+              const caddySnippet = `\\ntest.ai.on {\\n  tls internal\\n  reverse_proxy localhost:3100\\n}`;
+              execSync(`multipass exec aionima-test -- sudo bash -c "grep -q 'test.ai.on' /etc/caddy/Caddyfile || echo -e '${caddySnippet}' >> /etc/caddy/Caddyfile && sudo systemctl restart caddy"`, { stdio: "pipe", timeout: 15000 });
+
+              // Update VM /etc/hosts
+              execSync(`multipass exec aionima-test -- sudo bash -c "grep -q 'test.ai.on' /etc/hosts || sudo sed -i 's/ai.on/ai.on test.ai.on/' /etc/hosts"`, { stdio: "pipe", timeout: 5000 });
+
+              log.info("dev: test.ai.on provisioned (VM IP: " + vmIp + ")");
+            }
+          } catch (testVmErr) {
+            log.warn(`dev: test.ai.on provisioning skipped — ${testVmErr instanceof Error ? testVmErr.message : String(testVmErr)}`);
+          }
         }
 
         if (deps.coaLogger && deps.entityStore) {

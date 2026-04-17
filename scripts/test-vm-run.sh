@@ -102,16 +102,13 @@ run_e2e() {
 run_e2e_ui() {
   echo ""
   echo "================================================================"
-  echo "  E2E UI Tests (Playwright)"
+  echo "  E2E UI Tests (Playwright → test.ai.on)"
   echo "================================================================"
   echo ""
 
-  local vm_ip
-  vm_ip=$(bash "$VM_SCRIPT" ip)
-
-  echo "Running Playwright against VM at $vm_ip:3100..."
+  echo "Running Playwright against test.ai.on..."
   cd "$REPO_DIR"
-  BASE_URL="http://${vm_ip}:3100" npx playwright test
+  BASE_URL="https://test.ai.on" npx playwright test
 }
 
 # ---------------------------------------------------------------------------

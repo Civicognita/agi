@@ -28,6 +28,8 @@
     "test:vm:services-stop": "bash scripts/test-vm.sh services-stop",
     "test:vm:services-status": "bash scripts/test-vm.sh services-status",
     "test:services": "bash scripts/test-vm.sh test-services",
+    "test:ui": "bash scripts/test-vm-run.sh e2e:ui",
+    "test:vm:test-ui": "bash scripts/test-vm.sh test-ui",
     "lint": "oxlint --tsconfig tsconfig.json",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",

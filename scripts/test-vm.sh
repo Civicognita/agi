@@ -296,13 +296,25 @@ id.ai.on {
   tls internal
   reverse_proxy localhost:4100
 }
+
+test.ai.on {
+  tls internal
+  reverse_proxy localhost:3100
+}
 EOF
 systemctl restart caddy'
 
   echo "==> Adding /etc/hosts entries..."
   multipass exec "$VM_NAME" -- sudo bash -c '
-    grep -q "ai.on id.ai.on" /etc/hosts || echo "127.0.0.1 ai.on id.ai.on db.ai.on" >> /etc/hosts
+    grep -q "ai.on id.ai.on" /etc/hosts || echo "127.0.0.1 ai.on id.ai.on db.ai.on test.ai.on" >> /etc/hosts
   '
+
+  echo "==> Updating host DNS for test.ai.on..."
+  VM_IP=$(multipass info "$VM_NAME" --format csv | tail -1 | cut -d',' -f3)
+  sudo sed -i '/test\.ai\.on/d' /etc/dnsmasq.d/ai-on.conf
+  echo "address=/test.ai.on/$VM_IP" | sudo tee -a /etc/dnsmasq.d/ai-on.conf
+  sudo systemctl restart dnsmasq
+  echo "    test.ai.on → $VM_IP"
 
   echo "==> Building ID service..."
   multipass exec "$VM_NAME" -- bash -c '
@@ -408,6 +420,21 @@ cmd_services_status() {
   '
 }
 
+cmd_test_ui() {
+  ensure_vm_running
+
+  echo "==> Verifying test.ai.on is reachable..."
+  if ! curl -sk --max-time 5 "https://test.ai.on/api/system/stats" >/dev/null 2>&1; then
+    echo "Error: Gateway not reachable at https://test.ai.on" >&2
+    echo "Run: $0 services-start" >&2
+    exit 1
+  fi
+
+  echo "==> Running Playwright against test.ai.on..."
+  cd "$REPO_DIR"
+  BASE_URL="https://test.ai.on" npx playwright test "${@}"
+}
+
 cmd_test_services() {
   ensure_vm_running
   echo "==> Running service integration tests..."
@@ -470,8 +497,9 @@ case "${1:-help}" in
   services-stop)    cmd_services_stop ;;
   services-status)  cmd_services_status ;;
   test-services)    cmd_test_services ;;
+  test-ui)          cmd_test_ui "${@:2}" ;;
   help|--help|-h)
-    echo "Usage: $0 {create|destroy|status|ssh|ip|setup|test|remount|exec|services-setup|services-start|services-stop|services-status|test-services}"
+    echo "Usage: $0 {create|destroy|status|ssh|ip|setup|test|remount|exec|services-setup|services-start|services-stop|services-status|test-services|test-ui}"
     echo ""
     echo "Commands:"
     echo "  create           Launch a fresh Ubuntu ${VM_IMAGE} VM with all repo mounts"
@@ -490,6 +518,7 @@ case "${1:-help}" in
     echo "  services-stop    Stop ID service and AGI background processes"
     echo "  services-status  Show status and health of all services"
     echo "  test-services    Run service integration tests against the running stack"
+    echo "  test-ui          Run Playwright UI tests against https://test.ai.on"
     ;;
   *)
     echo "Unknown command: $1" >&2
