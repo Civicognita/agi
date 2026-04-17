@@ -59,14 +59,27 @@ function createSingleProvider(
         baseUrl: config.baseUrl ?? "http://127.0.0.1:11434",
       });
 
-    case "hf-local":
+    case "hf-local": {
+      // Resolve the actual port from ModelAgentBridge if available.
+      // The bridge registers running text-generation models with their
+      // container port — hardcoding 6000 breaks when models start on
+      // other ports from the allocation pool.
+      let baseUrl = config.baseUrl;
+      if (!baseUrl && _modelAgentBridge) {
+        const modelId = config.defaultModel ?? "local";
+        const bridgeProvider = _modelAgentBridge.getProviderForModel(modelId);
+        if (bridgeProvider) {
+          baseUrl = bridgeProvider.baseUrl;
+        }
+      }
       return new OpenAIProvider({
         apiKey: "not-needed",
         defaultModel: config.defaultModel ?? "local",
         maxTokens: config.maxTokens ?? 4096,
         maxRetries: config.maxRetries ?? 2,
-        baseUrl: config.baseUrl ?? "http://127.0.0.1:6000",
+        baseUrl: baseUrl ?? "http://127.0.0.1:6000",
       });
+    }
 
     default: {
       // Check plugin-registered providers before giving up. Plugins call
@@ -90,6 +103,16 @@ let _pluginProviderRegistry: PluginProviderLookup | null = null;
 
 export function setPluginProviderRegistry(registry: PluginProviderLookup): void {
   _pluginProviderRegistry = registry;
+}
+
+/** Late-bound ModelAgentBridge ref for resolving HF local model ports. */
+interface ModelBridgeLookup {
+  getProviderForModel(modelId: string): { baseUrl: string; model: string } | undefined;
+}
+let _modelAgentBridge: ModelBridgeLookup | null = null;
+
+export function setModelAgentBridge(bridge: ModelBridgeLookup): void {
+  _modelAgentBridge = bridge;
 }
 
 // ---------------------------------------------------------------------------

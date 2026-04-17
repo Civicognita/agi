@@ -8,6 +8,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { SectionHeading, FieldGroup } from "./SettingsShared.js";
+import { fetchHfProviders } from "../../api.js";
+import type { HfProviderOption } from "../../api.js";
 import type { AionimaConfig } from "../../types.js";
 
 interface WorkerEntry {
@@ -53,12 +55,35 @@ interface Props {
 
 export function ProvidersSettings({ config, update }: Props) {
   const [workers, setWorkers] = useState<WorkerEntry[]>([]);
+  const [hfProviders, setHfProviders] = useState<HfProviderOption[]>([]);
 
   const agentProvider = (config.agent as Record<string, unknown> | undefined)?.provider as string ?? "anthropic";
   const agentModel = (config.agent as Record<string, unknown> | undefined)?.model as string ?? "claude-sonnet-4-6";
   const modelOverrides = ((config.workers as Record<string, unknown> | undefined)?.modelOverrides ?? {}) as Record<string, { provider?: string; model?: string }>;
 
   const [workerError, setWorkerError] = useState<string | null>(null);
+
+  // Fetch running HF text-generation models to show in provider dropdowns
+  useEffect(() => {
+    fetchHfProviders().then(setHfProviders).catch(() => {});
+    // Re-check every 30s in case models start/stop
+    const interval = setInterval(() => {
+      fetchHfProviders().then(setHfProviders).catch(() => {});
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Build combined provider list: built-in + running HF models
+  const allProviders: ProviderOption[] = [
+    ...BUILTIN_PROVIDERS,
+    ...hfProviders.map((hf) => ({ id: `hf-local:${hf.id}`, name: hf.name })),
+  ];
+
+  // Build combined model list: include HF models
+  const allModels: Record<string, { id: string; name: string }[]> = { ...MODELS_BY_PROVIDER };
+  for (const hf of hfProviders) {
+    allModels[`hf-local:${hf.id}`] = [{ id: hf.id, name: hf.name }];
+  }
 
   useEffect(() => {
     fetch("/api/workers/catalog")
@@ -73,15 +98,30 @@ export function ProvidersSettings({ config, update }: Props) {
       .catch((err) => setWorkerError(err instanceof Error ? err.message : "Failed to load workers"));
   }, []);
 
-  const setAionProvider = useCallback((provider: string) => {
-    // When switching provider, also set a sensible default model
-    const models = MODELS_BY_PROVIDER[provider];
+  const setAionProvider = useCallback((providerKey: string) => {
+    // HF local models use "hf-local:{modelId}" as the key. Split it so
+    // config gets provider: "hf-local" + model: "{modelId}" + baseUrl.
+    if (providerKey.startsWith("hf-local:")) {
+      const modelId = providerKey.slice("hf-local:".length);
+      const hf = hfProviders.find((h) => h.id === modelId);
+      update((prev) => ({
+        ...prev,
+        agent: {
+          ...(prev.agent ?? {}),
+          provider: "hf-local",
+          model: modelId,
+          baseUrl: hf?.baseUrl ?? `http://127.0.0.1:6000`,
+        },
+      }));
+      return;
+    }
+    const models = MODELS_BY_PROVIDER[providerKey];
     const defaultModel = models?.[0]?.id ?? "claude-sonnet-4-6";
     update((prev) => ({
       ...prev,
-      agent: { ...(prev.agent ?? {}), provider, model: defaultModel },
+      agent: { ...(prev.agent ?? {}), provider: providerKey, model: defaultModel },
     }));
-  }, [update]);
+  }, [update, hfProviders]);
 
   const setAionModel = useCallback((model: string) => {
     update((prev) => ({
@@ -149,7 +189,7 @@ export function ProvidersSettings({ config, update }: Props) {
               value={agentProvider}
               onChange={(e) => setAionProvider(e.target.value)}
             >
-              {BUILTIN_PROVIDERS.map((p) => (
+              {allProviders.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
@@ -160,7 +200,7 @@ export function ProvidersSettings({ config, update }: Props) {
               value={agentModel}
               onChange={(e) => setAionModel(e.target.value)}
             >
-              {(MODELS_BY_PROVIDER[agentProvider] ?? []).map((m) => (
+              {(allModels[agentProvider] ?? allModels[`hf-local:${agentModel}`] ?? []).map((m) => (
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
             </select>
@@ -196,7 +236,7 @@ export function ProvidersSettings({ config, update }: Props) {
                     const currentProvider = override?.provider ?? "inherited";
 
                     const currentModel = override?.model ?? "";
-                    const workerProviderModels = currentProvider !== "inherited" ? (MODELS_BY_PROVIDER[currentProvider] ?? []) : [];
+                    const workerProviderModels = currentProvider !== "inherited" ? (allModels[currentProvider] ?? []) : [];
 
                     return (
                       <div key={w.id} className="flex items-center gap-4 py-1.5 border-b border-border last:border-b-0">
@@ -210,7 +250,7 @@ export function ProvidersSettings({ config, update }: Props) {
                           onChange={(e) => setWorkerOverride(key, "provider", e.target.value)}
                         >
                           <option value="inherited">Inherited ({agentProvider})</option>
-                          {BUILTIN_PROVIDERS.map((p) => (
+                          {allProviders.map((p) => (
                             <option key={p.id} value={p.id}>{p.name}</option>
                           ))}
                         </select>

@@ -559,6 +559,34 @@ export function registerHfRoutes(
     }
   });
 
+  // GET /api/hf/providers — running text-generation models available as LLM providers
+  fastify.get("/api/hf/providers", async (_request, reply) => {
+    try {
+      const running = containerManager.getRunning();
+      const installedIndex = new Map(
+        (await modelStore.getAll()).map((m) => [m.id, m]),
+      );
+      const LLM_TAGS = new Set(["text-generation", "text2text-generation", "conversational"]);
+      const providers = running
+        .filter((c) => {
+          const installed = installedIndex.get(c.modelId);
+          return installed && LLM_TAGS.has(installed.pipelineTag) && c.status === "running";
+        })
+        .map((c) => {
+          const installed = installedIndex.get(c.modelId)!;
+          return {
+            id: c.modelId,
+            name: `${installed.displayName} (local)`,
+            baseUrl: `http://127.0.0.1:${String(c.port)}`,
+            port: c.port,
+          };
+        });
+      return reply.send(providers);
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // -------------------------------------------------------------------------
   // Inference
   // -------------------------------------------------------------------------

@@ -2007,6 +2007,19 @@ export async function fetchPluginMarketplaceInstalled(): Promise<import("./types
   return res.json() as Promise<import("./types.js").PluginMarketplaceInstalledItem[]>;
 }
 
+export interface HfProviderOption {
+  id: string;
+  name: string;
+  baseUrl: string;
+  port: number;
+}
+
+export async function fetchHfProviders(): Promise<HfProviderOption[]> {
+  const res = await fetch("/api/hf/providers");
+  if (!res.ok) return [];
+  return res.json() as Promise<HfProviderOption[]>;
+}
+
 export interface MarketplaceUpdatesResponse {
   updates: import("./types.js").PluginMarketplaceUpdate[];
   newInMarketplace: { pluginName: string; version: string; description: string }[];

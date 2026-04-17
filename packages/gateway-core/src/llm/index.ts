@@ -19,4 +19,4 @@ export { AnthropicProvider } from "./anthropic-provider.js";
 export { OpenAIProvider } from "./openai-provider.js";
 export { OllamaProvider } from "./ollama-provider.js";
 export { FailoverProvider } from "./failover-provider.js";
-export { createLLMProvider, setPluginProviderRegistry } from "./factory.js";
+export { createLLMProvider, setPluginProviderRegistry, setModelAgentBridge } from "./factory.js";

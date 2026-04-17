@@ -55,7 +55,7 @@ import { OutboundDispatcher } from "./outbound-dispatcher.js";
 import { QueueConsumer } from "./queue-consumer.js";
 import { AgentSessionManager } from "./agent-session.js";
 import { SessionStore } from "./session-store.js";
-import { createLLMProvider, setPluginProviderRegistry } from "./llm/index.js";
+import { createLLMProvider, setPluginProviderRegistry, setModelAgentBridge } from "./llm/index.js";
 import type { LLMProvider } from "./llm/index.js";
 import { RateLimiter } from "./rate-limiter.js";
 import { ToolRegistry } from "./tool-registry.js";
@@ -1529,6 +1529,10 @@ export async function startGatewayServer(
     inferenceGateway,
     profile.capabilities,
   );
+
+  // Wire the bridge into the LLM factory so "hf-local" provider type
+  // resolves the actual container port dynamically instead of hardcoding 6000.
+  setModelAgentBridge(modelAgentBridge);
 
   // Known-models registry and custom container builder
   const knownModelsRegistry = new KnownModelsRegistry(
