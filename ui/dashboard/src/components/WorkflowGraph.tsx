@@ -73,6 +73,7 @@ function TaskmasterNode({ data }: NodeProps) {
   const d = data as { workerCount: number; domainCount: number };
   return (
     <Card className="border-primary/50 bg-card shadow-md" style={{ width: TM_WIDTH }}>
+      <Handle type="target" position={Position.Top} style={{ width: 8, height: 8, background: "var(--color-primary)", border: "2px solid var(--color-card)" }} />
       <Handle type="source" position={Position.Bottom} style={{ width: 8, height: 8, background: "var(--color-primary)", border: "2px solid var(--color-card)" }} />
       <div className="px-3 py-2 text-center">
         <div className="text-[13px] font-bold text-primary tracking-wide">TASKMASTER</div>
@@ -177,11 +178,11 @@ function RouterHubNode({ data }: NodeProps) {
 function RouterStageNode({ data }: NodeProps) {
   const d = data as { label: string; index: number };
   return (
-    <div className="px-3 py-1.5 rounded-full border border-border bg-card text-[9px] text-muted-foreground font-medium tracking-wide">
-      <Handle type="target" position={Position.Top} style={{ width: 4, height: 4, background: "var(--color-border)", opacity: 0.5 }} />
-      <Handle type="source" position={Position.Bottom} style={{ width: 4, height: 4, background: "var(--color-border)", opacity: 0.5 }} />
-      {d.label}
-    </div>
+    <Card className="border-border/50 bg-card shadow-sm px-3 py-1.5 text-center" style={{ minWidth: 70 }}>
+      <Handle type="target" position={Position.Top} style={{ width: 4, height: 4, background: "var(--color-primary)", opacity: 0.5 }} />
+      <Handle type="source" position={Position.Bottom} style={{ width: 4, height: 4, background: "var(--color-primary)", opacity: 0.5 }} />
+      <div className="text-[9px] text-muted-foreground font-medium tracking-wide">{d.label}</div>
+    </Card>
   );
 }
 
@@ -235,23 +236,31 @@ function buildGraph(
         draggable: false,
       });
 
-      edges.push({
-        id: `router-hub-to-${stageId}`,
-        source: "router-hub",
-        target: stageId,
-        animated: true,
-        style: { stroke: "var(--color-primary)", strokeWidth: 1, opacity: 0.4 },
-      });
-
-      if (i === stages.length - 1) {
+      if (i === 0) {
         edges.push({
-          id: `${stageId}-to-taskmaster`,
-          source: stageId,
-          target: "taskmaster",
+          id: `router-hub-to-${stageId}`,
+          source: "router-hub",
+          target: stageId,
           animated: true,
-          style: { stroke: "var(--color-primary)", strokeWidth: 1.5, opacity: 0.6 },
+          style: { stroke: "var(--color-primary)", strokeWidth: 1.5, opacity: 0.5 },
+        });
+      } else {
+        edges.push({
+          id: `router-stage-${i - 1}-to-${stageId}`,
+          source: `router-stage-${i - 1}`,
+          target: stageId,
+          animated: true,
+          style: { stroke: "var(--color-primary)", strokeWidth: 1.5, opacity: 0.5 },
         });
       }
+    });
+
+    edges.push({
+      id: "router-stage-2-to-taskmaster",
+      source: `router-stage-${stages.length - 1}`,
+      target: "taskmaster",
+      animated: true,
+      style: { stroke: "var(--color-primary)", strokeWidth: 1.5, opacity: 0.6 },
     });
   }
 
