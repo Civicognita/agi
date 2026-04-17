@@ -2550,6 +2550,7 @@ export async function createGatewayRuntimeState(
       "submodules": "pulling",
       "protocol-check": "pulling",
       "install": "building",
+      "rebuild": "building",
       "build": "building",
       "build-marketplace": "building",
       "required-check": "building",
@@ -2575,8 +2576,10 @@ export async function createGatewayRuntimeState(
         } catch {
           // Not JSON — fall through to plain text handling
         }
-        // Plain text output (from git, pnpm, etc.) — no step/status
-        broadcastUpgrade(currentPhase, line);
+        // Plain text output (from git, pnpm, etc.) — log to disk for
+        // debugging but do NOT broadcast to the dashboard. Raw pnpm output
+        // creates noise in the upgrade dropdown and shows out-of-order entries.
+        upgradeLog.debug(`[${lastStep}] ${line}`);
       }
     });
 

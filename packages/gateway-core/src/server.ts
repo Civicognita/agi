@@ -3008,8 +3008,9 @@ export async function startGatewayServer(
       case "log:subscribe": {
         logSubscribers.add(connectionId);
 
-        // Send recent history from activity.log
-        const logDir = config.logging?.logDir ?? "./logs";
+        // Send recent history from activity.log — must match the logger's
+        // default path (logger.ts uses ~/.agi/logs/, not ./logs/).
+        const logDir = (config.logging as { logDir?: string } | undefined)?.logDir ?? join(homedir(), ".agi", "logs");
         const activityLogPath = resolvePath(logDir, "activity.log");
         try {
           const raw = readFileSync(activityLogPath, "utf-8");
