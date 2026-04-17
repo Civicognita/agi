@@ -195,13 +195,14 @@ export function ProvidersSettings({ config, update }: Props) {
   }, [update]);
 
   const setProviderKey = useCallback((provider: string, apiKey: string) => {
+    if (!apiKey) return;
     update((prev) => ({
       ...prev,
       providers: {
         ...((prev.providers ?? {}) as Record<string, unknown>),
         [provider]: {
           ...(((prev.providers ?? {}) as Record<string, Record<string, unknown>>)[provider] ?? {}),
-          apiKey: apiKey || undefined,
+          apiKey,
         },
       },
     }));
@@ -279,7 +280,9 @@ export function ProvidersSettings({ config, update }: Props) {
             { id: "ollama", label: "Ollama", needsKey: false },
           ].map((p) => {
             const providersCred = (config.providers ?? {}) as Record<string, { apiKey?: string }>;
-            const hasKey = !!providersCred[p.id]?.apiKey;
+            const rawKey = providersCred[p.id]?.apiKey;
+            const hasKey = !!rawKey && rawKey !== "••••••••";
+            const isRedacted = rawKey === "••••••••";
             return (
               <div key={p.id} className="flex items-center gap-3 py-1.5">
                 <div className="w-20 text-[12px] text-foreground">{p.label}</div>
@@ -287,13 +290,13 @@ export function ProvidersSettings({ config, update }: Props) {
                   <>
                     <input
                       type="password"
-                      placeholder="API key"
+                      placeholder={isRedacted || hasKey ? "Key is set — enter new to replace" : "Enter API key"}
                       className="flex-1 h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono"
-                      value={providersCred[p.id]?.apiKey ?? ""}
+                      value=""
                       onChange={(e) => setProviderKey(p.id, e.target.value)}
                     />
-                    <span className={`text-[12px] ${hasKey ? "text-green-500" : "text-muted-foreground"}`}>
-                      {hasKey ? "✓" : "—"}
+                    <span className={`text-[12px] ${isRedacted || hasKey ? "text-green-500" : "text-muted-foreground"}`}>
+                      {isRedacted || hasKey ? "✓ Set" : "—"}
                     </span>
                   </>
                 ) : (

@@ -1953,7 +1953,17 @@ export async function createGatewayRuntimeState(
       }
       try {
         const raw = readFileSync(deps.configPath, "utf-8");
-        const parsed: unknown = JSON.parse(raw);
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        // Redact API keys before sending to the browser — never expose secrets.
+        const providers = parsed.providers as Record<string, Record<string, unknown>> | undefined;
+        if (providers) {
+          for (const name of Object.keys(providers)) {
+            const prov = providers[name];
+            if (prov && typeof prov.apiKey === "string" && prov.apiKey.length > 0) {
+              prov.apiKey = "••••••••";
+            }
+          }
+        }
         return reply.send(parsed);
       } catch (err) {
         return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
@@ -1972,11 +1982,23 @@ export async function createGatewayRuntimeState(
       if (deps.configPath === undefined) {
         return reply.code(404).send({ error: "Not Found" });
       }
-      const parsed = request.body as unknown;
+      const parsed = request.body as Record<string, unknown>;
       if (typeof parsed !== "object" || parsed === null) {
         return reply.code(400).send({ error: "Invalid JSON object" });
       }
       try {
+        // Preserve existing API keys when the browser sends back the redacted placeholder.
+        const existing = JSON.parse(readFileSync(deps.configPath, "utf-8")) as Record<string, unknown>;
+        const incomingProviders = parsed.providers as Record<string, Record<string, unknown>> | undefined;
+        const existingProviders = existing.providers as Record<string, Record<string, unknown>> | undefined;
+        if (incomingProviders && existingProviders) {
+          for (const name of Object.keys(incomingProviders)) {
+            const inc = incomingProviders[name];
+            if (inc && inc.apiKey === "••••••••") {
+              inc.apiKey = existingProviders[name]?.apiKey;
+            }
+          }
+        }
         writeFileSync(deps.configPath, JSON.stringify(parsed, null, 2) + "\n", "utf-8");
         return reply.send({ ok: true, message: "Config saved and applied." });
       } catch (err) {
