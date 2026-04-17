@@ -72,8 +72,8 @@ const GGUF_QUANT_NAMES: GgufQuantization[] = [
 
 const DEFAULT_IMAGES: Record<ModelRuntimeType, string> = {
   llm: "ghcr.io/ggerganov/llama.cpp:server",
-  diffusion: "ghcr.io/huggingface/diffusers-api:latest",
-  general: "ghcr.io/huggingface/text-generation-inference:latest",
+  diffusion: "ghcr.io/civicognita/diffusion-server:latest",
+  general: "ghcr.io/civicognita/transformers-server:latest",
   // Custom runtimes have no shared image — resolved per-model via the registry or model.containerImage
   custom: "",
 };
