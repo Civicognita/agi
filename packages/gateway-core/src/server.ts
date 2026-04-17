@@ -1468,6 +1468,14 @@ export async function startGatewayServer(
       statusPollIntervalMs: hostingConfig?.statusPollIntervalMs ?? 10_000,
       tunnelMode: hostingConfig?.tunnelMode ?? "named",
       tunnelDomain: hostingConfig?.tunnelDomain,
+      idService: (() => {
+        const idCfg = (config as Record<string, unknown>).idService as { local?: { enabled?: boolean; subdomain?: string; port?: number } } | undefined;
+        return idCfg?.local?.enabled ? {
+          enabled: true,
+          subdomain: idCfg.local.subdomain ?? "id",
+          port: idCfg.local.port ?? 3200,
+        } : undefined;
+      })(),
     },
     workspaceProjects: projectPaths,
     projectTypeRegistry,

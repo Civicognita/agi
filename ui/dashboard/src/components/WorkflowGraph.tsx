@@ -5,7 +5,7 @@
  * Uses react-fancy Canvas + Card/Badge components for consistent design system styling.
  */
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Canvas } from "@particle-academy/react-fancy";
 
 import { Card } from "@/components/ui/card.js";
@@ -64,6 +64,8 @@ interface WorkflowGraphProps {
 
 export function WorkflowGraph({ theme: _theme, config, onSaveConfig, routerStatus }: WorkflowGraphProps) {
   const [selectedWorker, setSelectedWorker] = useState<SelectedWorker | null>(null);
+  const [, setViewport] = useState<{ panX: number; panY: number; zoom: number } | null>(null);
+  const handleViewportChange = useCallback((v: { panX: number; panY: number; zoom: number }) => setViewport(v), []);
 
   /* ── Layout math ─────────────────────────────────────────────────── */
 
@@ -102,6 +104,7 @@ export function WorkflowGraph({ theme: _theme, config, onSaveConfig, routerStatu
         fitOnMount
         minZoom={0.3}
         maxZoom={2}
+        onViewportChange={handleViewportChange}
       >
         {/* ── Router layer ─────────────────────────────────────────── */}
         {routerStatus && (
