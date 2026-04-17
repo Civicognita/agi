@@ -163,7 +163,7 @@ export interface InvocationRequest {
 }
 
 export type InvocationOutcome =
-  | { type: "response"; text: string; toolsUsed: string[]; coaFingerprint: string; taskmasterEmissions: string[]; model: string; provider: string; usage: { inputTokens: number; outputTokens: number }; toolCount: number; loopCount: number }
+  | { type: "response"; text: string; toolsUsed: string[]; coaFingerprint: string; taskmasterEmissions: string[]; model: string; provider: string; usage: { inputTokens: number; outputTokens: number }; toolCount: number; loopCount: number; routingMeta?: { costMode: string; complexity: string; selectedModel: string; selectedProvider: string; escalated: boolean; reason: string } }
   | { type: "queued"; reason: string; entityNotification: string }
   | { type: "human_routed"; content: string }
   | { type: "log_only" }
@@ -1015,6 +1015,7 @@ export class AgentInvoker extends EventEmitter {
         usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
         toolCount: toolsUsed.length,
         loopCount,
+        routingMeta: result.routingMeta,
       };
     } catch (err) {
       this.emit("invocation_error", {

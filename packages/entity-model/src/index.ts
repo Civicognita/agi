@@ -342,3 +342,6 @@ export { SessionStore, CREATE_SESSIONS, CREATE_API_KEYS } from "./session-store.
 
 export type { UsageRecord, RecordUsageParams, UsageSummary, ProjectCost } from "./usage-store.js";
 export { UsageStore, CREATE_USAGE_LOG, estimateCost } from "./usage-store.js";
+
+export { PRICING, MODEL_TIERS, getModelsForMode, getDefaultModelForMode } from "./model-pricing.js";
+export type { CostMode, ModelTier } from "./model-pricing.js";

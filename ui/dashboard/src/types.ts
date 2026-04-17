@@ -514,6 +514,13 @@ export interface AionimaConfig {
     maxTokens?: number;
     replyMode?: string;
     devMode?: boolean;
+    router?: {
+      costMode?: "local" | "economy" | "balanced" | "max";
+      escalation?: boolean;
+      maxEscalationsPerTurn?: number;
+      simpleThresholdTokens?: number;
+      complexThresholdTokens?: number;
+    };
   };
   providers?: Record<string, ProviderCredential>;
   workers?: WorkerConfig;

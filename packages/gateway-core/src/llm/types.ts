@@ -76,6 +76,15 @@ export interface LLMResponse {
   model: string;
   /** Thinking blocks from extended thinking (if enabled). */
   thinkingBlocks: Array<{ thinking: string; signature: string }>;
+  /** Routing metadata — populated by AgentRouter, undefined when using a direct provider. */
+  routingMeta?: {
+    costMode: string;
+    complexity: string;
+    selectedModel: string;
+    selectedProvider: string;
+    escalated: boolean;
+    reason: string;
+  };
 }
 
 // ---------------------------------------------------------------------------

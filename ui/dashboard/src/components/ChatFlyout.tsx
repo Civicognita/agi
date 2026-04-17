@@ -44,6 +44,14 @@ interface ChatMessage {
   toolCard?: ToolCard;
   /** Next-step suggestions generated for this assistant turn. Persisted server-side so they survive reload. */
   suggestions?: string[];
+  /** Routing metadata from the Intelligent Agent Router. Only present on assistant messages. */
+  routingMeta?: {
+    provider: string;
+    model: string;
+    costMode: string;
+    escalated: boolean;
+    estimatedCostUsd: number;
+  };
 }
 
 interface ChatSession {
@@ -644,7 +652,20 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             break;
           }
           case "chat:response": {
-            const p = payload as { sessionId?: string; runId?: string; text: string; timestamp: string; suggestions?: string[] };
+            const p = payload as {
+              sessionId?: string;
+              runId?: string;
+              text: string;
+              timestamp: string;
+              suggestions?: string[];
+              routingMeta?: {
+                provider: string;
+                model: string;
+                costMode: string;
+                escalated: boolean;
+                estimatedCostUsd: number;
+              };
+            };
             if (!p.sessionId) break;
             setSessions((prev) => prev.map((s) => {
               if (s.id !== p.sessionId) return s;
@@ -664,14 +685,15 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                 progressText: undefined,
                 activeRunId: undefined,
                 queuedMessages: [],
-                // Persist suggestions onto the assistant message so a reload
-                // finds them via the chat-history fetch.
+                // Persist suggestions and routing metadata onto the assistant
+                // message so a reload finds them via the chat-history fetch.
                 messages: [...s.messages, ...queuedAsMsgs, {
                   role: "assistant" as const,
                   content: p.text,
                   timestamp: p.timestamp,
                   runId: p.runId ?? s.activeRunId,
                   suggestions: p.suggestions && p.suggestions.length > 0 ? p.suggestions : undefined,
+                  routingMeta: p.routingMeta,
                 }],
                 // Mirror onto the session for the suggestion-button row below
                 // the latest response.
@@ -1249,7 +1271,24 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                       // Assistant bubble gets a floating copy button top-right.
                       // Click copies styled HTML + plain-text fallback; Ctrl/Cmd+Click
                       // copies the raw markdown. See AgentBubble below.
-                      <AgentBubble content={msg.content} />
+                      <>
+                        <AgentBubble content={msg.content} />
+                        {msg.routingMeta && (
+                          <div className="flex items-center gap-2 mt-1 px-1">
+                            <span className="text-[9px] font-mono text-muted-foreground px-1.5 py-0.5 rounded bg-muted/50">
+                              {msg.routingMeta.model}
+                            </span>
+                            {msg.routingMeta.estimatedCostUsd > 0 && (
+                              <span className="text-[9px] font-mono text-muted-foreground">
+                                ${msg.routingMeta.estimatedCostUsd.toFixed(4)}
+                              </span>
+                            )}
+                            {msg.routingMeta.escalated && (
+                              <span className="text-[9px] text-yellow-500 font-mono">escalated</span>
+                            )}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 );

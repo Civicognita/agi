@@ -2791,3 +2791,31 @@ export async function restartGateway(): Promise<{ ok: boolean; message?: string 
   }
   return body as { ok: boolean; message?: string };
 }
+
+// ---------------------------------------------------------------------------
+// Router API — /api/router, /api/usage
+// ---------------------------------------------------------------------------
+
+export async function fetchRouterStatus(): Promise<{ costMode: string; providers: Array<{ provider: string; healthy: boolean }> }> {
+  const res = await fetch("/api/router/status");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{ costMode: string; providers: Array<{ provider: string; healthy: boolean }> }>;
+}
+
+export async function fetchUsageByProvider(days = 30): Promise<Array<{ provider: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>> {
+  const res = await fetch(`/api/usage/by-provider?days=${days}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<Array<{ provider: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>>;
+}
+
+export async function fetchUsageByModel(days = 30): Promise<Array<{ model: string; provider: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>> {
+  const res = await fetch(`/api/usage/by-model?days=${days}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<Array<{ model: string; provider: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>>;
+}
+
+export async function fetchUsageByCostMode(days = 30): Promise<Array<{ costMode: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>> {
+  const res = await fetch(`/api/usage/by-cost-mode?days=${days}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<Array<{ costMode: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>>;
+}

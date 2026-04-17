@@ -56,8 +56,9 @@ import { OutboundDispatcher } from "./outbound-dispatcher.js";
 import { QueueConsumer } from "./queue-consumer.js";
 import { AgentSessionManager } from "./agent-session.js";
 import { SessionStore } from "./session-store.js";
-import { createLLMProvider, setPluginProviderRegistry, setModelAgentBridge } from "./llm/index.js";
+import { createAgentRouter, setPluginProviderRegistry, setModelAgentBridge } from "./llm/index.js";
 import type { LLMProvider } from "./llm/index.js";
+import type { AgentRouter } from "./llm/index.js";
 import { RateLimiter } from "./rate-limiter.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { AgentInvoker } from "./agent-invoker.js";
@@ -114,6 +115,7 @@ import { WorkerRuntime } from "./worker-runtime.js";
 import { ReportsStore } from "./reports-store.js";
 import { registerReportsApi } from "./reports-api.js";
 import { registerWorkerApi } from "./worker-api.js";
+import { registerUsageRoutes } from "./usage-api.js";
 import { appendUpgradeLog } from "./upgrade-log.js";
 import { EventEmitter } from "node:events";
 import { Pool } from "pg";
@@ -547,13 +549,13 @@ export async function startGatewayServer(
   // Step 5b: Agent pipeline services
   // -------------------------------------------------------------------------
 
-  // createLLMProvider may fail here for plugin-contributed types (e.g.
+  // createAgentRouter may fail here for plugin-contributed types (e.g.
   // "claude-max") because plugins haven't loaded yet. Defer to a stub
   // provider that throws on first use; the post-plugin boot block below
   // replaces it with the real provider once plugins register their factories.
-  let llmProvider: ReturnType<typeof createLLMProvider>;
+  let llmProvider: ReturnType<typeof createAgentRouter>;
   try {
-    llmProvider = createLLMProvider(config);
+    llmProvider = createAgentRouter(config);
   } catch {
     const providerType = (config.agent as { provider?: string } | undefined)?.provider ?? "unknown";
     log.info(`LLM provider "${providerType}" deferred — will resolve after plugins load`);
@@ -1328,7 +1330,7 @@ export async function startGatewayServer(
         const agentProvider = (config.agent as { provider?: string } | undefined)?.provider ?? "anthropic";
         if (!["anthropic", "openai", "ollama", "hf-local"].includes(agentProvider)) {
           try {
-            llmProvider = createLLMProvider(config);
+            llmProvider = createAgentRouter(config);
             log.info(`LLM provider switched to plugin-contributed "${agentProvider}"`);
           } catch {
             // Provider not registered by any loaded plugin. Check if the
@@ -1362,7 +1364,7 @@ export async function startGatewayServer(
                     bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
                     // Retry provider creation now that the plugin is loaded
                     setPluginProviderRegistry(pluginRegistry as unknown as Parameters<typeof setPluginProviderRegistry>[0]);
-                    llmProvider = createLLMProvider(config);
+                    llmProvider = createAgentRouter(config);
                     log.info(`LLM provider "${agentProvider}" auto-installed and activated from marketplace`);
                   }
                 } else {
@@ -1990,6 +1992,19 @@ export async function startGatewayServer(
         (f) => registerWorkerApi(f, workerRuntime, workerPromptLoader, pluginRegistry),
         (f) => registerComplianceRoutes(f, { incidentStore, vendorStore, sessionStore: complianceSessionStore, backupManager }),
         (f) => registerSecurityRoutes(f, { scanRunner, scanStore }),
+        (f) => registerUsageRoutes(f, {
+          usageStore,
+          getRouterStatus: () => {
+            const router = llmProvider as AgentRouter;
+            const routerConfig = (config.agent as Record<string, unknown> | undefined)?.router as Record<string, unknown> | undefined;
+            return {
+              costMode: (routerConfig?.costMode as string | undefined) ?? "balanced",
+              providers: typeof router.getProviderHealth === "function"
+                ? router.getProviderHealth()
+                : [{ provider: "anthropic", healthy: true }],
+            };
+          },
+        }),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api")),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
       ],
@@ -2662,27 +2677,13 @@ export async function startGatewayServer(
             // assistant message. Previously they lived only in ephemeral
             // client state and vanished on page reload.
             const suggestions = await generateNextSteps(chatText ?? "", text, getLLMProvider());
-            sendChat("chat:response", {
-              sessionId: chatSessionId,
-              runId,
-              text,
-              timestamp: new Date().toISOString(),
-              suggestions,
-            });
-            // Keep emitting the legacy chat:suggestions frame for backwards
-            // compatibility with any client that still listens for it
-            // separately. No-op once the client reads from chat:response.
-            if (suggestions.length > 0) {
-              sendChat("chat:suggestions", {
-                sessionId: chatSessionId,
-                suggestions,
-              });
-            }
 
-            // Record usage (tokens + cost + project attribution)
+            // Record usage (tokens + cost + project attribution) BEFORE
+            // emitting chat:response so the cost is available for the payload.
+            let chatUsageRec: { costUsd: number } | undefined;
             if (outcome.usage && outcome.model) {
               try {
-                const chatUsageRec = usageStore.record({
+                chatUsageRec = usageStore.record({
                   entityId: ownerEntityId,
                   projectPath: chatProjectPath,
                   provider: outcome.provider ?? "unknown",
@@ -2693,6 +2694,9 @@ export async function startGatewayServer(
                   toolCount: outcome.toolCount ?? 0,
                   loopCount: outcome.loopCount ?? 0,
                   source: "chat",
+                  costMode: outcome.routingMeta?.costMode,
+                  escalated: outcome.routingMeta?.escalated,
+                  originalModel: outcome.routingMeta?.escalated ? outcome.routingMeta?.reason : undefined,
                 });
                 dashboardBroadcasterRef?.emitUsageRecorded({
                   source: "chat",
@@ -2704,17 +2708,49 @@ export async function startGatewayServer(
               }
             }
 
-            // Persist session to disk — include suggestions on the assistant
-            // message so they survive reload.
+            // Build routing metadata for the response payload so the dashboard
+            // can display which model handled the request and its estimated cost.
+            const responseRoutingMeta = outcome.routingMeta
+              ? {
+                  provider: outcome.routingMeta.selectedProvider ?? outcome.provider ?? "unknown",
+                  model: outcome.routingMeta.selectedModel ?? outcome.model ?? "unknown",
+                  costMode: outcome.routingMeta.costMode ?? "unknown",
+                  escalated: outcome.routingMeta.escalated ?? false,
+                  estimatedCostUsd: chatUsageRec?.costUsd ?? 0,
+                }
+              : undefined;
+
+            const responseTimestamp = new Date().toISOString();
+            sendChat("chat:response", {
+              sessionId: chatSessionId,
+              runId,
+              text,
+              timestamp: responseTimestamp,
+              suggestions,
+              routingMeta: responseRoutingMeta,
+            });
+            // Keep emitting the legacy chat:suggestions frame for backwards
+            // compatibility with any client that still listens for it
+            // separately. No-op once the client reads from chat:response.
+            if (suggestions.length > 0) {
+              sendChat("chat:suggestions", {
+                sessionId: chatSessionId,
+                suggestions,
+              });
+            }
+
+            // Persist session to disk — include suggestions and routing
+            // metadata on the assistant message so they survive reload.
             if (chatSessionId) {
               const existing = chatSessionData.get(chatSessionId);
               if (existing) {
                 const updated = ChatPersistence.appendMessage(existing, {
                   role: "assistant",
                   content: text,
-                  timestamp: new Date().toISOString(),
+                  timestamp: responseTimestamp,
                   runId,
                   suggestions: suggestions.length > 0 ? suggestions : undefined,
+                  routingMeta: responseRoutingMeta,
                 });
                 chatSessionData.set(chatSessionId, updated);
                 try { chatPersistence.save(updated); } catch { /* non-fatal */ }
@@ -3713,7 +3749,7 @@ export async function startGatewayServer(
       // Hot-swap LLM provider when agent or bots config changes
       if (event.changedKeys.some((k) => k === "agent" || k === "bots")) {
         try {
-          llmProvider = createLLMProvider(event.config);
+          llmProvider = createAgentRouter(event.config);
           log.info("LLM provider hot-swapped");
         } catch (err) {
           log.error(`failed to hot-swap LLM provider: ${err instanceof Error ? err.message : String(err)}`);

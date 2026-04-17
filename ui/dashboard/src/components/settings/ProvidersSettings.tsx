@@ -61,6 +61,9 @@ export function ProvidersSettings({ config, update }: Props) {
   const agentModel = (config.agent as Record<string, unknown> | undefined)?.model as string ?? "claude-sonnet-4-6";
   const modelOverrides = ((config.workers as Record<string, unknown> | undefined)?.modelOverrides ?? {}) as Record<string, { provider?: string; model?: string }>;
 
+  const routerCostMode = ((config.agent as Record<string, unknown> | undefined)?.router as Record<string, unknown> | undefined)?.costMode as string ?? "balanced";
+  const routerEscalation = ((config.agent as Record<string, unknown> | undefined)?.router as Record<string, unknown> | undefined)?.escalation as boolean ?? false;
+
   const [workerError, setWorkerError] = useState<string | null>(null);
 
   // Fetch running HF text-generation models to show in provider dropdowns
@@ -165,6 +168,45 @@ export function ProvidersSettings({ config, update }: Props) {
     });
   }, [update]);
 
+  const setCostMode = useCallback((mode: string) => {
+    update((prev) => ({
+      ...prev,
+      agent: {
+        ...(prev.agent ?? {}),
+        router: {
+          ...((prev.agent as Record<string, unknown> | undefined)?.router ?? {}),
+          costMode: mode,
+        },
+      },
+    }));
+  }, [update]);
+
+  const setEscalation = useCallback((enabled: boolean) => {
+    update((prev) => ({
+      ...prev,
+      agent: {
+        ...(prev.agent ?? {}),
+        router: {
+          ...((prev.agent as Record<string, unknown> | undefined)?.router ?? {}),
+          escalation: enabled,
+        },
+      },
+    }));
+  }, [update]);
+
+  const setProviderKey = useCallback((provider: string, apiKey: string) => {
+    update((prev) => ({
+      ...prev,
+      providers: {
+        ...((prev.providers ?? {}) as Record<string, unknown>),
+        [provider]: {
+          ...(((prev.providers ?? {}) as Record<string, Record<string, unknown>>)[provider] ?? {}),
+          apiKey: apiKey || undefined,
+        },
+      },
+    }));
+  }, [update]);
+
   // Group workers by domain
   const domains = new Map<string, WorkerEntry[]>();
   for (const w of workers) {
@@ -175,11 +217,99 @@ export function ProvidersSettings({ config, update }: Props) {
 
   return (
     <div className="space-y-6">
-      {/* Aion's Provider */}
+      {/* Routing Mode */}
       <Card className="p-6 gap-0">
-        <SectionHeading>Aion's LLM Provider</SectionHeading>
+        <SectionHeading>Routing Mode</SectionHeading>
         <p className="text-[12px] text-muted-foreground mb-4">
-          The primary provider used for all chat conversations and agent tool calls.
+          Controls how the router selects models for each request. The router classifies request
+          complexity and picks the right model tier automatically.
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl">
+          {([
+            { mode: "local" as const, label: "Local Only", cost: "Free", desc: "Ollama / HF models only" },
+            { mode: "economy" as const, label: "Economy", cost: "$", desc: "Haiku / GPT-4o Mini first" },
+            { mode: "balanced" as const, label: "Balanced", cost: "$$", desc: "Route by complexity" },
+            { mode: "max" as const, label: "Max Quality", cost: "$$$", desc: "Always strongest model" },
+          ] as const).map((m) => {
+            const isActive = routerCostMode === m.mode;
+            return (
+              <button
+                key={m.mode}
+                type="button"
+                className={`text-left p-3 rounded-lg border cursor-pointer transition-colors ${
+                  isActive
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-primary/50"
+                }`}
+                onClick={() => setCostMode(m.mode)}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[12px] font-semibold text-foreground">{m.label}</span>
+                  <span className="text-[10px] text-muted-foreground font-mono">{m.cost}</span>
+                </div>
+                <div className="text-[10px] text-muted-foreground">{m.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+        {(routerCostMode === "economy" || routerCostMode === "balanced") && (
+          <label className="flex items-center gap-2 mt-4 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={routerEscalation}
+              onChange={(e) => setEscalation(e.target.checked)}
+              className="rounded border-input"
+            />
+            <span className="text-[12px] text-foreground">Enable escalation</span>
+            <span className="text-[10px] text-muted-foreground">(auto-upgrade to stronger model when response quality is low)</span>
+          </label>
+        )}
+      </Card>
+
+      {/* Provider API Keys */}
+      <Card className="p-6 gap-0">
+        <SectionHeading>Provider API Keys</SectionHeading>
+        <p className="text-[12px] text-muted-foreground mb-4">
+          The router can use multiple providers. Enter API keys for each provider you want available.
+        </p>
+        <div className="space-y-2 max-w-lg">
+          {[
+            { id: "anthropic", label: "Anthropic", needsKey: true },
+            { id: "openai", label: "OpenAI", needsKey: true },
+            { id: "ollama", label: "Ollama", needsKey: false },
+          ].map((p) => {
+            const providersCred = (config.providers ?? {}) as Record<string, { apiKey?: string }>;
+            const hasKey = !!providersCred[p.id]?.apiKey;
+            return (
+              <div key={p.id} className="flex items-center gap-3 py-1.5">
+                <div className="w-20 text-[12px] text-foreground">{p.label}</div>
+                {p.needsKey ? (
+                  <>
+                    <input
+                      type="password"
+                      placeholder="API key"
+                      className="flex-1 h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono"
+                      value={providersCred[p.id]?.apiKey ?? ""}
+                      onChange={(e) => setProviderKey(p.id, e.target.value)}
+                    />
+                    <span className={`text-[12px] ${hasKey ? "text-green-500" : "text-muted-foreground"}`}>
+                      {hasKey ? "✓" : "—"}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-[10px] text-muted-foreground italic">No key needed</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
+      {/* Default Provider & Model */}
+      <Card className="p-6 gap-0">
+        <SectionHeading>Default Provider & Model</SectionHeading>
+        <p className="text-[12px] text-muted-foreground mb-4">
+          Preferred provider within your cost mode. The router uses this when multiple providers are eligible.
           Workers inherit this by default unless overridden below.
         </p>
         <div className="grid grid-cols-2 gap-4 max-w-lg">

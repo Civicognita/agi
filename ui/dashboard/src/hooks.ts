@@ -823,6 +823,7 @@ import {
   exitSafemode as apiExitSafemode,
   fetchAdminIncidents as apiFetchAdminIncidents,
   fetchAdminIncidentMarkdown as apiFetchAdminIncidentMarkdown,
+  fetchRouterStatus,
 } from "./api.js";
 
 export function useSafemode() {
@@ -860,5 +861,17 @@ export function useAdminIncidentMarkdown(id: string | null) {
     queryFn: () => apiFetchAdminIncidentMarkdown(id!),
     enabled: id !== null && id.length > 0,
     staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// useRouterStatus — polls /api/router/status every 10s
+// ---------------------------------------------------------------------------
+
+export function useRouterStatus() {
+  return useQuery({
+    queryKey: ["router", "status"],
+    queryFn: () => fetchRouterStatus(),
+    refetchInterval: 10_000,
   });
 }

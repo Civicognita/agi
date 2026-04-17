@@ -7,30 +7,8 @@
 
 import { ulid } from "ulid";
 import type { Database } from "./db.js";
-
-// ---------------------------------------------------------------------------
-// Pricing table (per million tokens)
-// ---------------------------------------------------------------------------
-
-const PRICING: Record<string, { input: number; output: number }> = {
-  "claude-sonnet-4-6": { input: 3.0, output: 15.0 },
-  "claude-opus-4-6": { input: 15.0, output: 75.0 },
-  "claude-haiku-4-5": { input: 0.80, output: 4.0 },
-  "claude-sonnet-4-5": { input: 3.0, output: 15.0 },
-  "claude-3-5-sonnet-20241022": { input: 3.0, output: 15.0 },
-  "claude-3-5-haiku-20241022": { input: 0.80, output: 4.0 },
-  "gpt-4o": { input: 2.50, output: 10.0 },
-  "gpt-4o-mini": { input: 0.15, output: 0.60 },
-  "gpt-4-turbo": { input: 10.0, output: 30.0 },
-};
-
-export function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
-  // Match by prefix — "claude-sonnet-4-6[1m]" → "claude-sonnet-4-6"
-  const key = Object.keys(PRICING).find((k) => model.startsWith(k));
-  if (!key) return 0;
-  const p = PRICING[key]!;
-  return (inputTokens / 1_000_000) * p.input + (outputTokens / 1_000_000) * p.output;
-}
+import { estimateCost } from "./model-pricing.js";
+export { estimateCost };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -65,6 +43,12 @@ export interface RecordUsageParams {
   loopCount?: number;
   /** "chat" for Aion direct turns, "worker" for TaskMaster worker runs. Defaults to "chat". */
   source?: "chat" | "worker";
+  /** Cost mode used by the AgentRouter (local/economy/balanced/max). */
+  costMode?: string;
+  /** Whether the AgentRouter escalated to a more capable model. */
+  escalated?: boolean;
+  /** Original model before escalation (the escalation reason string). */
+  originalModel?: string;
 }
 
 export interface UsageSummary {
@@ -126,6 +110,15 @@ export class UsageStore {
     } catch {
       // Column already exists — expected on new installs or repeated boots.
     }
+    try {
+      db.exec(`ALTER TABLE usage_log ADD COLUMN cost_mode TEXT DEFAULT 'balanced'`);
+    } catch { /* Column already exists */ }
+    try {
+      db.exec(`ALTER TABLE usage_log ADD COLUMN escalated INTEGER DEFAULT 0`);
+    } catch { /* Column already exists */ }
+    try {
+      db.exec(`ALTER TABLE usage_log ADD COLUMN original_model TEXT`);
+    } catch { /* Column already exists */ }
   }
 
   record(params: RecordUsageParams): UsageRecord {
@@ -135,14 +128,15 @@ export class UsageStore {
     const source = params.source ?? "chat";
 
     this.db.prepare(`
-      INSERT INTO usage_log (id, entity_id, project_path, provider, model, input_tokens, output_tokens, cost_usd, coa_fingerprint, tool_count, loop_count, created_at, source)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO usage_log (id, entity_id, project_path, provider, model, input_tokens, output_tokens, cost_usd, coa_fingerprint, tool_count, loop_count, created_at, source, cost_mode, escalated, original_model)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, params.entityId, params.projectPath ?? null,
       params.provider, params.model,
       params.inputTokens, params.outputTokens, costUsd,
       params.coaFingerprint ?? null,
       params.toolCount ?? 0, params.loopCount ?? 0, now, source,
+      params.costMode ?? "balanced", params.escalated ? 1 : 0, params.originalModel ?? null,
     );
 
     return {
@@ -224,5 +218,70 @@ export class UsageStore {
       costUsd: Math.round(r.cost * 10000) / 10000,
       count: r.count,
     }));
+  }
+
+  getByProvider(days = 30): Array<{ provider: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }> {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const rows = this.db.prepare(`
+      SELECT provider, SUM(input_tokens) as input, SUM(output_tokens) as output,
+             SUM(cost_usd) as cost, COUNT(*) as count
+      FROM usage_log WHERE created_at >= ?
+      GROUP BY provider ORDER BY cost DESC
+    `).all(cutoff) as { provider: string; input: number; output: number; cost: number; count: number }[];
+    return rows.map((r) => ({
+      provider: r.provider,
+      inputTokens: r.input,
+      outputTokens: r.output,
+      costUsd: Math.round(r.cost * 10000) / 10000,
+      invocationCount: r.count,
+    }));
+  }
+
+  getByModel(days = 30): Array<{ model: string; provider: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }> {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const rows = this.db.prepare(`
+      SELECT model, provider, SUM(input_tokens) as input, SUM(output_tokens) as output,
+             SUM(cost_usd) as cost, COUNT(*) as count
+      FROM usage_log WHERE created_at >= ?
+      GROUP BY model, provider ORDER BY cost DESC
+    `).all(cutoff) as { model: string; provider: string; input: number; output: number; cost: number; count: number }[];
+    return rows.map((r) => ({
+      model: r.model,
+      provider: r.provider,
+      inputTokens: r.input,
+      outputTokens: r.output,
+      costUsd: Math.round(r.cost * 10000) / 10000,
+      invocationCount: r.count,
+    }));
+  }
+
+  getByCostMode(days = 30): Array<{ costMode: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }> {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const rows = this.db.prepare(`
+      SELECT cost_mode, SUM(input_tokens) as input, SUM(output_tokens) as output,
+             SUM(cost_usd) as cost, COUNT(*) as count
+      FROM usage_log WHERE created_at >= ?
+      GROUP BY cost_mode ORDER BY cost DESC
+    `).all(cutoff) as { cost_mode: string; input: number; output: number; cost: number; count: number }[];
+    return rows.map((r) => ({
+      costMode: r.cost_mode ?? "balanced",
+      inputTokens: r.input,
+      outputTokens: r.output,
+      costUsd: Math.round(r.cost * 10000) / 10000,
+      invocationCount: r.count,
+    }));
+  }
+
+  getEscalationRate(days = 30): { total: number; escalated: number; rate: number } {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const row = this.db.prepare(`
+      SELECT COUNT(*) as total, SUM(CASE WHEN escalated = 1 THEN 1 ELSE 0 END) as escalated
+      FROM usage_log WHERE created_at >= ?
+    `).get(cutoff) as { total: number; escalated: number };
+    return {
+      total: row.total,
+      escalated: row.escalated ?? 0,
+      rate: row.total > 0 ? (row.escalated ?? 0) / row.total : 0,
+    };
   }
 }

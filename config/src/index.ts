@@ -25,6 +25,8 @@ export {
   type FederationConfig,
   type IdentityConfig,
   type HfConfig,
+  type RouterConfig,
+  type CostMode,
 } from "./schema.js";
 
 export {

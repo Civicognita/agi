@@ -43,6 +43,18 @@ export interface PersistedChatMessage {
    * messages.
    */
   suggestions?: string[];
+  /**
+   * Routing metadata from the Intelligent Agent Router. Persisted so the
+   * model/cost chip is visible when reloading a prior session. Only
+   * meaningful on assistant messages.
+   */
+  routingMeta?: {
+    provider: string;
+    model: string;
+    costMode: string;
+    escalated: boolean;
+    estimatedCostUsd: number;
+  };
 }
 
 export interface PersistedChatSession {

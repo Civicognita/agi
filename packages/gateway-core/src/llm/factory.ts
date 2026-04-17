@@ -12,6 +12,8 @@ import { AnthropicProvider } from "./anthropic-provider.js";
 import { OpenAIProvider } from "./openai-provider.js";
 import { OllamaProvider } from "./ollama-provider.js";
 import { FailoverProvider } from "./failover-provider.js";
+import { AgentRouter } from "./agent-router.js";
+import type { AgentRouterConfig, CostMode } from "./agent-router.js";
 
 // ---------------------------------------------------------------------------
 // ENV key map
@@ -28,7 +30,7 @@ const ENV_KEYS: Record<string, string> = {
 // Single-provider factory
 // ---------------------------------------------------------------------------
 
-function createSingleProvider(
+export function createSingleProvider(
   type: string,
   config: Partial<LLMProviderConfig>,
 ): LLMProvider {
@@ -169,4 +171,58 @@ export function createLLMProvider(config: AionimaConfig): LLMProvider {
     maxRetries,
     baseUrl: baseUrl ?? providerCred?.baseUrl,
   });
+}
+
+// ---------------------------------------------------------------------------
+// AgentRouter factory
+// ---------------------------------------------------------------------------
+
+/**
+ * Create an AgentRouter from AionimaConfig.
+ *
+ * The router is always active and performs per-request model selection
+ * based on cost mode and request complexity.
+ *
+ * Note: the config snapshot is captured at construction time. For true
+ * hot-reload the caller (server.ts) should pass a getConfig closure that
+ * reads live config — that is Phase 4's concern.
+ */
+export function createAgentRouter(config: AionimaConfig): LLMProvider {
+  const agent = config.agent as {
+    provider?: string;
+    model?: string;
+    maxTokens?: number;
+    maxRetries?: number;
+    baseUrl?: string;
+    providers?: Array<{ type: string; model: string; apiKey?: string; baseUrl?: string }>;
+    router?: {
+      costMode?: string;
+      escalation?: boolean;
+      maxEscalationsPerTurn?: number;
+      simpleThresholdTokens?: number;
+      complexThresholdTokens?: number;
+    };
+  } | undefined ?? {};
+
+  const providersCred =
+    (config.providers as Record<string, { apiKey?: string; baseUrl?: string; model?: string }> | undefined) ?? {};
+
+  const routerConfig: AgentRouterConfig = {
+    router: {
+      costMode: (agent.router?.costMode as CostMode) ?? "balanced",
+      escalation: agent.router?.escalation ?? false,
+      maxEscalationsPerTurn: agent.router?.maxEscalationsPerTurn ?? 1,
+      simpleThresholdTokens: agent.router?.simpleThresholdTokens ?? 500,
+      complexThresholdTokens: agent.router?.complexThresholdTokens ?? 2000,
+    },
+    defaultProvider: agent.provider ?? "anthropic",
+    defaultModel: agent.model ?? "claude-sonnet-4-6",
+    providers: providersCred,
+    baseUrl: agent.baseUrl,
+  };
+
+  return new AgentRouter(
+    () => routerConfig,
+    (type, provConfig) => createSingleProvider(type, provConfig),
+  );
 }

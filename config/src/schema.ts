@@ -51,6 +51,23 @@ const AuthConfigSchema = z
   })
   .strict();
 
+const CostModeSchema = z.enum(["local", "economy", "balanced", "max"]);
+
+const RouterConfigSchema = z
+  .object({
+    /** Active cost mode — controls which models the router selects. */
+    costMode: CostModeSchema.default("balanced"),
+    /** Enable confidence-based escalation (cheap model first, re-route on low confidence). */
+    escalation: z.boolean().default(false),
+    /** Maximum escalations per turn to prevent cost spiraling. */
+    maxEscalationsPerTurn: z.number().int().min(0).default(1),
+    /** Token threshold below which a request is classified as "simple". */
+    simpleThresholdTokens: z.number().int().positive().default(500),
+    /** Token threshold above which a request is classified as "complex". */
+    complexThresholdTokens: z.number().int().positive().default(2000),
+  })
+  .strict();
+
 const ProviderConfigSchema = z
   .object({
     /** Provider type. Built-in or plugin-contributed. */
@@ -90,6 +107,8 @@ const AgentConfigSchema = z
     replyMode: z.enum(["autonomous", "human-in-loop"]).default("autonomous"),
     /** Enable developer identity and workspace context injection. */
     devMode: z.boolean().optional().default(false),
+    /** Intelligent routing configuration — always active. */
+    router: RouterConfigSchema.default({}),
   })
   .strict();
 
@@ -616,3 +635,5 @@ export type IdServiceLocalConfig = z.infer<typeof IdServiceLocalSchema>;
 export type BackupConfig = z.infer<typeof BackupConfigSchema>;
 export type ComplianceConfig = z.infer<typeof ComplianceConfigSchema>;
 export type ChatConfig = z.infer<typeof ChatConfigSchema>;
+export type RouterConfig = z.infer<typeof RouterConfigSchema>;
+export type CostMode = z.infer<typeof CostModeSchema>;

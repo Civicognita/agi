@@ -134,24 +134,126 @@ function WorkerNode({ data }: NodeProps) {
   );
 }
 
+function RouterHubNode({ data }: NodeProps) {
+  const d = data as { costMode: string; escalation: boolean; providers: Array<{ provider: string; healthy: boolean }> };
+  const modeColors: Record<string, string> = {
+    local: "var(--color-green)",
+    economy: "var(--color-yellow)",
+    balanced: "var(--color-blue)",
+    max: "var(--color-mauve)",
+  };
+  const color = modeColors[d.costMode] ?? "var(--color-blue)";
+  return (
+    <Card className="border-primary/50 bg-card shadow-md" style={{ width: 220 }}>
+      <Handle type="source" position={Position.Bottom} style={{ width: 8, height: 8, background: color, border: "2px solid var(--color-card)" }} />
+      <div className="px-3 py-2 text-center">
+        <div className="text-[13px] font-bold tracking-wide" style={{ color }}>AGENT ROUTER</div>
+        <div className="flex items-center justify-center gap-2 mt-1">
+          <Badge variant="outline" className="text-[9px] px-1.5 py-0" style={{ borderColor: color, color }}>
+            {d.costMode.toUpperCase()}
+          </Badge>
+          {d.escalation && (
+            <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-muted-foreground text-muted-foreground">
+              ESCALATION
+            </Badge>
+          )}
+        </div>
+        <div className="flex items-center justify-center gap-1.5 mt-1.5">
+          {d.providers.map((p) => (
+            <div key={p.provider} className="flex items-center gap-0.5">
+              <div
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ background: p.healthy ? "var(--color-green)" : "var(--color-red)" }}
+              />
+              <span className="text-[8px] text-muted-foreground">{p.provider}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function RouterStageNode({ data }: NodeProps) {
+  const d = data as { label: string; index: number };
+  return (
+    <div className="px-3 py-1.5 rounded-full border border-border bg-card text-[9px] text-muted-foreground font-medium tracking-wide">
+      <Handle type="target" position={Position.Top} style={{ width: 4, height: 4, background: "var(--color-border)", opacity: 0.5 }} />
+      <Handle type="source" position={Position.Bottom} style={{ width: 4, height: 4, background: "var(--color-border)", opacity: 0.5 }} />
+      {d.label}
+    </div>
+  );
+}
+
 const nodeTypes: NodeTypes = {
   taskmaster: TaskmasterNode,
   domainGroup: DomainGroupNode,
   worker: WorkerNode,
+  routerHub: RouterHubNode,
+  routerStage: RouterStageNode,
 };
 
 /* ── Graph builder ──────────────────────────────────────────────────── */
 
-function buildGraph(): { nodes: Node[]; edges: Edge[] } {
+function buildGraph(
+  routerConfig?: { costMode: string; escalation: boolean; providers: Array<{ provider: string; healthy: boolean }> },
+): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
   const totalWorkers = domains.reduce((sum, d) => sum + d.workers.length, 0);
 
-  // Taskmaster hub — centered above domain groups
+  // Layout constants
   const totalWidth = domains.length * GROUP_WIDTH + (domains.length - 1) * GROUP_GAP;
   const tmX = 40 + (totalWidth - TM_WIDTH) / 2;
-  const tmY = 20;
+  const ROUTER_OFFSET = routerConfig ? 140 : 0;
+  const tmY = 20 + ROUTER_OFFSET;
+
+  // Router layer — sits above Taskmaster when router data is available
+  if (routerConfig) {
+    const stages = ["Classify", "Select", "Execute"];
+    const stageWidth = 70;
+    const stageGap = 30;
+    const totalStageWidth = stages.length * stageWidth + (stages.length - 1) * stageGap;
+    const stageStartX = 40 + totalWidth / 2 - totalStageWidth / 2;
+
+    nodes.push({
+      id: "router-hub",
+      type: "routerHub",
+      position: { x: 40 + totalWidth / 2 - 110, y: 20 },
+      data: routerConfig,
+      draggable: false,
+    });
+
+    stages.forEach((label, i) => {
+      const stageId = `router-stage-${i}`;
+      nodes.push({
+        id: stageId,
+        type: "routerStage",
+        position: { x: stageStartX + i * (stageWidth + stageGap), y: 85 },
+        data: { label, index: i },
+        draggable: false,
+      });
+
+      edges.push({
+        id: `router-hub-to-${stageId}`,
+        source: "router-hub",
+        target: stageId,
+        animated: true,
+        style: { stroke: "var(--color-primary)", strokeWidth: 1, opacity: 0.4 },
+      });
+
+      if (i === stages.length - 1) {
+        edges.push({
+          id: `${stageId}-to-taskmaster`,
+          source: stageId,
+          target: "taskmaster",
+          animated: true,
+          style: { stroke: "var(--color-primary)", strokeWidth: 1.5, opacity: 0.6 },
+        });
+      }
+    });
+  }
 
   nodes.push({
     id: "taskmaster",
@@ -243,10 +345,11 @@ interface WorkflowGraphProps {
   theme: "light" | "dark";
   config: AionimaConfig | null;
   onSaveConfig: (config: AionimaConfig) => Promise<void>;
+  routerStatus?: { costMode: string; escalation: boolean; providers: Array<{ provider: string; healthy: boolean }> };
 }
 
-export function WorkflowGraph({ theme, config, onSaveConfig }: WorkflowGraphProps) {
-  const { nodes, edges } = useMemo(() => buildGraph(), []);
+export function WorkflowGraph({ theme, config, onSaveConfig, routerStatus }: WorkflowGraphProps) {
+  const { nodes, edges } = useMemo(() => buildGraph(routerStatus), [routerStatus]);
   const colorMode = theme === "light" ? "light" : "dark";
   const [selectedWorker, setSelectedWorker] = useState<SelectedWorker | null>(null);
 
