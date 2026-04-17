@@ -95,7 +95,7 @@ export function WorkflowGraph({ theme: _theme, config, onSaveConfig, routerStatu
   const routerColor = routerStatus ? (modeColors[routerStatus.costMode] ?? "var(--color-blue)") : "var(--color-blue)";
 
   return (
-    <div className="min-h-[500px] h-full w-full">
+    <div style={{ width: "100%", height: 600 }}>
       <Canvas
         className="h-full w-full"
         showGrid
