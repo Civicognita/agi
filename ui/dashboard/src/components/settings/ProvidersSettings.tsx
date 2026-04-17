@@ -208,6 +208,37 @@ export function ProvidersSettings({ config, update }: Props) {
         </div>
       </Card>
 
+      {/* HF Local Models */}
+      <Card className="p-6 gap-0">
+        <SectionHeading>HuggingFace Local Models</SectionHeading>
+        <p className="text-[12px] text-muted-foreground mb-4">
+          Downloaded text-generation models running locally can be used as Aion's provider.
+          Start a model from the HF Models page, then select it above.
+        </p>
+        {hfProviders.length > 0 ? (
+          <div className="space-y-2">
+            {hfProviders.map((hf) => (
+              <div key={hf.id} className="flex items-center justify-between py-2 border-b border-border last:border-b-0">
+                <div>
+                  <div className="text-[12px] text-foreground">{hf.name}</div>
+                  <div className="text-[10px] text-muted-foreground font-mono">{hf.baseUrl}</div>
+                </div>
+                <button
+                  className="text-[11px] px-3 py-1 rounded-md border border-input bg-transparent hover:bg-accent cursor-pointer"
+                  onClick={() => setAionProvider(`hf-local:${hf.id}`)}
+                >
+                  Use as Provider
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-[12px] text-muted-foreground italic">
+            No text-generation models running. Download and start a model from the HF Models page to use it as a provider.
+          </div>
+        )}
+      </Card>
+
       {/* Worker Overrides */}
       <Card className="p-6 gap-0">
         <SectionHeading>Worker Provider Overrides</SectionHeading>
