@@ -56,36 +56,27 @@ const tabs: { id: Tab; label: string }[] = [
 
 export default function MarketplacePage() {
   const [activeTab, setActiveTab] = useState<Tab>("browse");
-  const [pageUpdates, setPageUpdates] = useState<{ updates: number; newInMarketplace: number }>({ updates: 0, newInMarketplace: 0 });
+  const [updateCount, setUpdateCount] = useState(0);
 
-  // Page-level update check on mount — fetches remote catalog WITHOUT syncing
   useEffect(() => {
     fetchPluginMarketplaceUpdates()
-      .then((result) => setPageUpdates({ updates: result.updates.length, newInMarketplace: result.newInMarketplace.length }))
+      .then((result) => setUpdateCount(result.updates.length))
       .catch(() => {});
   }, []);
-
-  const totalNotifications = pageUpdates.updates + pageUpdates.newInMarketplace;
 
   return (
     <PageScroll>
     <div>
-      {/* Page-level notification banner — above the tabs */}
-      {totalNotifications > 0 && (
+      {/* Page-level update banner — only shows when installed plugins have version bumps */}
+      {updateCount > 0 && (
         <div className="mb-4 px-4 py-2.5 rounded-lg border border-blue/30 bg-blue/5 text-[12px] text-foreground flex items-center gap-2">
           <span className="inline-block w-2 h-2 rounded-full bg-blue shrink-0" />
-          {pageUpdates.updates > 0 && (
-            <span>{pageUpdates.updates} plugin update{pageUpdates.updates > 1 ? "s" : ""} available</span>
-          )}
-          {pageUpdates.updates > 0 && pageUpdates.newInMarketplace > 0 && <span>·</span>}
-          {pageUpdates.newInMarketplace > 0 && (
-            <span>{pageUpdates.newInMarketplace} plugin{pageUpdates.newInMarketplace > 1 ? "s" : ""} available to install</span>
-          )}
+          <span>{updateCount} plugin update{updateCount > 1 ? "s" : ""} available</span>
           <button
-            onClick={() => setActiveTab("browse")}
+            onClick={() => setActiveTab("installed")}
             className="ml-auto text-blue text-[11px] font-medium cursor-pointer bg-transparent border-none"
           >
-            Browse →
+            View updates →
           </button>
         </div>
       )}
@@ -104,11 +95,8 @@ export default function MarketplacePage() {
             )}
           >
             {tab.label}
-            {tab.id === "installed" && pageUpdates.updates > 0 && (
-              <span className="ml-1.5 inline-block px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-blue text-white">{pageUpdates.updates}</span>
-            )}
-            {tab.id === "browse" && pageUpdates.newInMarketplace > 0 && (
-              <span className="ml-1.5 inline-block px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-green text-white">{pageUpdates.newInMarketplace}</span>
+            {tab.id === "installed" && updateCount > 0 && (
+              <span className="ml-1.5 inline-block px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-blue text-white">{updateCount}</span>
             )}
           </button>
         ))}
