@@ -12,18 +12,12 @@ import { setupContentRendererExtensions } from "./lib/content-renderer-setup.js"
 setupContentRendererExtensions();
 
 // Register PWA service worker (skip in Electron — it has its own update mechanism).
-// autoUpdate mode: the SW silently activates and reloads the page when new assets
-// are detected. No separate banner — the existing upgrade button in the header is
-// the single notification surface for updates.
+// autoUpdate mode: the SW silently activates when new assets are detected on
+// page navigation (browser default). No periodic polling — SW changes only
+// happen after an explicit upgrade (which rebuilds the dashboard assets).
 if (!isElectron()) {
   import("virtual:pwa-register").then(({ registerSW }) => {
-    registerSW({
-      onRegisteredSW(_url, registration) {
-        if (registration) {
-          setInterval(() => { void registration.update(); }, 60_000);
-        }
-      },
-    });
+    registerSW();
   }).catch(() => {});
 }
 
