@@ -52,22 +52,52 @@ export function registerWorkerApi(
   app: FastifyInstance,
   runtime: WorkerRuntime,
   promptLoader?: WorkerPromptLoader,
+  pluginRegistry?: { getWorkers(): Array<{ pluginId: string; worker: { id: string; name: string; domain: string; role: string; description: string; modelTier?: string } }> },
 ): void {
-  // GET /api/workers/catalog — dynamic worker prompt catalog
-  if (promptLoader) {
-    app.get("/api/workers/catalog", async () => {
-      return promptLoader.discover().map((entry) => ({
-        id: entry.id,
-        title: entry.name,
-        description: entry.description,
-        domain: entry.domain,
-        role: entry.role,
-        model: entry.model,
-        color: entry.color,
-        filePath: entry.filePath,
-      }));
-    });
-  }
+  // GET /api/workers/catalog — merges filesystem prompts + plugin-registered workers.
+  // Workers are primarily registered by plugins (plugin-worker-code, plugin-worker-comm, etc.)
+  // via api.registerWorker(). The filesystem loader is a legacy fallback.
+  app.get("/api/workers/catalog", async () => {
+    const entries: Array<{ id: string; title: string; description: string; domain: string; role: string; model?: string; color?: string }> = [];
+    const seenIds = new Set<string>();
+
+    // Plugin-registered workers (primary source)
+    if (pluginRegistry) {
+      for (const { worker } of pluginRegistry.getWorkers()) {
+        if (!seenIds.has(worker.id)) {
+          seenIds.add(worker.id);
+          entries.push({
+            id: worker.id,
+            title: worker.name,
+            description: worker.description,
+            domain: worker.domain,
+            role: worker.role,
+            model: worker.modelTier,
+          });
+        }
+      }
+    }
+
+    // Filesystem prompts (fallback for workers not registered as plugins)
+    if (promptLoader) {
+      for (const entry of promptLoader.discover()) {
+        if (!seenIds.has(entry.id)) {
+          seenIds.add(entry.id);
+          entries.push({
+            id: entry.id,
+            title: entry.name,
+            description: entry.description,
+            domain: entry.domain,
+            role: entry.role,
+            model: entry.model,
+            color: entry.color,
+          });
+        }
+      }
+    }
+
+    return entries;
+  });
   app.post<{ Params: { jobId: string } }>("/api/taskmaster/approve/:jobId", async (request) => {
     await runtime.approveCheckpoint(request.params.jobId);
     return { ok: true };

@@ -1938,7 +1938,7 @@ export async function startGatewayServer(
       },
       preListenHooks: [
         (f) => registerReportsApi(f, reportsStore),
-        (f) => registerWorkerApi(f, workerRuntime, workerPromptLoader),
+        (f) => registerWorkerApi(f, workerRuntime, workerPromptLoader, pluginRegistry),
         (f) => registerComplianceRoutes(f, { incidentStore, vendorStore, sessionStore: complianceSessionStore, backupManager }),
         (f) => registerSecurityRoutes(f, { scanRunner, scanStore }),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api")),
