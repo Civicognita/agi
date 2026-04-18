@@ -6,7 +6,7 @@
  * Caller supplies a pg Pool; call initialize() before using any other methods.
  */
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Pool } from "pg";
 import type { InstalledModel, ModelEndpoint, ModelStatus, ModelRuntimeType, DownloadProgress } from "./types.js";
@@ -396,7 +396,10 @@ export class ModelStore {
    * @param cacheDir Absolute path to the HF cache dir (e.g. ~/.agi/models).
    * @returns Number of entries that were re-created.
    */
-  async reconcileFromDisk(cacheDir: string): Promise<number> {
+  async reconcileFromDisk(
+    cacheDir: string,
+    fetchModelInfo?: (modelId: string) => Promise<{ pipeline_tag?: string; author?: string; siblings?: Array<{ rfilename: string; size?: number }> } | null>,
+  ): Promise<number> {
     const hubDir = join(cacheDir, "hub");
     if (!existsSync(hubDir)) return 0;
 
@@ -410,28 +413,59 @@ export class ModelStore {
     let reconciled = 0;
 
     for (const dir of dirs) {
-      // "models--Author--ModelName" → "Author/ModelName"
-      // Multiple "--" segments are joined with "/" to handle org-scoped names.
       const withoutPrefix = dir.slice("models--".length);
       const parts = withoutPrefix.split("--");
       if (parts.length < 2) continue;
       const modelId = parts.join("/");
 
-      // Skip if already in the database.
       const existing = await this.getById(modelId);
-      if (existing) continue;
+      if (existing && existing.pipelineTag !== "unknown") continue;
+      if (existing) {
+        await this.remove(modelId);
+      }
 
       const displayName = parts[parts.length - 1] ?? modelId;
       const filePath = join(hubDir, dir);
+
+      // Calculate actual file size from disk
+      let fileSizeBytes = 0;
+      try {
+        const files = readdirSync(filePath, { recursive: true, withFileTypes: true });
+        for (const f of files) {
+          if (f.isFile()) {
+            try {
+              const stat = statSync(join(f.parentPath ?? f.path, f.name));
+              fileSizeBytes += stat.size;
+            } catch { /* skip unreadable files */ }
+          }
+        }
+      } catch { /* directory not readable */ }
+
+      // Fetch metadata from HuggingFace Hub if available
+      let pipelineTag = "unknown";
+      let runtimeType: string = "general";
+      if (fetchModelInfo) {
+        try {
+          const info = await fetchModelInfo(modelId);
+          if (info?.pipeline_tag) {
+            pipelineTag = info.pipeline_tag;
+            const LLM_TAGS = new Set(["text-generation", "text2text-generation", "conversational"]);
+            const DIFFUSION_TAGS = new Set(["text-to-image", "image-to-image"]);
+            if (LLM_TAGS.has(pipelineTag)) runtimeType = "llm";
+            else if (DIFFUSION_TAGS.has(pipelineTag)) runtimeType = "diffusion";
+            else runtimeType = "general";
+          }
+        } catch { /* HF API unavailable — use defaults */ }
+      }
 
       await this.addModel({
         id: modelId,
         revision: "unknown",
         displayName,
-        pipelineTag: "unknown",
-        runtimeType: "general",
+        pipelineTag,
+        runtimeType: runtimeType as "llm" | "general" | "diffusion" | "custom",
         filePath,
-        fileSizeBytes: 0,
+        fileSizeBytes,
         status: "ready",
         downloadedAt: new Date().toISOString(),
       });

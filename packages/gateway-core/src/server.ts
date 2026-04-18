@@ -1535,7 +1535,13 @@ export async function startGatewayServer(
   const modelStore = new ModelStore(pgPool);
   try {
     await modelStore.initialize();
-    const reconciledModels = await modelStore.reconcileFromDisk(hfCacheDir);
+    const reconciledModels = await modelStore.reconcileFromDisk(
+      hfCacheDir,
+      async (modelId) => {
+        try { return await hfClient.getModelInfo(modelId); }
+        catch { return null; }
+      },
+    );
     if (reconciledModels > 0) {
       log.info(`HF model store: reconciled ${String(reconciledModels)} model(s) from disk`);
     }
