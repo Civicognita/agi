@@ -6,6 +6,8 @@
  * Caller supplies a pg Pool; call initialize() before using any other methods.
  */
 
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import type { Pool } from "pg";
 import type { InstalledModel, ModelEndpoint, ModelStatus, ModelRuntimeType, DownloadProgress } from "./types.js";
 
@@ -375,5 +377,68 @@ export class ModelStore {
     }
 
     return candidates;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Disk reconciliation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Scan the HuggingFace cache directory for model directories and create
+   * index entries for any models found on disk but missing from the database.
+   *
+   * HuggingFace stores downloaded models under:
+   *   <cacheDir>/hub/models--<Author>--<ModelName>/
+   *
+   * This repairs the common case where the database was wiped (e.g. after a
+   * Postgres restore or fresh ID-service install) but the model files remain.
+   *
+   * @param cacheDir Absolute path to the HF cache dir (e.g. ~/.agi/models).
+   * @returns Number of entries that were re-created.
+   */
+  async reconcileFromDisk(cacheDir: string): Promise<number> {
+    const hubDir = join(cacheDir, "hub");
+    if (!existsSync(hubDir)) return 0;
+
+    let dirs: string[];
+    try {
+      dirs = readdirSync(hubDir).filter((d) => d.startsWith("models--"));
+    } catch {
+      return 0;
+    }
+
+    let reconciled = 0;
+
+    for (const dir of dirs) {
+      // "models--Author--ModelName" → "Author/ModelName"
+      // Multiple "--" segments are joined with "/" to handle org-scoped names.
+      const withoutPrefix = dir.slice("models--".length);
+      const parts = withoutPrefix.split("--");
+      if (parts.length < 2) continue;
+      const modelId = parts.join("/");
+
+      // Skip if already in the database.
+      const existing = await this.getById(modelId);
+      if (existing) continue;
+
+      const displayName = parts[parts.length - 1] ?? modelId;
+      const filePath = join(hubDir, dir);
+
+      await this.addModel({
+        id: modelId,
+        revision: "unknown",
+        displayName,
+        pipelineTag: "unknown",
+        runtimeType: "general",
+        filePath,
+        fileSizeBytes: 0,
+        status: "ready",
+        downloadedAt: new Date().toISOString(),
+      });
+
+      reconciled++;
+    }
+
+    return reconciled;
   }
 }

@@ -555,7 +555,7 @@ export async function startGatewayServer(
   // replaces it with the real provider once plugins register their factories.
   let llmProvider: ReturnType<typeof createAgentRouter>;
   try {
-    llmProvider = createAgentRouter(config);
+    llmProvider = createAgentRouter(config, logger);
   } catch {
     const providerType = (config.agent as { provider?: string } | undefined)?.provider ?? "unknown";
     log.info(`LLM provider "${providerType}" deferred — will resolve after plugins load`);
@@ -1330,7 +1330,7 @@ export async function startGatewayServer(
         const agentProvider = (config.agent as { provider?: string } | undefined)?.provider ?? "anthropic";
         if (!["anthropic", "openai", "ollama", "hf-local"].includes(agentProvider)) {
           try {
-            llmProvider = createAgentRouter(config);
+            llmProvider = createAgentRouter(config, logger);
             log.info(`LLM provider switched to plugin-contributed "${agentProvider}"`);
           } catch {
             // Provider not registered by any loaded plugin. Check if the
@@ -1364,7 +1364,7 @@ export async function startGatewayServer(
                     bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
                     // Retry provider creation now that the plugin is loaded
                     setPluginProviderRegistry(pluginRegistry as unknown as Parameters<typeof setPluginProviderRegistry>[0]);
-                    llmProvider = createAgentRouter(config);
+                    llmProvider = createAgentRouter(config, logger);
                     log.info(`LLM provider "${agentProvider}" auto-installed and activated from marketplace`);
                   }
                 } else {
@@ -1535,6 +1535,10 @@ export async function startGatewayServer(
   const modelStore = new ModelStore(pgPool);
   try {
     await modelStore.initialize();
+    const reconciledModels = await modelStore.reconcileFromDisk(hfCacheDir);
+    if (reconciledModels > 0) {
+      log.info(`HF model store: reconciled ${String(reconciledModels)} model(s) from disk`);
+    }
   } catch (err) {
     log.warn(`ModelStore (HF models) disabled — Postgres unreachable at ${pgUrl}: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -3757,7 +3761,7 @@ export async function startGatewayServer(
       // Hot-swap LLM provider when agent or bots config changes
       if (event.changedKeys.some((k) => k === "agent" || k === "bots")) {
         try {
-          llmProvider = createAgentRouter(event.config);
+          llmProvider = createAgentRouter(event.config, logger);
           log.info("LLM provider hot-swapped");
         } catch (err) {
           log.error(`failed to hot-swap LLM provider: ${err instanceof Error ? err.message : String(err)}`);

@@ -14,6 +14,7 @@ import { OllamaProvider } from "./ollama-provider.js";
 import { FailoverProvider } from "./failover-provider.js";
 import { AgentRouter } from "./agent-router.js";
 import type { AgentRouterConfig, CostMode } from "./agent-router.js";
+import type { Logger } from "../logger.js";
 
 // ---------------------------------------------------------------------------
 // ENV key map
@@ -187,7 +188,7 @@ export function createLLMProvider(config: AionimaConfig): LLMProvider {
  * hot-reload the caller (server.ts) should pass a getConfig closure that
  * reads live config — that is Phase 4's concern.
  */
-export function createAgentRouter(config: AionimaConfig): LLMProvider {
+export function createAgentRouter(config: AionimaConfig, logger?: Logger): LLMProvider {
   const agent = config.agent as {
     provider?: string;
     model?: string;
@@ -224,5 +225,6 @@ export function createAgentRouter(config: AionimaConfig): LLMProvider {
   return new AgentRouter(
     () => routerConfig,
     (type, provConfig) => createSingleProvider(type, provConfig),
+    logger,
   );
 }
