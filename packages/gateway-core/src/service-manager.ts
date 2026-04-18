@@ -199,18 +199,37 @@ export class ServiceManager {
       const enabled = overrides?.enabled === true;
 
       if (!entry) {
+        // Service wasn't started by this manager — check if a container running
+        // the same image is already up (e.g. started by another service or an
+        // external compose stack).
+        let externalStatus: "running" | "stopped" = "stopped";
+        let externalPort: number | null = null;
+        try {
+          const lines = execFileSync(this.containerRuntime, [
+            "ps", "--filter", `ancestor=${svc.containerImage}`,
+            "--format", "{{.Names}}\t{{.Ports}}",
+          ], { stdio: "pipe", timeout: 10_000 }).toString().trim();
+          if (lines.length > 0) {
+            externalStatus = "running";
+            // Try to extract the host port from "0.0.0.0:5432->5432/tcp" notation
+            const firstLine = lines.split("\n")[0] ?? "";
+            const portMatch = /(\d+)->\d+\/tcp/.exec(firstLine);
+            if (portMatch?.[1]) externalPort = Number(portMatch[1]);
+          }
+        } catch { /* runtime unavailable or no match */ }
+
         return {
           id: svc.id,
           name: svc.name,
           description: svc.description,
           image: svc.containerImage,
-          status: "stopped" as const,
-          port: null,
+          status: externalStatus,
+          port: externalPort,
           enabled,
         };
       }
 
-      // Check actual container state
+      // Check actual container state for manager-owned container
       let status: "running" | "stopped" | "error" = "running";
       try {
         const raw = execFileSync(this.containerRuntime, [

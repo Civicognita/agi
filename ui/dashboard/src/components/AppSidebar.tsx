@@ -63,6 +63,9 @@ const builtinSections: NavSectionWithMode[] = [
     { to: "/docs", label: "Documentation", icon: FileText },
   ]},
   // ── ADMIN ──
+  { mode: "admin", title: "Overview", items: [
+    { to: "/admin", label: "Dashboard", exact: true, icon: LayoutDashboard },
+  ]},
   { mode: "admin", title: "Marketplace", items: [
     { to: "/gateway/marketplace", label: "Plugins", icon: Store },
     { to: "/magic-apps/admin", label: "MagicApps", icon: Sparkles },

@@ -109,6 +109,9 @@ export default function AdminDashboardPage() {
     : topProjectTypes.slice(0, 3).map(([type, count]) => `${type} ${String(count)}`).join(" · ")
       + (topProjectTypes.length > 3 ? ` +${String(topProjectTypes.length - 3)} more` : "");
 
+  // Only show services whose container image is locally available.
+  const visibleServices = services.filter((s) => s.imageAvailable !== false);
+
   return (
     <PageScroll>
       <div className="space-y-6">
@@ -129,8 +132,8 @@ export default function AdminDashboardPage() {
           />
           <StatCard
             label="Services"
-            value={servicesLoading ? "..." : String(services.length)}
-            sub={`${String(services.filter((s) => s.status === "running").length)} running`}
+            value={servicesLoading ? "..." : String(visibleServices.length)}
+            sub={`${String(visibleServices.filter((s) => s.status === "running").length)} running`}
           />
           <StatCard
             label="HF Models"
@@ -187,12 +190,12 @@ export default function AdminDashboardPage() {
         <Card className="p-4">
           <h2 className="text-sm font-semibold text-foreground mb-3">Services</h2>
           {servicesLoading && <div className="text-sm text-muted-foreground">Loading...</div>}
-          {!servicesLoading && services.length === 0 && (
+          {!servicesLoading && visibleServices.length === 0 && (
             <div className="text-sm text-muted-foreground">No services configured.</div>
           )}
-          {!servicesLoading && services.length > 0 && (
+          {!servicesLoading && visibleServices.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {services.map((svc) => {
+              {visibleServices.map((svc) => {
                 const svcStatus = svc.status === "running" ? "healthy" : svc.status === "error" ? "down" : "unknown";
                 return (
                   <div key={svc.name} className="flex items-center gap-3 p-3 rounded-lg bg-surface0/50">
