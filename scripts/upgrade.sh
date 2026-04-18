@@ -172,9 +172,9 @@ if [ "$ID_LOCAL_ENABLED" = "1" ] && [ -d "$ID_DIR" ]; then
       emit "build-id" "done" "Local ID service built and migrated"
 
       # Restart ID service if running
-      if systemctl is-active --quiet aionima-local-id 2>/dev/null; then
+      if systemctl is-active --quiet aionima-id 2>/dev/null; then
         emit "restart-id" "start"
-        sudo systemctl restart aionima-local-id
+        sudo systemctl restart aionima-id
         emit "restart-id" "done" "Local ID service restarted"
       fi
     else
