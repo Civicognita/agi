@@ -87,9 +87,18 @@ export default function ServicesPage() {
               <span className="text-[14px] font-semibold text-foreground">{svc.name}</span>
               <span className={cn("text-[10px] font-semibold capitalize ml-auto shrink-0", statusText)}>{svc.status}</span>
             </div>
-            <p className="text-[11px] text-muted-foreground mb-3">{svc.description}</p>
+            <p className="text-[11px] text-muted-foreground mb-2">{svc.description}</p>
+            {svc.extensions && svc.extensions.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-2">
+                {svc.extensions.map(ext => (
+                  <span key={ext} className="text-[9px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono">
+                    {ext}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="text-[10px] text-muted-foreground mb-3 flex flex-col gap-0.5 mt-auto">
-              <span>Image: <code className="text-foreground">{svc.image.split("/").pop()}</code></span>
+              <span>Image: <code className="text-foreground">{svc.image.startsWith("ghcr.io/civicognita/") ? svc.image.slice("ghcr.io/civicognita/".length) : svc.image}</code></span>
               {svc.port !== null && (
                 <span>Port: <code className="text-foreground">{svc.port}</code></span>
               )}

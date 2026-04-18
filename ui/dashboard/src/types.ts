@@ -598,6 +598,8 @@ export interface ServiceInfo {
   enabled: boolean;
   /** When false, the container image is not locally available. Omitting the field is treated as true (backward compat). */
   imageAvailable?: boolean;
+  /** Extension capabilities provided by this service (e.g. pgvector, PostGIS). */
+  extensions?: string[];
 }
 
 /** Runtime dependency bundled with a runtime (e.g. npm for Node). */
