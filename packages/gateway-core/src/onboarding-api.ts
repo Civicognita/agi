@@ -149,6 +149,28 @@ interface ActiveHandoff {
 
 let activeHandoff: ActiveHandoff | null = null;
 
+// ---------------------------------------------------------------------------
+// Device flow state — in-memory tracking of active device flow sessions
+// ---------------------------------------------------------------------------
+
+interface ActiveDeviceFlow {
+  deviceCode: string;
+  provider: string;
+  role: string;
+  startedAt: number;
+}
+
+let activeDeviceFlow: ActiveDeviceFlow | null = null;
+
+function deriveDeviceFlowServices(secrets: SecretsManager | undefined): Array<{ provider: string; role: string }> {
+  const read = (name: string): string | undefined => secrets?.readSecret(name) ?? process.env[name];
+  const services: Array<{ provider: string; role: string }> = [];
+  if (read("OWNER_GITHUB_TOKEN")) services.push({ provider: "github", role: "owner" });
+  if (read("OWNER_EMAIL_REFRESH_TOKEN") ?? read("OWNER_EMAIL_ACCESS_TOKEN")) services.push({ provider: "google", role: "owner" });
+  if (read("OWNER_DISCORD_TOKEN")) services.push({ provider: "discord", role: "owner" });
+  return services;
+}
+
 export function registerOnboardingRoutes(
   fastify: FastifyInstance,
   deps: OnboardingRouteDeps,
@@ -1007,5 +1029,133 @@ export function registerOnboardingRoutes(
 
     log.info(`Federation config saved (enabled: ${body.enabled ?? false})`);
     return reply.send({ ok: true });
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/onboarding/device-flow/start — initiate OAuth device flow
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/onboarding/device-flow/start", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    const body = request.body as { provider?: string; role?: string } | null;
+    if (!body?.provider) {
+      return reply.code(400).send({ error: "provider is required" });
+    }
+
+    const idBaseUrl = resolveIdServiceUrl(readConfig());
+    try {
+      const res = await fetch(`${idBaseUrl}/api/auth/device-flow/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: body.provider, role: body.role ?? "owner" }),
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({ error: "Unknown error" })) as { error?: string };
+        return reply.code(res.status).send(errBody);
+      }
+
+      const data = (await res.json()) as {
+        deviceCode: string;
+        userCode: string;
+        verificationUri: string;
+        expiresIn: number;
+      };
+
+      activeDeviceFlow = {
+        deviceCode: data.deviceCode,
+        provider: body.provider,
+        role: body.role ?? "owner",
+        startedAt: Date.now(),
+      };
+
+      log.info(`Device flow started for provider=${body.provider} role=${body.role ?? "owner"}`);
+      return reply.send(data);
+    } catch (e) {
+      return reply.code(502).send({ error: `Cannot reach ID service: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/onboarding/device-flow/poll — poll device flow status
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/onboarding/device-flow/poll", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    if (!activeDeviceFlow) {
+      return reply.send({ status: "no_session" });
+    }
+
+    // 15 min timeout
+    if (Date.now() - activeDeviceFlow.startedAt > 15 * 60 * 1000) {
+      activeDeviceFlow = null;
+      return reply.send({ status: "expired" });
+    }
+
+    const idBaseUrl = resolveIdServiceUrl(readConfig());
+    try {
+      const res = await fetch(
+        `${idBaseUrl}/api/auth/device-flow/poll?deviceCode=${encodeURIComponent(activeDeviceFlow.deviceCode)}`,
+      );
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({ error: "Poll failed" })) as { error?: string };
+        return reply.code(res.status).send(errBody);
+      }
+
+      const data = (await res.json()) as {
+        status: string;
+        accessToken?: string;
+        refreshToken?: string;
+        accountLabel?: string;
+        error?: string;
+      };
+
+      if (data.status === "completed") {
+        const { provider, role } = activeDeviceFlow;
+        const prefix = role === "agent" ? "AGENT" : "OWNER";
+
+        if (provider === "github" && data.accessToken) {
+          await saveSecret(secrets, `${prefix}_GITHUB_TOKEN`, data.accessToken, log);
+        }
+        if (provider === "google") {
+          if (data.accessToken) await saveSecret(secrets, `${prefix}_EMAIL_ACCESS_TOKEN`, data.accessToken, log);
+          if (data.refreshToken) await saveSecret(secrets, `${prefix}_EMAIL_REFRESH_TOKEN`, data.refreshToken, log);
+        }
+        if (provider === "discord" && data.accessToken) {
+          await saveSecret(secrets, `${prefix}_DISCORD_TOKEN`, data.accessToken, log);
+        }
+
+        // Mark step completed if we now have a GitHub token (primary auth signal)
+        const state = readOnboardingState(dataDir);
+        if (provider === "github") {
+          state.steps.aionimaId = "completed";
+          writeOnboardingState(state, dataDir);
+        }
+
+        log.info(`Device flow completed for provider=${provider} role=${role}`);
+        activeDeviceFlow = null;
+      }
+
+      return reply.send(data);
+    } catch (e) {
+      return reply.code(502).send({ error: `Poll failed: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/onboarding/device-flow/status — connected services from secrets
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/onboarding/device-flow/status", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    const services = deriveDeviceFlowServices(secrets);
+    return reply.send({ services, hasActiveSession: activeDeviceFlow !== null });
   });
 }

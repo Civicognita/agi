@@ -2,13 +2,13 @@
  * DevSettings — Contributing mode toggle + repo status + PRIME source controls.
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SectionHeading, FieldGroup } from "./SettingsShared.js";
-import { fetchDevStatus, switchDevMode, fetchPrimeStatus, switchPrimeSource } from "../../api.js";
+import { fetchDevStatus, switchDevMode, fetchPrimeStatus, switchPrimeSource, startDeviceFlow, pollDeviceFlow } from "../../api.js";
 import type { DevStatus, PrimeStatus, AionimaConfig } from "../../types.js";
 
 const MAIN_PRIME_URL = "git@github.com:Civicognita/aionima.git";
@@ -37,6 +37,14 @@ function RepoCard({ name, remote, branch, entries, isOwnerFork }: {
   );
 }
 
+interface GithubFlowState {
+  status: "idle" | "connecting" | "connected" | "error";
+  userCode?: string;
+  verificationUri?: string;
+  accountLabel?: string;
+  error?: string;
+}
+
 export function DevSettings({ config, update }: {
   config: AionimaConfig;
   update: (fn: (prev: AionimaConfig) => AionimaConfig) => void;
@@ -45,6 +53,10 @@ export function DevSettings({ config, update }: {
   const [loading, setLoading] = useState(true);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Inline GitHub device flow for the auth gate
+  const [githubFlow, setGithubFlow] = useState<GithubFlowState>({ status: "idle" });
+  const githubPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // PRIME source controls
   const [primeStatus, setPrimeStatus] = useState<PrimeStatus | null>(null);
@@ -76,6 +88,53 @@ export function DevSettings({ config, update }: {
       })
       .catch(() => { /* PRIME API unavailable */ })
       .finally(() => setPrimeLoading(false));
+  }, []);
+
+  // Cleanup GitHub poll on unmount
+  useEffect(() => {
+    return () => {
+      if (githubPollRef.current) clearInterval(githubPollRef.current);
+    };
+  }, []);
+
+  const handleGithubConnect = useCallback(async () => {
+    if (githubPollRef.current) clearInterval(githubPollRef.current);
+    setGithubFlow({ status: "connecting" });
+    try {
+      const data = await startDeviceFlow("github");
+      setGithubFlow({
+        status: "connecting",
+        userCode: data.userCode,
+        verificationUri: data.verificationUri,
+      });
+      githubPollRef.current = setInterval(() => {
+        void (async () => {
+          try {
+            const result = await pollDeviceFlow();
+            if (result.status === "completed") {
+              if (githubPollRef.current) clearInterval(githubPollRef.current);
+              setGithubFlow({ status: "connected", accountLabel: result.accountLabel });
+              // Re-fetch dev status so the toggle becomes enabled
+              const updated = await fetchDevStatus();
+              setDevStatus(updated);
+            } else if (result.status === "expired" || result.status === "error") {
+              if (githubPollRef.current) clearInterval(githubPollRef.current);
+              setGithubFlow({
+                status: "error",
+                error: result.error ?? "Authorization expired. Please try again.",
+              });
+            }
+          } catch {
+            // Keep polling on network errors
+          }
+        })();
+      }, 3000);
+    } catch (err) {
+      setGithubFlow({
+        status: "error",
+        error: err instanceof Error ? err.message : "Connection failed",
+      });
+    }
   }, []);
 
   const handleToggle = useCallback(async () => {
@@ -160,11 +219,76 @@ export function DevSettings({ config, update }: {
             <p className="text-sm text-card-foreground">GitHub authentication required</p>
             <p className="text-[13px] text-muted-foreground mt-1">
               Contributing mode clones owner forks of the AGI, PRIME, ID, and Marketplace repositories.
-              Connect your GitHub account via Aionima ID in the onboarding setup first.
+              Connect your GitHub account to continue.
             </p>
-            <div className="mt-2">
-              <Link to="/gateway/onboarding" className="text-xs text-blue underline">Open onboarding</Link>
-            </div>
+
+            {githubFlow.status === "idle" && (
+              <div className="mt-2">
+                <Button variant="outline" size="sm" onClick={() => void handleGithubConnect()}>
+                  Connect GitHub
+                </Button>
+              </div>
+            )}
+
+            {githubFlow.status === "connecting" && !githubFlow.userCode && (
+              <p className="mt-2 text-[12px] text-muted-foreground">Starting device flow...</p>
+            )}
+
+            {githubFlow.status === "connecting" && githubFlow.userCode && (
+              <div className="mt-3 p-3 rounded-lg bg-muted/30 border border-border">
+                <div className="text-[11px] text-muted-foreground mb-1">
+                  Visit this URL and enter the code:
+                </div>
+                <div className="mb-2">
+                  <a
+                    href={githubFlow.verificationUri}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[12px] text-primary underline font-mono break-all"
+                  >
+                    {githubFlow.verificationUri}
+                  </a>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[16px] font-mono font-bold tracking-widest text-foreground">
+                    {githubFlow.userCode}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void navigator.clipboard.writeText(githubFlow.userCode!)}
+                    className="text-[10px] px-2 py-0.5 rounded border border-border hover:bg-accent transition-colors"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-2 flex items-center gap-1">
+                  <span className="animate-pulse">●</span>
+                  <span>Waiting for authorization...</span>
+                </div>
+              </div>
+            )}
+
+            {githubFlow.status === "connected" && (
+              <div className="mt-2 flex items-center gap-2">
+                <Badge variant="outline" className="text-green border-green/50">
+                  ✓ {githubFlow.accountLabel ?? "GitHub connected"}
+                </Badge>
+                <span className="text-[12px] text-muted-foreground">Toggle contributing mode above.</span>
+              </div>
+            )}
+
+            {githubFlow.status === "error" && (
+              <div className="mt-2 text-[11px] text-destructive flex items-center gap-1 flex-wrap">
+                <span>{githubFlow.error}</span>
+                <button
+                  type="button"
+                  onClick={() => void handleGithubConnect()}
+                  className="underline"
+                >
+                  Try again
+                </button>
+              </div>
+            )}
           </div>
         )}
 

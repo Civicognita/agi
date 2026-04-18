@@ -2206,6 +2206,42 @@ export async function saveZeroMe(
   return res.json() as Promise<{ ok: boolean }>;
 }
 
+export async function startDeviceFlow(
+  provider: string,
+  role = "owner",
+): Promise<{ deviceCode: string; userCode: string; verificationUri: string; expiresIn: number }> {
+  const res = await fetch("/api/onboarding/device-flow/start", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, role }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Failed" })) as { error?: string };
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ deviceCode: string; userCode: string; verificationUri: string; expiresIn: number }>;
+}
+
+export async function pollDeviceFlow(): Promise<{
+  status: string;
+  provider?: string;
+  accountLabel?: string;
+  error?: string;
+}> {
+  const res = await fetch("/api/onboarding/device-flow/poll");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{ status: string; provider?: string; accountLabel?: string; error?: string }>;
+}
+
+export async function fetchDeviceFlowStatus(): Promise<{
+  services: Array<{ provider: string; role: string }>;
+  hasActiveSession: boolean;
+}> {
+  const res = await fetch("/api/onboarding/device-flow/status");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{ services: Array<{ provider: string; role: string }>; hasActiveSession: boolean }>;
+}
+
 // ---------------------------------------------------------------------------
 // Reports
 // ---------------------------------------------------------------------------
