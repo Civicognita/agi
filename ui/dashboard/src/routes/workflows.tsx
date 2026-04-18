@@ -174,11 +174,11 @@ const HF_WORKFLOW_CARDS: WorkflowCard[] = [
   },
   {
     title: "Run Local LLM",
-    description: "Chat with a locally-running language model. Uses llama.cpp for fast CPU/GPU inference.",
+    description: "Chat with a locally-running language model. Supports all model formats via the transformers runtime.",
     badge: "Language Model",
-    note: "Requires llama.cpp runtime image (ghcr.io/ggerganov/llama.cpp:server). GGUF format models only.",
+    note: "Requires the transformers-server container image. Supports safetensors, GGUF, and other formats.",
     steps: [
-      { label: "Install a GGUF model (text-generation pipeline)" },
+      { label: "Install a text-generation model from HF Models" },
       { label: "Start the model container" },
       { label: "Use via the agent or call the /api/hf/inference/{id}/chat endpoint" },
     ],

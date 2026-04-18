@@ -87,7 +87,7 @@ The `ContainerRuntimeType` enum determines which Podman image and startup flags 
 
 | Type | Models | Image | Notes |
 |------|--------|-------|-------|
-| `llm` | Text generation LLMs | `ghcr.io/ggerganov/llama.cpp:server` | Serves GGUF files via llama.cpp HTTP server; OpenAI-compatible `/v1/chat/completions` |
+| `llm` | Text generation LLMs | `ghcr.io/civicognita/transformers-server:latest` | Serves all model formats via Transformers; OpenAI-compatible `/v1/chat/completions` |
 | `diffusion` | Image generation | `ghcr.io/huggingface/diffusers:latest` | Runs a Diffusers API server; returns base64-encoded images |
 | `general` | Embeddings, classification, audio | `ghcr.io/huggingface/transformers-inference:latest` | General-purpose Transformers server |
 

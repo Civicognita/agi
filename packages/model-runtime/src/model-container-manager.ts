@@ -26,7 +26,7 @@ const HEALTH_CHECK_INTERVAL_MS = 2_000;
 const HEALTH_CHECK_TIMEOUT_MS = 120_000;
 
 const DEFAULT_IMAGES: Record<ModelRuntimeType, string> = {
-  llm: "ghcr.io/ggerganov/llama.cpp:server",
+  llm: "ghcr.io/civicognita/transformers-server:latest",
   diffusion: "ghcr.io/civicognita/diffusion-server:latest",
   general: "ghcr.io/civicognita/transformers-server:latest",
   // Custom runtimes have no shared default — image must be provided per-model
