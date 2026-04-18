@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
-import type { OutboundContent } from "@aionima/channel-sdk";
-import type { QueueMessage } from "@aionima/entity-model";
+import type { OutboundContent } from "@agi/channel-sdk";
+import type { QueueMessage } from "@agi/entity-model";
 
 import type {
   HeldMessage,

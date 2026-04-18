@@ -8,7 +8,7 @@
  * Pure synchronous logic -- no API calls, no side effects.
  */
 
-import type { VerificationTier } from "@aionima/entity-model";
+import type { VerificationTier } from "@agi/entity-model";
 
 // ---------------------------------------------------------------------------
 // Types

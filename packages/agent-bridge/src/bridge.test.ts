@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { ChannelId, OutboundContent } from "@aionima/channel-sdk";
-import type { QueueMessage } from "@aionima/entity-model";
+import type { ChannelId, OutboundContent } from "@agi/channel-sdk";
+import type { QueueMessage } from "@agi/entity-model";
 import { AgentBridge } from "./bridge.js";
 import type { BridgeDispatcher, BridgeBroadcaster, HeldMessage } from "./types.js";
 

@@ -2,7 +2,7 @@
  * defineSkill — chainable builder for SkillRegistration.
  */
 
-import type { SkillRegistration } from "@aionima/plugins";
+import type { SkillRegistration } from "@agi/plugins";
 
 class SkillBuilder {
   private def: Partial<SkillRegistration> & { triggers: string[] };

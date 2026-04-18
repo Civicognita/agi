@@ -1,9 +1,9 @@
-import type { AionimaMessage, OutboundContent } from "@aionima/channel-sdk";
-import type { EntityStore, MessageQueue, CommsLog } from "@aionima/entity-model";
-import type { COAChainLogger } from "@aionima/coa-chain";
-import type { VoicePipeline, VoiceGatewayState, AudioFormat } from "@aionima/voice";
+import type { AionimaMessage, OutboundContent } from "@agi/channel-sdk";
+import type { EntityStore, MessageQueue, CommsLog } from "@agi/entity-model";
+import type { COAChainLogger } from "@agi/coa-chain";
+import type { VoicePipeline, VoiceGatewayState, AudioFormat } from "@agi/voice";
 import type { PairingStore } from "./pairing-store.js";
-import type { OwnerConfig } from "@aionima/config";
+import type { OwnerConfig } from "@agi/config";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 

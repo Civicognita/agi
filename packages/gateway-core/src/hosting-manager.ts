@@ -19,7 +19,7 @@ import { createComponentLogger } from "./logger.js";
 import { projectConfigPath, projectSlug } from "./project-config-path.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 import type { ProjectTypeRegistry } from "./project-types.js";
-import type { PluginRegistry } from "@aionima/plugins";
+import type { PluginRegistry } from "@agi/plugins";
 import type { StackRegistry } from "./stack-registry.js";
 import type { SharedContainerManager } from "./shared-container-manager.js";
 import type { ProjectStackInstance, StackContainerContext, StackDefinition, StackContainerConfig } from "./stack-types.js";
@@ -645,7 +645,7 @@ export class HostingManager {
     const runningContainers = new Map<string, { name: string; image: string; state: string }>();
     try {
       const out = execFileSync("podman", [
-        "ps", "-a", "--filter", "label=aionima.managed=true",
+        "ps", "-a", "--filter", "label=agi.managed=true",
         "--format", "{{.Names}}|{{.Image}}|{{.State}}|{{.Labels}}",
       ], { stdio: "pipe", timeout: 15_000 }).toString().trim();
       if (out.length > 0) {
@@ -657,9 +657,8 @@ export class HostingManager {
           // space-separated, wrapped in map[]. The old regex used `=` and `,`
           // which never matched, causing "discovered 0" on every boot and
           // silently recreating all containers from scratch on every restart.
-          // Match both agi.project (correct naming: AGI is the platform) and
-          // aionima.project (legacy — existing containers still carry these labels).
-          // Label creation code should be migrated to agi.* in a follow-up.
+          // Match both agi.project (current) and aionima.project (legacy — containers
+          // created before this rename still carry the old labels; backward compat).
           const projectMatch = labels?.match(/(?:agi|aionima)\.project:([^ \]]+)/);
           const projectPath = projectMatch?.[1];
           if (projectPath) {
@@ -993,7 +992,7 @@ export class HostingManager {
       }
     }
 
-    const containerName = `aionima-${meta.hostname}`;
+    const containerName = `agi-${meta.hostname}`;
 
     const hosted: HostedProject = {
       path: resolved,
@@ -1100,7 +1099,7 @@ export class HostingManager {
     if (updates.type !== undefined) hosted.meta.type = updates.type;
     if (updates.hostname !== undefined) {
       hosted.meta.hostname = updates.hostname;
-      hosted.containerName = `aionima-${updates.hostname}`;
+      hosted.containerName = `agi-${updates.hostname}`;
     }
     if (updates.docRoot !== undefined) hosted.meta.docRoot = updates.docRoot;
     if (updates.startCommand !== undefined) hosted.meta.startCommand = updates.startCommand;
@@ -1168,7 +1167,7 @@ export class HostingManager {
    * Convert MApp container config (template strings) to the function-based
    * MagicAppContainerConfig used by startContainer().
    */
-  private mappContainerToConfig(container: import("@aionima/sdk").MAppContainerConfig): MagicAppContainerConfig {
+  private mappContainerToConfig(container: import("@agi/sdk").MAppContainerConfig): MagicAppContainerConfig {
     return {
       image: container.image,
       internalPort: container.internalPort,
@@ -1317,7 +1316,7 @@ export class HostingManager {
       return;
     }
 
-    const containerName = hosted.containerName ?? `aionima-${hosted.meta.hostname}`;
+    const containerName = hosted.containerName ?? `agi-${hosted.meta.hostname}`;
 
     // Clean up any stale container with the same name
     try {
@@ -1350,9 +1349,9 @@ export class HostingManager {
         "run", "-d",
         "--name", containerName,
         "--restart=always",
-        "--label", "aionima.managed=true",
-        "--label", `aionima.hostname=${hosted.meta.hostname}`,
-        "--label", `aionima.project=${hosted.path}`,
+        "--label", "agi.managed=true",
+        "--label", `agi.hostname=${hosted.meta.hostname}`,
+        "--label", `agi.project=${hosted.path}`,
         "-p", `127.0.0.1:${String(hosted.meta.port)}:${String(internalPort)}`,
       ];
 
@@ -1411,9 +1410,9 @@ export class HostingManager {
         "run", "-d",
         "--name", containerName,
         "--restart=always",
-        "--label", "aionima.managed=true",
-        "--label", `aionima.hostname=${hosted.meta.hostname}`,
-        "--label", `aionima.project=${hosted.path}`,
+        "--label", "agi.managed=true",
+        "--label", `agi.hostname=${hosted.meta.hostname}`,
+        "--label", `agi.project=${hosted.path}`,
         "-p", `127.0.0.1:${String(hosted.meta.port)}:${String(internalPort)}`,
       ];
 
@@ -1520,9 +1519,9 @@ export class HostingManager {
       "run", "-d",
       "--name", containerName,
       "--restart=always",
-      "--label", "aionima.managed=true",
-      "--label", `aionima.hostname=${hosted.meta.hostname}`,
-      "--label", `aionima.project=${hosted.path}`,
+      "--label", "agi.managed=true",
+      "--label", `agi.hostname=${hosted.meta.hostname}`,
+      "--label", `agi.project=${hosted.path}`,
       "-p", `127.0.0.1:${String(hosted.meta.port)}:${String(internalPort)}`,
     ];
 
@@ -2294,7 +2293,7 @@ export class HostingManager {
   // -------------------------------------------------------------------------
 
   private ensureWhoDB(): void {
-    const containerName = "aionima-whodb";
+    const containerName = "agi-whodb";
     const port = this.config.whodbPort ?? 5050;
 
     try {
@@ -2342,7 +2341,7 @@ export class HostingManager {
         "run", "-d",
         "--name", containerName,
         "--restart=always",
-        "--label", "aionima.infra=true",
+        "--label", "agi.infra=true",
         "-p", `127.0.0.1:${String(port)}:8080`,
         "-v", "whodb-data:/data",
         ...envArgs,

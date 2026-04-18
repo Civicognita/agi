@@ -10,7 +10,7 @@
  * NOT per-message — intentionally batched for performance.
  */
 
-import type { GatewayState } from "@aionima/gateway-core";
+import type { GatewayState } from "@agi/gateway-core";
 
 import type {
   MemoryProvider,

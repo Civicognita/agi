@@ -13,7 +13,7 @@ export interface ADFContext {
   config: Record<string, unknown>;
   workspaceRoot: string;
   projectDirs: string[];
-  /** Security scanning context — available when @aionima/security is loaded. */
+  /** Security scanning context — available when @agi/security is loaded. */
   security?: ADFSecurityContext;
   /** Project config manager — available when ProjectConfigManager is initialized. */
   projectConfig?: ADFProjectConfigContext;

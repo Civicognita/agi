@@ -20,8 +20,8 @@
 import type {
   AionimaChannelPlugin,
   AionimaMessage,
-} from "@aionima/channel-sdk";
-import type { AionimaPlugin, AionimaPluginAPI } from "@aionima/plugins";
+} from "@agi/channel-sdk";
+import type { AionimaPlugin, AionimaPluginAPI } from "@agi/plugins";
 
 import {
   type WhatsAppConfig,

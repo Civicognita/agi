@@ -834,7 +834,7 @@ export interface ConnectionStatus {
 }
 
 // ---------------------------------------------------------------------------
-// Plugin extensibility types (mirrors @aionima/plugins types for dashboard)
+// Plugin extensibility types (mirrors @agi/plugins types for dashboard)
 // ---------------------------------------------------------------------------
 
 export interface UIField {

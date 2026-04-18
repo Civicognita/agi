@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 
-import type { MessageQueue, QueueDirection, QueueMessage } from "@aionima/entity-model";
+import type { MessageQueue, QueueDirection, QueueMessage } from "@agi/entity-model";
 
 import type { OutboundDispatcher, OutboundRoute } from "./outbound-dispatcher.js";
 

@@ -35,7 +35,7 @@ Install path: `~/.agi/mapps/{author}/{slug}.json`
 ### SDK Builder
 
 ```ts
-import { defineMagicApp } from "@aionima/sdk";
+import { defineMagicApp } from "@agi/sdk";
 
 const reader = defineMagicApp("reader", "Reader", "civicognita")
   .description("E-reader for literature projects")

@@ -76,7 +76,7 @@ The `.passthrough()` on the root schema preserves unknown keys during read/write
 ## Service API
 
 ```ts
-import { ProjectConfigManager } from "@aionima/gateway-core";
+import { ProjectConfigManager } from "@agi/gateway-core";
 
 const mgr = new ProjectConfigManager({ logger });
 
@@ -105,7 +105,7 @@ mgr.on("changed", ({ projectPath, config, changedKeys }) => { ... })
 Core code can use the `ProjectConfig()` facade:
 
 ```ts
-import { ProjectConfig } from "@aionima/sdk";
+import { ProjectConfig } from "@agi/sdk";
 
 const config = ProjectConfig().read(path);
 const stacks = ProjectConfig().getStacks(path);
@@ -145,7 +145,7 @@ Defined in `config/src/project-schema.ts`:
 - `ProjectStackInstanceSchema` — stack instance
 - `ProjectCategorySchema` — category enum
 
-Types exported from `@aionima/config`:
+Types exported from `@agi/config`:
 - `ProjectConfig`, `ProjectHosting`, `ProjectStackInstance`, `ProjectCategory`
 
 ## Dashboard Tab Architecture

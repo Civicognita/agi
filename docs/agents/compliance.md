@@ -26,7 +26,7 @@ The compliance system is built from independent stores that share the entity dat
 After database creation, instantiate the compliance stores:
 
 ```typescript
-import { IncidentStore, ConsentStore, VendorStore, SessionStore } from "@aionima/entity-model";
+import { IncidentStore, ConsentStore, VendorStore, SessionStore } from "@agi/entity-model";
 import { BackupManager } from "./backup-manager.js";
 
 const incidentStore = new IncidentStore(db);

@@ -1,7 +1,7 @@
 /**
  * SharedContainerManager — manages shared database containers.
  *
- * One container per `sharedKey` (e.g. "postgres-17" → container "aionima-shared-postgres-17").
+ * One container per `sharedKey` (e.g. "postgres-17" → container "agi-shared-postgres-17").
  * Port allocation from the same pool as project containers.
  * Persistence in ~/.agi/shared-containers.json.
  * Reference counting — auto-start on first add, auto-stop on last remove.
@@ -94,7 +94,7 @@ export class SharedContainerManager {
 
       if (!container) {
         const port = this.allocatePort();
-        const containerName = `aionima-shared-${sharedKey}`;
+        const containerName = `agi-shared-${sharedKey}`;
         container = {
           sharedKey,
           containerName,
@@ -245,8 +245,8 @@ export class SharedContainerManager {
       "--name", containerName,
       "--replace",
       "-p", `${port}:${config.internalPort}`,
-      "--label", "aionima.managed=true",
-      "--label", `aionima.shared-key=${container.sharedKey}`,
+      "--label", "agi.managed=true",
+      "--label", `agi.shared-key=${container.sharedKey}`,
     ];
 
     for (const vol of volumes) {

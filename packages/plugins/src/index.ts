@@ -1,5 +1,5 @@
 /**
- * @aionima/plugins — Plugin system for Aionima.
+ * @agi/plugins — Plugin system for Aionima.
  */
 
 // Types

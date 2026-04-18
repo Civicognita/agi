@@ -172,10 +172,10 @@ importers:
 
   channels/discord:
     dependencies:
-      '@aionima/channel-sdk':
+      '@agi/channel-sdk':
         specifier: workspace:*
         version: link:../../packages/channel-sdk
-      '@aionima/plugins':
+      '@agi/plugins':
         specifier: workspace:*
         version: link:../../packages/plugins
       discord.js:
@@ -184,10 +184,10 @@ importers:
 
   channels/gmail:
     dependencies:
-      '@aionima/channel-sdk':
+      '@agi/channel-sdk':
         specifier: workspace:*
         version: link:../../packages/channel-sdk
-      '@aionima/plugins':
+      '@agi/plugins':
         specifier: workspace:*
         version: link:../../packages/plugins
       googleapis:
@@ -196,19 +196,19 @@ importers:
 
   channels/signal:
     dependencies:
-      '@aionima/channel-sdk':
+      '@agi/channel-sdk':
         specifier: workspace:*
         version: link:../../packages/channel-sdk
-      '@aionima/plugins':
+      '@agi/plugins':
         specifier: workspace:*
         version: link:../../packages/plugins
 
   channels/telegram:
     dependencies:
-      '@aionima/channel-sdk':
+      '@agi/channel-sdk':
         specifier: workspace:*
         version: link:../../packages/channel-sdk
-      '@aionima/plugins':
+      '@agi/plugins':
         specifier: workspace:*
         version: link:../../packages/plugins
       grammy:
@@ -217,16 +217,16 @@ importers:
 
   channels/whatsapp:
     dependencies:
-      '@aionima/channel-sdk':
+      '@agi/channel-sdk':
         specifier: workspace:*
         version: link:../../packages/channel-sdk
-      '@aionima/plugins':
+      '@agi/plugins':
         specifier: workspace:*
         version: link:../../packages/plugins
 
   cli:
     dependencies:
-      '@aionima/config':
+      '@agi/config':
         specifier: workspace:*
         version: link:../config
       commander:
@@ -241,22 +241,22 @@ importers:
 
   packages/agent-bridge:
     dependencies:
-      '@aionima/channel-sdk':
+      '@agi/channel-sdk':
         specifier: workspace:*
         version: link:../channel-sdk
-      '@aionima/entity-model':
+      '@agi/entity-model':
         specifier: workspace:*
         version: link:../entity-model
 
   packages/aion-sdk:
     dependencies:
-      '@aionima/gateway-core':
+      '@agi/gateway-core':
         specifier: workspace:*
         version: link:../gateway-core
-      '@aionima/plugins':
+      '@agi/plugins':
         specifier: workspace:*
         version: link:../plugins
-      '@aionima/security':
+      '@agi/security':
         specifier: workspace:*
         version: link:../security
 
@@ -272,7 +272,7 @@ importers:
         specifier: ^11.0.0
         version: 11.10.0
     devDependencies:
-      '@aionima/entity-model':
+      '@agi/entity-model':
         specifier: workspace:*
         version: link:../entity-model
       '@types/better-sqlite3':
@@ -294,40 +294,40 @@ importers:
 
   packages/gateway-core:
     dependencies:
-      '@aionima/channel-sdk':
+      '@agi/channel-sdk':
         specifier: workspace:*
         version: link:../channel-sdk
-      '@aionima/coa-chain':
+      '@agi/coa-chain':
         specifier: workspace:*
         version: link:../coa-chain
-      '@aionima/entity-model':
+      '@agi/entity-model':
         specifier: workspace:*
         version: link:../entity-model
-      '@aionima/marketplace':
+      '@agi/marketplace':
         specifier: workspace:*
         version: link:../marketplace
-      '@aionima/memory':
+      '@agi/memory':
         specifier: workspace:*
         version: link:../memory
-      '@aionima/model-runtime':
+      '@agi/model-runtime':
         specifier: workspace:*
         version: link:../model-runtime
-      '@aionima/plugins':
+      '@agi/plugins':
         specifier: workspace:*
         version: link:../plugins
-      '@aionima/sdk':
+      '@agi/sdk':
         specifier: workspace:*
         version: link:../aion-sdk
-      '@aionima/security':
+      '@agi/security':
         specifier: workspace:*
         version: link:../security
-      '@aionima/skills':
+      '@agi/skills':
         specifier: workspace:*
         version: link:../skills
-      '@aionima/trpc-api':
+      '@agi/trpc-api':
         specifier: workspace:*
         version: link:../trpc-api
-      '@aionima/voice':
+      '@agi/voice':
         specifier: workspace:*
         version: link:../voice
       '@anthropic-ai/sdk':
@@ -380,7 +380,7 @@ importers:
 
   packages/memory:
     dependencies:
-      '@aionima/gateway-core':
+      '@agi/gateway-core':
         specifier: workspace:*
         version: link:../gateway-core
 
@@ -396,13 +396,13 @@ importers:
 
   packages/plugins:
     dependencies:
-      '@aionima/channel-sdk':
+      '@agi/channel-sdk':
         specifier: workspace:*
         version: link:../channel-sdk
-      '@aionima/gateway-core':
+      '@agi/gateway-core':
         specifier: workspace:*
         version: link:../gateway-core
-      '@aionima/security':
+      '@agi/security':
         specifier: workspace:*
         version: link:../security
     devDependencies:
@@ -425,13 +425,13 @@ importers:
 
   packages/skills:
     dependencies:
-      '@aionima/gateway-core':
+      '@agi/gateway-core':
         specifier: workspace:*
         version: link:../gateway-core
 
   packages/trpc-api:
     dependencies:
-      '@aionima/gateway-core':
+      '@agi/gateway-core':
         specifier: workspace:*
         version: link:../gateway-core
       '@trpc/server':
@@ -449,7 +449,7 @@ importers:
 
   ui/dashboard:
     dependencies:
-      '@aionima/trpc-api':
+      '@agi/trpc-api':
         specifier: workspace:*
         version: link:../../packages/trpc-api
       '@codemirror/commands':
@@ -552,7 +552,7 @@ importers:
         specifier: ^4.2.1
         version: 4.2.1
     devDependencies:
-      '@aionima/gateway-core':
+      '@agi/gateway-core':
         specifier: workspace:*
         version: link:../../packages/gateway-core
       '@particle-academy/fancy-code':
@@ -586,7 +586,7 @@ importers:
         specifier: ^19.0.0
         version: 19.2.4(react@19.2.4)
     devDependencies:
-      '@aionima/entity-model':
+      '@agi/entity-model':
         specifier: workspace:*
         version: link:../../packages/entity-model
       '@types/react':
@@ -604,7 +604,7 @@ importers:
 
   ui/web:
     devDependencies:
-      '@aionima/gateway-core':
+      '@agi/gateway-core':
         specifier: workspace:*
         version: link:../../packages/gateway-core
       '@types/ws':

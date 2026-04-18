@@ -7,7 +7,7 @@ export default defineConfig([
     format: "esm",
     dts: true,
     clean: true,
-    external: ["better-sqlite3", "node-pty", "@aionima/security", "pg"],
+    external: ["better-sqlite3", "node-pty", "@agi/security", "pg"],
   },
   {
     entry: ["cli/src/index.ts"],

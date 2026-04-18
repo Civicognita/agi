@@ -16,9 +16,9 @@ export type {
   SkillEndorsement,
   SkillVerificationStatus,
   RankingScore,
-} from "@aionima/entity-model";
+} from "@agi/entity-model";
 
-export type { RecognitionDomain } from "@aionima/entity-model";
+export type { RecognitionDomain } from "@agi/entity-model";
 
 /** Marketplace UI search parameters. */
 export interface MarketplaceSearchParams {

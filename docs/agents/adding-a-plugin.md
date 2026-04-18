@@ -50,7 +50,7 @@ The plugin manifest lives in the `"aionima"` field of `package.json`.
 
 ```json
 {
-  "name": "@aionima/plugin-<name>",
+  "name": "@agi/plugin-<name>",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -69,7 +69,7 @@ The plugin manifest lives in the `"aionima"` field of `package.json`.
     "entry": "./src/index.ts"
   },
   "dependencies": {
-    "@aionima/sdk": "workspace:*"
+    "@agi/sdk": "workspace:*"
   }
 }
 ```
@@ -129,7 +129,7 @@ Declare only the permissions your plugin actually uses. The manifest validator (
 
 ```ts
 // plugins/plugin-<name>/src/index.ts
-import { createPlugin } from "@aionima/sdk";
+import { createPlugin } from "@agi/sdk";
 
 export default createPlugin({
   async activate(api) {
@@ -154,7 +154,7 @@ export default createPlugin({
 
 `deactivate()` is optional. Implement it if your plugin opens connections or starts timers.
 
-> **Note:** Always import from `@aionima/sdk`, not `@aionima/plugins`. The SDK wraps the low-level plugin types with `createPlugin()` factory and `define*()` builders for type-safe registration. See `docs/agents/plugin-schema.md` for the full registration surface.
+> **Note:** Always import from `@agi/sdk`, not `@agi/plugins`. The SDK wraps the low-level plugin types with `createPlugin()` factory and `define*()` builders for type-safe registration. See `docs/agents/plugin-schema.md` for the full registration surface.
 
 ## Step 4: Add to marketplace.json
 
@@ -190,7 +190,7 @@ The discovery chain at startup is: `discoverPlugins()` (user-installed) → `dis
 
 ## Step 6: Deploy
 
-The marketplace repo is deployed to `/opt/aionima-marketplace/`. When `upgrade.sh` runs, it pulls the marketplace repo alongside AGI and PRIME. New plugins added to the marketplace repo are automatically available after the next deploy.
+The marketplace repo is deployed to `/opt/agi-marketplace/`. When `upgrade.sh` runs, it pulls the marketplace repo alongside AGI and PRIME. New plugins added to the marketplace repo are automatically available after the next deploy.
 
 ## Files to Modify
 

@@ -20,19 +20,19 @@
     "noUncheckedIndexedAccess": true,
     "types": ["node"],
     "paths": {
-      "@aionima/channel-sdk": ["./packages/channel-sdk/src/index.ts"],
-      "@aionima/entity-model": ["./packages/entity-model/src/index.ts"],
-      "@aionima/coa-chain": ["./packages/coa-chain/src/index.ts"],
-      "@aionima/gateway-core": ["./packages/gateway-core/src/index.ts"],
-      "@aionima/agent-bridge": ["./packages/agent-bridge/src/index.ts"],
-      "@aionima/config": ["./config/src/index.ts"],
-      "@aionima/memory": ["./packages/memory/src/index.ts"],
-      "@aionima/skills": ["./packages/skills/src/index.ts"],
-      "@aionima/voice": ["./packages/voice/src/index.ts"],
-      "@aionima/plugins": ["./packages/plugins/src/index.ts"],
-      "@aionima/sdk": ["./packages/aion-sdk/src/index.ts"],
-      "@aionima/marketplace": ["./packages/marketplace/src/index.ts"],
-      "@aionima/model-runtime": ["./packages/model-runtime/src/index.ts"]
+      "@agi/channel-sdk": ["./packages/channel-sdk/src/index.ts"],
+      "@agi/entity-model": ["./packages/entity-model/src/index.ts"],
+      "@agi/coa-chain": ["./packages/coa-chain/src/index.ts"],
+      "@agi/gateway-core": ["./packages/gateway-core/src/index.ts"],
+      "@agi/agent-bridge": ["./packages/agent-bridge/src/index.ts"],
+      "@agi/config": ["./config/src/index.ts"],
+      "@agi/memory": ["./packages/memory/src/index.ts"],
+      "@agi/skills": ["./packages/skills/src/index.ts"],
+      "@agi/voice": ["./packages/voice/src/index.ts"],
+      "@agi/plugins": ["./packages/plugins/src/index.ts"],
+      "@agi/sdk": ["./packages/aion-sdk/src/index.ts"],
+      "@agi/marketplace": ["./packages/marketplace/src/index.ts"],
+      "@agi/model-runtime": ["./packages/model-runtime/src/index.ts"]
     }
   },
   "include": [

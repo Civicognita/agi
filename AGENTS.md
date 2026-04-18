@@ -46,7 +46,7 @@ ui/
   dashboard/                  React dashboard (Vite + Tailwind + TanStack Query)
 scripts/
   upgrade.sh                   Production deployment
-  aionima.service             systemd unit file
+  agi.service                 systemd unit file
   hosting-setup.sh            Caddy + dnsmasq installation
 skills/                       Agent skill definitions
 data/                         Runtime data (entities.db, etc.)
@@ -56,14 +56,14 @@ data/                         Runtime data (entities.db, etc.)
 
 Aionima has two developer-facing layers: the **SDK** (for plugins) and the **ADF** (for core code).
 
-### SDK (`@aionima/sdk`)
+### SDK (`@agi/sdk`)
 
-The SDK is the public API for building marketplace plugins. All plugins should import from `@aionima/sdk`, never from `@aionima/plugins` directly.
+The SDK is the public API for building marketplace plugins. All plugins should import from `@agi/sdk`, never from `@agi/plugins` directly.
 
 **Plugin entry pattern:**
 
 ```ts
-import { createPlugin } from "@aionima/sdk";
+import { createPlugin } from "@agi/sdk";
 
 export default createPlugin({
   async activate(api) {
@@ -93,7 +93,7 @@ export default createPlugin({
 | `defineScan()` | `api.registerScanProvider()` | Security scan providers |
 | `defineWorker()` | `api.registerWorker()` | Worker task specialists |
 
-**Testing:** `import { testActivate } from "@aionima/sdk/testing"` provides a mock `AionimaPluginAPI` for unit tests.
+**Testing:** `import { testActivate } from "@agi/sdk/testing"` provides a mock `AionimaPluginAPI` for unit tests.
 
 **Key files:** `packages/aion-sdk/src/index.ts` (entry), `packages/aion-sdk/src/create-plugin.ts` (factory), `packages/aion-sdk/src/define-*.ts` (builders).
 
@@ -104,7 +104,7 @@ The ADF is for **AGI core code only**, not plugins. It provides module-scoped si
 - `Log()` — structured logger
 - `Config()` — config accessor
 - `Workspace()` — workspace info
-- `Security()` — security scan runner and findings (requires `@aionima/security`)
+- `Security()` — security scan runner and findings (requires `@agi/security`)
 
 Plugins get the same capabilities through `api.getLogger()`, `api.getConfig()`, etc. — they never use ADF facades.
 
@@ -180,11 +180,11 @@ The system is built from **independent git repos** — not submodules.
 
 | Repo | Production Path | Dev Path | Source |
 |------|----------------|----------|--------|
-| AGI | `/opt/aionima` | (dev workspace) | `@Civicognita/agi` |
-| PRIME | `/opt/aionima-prime` | `/opt/aionima-prime_dev` | `@Civicognita/aionima` |
-| ID | `/opt/aionima-local-id` | `/opt/aionima-local-id_dev` | `@Civicognita/aionima-local-id` |
-| Plugin Marketplace | `/opt/aionima-marketplace` | `/opt/aionima-marketplace_dev` | `@Civicognita/aionima-marketplace` |
-| MApp Marketplace | `/opt/aionima-mapp-marketplace` | — | `@Civicognita/aionima-mapp-marketplace` |
+| AGI | `/opt/agi` | (dev workspace) | `@Civicognita/agi` |
+| PRIME | `/opt/agi-prime` | `/opt/agi-prime_dev` | `@Civicognita/aionima` |
+| ID | `/opt/agi-local-id` | `/opt/agi-local-id_dev` | `@Civicognita/aionima-local-id` |
+| Plugin Marketplace | `/opt/agi-marketplace` | `/opt/agi-marketplace_dev` | `@Civicognita/aionima-marketplace` |
+| MApp Marketplace | `/opt/agi-mapp-marketplace` | — | `@Civicognita/aionima-mapp-marketplace` |
 
 AGI resolves repo paths at runtime from config (`prime.dir`, `idService.dir`, `marketplace.dir`, `mappMarketplace.dir`). Dev mode (`dev.enabled: true`) switches to dev directories automatically.
 
@@ -206,12 +206,12 @@ Each repo has a `protocol.json` at its root. AGI checks semver compatibility at 
    - **Restarts the service only if backend changed**
    - Writes `.deployed-commit` marker for update detection
 
-Key paths: service runs from `/opt/aionima`, systemd unit at `/etc/systemd/system/aionima.service`, config at `/opt/aionima/gateway.json`, secrets in `/opt/aionima/.env`.
+Key paths: service runs from `/opt/agi`, systemd unit at `/etc/systemd/system/agi.service`, config at `/opt/agi/gateway.json`, secrets in `/opt/agi/.env`.
 
 ### Dev Mode
 
 Toggle via dashboard (`POST /api/dev/switch`) or config file. Dev mode:
-- Reads PRIME from `dev.primeDir` (default: `/opt/aionima-prime_dev`)
+- Reads PRIME from `dev.primeDir` (default: `/opt/agi-prime_dev`)
 - Adds `fork_id` to COA audit records for traceability
 - Requires restart after toggle
 
@@ -219,13 +219,13 @@ Toggle via dashboard (`POST /api/dev/switch`) or config file. Dev mode:
 
 | Path | Purpose |
 |------|---------|
-| `/opt/aionima-prime/` | **PRIME knowledge corpus (production) — NEVER write runtime data here** |
+| `/opt/agi-prime/` | **PRIME knowledge corpus (production) — NEVER write runtime data here** |
 | `~/.agi/` | Runtime data root (config, db, secrets, chat history) |
 | `~/.agi/gateway.json` | Runtime config (single source — NOT in repo or service dir) |
 | `~/.agi/entities.db` | SQLite entity database |
 | `~/.agi/chat-history/` | Chat session history (JSON files per session) |
 | `~/.agi/secrets/` | TPM2-sealed credentials |
-| `/opt/aionima/` | Production deployment target — code only, no runtime data or config |
+| `/opt/agi/` | Production deployment target — code only, no runtime data or config |
 
 **Critical rule:** The PRIME corpus is a knowledge store. Runtime data (chat history, logs, caches, config, database) must never be stored in the repo, service dir, or PRIME. All runtime data lives in `~/.agi/`.
 
@@ -247,7 +247,7 @@ Two documentation sets live in `docs/`:
 
 ### How Docs Are Served
 
-Docs are served through the editor plugin (now in the marketplace repo). The dashboard has a `/docs` route at `ui/dashboard/src/routes/docs.tsx` with a two-column layout (file tree + rendered markdown). Shared markdown components are in `ui/dashboard/src/lib/markdown.tsx`. The `docs/` directory is synced to `/opt/aionima/docs/` via `upgrade.sh`.
+Docs are served through the editor plugin (now in the marketplace repo). The dashboard has a `/docs` route at `ui/dashboard/src/routes/docs.tsx` with a two-column layout (file tree + rendered markdown). Shared markdown components are in `ui/dashboard/src/lib/markdown.tsx`. The `docs/` directory is synced to `/opt/agi/docs/` via `upgrade.sh`.
 
 ---
 

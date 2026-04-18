@@ -2,8 +2,8 @@
  * createPlugin — factory for type-safe plugin creation.
  */
 
-import type { AionimaPlugin, AionimaPluginAPI, CleanupManifest } from "@aionima/plugins";
-import { validatePluginId } from "@aionima/plugins";
+import type { AionimaPlugin, AionimaPluginAPI, CleanupManifest } from "@agi/plugins";
+import { validatePluginId } from "@agi/plugins";
 
 export interface PluginOptions {
   /** Optional plugin ID — validated at definition time if provided. */

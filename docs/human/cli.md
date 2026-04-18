@@ -6,7 +6,7 @@ The `agi` command is the single entry point for managing the Aionima gateway fro
 agi <command> [args]
 ```
 
-Installed as a symlink: `/usr/local/bin/agi` → `/opt/aionima/scripts/agi-cli.sh`
+Installed as a symlink: `/usr/local/bin/agi` → `/opt/agi/scripts/agi-cli.sh`
 
 ---
 

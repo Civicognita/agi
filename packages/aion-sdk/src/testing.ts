@@ -24,11 +24,11 @@ import type {
   RuntimeDefinition,
   ServiceDefinition,
   LLMProviderDefinition,
-} from "@aionima/plugins";
-import type { ProjectTypeDefinition, ProjectTypeTool, StackDefinition } from "@aionima/gateway-core";
-import type { AionimaChannelPlugin } from "@aionima/channel-sdk";
-import type { ScanProviderDefinition } from "@aionima/security";
-import type { WorkerDefinition } from "@aionima/plugins";
+} from "@agi/plugins";
+import type { ProjectTypeDefinition, ProjectTypeTool, StackDefinition } from "@agi/gateway-core";
+import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import type { ScanProviderDefinition } from "@agi/security";
+import type { WorkerDefinition } from "@agi/plugins";
 
 export interface MockRegistrations {
   actions: ActionDefinition[];

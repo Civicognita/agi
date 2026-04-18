@@ -2,7 +2,7 @@
  * defineTheme — chainable builder for ThemeDefinition.
  */
 
-import type { ThemeDefinition } from "@aionima/plugins";
+import type { ThemeDefinition } from "@agi/plugins";
 
 class ThemeBuilder {
   private def: Partial<ThemeDefinition> & { properties: Record<string, string> };

@@ -7,8 +7,8 @@
  * Skill execution tracking for COA.
  */
 
-import type { GatewayState } from "@aionima/gateway-core";
-import type { VerificationTier } from "@aionima/entity-model";
+import type { GatewayState } from "@agi/gateway-core";
+import type { VerificationTier } from "@agi/entity-model";
 
 import type {
   SkillDefinition,

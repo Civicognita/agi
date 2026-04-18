@@ -4,9 +4,9 @@
  */
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import type { ScanRunner } from "@aionima/security";
-import type { ScanStore } from "@aionima/security";
-import type { ScanConfig, FindingSeverity, FindingStatus } from "@aionima/security";
+import type { ScanRunner } from "@agi/security";
+import type { ScanStore } from "@agi/security";
+import type { ScanConfig, FindingSeverity, FindingStatus } from "@agi/security";
 
 function isPrivateNetwork(ip: string): boolean {
   if (ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1") return true;

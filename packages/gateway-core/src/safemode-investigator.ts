@@ -18,7 +18,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { NotificationStore } from "@aionima/entity-model";
+import type { NotificationStore } from "@agi/entity-model";
 import type { ComponentLogger } from "./logger.js";
 import type { LocalModelRuntime } from "./local-model-runtime.js";
 import { peekShutdownMarker } from "./boot-recovery.js";
@@ -114,10 +114,10 @@ export function collectEvidence(log: ComponentLogger): Evidence {
     collectedAt: new Date().toISOString(),
     hadPriorMarker: peekShutdownMarker() !== null,
     gatewayJournal: journalctl("aionima", 500),
-    idServiceJournal: journalctl("aionima-id", 200),
+    idServiceJournal: journalctl("agi-id", 200),
     gatewayLog: gatewayLogTail(300),
     podmanPs: podmanPs(),
-    postgresLogs: podmanLogs("aionima-id-postgres", 100),
+    postgresLogs: podmanLogs("agi-postgres", 100),
     dmesg: dmesgTail(100),
     diskRoot: diskFree("/"),
     diskAgi: diskFree(join(homedir(), ".agi")),
@@ -152,11 +152,11 @@ export function classifyIncident(e: Evidence): ClassifiedIncident {
     return {
       classification: "postgres_unreachable",
       confidence: "high",
-      summary: "Gateway couldn't reach the ID service's PostgreSQL at 127.0.0.1:5433. Likely cause: the aionima-id-postgres container did not auto-restart after a host reboot.",
+      summary: "Gateway couldn't reach the ID service's PostgreSQL at 127.0.0.1:5433. Likely cause: the agi-postgres container did not auto-restart after a host reboot.",
       autoRecoverable: true,
       recommendedActions: [
-        "Click 'Recover now' — the gateway will start aionima-id-postgres and aionima-id.service, then re-run reconciliation.",
-        "If recovery keeps failing, check `podman inspect aionima-id-postgres` for image/volume errors.",
+        "Click 'Recover now' — the gateway will start agi-postgres and agi-id.service, then re-run reconciliation.",
+        "If recovery keeps failing, check `podman inspect agi-postgres` for image/volume errors.",
       ],
     };
   }
@@ -193,7 +193,7 @@ export function classifyIncident(e: Evidence): ClassifiedIncident {
   }
 
   // ID service failure
-  if (/aionima-id\.service.*(failed|Failed)|Start-Pre.*exited with code/i.test(e.idServiceJournal)) {
+  if (/agi-id\.service.*(failed|Failed)|Start-Pre.*exited with code/i.test(e.idServiceJournal)) {
     return {
       classification: "id_service_failed",
       confidence: "medium",
@@ -201,7 +201,7 @@ export function classifyIncident(e: Evidence): ClassifiedIncident {
       autoRecoverable: true,
       recommendedActions: [
         "Click 'Recover now' to retry starting the ID service after reconciling externals.",
-        "Check `journalctl -u aionima-id -n 50` for migration errors.",
+        "Check `journalctl -u agi-id -n 50` for migration errors.",
       ],
     };
   }
@@ -268,7 +268,7 @@ function composeHeuristicReport(
   lines.push(truncateForReport(evidence.gatewayJournal, 8_000));
   lines.push("```");
   lines.push("");
-  lines.push("### ID service journal (`journalctl -u aionima-id`)");
+  lines.push("### ID service journal (`journalctl -u agi-id`)");
   lines.push("```");
   lines.push(truncateForReport(evidence.idServiceJournal, 4_000));
   lines.push("```");

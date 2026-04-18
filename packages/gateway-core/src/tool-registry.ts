@@ -7,8 +7,8 @@
  * @see docs/governance/agent-invocation-spec.md §6
  */
 
-import type { VerificationTier } from "@aionima/entity-model";
-import type { COAChainLogger } from "@aionima/coa-chain";
+import type { VerificationTier } from "@agi/entity-model";
+import type { COAChainLogger } from "@agi/coa-chain";
 
 import type { GatewayState } from "./types.js";
 import type { ToolManifestEntry, TierCapabilities } from "./system-prompt.js";

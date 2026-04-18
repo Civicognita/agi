@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 
-import type { AionimaChannelPlugin } from "@aionima/channel-sdk";
-import { assertValidAdapter } from "@aionima/channel-sdk";
+import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import { assertValidAdapter } from "@agi/channel-sdk";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 

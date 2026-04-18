@@ -51,8 +51,8 @@ Key config sections:
 ├── memory/                     → Agent memory (multi-file with _map.md index)
 └── secrets/                    → TPM2-sealed credentials
 
-/opt/aionima/                   → Production AGI installation
-/opt/aionima-prime/             → Production PRIME corpus (read-only at runtime)
+/opt/agi/                   → Production AGI installation
+/opt/agi-prime/             → Production PRIME corpus (read-only at runtime)
 ```
 
 Entity classification follows the HIVE-ID system:

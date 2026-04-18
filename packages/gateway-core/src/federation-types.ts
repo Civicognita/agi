@@ -9,7 +9,7 @@
  * Trust: Progressive (0=unknown, 1=handshake, 2=verified, 3=trusted)
  */
 
-import type { GEID } from "@aionima/entity-model";
+import type { GEID } from "@agi/entity-model";
 
 // ---------------------------------------------------------------------------
 // Node identity

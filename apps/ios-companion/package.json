@@ -1,5 +1,5 @@
 {
-  "name": "@aionima/ios-companion",
+  "name": "@agi/ios-companion",
   "version": "0.1.0",
   "private": true,
   "main": "src/App.tsx",

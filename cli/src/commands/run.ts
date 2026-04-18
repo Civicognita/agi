@@ -7,7 +7,7 @@ import { resolve } from "node:path";
 import type { Command } from "commander";
 import { loadConfig } from "../config-loader.js";
 import { bold, cyan, dim, formatState } from "../output.js";
-import { startGatewayServer } from "@aionima/gateway-core";
+import { startGatewayServer } from "@agi/gateway-core";
 
 /** Auto-detect dashboard dist directory relative to project root. */
 function findDashboardDir(): string | undefined {
@@ -51,7 +51,7 @@ export function registerRunCommand(program: Command): void {
       console.log(`  ${dim("listen")}    ${cyan(`${gw.host}:${String(gw.port)}`)}`);
       console.log(`  ${dim("state")}     ${formatState(gw.state)}`);
       console.log(`  ${dim("channels")}  ${String(config.channels.length)} configured`);
-      console.log(`  ${dim("dashboard")} ${staticDir !== undefined ? cyan(`http://${gw.host}:${String(gw.port)}`) : dim("not built (run: pnpm --filter @aionima/dashboard build)")}`);
+      console.log(`  ${dim("dashboard")} ${staticDir !== undefined ? cyan(`http://${gw.host}:${String(gw.port)}`) : dim("not built (run: pnpm --filter @agi/dashboard build)")}`);
       console.log();
 
       let server;

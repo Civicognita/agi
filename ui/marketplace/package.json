@@ -1,5 +1,5 @@
 {
-  "name": "@aionima/marketplace-ui",
+  "name": "@agi/marketplace-ui",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -16,7 +16,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@aionima/entity-model": "workspace:*",
+    "@agi/entity-model": "workspace:*",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",

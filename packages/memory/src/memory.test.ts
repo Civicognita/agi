@@ -1,5 +1,5 @@
 /**
- * Comprehensive tests for @aionima/memory package.
+ * Comprehensive tests for @agi/memory package.
  *
  * Covers:
  * - FileMemoryProvider (file-adapter.ts)
@@ -18,7 +18,7 @@ import { CogneeMemoryProvider } from "./cognee-adapter.js";
 import { CompositeMemoryAdapter } from "./composite-adapter.js";
 import { retrieveMemories, extractSessionMemories } from "./retrieval.js";
 import type { MemoryEntry } from "./types.js";
-import type { GatewayState } from "@aionima/gateway-core";
+import type { GatewayState } from "@agi/gateway-core";
 
 // ---------------------------------------------------------------------------
 // Shared helpers

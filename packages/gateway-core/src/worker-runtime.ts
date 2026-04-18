@@ -20,7 +20,7 @@ import { dispatchJobsDir, finalizeDispatchFile, loadLiveJobOverlay, mergeJobStat
 import type { ToolRegistry, ToolExecutionContext } from "./tool-registry.js";
 import type { LLMProvider } from "./llm/provider.js";
 import type { LLMInvokeParams, LLMToolContinuationParams, LLMContentBlock } from "./llm/types.js";
-import type { VerificationTier } from "@aionima/entity-model";
+import type { VerificationTier } from "@agi/entity-model";
 import type { GatewayState } from "./types.js";
 
 // ---------------------------------------------------------------------------

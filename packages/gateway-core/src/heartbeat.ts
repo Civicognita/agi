@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { AgentInvoker } from "./agent-invoker.js";
-import type { EntityStore } from "@aionima/entity-model";
-import type { COAChainLogger } from "@aionima/coa-chain";
+import type { EntityStore } from "@agi/entity-model";
+import type { COAChainLogger } from "@agi/coa-chain";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 

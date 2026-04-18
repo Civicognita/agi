@@ -62,7 +62,7 @@ When `activate(api)` is called, the `api` parameter is an `AionimaPluginAPI` ins
 |--------|---------------|-------------|
 | `registerScanProvider(def)` | `ScanProviderDefinition` | Register a security scan provider (SAST, SCA, secrets, etc.) |
 
-Use the `defineScan()` builder from `@aionima/sdk` to create `ScanProviderDefinition` objects. See [Builder Reference](../sdk/builders.md#definescanid-name) for details.
+Use the `defineScan()` builder from `@agi/sdk` to create `ScanProviderDefinition` objects. See [Builder Reference](../sdk/builders.md#definescanid-name) for details.
 
 ### Workers
 
@@ -70,7 +70,7 @@ Use the `defineScan()` builder from `@aionima/sdk` to create `ScanProviderDefini
 |--------|---------------|-------------|
 | `registerWorker(def)` | `WorkerDefinition` | Register a background task worker for Taskmaster dispatch |
 
-Use the `defineWorker()` builder from `@aionima/sdk` to create `WorkerDefinition` objects. See [Builder Reference](../sdk/builders.md#defineworkerid-name) for details.
+Use the `defineWorker()` builder from `@agi/sdk` to create `WorkerDefinition` objects. See [Builder Reference](../sdk/builders.md#defineworkerid-name) for details.
 
 ### Lifecycle
 
@@ -117,7 +117,7 @@ Pass these hook names to `api.registerHook()`:
 
 ## Type Re-Exports
 
-All types listed in this document are available from `@aionima/sdk`:
+All types listed in this document are available from `@agi/sdk`:
 
 ```typescript
 import type {
@@ -145,7 +145,7 @@ import type {
   StackDefinition,
   LLMProviderDefinition,
   AionimaChannelPlugin,
-} from "@aionima/sdk";
+} from "@agi/sdk";
 ```
 
-The SDK re-exports types from `@aionima/plugins`, `@aionima/channel-sdk`, and `@aionima/gateway-core` so that plugin authors only need a single import source.
+The SDK re-exports types from `@agi/plugins`, `@agi/channel-sdk`, and `@agi/gateway-core` so that plugin authors only need a single import source.

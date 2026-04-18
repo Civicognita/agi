@@ -1,18 +1,18 @@
 # Aionima SDK Overview
 
-The Aionima SDK (`@aionima/sdk`) is the public API for building marketplace plugins. It provides a `createPlugin()` factory, 14 chainable `define*()` builders, and type-safe access to the full plugin registration surface.
+The Aionima SDK (`@agi/sdk`) is the public API for building marketplace plugins. It provides a `createPlugin()` factory, 14 chainable `define*()` builders, and type-safe access to the full plugin registration surface.
 
 ---
 
 ## Import Convention
 
-Always import from `@aionima/sdk`:
+Always import from `@agi/sdk`:
 
 ```typescript
-import { createPlugin, defineStack, defineService } from "@aionima/sdk";
+import { createPlugin, defineStack, defineService } from "@agi/sdk";
 ```
 
-Never import from `@aionima/plugins` directly — the SDK re-exports all necessary types. Direct imports from internal packages bypass the public API contract and may break across versions.
+Never import from `@agi/plugins` directly — the SDK re-exports all necessary types. Direct imports from internal packages bypass the public API contract and may break across versions.
 
 ---
 
@@ -21,7 +21,7 @@ Never import from `@aionima/plugins` directly — the SDK re-exports all necessa
 Every plugin uses the `createPlugin()` factory. It takes an object with `activate` (required) and `deactivate` (optional) methods:
 
 ```typescript
-import { createPlugin, defineService, defineSettings } from "@aionima/sdk";
+import { createPlugin, defineService, defineSettings } from "@agi/sdk";
 
 export default createPlugin({
   async activate(api) {
@@ -107,14 +107,14 @@ ADF is a module-scoped singleton for AGI core code. It provides global framework
 ADF is initialized once at gateway boot before any plugins activate:
 
 ```typescript
-import { initADF } from "@aionima/sdk";
+import { initADF } from "@agi/sdk";
 
 initADF({
   logger,
   config: rawConfig,
   workspaceRoot: "/home/wishborn/temp_core",
   projectDirs: [...],
-  security: securityModule,      // optional — requires @aionima/security
+  security: securityModule,      // optional — requires @agi/security
   projectConfig: projectConfigMgr, // optional
   systemConfig: systemConfigSvc,   // optional
 });
@@ -123,7 +123,7 @@ initADF({
 To get the raw context object after initialization:
 
 ```typescript
-import { getADFContext } from "@aionima/sdk";
+import { getADFContext } from "@agi/sdk";
 
 const ctx = getADFContext(); // throws if initADF() was not called
 ```
@@ -136,7 +136,7 @@ interface ADFContext {
   config: Record<string, unknown>;
   workspaceRoot: string;
   projectDirs: string[];
-  security?: ADFSecurityContext;       // available when @aionima/security is loaded
+  security?: ADFSecurityContext;       // available when @agi/security is loaded
   projectConfig?: ADFProjectConfigContext; // available when ProjectConfigManager is init'd
   systemConfig?: ADFSystemConfigContext;   // available when SystemConfigService is init'd
 }
@@ -144,10 +144,10 @@ interface ADFContext {
 
 ### The Six Facades
 
-Import any facade from `@aionima/sdk`:
+Import any facade from `@agi/sdk`:
 
 ```typescript
-import { Log, Config, Workspace, Security, ProjectConfig, SystemConfig } from "@aionima/sdk";
+import { Log, Config, Workspace, Security, ProjectConfig, SystemConfig } from "@agi/sdk";
 ```
 
 #### `Log()`
@@ -183,7 +183,7 @@ const { root, projects } = Workspace();
 
 #### `Security()`
 
-Returns the security scanning facade. Throws if `@aionima/security` is not loaded.
+Returns the security scanning facade. Throws if `@agi/security` is not loaded.
 
 ```typescript
 const scan = await Security().runScan({

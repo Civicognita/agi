@@ -284,7 +284,7 @@ For complex migrations, do them outside the normal DDL system and add a record t
 If your store records actions that should be tracked in the Chain of Accountability:
 
 ```ts
-import { COAChainLogger } from "@aionima/coa-chain";
+import { COAChainLogger } from "@agi/coa-chain";
 
 // In your store method, after writing:
 await coaLogger.log({

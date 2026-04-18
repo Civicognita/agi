@@ -2,7 +2,7 @@
  * defineSidebar — chainable builder for SidebarSectionDefinition.
  */
 
-import type { SidebarSectionDefinition, SidebarItem } from "@aionima/plugins";
+import type { SidebarSectionDefinition, SidebarItem } from "@agi/plugins";
 
 class SidebarBuilder {
   private def: Partial<SidebarSectionDefinition> & { items: SidebarItem[] };

@@ -1,6 +1,6 @@
 # Testing Plugins
 
-The SDK provides testing utilities at `@aionima/sdk/testing` for unit testing plugins without a running gateway.
+The SDK provides testing utilities at `@agi/sdk/testing` for unit testing plugins without a running gateway.
 
 ---
 
@@ -10,7 +10,7 @@ The simplest way to test a plugin. It creates a mock API, activates your plugin 
 
 ```typescript
 import { describe, it, expect } from "vitest";
-import { testActivate } from "@aionima/sdk/testing";
+import { testActivate } from "@agi/sdk/testing";
 import myPlugin from "../src/index.js";
 
 describe("my-plugin", () => {
@@ -59,7 +59,7 @@ async function testActivate(
 For more control, use `createMockAPI()` directly. It returns both the mock API and the registrations object, letting you inspect the API before or after activation:
 
 ```typescript
-import { createMockAPI } from "@aionima/sdk/testing";
+import { createMockAPI } from "@agi/sdk/testing";
 
 const { api, registrations } = createMockAPI({
   config: { gateway: { port: 3100 } },
@@ -124,7 +124,7 @@ Stack plugins that register container images should verify they use custom GHCR 
 
 ```typescript
 import { describe, it, expect } from "vitest";
-import { testActivate } from "@aionima/sdk/testing";
+import { testActivate } from "@agi/sdk/testing";
 import plugin from "./index.js";
 
 describe("TALL stack plugin", () => {
@@ -163,7 +163,7 @@ A full test file for a hypothetical monitoring plugin:
 
 ```typescript
 import { describe, it, expect } from "vitest";
-import { testActivate, createMockAPI } from "@aionima/sdk/testing";
+import { testActivate, createMockAPI } from "@agi/sdk/testing";
 import monitorPlugin from "../src/index.js";
 
 describe("plugin-monitor", () => {

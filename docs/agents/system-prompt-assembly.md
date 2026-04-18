@@ -41,7 +41,7 @@ InboundRouter → MessageQueue → QueueConsumer → AgentBridge.notify()
 Before any user-supplied content enters the system prompt, it passes through `packages/agent-bridge/src/sanitize.ts`:
 
 ```ts
-import { sanitizeForPromptLiteral, sanitizeRecord } from "@aionima/agent-bridge";
+import { sanitizeForPromptLiteral, sanitizeRecord } from "@agi/agent-bridge";
 
 // Sanitize a string before injecting into system prompt
 const safeText = sanitizeForPromptLiteral(userInput);
@@ -62,7 +62,7 @@ Always sanitize before injecting user-controlled content.
 `ContextGuard` in `packages/agent-bridge/src/context-guard.ts` tracks token usage and enforces the session context window budget:
 
 ```ts
-import { ContextGuard } from "@aionima/agent-bridge";
+import { ContextGuard } from "@agi/agent-bridge";
 
 const guard = new ContextGuard({
   contextWindowTokens: 200000,  // from sessions.contextWindowTokens in config
@@ -177,7 +177,7 @@ Skills live in `skills/` and are loaded via `packages/skills/`. The `SkillLoader
 
 ```ts
 // In agent-session.ts
-import { SkillLoader } from "@aionima/skills";
+import { SkillLoader } from "@agi/skills";
 
 const loader = new SkillLoader({ skillsDir: join(workspaceRoot, "skills") });
 const skills = await loader.loadAll();
@@ -198,7 +198,7 @@ function buildSkillsContext(skills: Skill[]): string {
 `packages/memory/` provides a composite memory adapter. It aggregates multiple memory backends (local file, Cognee, etc.):
 
 ```ts
-import type { MemoryAdapter } from "@aionima/memory";
+import type { MemoryAdapter } from "@agi/memory";
 
 async function buildMemoryContext(memory: MemoryAdapter, entityId: string, query: string): Promise<string> {
   const memories = await memory.recall({ entityId, query, limit: 10 });

@@ -73,7 +73,7 @@ aionima/
 │   └── dashboard/          React dashboard (Vite + Tailwind + TanStack Query)
 ├── scripts/
 │   ├── upgrade.sh           Production deployment script
-│   └── aionima.service     systemd unit file
+│   └── agi.service     systemd unit file
 ├── skills/                 Agent skill definitions (.skill.md files)
 └── aionima.example.json    Example configuration to copy from
 ```
@@ -173,8 +173,8 @@ Hot-reload (config.changed hook fires, relevant services update)
 | `~/.agi/chat-history/` | Chat session history (JSON files per session) |
 | `~/.agi/secrets/` | TPM2-sealed credentials |
 | `~/.agi/` | Runtime data root |
-| `/opt/aionima/` | Production deployment target |
-| `/opt/aionima-prime/` | PRIME knowledge corpus (external repo) — never write runtime data here |
+| `/opt/agi/` | Production deployment target |
+| `/opt/agi-prime/` | PRIME knowledge corpus (external repo) — never write runtime data here |
 | `logs/` | Application log files (configured via `logging.logDir`, default `./logs` relative to workspace root) |
 
 ---

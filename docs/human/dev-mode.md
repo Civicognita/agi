@@ -15,8 +15,8 @@ Contributing mode uses **separate directories** for each repo rather than switch
 
 | Mode | PRIME Directory |
 |------|----------------|
-| Production | `/opt/aionima-prime` |
-| Contributing | `/opt/aionima-prime_dev` |
+| Production | `/opt/agi-prime` |
+| Contributing | `/opt/agi-prime_dev` |
 
 When you toggle contributing mode, Aionima changes which directory it reads PRIME from. The production directory is never modified while in contributing mode.
 
@@ -26,7 +26,7 @@ When you toggle contributing mode, Aionima changes which directory it reads PRIM
 
 ```bash
 # Clone your personal fork
-git clone git@github.com:wishborn/aionima.git /opt/aionima-prime_dev
+git clone git@github.com:wishborn/aionima.git /opt/agi-prime_dev
 ```
 
 ### 2. Configure Custom Paths (Optional)
@@ -39,7 +39,7 @@ If your contributing directory is in a non-default location, add it to `gateway.
     "enabled": false,
     "agiRepo": "git@github.com:your-user/agi.git",
     "primeRepo": "git@github.com:your-user/aionima.git",
-    "primeDir": "/opt/aionima-prime_dev"
+    "primeDir": "/opt/agi-prime_dev"
   }
 }
 ```
@@ -89,7 +89,7 @@ Response includes the directories that will be active after restart:
 {
   "ok": true,
   "enabled": true,
-  "primeDir": "/opt/aionima-prime_dev",
+  "primeDir": "/opt/agi-prime_dev",
   "note": "Restart required for path changes to take effect"
 }
 ```

@@ -12,7 +12,7 @@ import type { HostingManager } from "./hosting-manager.js";
 import type { ProjectCategory } from "./project-types.js";
 import type { StackCategory } from "./stack-types.js";
 import type { ComponentLogger } from "./logger.js";
-import type { RuntimeDefinition } from "@aionima/plugins";
+import type { RuntimeDefinition } from "@agi/plugins";
 
 export interface PluginRegistryLike {
   getRuntimes(): RuntimeDefinition[];
@@ -414,7 +414,7 @@ export function registerStackRoutes(app: FastifyInstance, deps: StackApiDeps): v
         if (!containerName) continue;
         try {
           const mountPoint = execSync(
-            `podman volume inspect aionima-shared-${sharedKey} --format '{{.Mountpoint}}'`,
+            `podman volume inspect agi-shared-${sharedKey} --format '{{.Mountpoint}}'`,
             { encoding: "utf-8", stdio: "pipe", timeout: 10_000 },
           ).trim();
           if (mountPoint) {
@@ -424,14 +424,14 @@ export function registerStackRoutes(app: FastifyInstance, deps: StackApiDeps): v
               timeout: 10_000,
             }).trim();
             results.projectBytes = parseInt(sizeOut.split("\t")[0] ?? "0", 10);
-            results.volumeName = `aionima-shared-${sharedKey}`;
+            results.volumeName = `agi-shared-${sharedKey}`;
           }
         } catch { /* volume not found or du failed */ }
         break; // only report first database stack
       }
     }
 
-    // Aggregate all aionima-shared-* database volumes for totalBytes
+    // Aggregate all agi-shared-* database volumes for totalBytes
     try {
       const volumesRaw = execSync("podman volume ls --format '{{.Name}}'", {
         encoding: "utf-8",

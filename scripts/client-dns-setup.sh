@@ -170,10 +170,10 @@ CA_CERT=$(curl -sL "$CA_URL" 2>/dev/null || true)
 if [ -z "$CA_CERT" ] || echo "$CA_CERT" | grep -q '"error"'; then
   echo "    WARNING: Could not download CA cert from ${CA_URL}."
   echo "    HTTPS sites will show browser warnings until the CA is trusted."
-  echo "    You can retry later: curl -sL ${CA_URL} -o aionima-ca.crt"
+  echo "    You can retry later: curl -sL ${CA_URL} -o agi-ca.crt"
 else
   if [ "$OS" = "macos" ]; then
-    CA_FILE="/tmp/aionima-ca.crt"
+    CA_FILE="/tmp/agi-ca.crt"
     echo "$CA_CERT" > "$CA_FILE"
     security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$CA_FILE"
     rm -f "$CA_FILE"
@@ -181,14 +181,14 @@ else
   elif [ "$OS" = "linux" ]; then
     CA_DIR="/usr/local/share/ca-certificates"
     mkdir -p "$CA_DIR"
-    echo "$CA_CERT" > "${CA_DIR}/aionima-ca.crt"
+    echo "$CA_CERT" > "${CA_DIR}/agi-ca.crt"
     update-ca-certificates 2>/dev/null || true
     echo "    CA certificate installed to system trust store"
 
     # Chrome/Chromium on Linux uses the NSS shared DB
     for nssdb in "$HOME/.pki/nssdb" /etc/pki/nssdb; do
       if [ -d "$nssdb" ]; then
-        certutil -d "sql:${nssdb}" -A -t "C,," -n "Aionima Local CA" -i "${CA_DIR}/aionima-ca.crt" 2>/dev/null \
+        certutil -d "sql:${nssdb}" -A -t "C,," -n "AGI Local CA" -i "${CA_DIR}/agi-ca.crt" 2>/dev/null \
           && echo "    CA added to NSS DB (${nssdb}) — Chrome/Chromium will trust it" \
           || echo "    NOTE: Install libnss3-tools to add CA to Chrome: sudo apt install libnss3-tools"
       fi
@@ -197,7 +197,7 @@ else
     # Firefox uses per-profile cert9.db
     for profile in "$HOME"/.mozilla/firefox/*.default* "$HOME"/snap/firefox/common/.mozilla/firefox/*.default*; do
       [ -d "$profile" ] || continue
-      certutil -d "sql:${profile}" -A -t "C,," -n "Aionima Local CA" -i "${CA_DIR}/aionima-ca.crt" 2>/dev/null \
+      certutil -d "sql:${profile}" -A -t "C,," -n "AGI Local CA" -i "${CA_DIR}/agi-ca.crt" 2>/dev/null \
         && echo "    CA added to Firefox profile: $(basename "$profile")" \
         || true
     done

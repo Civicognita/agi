@@ -1,5 +1,5 @@
 {
-  "name": "@aionima/sdk",
+  "name": "@agi/sdk",
   "version": "0.1.0",
   "description": "Developer SDK for building Aionima plugins",
   "type": "module",
@@ -10,8 +10,8 @@
     "./testing": "./src/testing.ts"
   },
   "dependencies": {
-    "@aionima/plugins": "workspace:*",
-    "@aionima/gateway-core": "workspace:*",
-    "@aionima/security": "workspace:*"
+    "@agi/plugins": "workspace:*",
+    "@agi/gateway-core": "workspace:*",
+    "@agi/security": "workspace:*"
   }
 }

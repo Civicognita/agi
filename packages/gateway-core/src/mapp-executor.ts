@@ -14,8 +14,8 @@
  * 4. Return aggregated step outputs
  */
 
-import type { MAppDefinition, MAppModelInferenceConfig } from "@aionima/sdk";
-import type { InferenceGateway } from "@aionima/model-runtime";
+import type { MAppDefinition, MAppModelInferenceConfig } from "@agi/sdk";
+import type { InferenceGateway } from "@agi/model-runtime";
 
 // ---------------------------------------------------------------------------
 // Types

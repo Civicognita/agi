@@ -7,8 +7,8 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { MAppDefinitionSchema } from "@aionima/config";
-import type { MAppDefinition } from "@aionima/sdk";
+import { MAppDefinitionSchema } from "@agi/config";
+import type { MAppDefinition } from "@agi/sdk";
 import type { MAppRegistry } from "./mapp-registry.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
@@ -91,7 +91,7 @@ export function discoverMApps(
           log.warn(`MApp at ${filePath} has author "${parsed.data.author}" but is in directory "${author}" — using directory name`);
         }
 
-        registry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+        registry.register(parsed.data as import("@agi/sdk").MAppDefinition);
         result.loaded++;
         log.info(`loaded MApp: ${parsed.data.name} (${parsed.data.id}) by ${author}`);
       } catch (err) {

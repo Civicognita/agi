@@ -8,7 +8,7 @@
 
 import type { Server as HttpServer, IncomingMessage, ServerResponse } from "node:http";
 
-import type { AionimaChannelPlugin, AionimaMessage } from "@aionima/channel-sdk";
+import type { AionimaChannelPlugin, AionimaMessage } from "@agi/channel-sdk";
 
 import type { ChannelRegistry } from "./channel-registry.js";
 import type { QueueConsumer } from "./queue-consumer.js";

@@ -250,7 +250,7 @@ const LoggingConfigSchema = z
 const PrimeConfigSchema = z
   .object({
     /** Path to the PRIME knowledge corpus directory. */
-    dir: z.string().default("/opt/aionima-prime"),
+    dir: z.string().default("/opt/agi-prime"),
     /** Git remote URL for the PRIME corpus source. */
     source: z.string().default("git@github.com:Civicognita/aionima.git"),
     /** Branch to track. */
@@ -356,19 +356,19 @@ const DevConfigSchema = z
     /** Git remote URL for PRIME repo fork. */
     primeRepo: z.string().default("git@github.com:wishborn/aionima.git"),
     /** Dev directory for PRIME fork. */
-    primeDir: z.string().default("/opt/aionima-prime_dev"),
+    primeDir: z.string().default("/opt/agi-prime_dev"),
     /** Git remote URL for marketplace fork. */
     marketplaceRepo: z.string().default("git@github.com:wishborn/aionima-marketplace.git"),
     /** Dev directory for marketplace fork. */
-    marketplaceDir: z.string().default("/opt/aionima-marketplace_dev"),
+    marketplaceDir: z.string().default("/opt/agi-marketplace_dev"),
     /** Git remote URL for ID service fork. */
     idRepo: z.string().default("git@github.com:wishborn/aionima-local-id.git"),
     /** Dev directory for ID service fork. */
-    idDir: z.string().default("/opt/aionima-local-id_dev"),
+    idDir: z.string().default("/opt/agi-local-id_dev"),
     /** Git remote URL for MApp marketplace fork. */
     mappMarketplaceRepo: z.string().default("git@github.com:wishborn/aionima-mapp-marketplace.git"),
     /** Dev directory for MApp marketplace fork. */
-    mappMarketplaceDir: z.string().default("/opt/aionima-mapp-marketplace_dev"),
+    mappMarketplaceDir: z.string().default("/opt/agi-mapp-marketplace_dev"),
   })
   .strict();
 
@@ -406,7 +406,7 @@ const WorkersConfigSchema = z
 const MarketplaceConfigSchema = z
   .object({
     /** Path to the official marketplace directory (plugins repo). */
-    dir: z.string().default("/opt/aionima-marketplace"),
+    dir: z.string().default("/opt/agi-marketplace"),
     /** Git remote URL for the marketplace source. */
     source: z
       .string()
@@ -419,7 +419,7 @@ const MarketplaceConfigSchema = z
 const MAppMarketplaceConfigSchema = z
   .object({
     /** Path to the official MApp marketplace directory. */
-    dir: z.string().default("/opt/aionima-mapp-marketplace"),
+    dir: z.string().default("/opt/agi-mapp-marketplace"),
     /** Git remote URL for the MApp marketplace source. */
     source: z
       .string()
@@ -470,7 +470,7 @@ const IdServiceLocalSchema = z
 const IdServiceConfigSchema = z
   .object({
     /** Path to the ID service directory. */
-    dir: z.string().default("/opt/aionima-local-id"),
+    dir: z.string().default("/opt/agi-local-id"),
     /** Git remote URL for the ID service source. */
     source: z.string().default("git@github.com:Civicognita/aionima-local-id.git"),
     /** Branch to track. */

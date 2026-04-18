@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from "vitest";
 import { createLLMProvider, createAgentRouter } from "./index.js";
-import type { AionimaConfig } from "@aionima/config";
+import type { AionimaConfig } from "@agi/config";
 import type { LLMResponse, LLMInvokeParams } from "./index.js";
 
 // Full agent config defaults (Zod output type requires all default fields)

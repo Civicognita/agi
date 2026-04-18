@@ -1,7 +1,7 @@
-import type { ChannelOutboundAdapter, OutboundContent } from "@aionima/channel-sdk";
-import type { COAChainLogger } from "@aionima/coa-chain";
-import type { VoicePipeline } from "@aionima/voice";
-import type { VoiceGatewayState } from "@aionima/voice";
+import type { ChannelOutboundAdapter, OutboundContent } from "@agi/channel-sdk";
+import type { COAChainLogger } from "@agi/coa-chain";
+import type { VoicePipeline } from "@agi/voice";
+import type { VoiceGatewayState } from "@agi/voice";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 

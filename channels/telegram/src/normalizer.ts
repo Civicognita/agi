@@ -1,5 +1,5 @@
 import type { Message } from "grammy/types";
-import type { ChannelId, AionimaMessage, MessageContent } from "@aionima/channel-sdk";
+import type { ChannelId, AionimaMessage, MessageContent } from "@agi/channel-sdk";
 
 export const TELEGRAM_CHANNEL_ID = "telegram" as ChannelId;
 

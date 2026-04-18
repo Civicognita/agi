@@ -4,13 +4,13 @@
 
 VOICE="en-US-EmmaNeural"
 EDGE_TTS="$HOME/.local/bin/edge-tts"
-TMP_FILE="/tmp/aionima-voice-notify.mp3"
+TMP_FILE="/tmp/agi-voice-notify.mp3"
 
 # Read hook input from stdin
 INPUT=$(cat)
 
 # Log raw input for debugging
-echo "$(date -Iseconds) $INPUT" >> /tmp/aionima-notify-debug.log
+echo "$(date -Iseconds) $INPUT" >> /tmp/agi-notify-debug.log
 
 # Determine message based on notification type
 # Claude Code sends JSON with a "type" field

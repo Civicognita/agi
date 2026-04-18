@@ -3,7 +3,7 @@
  * Gateway-core provides the actual implementation at mount time.
  */
 
-import type { DashboardQueries } from "@aionima/gateway-core";
+import type { DashboardQueries } from "@agi/gateway-core";
 
 export interface AppContext {
   /** Dashboard aggregation queries (read-only SQLite). */

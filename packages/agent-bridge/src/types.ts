@@ -1,4 +1,4 @@
-import type { OutboundContent, AionimaMessage } from "@aionima/channel-sdk";
+import type { OutboundContent, AionimaMessage } from "@agi/channel-sdk";
 
 // ---------------------------------------------------------------------------
 // Agent communication types

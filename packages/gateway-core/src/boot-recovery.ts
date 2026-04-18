@@ -62,8 +62,8 @@ export const DEFAULT_MARKER_PATH = join(homedir(), ".agi", "shutdown-state.json"
 // External-dep defaults
 // ---------------------------------------------------------------------------
 
-export const ID_POSTGRES_CONTAINER = "aionima-id-postgres";
-export const ID_SERVICE_UNIT = "aionima-id.service";
+export const ID_POSTGRES_CONTAINER = "agi-postgres";
+export const ID_SERVICE_UNIT = "agi-id.service";
 export const ID_POSTGRES_PORT = 5433;
 
 // ---------------------------------------------------------------------------
@@ -395,7 +395,7 @@ function discoverManagedProjectContainers(log: Log): string[] {
       "podman",
       [
         "ps", "-a",
-        "--filter", "label=aionima.managed=true",
+        "--filter", "label=agi.managed=true",
         "--format", "{{.Names}}",
       ],
       { stdio: "pipe", timeout: 10_000 },

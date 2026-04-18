@@ -358,7 +358,7 @@ A minimal plugin:
 
 ```typescript
 // plugins/plugin-example/src/index.ts
-import { createPlugin } from "@aionima/sdk";
+import { createPlugin } from "@agi/sdk";
 
 export default createPlugin({
   async activate(api) {
@@ -382,6 +382,6 @@ export default createPlugin({
 });
 ```
 
-> **Note:** Always import from `@aionima/sdk`, not `@aionima/plugins`. The SDK re-exports all necessary types and provides the `createPlugin()` factory. See the [SDK documentation](../sdk/overview.md) for full details.
+> **Note:** Always import from `@agi/sdk`, not `@agi/plugins`. The SDK re-exports all necessary types and provides the `createPlugin()` factory. See the [SDK documentation](../sdk/overview.md) for full details.
 
 To publish: create the plugin in the marketplace repo under `plugins/plugin-example/`, add a `marketplace.json` entry, and push.

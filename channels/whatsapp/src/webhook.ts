@@ -14,7 +14,7 @@ import { verifyWebhookSignature } from "./security.js";
 import { normalizeWebhook } from "./normalizer.js";
 import type { WhatsAppWebhookPayload } from "./types.js";
 import type { WhatsAppConfig } from "./config.js";
-import type { AionimaMessage } from "@aionima/channel-sdk";
+import type { AionimaMessage } from "@agi/channel-sdk";
 import type { ConversationWindowTracker } from "./outbound.js";
 
 export interface WebhookHandlerDeps {

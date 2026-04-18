@@ -4,7 +4,7 @@
  * ## Example
  *
  * ```ts
- * import { defineWorker } from "@aionima/sdk";
+ * import { defineWorker } from "@agi/sdk";
  *
  * const hacker = defineWorker("code.hacker", "Code Hacker")
  *   .domain("code")
@@ -21,7 +21,7 @@
  * ```
  */
 
-import type { WorkerDefinition, WorkerDomain } from "@aionima/plugins";
+import type { WorkerDefinition, WorkerDomain } from "@agi/plugins";
 
 class WorkerBuilder {
   private def: Partial<WorkerDefinition> & { id: string; name: string };

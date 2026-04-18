@@ -13,8 +13,8 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { ulid } from "ulid";
-import type { ModelStore } from "@aionima/model-runtime";
-import type { DatasetStore } from "@aionima/model-runtime";
+import type { ModelStore } from "@agi/model-runtime";
+import type { DatasetStore } from "@agi/model-runtime";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -50,7 +50,7 @@ export interface FineTuneJob {
 // Constants
 // ---------------------------------------------------------------------------
 
-const FINETUNE_IMAGE = "aionima-finetune:latest";
+const FINETUNE_IMAGE = "agi-finetune:latest";
 const FINETUNE_INTERNAL_PORT = 8000;
 const PORT_RANGE_START = 6200;
 
@@ -160,7 +160,7 @@ export class FineTuneManager {
     // Allocate a port
     const port = this.allocatePort();
 
-    const containerName = `aionima-finetune-${jobId}`;
+    const containerName = `agi-finetune-${jobId}`;
 
     // Build env var list for the container
     const env: Record<string, string> = {

@@ -1,5 +1,5 @@
 /**
- * @aionima/model-runtime — HuggingFace Model Runtime
+ * @agi/model-runtime — HuggingFace Model Runtime
  *
  * Download, serve, and manage HuggingFace ML models via Podman containers.
  * Provides hardware-adaptive capability detection and dynamic agent tool

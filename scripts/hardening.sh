@@ -10,15 +10,15 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' /opt/aionima 2>/dev/null || echo aionima)}"
-DEPLOY_DIR="${AIONIMA_DEPLOY_DIR:-/opt/aionima}"
+SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' /opt/agi 2>/dev/null || echo aionima)}"
+DEPLOY_DIR="${AIONIMA_DEPLOY_DIR:-${AGI_DEPLOY_DIR:-/opt/agi}}"
 
 echo "==> Aionima hardening (user=$SERVICE_USER, dir=$DEPLOY_DIR)"
 
 # ---------------------------------------------------------------------------
 # 1. Systemd hardening drop-in
 # ---------------------------------------------------------------------------
-DROPIN_DIR="/etc/systemd/system/aionima.service.d"
+DROPIN_DIR="/etc/systemd/system/agi.service.d"
 DROPIN_FILE="$DROPIN_DIR/hardening.conf"
 
 mkdir -p "$DROPIN_DIR"
@@ -85,8 +85,8 @@ if command -v auditctl &>/dev/null; then
 
   cat > "$AUDIT_FILE" << EOF
 # Aionima — watch config and secrets for writes
--w $DEPLOY_DIR/gateway.json -p wa -k aionima-config
--w $DEPLOY_DIR/.env -p wa -k aionima-secrets
+-w $DEPLOY_DIR/gateway.json -p wa -k agi-config
+-w $DEPLOY_DIR/.env -p wa -k agi-secrets
 EOF
 
   echo "  [OK] Auditd rules: $AUDIT_FILE"

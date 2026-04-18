@@ -11,12 +11,12 @@ if (process.env.AIONIMA_TEST_VM !== "1") {
 export default defineConfig({
   resolve: {
     alias: {
-      "@aionima/channel-sdk": resolve("./packages/channel-sdk/src/index.ts"),
-      "@aionima/entity-model": resolve("./packages/entity-model/src/index.ts"),
-      "@aionima/coa-chain": resolve("./packages/coa-chain/src/index.ts"),
-      "@aionima/gateway-core": resolve("./packages/gateway-core/src/index.ts"),
-      "@aionima/agent-bridge": resolve("./packages/agent-bridge/src/index.ts"),
-      "@aionima/config": resolve("./config/src/index.ts"),
+      "@agi/channel-sdk": resolve("./packages/channel-sdk/src/index.ts"),
+      "@agi/entity-model": resolve("./packages/entity-model/src/index.ts"),
+      "@agi/coa-chain": resolve("./packages/coa-chain/src/index.ts"),
+      "@agi/gateway-core": resolve("./packages/gateway-core/src/index.ts"),
+      "@agi/agent-bridge": resolve("./packages/agent-bridge/src/index.ts"),
+      "@agi/config": resolve("./config/src/index.ts"),
     },
   },
   test: {

@@ -19,7 +19,7 @@
 #   ./scripts/test-vm.sh test-services    # Run service integration tests
 set -euo pipefail
 
-VM_NAME="aionima-test"
+VM_NAME="agi-test"
 VM_IMAGE="24.04"
 VM_CPUS=2
 VM_MEM="4G"
@@ -117,7 +117,7 @@ cmd_create() {
 
   # Write cloud-init to a snap-accessible location with readable permissions
   local cloud_init_file
-  cloud_init_file="$HOME/aionima-cloud-init.yaml"
+  cloud_init_file="$HOME/agi-cloud-init.yaml"
   echo "$CLOUD_INIT" > "$cloud_init_file"
   chmod 644 "$cloud_init_file"
 
@@ -132,8 +132,8 @@ cmd_create() {
 
   echo "==> Mounting workspace repos..."
   mount_repo "$REPO_DIR"                          "/mnt/agi"                 "AGI"
-  mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/aionima-prime"       "PRIME"
-  mount_repo "$WORKSPACE_DIR/aionima-local-id"     "/mnt/aionima-local-id"    "ID"
+  mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/agi-prime"           "PRIME"
+  mount_repo "$WORKSPACE_DIR/aionima-local-id"     "/mnt/agi-local-id"        "ID"
 
   echo "==> Waiting for cloud-init to finish..."
   multipass exec "$VM_NAME" -- cloud-init status --wait 2>/dev/null || true
@@ -225,12 +225,12 @@ cmd_remount() {
 
   # Unmount any stale mounts first (ignore errors if not mounted)
   multipass umount "$VM_NAME":/mnt/agi 2>/dev/null || true
-  multipass umount "$VM_NAME":/mnt/aionima-prime 2>/dev/null || true
-  multipass umount "$VM_NAME":/mnt/aionima-local-id 2>/dev/null || true
+  multipass umount "$VM_NAME":/mnt/agi-prime 2>/dev/null || true
+  multipass umount "$VM_NAME":/mnt/agi-local-id 2>/dev/null || true
 
   mount_repo "$REPO_DIR"                          "/mnt/agi"                 "AGI"
-  mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/aionima-prime"       "PRIME"
-  mount_repo "$WORKSPACE_DIR/aionima-local-id"     "/mnt/aionima-local-id"    "ID"
+  mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/agi-prime"           "PRIME"
+  mount_repo "$WORKSPACE_DIR/aionima-local-id"     "/mnt/agi-local-id"        "ID"
 
   echo "Done."
 }
@@ -318,7 +318,7 @@ systemctl restart caddy'
 
   echo "==> Building ID service..."
   multipass exec "$VM_NAME" -- bash -c '
-    cd /mnt/aionima-local-id
+    cd /mnt/agi-local-id
     npm install
     npm run build
 
@@ -373,21 +373,21 @@ cmd_services_start() {
 
   echo "==> Starting ID service..."
   multipass exec "$VM_NAME" -- bash -c '
-    cd /mnt/aionima-local-id
+    cd /mnt/agi-local-id
     set -a && source .env && set +a
-    nohup node dist/index.js > /tmp/aionima-local-id.log 2>&1 &
-    echo $! > /tmp/aionima-local-id.pid
+    nohup node dist/index.js > /tmp/agi-local-id.log 2>&1 &
+    echo $! > /tmp/agi-local-id.pid
     sleep 2
-    echo "  ID service PID: $(cat /tmp/aionima-local-id.pid)"
+    echo "  ID service PID: $(cat /tmp/agi-local-id.pid)"
   '
 
   echo "==> Starting AGI gateway..."
   multipass exec "$VM_NAME" -- bash -c '
     cd /mnt/agi
-    nohup node cli/dist/index.js run > /tmp/aionima.log 2>&1 &
-    echo $! > /tmp/aionima.pid
+    nohup node cli/dist/index.js run > /tmp/agi.log 2>&1 &
+    echo $! > /tmp/agi.pid
     sleep 3
-    echo "  AGI PID: $(cat /tmp/aionima.pid)"
+    echo "  AGI PID: $(cat /tmp/agi.pid)"
   '
 
   echo "==> Checking health..."
@@ -401,8 +401,8 @@ cmd_services_start() {
 cmd_services_stop() {
   ensure_vm_running
   multipass exec "$VM_NAME" -- bash -c '
-    [ -f /tmp/aionima.pid ] && kill $(cat /tmp/aionima.pid) 2>/dev/null && rm /tmp/aionima.pid && echo "AGI stopped"
-    [ -f /tmp/aionima-local-id.pid ] && kill $(cat /tmp/aionima-local-id.pid) 2>/dev/null && rm /tmp/aionima-local-id.pid && echo "ID stopped"
+    [ -f /tmp/agi.pid ] && kill $(cat /tmp/agi.pid) 2>/dev/null && rm /tmp/agi.pid && echo "AGI stopped"
+    [ -f /tmp/agi-local-id.pid ] && kill $(cat /tmp/agi-local-id.pid) 2>/dev/null && rm /tmp/agi-local-id.pid && echo "ID stopped"
   '
 }
 
@@ -411,8 +411,8 @@ cmd_services_status() {
   multipass exec "$VM_NAME" -- bash -c '
     echo "PostgreSQL: $(systemctl is-active postgresql)"
     echo "Caddy:      $(systemctl is-active caddy)"
-    echo "AGI:        $([ -f /tmp/aionima.pid ] && kill -0 $(cat /tmp/aionima.pid) 2>/dev/null && echo "running (PID $(cat /tmp/aionima.pid))" || echo "stopped")"
-    echo "ID:         $([ -f /tmp/aionima-local-id.pid ] && kill -0 $(cat /tmp/aionima-local-id.pid) 2>/dev/null && echo "running (PID $(cat /tmp/aionima-local-id.pid))" || echo "stopped")"
+    echo "AGI:        $([ -f /tmp/agi.pid ] && kill -0 $(cat /tmp/agi.pid) 2>/dev/null && echo "running (PID $(cat /tmp/agi.pid))" || echo "stopped")"
+    echo "ID:         $([ -f /tmp/agi-local-id.pid ] && kill -0 $(cat /tmp/agi-local-id.pid) 2>/dev/null && echo "running (PID $(cat /tmp/agi-local-id.pid))" || echo "stopped")"
     echo ""
     echo "Health checks:"
     echo "  AGI:  $(curl -sk https://ai.on/health 2>/dev/null || echo "unreachable")"

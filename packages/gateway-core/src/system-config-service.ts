@@ -13,7 +13,7 @@
 import { EventEmitter } from "node:events";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { AionimaConfigSchema, type AionimaConfig } from "@aionima/config";
+import { AionimaConfigSchema, type AionimaConfig } from "@agi/config";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 

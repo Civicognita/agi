@@ -427,7 +427,7 @@ export async function switchPrimeSource(source: string, branch?: string): Promis
 
 function getDashboardToken(): string | null {
   if (typeof localStorage === "undefined") return null;
-  return localStorage.getItem("aionima-dashboard-token");
+  return localStorage.getItem("agi-dashboard-token");
 }
 
 export async function fetchDevStatus(): Promise<import("./types.js").DevStatus> {
@@ -1591,7 +1591,7 @@ export async function fetchCurrentUser(token: string): Promise<{
 }
 
 export async function logoutDashboard(): Promise<void> {
-  const token = localStorage.getItem("aionima-dashboard-token");
+  const token = localStorage.getItem("agi-dashboard-token");
   if (token) {
     // Best-effort server call — logout works even if this fails
     await fetch("/api/auth/logout", {
@@ -1599,7 +1599,7 @@ export async function logoutDashboard(): Promise<void> {
       headers: { Authorization: `Bearer ${token}` },
     }).catch(() => {});
   }
-  localStorage.removeItem("aionima-dashboard-token");
+  localStorage.removeItem("agi-dashboard-token");
 }
 
 export async function fetchDashboardUsers(token: string): Promise<import("./types.js").DashboardUserInfo[]> {

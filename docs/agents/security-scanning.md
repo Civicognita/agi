@@ -6,9 +6,9 @@ This guide covers the security scanning system architecture, file locations, and
 
 The security system spans four layers:
 
-1. **`@aionima/security`** (`packages/security/`) — Types, registry, store, runner, built-in scanners
-2. **`@aionima/plugins`** (`packages/plugins/`) — `registerScanProvider()` in plugin API
-3. **`@aionima/sdk`** (`packages/aion-sdk/`) — `defineScan()` builder, `Security()` ADF facade
+1. **`@agi/security`** (`packages/security/`) — Types, registry, store, runner, built-in scanners
+2. **`@agi/plugins`** (`packages/plugins/`) — `registerScanProvider()` in plugin API
+3. **`@agi/sdk`** (`packages/aion-sdk/`) — `defineScan()` builder, `Security()` ADF facade
 4. **`gateway-core`** (`packages/gateway-core/`) — HTTP API routes, server wiring
 
 ## Key Files
@@ -44,7 +44,7 @@ The security system spans four layers:
 Plugins register scanners via the SDK:
 
 ```typescript
-import { createPlugin, defineScan } from "@aionima/sdk";
+import { createPlugin, defineScan } from "@agi/sdk";
 
 export default createPlugin({
   async activate(api) {
@@ -113,12 +113,12 @@ All endpoints are private-network-only.
 Core code can use the `Security()` facade:
 
 ```typescript
-import { Security } from "@aionima/sdk";
+import { Security } from "@agi/sdk";
 
 // Run a scan programmatically
 const run = await Security().runScan({
   scanTypes: ["sast", "sca"],
-  targetPath: "/opt/aionima",
+  targetPath: "/opt/agi",
 });
 
 // Query findings

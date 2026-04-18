@@ -243,7 +243,7 @@ Runs `install.sh` with `AIONIMA_REPO=/mnt/agi` (clones from local mount) and `AI
 - `aionima` user exists
 - Node 22+ installed
 - pnpm installed
-- `/opt/aionima/` has package.json and built dist directories
+- `/opt/agi/` has package.json and built dist directories
 - systemd unit installed and enabled
 - `.env` exists with 0600 permissions
 - Service starts and `/health` responds with `ok: true`
@@ -277,7 +277,7 @@ Exercises the full onboarding state machine:
 
 Validates the plugin install framework on a clean VM:
 
-- Checks plugin directories exist in `/opt/aionima/packages/plugin-*`
+- Checks plugin directories exist in `/opt/agi/packages/plugin-*`
 - Runs `installedCheck` commands (redis-cli, mysql, psql, etc.) — expects failure on fresh VM
 - Installs redis-server via apt — verifies `installedCheck` passes, service runs, `redis-cli ping` returns PONG
 
@@ -324,7 +324,7 @@ SCRIPT
 
 Without this, the CLI crashes with "Failed to load native module: pty.node."
 
-**3. upgrade.sh assumes git repo** — `install.sh` calls `upgrade.sh` at the end, which does `git pull` inside `/opt/aionima`. Since the VM's `/opt/aionima` is not a git clone (it's an empty dir), this step fails. For dev testing, skip deploy and run directly from the cloned repo:
+**3. upgrade.sh assumes git repo** — `install.sh` calls `upgrade.sh` at the end, which does `git pull` inside `/opt/agi`. Since the VM's `/opt/agi` is not a git clone (it's an empty dir), this step fails. For dev testing, skip deploy and run directly from the cloned repo:
 
 ```bash
 multipass exec aionima-test -- sudo -u aionima env HOME=/home/aionima bash << 'SCRIPT'
@@ -469,7 +469,7 @@ If `pnpm lint` reports errors, fix them before committing. Do not use `eslint-di
 
 ## Testing Plugin Changes (Marketplace Repo)
 
-Plugin tests use `testActivate()` from `@aionima/sdk/testing`. Each plugin that registers stacks, runtimes, or services should have a test file at `plugins/plugin-<name>/src/index.test.ts` that verifies:
+Plugin tests use `testActivate()` from `@agi/sdk/testing`. Each plugin that registers stacks, runtimes, or services should have a test file at `plugins/plugin-<name>/src/index.test.ts` that verifies:
 
 - **Correct registration counts** — right number of stacks, services, runtimes
 - **GHCR image references** — all container images use `ghcr.io/civicognita/*`, never vanilla upstream
@@ -481,7 +481,7 @@ Example:
 
 ```typescript
 import { describe, it, expect } from "vitest";
-import { testActivate } from "@aionima/sdk/testing";
+import { testActivate } from "@agi/sdk/testing";
 import plugin from "./index.js";
 
 describe("PostgreSQL plugin", () => {

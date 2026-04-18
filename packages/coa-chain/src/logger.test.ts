@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createDatabase } from "@aionima/entity-model";
-import type { Database } from "@aionima/entity-model";
+import { createDatabase } from "@agi/entity-model";
+import type { Database } from "@agi/entity-model";
 import { COAChainLogger } from "./logger.js";
 
 // The COAChainLogger uses coa_chains.entity_id which:

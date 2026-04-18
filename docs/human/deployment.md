@@ -10,11 +10,11 @@ Aionima uses a **multi-repo architecture** with independent git repositories:
 
 | Repo | Production Path | Purpose |
 |------|----------------|---------|
-| **AGI** | `/opt/aionima` | Gateway server, dashboard, plugins |
-| **PRIME** | `/opt/aionima-prime` | Knowledge corpus (Mycelium Protocol) |
-| **Plugin Marketplace** | `/opt/aionima-marketplace` | Code plugins (runtimes, stacks, workers, etc.) |
-| **MApp Marketplace** | `/opt/aionima-mapp-marketplace` | Declarative JSON MagicApps |
-| **ID** | `/opt/aionima-local-id` | OAuth credential broker and identity service |
+| **AGI** | `/opt/agi` | Gateway server, dashboard, plugins |
+| **PRIME** | `/opt/agi-prime` | Knowledge corpus (Mycelium Protocol) |
+| **Plugin Marketplace** | `/opt/agi-marketplace` | Code plugins (runtimes, stacks, workers, etc.) |
+| **MApp Marketplace** | `/opt/agi-mapp-marketplace` | Declarative JSON MagicApps |
+| **ID** | `/opt/agi-local-id` | OAuth credential broker and identity service |
 
 Each repo is a standalone git clone on the server. There are no submodules. If a companion repo directory doesn't exist during deployment, upgrade.sh auto-clones it.
 
@@ -38,16 +38,16 @@ The upgrade flow is:
 
 ```bash
 # AGI (main gateway — required)
-git clone git@github.com:Civicognita/agi.git /opt/aionima
+git clone git@github.com:Civicognita/agi.git /opt/agi
 
 # PRIME (knowledge corpus — optional)
-git clone git@github.com:Civicognita/aionima.git /opt/aionima-prime
+git clone git@github.com:Civicognita/aionima.git /opt/agi-prime
 
 # MARKETPLACE (plugin marketplace — optional)
-git clone git@github.com:Civicognita/aionima-marketplace.git /opt/aionima-marketplace
+git clone git@github.com:Civicognita/aionima-marketplace.git /opt/agi-marketplace
 
 # ID (identity service — optional)
-git clone git@github.com:Civicognita/aionima-local-id.git /opt/aionima-local-id
+git clone git@github.com:Civicognita/aionima-local-id.git /opt/agi-local-id
 ```
 
 ### Step 2 -- Install Node.js and pnpm
@@ -64,7 +64,7 @@ sudo corepack enable pnpm
 ### Step 3 -- Install Dependencies and Build
 
 ```bash
-cd /opt/aionima
+cd /opt/agi
 pnpm install
 pnpm build
 ```
@@ -72,10 +72,10 @@ pnpm build
 ### Step 4 -- Run the Setup Wizard
 
 ```bash
-pnpm cli setup --dir /opt/aionima
+pnpm cli setup --dir /opt/agi
 ```
 
-This creates `/opt/aionima/gateway.json` and `/opt/aionima/.env`.
+This creates `/opt/agi/gateway.json` and `/opt/agi/.env`.
 
 ### Step 5 -- Configure Repository Paths
 
@@ -84,10 +84,10 @@ Add repo paths to `~/.agi/gateway.json`:
 ```json
 {
   "prime": {
-    "dir": "/opt/aionima-prime"
+    "dir": "/opt/agi-prime"
   },
   "marketplace": {
-    "dir": "/opt/aionima-marketplace"
+    "dir": "/opt/agi-marketplace"
   },
   "idService": {
     "local": {
@@ -95,7 +95,7 @@ Add repo paths to `~/.agi/gateway.json`:
       "port": 3200,
       "subdomain": "id"
     },
-    "dir": "/opt/aionima-local-id"
+    "dir": "/opt/agi-local-id"
   }
 }
 ```
@@ -105,7 +105,7 @@ When `idService.local.enabled` is `true`, the gateway manages a local ID service
 ### Step 6 -- Run the Deployment Script
 
 ```bash
-cd /opt/aionima
+cd /opt/agi
 bash scripts/upgrade.sh
 ```
 
@@ -133,7 +133,7 @@ Only fast-forward merges are allowed. If the repo has diverged, the pull fails a
 ### Phase 2 -- Pull PRIME
 
 ```bash
-cd /opt/aionima-prime && git pull --ff-only
+cd /opt/agi-prime && git pull --ff-only
 ```
 
 Non-fatal -- if PRIME pull fails, deployment continues in degraded mode.
@@ -141,7 +141,7 @@ Non-fatal -- if PRIME pull fails, deployment continues in degraded mode.
 ### Phase 3 -- Pull MARKETPLACE
 
 ```bash
-cd /opt/aionima-marketplace && git pull --ff-only
+cd /opt/agi-marketplace && git pull --ff-only
 ```
 
 Non-fatal -- plugins still work from the previous build cache.
@@ -149,7 +149,7 @@ Non-fatal -- plugins still work from the previous build cache.
 ### Phase 3c -- Pull ID
 
 ```bash
-cd /opt/aionima-local-id && git pull --ff-only
+cd /opt/agi-local-id && git pull --ff-only
 ```
 
 Non-fatal -- if ID pull fails, the identity service continues running from its last good state.
@@ -192,8 +192,8 @@ pnpm build
 Marketplace plugins are bundled with `tsdown`, and a symlink is created from the marketplace directory to AGI's `node_modules/`:
 
 ```bash
-npx tsx scripts/build-marketplace.ts /opt/aionima-marketplace
-ln -sfn /opt/aionima/node_modules /opt/aionima-marketplace/node_modules
+npx tsx scripts/build-marketplace.ts /opt/agi-marketplace
+ln -sfn /opt/agi/node_modules /opt/agi-marketplace/node_modules
 ```
 
 The symlink allows bundled plugins to resolve external dependencies (like `better-sqlite3`) that are marked as `external` in the bundle config. Without it, Node.js can't find the packages because it resolves bare specifiers relative to the importing file's location.
@@ -213,7 +213,7 @@ If backend files changed, the service is restarted. Frontend-only changes take e
 ### Phase 8 -- Deployed Commit Marker
 
 ```bash
-git rev-parse HEAD > /opt/aionima/.deployed-commit
+git rev-parse HEAD > /opt/agi/.deployed-commit
 ```
 
 The dashboard reads this to detect available updates.
@@ -222,7 +222,7 @@ The dashboard reads this to detect available updates.
 
 ## Systemd Service
 
-The service unit is installed at `/etc/systemd/system/aionima.service`.
+The service unit is installed at `/etc/systemd/system/agi.service`.
 
 ```ini
 [Unit]
@@ -232,11 +232,11 @@ After=network.target
 [Service]
 Type=simple
 User=wishborn
-WorkingDirectory=/opt/aionima
+WorkingDirectory=/opt/agi
 ExecStart=node cli/dist/index.js run
 Restart=on-failure
 RestartSec=5s
-EnvironmentFile=/opt/aionima/.env
+EnvironmentFile=/opt/agi/.env
 
 [Install]
 WantedBy=multi-user.target
@@ -294,7 +294,7 @@ There is no automated rollback. If a deployment breaks the service:
 1. SSH into the server.
 2. Check the service logs: `sudo journalctl -u aionima -n 50`.
 3. If the issue is in the code, revert the commit in the repo and redeploy.
-4. If the config was changed, edit `/opt/aionima/gateway.json` and restart.
+4. If the config was changed, edit `/opt/agi/gateway.json` and restart.
 
 ---
 
@@ -334,4 +334,4 @@ Both core system domains (dashboard, db portal, ID service) and project virtual 
 
 ### Log Files
 
-Application logs are written to `/opt/aionima/logs/`. Logs rotate at 10 MB with up to 5 rotated files kept.
+Application logs are written to `/opt/agi/logs/`. Logs rotate at 10 MB with up to 5 rotated files kept.

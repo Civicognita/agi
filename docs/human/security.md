@@ -204,14 +204,14 @@ Common patterns checked:
 The `.env` file must have mode `0600` (readable only by the owner). The setup wizard sets this automatically. Verify:
 
 ```bash
-stat /opt/aionima/.env
+stat /opt/agi/.env
 # Should show: -rw------- (0600)
 ```
 
 Fix if wrong:
 
 ```bash
-chmod 0600 /opt/aionima/.env
+chmod 0600 /opt/agi/.env
 ```
 
 ### Systemd EnvironmentFile

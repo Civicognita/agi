@@ -7,9 +7,9 @@
 
 import type { ToolHandler } from "../tool-registry.js";
 import type { MAppRegistry } from "../mapp-registry.js";
-import { MAppDefinitionSchema } from "@aionima/config";
-import { serializeMApp } from "@aionima/sdk";
-import type { MAppDefinition } from "@aionima/sdk";
+import { MAppDefinitionSchema } from "@agi/config";
+import { serializeMApp } from "@agi/sdk";
+import type { MAppDefinition } from "@agi/sdk";
 
 export interface BuilderToolsConfig {
   mappRegistry?: MAppRegistry;

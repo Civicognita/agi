@@ -9,13 +9,13 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 AIONIMA_USER="${AIONIMA_USER:-aionima}"
 AIONIMA_REPO="${AIONIMA_REPO:-https://github.com/Civicognita/agi.git}"
-INSTALL_DIR="${AIONIMA_INSTALL_DIR:-/opt/aionima}"
+INSTALL_DIR="${AIONIMA_INSTALL_DIR:-/opt/agi}"
 PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
-PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
+PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/agi-prime}"
 # Plugin and MApp marketplaces are fetched from GitHub on demand by the gateway.
 # No local clones needed.
 ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
-ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
+ID_DIR="${AIONIMA_ID_DIR:-/opt/agi-local-id}"
 BRANCH="${AIONIMA_BRANCH:-main}"
 SKIP_HARDENING="${AIONIMA_SKIP_HARDENING:-}"
 
@@ -317,20 +317,20 @@ IDENVEOF
       echo "         then re-run this section by adding a DATABASE_URL to $ID_ENV manually."
     else
       ID_DB_PASS=$(openssl rand -hex 16)
-      ID_DB_CONTAINER="aionima-id-postgres"
+      ID_DB_CONTAINER="agi-postgres"
       ID_DB_NAME="aionima_id"
       ID_DB_USER="aionima_id"
 
       echo "  Starting PostgreSQL container ($ID_DB_CONTAINER)..."
       podman rm -f "$ID_DB_CONTAINER" 2>/dev/null || true
-      podman volume create aionima-id-pgdata 2>/dev/null || true
+      podman volume create agi-pgdata 2>/dev/null || true
       podman run -d \
         --name "$ID_DB_CONTAINER" \
         --restart unless-stopped \
         -e POSTGRES_DB="$ID_DB_NAME" \
         -e POSTGRES_USER="$ID_DB_USER" \
         -e POSTGRES_PASSWORD="$ID_DB_PASS" \
-        -v aionima-id-pgdata:/var/lib/postgresql/data \
+        -v agi-pgdata:/var/lib/postgresql/data \
         -p 5433:5432 \
         docker.io/postgres:16-alpine
 
@@ -352,13 +352,13 @@ IDENVEOF
   fi
 
   # 9e. Install + enable systemd unit
-  ID_SERVICE_FILE="$INSTALL_DIR/scripts/aionima-local-id.service"
-  ID_DEST_SERVICE="/etc/systemd/system/aionima-local-id.service"
+  ID_SERVICE_FILE="$INSTALL_DIR/scripts/agi-id.service"
+  ID_DEST_SERVICE="/etc/systemd/system/agi-id.service"
   if [ -f "$ID_SERVICE_FILE" ]; then
     sed "s/%AIONIMA_USER%/$AIONIMA_USER/g" "$ID_SERVICE_FILE" > "$ID_DEST_SERVICE"
     systemctl daemon-reload
-    systemctl enable aionima-local-id 2>/dev/null || true
-    echo "  [OK] aionima-local-id.service installed and enabled"
+    systemctl enable agi-id 2>/dev/null || true
+    echo "  [OK] agi-id.service installed and enabled"
   else
     echo "  [WARN] $ID_SERVICE_FILE missing — skipping systemd unit install"
   fi
@@ -368,12 +368,12 @@ fi
 # 10. Install systemd service
 # ---------------------------------------------------------------------------
 echo "==> Installing systemd service..."
-SERVICE_FILE="$INSTALL_DIR/scripts/aionima.service"
-DEST_SERVICE="/etc/systemd/system/aionima.service"
+SERVICE_FILE="$INSTALL_DIR/scripts/agi.service"
+DEST_SERVICE="/etc/systemd/system/agi.service"
 
 sed "s/%AIONIMA_USER%/$AIONIMA_USER/g" "$SERVICE_FILE" > "$DEST_SERVICE"
 systemctl daemon-reload
-systemctl enable aionima
+systemctl enable agi
 echo "  [OK] Service installed and enabled"
 
 # ---------------------------------------------------------------------------
@@ -415,9 +415,9 @@ fi
 # 14. Start the service
 # ---------------------------------------------------------------------------
 echo "==> Starting Aionima..."
-systemctl start aionima
+systemctl start agi
 sleep 3
-if systemctl is-active --quiet aionima; then
+if systemctl is-active --quiet agi; then
   echo "  [OK] Aionima is running"
 else
   echo "  [WARN] Aionima failed to start — run 'agi logs' to investigate"
@@ -432,7 +432,7 @@ else
   HARDENING="$INSTALL_DIR/scripts/hardening.sh"
   if [ -f "$HARDENING" ]; then
     echo "==> Running hardening..."
-    AIONIMA_USER="$AIONIMA_USER" AIONIMA_DEPLOY_DIR="$INSTALL_DIR" \
+    AIONIMA_USER="$AIONIMA_USER" AIONIMA_DEPLOY_DIR="$INSTALL_DIR" AGI_DEPLOY_DIR="$INSTALL_DIR" \
       bash "$HARDENING"
   fi
 fi

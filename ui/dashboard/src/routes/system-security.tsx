@@ -36,7 +36,7 @@ export default function SystemSecurityPage() {
   const devMode = Boolean(configHook.data?.dev?.enabled);
 
   const handleFixFinding = useCallback((finding: SecurityFinding) => {
-    onOpenChatWithMessage("/opt/aionima", formatSecurityFixPrompt(finding));
+    onOpenChatWithMessage("/opt/agi", formatSecurityFixPrompt(finding));
   }, [onOpenChatWithMessage]);
 
   const refresh = useCallback(async () => {
@@ -60,7 +60,7 @@ export default function SystemSecurityPage() {
       // Scan workspace root with all scan types
       await triggerSecurityScan({
         scanTypes: ["sast", "sca", "secrets", "config"],
-        targetPath: "/opt/aionima",
+        targetPath: "/opt/agi",
       });
       setTimeout(() => { void refresh(); }, 3000);
       setTimeout(() => { void refresh(); }, 8000);

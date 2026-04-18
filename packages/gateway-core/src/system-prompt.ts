@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { hostname } from "node:os";
-import type { VerificationTier } from "@aionima/entity-model";
+import type { VerificationTier } from "@agi/entity-model";
 
 import type { GatewayState } from "./types.js";
 import type { StateCapabilities } from "./state-machine.js";

@@ -24,8 +24,8 @@ import type {
   VerificationProof,
   VerificationRequest,
   VerificationTier,
-} from "@aionima/entity-model";
-import { VerificationManager } from "@aionima/entity-model";
+} from "@agi/entity-model";
+import { VerificationManager } from "@agi/entity-model";
 
 import type { SealPayload, SignedSeal } from "./seal-signer.js";
 import { SealSigner } from "./seal-signer.js";

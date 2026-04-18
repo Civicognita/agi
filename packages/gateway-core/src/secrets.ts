@@ -11,7 +11,7 @@ import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 
-const SERVICE_UNIT_PATH = "/etc/systemd/system/aionima.service";
+const SERVICE_UNIT_PATH = "/etc/systemd/system/agi.service";
 const BEGIN_MARKER = "# --- BEGIN CREDENTIALS ---";
 const END_MARKER = "# --- END CREDENTIALS ---";
 

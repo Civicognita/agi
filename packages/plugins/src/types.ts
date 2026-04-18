@@ -2,12 +2,12 @@
  * Plugin system types — adapted from OpenClaw's plugin architecture.
  */
 
-import type { ProjectTypeDefinition, ProjectTypeTool } from "@aionima/gateway-core";
-export type { LogSourceDefinition } from "@aionima/gateway-core";
-import type { ComponentLogger } from "@aionima/gateway-core";
-import type { StackDefinition } from "@aionima/gateway-core";
-import type { AionimaChannelPlugin } from "@aionima/channel-sdk";
-import type { ScanProviderDefinition } from "@aionima/security";
+import type { ProjectTypeDefinition, ProjectTypeTool } from "@agi/gateway-core";
+export type { LogSourceDefinition } from "@agi/gateway-core";
+import type { ComponentLogger } from "@agi/gateway-core";
+import type { StackDefinition } from "@agi/gateway-core";
+import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import type { ScanProviderDefinition } from "@agi/security";
 
 // ---------------------------------------------------------------------------
 // Permissions

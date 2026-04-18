@@ -13,14 +13,14 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 
-import { createDatabase, EntityStore, MessageQueue } from "@aionima/entity-model";
-import { COAChainLogger } from "@aionima/coa-chain";
+import { createDatabase, EntityStore, MessageQueue } from "@agi/entity-model";
+import { COAChainLogger } from "@agi/coa-chain";
 
 import { InboundRouter } from "./inbound-router.js";
 import { OutboundDispatcher } from "./outbound-dispatcher.js";
 import { GatewayStateMachine } from "./state-machine.js";
 
-import type { AionimaMessage, ChannelId } from "@aionima/channel-sdk";
+import type { AionimaMessage, ChannelId } from "@agi/channel-sdk";
 
 // ---------------------------------------------------------------------------
 // Helpers

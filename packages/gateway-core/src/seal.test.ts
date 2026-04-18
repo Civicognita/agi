@@ -8,8 +8,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { createDatabase, ALL_DDL, VerificationManager, EntityStore } from "@aionima/entity-model";
-import type { Database } from "@aionima/entity-model";
+import { createDatabase, ALL_DDL, VerificationManager, EntityStore } from "@agi/entity-model";
+import type { Database } from "@agi/entity-model";
 
 import {
   SealSigner,

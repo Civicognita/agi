@@ -25,8 +25,8 @@ import type {
   PlanGateResult,
 } from "./billing.js";
 
-import { PLAN_LIMITS } from "@aionima/entity-model";
-import type { PlanTier } from "@aionima/entity-model";
+import { PLAN_LIMITS } from "@agi/entity-model";
+import type { PlanTier } from "@agi/entity-model";
 
 // ---------------------------------------------------------------------------
 // Helpers

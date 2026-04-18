@@ -4,12 +4,12 @@ set -uo pipefail
 # always emits a structured error before exiting, making failures visible
 # in the dashboard upgrade log.
 
-DEPLOY_DIR="/opt/aionima"
-PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
+DEPLOY_DIR="${AIONIMA_DEPLOY_DIR:-/opt/agi}"
+PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/agi-prime}"
 PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
 # Marketplace repos are NOT pulled locally — plugins are fetched from GitHub
 # on demand by the gateway's plugin marketplace manager.
-ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
+ID_DIR="${AIONIMA_ID_DIR:-/opt/agi-local-id}"
 ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
 
@@ -36,10 +36,67 @@ die() {
   exit 1
 }
 
+# ---------------------------------------------------------------------------
+# 0. Platform rename migration (aionima → agi)
+# ---------------------------------------------------------------------------
+# One-time migration: move /opt/aionima* to /opt/agi*, rename containers,
+# migrate systemd services, update config paths.
+
+if [ -d "/opt/aionima" ] && [ ! -d "/opt/agi" ]; then
+  emit "migrate" "start" "Platform rename: aionima → agi"
+
+  # Move production directories
+  for pair in "aionima:agi" "aionima-prime:agi-prime" "aionima-local-id:agi-local-id" "aionima-marketplace:agi-marketplace" "aionima-mapp-marketplace:agi-mapp-marketplace"; do
+    old="/opt/${pair%%:*}"
+    new="/opt/${pair##*:}"
+    if [ -d "$old" ] && [ ! -d "$new" ] && [ ! -L "$old" ]; then
+      sudo mv "$old" "$new"
+      sudo ln -sf "$new" "$old"
+      emit "migrate" "start" "Moved $old → $new (symlink created)"
+    fi
+  done
+
+  # Rename containers
+  podman ps -a --format '{{.Names}}' 2>/dev/null | grep '^aionima-' | while IFS= read -r name; do
+    new_name="agi-${name#aionima-}"
+    podman rename "$name" "$new_name" 2>/dev/null && \
+      emit "migrate" "start" "Renamed container: $name → $new_name" || true
+  done
+
+  # Migrate systemd services
+  if [ -f /etc/systemd/system/aionima.service ]; then
+    sudo systemctl stop aionima 2>/dev/null || true
+    sudo systemctl disable aionima 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/aionima.service
+  fi
+  if [ -f /etc/systemd/system/aionima-local-id.service ]; then
+    sudo systemctl stop aionima-local-id 2>/dev/null || true
+    sudo systemctl disable aionima-local-id 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/aionima-local-id.service
+  fi
+  if [ -f /etc/systemd/system/aionima-id.service ]; then
+    sudo systemctl stop aionima-id 2>/dev/null || true
+    sudo systemctl disable aionima-id 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/aionima-id.service
+  fi
+  sudo systemctl daemon-reload
+
+  # Update config file paths
+  if [ -f ~/.agi/gateway.json ]; then
+    sed -i 's|/opt/aionima-|/opt/agi-|g; s|"/opt/aionima"|"/opt/agi"|g' ~/.agi/gateway.json
+    emit "migrate" "start" "Updated gateway.json paths"
+  fi
+
+  emit "migrate" "done" "Platform rename complete"
+fi
+
+# Update DEPLOY_DIR after potential migration
+DEPLOY_DIR="${AIONIMA_DEPLOY_DIR:-/opt/agi}"
+
 cd "$DEPLOY_DIR"
 
 # ---------------------------------------------------------------------------
-# 0. Abort if production tree is dirty (nothing should be modified here)
+# 1a. Abort if production tree is dirty (nothing should be modified here)
 # ---------------------------------------------------------------------------
 if [ -n "$(git diff --name-only 2>/dev/null)" ]; then
   DIRTY_FILES="$(git diff --name-only | tr '\n' ', ')"
@@ -48,7 +105,7 @@ if [ -n "$(git diff --name-only 2>/dev/null)" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 0b. Ensure all repos use HTTPS remotes (public repos don't need SSH keys)
+# 1b. Ensure all repos use HTTPS remotes (public repos don't need SSH keys)
 # ---------------------------------------------------------------------------
 ensure_https_remote() {
   local dir="$1"
@@ -173,9 +230,9 @@ if [ "$ID_LOCAL_ENABLED" = "1" ] && [ -d "$ID_DIR" ]; then
       # Restart ID service only if version changed
       id_version_after="$(cd "$ID_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
       if [ "$id_version_before" != "$id_version_after" ]; then
-        if systemctl is-active --quiet aionima-id 2>/dev/null; then
+        if systemctl is-active --quiet agi-id 2>/dev/null; then
           emit "restart-id" "start" "ID version changed: $id_version_before → $id_version_after"
-          sudo systemctl restart aionima-id
+          sudo systemctl restart agi-id
           emit "restart-id" "done" "Local ID service restarted"
         fi
       fi
@@ -310,12 +367,12 @@ mkdir -p "$DEPLOY_DIR/logs"
 # ---------------------------------------------------------------------------
 # 9. Install systemd unit (if changed) — preserve TPM2 credential lines
 # ---------------------------------------------------------------------------
-RENDERED_SERVICE="$(sed "s/%AIONIMA_USER%/$SERVICE_USER/g" "$DEPLOY_DIR/scripts/aionima.service")"
+RENDERED_SERVICE="$(sed "s/%AIONIMA_USER%/$SERVICE_USER/g" "$DEPLOY_DIR/scripts/agi.service")"
 
 # Preserve existing LoadCredentialEncrypted lines from the live service unit.
 # SecretsManager inserts these between the BEGIN/END markers; deploy must not
 # wipe them or the API keys won't be available after restart.
-LIVE_UNIT="/etc/systemd/system/aionima.service"
+LIVE_UNIT="/etc/systemd/system/agi.service"
 if [ -f "$LIVE_UNIT" ]; then
   LIVE_CREDS="$(sed -n '/^# --- BEGIN CREDENTIALS ---$/,/^# --- END CREDENTIALS ---$/{ //!p }' "$LIVE_UNIT")"
   if [ -n "$LIVE_CREDS" ]; then
@@ -331,10 +388,10 @@ if ! echo "$RENDERED_SERVICE" | diff - "$LIVE_UNIT" &>/dev/null; then
   sudo systemctl daemon-reload
   emit "systemd" "done"
 fi
-sudo systemctl enable aionima &>/dev/null
+sudo systemctl enable agi &>/dev/null
 
 # Ensure Caddy CA cert is trusted by Node.js for internal HTTPS calls
-for unit in /etc/systemd/system/aionima.service /etc/systemd/system/aionima-id.service; do
+for unit in /etc/systemd/system/agi.service /etc/systemd/system/agi-id.service; do
   if [ -f "$unit" ] && ! grep -q NODE_EXTRA_CA_CERTS "$unit"; then
     sudo sed -i '/\[Service\]/a Environment=NODE_EXTRA_CA_CERTS=/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt' "$unit"
     emit "systemd" "start" "Added Caddy CA trust to $(basename "$unit")"
@@ -365,7 +422,7 @@ if [ "$version_before" != "$version_after" ]; then
   # Sentinel file tells the new server it booted after an upgrade.
   # The new server removes it on startup and appends "restart complete" to the upgrade log.
   touch "$DEPLOY_DIR/.upgrade-pending"
-  sudo systemctl restart aionima
+  sudo systemctl restart agi
   # upgrade.sh typically dies here (SIGPIPE when parent Node process exits).
   # If it survives (e.g. stdout redirected), clean up:
   rm -f "$DEPLOY_DIR/.upgrade-pending"

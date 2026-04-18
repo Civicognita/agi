@@ -50,11 +50,11 @@ Five independent git repos (not submodules):
 
 | Repo | Purpose | Production Path |
 |------|---------|-----------------|
-| **AGI** (this repo) | Core gateway, dashboard, CLI | `/opt/aionima` |
-| **PRIME** | Knowledge corpus (Mycelium Protocol, Impactinomics) | `/opt/aionima-prime` |
-| **Plugin Marketplace** | Code plugins (runtimes, stacks, workers) | `/opt/aionima-marketplace` |
-| **MApp Marketplace** | Declarative JSON MagicApps | `/opt/aionima-mapp-marketplace` |
-| **ID Service** | OAuth credential broker, session gateway | `/opt/aionima-local-id` |
+| **AGI** (this repo) | Core gateway, dashboard, CLI | `/opt/agi` |
+| **PRIME** | Knowledge corpus (Mycelium Protocol, Impactinomics) | `/opt/agi-prime` |
+| **Plugin Marketplace** | Code plugins (runtimes, stacks, workers) | `/opt/agi-marketplace` |
+| **MApp Marketplace** | Declarative JSON MagicApps | `/opt/agi-mapp-marketplace` |
+| **ID Service** | OAuth credential broker, session gateway | `/opt/agi-local-id` |
 
 Each repo has `protocol.json` for semver compatibility checks at boot.
 

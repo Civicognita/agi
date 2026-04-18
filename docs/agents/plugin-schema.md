@@ -105,7 +105,7 @@ The `pluginId` field is injected automatically by the plugin loader — do not i
 ## Testing Plugins
 
 ```ts
-import { testActivate } from "@aionima/sdk/testing";
+import { testActivate } from "@agi/sdk/testing";
 import * as plugin from "./index.js";
 
 const regs = await testActivate(plugin);

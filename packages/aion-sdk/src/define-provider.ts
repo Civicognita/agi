@@ -23,7 +23,7 @@
  * ```
  */
 
-import type { LLMProviderDefinition, LLMProviderFactory } from "@aionima/plugins";
+import type { LLMProviderDefinition, LLMProviderFactory } from "@agi/plugins";
 
 class ProviderBuilder {
   private def: Partial<LLMProviderDefinition> & { id: string; name: string };

@@ -6,8 +6,8 @@
  * automatically on creation.
  */
 
-import type { EntityStore, GEID } from "@aionima/entity-model";
-import { signIdentityStatement, formatAddress } from "@aionima/entity-model";
+import type { EntityStore, GEID } from "@agi/entity-model";
+import { signIdentityStatement, formatAddress } from "@agi/entity-model";
 import type { FederationNode } from "./federation-node.js";
 
 // ---------------------------------------------------------------------------

@@ -6,8 +6,8 @@
 
 import type { FastifyInstance } from "fastify";
 import type { IncomingMessage } from "node:http";
-import type { CommsLog } from "@aionima/entity-model";
-import type { NotificationStore } from "@aionima/entity-model";
+import type { CommsLog } from "@agi/entity-model";
+import type { NotificationStore } from "@agi/entity-model";
 
 // ---------------------------------------------------------------------------
 // Helpers (same as hosting-api.ts / server-runtime-state.ts)

@@ -20,8 +20,8 @@
 
 import { EventEmitter } from "node:events";
 
-import type { Entity } from "@aionima/entity-model";
-import type { COAChainLogger } from "@aionima/coa-chain";
+import type { Entity } from "@agi/entity-model";
+import type { COAChainLogger } from "@agi/coa-chain";
 
 import type { GatewayState } from "./types.js";
 import type { GatewayStateMachine } from "./state-machine.js";

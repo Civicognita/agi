@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import type { AionimaChannelPlugin, ChannelId } from "@aionima/channel-sdk";
-import { EntityStore, MessageQueue, createDatabase } from "@aionima/entity-model";
-import type { Database } from "@aionima/entity-model";
-import { COAChainLogger } from "@aionima/coa-chain";
+import type { AionimaChannelPlugin, ChannelId } from "@agi/channel-sdk";
+import { EntityStore, MessageQueue, createDatabase } from "@agi/entity-model";
+import type { Database } from "@agi/entity-model";
+import { COAChainLogger } from "@agi/coa-chain";
 
 import { GatewayStateMachine } from "./state-machine.js";
 import { ChannelRegistry } from "./channel-registry.js";
@@ -10,7 +10,7 @@ import { InboundRouter } from "./inbound-router.js";
 import { OutboundDispatcher } from "./outbound-dispatcher.js";
 import type { OutboundRoute } from "./outbound-dispatcher.js";
 import { QueueConsumer } from "./queue-consumer.js";
-import type { QueueMessage } from "@aionima/entity-model";
+import type { QueueMessage } from "@agi/entity-model";
 
 // ---------------------------------------------------------------------------
 // Mock channel adapter factory

@@ -5,9 +5,9 @@
 
 import type { FastifyInstance } from "fastify";
 import type { IncomingMessage } from "node:http";
-import type { IncidentStore, IncidentSeverity, IncidentStatus, BreachClassification } from "@aionima/entity-model";
-import type { VendorStore, VendorType } from "@aionima/entity-model";
-import type { SessionStore } from "@aionima/entity-model";
+import type { IncidentStore, IncidentSeverity, IncidentStatus, BreachClassification } from "@agi/entity-model";
+import type { VendorStore, VendorType } from "@agi/entity-model";
+import type { SessionStore } from "@agi/entity-model";
 import type { BackupManager } from "./backup-manager.js";
 
 function getClientIp(req: IncomingMessage): string {

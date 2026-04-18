@@ -1,25 +1,25 @@
 [Unit]
 Description=Aionima Local ID Service — OAuth credential broker
 Documentation=https://github.com/Civicognita/aionima-local-id
-After=network.target aionima.service
-Wants=aionima.service
+After=network.target agi.service
+Wants=agi.service
 
 [Service]
 Type=simple
 User=%AIONIMA_USER%
 Group=%AIONIMA_USER%
-WorkingDirectory=/opt/aionima-local-id
+WorkingDirectory=/opt/agi-local-id
 ExecStartPre=/usr/bin/npx drizzle-kit migrate
 ExecStart=/usr/bin/node dist/index.js
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=aionima-local-id
+SyslogIdentifier=agi-id
 
 # Environment file for secrets (DATABASE_URL, ENCRYPTION_KEY, OAuth credentials).
 # Installed by `scripts/install.sh` alongside this unit; AGI owns its lifecycle.
-EnvironmentFile=/opt/aionima-local-id/.env
+EnvironmentFile=/opt/agi-local-id/.env
 
 # --- BEGIN CREDENTIALS ---
 # --- END CREDENTIALS ---
@@ -28,7 +28,7 @@ EnvironmentFile=/opt/aionima-local-id/.env
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/opt/aionima-local-id/dist /opt/aionima-local-id/drizzle
+ReadWritePaths=/opt/agi-local-id/dist /opt/agi-local-id/drizzle
 
 [Install]
 WantedBy=multi-user.target

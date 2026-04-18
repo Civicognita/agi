@@ -16,8 +16,8 @@
  * template fallback), so safemode works on first-ever boot.
  */
 
-import type { InferenceGateway } from "@aionima/model-runtime";
-import type { ModelStore } from "@aionima/model-runtime";
+import type { InferenceGateway } from "@agi/model-runtime";
+import type { ModelStore } from "@agi/model-runtime";
 import type { ComponentLogger } from "./logger.js";
 
 export const DEFAULT_LOCAL_MODEL_ID = "HuggingFaceTB/SmolLM2-360M-Instruct";

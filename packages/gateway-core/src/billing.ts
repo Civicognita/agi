@@ -11,8 +11,8 @@
  * - Usage metering for message counts
  */
 
-import type { PlanTier, PlanLimits, TenantId } from "@aionima/entity-model";
-import { getPlanLimits } from "@aionima/entity-model";
+import type { PlanTier, PlanLimits, TenantId } from "@agi/entity-model";
+import { getPlanLimits } from "@agi/entity-model";
 
 // ---------------------------------------------------------------------------
 // Types

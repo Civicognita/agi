@@ -9,7 +9,7 @@
  * - Permission analysis
  */
 
-import { MAppDefinitionSchema } from "@aionima/config";
+import { MAppDefinitionSchema } from "@agi/config";
 
 // ---------------------------------------------------------------------------
 // Types

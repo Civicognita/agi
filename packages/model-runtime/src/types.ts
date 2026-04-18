@@ -545,7 +545,7 @@ export interface InstalledDataset {
 }
 
 // ---------------------------------------------------------------------------
-// Configuration (mirrors HfConfigSchema from @aionima/config)
+// Configuration (mirrors HfConfigSchema from @agi/config)
 // ---------------------------------------------------------------------------
 
 export interface HfRuntimeConfig {

@@ -1,5 +1,5 @@
 {
-  "name": "@aionima/dashboard",
+  "name": "@agi/dashboard",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@aionima/trpc-api": "workspace:*",
+    "@agi/trpc-api": "workspace:*",
     "@codemirror/commands": "^6.8.0",
     "@codemirror/lang-javascript": "^6.2.0",
     "@codemirror/lang-json": "^6.0.1",
@@ -48,7 +48,7 @@
     "tailwindcss": "^4.2.1"
   },
   "devDependencies": {
-    "@aionima/gateway-core": "workspace:*",
+    "@agi/gateway-core": "workspace:*",
     "@particle-academy/fancy-code": "^0.4.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

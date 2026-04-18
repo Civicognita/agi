@@ -1,5 +1,5 @@
 {
-  "name": "@aionima/coa-chain",
+  "name": "@agi/coa-chain",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "better-sqlite3": "^11.0.0"
   },
   "devDependencies": {
-    "@aionima/entity-model": "workspace:*",
+    "@agi/entity-model": "workspace:*",
     "@types/better-sqlite3": "^7.6.0"
   }
 }

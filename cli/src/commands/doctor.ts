@@ -11,7 +11,7 @@ import type { Command } from "commander";
 import { loadConfig, validateConfigFile } from "../config-loader.js";
 import { GatewayClient } from "../gateway-client.js";
 import { bold, dim, formatCheck, green, red, yellow } from "../output.js";
-import type { AionimaConfig } from "@aionima/config";
+import type { AionimaConfig } from "@agi/config";
 
 interface Check {
   name: string;
@@ -119,19 +119,19 @@ async function coreChecks(configPath?: string): Promise<{ group: CheckGroup; con
   });
 
   // Systemd service
-  const serviceOk = fileExists("/etc/systemd/system/aionima.service");
+  const serviceOk = fileExists("/etc/systemd/system/agi.service");
   checks.push({
     name: "Systemd service",
     ok: serviceOk,
-    fix: serviceOk ? undefined : "Install: sudo cp scripts/aionima.service /etc/systemd/system/ && sudo systemctl daemon-reload",
+    fix: serviceOk ? undefined : "Install: sudo cp scripts/agi.service /etc/systemd/system/ && sudo systemctl daemon-reload",
   });
 
   // Deploy directory
-  const deployOk = dirExists("/opt/aionima");
+  const deployOk = dirExists("/opt/agi");
   checks.push({
     name: "Deploy directory",
     ok: deployOk,
-    fix: deployOk ? undefined : "Create: sudo mkdir -p /opt/aionima && sudo chown $USER:$USER /opt/aionima",
+    fix: deployOk ? undefined : "Create: sudo mkdir -p /opt/agi && sudo chown $USER:$USER /opt/agi",
   });
 
   // No secrets in config
@@ -212,22 +212,22 @@ function repoChecks(config: AionimaConfig): CheckGroup {
   const repos = [
     {
       name: "PRIME corpus",
-      path: config.prime?.dir ?? "/opt/aionima-prime",
+      path: config.prime?.dir ?? "/opt/agi-prime",
       repo: "https://github.com/Civicognita/aionima.git",
     },
     {
       name: "Plugin Marketplace",
-      path: config.marketplace?.dir ?? "/opt/aionima-marketplace",
+      path: config.marketplace?.dir ?? "/opt/agi-marketplace",
       repo: "https://github.com/Civicognita/aionima-marketplace.git",
     },
     {
       name: "MApp Marketplace",
-      path: mappMarketplaceConfig?.dir ?? "/opt/aionima-mapp-marketplace",
+      path: mappMarketplaceConfig?.dir ?? "/opt/agi-mapp-marketplace",
       repo: "https://github.com/Civicognita/aionima-mapp-marketplace.git",
     },
     {
       name: "ID service",
-      path: config.idService?.dir ?? "/opt/aionima-local-id",
+      path: config.idService?.dir ?? "/opt/agi-local-id",
       repo: "https://github.com/Civicognita/aionima-local-id.git",
     },
   ];
@@ -349,8 +349,8 @@ function devChecks(config: AionimaConfig): CheckGroup | null {
 
   const checks: Check[] = [];
   const dirs = [
-    { name: "Dev PRIME", path: config.dev.primeDir ?? "/opt/aionima-prime_dev" },
-    { name: "Dev Marketplace", path: config.dev.marketplaceDir ?? "/opt/aionima-marketplace_dev" },
+    { name: "Dev PRIME", path: config.dev.primeDir ?? "/opt/agi-prime_dev" },
+    { name: "Dev Marketplace", path: config.dev.marketplaceDir ?? "/opt/agi-marketplace_dev" },
   ];
 
   for (const dir of dirs) {
@@ -375,18 +375,18 @@ async function gatewayChecks(config: AionimaConfig): Promise<CheckGroup> {
   checks.push({
     name: `Gateway (${host}:${String(port)})`,
     ok: gatewayOk,
-    fix: gatewayOk ? undefined : "Start: sudo systemctl start aionima",
+    fix: gatewayOk ? undefined : "Start: sudo systemctl start agi",
   });
 
   // Dashboard built
-  const selfRepo = config.workspace?.selfRepo ?? "/opt/aionima";
+  const selfRepo = config.workspace?.selfRepo ?? "/opt/agi";
   const dashIndex = join(selfRepo, "ui/dashboard/dist/index.html");
   const dashOk = fileExists(dashIndex);
   checks.push({
     name: "Dashboard built",
     ok: dashOk,
     warn: !dashOk,
-    fix: dashOk ? undefined : "Build: cd /opt/aionima && pnpm build",
+    fix: dashOk ? undefined : "Build: cd /opt/agi && pnpm build",
   });
 
   return { title: "Gateway", checks };

@@ -20,20 +20,20 @@ import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { ulid } from "ulid";
 import { dispatchJobsDir } from "./dispatch-paths.js";
-import { createDatabase, EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@aionima/entity-model";
+import { createDatabase, EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@agi/entity-model";
 import { BackupManager } from "./backup-manager.js";
 import { registerComplianceRoutes } from "./compliance-api.js";
 import { registerSecurityRoutes } from "./security-api.js";
 import { registerAdminRoutes } from "./admin-api.js";
-import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@aionima/security";
-import { COAChainLogger } from "@aionima/coa-chain";
+import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
+import { COAChainLogger } from "@agi/coa-chain";
 import { PairingStore } from "./pairing-store.js";
-import type { AionimaMessage } from "@aionima/channel-sdk";
+import type { AionimaMessage } from "@agi/channel-sdk";
 import { createLogger, createComponentLogger } from "./logger.js";
 import type { Logger, LogEntry } from "./logger.js";
 
-import type { AionimaConfig, ConfigReloadEvent } from "@aionima/config";
-import { ConfigWatcher } from "@aionima/config";
+import type { AionimaConfig, ConfigReloadEvent } from "@agi/config";
+import { ConfigWatcher } from "@agi/config";
 
 import { SecretsManager } from "./secrets.js";
 import {
@@ -64,15 +64,15 @@ import { ToolRegistry } from "./tool-registry.js";
 import { AgentInvoker } from "./agent-invoker.js";
 import { ChatEventBuffer } from "./chat-event-buffer.js";
 import { registerAllTools, registerAgentTools } from "./tools/index.js";
-import { SkillRegistry } from "@aionima/skills";
-import { CompositeMemoryAdapter } from "@aionima/memory";
+import { SkillRegistry } from "@agi/skills";
+import { CompositeMemoryAdapter } from "@agi/memory";
 import {
   VoicePipeline,
   WhisperSTTProvider,
   LocalSTTProvider,
   EdgeTTSProvider,
   LocalTTSProvider,
-} from "@aionima/voice";
+} from "@agi/voice";
 import type { CanvasDocument } from "./canvas-types.js";
 import { ChannelRegistry } from "./channel-registry.js";
 import { DashboardApi } from "./dashboard-api.js";
@@ -98,11 +98,11 @@ import { ProjectConfigManager } from "./project-config-manager.js";
 import { SystemConfigService } from "./system-config-service.js";
 import { createProjectTypeRegistry } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
-import { discoverPlugins, getDefaultSearchPaths, loadPlugins, tryLoadManifest, PluginRegistry, HookBus } from "@aionima/plugins";
+import { discoverPlugins, getDefaultSearchPaths, loadPlugins, tryLoadManifest, PluginRegistry, HookBus } from "@agi/plugins";
 import { ServiceManager } from "./service-manager.js";
 import { bridgePluginCapabilities, unbridgePluginCapabilities } from "./plugin-bridges.js";
 import { ScheduledTaskManager } from "./scheduled-task-manager.js";
-import { MarketplaceManager } from "@aionima/marketplace";
+import { MarketplaceManager } from "@agi/marketplace";
 import { FederationNode, generateNodeKeypair } from "./federation-node.js";
 import { FederationRouter } from "./federation-router.js";
 import { FederationPeerStore } from "./federation-peer-store.js";
@@ -130,8 +130,8 @@ import {
   ModelAgentBridge,
   KnownModelsRegistry,
   CustomContainerBuilder,
-} from "@aionima/model-runtime";
-import type { ModelRuntimeEventEmitter } from "@aionima/model-runtime";
+} from "@agi/model-runtime";
+import type { ModelRuntimeEventEmitter } from "@agi/model-runtime";
 import { registerHfRoutes } from "./hf-api.js";
 import { FineTuneManager } from "./finetune-manager.js";
 
@@ -236,7 +236,7 @@ export async function startGatewayServer(
   // Read (and delete) the shutdown marker written by the previous close().
   // Presence of a marker = last exit was graceful → reconcile saved state.
   // Absence = crash → enter safemode (dashboard callout + investigator).
-  // External deps (ID Postgres, aionima-id.service) are started either way
+  // External deps (ID Postgres, agi-id.service) are started either way
   // because AGI's DBs live in them.
   // -------------------------------------------------------------------------
 
@@ -1024,7 +1024,7 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   {
-    const { initADF, Log } = await import("@aionima/sdk");
+    const { initADF, Log } = await import("@agi/sdk");
     initADF({
       logger: createComponentLogger(logger, "adf"),
       config: config as Record<string, unknown>,
@@ -1435,7 +1435,7 @@ export async function startGatewayServer(
   log.info(`MApps: ${String(mappDiscoveryResult.loaded)} loaded, ${String(mappDiscoveryResult.skipped)} skipped`);
 
   // MApp Marketplace Manager — multi-source MApp catalog, install, and updates
-  const { MAppMarketplaceManager } = await import("@aionima/marketplace");
+  const { MAppMarketplaceManager } = await import("@agi/marketplace");
   const mappMarketplaceManager = new MAppMarketplaceManager({
     store: marketplaceManager.getStore(),
     mappsDir,

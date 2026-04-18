@@ -2,7 +2,7 @@
  * defineAction — chainable builder for ActionDefinition.
  */
 
-import type { ActionDefinition, ActionScope, ActionHandler } from "@aionima/plugins";
+import type { ActionDefinition, ActionScope, ActionHandler } from "@agi/plugins";
 
 class ActionBuilder {
   private def: Partial<ActionDefinition>;

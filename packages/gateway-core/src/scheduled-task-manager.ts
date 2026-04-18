@@ -3,7 +3,7 @@
  * using setInterval for interval tasks and basic cron parsing.
  */
 
-import type { PluginRegistry } from "@aionima/plugins";
+import type { PluginRegistry } from "@agi/plugins";
 import type { Logger } from "./logger.js";
 import { createComponentLogger } from "./logger.js";
 

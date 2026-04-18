@@ -34,7 +34,7 @@ import type {
   ImpactHookAdapter,
   COAEmitterAdapter,
   ChannelId,
-} from "@aionima/channel-sdk";
+} from "@agi/channel-sdk";
 
 class ChannelBuilder {
   private def: {

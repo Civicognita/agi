@@ -1,6 +1,6 @@
 {
-  "name": "aionima",
-  "version": "0.3.8",
+  "name": "agi",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -8,13 +8,13 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @aionima/dashboard build && tsdown",
+    "build": "pnpm --filter @agi/dashboard build && tsdown",
     "build:marketplace": "tsx scripts/build-marketplace.ts",
-    "build:dashboard": "pnpm --filter @aionima/dashboard build",
+    "build:dashboard": "pnpm --filter @agi/dashboard build",
     "start": "tsx cli/src/index.ts run",
     "cli": "tsx cli/src/index.ts",
     "dev": "tsx watch cli/src/index.ts run",
-    "dev:dashboard": "pnpm --filter @aionima/dashboard dev",
+    "dev:dashboard": "pnpm --filter @agi/dashboard dev",
     "test": "bash scripts/test-vm-run.sh unit",
     "test:e2e": "bash scripts/test-vm-run.sh e2e",
     "test:e2e:ui": "bash scripts/test-vm-run.sh e2e:ui",

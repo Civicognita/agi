@@ -3,7 +3,7 @@
 # agi-cli — standalone management CLI for the Aionima gateway
 #
 # Works independently of the Node.js service (bash-only, no dependencies).
-# Install: sudo ln -sf /opt/aionima/scripts/agi-cli.sh /usr/local/bin/agi
+# Install: sudo ln -sf /opt/agi/scripts/agi-cli.sh /usr/local/bin/agi
 #
 # Usage:
 #   agi status          — service + infra status
@@ -18,11 +18,11 @@
 # ---------------------------------------------------------------------------
 set -uo pipefail
 
-DEPLOY_DIR="${AIONIMA_DIR:-/opt/aionima}"
+DEPLOY_DIR="${AIONIMA_DIR:-/opt/agi}"
 AGI_DIR="${HOME}/.agi"
 CONFIG_FILE="${AGI_DIR}/gateway.json"
 LOG_DIR="${AGI_DIR}/logs"
-SERVICE="aionima"
+SERVICE="agi"
 
 # Colors (respect NO_COLOR)
 if [ -z "${NO_COLOR:-}" ] && [ -t 1 ]; then
@@ -145,7 +145,7 @@ cmd_status() {
 
 cmd_logs() {
   local lines="${1:-50}"
-  local log_file="${LOG_DIR}/aionima.log"
+  local log_file="${LOG_DIR}/agi.log"
 
   if [ -f "$log_file" ]; then
     tail -n "$lines" "$log_file"
@@ -156,7 +156,7 @@ cmd_logs() {
 }
 
 cmd_logs_follow() {
-  local log_file="${LOG_DIR}/aionima.log"
+  local log_file="${LOG_DIR}/agi.log"
 
   if [ -f "$log_file" ]; then
     tail -f "$log_file"

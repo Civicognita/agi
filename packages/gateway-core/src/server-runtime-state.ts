@@ -29,16 +29,16 @@ import type { DashboardApi } from "./dashboard-api.js";
 import type { DashboardQueries } from "./dashboard-queries.js";
 import { GatewayWebSocketServer } from "./ws-server.js";
 import { handlePlanRequest } from "./plan-api.js";
-import type { EntityStore, CommsLog, NotificationStore } from "@aionima/entity-model";
+import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
-import { appRouter, type AppContext } from "@aionima/trpc-api";
+import { appRouter, type AppContext } from "@agi/trpc-api";
 import type { HostingManager } from "./hosting-manager.js";
 import { registerHostingRoutes } from "./hosting-api.js";
 import { registerStackRoutes } from "./stack-api.js";
 import { safemodeState } from "./safemode-state.js";
-import type { RouteHandler, RuntimeDefinition, RuntimeInstaller, HostingExtension } from "@aionima/plugins";
-import { categoryToProvides } from "@aionima/plugins";
+import type { RouteHandler, RuntimeDefinition, RuntimeInstaller, HostingExtension } from "@agi/plugins";
+import { categoryToProvides } from "@agi/plugins";
 import type { ServiceManager } from "./service-manager.js";
 import { registerCommsRoutes } from "./comms-api.js";
 import { registerModelsRoutes } from "./models-api.js";
@@ -55,7 +55,7 @@ import { registerIdentityRoutes } from "./identity-api.js";
 import { registerSubUserRoutes } from "./sub-user-api.js";
 import type { VisitorAuthManager } from "./visitor-auth.js";
 import type { FederationNode } from "./federation-node.js";
-import type { COAChainLogger } from "@aionima/coa-chain";
+import type { COAChainLogger } from "@agi/coa-chain";
 import type { DashboardSession } from "./dashboard-user-store.js";
 import type { FederationRouter as FedRouter } from "./federation-router.js";
 import { appendUpgradeLog, clearUpgradeLog, getUpgradeLog } from "./upgrade-log.js";
@@ -218,9 +218,9 @@ export interface RuntimeStateDeps {
   /** MAppRegistry — standalone MApp registry (NOT plugin-based). */
   mappRegistry?: import("./mapp-registry.js").MAppRegistry;
   /** InferenceGateway — used for model-inference workflow steps. */
-  inferenceGateway?: import("@aionima/model-runtime").InferenceGateway;
+  inferenceGateway?: import("@agi/model-runtime").InferenceGateway;
   /** ModelStore — used for model dependency status checks. */
-  modelStore?: import("@aionima/model-runtime").ModelStore;
+  modelStore?: import("@agi/model-runtime").ModelStore;
   mappMarketplaceManager?: {
     getSources(): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number }[];
     addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number };
@@ -1763,9 +1763,9 @@ export async function createGatewayRuntimeState(
     const workspaceRoot = deps.workspaceRoot ?? process.cwd();
     const primeDir = deps.primeDir ?? join(workspaceRoot, ".aionima");
     const botsDir = deps.botsDir ?? join(workspaceRoot, ".bots");
-    const idDir = ((deps.config as Record<string, unknown> | undefined)?.idService as Record<string, string> | undefined)?.dir ?? "/opt/aionima-local-id";
-    const marketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.marketplace as Record<string, string> | undefined)?.dir ?? "/opt/aionima-marketplace";
-    const mappMarketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.mappMarketplace as Record<string, string> | undefined)?.dir ?? "/opt/aionima-mapp-marketplace";
+    const idDir = ((deps.config as Record<string, unknown> | undefined)?.idService as Record<string, string> | undefined)?.dir ?? "/opt/agi-local-id";
+    const marketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.marketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-marketplace";
+    const mappMarketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.mappMarketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-mapp-marketplace";
 
     const getRemote = (cwd: string): string => {
       try {
@@ -2516,8 +2516,8 @@ export async function createGatewayRuntimeState(
     // Check service repos (ID, PRIME, marketplace) for pending updates
     const serviceRepoPaths = [
       deps.primeDir,
-      deps.config ? (deps.config as Record<string, unknown>).idService ? ((deps.config as Record<string, unknown>).idService as Record<string, string>).dir ?? "/opt/aionima-local-id" : "/opt/aionima-local-id" : undefined,
-      deps.config ? (deps.config as Record<string, unknown>).marketplace ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string>).dir ?? "/opt/aionima-marketplace" : "/opt/aionima-marketplace" : undefined,
+      deps.config ? (deps.config as Record<string, unknown>).idService ? ((deps.config as Record<string, unknown>).idService as Record<string, string>).dir ?? "/opt/agi-local-id" : "/opt/agi-local-id" : undefined,
+      deps.config ? (deps.config as Record<string, unknown>).marketplace ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string>).dir ?? "/opt/agi-marketplace" : "/opt/agi-marketplace" : undefined,
     ].filter(Boolean) as string[];
 
     const serviceChecks = await Promise.all(serviceRepoPaths.map(checkServiceRepo));
@@ -2529,8 +2529,8 @@ export async function createGatewayRuntimeState(
     if (deps.marketplaceManager && totalServiceBehind > 0) {
       const mp = deps.marketplaceManager;
       const marketplaceDir = deps.config
-        ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string> | undefined)?.dir ?? "/opt/aionima-marketplace"
-        : "/opt/aionima-marketplace";
+        ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-marketplace"
+        : "/opt/agi-marketplace";
       if (existsSync(marketplaceDir)) {
         mp.syncLocalCatalog(marketplaceDir);
         const { updates } = mp.checkUpdates();
@@ -4406,7 +4406,7 @@ export async function createGatewayRuntimeState(
     if (!deps.mappRegistry) return reply.code(404).send({ error: "MApp not found" });
     const def = deps.mappRegistry.get(id);
     if (!def) return reply.code(404).send({ error: "MApp not found" });
-    const { serializeMApp } = await import("@aionima/sdk");
+    const { serializeMApp } = await import("@agi/sdk");
     return reply.send({ app: serializeMApp(def) });
   });
 
@@ -4431,7 +4431,7 @@ export async function createGatewayRuntimeState(
     }
 
     // Parse and install
-    const { MAppDefinitionSchema } = await import("@aionima/config");
+    const { MAppDefinitionSchema } = await import("@agi/config");
     const parsed = MAppDefinitionSchema.safeParse(body.definition);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid MApp definition", issues: parsed.error.issues });
@@ -4447,7 +4447,7 @@ export async function createGatewayRuntimeState(
 
     // Register in live registry
     if (deps.mappRegistry) {
-      deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+      deps.mappRegistry.register(parsed.data as import("@agi/sdk").MAppDefinition);
     }
 
     return reply.send({ ok: true, id: parsed.data.id, path: installPath, scan: scanResult });
@@ -4755,7 +4755,7 @@ export async function createGatewayRuntimeState(
       if (!result.ok) return reply.code(400).send(result);
 
       // Register in live registry
-      const { MAppDefinitionSchema } = await import("@aionima/config");
+      const { MAppDefinitionSchema } = await import("@agi/config");
       const catalog = mappMp.getCatalogWithInstalled();
       const entry = catalog.find((e) => e.id === body.appId);
       if (entry && deps.mappRegistry) {
@@ -4765,7 +4765,7 @@ export async function createGatewayRuntimeState(
           const raw = JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, unknown>;
           const parsed = MAppDefinitionSchema.safeParse(raw);
           if (parsed.success) {
-            deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+            deps.mappRegistry.register(parsed.data as import("@agi/sdk").MAppDefinition);
           }
         } catch { /* non-fatal */ }
       }
@@ -4793,7 +4793,7 @@ export async function createGatewayRuntimeState(
 
       // Re-register updated MApps in live registry
       if (deps.mappRegistry && result.updated.length > 0) {
-        const { MAppDefinitionSchema } = await import("@aionima/config");
+        const { MAppDefinitionSchema } = await import("@agi/config");
         const mappsDir = join(homedir(), ".agi", "mapps");
         for (const appId of result.updated) {
           const catalog = mappMp.getCatalogWithInstalled();
@@ -4802,7 +4802,7 @@ export async function createGatewayRuntimeState(
           try {
             const raw = JSON.parse(readFileSync(join(mappsDir, entry.author, `${appId}.json`), "utf-8")) as Record<string, unknown>;
             const parsed = MAppDefinitionSchema.safeParse(raw);
-            if (parsed.success) deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+            if (parsed.success) deps.mappRegistry.register(parsed.data as import("@agi/sdk").MAppDefinition);
           } catch { /* non-fatal */ }
         }
       }

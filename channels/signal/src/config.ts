@@ -1,4 +1,4 @@
-import type { ChannelConfigAdapter } from "@aionima/channel-sdk";
+import type { ChannelConfigAdapter } from "@agi/channel-sdk";
 
 // ---------------------------------------------------------------------------
 // Signal config

@@ -1,5 +1,5 @@
 /**
- * @aionima/sdk — Developer SDK for building Aionima plugins.
+ * @agi/sdk — Developer SDK for building Aionima plugins.
  *
  * ## Overview
  *
@@ -40,7 +40,7 @@
  * ### Plugin lifecycle
  *
  * ```ts
- * import { createPlugin, defineStack } from "@aionima/sdk";
+ * import { createPlugin, defineStack } from "@agi/sdk";
  *
  * export default createPlugin({
  *   async activate(api) {
@@ -57,7 +57,7 @@
  * ### Testing
  *
  * ```ts
- * import { testActivate } from "@aionima/sdk/testing";
+ * import { testActivate } from "@agi/sdk/testing";
  * import * as plugin from "./index.js";
  *
  * const regs = await testActivate(plugin);
@@ -117,8 +117,8 @@ export type {
 export { UI_COMPONENTS, WIDGET_COMPONENT_MAP } from "./ui-components.js";
 export type { ContentRendererConfig, MAppWidgetType } from "./ui-components.js";
 
-// Testing utilities (separate entry point: @aionima/sdk/testing)
-// import { testActivate, createMockAPI } from "@aionima/sdk/testing";
+// Testing utilities (separate entry point: @agi/sdk/testing)
+// import { testActivate, createMockAPI } from "@agi/sdk/testing";
 
 // Types — full plugin schema surface
 export type * from "./types.js";

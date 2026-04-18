@@ -4,7 +4,7 @@
  */
 
 import { execFile } from "node:child_process";
-import type { PluginRegistry } from "@aionima/plugins";
+import type { PluginRegistry } from "@agi/plugins";
 import type { Logger } from "./logger.js";
 import { createComponentLogger } from "./logger.js";
 

@@ -12,8 +12,8 @@ import type {
   SettingsPageDefinition, DashboardInterfacePageDefinition, DashboardInterfaceDomainDefinition,
   SubdomainRouteDefinition, LLMProviderDefinition, ProvidesLabel, WorkerDefinition,
 } from "./types.js";
-import type { StackDefinition } from "@aionima/gateway-core";
-import type { ScanProviderDefinition } from "@aionima/security";
+import type { StackDefinition } from "@agi/gateway-core";
+import type { ScanProviderDefinition } from "@agi/security";
 
 export interface LoadedPlugin {
   manifest: AionimaPluginManifest;

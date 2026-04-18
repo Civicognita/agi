@@ -28,7 +28,7 @@ import type { ToolExecutionContext } from "./tool-registry.js";
 import { WORKER_DISPATCH_MANIFEST } from "./tools/worker-dispatch.js";
 import { AgentInvoker } from "./agent-invoker.js";
 import type { AgentInvokerDeps } from "./agent-invoker.js";
-import type { COAChainLogger } from "@aionima/coa-chain";
+import type { COAChainLogger } from "@agi/coa-chain";
 
 // ---------------------------------------------------------------------------
 // Shared helpers / mock factories

@@ -4,7 +4,7 @@
  * ## Example
  *
  * ```ts
- * import { defineScan } from "@aionima/sdk";
+ * import { defineScan } from "@agi/sdk";
  *
  * const phpScanner = defineScan("php-sast", "PHP SAST")
  *   .description("Static analysis for PHP projects")
@@ -22,7 +22,7 @@
  * ```
  */
 
-import type { ScanProviderDefinition, ScanProviderHandler, ScanType } from "@aionima/security";
+import type { ScanProviderDefinition, ScanProviderHandler, ScanType } from "@agi/security";
 
 class ScanBuilder {
   private def: Partial<ScanProviderDefinition> & { id: string; name: string };

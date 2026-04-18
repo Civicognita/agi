@@ -53,7 +53,7 @@ echo "  Hosting status retrieved."
 echo ""
 echo "--- Plugin filesystem checks ---"
 
-DEPLOY_DIR="/opt/aionima"
+DEPLOY_DIR="/opt/agi"
 
 # Check that plugin directories exist in the deploy
 for plugin in plugin-editor plugin-mysql plugin-postgres plugin-redis plugin-node-runtime plugin-php-runtime; do

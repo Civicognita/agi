@@ -142,7 +142,7 @@ echo "[OK] Container images pulled"
 # 5b. WhoDB — always-on database explorer at db.ai.on
 # ---------------------------------------------------------------------------
 
-WHODB_CONTAINER="aionima-whodb"
+WHODB_CONTAINER="agi-whodb"
 WHODB_PORT=5050
 
 echo "[...] Setting up WhoDB database explorer..."
@@ -155,7 +155,7 @@ else
   su - "$SUDO_USER" -c "podman run -d \
     --name ${WHODB_CONTAINER} \
     --restart=always \
-    --label aionima.infra=true \
+    --label agi.infra=true \
     -p ${WHODB_PORT}:8080 \
     -v whodb-data:/data \
     -e WHODB_OLLAMA_HOST=host.containers.internal \

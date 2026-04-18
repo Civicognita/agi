@@ -1,5 +1,5 @@
 /**
- * @aionima/marketplace — Claude Code-compatible plugin marketplace.
+ * @agi/marketplace — Claude Code-compatible plugin marketplace.
  */
 
 export { MarketplaceStore } from "./store.js";

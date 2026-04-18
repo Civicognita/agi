@@ -1,7 +1,7 @@
 {
-  "prime": { "dir": "/mnt/aionima-prime" },
-  "bots": { "dir": "/mnt/aionima-bots" },
-  "idService": { "dir": "/mnt/aionima-local-id" },
+  "prime": { "dir": "/mnt/agi-prime" },
+  "bots": { "dir": "/mnt/agi-bots" },
+  "idService": { "dir": "/mnt/agi-local-id" },
   "gateway": { "port": 3100 },
   "workspace": {
     "projects": ["/mnt/agi/test/fixtures/projects"]

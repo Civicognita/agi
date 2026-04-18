@@ -5,7 +5,7 @@
  * so peers survive restarts.
  */
 
-import type { Database } from "@aionima/entity-model";
+import type { Database } from "@agi/entity-model";
 import type { PeerNode, DiscoveryMethod, TrustLevel } from "./federation-types.js";
 
 // ---------------------------------------------------------------------------

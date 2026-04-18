@@ -117,7 +117,7 @@ Only channels that are configured in `gateway.json` appear in the sidebar.
 
 ### Knowledge
 
-The Knowledge section provides access to the PRIME knowledge corpus (stored in an external repo at the path configured by `prime.dir`, default `/opt/aionima-prime`). It allows browsing and reading corpus documents. Writing from the dashboard editor is not supported — the corpus is managed via its own source repository.
+The Knowledge section provides access to the PRIME knowledge corpus (stored in an external repo at the path configured by `prime.dir`, default `/opt/agi-prime`). It allows browsing and reading corpus documents. Writing from the dashboard editor is not supported — the corpus is managed via its own source repository.
 
 ### Documentation
 

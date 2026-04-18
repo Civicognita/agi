@@ -6,7 +6,7 @@
  */
 
 import type { FastifyInstance } from "fastify";
-import type { UsageStore } from "@aionima/entity-model";
+import type { UsageStore } from "@agi/entity-model";
 
 export interface UsageApiDeps {
   usageStore: UsageStore;

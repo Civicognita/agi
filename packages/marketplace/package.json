@@ -1,5 +1,5 @@
 {
-  "name": "@aionima/marketplace",
+  "name": "@agi/marketplace",
   "version": "0.1.0",
   "description": "Marketplace for Aionima extensions",
   "type": "module",

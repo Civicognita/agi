@@ -1,5 +1,5 @@
 import type { Api } from "grammy";
-import type { OutboundContent } from "@aionima/channel-sdk";
+import type { OutboundContent } from "@agi/channel-sdk";
 
 /** Telegram's maximum message length for text. */
 const MAX_TEXT_LENGTH = 4096;

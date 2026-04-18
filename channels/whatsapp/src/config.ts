@@ -5,7 +5,7 @@
  * Supports both 360dialog aggregator and direct Cloud API access.
  */
 
-import type { ChannelConfigAdapter } from "@aionima/channel-sdk";
+import type { ChannelConfigAdapter } from "@agi/channel-sdk";
 
 // ---------------------------------------------------------------------------
 // Config type

@@ -5,8 +5,8 @@
  * from ~/.agi/mapps/{author}/{slug}.json at boot, not through plugins.
  */
 
-import type { MAppDefinition, MAppInfo } from "@aionima/sdk";
-import { serializeMApp } from "@aionima/sdk";
+import type { MAppDefinition, MAppInfo } from "@agi/sdk";
+import { serializeMApp } from "@agi/sdk";
 
 export class MAppRegistry {
   private readonly mapps = new Map<string, MAppDefinition>();

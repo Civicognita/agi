@@ -284,7 +284,7 @@ async function installDependencies(dir: string): Promise<void> {
 }
 
 /**
- * Build a plugin with esbuild — bundles @aionima/* workspace imports inline
+ * Build a plugin with esbuild — bundles @agi/* workspace imports inline
  * and injects createRequire so CJS packages (ulid, etc.) work in ESM output.
  * Uses sudo because the plugin cache dirs are root-owned.
  */
@@ -345,18 +345,18 @@ await build({
   external: ["node:*", "grammy", "discord.js", "googleapis"],
   // Let plugins import gateway deps (e.g. @anthropic-ai/sdk) that aren't
   // in the plugin's own node_modules. Without this, only the explicitly
-  // aliased @aionima/* packages resolve at build time.
+  // aliased @agi/* packages resolve at build time.
   nodePaths: [
     ${JSON.stringify(resolve(agiDir, "node_modules"))},
     ${JSON.stringify(resolve(agiDir, "node_modules", ".pnpm", "node_modules"))},
     ${JSON.stringify(resolve(agiDir, "packages", "gateway-core", "node_modules"))},
   ],
   alias: {
-    "@aionima/sdk": ${JSON.stringify(resolve(agiDir, "packages/aion-sdk/src/index.ts"))},
-    "@aionima/plugins": ${JSON.stringify(resolve(agiDir, "packages/plugins/src/index.ts"))},
-    "@aionima/channel-sdk": ${JSON.stringify(resolve(agiDir, "packages/channel-sdk/src/index.ts"))},
-    "@aionima/gateway-core": ${JSON.stringify(resolve(agiDir, "packages/gateway-core/src/index.ts"))},
-    "@aionima/config": ${JSON.stringify(resolve(agiDir, "config/src/index.ts"))},
+    "@agi/sdk": ${JSON.stringify(resolve(agiDir, "packages/aion-sdk/src/index.ts"))},
+    "@agi/plugins": ${JSON.stringify(resolve(agiDir, "packages/plugins/src/index.ts"))},
+    "@agi/channel-sdk": ${JSON.stringify(resolve(agiDir, "packages/channel-sdk/src/index.ts"))},
+    "@agi/gateway-core": ${JSON.stringify(resolve(agiDir, "packages/gateway-core/src/index.ts"))},
+    "@agi/config": ${JSON.stringify(resolve(agiDir, "config/src/index.ts"))},
   },
   logLevel: "warning",
 });

@@ -5,7 +5,7 @@
  * Supports single-provider and failover-provider configurations.
  */
 
-import type { AionimaConfig } from "@aionima/config";
+import type { AionimaConfig } from "@agi/config";
 
 import type { LLMProvider, LLMProviderConfig } from "./provider.js";
 import { AnthropicProvider } from "./anthropic-provider.js";

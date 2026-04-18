@@ -15,8 +15,8 @@ import {
   createDatabase,
   EntityStore,
   ImpactRecorder,
-} from "@aionima/entity-model";
-import type { Database } from "@aionima/entity-model";
+} from "@agi/entity-model";
+import type { Database } from "@agi/entity-model";
 
 import { DashboardQueries } from "./dashboard-queries.js";
 import { DashboardApi } from "./dashboard-api.js";

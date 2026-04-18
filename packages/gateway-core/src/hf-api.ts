@@ -23,9 +23,9 @@ import type {
   InferenceGateway,
   KnownModelsRegistry,
   CustomContainerBuilder,
-} from "@aionima/model-runtime";
-import type { ModelAgentBridge } from "@aionima/model-runtime";
-import { getBuildLog } from "@aionima/model-runtime";
+} from "@agi/model-runtime";
+import type { ModelAgentBridge } from "@agi/model-runtime";
+import { getBuildLog } from "@agi/model-runtime";
 import type { FineTuneManager } from "./finetune-manager.js";
 
 // ---------------------------------------------------------------------------

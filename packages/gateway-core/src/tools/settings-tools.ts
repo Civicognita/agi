@@ -7,7 +7,7 @@
 
 import type { ToolHandler } from "../tool-registry.js";
 import type { SystemConfigService } from "../system-config-service.js";
-import type { PluginRegistry } from "@aionima/plugins";
+import type { PluginRegistry } from "@agi/plugins";
 
 // ---------------------------------------------------------------------------
 // Config

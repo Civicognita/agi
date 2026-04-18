@@ -6,7 +6,7 @@ import type { Server } from "node:http";
 
 import { PUBLIC_DIR } from "./index.js";
 import { createWebChatServer, startWebChatServer } from "./static-server.js";
-import { GatewayWebSocketServer } from "@aionima/gateway-core";
+import { GatewayWebSocketServer } from "@agi/gateway-core";
 
 // ---------------------------------------------------------------------------
 // Port range: 19200–19299 — high range to avoid conflicts with other tests

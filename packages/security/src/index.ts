@@ -1,5 +1,5 @@
 /**
- * @aionima/security — Security scanning framework for the Aionima platform.
+ * @agi/security — Security scanning framework for the Aionima platform.
  *
  * Provides types, registry, persistence, and built-in scanners for SAST,
  * SCA, secrets detection, and configuration hardening checks.

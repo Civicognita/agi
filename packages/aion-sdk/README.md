@@ -1,17 +1,17 @@
-# @aionima/sdk
+# @agi/sdk
 
 Developer SDK for building Aionima plugins. Provides type-safe builders, type re-exports, and testing utilities.
 
 ## Install
 
 ```bash
-pnpm add @aionima/sdk
+pnpm add @agi/sdk
 ```
 
 ## Quick Start
 
 ```ts
-import { createPlugin, defineStack, defineRuntime, defineService } from "@aionima/sdk";
+import { createPlugin, defineStack, defineRuntime, defineService } from "@agi/sdk";
 
 export default createPlugin({
   async activate(api) {
@@ -168,7 +168,7 @@ api.registerHook("project:created", async (project) => { /* ... */ });
 ## Testing
 
 ```ts
-import { testActivate, createMockAPI } from "@aionima/sdk/testing";
+import { testActivate, createMockAPI } from "@agi/sdk/testing";
 import * as myPlugin from "./index.js";
 
 // Quick test — activate and inspect registrations
@@ -188,7 +188,7 @@ await myPlugin.activate(api);
 
 ## API Reference
 
-All types are re-exported from `@aionima/sdk` so plugin authors only need one dependency:
+All types are re-exported from `@agi/sdk` so plugin authors only need one dependency:
 
 ```ts
 import type {
@@ -199,7 +199,7 @@ import type {
   ServiceDefinition,
   ActionDefinition,
   // ... all other types
-} from "@aionima/sdk";
+} from "@agi/sdk";
 ```
 
 See `src/types.ts` for the complete type surface.
