@@ -249,7 +249,7 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = fa
   // ---------------------------------------------------------------------------
 
   return (
-    <Sidebar defaultCollapsed={false} collapseMode="icons" data-testid="app-sidebar">
+    <Sidebar defaultCollapsed={false} collapseMode="icons" data-testid="app-sidebar" className="!w-[200px] [&_button]:w-full [&_a]:w-full">
       {/* Logo */}
       <div className="px-3 py-3 border-b border-border">
         <Link to="/" className="flex items-center gap-2 text-foreground no-underline">

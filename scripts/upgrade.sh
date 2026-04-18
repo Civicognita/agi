@@ -23,13 +23,6 @@ BRANCH="${AIONIMA_UPDATE_CHANNEL:-$(node -e "
   } catch { console.log('main'); }
 " 2>/dev/null || echo "main")}"
 
-# Backend dist dirs — changes here require a service restart.
-# Channel adapters are plugin marketplace items (not bundled in core).
-BACKEND_DIRS=(
-  "cli/dist"
-  "packages/gateway-core/dist"
-)
-
 # Structured JSON log emitter
 emit() {
   local phase="$1" status="$2" details="${3:-}"
@@ -159,6 +152,7 @@ ID_LOCAL_ENABLED=$(node -e "
 
 if [ "$ID_LOCAL_ENABLED" = "1" ] && [ -d "$ID_DIR" ]; then
   emit "build-id" "start"
+  id_version_before="$(cd "$ID_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
 
   # Install dependencies
   if (cd "$ID_DIR" && npm install 2>&1); then
@@ -171,11 +165,14 @@ if [ "$ID_LOCAL_ENABLED" = "1" ] && [ -d "$ID_DIR" ]; then
       fi
       emit "build-id" "done" "Local ID service built and migrated"
 
-      # Restart ID service if running
-      if systemctl is-active --quiet aionima-id 2>/dev/null; then
-        emit "restart-id" "start"
-        sudo systemctl restart aionima-id
-        emit "restart-id" "done" "Local ID service restarted"
+      # Restart ID service only if version changed
+      id_version_after="$(cd "$ID_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
+      if [ "$id_version_before" != "$id_version_after" ]; then
+        if systemctl is-active --quiet aionima-id 2>/dev/null; then
+          emit "restart-id" "start" "ID version changed: $id_version_before → $id_version_after"
+          sudo systemctl restart aionima-id
+          emit "restart-id" "done" "Local ID service restarted"
+        fi
       fi
     else
       emit "build-id" "error" "ID service build failed"
@@ -249,14 +246,9 @@ fi
 echo "$CURRENT_NODE_VERSION" > "$NODE_VERSION_FILE"
 
 # ---------------------------------------------------------------------------
-# 6. Snapshot backend checksums before build
+# 6. Snapshot version before build
 # ---------------------------------------------------------------------------
-backend_hash_before=""
-for dir in "${BACKEND_DIRS[@]}"; do
-  if [ -d "$DEPLOY_DIR/$dir" ]; then
-    backend_hash_before+="$(find "$DEPLOY_DIR/$dir" -type f -exec md5sum {} + 2>/dev/null | sort | md5sum)"
-  fi
-done
+version_before="$(cd "$DEPLOY_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
 
 # ---------------------------------------------------------------------------
 # 7. Build (only when source files changed since last build)
@@ -341,6 +333,15 @@ if ! echo "$RENDERED_SERVICE" | diff - "$LIVE_UNIT" &>/dev/null; then
 fi
 sudo systemctl enable aionima &>/dev/null
 
+# Ensure Caddy CA cert is trusted by Node.js for internal HTTPS calls
+for unit in /etc/systemd/system/aionima.service /etc/systemd/system/aionima-id.service; do
+  if [ -f "$unit" ] && ! grep -q NODE_EXTRA_CA_CERTS "$unit"; then
+    sudo sed -i '/\[Service\]/a Environment=NODE_EXTRA_CA_CERTS=/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt' "$unit"
+    emit "systemd" "start" "Added Caddy CA trust to $(basename "$unit")"
+  fi
+done
+sudo systemctl daemon-reload
+
 # ---------------------------------------------------------------------------
 # 9b. Install agi CLI (idempotent symlink)
 # ---------------------------------------------------------------------------
@@ -350,24 +351,17 @@ if [ -x "$AGI_CLI" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 10. Check if backend changed
-# ---------------------------------------------------------------------------
-backend_hash_after=""
-for dir in "${BACKEND_DIRS[@]}"; do
-  if [ -d "$DEPLOY_DIR/$dir" ]; then
-    backend_hash_after+="$(find "$DEPLOY_DIR/$dir" -type f -exec md5sum {} + 2>/dev/null | sort | md5sum)"
-  fi
-done
-# ---------------------------------------------------------------------------
 # 11. Record deployed commit
 # ---------------------------------------------------------------------------
 git rev-parse HEAD > "$DEPLOY_DIR/.deployed-commit"
 
 # ---------------------------------------------------------------------------
-# 12. Restart if backend changed
+# 12. Restart if version changed
 # ---------------------------------------------------------------------------
-if [ "$backend_hash_before" != "$backend_hash_after" ]; then
-  emit "restart" "start" "Backend changed"
+version_after="$(cd "$DEPLOY_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
+
+if [ "$version_before" != "$version_after" ]; then
+  emit "restart" "start" "Version changed: $version_before → $version_after"
   # Sentinel file tells the new server it booted after an upgrade.
   # The new server removes it on startup and appends "restart complete" to the upgrade log.
   touch "$DEPLOY_DIR/.upgrade-pending"
@@ -376,7 +370,7 @@ if [ "$backend_hash_before" != "$backend_hash_after" ]; then
   # If it survives (e.g. stdout redirected), clean up:
   rm -f "$DEPLOY_DIR/.upgrade-pending"
   emit "restart" "done"
-  emit "complete" "done" "Deploy complete — service restarted"
+  emit "complete" "done" "Deploy complete — service restarted (v$version_after)"
 else
-  emit "complete" "done" "Deploy complete — frontend only (no restart)"
+  emit "complete" "done" "Deploy complete — no version change (v$version_after)"
 fi

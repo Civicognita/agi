@@ -75,7 +75,7 @@ export interface BuildCaddyfileOptions {
   whodbPort?: number;
   idService?: { enabled?: boolean; subdomain?: string; port?: number };
   pluginSubdomainRoutes: Array<{ subdomain: string; target: number | "gateway" }>;
-  projects: Array<{ hostname: string; port: number }>;
+  projects: Array<{ hostname: string; containerIp: string; internalPort: number }>;
   existingCaddyfile: string;
 }
 
@@ -175,7 +175,7 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
     const fqdn = `${project.hostname}.${opts.baseDomain}`;
     blocks.push(`${fqdn} {`);
     blocks.push(`    tls internal`);
-    blocks.push(`    reverse_proxy localhost:${String(project.port)}`);
+    blocks.push(`    reverse_proxy ${project.containerIp}:${String(project.internalPort)}`);
     blocks.push(`}\n`);
   }
 
@@ -317,6 +317,8 @@ export interface HostedProject {
   meta: ProjectHostingMeta;
   containerId: string | null;
   containerName: string | null;
+  /** IP address of the container on the aionima Podman network. Resolved after start. */
+  containerIp: string | null;
   status: "running" | "stopped" | "error" | "unconfigured";
   error?: string;
   tunnelPid: number | null;
@@ -401,8 +403,6 @@ const CONTAINER_INTERNAL_PORTS: Record<string, number> = {
   "static-site": 80,
 };
 
-const PORT_POOL_SIZE = 100;
-
 /**
  * Migration map: old framework-based project types → broad project types + corresponding stacks.
  * Used during initialize() to auto-migrate existing projects to the new model.
@@ -426,7 +426,6 @@ export class HostingManager {
   private readonly workspaceProjects: string[];
   private readonly log: ComponentLogger;
   private readonly projects = new Map<string, HostedProject>();
-  private readonly allocatedPorts = new Set<number>();
   /** Running containers discovered on startup — used to reconnect instead of recreating. */
   private _runningContainers = new Map<string, { name: string; image: string; state: string }>();
   private readonly registry: ProjectTypeRegistry | null;
@@ -457,6 +456,7 @@ export class HostingManager {
     this.configMgr = deps.projectConfigManager ?? null;
     this.mappReg = deps.mappRegistry ?? null;
     this.log = createComponentLogger(deps.logger, "hosting");
+    this.ensurePodmanNetwork();
   }
 
   /**
@@ -974,18 +974,6 @@ export class HostingManager {
   ): Promise<HostedProject> {
     const resolved = resolvePath(projectPath);
 
-    // All types get a port for container port mapping
-    if (meta.port !== null) {
-      if (this.allocatedPorts.has(meta.port) || !this.isPortAvailable(meta.port)) {
-        this.log.warn(`[${meta.hostname}] persisted port ${String(meta.port)} is in use — reallocating`);
-        meta.port = this.allocatePort();
-      } else {
-        this.allocatedPorts.add(meta.port);
-      }
-    } else {
-      meta.port = this.allocatePort();
-    }
-
     // Check for hostname collision
     for (const existing of this.projects.values()) {
       if (existing.meta.hostname === meta.hostname && existing.path !== resolved) {
@@ -1000,6 +988,7 @@ export class HostingManager {
       meta,
       containerId: null,
       containerName,
+      containerIp: null,
       status: "stopped",
       tunnelPid: null,
       tunnelUrl: null,
@@ -1026,8 +1015,9 @@ export class HostingManager {
       // Container is running — reconnect without restarting
       hosted.containerName = existing.name;
       hosted.status = "running";
+      hosted.containerIp = this.getContainerIp(existing.name);
       this._runningContainers.delete(resolved);
-      this.log.info(`[${meta.hostname}] reconnected to running container ${existing.name}`);
+      this.log.info(`[${meta.hostname}] reconnected to running container ${existing.name} (ip: ${hosted.containerIp})`);
     } else {
       // No running container — clean up stale one if exists, start fresh
       if (existing) {
@@ -1055,11 +1045,6 @@ export class HostingManager {
 
     // Stop container
     this.stopContainer(hosted);
-
-    // Release port
-    if (hosted.meta.port !== null) {
-      this.allocatedPorts.delete(hosted.meta.port);
-    }
 
     // Update metadata
     hosted.meta.enabled = false;
@@ -1311,12 +1296,6 @@ export class HostingManager {
       );
     }
 
-    if (hosted.meta.port === null) {
-      hosted.status = "error";
-      hosted.error = "No port allocated";
-      return;
-    }
-
     const containerName = hosted.containerName ?? `aionima-${hosted.meta.hostname}`;
 
     // Clean up any stale container with the same name
@@ -1337,14 +1316,14 @@ export class HostingManager {
 
     const magicAppConfig = this.resolveMagicAppContainerConfig(hosted);
     if (magicAppConfig) {
+      const internalPort = hosted.meta.internalPort ?? magicAppConfig.internalPort;
+
       const ctx: MagicAppContainerContext = {
         projectPath: hosted.path,
         projectHostname: hosted.meta.hostname,
-        allocatedPort: hosted.meta.port,
+        allocatedPort: internalPort,
         mode: hosted.meta.mode,
       };
-
-      const internalPort = hosted.meta.internalPort ?? magicAppConfig.internalPort;
 
       const args: string[] = [
         "run", "-d",
@@ -1353,7 +1332,8 @@ export class HostingManager {
         "--label", "aionima.managed=true",
         "--label", `aionima.hostname=${hosted.meta.hostname}`,
         "--label", `aionima.project=${hosted.path}`,
-        "-p", `${String(hosted.meta.port)}:${String(internalPort)}`,
+        "--network", "aionima",
+        "--network-alias", hosted.meta.hostname,
       ];
 
       for (const vol of magicAppConfig.volumeMounts(ctx)) {
@@ -1388,7 +1368,13 @@ export class HostingManager {
       const wrapped = this.wrapResilient(cmdTokens);
       if (wrapped) args.push(...wrapped);
 
+      // Store internalPort in meta for Caddy and tunnel use
+      hosted.meta.internalPort = internalPort;
       this.execContainerStart(hosted, containerName, args, "magic-app");
+      if (hosted.status === "running") {
+        hosted.containerIp = this.getContainerIp(containerName);
+        this.regenerateCaddyfile();
+      }
       return;
     }
 
@@ -1398,14 +1384,14 @@ export class HostingManager {
 
     const stackConfig = this.resolveStackContainerConfig(hosted);
     if (stackConfig) {
+      const internalPort = hosted.meta.internalPort ?? stackConfig.internalPort;
+
       const ctx: StackContainerContext = {
         projectPath: hosted.path,
         projectHostname: hosted.meta.hostname,
-        allocatedPort: hosted.meta.port,
+        allocatedPort: internalPort,
         mode: hosted.meta.mode,
       };
-
-      const internalPort = hosted.meta.internalPort ?? stackConfig.internalPort;
 
       const args: string[] = [
         "run", "-d",
@@ -1414,7 +1400,8 @@ export class HostingManager {
         "--label", "aionima.managed=true",
         "--label", `aionima.hostname=${hosted.meta.hostname}`,
         "--label", `aionima.project=${hosted.path}`,
-        "-p", `${String(hosted.meta.port)}:${String(internalPort)}`,
+        "--network", "aionima",
+        "--network-alias", hosted.meta.hostname,
       ];
 
       for (const vol of stackConfig.volumeMounts(ctx)) {
@@ -1491,7 +1478,13 @@ export class HostingManager {
       const stackWrapped = this.wrapResilient(cmdTokens);
       if (stackWrapped) args.push(...stackWrapped);
 
+      // Store internalPort in meta for Caddy and tunnel use
+      hosted.meta.internalPort = internalPort;
       this.execContainerStart(hosted, containerName, args, "stack");
+      if (hosted.status === "running") {
+        hosted.containerIp = this.getContainerIp(containerName);
+        this.regenerateCaddyfile();
+      }
       return;
     }
 
@@ -1523,7 +1516,8 @@ export class HostingManager {
       "--label", "aionima.managed=true",
       "--label", `aionima.hostname=${hosted.meta.hostname}`,
       "--label", `aionima.project=${hosted.path}`,
-      "-p", `${String(hosted.meta.port)}:${String(internalPort)}`,
+      "--network", "aionima",
+      "--network-alias", hosted.meta.hostname,
     ];
 
     // Collected across branches: the user-level command tokens (post-image).
@@ -1627,7 +1621,13 @@ export class HostingManager {
     const legacyWrapped = this.wrapResilient(legacyCmdTokens);
     if (legacyWrapped) args.push(...legacyWrapped);
 
+    // Store internalPort in meta for Caddy and tunnel use
+    hosted.meta.internalPort = internalPort;
     this.execContainerStart(hosted, containerName, args, "legacy");
+    if (hosted.status === "running") {
+      hosted.containerIp = this.getContainerIp(containerName);
+      this.regenerateCaddyfile();
+    }
   }
 
   /** Execute podman run and update hosted project state. */
@@ -1648,7 +1648,7 @@ export class HostingManager {
       hosted.status = "running";
       hosted.error = undefined;
 
-      this.log.info(`[${hosted.meta.hostname}] container started: ${containerName} (port ${String(hosted.meta.port)}) [${source}]`);
+      this.log.info(`[${hosted.meta.hostname}] container started: ${containerName} (internal port ${String(hosted.meta.internalPort ?? "unknown")}) [${source}]`);
     } catch (err) {
       hosted.status = "error";
       hosted.error = err instanceof Error ? err.message : String(err);
@@ -1916,29 +1916,34 @@ export class HostingManager {
   }
 
   // -------------------------------------------------------------------------
-  // Port allocation
+  // Podman network helpers
   // -------------------------------------------------------------------------
 
-  /** Check whether a TCP port is free using `ss`. */
-  private isPortAvailable(port: number): boolean {
+  /**
+   * Ensure the `aionima` Podman network exists. Idempotent — silently succeeds
+   * if the network was already created on a prior boot.
+   */
+  private ensurePodmanNetwork(): void {
     try {
-      const out = execFileSync("ss", ["-tlnH", `sport = :${String(port)}`], { stdio: "pipe", timeout: 5_000 }).toString();
-      return out.trim().length === 0;
+      execSync("podman network create aionima 2>/dev/null", { stdio: "pipe" });
     } catch {
-      return true; // ss failed — assume free
+      // Network already exists — expected on every boot after the first
     }
   }
 
-  private allocatePort(): number {
-    const start = this.config.portRangeStart;
-    for (let i = 0; i < PORT_POOL_SIZE; i++) {
-      const port = start + i;
-      if (!this.allocatedPorts.has(port) && this.isPortAvailable(port)) {
-        this.allocatedPorts.add(port);
-        return port;
-      }
+  /**
+   * Get the container's IP address on the `aionima` Podman network.
+   * Returns "127.0.0.1" on failure so callers always have a usable string.
+   */
+  private getContainerIp(containerName: string): string {
+    try {
+      return execSync(
+        `podman inspect ${containerName} --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'`,
+        { encoding: "utf-8", stdio: "pipe" },
+      ).trim();
+    } catch {
+      return "127.0.0.1";
     }
-    throw new Error(`Port pool exhausted (${String(start)}-${String(start + PORT_POOL_SIZE - 1)})`);
   }
 
   // -------------------------------------------------------------------------
@@ -1961,8 +1966,12 @@ export class HostingManager {
       idService: this.config.idService,
       pluginSubdomainRoutes: this.pluginReg?.getSubdomainRoutes().map(({ route }) => route) ?? [],
       projects: Array.from(this.projects.values())
-        .filter((p) => p.meta.enabled && p.meta.port !== null)
-        .map((p) => ({ hostname: p.meta.hostname, port: p.meta.port as number })),
+        .filter((p) => p.meta.enabled && p.containerIp !== null && p.meta.internalPort !== null)
+        .map((p) => ({
+          hostname: p.meta.hostname,
+          containerIp: p.containerIp as string,
+          internalPort: p.meta.internalPort as number,
+        })),
       existingCaddyfile: existing,
     });
 
@@ -2404,7 +2413,6 @@ export class HostingManager {
     // The gateway will reconnect to them on next startup. Containers are only
     // replaced when their image changes (detected during initialize()).
     this.projects.clear();
-    this.allocatedPorts.clear();
     this.log.info("hosting manager shut down");
   }
 
@@ -2670,8 +2678,10 @@ export class HostingManager {
 
   /** Quick tunnel — ephemeral random URL, no auth needed. Falls back here when Cloudflare is not authenticated. */
   private enableQuickTunnel(resolved: string, hosted: HostedProject, bin: string): Promise<{ url: string }> {
+    const containerIp = hosted.containerIp ?? "127.0.0.1";
+    const containerPort = hosted.meta.internalPort ?? 80;
     return new Promise<{ url: string }>((resolve, reject) => {
-      const child = spawn(bin, ["tunnel", "--url", `http://localhost:${String(hosted.meta.port)}`], {
+      const child = spawn(bin, ["tunnel", "--url", `http://${containerIp}:${String(containerPort)}`], {
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -2779,13 +2789,15 @@ export class HostingManager {
     }
 
     const url = `https://${dnsHostname}`;
+    const tunnelContainerIp = hosted.containerIp ?? "127.0.0.1";
+    const tunnelContainerPort = hosted.meta.internalPort ?? 80;
     const configPath = join(dirname(credPath), "tunnel-config.yml");
     const configContent = [
       `tunnel: ${tunnelId}`,
       `credentials-file: ${credPath}`,
       `ingress:`,
       `  - hostname: ${dnsHostname}`,
-      `    service: http://localhost:${String(hosted.meta.port)}`,
+      `    service: http://${tunnelContainerIp}:${String(tunnelContainerPort)}`,
       `  - service: http_status:404`,
     ].join("\n");
     writeFileSync(configPath, configContent);
@@ -3046,7 +3058,7 @@ export class HostingManager {
       const ctx: StackContainerContext = {
         projectPath: hosted.path,
         projectHostname: hosted.meta.hostname,
-        allocatedPort: hosted.meta.port ?? 0,
+        allocatedPort: hosted.meta.internalPort ?? stackConfig.internalPort,
         mode: hosted.meta.mode,
       };
       stackCommand = stackConfig.command?.(ctx) ?? null;
