@@ -3961,7 +3961,12 @@ export async function createGatewayRuntimeState(
     if (!deps.serviceManager) {
       return reply.send({ services: [] });
     }
-    return reply.send({ services: deps.serviceManager.getStatus() });
+    const sm = deps.serviceManager;
+    const services = sm.getStatus().map(svc => ({
+      ...svc,
+      imageAvailable: sm.isImageAvailable(svc.image),
+    }));
+    return reply.send({ services });
   });
 
   fastify.post<{ Params: { id: string } }>("/api/services/:id/start", async (request, reply) => {

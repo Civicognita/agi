@@ -241,6 +241,16 @@ export class ServiceManager {
     this.log.info("service manager shut down");
   }
 
+  /** Check whether a container image is locally available (pulled). */
+  isImageAvailable(image: string): boolean {
+    try {
+      execFileSync(this.containerRuntime, ["image", "exists", image], { stdio: "pipe", timeout: 5_000 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Port allocation
   // -------------------------------------------------------------------------

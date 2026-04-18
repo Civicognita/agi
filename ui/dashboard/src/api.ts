@@ -1440,6 +1440,26 @@ export async function removeStack(path: string, stackId: string): Promise<void> 
   }
 }
 
+// ---------------------------------------------------------------------------
+// Database engines
+// ---------------------------------------------------------------------------
+
+export interface DatabaseEngine {
+  stackId: string;
+  engine: string;
+  label: string;
+  description: string;
+  imageAvailable: boolean;
+  containerRunning: boolean;
+  port: number;
+}
+
+export async function fetchDatabaseEngines(): Promise<DatabaseEngine[]> {
+  const res = await fetch("/api/hosting/database-engines");
+  if (!res.ok) return [];
+  return res.json() as Promise<DatabaseEngine[]>;
+}
+
 export async function fetchSharedContainers(): Promise<import("./types.js").SharedContainerInfo[]> {
   const res = await fetch("/api/shared-containers");
   if (!res.ok) {

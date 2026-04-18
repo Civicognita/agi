@@ -17,7 +17,7 @@ export interface StackPickerProps {
   addError?: string | null;
 }
 
-const CATEGORY_ORDER = ["database", "framework", "tooling", "workflow"] as const;
+const CATEGORY_ORDER = ["framework", "tooling", "workflow"] as const;
 
 export function StackPicker({ projectCategory, installedStacks, onAdd, onClose, adding, addError }: StackPickerProps) {
   const [stacks, setStacks] = useState<StackInfo[]>([]);

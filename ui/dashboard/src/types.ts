@@ -596,6 +596,8 @@ export interface ServiceInfo {
   status: "running" | "stopped" | "error";
   port: number | null;
   enabled: boolean;
+  /** When false, the container image is not locally available. Omitting the field is treated as true (backward compat). */
+  imageAvailable?: boolean;
 }
 
 /** Runtime dependency bundled with a runtime (e.g. npm for Node). */

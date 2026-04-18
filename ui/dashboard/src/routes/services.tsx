@@ -46,7 +46,11 @@ export default function ServicesPage() {
     return <PageScroll><div className="text-[12px] text-red py-8">Failed to load services: {error}</div></PageScroll>;
   }
 
-  if (services.length === 0) {
+  // Only show services whose image is locally available. If imageAvailable is
+  // absent on the response (older backend), treat it as true for backward compat.
+  const visibleServices = services.filter((svc) => svc.imageAvailable !== false);
+
+  if (visibleServices.length === 0) {
     return (
       <PageScroll>
       <div className="text-center py-12">
@@ -63,7 +67,7 @@ export default function ServicesPage() {
   return (
     <PageScroll>
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {services.map((svc) => {
+      {visibleServices.map((svc) => {
         const statusColor = {
           running: "bg-green",
           stopped: "bg-muted-foreground",

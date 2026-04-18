@@ -2,6 +2,7 @@
  * Stack API routes — REST endpoints for stack management.
  */
 
+import { execFileSync } from "node:child_process";
 import type { FastifyInstance } from "fastify";
 import type { StackRegistry } from "./stack-registry.js";
 import type { SharedContainerManager } from "./shared-container-manager.js";
@@ -170,6 +171,60 @@ export function registerStackRoutes(app: FastifyInstance, deps: StackApiDeps): v
       : allRuntimes;
 
     reply.send({ runtimes });
+  });
+
+  // GET /api/hosting/database-engines — list database engines available for the Database card
+  app.get("/api/hosting/database-engines", async (_request, reply) => {
+    const allStacks = stackRegistry.getAll();
+    const dbStacks = allStacks.filter(s => s.category === "database");
+
+    // Build a set of running shared container sharedKeys for O(1) lookup
+    const runningKeys = new Set(
+      sharedContainerManager.getAll()
+        .filter(c => c.status === "running")
+        .map(c => c.sharedKey),
+    );
+
+    const engines = dbStacks.map(stack => {
+      const image = stack.containerConfig?.image ?? "";
+      const imageAvailable = image !== "" && (() => {
+        try {
+          execFileSync("podman", ["image", "exists", image], { stdio: "pipe", timeout: 5_000 });
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+
+      const sharedKey = stack.containerConfig?.sharedKey;
+      const containerRunning = sharedKey !== undefined && runningKeys.has(sharedKey);
+
+      return {
+        stackId: stack.id,
+        engine: stack.databaseConfig?.engine ?? stack.id,
+        label: stack.label,
+        description: stack.description,
+        imageAvailable,
+        containerRunning,
+        port: stack.containerConfig?.internalPort ?? 0,
+      };
+    }).filter(e => e.imageAvailable);
+
+    // Prepend the "file" default option (always available, no container needed)
+    const result = [
+      {
+        stackId: "file",
+        engine: "file",
+        label: "File (default)",
+        description: "SQLite or whatever the project defaults to",
+        imageAvailable: true,
+        containerRunning: true,
+        port: 0,
+      },
+      ...engines,
+    ];
+
+    return reply.send(result);
   });
 
   // GET /api/shared-containers — list all shared containers
