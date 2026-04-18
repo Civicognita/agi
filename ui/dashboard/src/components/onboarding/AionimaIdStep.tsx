@@ -1,19 +1,15 @@
 /**
- * AionimaIdStep — Connect services via OAuth Device Flow.
+ * AionimaIdStep — Connect to Aionima Local-ID service.
  *
- * Shows three provider cards (GitHub, Google, Discord). Each can be
- * independently connected via the device code flow — no popup required.
- * The user visits the verification URL on any device and enters the code.
- *
- * Works in both central and local ID service modes — the backend resolves
- * the correct ID service URL before proxying the device flow.
+ * Onboarding only connects to the ID service itself. Individual provider
+ * connections (GitHub, Google, Discord) happen through Local-ID's own
+ * interface — not through AGI's onboarding.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card } from "@/components/ui/card.js";
 import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
-import { startDeviceFlow, pollDeviceFlow, fetchDeviceFlowStatus } from "@/api.js";
 import type { OnboardingStepStatus, OnboardingState } from "@/types.js";
 
 interface Props {
@@ -23,235 +19,141 @@ interface Props {
   idMode?: OnboardingState["idMode"];
 }
 
-interface ProviderState {
-  status: "idle" | "connecting" | "connected" | "error";
-  deviceCode?: string;
-  userCode?: string;
-  verificationUri?: string;
-  accountLabel?: string;
-  error?: string;
-}
-
-interface ProviderDef {
-  id: string;
-  label: string;
-  description: string;
-}
-
-const PROVIDERS: ProviderDef[] = [
-  { id: "github", label: "GitHub", description: "Repository access, dev mode, PR tools" },
-  { id: "google", label: "Google", description: "Gmail channel, email identity" },
-  { id: "discord", label: "Discord", description: "Discord bot, guild management" },
-];
-
-function initialStates(): Record<string, ProviderState> {
-  const map: Record<string, ProviderState> = {};
-  for (const p of PROVIDERS) map[p.id] = { status: "idle" };
-  return map;
+async function getIdServiceUrl(): Promise<string> {
+  const res = await fetch("/api/onboarding/id-service-url");
+  if (!res.ok) throw new Error("Cannot resolve ID service URL");
+  const data = await res.json() as { url: string };
+  return data.url;
 }
 
 export function AionimaIdStep({ onNext, onSkip, status }: Props) {
-  const [providerStates, setProviderStates] = useState<Record<string, ProviderState>>(initialStates);
-  const pollRefs = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const [idStatus, setIdStatus] = useState<"checking" | "healthy" | "unreachable">("checking");
+  const [idUrl, setIdUrl] = useState<string | null>(null);
+  const [connectedServices, setConnectedServices] = useState<Array<{ provider: string; role: string; accountLabel: string | null }>>([]);
 
   const isCompleted = status === "completed";
 
-  // Cleanup all polling intervals on unmount
-  useEffect(() => {
-    const refs = pollRefs.current;
-    return () => {
-      for (const interval of Object.values(refs)) clearInterval(interval);
-    };
-  }, []);
-
-  // Hydrate connected state from stored secrets on mount
-  useEffect(() => {
-    let cancelled = false;
-    fetchDeviceFlowStatus()
-      .then((services) => {
-        if (cancelled) return;
-        if (services.length === 0) return;
-        setProviderStates((prev) => {
-          const next = { ...prev };
-          for (const svc of services) {
-            if (next[svc.provider]) {
-              next[svc.provider] = { status: "connected", accountLabel: svc.accountLabel ?? undefined };
-            }
-          }
-          return next;
-        });
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-
-  const setProviderState = useCallback((provider: string, update: ProviderState) => {
-    setProviderStates((prev) => ({ ...prev, [provider]: update }));
-  }, []);
-
-  const stopPolling = useCallback((provider: string) => {
-    if (pollRefs.current[provider]) {
-      clearInterval(pollRefs.current[provider]);
-      delete pollRefs.current[provider];
-    }
-  }, []);
-
-  const startPolling = useCallback((provider: string, deviceCode: string) => {
-    stopPolling(provider);
-    const interval = setInterval(() => {
-      void (async () => {
-        try {
-          const result = await pollDeviceFlow(deviceCode);
-          if (result.status === "completed") {
-            stopPolling(provider);
-            setProviderState(provider, {
-              status: "connected",
-              accountLabel: result.accountLabel,
-            });
-          } else if (result.status === "expired" || result.status === "error") {
-            stopPolling(provider);
-            setProviderState(provider, {
-              status: "error",
-              error: result.error ?? "Authorization expired. Please try again.",
-            });
-          }
-          // pending / no_session: keep polling
-        } catch {
-          // Network error — keep polling
-        }
-      })();
-    }, 3000);
-    pollRefs.current[provider] = interval;
-  }, [stopPolling, setProviderState]);
-
-  const handleConnect = useCallback(async (provider: string) => {
-    stopPolling(provider);
-    setProviderState(provider, { status: "connecting" });
+  const checkIdService = useCallback(async () => {
+    setIdStatus("checking");
     try {
-      const data = await startDeviceFlow(provider);
-      setProviderState(provider, {
-        status: "connecting",
-        deviceCode: data.deviceCode,
-        userCode: data.userCode,
-        verificationUri: data.verificationUri,
-      });
-      startPolling(provider, data.deviceCode);
-    } catch (err) {
-      setProviderState(provider, {
-        status: "error",
-        error: err instanceof Error ? err.message : "Connection failed",
-      });
+      const url = await getIdServiceUrl();
+      setIdUrl(url);
+      const healthRes = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
+      if (healthRes.ok) {
+        setIdStatus("healthy");
+        // Fetch connected services from Local-ID
+        try {
+          const statusRes = await fetch(`${url}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
+          if (statusRes.ok) {
+            const services = await statusRes.json() as typeof connectedServices;
+            setConnectedServices(services);
+          }
+        } catch { /* non-fatal */ }
+      } else {
+        setIdStatus("unreachable");
+      }
+    } catch {
+      setIdStatus("unreachable");
     }
-  }, [stopPolling, setProviderState, startPolling]);
+  }, []);
 
-  const anyConnected = PROVIDERS.some((p) => providerStates[p.id]?.status === "connected");
+  useEffect(() => { void checkIdService(); }, [checkIdService]);
 
   return (
     <div className="flex flex-col gap-5 sm:gap-6">
       <div className="onboard-animate-in">
         <h2 className="text-xl sm:text-2xl font-semibold mb-1">
-          Connect Your Services
+          Connect your Identity
         </h2>
         <p className="text-[13px] sm:text-sm text-muted-foreground leading-relaxed">
-          Link your accounts through secure device authorization. No data leaves your network.
+          Link your gateway to Aionima ID — your local identity service that manages
+          authentication, OAuth connections, and entity registration.
         </p>
       </div>
 
       {isCompleted && (
         <div className="p-3 rounded-lg bg-green/5 border border-green/20 text-sm text-muted-foreground onboard-animate-in">
-          Services are already connected. Continue to keep the current connections.
+          Identity service is connected. Continue to keep the current configuration.
         </div>
       )}
 
-      <div className="flex flex-col gap-3 onboard-animate-in onboard-stagger-1">
-        {PROVIDERS.map((p) => {
-          const state = providerStates[p.id] ?? { status: "idle" };
-          return (
-            <Card key={p.id} className="p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[13px] font-semibold">{p.label}</div>
-                  <div className="text-[11px] text-muted-foreground">{p.description}</div>
-                </div>
-
-                {state.status === "idle" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    onClick={() => void handleConnect(p.id)}
-                  >
-                    Connect
-                  </Button>
-                )}
-
-                {state.status === "connecting" && !state.userCode && (
-                  <span className="text-[12px] text-muted-foreground shrink-0">Starting...</span>
-                )}
-
-                {state.status === "connected" && (
-                  <Badge variant="outline" className="shrink-0 text-green border-green/50">
-                    ✓ {state.accountLabel ?? "Connected"}
-                  </Badge>
-                )}
+      <Card className="p-5 onboard-animate-in onboard-stagger-1">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
+              ID
+            </div>
+            <div>
+              <div className="text-[13px] font-semibold">Aionima ID</div>
+              <div className="text-[11px] text-muted-foreground font-mono">
+                {idUrl ?? "Resolving..."}
               </div>
+            </div>
+          </div>
 
-              {state.status === "connecting" && state.userCode && (
-                <div className="mt-3 p-3 rounded-lg bg-muted/30 border border-border">
-                  <div className="text-[11px] text-muted-foreground mb-1">
-                    Visit this URL and enter the code:
-                  </div>
-                  <div className="mb-2">
-                    <a
-                      href={state.verificationUri}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[12px] text-primary underline font-mono break-all"
-                    >
-                      {state.verificationUri}
-                    </a>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[16px] font-mono font-bold tracking-widest text-foreground">
-                      {state.userCode}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => void navigator.clipboard.writeText(state.userCode!)}
-                      className="text-[10px] px-2 py-0.5 rounded border border-border hover:bg-accent transition-colors"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                  <div className="text-[10px] text-muted-foreground mt-2 flex items-center gap-1">
-                    <span className="animate-pulse">●</span>
-                    <span>Waiting for authorization...</span>
-                  </div>
-                </div>
-              )}
+          {idStatus === "checking" && (
+            <span className="text-[11px] text-muted-foreground">Checking...</span>
+          )}
+          {idStatus === "healthy" && (
+            <Badge variant="outline" className="text-green border-green/50">Connected</Badge>
+          )}
+          {idStatus === "unreachable" && (
+            <Badge variant="outline" className="text-red border-red/50">Unreachable</Badge>
+          )}
+        </div>
 
-              {state.status === "error" && (
-                <div className="mt-2 text-[11px] text-destructive flex items-center gap-1 flex-wrap">
-                  <span>{state.error}</span>
-                  <button
-                    type="button"
-                    onClick={() => void handleConnect(p.id)}
-                    className="underline"
-                  >
-                    Try again
-                  </button>
-                </div>
-              )}
-            </Card>
-          );
-        })}
-      </div>
+        {idStatus === "unreachable" && (
+          <div className="mt-3 space-y-2">
+            <p className="text-[11px] text-red">
+              Cannot reach the local ID service. Make sure it is running and the Caddy
+              reverse proxy is configured.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void checkIdService()}>
+              Retry
+            </Button>
+          </div>
+        )}
 
-      <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 onboard-animate-in onboard-stagger-2">
-        <Button onClick={onNext} disabled={!anyConnected && !isCompleted} className="w-full sm:w-auto">
+        {idStatus === "healthy" && connectedServices.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-border">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
+              Connected Services
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {connectedServices.map((svc) => (
+                <Badge key={`${svc.provider}-${svc.role}`} variant="secondary" className="text-[10px]">
+                  {svc.provider} {svc.accountLabel ? `(${svc.accountLabel})` : ""}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {idStatus === "healthy" && idUrl && (
+          <div className="mt-3 pt-3 border-t border-border">
+            <p className="text-[11px] text-muted-foreground mb-2">
+              Manage your service connections (GitHub, Google, Discord) through the ID service dashboard:
+            </p>
+            <a
+              href={idUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[12px] text-primary underline font-mono"
+            >
+              Open Aionima ID →
+            </a>
+          </div>
+        )}
+      </Card>
+
+      <div className="flex gap-3 onboard-animate-in onboard-stagger-2">
+        <Button
+          onClick={onNext}
+          disabled={idStatus !== "healthy" && !isCompleted}
+        >
           Continue
         </Button>
-        <Button variant="ghost" onClick={onSkip} className="w-full sm:w-auto">
+        <Button variant="ghost" onClick={onSkip}>
           Skip for now
         </Button>
       </div>
