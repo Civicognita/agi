@@ -2206,11 +2206,22 @@ export async function saveZeroMe(
   return res.json() as Promise<{ ok: boolean }>;
 }
 
+let _idServiceUrl: string | null = null;
+async function getIdServiceUrl(): Promise<string> {
+  if (_idServiceUrl) return _idServiceUrl;
+  const res = await fetch("/api/onboarding/id-service-url");
+  if (!res.ok) throw new Error("Cannot resolve ID service URL");
+  const data = await res.json() as { url: string };
+  _idServiceUrl = data.url;
+  return _idServiceUrl;
+}
+
 export async function startDeviceFlow(
   provider: string,
   role = "owner",
 ): Promise<{ deviceCode: string; userCode: string; verificationUri: string; expiresIn: number }> {
-  const res = await fetch("/api/onboarding/device-flow/start", {
+  const idUrl = await getIdServiceUrl();
+  const res = await fetch(`${idUrl}/api/auth/device-flow/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ provider, role }),
@@ -2222,24 +2233,25 @@ export async function startDeviceFlow(
   return res.json() as Promise<{ deviceCode: string; userCode: string; verificationUri: string; expiresIn: number }>;
 }
 
-export async function pollDeviceFlow(): Promise<{
+export async function pollDeviceFlow(deviceCode: string): Promise<{
   status: string;
   provider?: string;
   accountLabel?: string;
   error?: string;
 }> {
-  const res = await fetch("/api/onboarding/device-flow/poll");
+  const idUrl = await getIdServiceUrl();
+  const res = await fetch(`${idUrl}/api/auth/device-flow/poll?deviceCode=${encodeURIComponent(deviceCode)}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<{ status: string; provider?: string; accountLabel?: string; error?: string }>;
 }
 
-export async function fetchDeviceFlowStatus(): Promise<{
-  services: Array<{ provider: string; role: string }>;
-  hasActiveSession: boolean;
-}> {
-  const res = await fetch("/api/onboarding/device-flow/status");
+export async function fetchDeviceFlowStatus(): Promise<
+  Array<{ provider: string; role: string; accountLabel: string | null }>
+> {
+  const idUrl = await getIdServiceUrl();
+  const res = await fetch(`${idUrl}/api/auth/device-flow/status`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<{ services: Array<{ provider: string; role: string }>; hasActiveSession: boolean }>;
+  return res.json() as Promise<Array<{ provider: string; role: string; accountLabel: string | null }>>;
 }
 
 // ---------------------------------------------------------------------------

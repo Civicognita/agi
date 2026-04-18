@@ -25,6 +25,7 @@ interface Props {
 
 interface ProviderState {
   status: "idle" | "connecting" | "connected" | "error";
+  deviceCode?: string;
   userCode?: string;
   verificationUri?: string;
   accountLabel?: string;
@@ -67,14 +68,14 @@ export function AionimaIdStep({ onNext, onSkip, status }: Props) {
   useEffect(() => {
     let cancelled = false;
     fetchDeviceFlowStatus()
-      .then((data) => {
+      .then((services) => {
         if (cancelled) return;
-        if (data.services.length === 0) return;
+        if (services.length === 0) return;
         setProviderStates((prev) => {
           const next = { ...prev };
-          for (const svc of data.services) {
+          for (const svc of services) {
             if (next[svc.provider]) {
-              next[svc.provider] = { status: "connected" };
+              next[svc.provider] = { status: "connected", accountLabel: svc.accountLabel ?? undefined };
             }
           }
           return next;
@@ -95,12 +96,12 @@ export function AionimaIdStep({ onNext, onSkip, status }: Props) {
     }
   }, []);
 
-  const startPolling = useCallback((provider: string) => {
+  const startPolling = useCallback((provider: string, deviceCode: string) => {
     stopPolling(provider);
     const interval = setInterval(() => {
       void (async () => {
         try {
-          const result = await pollDeviceFlow();
+          const result = await pollDeviceFlow(deviceCode);
           if (result.status === "completed") {
             stopPolling(provider);
             setProviderState(provider, {
@@ -130,10 +131,11 @@ export function AionimaIdStep({ onNext, onSkip, status }: Props) {
       const data = await startDeviceFlow(provider);
       setProviderState(provider, {
         status: "connecting",
+        deviceCode: data.deviceCode,
         userCode: data.userCode,
         verificationUri: data.verificationUri,
       });
-      startPolling(provider);
+      startPolling(provider, data.deviceCode);
     } catch (err) {
       setProviderState(provider, {
         status: "error",

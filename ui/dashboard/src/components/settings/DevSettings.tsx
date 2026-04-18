@@ -107,10 +107,11 @@ export function DevSettings({ config, update }: {
         userCode: data.userCode,
         verificationUri: data.verificationUri,
       });
+      const dc = data.deviceCode;
       githubPollRef.current = setInterval(() => {
         void (async () => {
           try {
-            const result = await pollDeviceFlow();
+            const result = await pollDeviceFlow(dc);
             if (result.status === "completed") {
               if (githubPollRef.current) clearInterval(githubPollRef.current);
               setGithubFlow({ status: "connected", accountLabel: result.accountLabel });
