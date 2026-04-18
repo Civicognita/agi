@@ -93,9 +93,9 @@ describe("classifyIncident — heuristics", () => {
     diskAgi: "",
   });
 
-  it("classifies ECONNREFUSED:5433 as postgres_unreachable", () => {
+  it("classifies ECONNREFUSED:5432 as postgres_unreachable", () => {
     const e = emptyEvidence();
-    e.gatewayLog = "Error: connect ECONNREFUSED 127.0.0.1:5433";
+    e.gatewayLog = "Error: connect ECONNREFUSED 127.0.0.1:5432";
     const c = classifyIncident(e);
     expect(c.classification).toBe("postgres_unreachable");
     expect(c.autoRecoverable).toBe(true);

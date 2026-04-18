@@ -1525,7 +1525,7 @@ export async function startGatewayServer(
 
   // Build PostgreSQL connection from ID service config
   const idServiceConfig = (config as Record<string, unknown>).idService as { local?: { databaseUrl?: string } } | undefined;
-  const pgUrl = idServiceConfig?.local?.databaseUrl ?? "postgres://aionima_id:0a117a24fd397009f19dd7146e348f54@localhost:5433/aionima_id";
+  const pgUrl = idServiceConfig?.local?.databaseUrl ?? "postgres://aionima_id:0a117a24fd397009f19dd7146e348f54@localhost:5432/aionima_id";
   const pgPool = new Pool({ connectionString: pgUrl });
 
   // ModelStore + DatasetStore require the ID service's Postgres to be

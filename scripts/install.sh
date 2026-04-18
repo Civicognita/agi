@@ -307,36 +307,16 @@ IDENVEOF
     echo "  [OK] Generated $ID_ENV"
   fi
 
-  # 9b. PostgreSQL via Podman — canonical container runtime for AGI infra.
-  # Uses host port 5433 to avoid colliding with any system postgres on 5432.
-  # Container is restart=unless-stopped so it survives reboots.
+  # 9b. PostgreSQL — managed by the agi-postgres plugin.
+  # The standalone Podman container previously created here has been removed.
+  # PostgreSQL is now provisioned through the Services page (agi-postgres plugin),
+  # which uses ghcr.io/civicognita/postgres:17 on port 5432.
+  # After install, enable the agi-postgres service in the dashboard, then add
+  # DATABASE_URL to $ID_ENV if it is not already present.
   if ! grep -q "^DATABASE_URL=" "$ID_ENV"; then
-    if ! command -v podman &>/dev/null; then
-      echo "  [WARN] podman not found — skipping PostgreSQL setup."
-      echo "         Run 'agi doctor' after install to finish container infra setup,"
-      echo "         then re-run this section by adding a DATABASE_URL to $ID_ENV manually."
-    else
-      ID_DB_PASS=$(openssl rand -hex 16)
-      ID_DB_CONTAINER="agi-postgres"
-      ID_DB_NAME="aionima_id"
-      ID_DB_USER="aionima_id"
-
-      echo "  Starting PostgreSQL container ($ID_DB_CONTAINER)..."
-      podman rm -f "$ID_DB_CONTAINER" 2>/dev/null || true
-      podman volume create agi-pgdata 2>/dev/null || true
-      podman run -d \
-        --name "$ID_DB_CONTAINER" \
-        --restart unless-stopped \
-        -e POSTGRES_DB="$ID_DB_NAME" \
-        -e POSTGRES_USER="$ID_DB_USER" \
-        -e POSTGRES_PASSWORD="$ID_DB_PASS" \
-        -v agi-pgdata:/var/lib/postgresql/data \
-        -p 5433:5432 \
-        docker.io/postgres:16-alpine
-
-      echo "DATABASE_URL=postgres://$ID_DB_USER:$ID_DB_PASS@localhost:5433/$ID_DB_NAME" >> "$ID_ENV"
-      echo "  [OK] PostgreSQL running on host port 5433"
-    fi
+    echo "  [NOTE] DATABASE_URL not set in $ID_ENV."
+    echo "         Enable the agi-postgres service in the dashboard (Services page)"
+    echo "         and add the connection string to $ID_ENV, then restart agi-id."
   fi
 
   # 9c. Install deps + build

@@ -50,11 +50,11 @@ export function getInstallPath(name: string, itemType: MarketplaceItemType, ctx:
     case "skill":
       return join(ctx.workspaceRoot, "skills", `${name}.skill.md`);
     case "knowledge":
-      return join(ctx.workspaceRoot, ".aionima", "marketplace-knowledge", name);
+      return join(ctx.workspaceRoot, ".agi", "marketplace-knowledge", name);
     case "theme":
       return join(cacheDir, `theme-${name}`);
     case "workflow":
-      return join(ctx.workspaceRoot, ".aionima", "workflows", `${name}.workflow.json`);
+      return join(ctx.workspaceRoot, ".agi", "workflows", `${name}.workflow.json`);
     case "channel":
       return join(ctx.workspaceRoot, "channels", name);
     case "agent-tool":

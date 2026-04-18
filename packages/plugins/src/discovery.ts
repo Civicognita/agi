@@ -171,7 +171,7 @@ export function getDefaultSearchPaths(optsOrRoot: string | SearchPathOptions): s
   const { workspaceRoot } = opts;
   const paths: string[] = [
     join(workspaceRoot, ".plugins"),                // user-installed plugins
-    join(workspaceRoot, ".aionima", "plugins"),      // standard location
+    join(workspaceRoot, ".agi", "plugins"),           // standard location
     join(workspaceRoot, ".nexus", "plugins"),        // legacy backwards compat
   ];
 

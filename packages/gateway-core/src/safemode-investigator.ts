@@ -108,8 +108,38 @@ export interface Evidence {
   diskAgi: string;
 }
 
+function findPostgresContainerName(): string {
+  // PostgreSQL is managed by the agi-postgres plugin — the container name is
+  // not hardcoded. Discover it by image ancestry at evidence-collection time.
+  try {
+    const out = safeExec("podman", [
+      "ps", "-a",
+      "--filter", "ancestor=ghcr.io/civicognita/postgres:17",
+      "--format", "{{.Names}}",
+    ]);
+    const first = out.trim().split("\n")[0]?.trim();
+    if (first && first.length > 0) return first;
+  } catch {
+    // fall through
+  }
+  // Fallback: any container whose name includes "postgres"
+  try {
+    const out = safeExec("podman", [
+      "ps", "-a",
+      "--filter", "name=postgres",
+      "--format", "{{.Names}}",
+    ]);
+    const first = out.trim().split("\n")[0]?.trim();
+    if (first && first.length > 0) return first;
+  } catch {
+    // fall through
+  }
+  return "agi-postgres"; // last-resort default (may produce empty logs)
+}
+
 export function collectEvidence(log: ComponentLogger): Evidence {
   log.info("collecting crash evidence...");
+  const pgContainerName = findPostgresContainerName();
   return {
     collectedAt: new Date().toISOString(),
     hadPriorMarker: peekShutdownMarker() !== null,
@@ -117,7 +147,7 @@ export function collectEvidence(log: ComponentLogger): Evidence {
     idServiceJournal: journalctl("agi-id", 200),
     gatewayLog: gatewayLogTail(300),
     podmanPs: podmanPs(),
-    postgresLogs: podmanLogs("agi-postgres", 100),
+    postgresLogs: podmanLogs(pgContainerName, 100),
     dmesg: dmesgTail(100),
     diskRoot: diskFree("/"),
     diskAgi: diskFree(join(homedir(), ".agi")),
@@ -148,15 +178,15 @@ export function classifyIncident(e: Evidence): ClassifiedIncident {
   const combined = [e.gatewayJournal, e.gatewayLog, e.idServiceJournal].join("\n");
 
   // Postgres unreachable — the exact scenario that hit us today
-  if (/ECONNREFUSED .*:5433|ECONNREFUSED 127\.0\.0\.1:5433|connect.*:5433.*refused/i.test(combined)) {
+  if (/ECONNREFUSED .*:5432|ECONNREFUSED 127\.0\.0\.1:5432|connect.*:5432.*refused/i.test(combined)) {
     return {
       classification: "postgres_unreachable",
       confidence: "high",
-      summary: "Gateway couldn't reach the ID service's PostgreSQL at 127.0.0.1:5433. Likely cause: the agi-postgres container did not auto-restart after a host reboot.",
+      summary: "Gateway couldn't reach the ID service's PostgreSQL at 127.0.0.1:5432. Likely cause: the agi-postgres plugin container did not auto-restart after a host reboot.",
       autoRecoverable: true,
       recommendedActions: [
-        "Click 'Recover now' — the gateway will start agi-postgres and agi-id.service, then re-run reconciliation.",
-        "If recovery keeps failing, check `podman inspect agi-postgres` for image/volume errors.",
+        "Click 'Recover now' — the gateway will start the agi-postgres service container and agi-id.service, then re-run reconciliation.",
+        "If recovery keeps failing, check the Services page in the dashboard and inspect the agi-postgres plugin container logs.",
       ],
     };
   }

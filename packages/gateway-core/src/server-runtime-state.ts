@@ -1204,7 +1204,7 @@ export async function createGatewayRuntimeState(
 
     // Check hosting metadata
     let hostingEnabled = false;
-    const hostingMetaPath = join(targetPath, ".aionima-hosting.json");
+    const hostingMetaPath = join(targetPath, ".agi-hosting.json");
     if (existsSync(hostingMetaPath)) {
       try {
         const hostingMeta = JSON.parse(readFileSync(hostingMetaPath, "utf-8")) as { enabled?: boolean };
