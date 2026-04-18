@@ -1012,12 +1012,21 @@ export class HostingManager {
     // (exited, etc.) still fall through to the start-fresh branch.
     const existing = this._runningContainers.get(resolved);
     if (existing && existing.state.toLowerCase() === "running") {
-      // Container is running — reconnect without restarting
-      hosted.containerName = existing.name;
-      hosted.status = "running";
-      hosted.containerIp = this.getContainerIp(existing.name);
-      this._runningContainers.delete(resolved);
-      this.log.info(`[${meta.hostname}] reconnected to running container ${existing.name} (ip: ${hosted.containerIp})`);
+      const containerIp = this.getContainerIp(existing.name);
+      if (containerIp === "127.0.0.1") {
+        // Container exists but isn't on the aionima network — recreate it
+        this.log.info(`[${meta.hostname}] migrating container ${existing.name} to aionima network`);
+        try { execFileSync("podman", ["rm", "-f", existing.name], { stdio: "pipe", timeout: 15_000 }); } catch { /* ignore */ }
+        this._runningContainers.delete(resolved);
+        void this.startContainer(hosted);
+      } else {
+        // Container is running on the correct network — reconnect
+        hosted.containerName = existing.name;
+        hosted.status = "running";
+        hosted.containerIp = containerIp;
+        this._runningContainers.delete(resolved);
+        this.log.info(`[${meta.hostname}] reconnected to running container ${existing.name} (ip: ${containerIp})`);
+      }
     } else {
       // No running container — clean up stale one if exists, start fresh
       if (existing) {
