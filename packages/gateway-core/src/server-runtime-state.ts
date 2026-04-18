@@ -94,6 +94,21 @@ function resolveWidgetEndpoints(widgets: PanelWidgetAny[], pluginId: string): Pa
 }
 
 
+function resolveIdUrl(configPath?: string): string {
+  if (!configPath) return "https://id.ai.on";
+  try {
+    const cfg = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    const idSvc = cfg.idService as { local?: { enabled?: boolean; subdomain?: string } } | undefined;
+    const hosting = cfg.hosting as { baseDomain?: string } | undefined;
+    if (idSvc?.local?.enabled) {
+      const sub = idSvc.local.subdomain ?? "id";
+      const domain = hosting?.baseDomain ?? "ai.on";
+      return `https://${sub}.${domain}`;
+    }
+  } catch { /* fallback */ }
+  return "https://id.ai.on";
+}
+
 export interface RuntimeStateDeps {
   auth: GatewayAuth;
   stateMachine: GatewayStateMachine;
@@ -1787,9 +1802,16 @@ export async function createGatewayRuntimeState(
 
       const primeEntries = deps.primeLoader !== undefined ? deps.primeLoader.index() : 0;
 
-      // Check if GitHub is authenticated (OWNER_GITHUB_TOKEN exists)
-      const ghToken = deps.secrets?.readSecret("OWNER_GITHUB_TOKEN") ?? process.env["OWNER_GITHUB_TOKEN"] ?? "";
-      const githubAuthenticated = ghToken.length > 0;
+      // Check if GitHub is authenticated by querying Local-ID (identity lives there, not AGI)
+      let githubAuthenticated = false;
+      try {
+        const idUrl = resolveIdUrl(deps.configPath);
+        const idRes = await fetch(`${idUrl}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
+        if (idRes.ok) {
+          const conns = await idRes.json() as Array<{ provider: string }>;
+          githubAuthenticated = conns.some((c) => c.provider === "github");
+        }
+      } catch { /* ID service unreachable — treat as not authenticated */ }
 
       return reply.send({
         enabled,
@@ -1827,10 +1849,18 @@ export async function createGatewayRuntimeState(
 
       const targetEnabled = body.enabled;
 
-      // Enabling dev mode requires GitHub authentication (for creating owner forks)
+      // Enabling dev mode requires GitHub authentication (checked via Local-ID)
       if (targetEnabled) {
-        const ghToken = deps.secrets?.readSecret("OWNER_GITHUB_TOKEN") ?? process.env["OWNER_GITHUB_TOKEN"] ?? "";
-        if (ghToken.length === 0) {
+        let hasGithub = false;
+        try {
+          const idUrl = resolveIdUrl(deps.configPath);
+          const idRes = await fetch(`${idUrl}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
+          if (idRes.ok) {
+            const conns = await idRes.json() as Array<{ provider: string }>;
+            hasGithub = conns.some((c) => c.provider === "github");
+          }
+        } catch { /* ID service unreachable */ }
+        if (!hasGithub) {
           return reply.code(403).send({
             error: "GitHub authentication required. Connect your GitHub account via Aionima ID before enabling dev mode.",
             reason: "github_not_authenticated",
