@@ -1460,6 +1460,34 @@ export async function fetchDatabaseEngines(): Promise<DatabaseEngine[]> {
   return res.json() as Promise<DatabaseEngine[]>;
 }
 
+export async function detectDatabaseEngine(path: string): Promise<{ detectedEngine: string | null; reason: string }> {
+  const res = await fetch(`/api/hosting/database-detect?path=${encodeURIComponent(path)}`);
+  if (!res.ok) return { detectedEngine: null, reason: "detection failed" };
+  return res.json() as Promise<{ detectedEngine: string | null; reason: string }>;
+}
+
+export async function runDatabaseMigrations(path: string): Promise<{ ok: boolean; tool?: string; output?: string; error?: string }> {
+  const res = await fetch("/api/hosting/database-migrate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  return res.json() as Promise<{ ok: boolean; tool?: string; output?: string; error?: string }>;
+}
+
+export async function fetchDatabaseStorage(path?: string): Promise<{ projectBytes: number | null; totalBytes: number | null; volumeName: string | null }> {
+  const url = path ? `/api/hosting/database-storage?path=${encodeURIComponent(path)}` : "/api/hosting/database-storage";
+  const res = await fetch(url);
+  if (!res.ok) return { projectBytes: null, totalBytes: null, volumeName: null };
+  return res.json() as Promise<{ projectBytes: number | null; totalBytes: number | null; volumeName: string | null }>;
+}
+
+export async function testDatabaseConnection(path: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/hosting/database-test?path=${encodeURIComponent(path)}`);
+  if (!res.ok) return { ok: false, error: "Test failed" };
+  return res.json() as Promise<{ ok: boolean; error?: string }>;
+}
+
 export async function fetchSharedContainers(): Promise<import("./types.js").SharedContainerInfo[]> {
   const res = await fetch("/api/shared-containers");
   if (!res.ok) {

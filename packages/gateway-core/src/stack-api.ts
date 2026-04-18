@@ -2,7 +2,9 @@
  * Stack API routes — REST endpoints for stack management.
  */
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join, resolve as resolvePath } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { StackRegistry } from "./stack-registry.js";
 import type { SharedContainerManager } from "./shared-container-manager.js";
@@ -225,6 +227,285 @@ export function registerStackRoutes(app: FastifyInstance, deps: StackApiDeps): v
     ];
 
     return reply.send(result);
+  });
+
+  // GET /api/hosting/database-detect — auto-detect database engine from project files
+  app.get("/api/hosting/database-detect", async (request, reply) => {
+    const query = request.query as { path?: string };
+    if (!query.path) {
+      reply.code(400).send({ error: "path required" });
+      return;
+    }
+
+    const resolved = resolvePath(query.path);
+
+    // prisma/schema.prisma
+    try {
+      const prisma = readFileSync(join(resolved, "prisma", "schema.prisma"), "utf-8");
+      if (prisma.includes('provider = "postgresql"')) {
+        return reply.send({ detectedEngine: "postgresql", reason: "prisma/schema.prisma" });
+      }
+      if (prisma.includes('provider = "mysql"')) {
+        return reply.send({ detectedEngine: "mysql", reason: "prisma/schema.prisma" });
+      }
+      if (prisma.includes('provider = "sqlite"')) {
+        return reply.send({ detectedEngine: "sqlite", reason: "prisma/schema.prisma" });
+      }
+    } catch { /* not found */ }
+
+    // drizzle.config.ts / drizzle.config.js
+    for (const name of ["drizzle.config.ts", "drizzle.config.js"]) {
+      try {
+        const drizzle = readFileSync(join(resolved, name), "utf-8");
+        if (drizzle.includes("pg") || drizzle.includes("postgres")) {
+          return reply.send({ detectedEngine: "postgresql", reason: name });
+        }
+        if (drizzle.includes("mysql")) {
+          return reply.send({ detectedEngine: "mysql", reason: name });
+        }
+        if (drizzle.includes("sqlite") || drizzle.includes("better-sqlite")) {
+          return reply.send({ detectedEngine: "sqlite", reason: name });
+        }
+      } catch { /* not found */ }
+    }
+
+    // config/database.yml (Rails-style)
+    try {
+      const dbYml = readFileSync(join(resolved, "config", "database.yml"), "utf-8");
+      if (dbYml.includes("adapter: postgresql") || dbYml.includes("adapter: pg")) {
+        return reply.send({ detectedEngine: "postgresql", reason: "config/database.yml" });
+      }
+      if (dbYml.includes("adapter: mysql") || dbYml.includes("adapter: mysql2")) {
+        return reply.send({ detectedEngine: "mysql", reason: "config/database.yml" });
+      }
+      if (dbYml.includes("adapter: sqlite")) {
+        return reply.send({ detectedEngine: "sqlite", reason: "config/database.yml" });
+      }
+    } catch { /* not found */ }
+
+    // config/database.php (Laravel/Symfony)
+    try {
+      const dbPhp = readFileSync(join(resolved, "config", "database.php"), "utf-8");
+      if (dbPhp.includes("pgsql") || dbPhp.includes("postgresql")) {
+        return reply.send({ detectedEngine: "postgresql", reason: "config/database.php" });
+      }
+      if (dbPhp.includes("mysql")) {
+        return reply.send({ detectedEngine: "mysql", reason: "config/database.php" });
+      }
+      if (dbPhp.includes("sqlite")) {
+        return reply.send({ detectedEngine: "sqlite", reason: "config/database.php" });
+      }
+    } catch { /* not found */ }
+
+    // composer.json — PHP dependency hints
+    try {
+      const composer = readFileSync(join(resolved, "composer.json"), "utf-8");
+      if (composer.includes("ext-pdo_pgsql") || composer.includes("doctrine/dbal")) {
+        return reply.send({ detectedEngine: "postgresql", reason: "composer.json" });
+      }
+      if (composer.includes("ext-pdo_mysql")) {
+        return reply.send({ detectedEngine: "mysql", reason: "composer.json" });
+      }
+    } catch { /* not found */ }
+
+    // .env.example / .env — DATABASE_URL or DB_CONNECTION
+    for (const envFile of [".env.example", ".env"]) {
+      try {
+        const env = readFileSync(join(resolved, envFile), "utf-8");
+        if (env.includes("postgresql://") || env.includes("postgres://")) {
+          return reply.send({ detectedEngine: "postgresql", reason: envFile });
+        }
+        if (env.includes("mysql://")) {
+          return reply.send({ detectedEngine: "mysql", reason: envFile });
+        }
+        const dbConn = env.match(/DB_CONNECTION\s*=\s*(\S+)/);
+        if (dbConn?.[1]) {
+          const driver = dbConn[1].toLowerCase();
+          if (driver.includes("pgsql") || driver.includes("postgres")) {
+            return reply.send({ detectedEngine: "postgresql", reason: envFile });
+          }
+          if (driver.includes("mysql")) {
+            return reply.send({ detectedEngine: "mysql", reason: envFile });
+          }
+          if (driver.includes("sqlite")) {
+            return reply.send({ detectedEngine: "sqlite", reason: envFile });
+          }
+        }
+      } catch { /* not found */ }
+    }
+
+    return reply.send({ detectedEngine: null, reason: "no database configuration detected" });
+  });
+
+  // POST /api/hosting/database-migrate — detect migration tool and run it in the project container
+  app.post("/api/hosting/database-migrate", async (request, reply) => {
+    const body = request.body as { path?: string } | null;
+    if (!body?.path) {
+      reply.code(400).send({ error: "path required" });
+      return;
+    }
+
+    const resolved = resolvePath(body.path);
+    const containerName = hostingManager.getContainerName(resolved);
+    if (!containerName) {
+      reply.code(404).send({ error: "No running container for this project" });
+      return;
+    }
+
+    // Detect migration tool from package.json or composer.json
+    let cmd: string | null = null;
+
+    try {
+      const pkg = readFileSync(join(resolved, "package.json"), "utf-8");
+      if (pkg.includes("prisma")) {
+        cmd = "npx prisma migrate deploy";
+      } else if (pkg.includes("drizzle-kit")) {
+        cmd = "npx drizzle-kit migrate";
+      }
+    } catch { /* not a node project */ }
+
+    if (!cmd) {
+      try {
+        const composer = readFileSync(join(resolved, "composer.json"), "utf-8");
+        if (composer.includes("laravel")) {
+          cmd = "php artisan migrate --force";
+        }
+      } catch { /* not a php project */ }
+    }
+
+    if (!cmd) {
+      reply.code(400).send({ error: "No migration tool detected (checked: prisma, drizzle-kit, artisan)" });
+      return;
+    }
+
+    try {
+      const output = execSync(`podman exec ${containerName} sh -c '${cmd}'`, {
+        encoding: "utf-8",
+        timeout: 60_000,
+        stdio: "pipe",
+      });
+      return reply.send({ ok: true, tool: cmd, output: output.trim() });
+    } catch (err) {
+      const msg = err instanceof Error ? ((err as NodeJS.ErrnoException & { stderr?: string }).stderr ?? err.message) : String(err);
+      return reply.send({ ok: false, tool: cmd, error: msg });
+    }
+  });
+
+  // GET /api/hosting/database-storage — disk usage for database volumes
+  app.get("/api/hosting/database-storage", async (request, reply) => {
+    const query = request.query as { path?: string };
+
+    const results: { projectBytes: number | null; totalBytes: number | null; volumeName: string | null } = {
+      projectBytes: null,
+      totalBytes: null,
+      volumeName: null,
+    };
+
+    // If a project path is given, look up which shared container it uses and
+    // try to surface just that volume's usage as projectBytes.
+    if (query.path) {
+      const resolved = resolvePath(query.path);
+      const stacks = hostingManager.getProjectStacks(resolved);
+      for (const instance of stacks) {
+        const def = stackRegistry.get(instance.stackId);
+        const sharedKey = def?.containerConfig?.sharedKey;
+        if (!sharedKey) continue;
+        const containerName = sharedContainerManager.getContainerName(sharedKey);
+        if (!containerName) continue;
+        try {
+          const mountPoint = execSync(
+            `podman volume inspect aionima-shared-${sharedKey} --format '{{.Mountpoint}}'`,
+            { encoding: "utf-8", stdio: "pipe", timeout: 10_000 },
+          ).trim();
+          if (mountPoint) {
+            const sizeOut = execSync(`du -sb ${mountPoint} 2>/dev/null`, {
+              encoding: "utf-8",
+              stdio: "pipe",
+              timeout: 10_000,
+            }).trim();
+            results.projectBytes = parseInt(sizeOut.split("\t")[0] ?? "0", 10);
+            results.volumeName = `aionima-shared-${sharedKey}`;
+          }
+        } catch { /* volume not found or du failed */ }
+        break; // only report first database stack
+      }
+    }
+
+    // Aggregate all aionima-shared-* database volumes for totalBytes
+    try {
+      const volumesRaw = execSync("podman volume ls --format '{{.Name}}'", {
+        encoding: "utf-8",
+        stdio: "pipe",
+        timeout: 10_000,
+      }).trim();
+
+      const volumes = volumesRaw
+        .split("\n")
+        .map((v) => v.trim())
+        .filter((v) => v.includes("postgres") || v.includes("mariadb") || v.includes("mysql") || v.includes("redis"));
+
+      let total = 0;
+      for (const vol of volumes) {
+        try {
+          const mountPoint = execSync(
+            `podman volume inspect ${vol} --format '{{.Mountpoint}}'`,
+            { encoding: "utf-8", stdio: "pipe", timeout: 10_000 },
+          ).trim();
+          const sizeOut = execSync(`du -sb ${mountPoint} 2>/dev/null`, {
+            encoding: "utf-8",
+            stdio: "pipe",
+            timeout: 10_000,
+          }).trim();
+          total += parseInt(sizeOut.split("\t")[0] ?? "0", 10);
+          if (!results.volumeName) results.volumeName = vol;
+        } catch { /* skip this volume */ }
+      }
+
+      if (total > 0) results.totalBytes = total;
+    } catch { /* podman not available or no volumes */ }
+
+    return reply.send(results);
+  });
+
+  // GET /api/hosting/database-test — test database connectivity from the project container
+  app.get("/api/hosting/database-test", async (request, reply) => {
+    const query = request.query as { path?: string };
+    if (!query.path) {
+      reply.code(400).send({ error: "path required" });
+      return;
+    }
+
+    const resolved = resolvePath(query.path);
+    const containerName = hostingManager.getContainerName(resolved);
+    if (!containerName) {
+      return reply.send({ ok: false, error: "No running container" });
+    }
+
+    // Try to read DATABASE_URL from the project's .env
+    let dbUrl = "";
+    try {
+      const env = readFileSync(join(resolved, ".env"), "utf-8");
+      const match = env.match(/DATABASE_URL\s*=\s*(.+)/);
+      if (match?.[1]) dbUrl = match[1].trim();
+    } catch { /* no .env */ }
+
+    if (!dbUrl) {
+      return reply.send({ ok: false, error: "No DATABASE_URL in .env" });
+    }
+
+    // Test TCP connectivity from inside the project container to the database host/port
+    try {
+      const url = new URL(dbUrl);
+      const host = url.hostname;
+      const port = url.port || (url.protocol.includes("postgres") ? "5432" : url.protocol.includes("mysql") ? "3306" : "5432");
+      execSync(
+        `podman exec ${containerName} sh -c "timeout 3 bash -c '</dev/tcp/${host}/${port}' 2>/dev/null"`,
+        { encoding: "utf-8", timeout: 10_000, stdio: "pipe" },
+      );
+      return reply.send({ ok: true });
+    } catch {
+      return reply.send({ ok: false, error: "Cannot reach database from project container" });
+    }
   });
 
   // GET /api/shared-containers — list all shared containers
