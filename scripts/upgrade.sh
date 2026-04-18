@@ -69,6 +69,10 @@ if [ -d "/opt/aionima" ] && [ ! -d "/opt/agi" ]; then
       emit "migrate" "start" "Renamed container: agi-id-postgres → agi-postgres-17" || true
   fi
 
+  # Clean up orphaned volumes from the old naming convention
+  podman volume rm aionima-id-pgdata 2>/dev/null && \
+    emit "migrate" "start" "Removed orphaned volume: aionima-id-pgdata" || true
+
   # Migrate systemd services
   if [ -f /etc/systemd/system/aionima.service ]; then
     sudo systemctl stop aionima 2>/dev/null || true

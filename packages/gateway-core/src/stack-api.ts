@@ -442,7 +442,10 @@ export function registerStackRoutes(app: FastifyInstance, deps: StackApiDeps): v
       const volumes = volumesRaw
         .split("\n")
         .map((v) => v.trim())
-        .filter((v) => v.includes("postgres") || v.includes("mariadb") || v.includes("mysql") || v.includes("redis"));
+        .filter((v) =>
+          v.includes("postgres") || v.includes("mariadb") || v.includes("mysql") ||
+          v.includes("redis") || v.includes("pgdata") || v.includes("agi-shared-"),
+        );
 
       let total = 0;
       for (const vol of volumes) {
