@@ -1353,7 +1353,7 @@ export class HostingManager {
         "--label", "aionima.managed=true",
         "--label", `aionima.hostname=${hosted.meta.hostname}`,
         "--label", `aionima.project=${hosted.path}`,
-        "-p", `${String(hosted.meta.port)}:${String(internalPort)}`,
+        "-p", `127.0.0.1:${String(hosted.meta.port)}:${String(internalPort)}`,
       ];
 
       for (const vol of magicAppConfig.volumeMounts(ctx)) {
@@ -1414,7 +1414,7 @@ export class HostingManager {
         "--label", "aionima.managed=true",
         "--label", `aionima.hostname=${hosted.meta.hostname}`,
         "--label", `aionima.project=${hosted.path}`,
-        "-p", `${String(hosted.meta.port)}:${String(internalPort)}`,
+        "-p", `127.0.0.1:${String(hosted.meta.port)}:${String(internalPort)}`,
       ];
 
       for (const vol of stackConfig.volumeMounts(ctx)) {
@@ -1523,7 +1523,7 @@ export class HostingManager {
       "--label", "aionima.managed=true",
       "--label", `aionima.hostname=${hosted.meta.hostname}`,
       "--label", `aionima.project=${hosted.path}`,
-      "-p", `${String(hosted.meta.port)}:${String(internalPort)}`,
+      "-p", `127.0.0.1:${String(hosted.meta.port)}:${String(internalPort)}`,
     ];
 
     // Collected across branches: the user-level command tokens (post-image).
@@ -2343,7 +2343,7 @@ export class HostingManager {
         "--name", containerName,
         "--restart=always",
         "--label", "aionima.infra=true",
-        "-p", `${String(port)}:8080`,
+        "-p", `127.0.0.1:${String(port)}:8080`,
         "-v", "whodb-data:/data",
         ...envArgs,
         "docker.io/clidey/whodb:latest",
