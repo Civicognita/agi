@@ -14,6 +14,7 @@ Project hosting is disabled by default. To enable it, set the following in `gate
     "enabled": true,
     "lanIp": "192.168.0.144",
     "baseDomain": "ai.on",
+    "portRangeStart": 4000,
     "containerRuntime": "podman"
   }
 }
@@ -24,6 +25,7 @@ Project hosting is disabled by default. To enable it, set the following in `gate
 | `enabled` | `false` | Enable the hosting infrastructure |
 | `lanIp` | `192.168.0.144` | LAN IP address for DNS and Caddy binding |
 | `baseDomain` | `ai.on` | Base domain for hosted projects |
+| `portRangeStart` | `4000` | Start of the port range for reverse proxies |
 | `containerRuntime` | `podman` | Container runtime (only `podman` supported) |
 | `statusPollIntervalMs` | `10000` | How often to poll container status |
 | `domainAliases` | `[]` | Extra domains that proxy to the gateway dashboard |
@@ -221,11 +223,11 @@ sudo dpkg -i cloudflared-linux-amd64.deb
 
 ---
 
-## Podman Network
+## Port Pool
 
-All hosted project containers run on a dedicated Podman network named `aionima`. This network is created automatically on first boot and is idempotent (re-creation is a no-op).
+Aionima allocates ports from a pool starting at `portRangeStart` (default: 4000). Each hosted project gets one port from the pool. The port is used for the Caddy → container reverse proxy route.
 
-Containers communicate with Caddy via their Podman network IP addresses — no host port bindings are used for project containers. This eliminates port conflicts and port pool exhaustion.
+If a port in the pool is already in use by another process, Aionima increments to the next port until a free one is found.
 
 ---
 
@@ -237,15 +239,19 @@ An example generated Caddyfile:
 
 ```
 myapp.ai.on {
-    reverse_proxy 10.89.0.2:3000
+    reverse_proxy localhost:4000
 }
 
 api.ai.on {
-    reverse_proxy 10.89.0.3:8000
+    reverse_proxy localhost:4001
+}
+
+*.ai.on {
+    respond "Not found" 404
 }
 ```
 
-Each entry uses the container's IP on the `aionima` Podman network and the container's internal listen port. The gateway dashboard itself is served at the base domain (`ai.on`) and any configured `domainAliases`.
+The gateway dashboard itself is served at the base domain (`ai.on`) and any configured `domainAliases`.
 
 ---
 
@@ -270,12 +276,6 @@ Each entry uses the container's IP on the `aionima` Podman network and the conta
 - Validate the generated Caddyfile syntax: `sudo caddy validate --config /etc/caddy/Caddyfile`.
 - Ensure the `caddy` binary is in the PATH and has sudo permissions configured.
 
-### Container IP Not Assigned
+### Port Conflict
 
-If a container starts but Caddy cannot reach it, the Podman network IP may not have been assigned. Inspect the container:
-
-```bash
-podman inspect aionima-myapp --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
-```
-
-Restart the project from the dashboard to trigger a fresh IP assignment and Caddyfile regeneration.
+If the allocated port is already in use, the container fails to start. Check `ss -tlnp | grep :4000` to see what is using the port. Adjust `portRangeStart` to a free range.

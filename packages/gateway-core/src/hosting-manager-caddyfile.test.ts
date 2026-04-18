@@ -141,10 +141,7 @@ papa.ai.on {
   it("writes project blocks in the PROJECT DOMAINS section", () => {
     const out = buildCaddyfileContent({
       ...baseOpts,
-      projects: [
-        { hostname: "blog", containerIp: "10.89.0.2", internalPort: 3000 },
-        { hostname: "shop", containerIp: "10.89.0.3", internalPort: 80 },
-      ],
+      projects: [{ hostname: "blog", port: 4001 }, { hostname: "shop", port: 4002 }],
     });
     const projStart = out.indexOf("# === PROJECT DOMAINS ===");
     const projEnd = out.indexOf("# === END PROJECT DOMAINS ===");
@@ -152,8 +149,8 @@ papa.ai.on {
     expect(projEnd).toBeGreaterThan(projStart);
     const projSection = out.slice(projStart, projEnd);
     expect(projSection).toContain("blog.ai.on {");
-    expect(projSection).toContain("reverse_proxy 10.89.0.2:3000");
+    expect(projSection).toContain("reverse_proxy localhost:4001");
     expect(projSection).toContain("shop.ai.on {");
-    expect(projSection).toContain("reverse_proxy 10.89.0.3:80");
+    expect(projSection).toContain("reverse_proxy localhost:4002");
   });
 });
