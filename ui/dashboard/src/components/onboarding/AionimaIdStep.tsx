@@ -19,13 +19,6 @@ interface Props {
   idMode?: OnboardingState["idMode"];
 }
 
-async function getIdServiceUrl(): Promise<string> {
-  const res = await fetch("/api/onboarding/id-service-url");
-  if (!res.ok) throw new Error("Cannot resolve ID service URL");
-  const data = await res.json() as { url: string };
-  return data.url;
-}
-
 export function AionimaIdStep({ onNext, onSkip, status }: Props) {
   const [idStatus, setIdStatus] = useState<"checking" | "healthy" | "unreachable">("checking");
   const [idUrl, setIdUrl] = useState<string | null>(null);
@@ -36,19 +29,31 @@ export function AionimaIdStep({ onNext, onSkip, status }: Props) {
   const checkIdService = useCallback(async () => {
     setIdStatus("checking");
     try {
-      const url = await getIdServiceUrl();
-      setIdUrl(url);
-      const healthRes = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
+      // Get ID service URL from AGI backend
+      const urlRes = await fetch("/api/onboarding/id-service-url");
+      if (urlRes.ok) {
+        const { url } = await urlRes.json() as { url: string };
+        setIdUrl(url);
+      }
+      // Check health via AGI backend (avoids CORS — AGI fetches server-side)
+      const healthRes = await fetch("/api/onboarding/hosting/local-id-status");
       if (healthRes.ok) {
-        setIdStatus("healthy");
-        // Fetch connected services from Local-ID
-        try {
-          const statusRes = await fetch(`${url}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
-          if (statusRes.ok) {
-            const services = await statusRes.json() as typeof connectedServices;
-            setConnectedServices(services);
-          }
-        } catch { /* non-fatal */ }
+        const data = await healthRes.json() as { status: string };
+        if (data.status === "healthy") {
+          setIdStatus("healthy");
+          // Fetch connected services via AGI backend proxy
+          try {
+            const statusRes = await fetch("/api/onboarding/aionima-id/status");
+            if (statusRes.ok) {
+              const statusData = await statusRes.json() as { services?: Array<{ provider: string; role: string }> };
+              if (statusData.services) {
+                setConnectedServices(statusData.services.map((s) => ({ ...s, accountLabel: null })));
+              }
+            }
+          } catch { /* non-fatal */ }
+        } else {
+          setIdStatus("unreachable");
+        }
       } else {
         setIdStatus("unreachable");
       }
