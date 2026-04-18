@@ -109,7 +109,7 @@ export interface Evidence {
 }
 
 function findPostgresContainerName(): string {
-  // PostgreSQL is managed by the agi-postgres plugin — the container name is
+  // PostgreSQL is managed by the agi-postgres-17 plugin — the container name is
   // not hardcoded. Discover it by image ancestry at evidence-collection time.
   try {
     const out = safeExec("podman", [
@@ -134,7 +134,7 @@ function findPostgresContainerName(): string {
   } catch {
     // fall through
   }
-  return "agi-postgres"; // last-resort default (may produce empty logs)
+  return "agi-postgres-17"; // last-resort default (may produce empty logs)
 }
 
 export function collectEvidence(log: ComponentLogger): Evidence {
@@ -182,11 +182,11 @@ export function classifyIncident(e: Evidence): ClassifiedIncident {
     return {
       classification: "postgres_unreachable",
       confidence: "high",
-      summary: "Gateway couldn't reach the ID service's PostgreSQL at 127.0.0.1:5432. Likely cause: the agi-postgres plugin container did not auto-restart after a host reboot.",
+      summary: "Gateway couldn't reach the ID service's PostgreSQL at 127.0.0.1:5432. Likely cause: the agi-postgres-17 plugin container did not auto-restart after a host reboot.",
       autoRecoverable: true,
       recommendedActions: [
-        "Click 'Recover now' — the gateway will start the agi-postgres service container and agi-id.service, then re-run reconciliation.",
-        "If recovery keeps failing, check the Services page in the dashboard and inspect the agi-postgres plugin container logs.",
+        "Click 'Recover now' — the gateway will start the agi-postgres-17 service container and agi-id.service, then re-run reconciliation.",
+        "If recovery keeps failing, check the Services page in the dashboard and inspect the agi-postgres-17 plugin container logs.",
       ],
     };
   }

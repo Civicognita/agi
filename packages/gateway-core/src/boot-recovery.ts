@@ -66,7 +66,7 @@ export const DEFAULT_MARKER_PATH = join(homedir(), ".agi", "shutdown-state.json"
 // We no longer rely on a hardcoded container name — we check the port instead.
 // Kept as a deprecated alias for backward compatibility with existing shutdown
 // markers that may still reference this name.
-export const ID_POSTGRES_CONTAINER = "agi-postgres";
+export const ID_POSTGRES_CONTAINER = "agi-postgres-17";
 export const ID_SERVICE_UNIT = "agi-id.service";
 export const ID_POSTGRES_PORT = 5432;
 

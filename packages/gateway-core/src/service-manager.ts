@@ -220,31 +220,6 @@ export class ServiceManager {
           }
         } catch { /* runtime unavailable or no match */ }
 
-        // Fallback: if still stopped, search all running containers for a
-        // matching engine name. This handles cases where an externally-managed
-        // container (e.g. from another compose stack) uses a different image
-        // tag than the one registered by the plugin.
-        if (externalStatus === "stopped") {
-          const engineName = svc.containerImage.includes("postgres") ? "postgres"
-            : svc.containerImage.includes("mariadb") ? "mariadb"
-            : svc.containerImage.includes("redis") ? "redis"
-            : null;
-          if (engineName) {
-            try {
-              const allLines = execFileSync(this.containerRuntime, [
-                "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}",
-              ], { stdio: "pipe", timeout: 10_000 }).toString().trim();
-              for (const line of allLines.split("\n")) {
-                if (line.toLowerCase().includes(engineName)) {
-                  externalStatus = "running";
-                  const portMatch = /(\d+)->\d+\/tcp/.exec(line);
-                  if (portMatch?.[1]) externalPort = Number(portMatch[1]);
-                  break;
-                }
-              }
-            } catch { /* runtime unavailable */ }
-          }
-        }
 
         // Parse extension badges from the service description
         const extensions: string[] = [];
@@ -304,23 +279,6 @@ export class ServiceManager {
       execFileSync(this.containerRuntime, ["image", "exists", image], { stdio: "pipe", timeout: 5_000 });
       return true;
     } catch {
-      // Image not pulled — but check if an external container for the same
-      // engine is already running (e.g. docker.io/library/postgres:16-alpine
-      // instead of ghcr.io/civicognita/postgres:17).
-      const engineName = image.includes("postgres") ? "postgres"
-        : image.includes("mariadb") ? "mariadb"
-        : image.includes("redis") ? "redis"
-        : null;
-      if (engineName) {
-        try {
-          const allLines = execFileSync(this.containerRuntime, [
-            "ps", "--format", "{{.Names}}\t{{.Image}}",
-          ], { stdio: "pipe", timeout: 5_000 }).toString().trim();
-          for (const line of allLines.split("\n")) {
-            if (line.toLowerCase().includes(engineName)) return true;
-          }
-        } catch { /* runtime unavailable */ }
-      }
       return false;
     }
   }

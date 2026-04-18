@@ -56,12 +56,18 @@ if [ -d "/opt/aionima" ] && [ ! -d "/opt/agi" ]; then
     fi
   done
 
-  # Rename containers
+  # Rename containers from aionima-* to agi-*
   podman ps -a --format '{{.Names}}' 2>/dev/null | grep '^aionima-' | while IFS= read -r name; do
     new_name="agi-${name#aionima-}"
     podman rename "$name" "$new_name" 2>/dev/null && \
       emit "migrate" "start" "Renamed container: $name → $new_name" || true
   done
+
+  # Rename legacy agi-id-postgres to agi-postgres-17 (shared, not ID-specific)
+  if podman container exists agi-id-postgres 2>/dev/null; then
+    podman rename agi-id-postgres agi-postgres-17 2>/dev/null && \
+      emit "migrate" "start" "Renamed container: agi-id-postgres → agi-postgres-17" || true
+  fi
 
   # Migrate systemd services
   if [ -f /etc/systemd/system/aionima.service ]; then
