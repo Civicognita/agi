@@ -68,6 +68,11 @@ ensure_https_remote "$PRIME_DIR"
 ensure_https_remote "$ID_DIR"
 
 # ---------------------------------------------------------------------------
+# Snapshot versions BEFORE pull (must happen before git checkout changes package.json)
+# ---------------------------------------------------------------------------
+version_before="$(cd "$DEPLOY_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
+
+# ---------------------------------------------------------------------------
 # 1. Pull AGI repo
 # ---------------------------------------------------------------------------
 emit "pull-agi" "start" "channel: $BRANCH"
@@ -117,6 +122,7 @@ fi
 # ---------------------------------------------------------------------------
 # 3c. Pull ID service repo (auto-clone if missing)
 # ---------------------------------------------------------------------------
+id_version_before="$(cd "$ID_DIR" 2>/dev/null && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
 if [ -d "$ID_DIR/.git" ]; then
   emit "pull-id" "start"
   if (cd "$ID_DIR" && git fetch origin 2>&1 && git checkout -B "$BRANCH" "origin/$BRANCH" 2>&1); then
@@ -152,7 +158,6 @@ ID_LOCAL_ENABLED=$(node -e "
 
 if [ "$ID_LOCAL_ENABLED" = "1" ] && [ -d "$ID_DIR" ]; then
   emit "build-id" "start"
-  id_version_before="$(cd "$ID_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
 
   # Install dependencies
   if (cd "$ID_DIR" && npm install 2>&1); then
@@ -244,11 +249,6 @@ else
   emit "rebuild" "skip" "Native modules up to date (Node $CURRENT_NODE_VERSION unchanged)"
 fi
 echo "$CURRENT_NODE_VERSION" > "$NODE_VERSION_FILE"
-
-# ---------------------------------------------------------------------------
-# 6. Snapshot version before build
-# ---------------------------------------------------------------------------
-version_before="$(cd "$DEPLOY_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
 
 # ---------------------------------------------------------------------------
 # 7. Build (only when source files changed since last build)
