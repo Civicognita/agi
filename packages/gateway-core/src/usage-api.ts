@@ -37,4 +37,17 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageApiDeps): v
   app.get("/api/router/status", async () => {
     return deps.getRouterStatus();
   });
+
+  app.get("/api/usage/current-period", async () => {
+    // Current calendar month — count days from the 1st of this month to today
+    const now = new Date();
+    const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const days = Math.ceil((now.getTime() - periodStart.getTime()) / 86400000) + 1;
+    const summary = deps.usageStore.getSummary(days);
+    return {
+      totalCostUsd: summary.totalCostUsd,
+      periodStart: periodStart.toISOString(),
+      requestCount: summary.invocationCount,
+    };
+  });
 }

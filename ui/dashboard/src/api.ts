@@ -2915,3 +2915,9 @@ export async function fetchUsageByCostMode(days = 30): Promise<Array<{ costMode:
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<Array<{ costMode: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>>;
 }
+
+export async function fetchCurrentPeriodUsage(): Promise<{ totalCostUsd: number; periodStart: string; requestCount: number }> {
+  const res = await fetch("/api/usage/current-period");
+  if (!res.ok) return { totalCostUsd: 0, periodStart: "", requestCount: 0 };
+  return res.json() as Promise<{ totalCostUsd: number; periodStart: string; requestCount: number }>;
+}

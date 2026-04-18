@@ -30,7 +30,7 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
-import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard } from "@/api.js";
+import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard, fetchCurrentPeriodUsage } from "@/api.js";
 import { LoginPage } from "@/components/LoginPage.js";
 import type { ActivityEntry, DashboardEvent, Notification, ProjectActivity, TimeBucket, UpdateCheck } from "@/types.js";
 
@@ -119,6 +119,18 @@ export default function RootLayout() {
   const projectsHook = useProjects();
   const hostingHook = useHosting();
   const contributingEnabled = Boolean(configHook.data?.dev?.enabled);
+
+  // Derive the lowest balance alert threshold across all configured providers
+  const balanceThreshold = (() => {
+    const providers = configHook.data?.providers as Record<string, { balanceAlertThreshold?: number }> | undefined;
+    if (!providers) return null;
+    return Object.values(providers).reduce<number | null>((min, p) => {
+      if (p.balanceAlertThreshold !== undefined && (min === null || p.balanceAlertThreshold < min)) {
+        return p.balanceAlertThreshold;
+      }
+      return min;
+    }, null);
+  })();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -150,6 +162,7 @@ export default function RootLayout() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
+  const [periodCost, setPeriodCost] = useState<number>(0);
   const [upgradePhase, setUpgradePhase] = useState<string | null>(null);
   const [upgradeLogs, setUpgradeLogs] = useState<{ step: string; status: string; message: string; timestamp: string }[]>([]);
   const [upgradeDropdown, setUpgradeDropdown] = useState(false);
@@ -223,6 +236,11 @@ export default function RootLayout() {
         setUnreadCount(count);
       })
       .catch(() => {});
+  }, []);
+
+  // Fetch current period cost on mount
+  useEffect(() => {
+    fetchCurrentPeriodUsage().then((d) => setPeriodCost(d.totalCostUsd)).catch(() => {});
   }, []);
 
   // Recover upgrade log after page reload (e.g. post-restart).
@@ -402,6 +420,10 @@ export default function RootLayout() {
       setNotifications((prev) => [event.data, ...prev].slice(0, 100));
       setUnreadCount((prev) => prev + 1);
     }
+    if (event.type === "usage:recorded") {
+      // Refresh period cost whenever usage is recorded
+      fetchCurrentPeriodUsage().then((d) => setPeriodCost(d.totalCostUsd)).catch(() => {});
+    }
   }, [overviewHook.refresh, hostingHook.refresh, projectsHook.refresh, queryClient]);
 
   useDashboardWS(handleEvent);
@@ -551,6 +573,23 @@ export default function RootLayout() {
           <div className="flex gap-2 items-center">
             {!isMobile && contributingEnabled && (
               <Badge className="text-xs bg-indigo-600 text-white">Contributing</Badge>
+            )}
+            {/* Monthly spend indicator */}
+            {periodCost > 0 && (
+              <span
+                className={`text-[10px] font-mono hidden md:inline ${
+                  balanceThreshold !== null
+                    ? periodCost >= balanceThreshold
+                      ? "text-red-500"
+                      : periodCost >= balanceThreshold * 0.8
+                      ? "text-yellow-500"
+                      : "text-muted-foreground"
+                    : "text-muted-foreground"
+                }`}
+                title={`API spend this month${balanceThreshold !== null ? ` (alert at $${balanceThreshold.toFixed(2)})` : ""}`}
+              >
+                ${periodCost.toFixed(2)}
+              </span>
             )}
             {/* Active downloads indicator */}
             <ActiveDownloads />

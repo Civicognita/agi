@@ -208,6 +208,19 @@ export function ProvidersSettings({ config, update }: Props) {
     }));
   }, [update]);
 
+  const setProviderThreshold = useCallback((provider: string, threshold: number | undefined) => {
+    update((prev) => ({
+      ...prev,
+      providers: {
+        ...((prev.providers ?? {}) as Record<string, unknown>),
+        [provider]: {
+          ...(((prev.providers ?? {}) as Record<string, Record<string, unknown>>)[provider] ?? {}),
+          balanceAlertThreshold: threshold,
+        },
+      },
+    }));
+  }, [update]);
+
   // Group workers by domain
   const domains = new Map<string, WorkerEntry[]>();
   for (const w of workers) {
@@ -279,10 +292,11 @@ export function ProvidersSettings({ config, update }: Props) {
             { id: "openai", label: "OpenAI", needsKey: true },
             { id: "ollama", label: "Ollama", needsKey: false },
           ].map((p) => {
-            const providersCred = (config.providers ?? {}) as Record<string, { apiKey?: string }>;
+            const providersCred = (config.providers ?? {}) as Record<string, { apiKey?: string; balanceAlertThreshold?: number }>;
             const rawKey = providersCred[p.id]?.apiKey;
             const hasKey = !!rawKey && rawKey !== "••••••••";
             const isRedacted = rawKey === "••••••••";
+            const threshold = providersCred[p.id]?.balanceAlertThreshold;
             return (
               <div key={p.id} className="flex items-center gap-3 py-1.5">
                 <div className="w-20 text-[12px] text-foreground">{p.label}</div>
@@ -298,6 +312,16 @@ export function ProvidersSettings({ config, update }: Props) {
                     <span className={`text-[12px] ${isRedacted || hasKey ? "text-green-500" : "text-muted-foreground"}`}>
                       {isRedacted || hasKey ? "✓ Set" : "—"}
                     </span>
+                    <input
+                      type="number"
+                      placeholder="Alert $"
+                      step="1"
+                      min="0"
+                      title="Alert when monthly spend reaches this USD amount"
+                      className="w-24 h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono"
+                      value={threshold ?? ""}
+                      onChange={(e) => setProviderThreshold(p.id, e.target.value ? Number(e.target.value) : undefined)}
+                    />
                   </>
                 ) : (
                   <span className="text-[10px] text-muted-foreground italic">No key needed</span>

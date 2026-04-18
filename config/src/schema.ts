@@ -309,6 +309,8 @@ const ProviderCredentialSchema = z
     apiKey: z.string().optional(),
     baseUrl: z.string().optional(),
     model: z.string().optional(),
+    /** USD amount at which to alert when cumulative API spend reaches this threshold. */
+    balanceAlertThreshold: z.number().nonnegative().optional(),
   })
   .strict();
 

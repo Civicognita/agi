@@ -1018,14 +1018,53 @@ export class AgentInvoker extends EventEmitter {
         routingMeta: result.routingMeta,
       };
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isBillingError =
+        errMsg.includes("credit balance") ||
+        errMsg.includes("insufficient_quota") ||
+        errMsg.includes("exceeded your current quota");
+      const isAuthError =
+        errMsg.includes("401") ||
+        errMsg.includes("invalid_x_api_key");
+
       this.emit("invocation_error", {
         entityId: entity.id,
-        error: err instanceof Error ? err.message : String(err),
+        error: errMsg,
       });
+
+      if (isBillingError) {
+        return {
+          type: "response",
+          text: "Your API credit balance is too low. Please add credits at your provider's billing page, or switch to a different provider in Settings > Providers.",
+          toolsUsed: [],
+          coaFingerprint: "",
+          taskmasterEmissions: [],
+          model: "unknown",
+          provider: "unknown",
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolCount: 0,
+          loopCount: 0,
+        };
+      }
+
+      if (isAuthError) {
+        return {
+          type: "response",
+          text: "API authentication failed. Please check your API key in Settings > Providers.",
+          toolsUsed: [],
+          coaFingerprint: "",
+          taskmasterEmissions: [],
+          model: "unknown",
+          provider: "unknown",
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolCount: 0,
+          loopCount: 0,
+        };
+      }
 
       return {
         type: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: errMsg,
       };
     }
   }

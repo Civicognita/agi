@@ -151,6 +151,17 @@ export class AgentRouter implements LLMProvider {
   /** Tracks the last config reference for cache invalidation on hot-reload. */
   private lastConfigRef: AgentRouterConfig | null = null;
 
+  /**
+   * Optional callback invoked when a provider returns a billing or auth error.
+   * Server.ts wires this to the dashboard broadcaster for real-time alerts.
+   */
+  onProviderError?: (error: {
+    provider: string;
+    model: string;
+    type: "billing" | "auth" | "error";
+    message: string;
+  }) => void;
+
   constructor(
     private readonly getConfig: () => AgentRouterConfig,
     private readonly providerFactory: (type: string, config: Partial<LLMProviderConfig>) => LLMProvider,
@@ -209,7 +220,69 @@ export class AgentRouter implements LLMProvider {
       `route: ${costMode}/${classification.complexity} → ${route.provider}/${route.model}`,
     );
 
-    let response = await provider.invoke(overriddenParams);
+    let response: LLMResponse;
+    try {
+      response = await provider.invoke(overriddenParams);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isBillingError =
+        msg.includes("credit balance") ||
+        msg.includes("insufficient_quota") ||
+        msg.includes("billing") ||
+        msg.includes("exceeded your current quota");
+      const isAuthError =
+        msg.includes("401") ||
+        msg.includes("invalid_x_api_key") ||
+        msg.toLowerCase().includes("invalid api key") ||
+        msg.toLowerCase().includes("authentication");
+
+      if (isBillingError || isAuthError) {
+        this.onProviderError?.({
+          provider: route.provider,
+          model: route.model,
+          type: isBillingError ? "billing" : "auth",
+          message: msg,
+        });
+
+        // Auto-fallback on billing error — try another configured provider
+        if (isBillingError) {
+          const fallbackRoute = this.findFallbackRoute(config, route.provider);
+          if (fallbackRoute) {
+            this.log.warn(
+              `billing error on ${route.provider}/${route.model} — falling back to ${fallbackRoute.provider}/${fallbackRoute.model}`,
+            );
+            const fallbackProvider = this.getOrCreateProvider(
+              fallbackRoute.provider,
+              fallbackRoute.model,
+              config,
+            );
+            const fallbackParams: LLMInvokeParams = { ...overriddenParams, model: fallbackRoute.model };
+            const fallbackResponse = await fallbackProvider.invoke(fallbackParams);
+
+            this.lastDecision = {
+              provider: fallbackRoute.provider,
+              model: fallbackRoute.model,
+              reason: `fallback from ${route.provider} (billing error)`,
+              complexity: classification.complexity,
+              costMode,
+              escalated: false,
+            };
+
+            fallbackResponse.routingMeta = {
+              costMode,
+              complexity: classification.complexity,
+              selectedModel: fallbackRoute.model,
+              selectedProvider: fallbackRoute.provider,
+              escalated: false,
+              reason: `fallback from ${route.provider} (billing error)`,
+            };
+
+            return fallbackResponse;
+          }
+        }
+      }
+      throw err;
+    }
 
     // Escalation: if the response looks low-confidence, try a stronger model.
     if (
@@ -376,6 +449,31 @@ export class AgentRouter implements LLMProvider {
 
     // Fall back to whatever the user has configured.
     return { provider: config.defaultProvider, model: config.defaultModel };
+  }
+
+  /**
+   * Find a fallback provider/model when the primary provider hits a billing error.
+   * Returns the first configured provider (with an API key) that is not the failed one.
+   * Falls back to ollama as a last resort if configured.
+   */
+  private findFallbackRoute(
+    config: AgentRouterConfig,
+    failedProvider: string,
+  ): RouteTarget | null {
+    // Try other API-key-based providers first
+    for (const [name, cred] of Object.entries(config.providers)) {
+      if (name === failedProvider || !cred?.apiKey) continue;
+      if (name === "ollama") continue; // handle ollama separately below
+      // Pick the cheapest model for the fallback provider
+      const economyRoutes = Object.values(ROUTING_TABLE.economy);
+      const match = economyRoutes.find((r) => r.provider === name);
+      if (match) return match;
+    }
+    // Try ollama as last resort (no key needed)
+    if (failedProvider !== "ollama") {
+      return { provider: "ollama", model: "llama3.1" };
+    }
+    return null;
   }
 
   private getOrCreateProvider(

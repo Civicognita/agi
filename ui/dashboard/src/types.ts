@@ -495,6 +495,9 @@ export interface WorkerModelOverride {
 export interface ProviderCredential {
   apiKey?: string;
   baseUrl?: string;
+  model?: string;
+  /** USD amount at which to alert when cumulative API spend reaches this threshold. */
+  balanceAlertThreshold?: number;
 }
 
 export interface WorkerConfig {

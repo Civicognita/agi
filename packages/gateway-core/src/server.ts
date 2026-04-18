@@ -56,9 +56,8 @@ import { OutboundDispatcher } from "./outbound-dispatcher.js";
 import { QueueConsumer } from "./queue-consumer.js";
 import { AgentSessionManager } from "./agent-session.js";
 import { SessionStore } from "./session-store.js";
-import { createAgentRouter, setPluginProviderRegistry, setModelAgentBridge } from "./llm/index.js";
+import { createAgentRouter, AgentRouter, setPluginProviderRegistry, setModelAgentBridge } from "./llm/index.js";
 import type { LLMProvider } from "./llm/index.js";
-import type { AgentRouter } from "./llm/index.js";
 import { RateLimiter } from "./rate-limiter.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { AgentInvoker } from "./agent-invoker.js";
@@ -566,6 +565,28 @@ export async function startGatewayServer(
     };
   }
   const getLLMProvider = () => llmProvider;
+
+  /**
+   * Wire the onProviderError callback on an AgentRouter instance.
+   * Must be called whenever llmProvider is (re)created so billing/auth errors
+   * are forwarded to the dashboard broadcaster as real-time notifications.
+   */
+  function wireProviderErrorCallback(provider: ReturnType<typeof createAgentRouter>): void {
+    if (provider instanceof AgentRouter) {
+      provider.onProviderError = (error) => {
+        dashboardBroadcasterRef?.emitNotification({
+          id: `provider-error-${Date.now()}`,
+          type: error.type === "billing" ? "warning" : "error",
+          title: `Provider ${error.type === "billing" ? "billing error" : "auth error"}: ${error.provider}`,
+          body: error.message,
+          metadata: { provider: error.provider, model: error.model, errorType: error.type },
+          createdAt: new Date().toISOString(),
+        });
+      };
+    }
+  }
+
+  wireProviderErrorCallback(llmProvider);
 
   const agentSessionManager = new AgentSessionManager({
     contextWindowTokens: config.sessions?.contextWindowTokens ?? 200000,
@@ -1331,6 +1352,7 @@ export async function startGatewayServer(
         if (!["anthropic", "openai", "ollama", "hf-local"].includes(agentProvider)) {
           try {
             llmProvider = createAgentRouter(config, logger);
+            wireProviderErrorCallback(llmProvider);
             log.info(`LLM provider switched to plugin-contributed "${agentProvider}"`);
           } catch {
             // Provider not registered by any loaded plugin. Check if the
@@ -2721,6 +2743,29 @@ export async function startGatewayServer(
                   projectPath: chatProjectPath ?? "",
                   costUsd: chatUsageRec.costUsd,
                 });
+
+                // Phase 5: post-completion balance threshold check
+                if (chatUsageRec.costUsd > 0 && outcome.provider) {
+                  const providersCred = (config.providers ?? {}) as Record<string, { balanceAlertThreshold?: number } | undefined>;
+                  const threshold = providersCred[outcome.provider]?.balanceAlertThreshold;
+                  if (threshold !== undefined) {
+                    try {
+                      const now = new Date();
+                      const periodDays = Math.ceil((now.getTime() - new Date(now.getFullYear(), now.getMonth(), 1).getTime()) / 86400000) + 1;
+                      const summary = usageStore.getSummary(periodDays);
+                      if (summary.totalCostUsd >= threshold) {
+                        dashboardBroadcasterRef?.emitNotification({
+                          id: `balance-alert-${Date.now()}`,
+                          type: "warning",
+                          title: "Balance Alert",
+                          body: `API spend ($${summary.totalCostUsd.toFixed(2)}) has reached your alert threshold ($${threshold.toFixed(2)})`,
+                          metadata: { provider: outcome.provider, totalCostUsd: summary.totalCostUsd, threshold },
+                          createdAt: new Date().toISOString(),
+                        });
+                      }
+                    } catch { /* threshold check is non-fatal */ }
+                  }
+                }
               } catch (usageErr) {
                 log.warn(`usage recording failed: ${usageErr instanceof Error ? usageErr.message : String(usageErr)}`);
               }
@@ -3768,6 +3813,7 @@ export async function startGatewayServer(
       if (event.changedKeys.some((k) => k === "agent" || k === "bots")) {
         try {
           llmProvider = createAgentRouter(event.config, logger);
+          wireProviderErrorCallback(llmProvider);
           log.info("LLM provider hot-swapped");
         } catch (err) {
           log.error(`failed to hot-swap LLM provider: ${err instanceof Error ? err.message : String(err)}`);
