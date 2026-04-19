@@ -261,6 +261,8 @@ export interface RuntimeStateDeps {
     syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
     backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): void;
     updatePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }>;
+    rebuildPlugin(name: string): Promise<void>;
+    rebuildAll(): Promise<{ rebuilt: string[]; failed: string[] }>;
   };
   /** Callback to hot-load a newly installed plugin (discover, activate, bridge). */
   onPluginInstalled?: (installPath: string) => Promise<{ loaded: boolean; pluginId?: string; error?: string }>;
@@ -3615,6 +3617,107 @@ export async function createGatewayRuntimeState(
         reloaded,
         reloadErrors,
         errors: result.errors,
+      });
+    });
+
+    // POST /api/marketplace/rebuild/:name — rebuild a single installed plugin (esbuild only, no re-download)
+    fastify.post<{ Params: { name: string } }>("/api/marketplace/rebuild/:name", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
+      }
+
+      const { name } = request.params;
+
+      try {
+        await mp.rebuildPlugin(name);
+      } catch (e) {
+        return reply.code(400).send({ error: e instanceof Error ? e.message : String(e) });
+      }
+
+      // Hot-reload the rebuilt plugin using the same deactivate → reload flow as update
+      if (deps.onPluginDeactivating) {
+        try { await deps.onPluginDeactivating(name); } catch (deactErr) {
+          log.warn(`rebuild deactivation warning for "${name}": ${deactErr instanceof Error ? deactErr.message : String(deactErr)}`);
+        }
+        // Remove stale route handlers for this plugin
+        for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+          if (route.pluginId === name) {
+            pluginRouteHandlers.delete(`${route.method.toUpperCase()}:${route.path}`);
+          }
+        }
+      }
+
+      if (deps.onPluginUpdated) {
+        const installed = mp.getInstalled().find(i => i.name === name);
+        if (installed) {
+          const hlResult = await deps.onPluginUpdated(installed.installPath);
+          if (!hlResult.loaded) {
+            return reply.code(500).send({ error: hlResult.error ?? "Failed to reload plugin after rebuild" });
+          }
+          // Re-register route handlers for the reloaded plugin
+          for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+            if (route.pluginId === name) {
+              pluginRouteHandlers.set(`${route.method.toUpperCase()}:${route.path}`, route.handler);
+            }
+          }
+        }
+      }
+
+      log.info(`plugin rebuilt and reloaded: ${name}`);
+      return reply.send({ ok: true, name });
+    });
+
+    // POST /api/marketplace/rebuild-all — rebuild all installed plugins (esbuild only, no re-download)
+    fastify.post("/api/marketplace/rebuild-all", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
+      }
+
+      const result = await mp.rebuildAll();
+
+      // Hot-reload all successfully rebuilt plugins
+      const reloaded: string[] = [];
+      const reloadErrors: string[] = [];
+      for (const name of result.rebuilt) {
+        if (deps.onPluginDeactivating) {
+          try { await deps.onPluginDeactivating(name); } catch { /* deactivation is best-effort */ }
+          for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+            if (route.pluginId === name) {
+              pluginRouteHandlers.delete(`${route.method.toUpperCase()}:${route.path}`);
+            }
+          }
+        }
+        if (deps.onPluginUpdated) {
+          const installed = mp.getInstalled().find(i => i.name === name);
+          if (installed) {
+            try {
+              const hlResult = await deps.onPluginUpdated(installed.installPath);
+              if (hlResult.loaded) {
+                for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+                  if (route.pluginId === name) {
+                    pluginRouteHandlers.set(`${route.method.toUpperCase()}:${route.path}`, route.handler);
+                  }
+                }
+                reloaded.push(name);
+              } else {
+                reloadErrors.push(`${name}: ${hlResult.error ?? "unknown error"}`);
+              }
+            } catch (err) {
+              reloadErrors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+        }
+      }
+
+      log.info(`rebuild-all: rebuilt=${result.rebuilt.length}, failed=${result.failed.length}, reloaded=${reloaded.length}`);
+      return reply.send({
+        ok: true,
+        rebuilt: result.rebuilt,
+        failed: result.failed,
+        reloaded,
+        reloadErrors,
       });
     });
   }

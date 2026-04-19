@@ -9,8 +9,8 @@ export { MAppMarketplaceManager } from "./mapp-marketplace-manager.js";
 export type { MAppMarketplaceManagerOptions } from "./mapp-marketplace-manager.js";
 export { fetchCatalog, parseSourceRef } from "./catalog-fetcher.js";
 export type { FetchCatalogResult } from "./catalog-fetcher.js";
-export { installPlugin, uninstallPlugin, getInstallPath } from "./installer.js";
-export type { InstallContext } from "./installer.js";
+export { installPlugin, uninstallPlugin, getInstallPath, rebuildPlugin, rebuildAll } from "./installer.js";
+export type { InstallContext, RebuildAllResult } from "./installer.js";
 export type {
   MarketplaceItemType,
   MarketplacePluginEntry,

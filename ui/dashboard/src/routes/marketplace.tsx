@@ -36,6 +36,8 @@ import {
   fetchPluginMarketplaceUpdates,
   fetchPluginDetails,
   fetchUninstallPreview,
+  rebuildPlugin,
+  rebuildAllPlugins,
 } from "../api.js";
 import type { CleanupResource, CatalogDiff } from "../api.js";
 import type {
@@ -677,6 +679,9 @@ function InstalledTab() {
   const [uninstalling, setUninstalling] = useState<string | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
   const [pulling, setPulling] = useState(false);
+  const [rebuilding, setRebuilding] = useState<string | null>(null);
+  const [rebuildingAll, setRebuildingAll] = useState(false);
+  const [rebuildResult, setRebuildResult] = useState<{ rebuilt: string[]; failed: string[] } | null>(null);
   const [selectedPlugin, setSelectedPlugin] = useState<PluginMarketplaceCatalogItem | null>(null);
 
   // Cleanup preview state
@@ -787,12 +792,41 @@ function InstalledTab() {
 
   return (
     <div className="space-y-4">
-      <Card className="p-4 flex items-center justify-between">
+      {rebuildResult && (
+        <div className={`rounded-lg px-4 py-3 text-sm border ${rebuildResult.failed.length > 0 ? "bg-red/10 border-red/30 text-red" : "bg-green/10 border-green/30 text-green"}`}>
+          {rebuildResult.rebuilt.length > 0 && <span>Rebuilt: {rebuildResult.rebuilt.join(", ")}. </span>}
+          {rebuildResult.failed.length > 0 && <span>Failed: {rebuildResult.failed.join(", ")}.</span>}
+          <button className="ml-2 underline text-[11px] cursor-pointer bg-transparent border-none" onClick={() => setRebuildResult(null)}>dismiss</button>
+        </div>
+      )}
+
+      <Card className="p-4 flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
           {updates.length > 0
             ? `${updates.length} update${updates.length > 1 ? "s" : ""} available`
             : "All plugins up to date"}
         </p>
+        <div className="flex gap-2 shrink-0">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={rebuildingAll}
+          onClick={async () => {
+            setRebuildingAll(true);
+            setRebuildResult(null);
+            try {
+              const result = await rebuildAllPlugins();
+              setRebuildResult(result);
+            } catch {
+              setRebuildResult({ rebuilt: [], failed: ["Rebuild request failed"] });
+            } finally {
+              setRebuildingAll(false);
+              void load();
+            }
+          }}
+        >
+          {rebuildingAll ? "Rebuilding..." : "Rebuild All"}
+        </Button>
         <Button
           size="sm"
           variant={updates.length > 0 ? "default" : "outline"}
@@ -839,6 +873,7 @@ function InstalledTab() {
         >
           {pulling ? "Updating..." : updates.length > 0 ? "Update All" : "Check for Updates"}
         </Button>
+        </div>
       </Card>
 
       {/* Filters */}
@@ -949,6 +984,23 @@ function InstalledTab() {
                       {updating === item.name ? "Updating..." : "Update"}
                     </Button>
                   )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={rebuilding === item.name}
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setRebuilding(item.name);
+                      try {
+                        await rebuildPlugin(item.name);
+                        toast({ title: `Rebuilt ${item.name}`, variant: "success" });
+                      } catch (err) {
+                        toast({ title: `Rebuild failed`, description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
+                      } finally { setRebuilding(null); }
+                    }}
+                  >
+                    {rebuilding === item.name ? "Rebuilding..." : "Rebuild"}
+                  </Button>
                   <Button
                     size="sm"
                     variant="destructive"

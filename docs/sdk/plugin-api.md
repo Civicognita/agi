@@ -25,6 +25,40 @@ When `activate(api)` is called, the `api` parameter is an `AionimaPluginAPI` ins
 | `registerChannel(plugin)` | `AionimaChannelPlugin` | Register a messaging channel adapter |
 | `registerProvider(def)` | `LLMProviderDefinition` | Register an LLM provider (Anthropic, OpenAI, Ollama, etc.) |
 
+#### `registerProvider()` Extended API
+
+Provider definitions support two optional extension methods that enhance the Settings UI:
+
+**`.fields()`** — declares the configuration fields the provider requires (API key, base URL, model selection, etc.). The dashboard renders these fields in the Settings > Providers card:
+
+```typescript
+api.registerProvider(
+  defineProvider("my-provider", "My Provider")
+    .fields([
+      { id: "apiKey", label: "API Key", type: "password", placeholder: "sk-..." },
+      { id: "baseUrl", label: "Base URL", type: "text", placeholder: "https://api.example.com" },
+      { id: "model", label: "Default Model", type: "select",
+        options: [{ value: "my-model-v1", label: "My Model v1" }] },
+    ])
+    .checkBalance(async (config) => {
+      // Return balance info or throw on failure
+      return { balance: "$5.00", currency: "USD" };
+    })
+    .build()
+);
+```
+
+**`.checkBalance(handler)`** — registers an async balance check handler. When the user clicks "Check Balance" in the provider settings card, this handler is invoked with the provider's current config values. Return `{ balance: string; currency?: string }` or throw an error to display in the UI.
+
+Field type reference:
+
+| `type` | Description |
+|--------|-------------|
+| `password` | Masked text input, never logged |
+| `text` | Plain text input |
+| `number` | Numeric input with optional `min`, `max`, `step` |
+| `select` | Dropdown — provide `options: [{ value, label }]` |
+
 ### Dashboard UI
 
 | Method | Parameter Type | Description |
@@ -149,3 +183,44 @@ import type {
 ```
 
 The SDK re-exports types from `@agi/plugins`, `@agi/channel-sdk`, and `@agi/gateway-core` so that plugin authors only need a single import source.
+
+---
+
+## Plugin Rebuild
+
+The gateway can rebuild installed plugins from source without uninstalling them. This is useful when the AGI SDK version changes or when a plugin's TypeScript source is updated outside of a full reinstall.
+
+**Dashboard:** Go to Marketplace > Installed. Each installed plugin card has a **Rebuild** button. The tab header also shows a **Rebuild All** button that rebuilds every installed plugin in sequence.
+
+**API:**
+- `POST /api/marketplace/rebuild/:name` — rebuild a single plugin by name
+- `POST /api/marketplace/rebuild-all` — rebuild all installed plugins; returns `{ rebuilt: string[], failed: string[] }`
+
+**Automatic rebuild on upgrade:** When `upgrade.sh` detects that the `@agi/sdk` version has changed, it writes a `.plugins-need-rebuild` sentinel file to the deploy directory. The gateway reads this file on boot and triggers a rebuild pass for all installed plugins before activating them.
+
+---
+
+## Hot-Reload Behavior
+
+All gateway configuration is hot-swappable — read from disk at use time, never cached at boot. This applies to:
+
+- `gateway.json` — all runtime config keys
+- Plugin enable/disable state — toggling in the dashboard takes effect immediately without restarting the gateway
+- Provider credentials — updated API keys are picked up on the next agent invocation
+- Channel config — channel adapter settings are re-read on the next message cycle
+
+Plugins themselves are **not** hot-reloaded automatically. A full plugin reload (deactivate + re-activate) requires a gateway restart or an explicit rebuild via the dashboard. The `config:changed` hook fires on every config write and can be used by plugins to react to setting changes without a restart.
+
+---
+
+## Import Namespace
+
+All SDK imports use the `@agi/*` namespace:
+
+```typescript
+import { createPlugin } from "@agi/sdk";
+import type { AionimaPlugin, AionimaPluginAPI } from "@agi/sdk";
+import { testActivate } from "@agi/sdk/testing";
+```
+
+> **Deprecation notice:** The `@aionima/*` import namespace (`@aionima/sdk`, `@aionima/plugins`, `@aionima/channel-sdk`) is deprecated. Existing plugins using these imports are automatically migrated during the next gateway upgrade. New plugins must use `@agi/*`.

@@ -9,7 +9,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MarketplaceStore } from "./store.js";
 import { fetchCatalog, parseSourceRef } from "./catalog-fetcher.js";
-import { installPlugin, uninstallPlugin, computePluginIntegrityHash } from "./installer.js";
+import { installPlugin, uninstallPlugin, computePluginIntegrityHash, rebuildPlugin as rebuildPluginInstall } from "./installer.js";
+import type { RebuildAllResult } from "./installer.js";
 import type {
   MarketplaceSource,
   MarketplacePluginEntry,
@@ -428,6 +429,35 @@ export class MarketplaceManager {
     }
 
     return { updates, newInMarketplace };
+  }
+
+  /**
+   * Rebuild a single installed plugin by re-running the esbuild step only.
+   * Does not re-download or re-run npm install. Throws if not installed.
+   */
+  async rebuildPlugin(name: string): Promise<void> {
+    const installed = this.store.getInstalled().find(i => i.name === name);
+    if (!installed) throw new Error(`Plugin "${name}" is not installed`);
+    await rebuildPluginInstall(installed.installPath);
+  }
+
+  /**
+   * Rebuild all installed plugins by re-running the esbuild step only.
+   * Returns lists of rebuilt and failed plugin names.
+   */
+  async rebuildAll(): Promise<RebuildAllResult> {
+    const installed = this.store.getInstalled();
+    const rebuilt: string[] = [];
+    const failed: string[] = [];
+    for (const item of installed) {
+      try {
+        await rebuildPluginInstall(item.installPath);
+        rebuilt.push(item.name);
+      } catch {
+        failed.push(item.name);
+      }
+    }
+    return { rebuilt, failed };
   }
 
   close(): void {

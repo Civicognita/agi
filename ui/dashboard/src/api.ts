@@ -2131,6 +2131,16 @@ export async function pullPluginMarketplace(): Promise<{ ok: boolean; catalogSyn
   return data;
 }
 
+export async function rebuildPlugin(name: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/marketplace/rebuild/${encodeURIComponent(name)}`, { method: "POST" });
+  return res.json() as Promise<{ ok: boolean; error?: string }>;
+}
+
+export async function rebuildAllPlugins(): Promise<{ rebuilt: string[]; failed: string[] }> {
+  const res = await fetch("/api/marketplace/rebuild-all", { method: "POST" });
+  return res.json() as Promise<{ rebuilt: string[]; failed: string[] }>;
+}
+
 export async function fetchPluginDetails(id: string): Promise<import("./types.js").PluginDetails> {
   const res = await fetch(`/api/plugins/${encodeURIComponent(id)}/details`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);

@@ -113,6 +113,27 @@ if [ -d "/opt/aionima" ] && [ ! -d "/opt/agi" ]; then
   emit "migrate" "done" "Platform rename complete"
 fi
 
+# ---------------------------------------------------------------------------
+# 0b. Plugin import namespace migration (@aionima/* → @agi/*)
+# ---------------------------------------------------------------------------
+# One-time migration: update any installed plugin source files that still
+# import from the old @aionima/* namespace to the renamed @agi/* namespace.
+PLUGIN_IMPORT_SENTINEL="$HOME/.agi/.plugin-import-migrated"
+if [ ! -f "$PLUGIN_IMPORT_SENTINEL" ]; then
+  emit "migrate" "start" "Migrating plugin imports to @agi/* namespace"
+  _migrated=0
+  for plugin_dir in ~/.agi/plugins/cache/*/src; do
+    if [ -d "$plugin_dir" ]; then
+      while IFS= read -r f; do
+        sed -i 's/@aionima\/sdk/@agi\/sdk/g; s/@aionima\/plugins/@agi\/plugins/g; s/@aionima\/channel-sdk/@agi\/channel-sdk/g; s/@aionima\/config/@agi\/config/g; s/@aionima\/gateway-core/@agi\/gateway-core/g' "$f"
+        _migrated=$((_migrated + 1))
+      done < <(find "$plugin_dir" -name "*.ts" -exec grep -l "@aionima/" {} \; 2>/dev/null)
+    fi
+  done
+  touch "$PLUGIN_IMPORT_SENTINEL"
+  emit "migrate" "done" "Plugin imports migrated ($_migrated files updated)"
+fi
+
 # Update DEPLOY_DIR after potential migration
 DEPLOY_DIR="${AIONIMA_DEPLOY_DIR:-/opt/agi}"
 
@@ -368,6 +389,25 @@ fi
 
 # Plugin and MApp updates are handled by the gateway via GitHub — not during upgrade.
 # The gateway syncs catalogs and updates on boot and via dashboard API calls.
+
+# ---------------------------------------------------------------------------
+# 7b. SDK version tracking — mark plugins for rebuild when SDK version changes
+# ---------------------------------------------------------------------------
+SDK_VERSION_FILE="$DEPLOY_DIR/.sdk-version"
+CURRENT_SDK_VERSION="$(cd "$DEPLOY_DIR" && node -p "require('./packages/aion-sdk/package.json').version" 2>/dev/null || echo "0.0.0")"
+PREVIOUS_SDK_VERSION=""
+[ -f "$SDK_VERSION_FILE" ] && PREVIOUS_SDK_VERSION="$(cat "$SDK_VERSION_FILE")"
+
+if [ "$CURRENT_SDK_VERSION" != "$PREVIOUS_SDK_VERSION" ]; then
+  emit "plugins-rebuild" "start" "SDK version changed ($PREVIOUS_SDK_VERSION → $CURRENT_SDK_VERSION)"
+  # Mark that plugins need rebuilding — the gateway will do it on next boot.
+  # The sentinel is removed by the gateway after it completes the rebuild pass.
+  echo "$CURRENT_SDK_VERSION" > "$SDK_VERSION_FILE"
+  touch "$DEPLOY_DIR/.plugins-need-rebuild"
+  emit "plugins-rebuild" "done" "Plugins marked for rebuild on next boot"
+else
+  emit "plugins-rebuild" "skip" "SDK version unchanged ($CURRENT_SDK_VERSION)"
+fi
 
 # ---------------------------------------------------------------------------
 # 7e. Migrate project configs to current schema

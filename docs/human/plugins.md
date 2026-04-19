@@ -385,3 +385,28 @@ export default createPlugin({
 > **Note:** Always import from `@agi/sdk`, not `@agi/plugins`. The SDK re-exports all necessary types and provides the `createPlugin()` factory. See the [SDK documentation](../sdk/overview.md) for full details.
 
 To publish: create the plugin in the marketplace repo under `plugins/plugin-example/`, add a `marketplace.json` entry, and push.
+
+---
+
+## Rebuilding Plugins
+
+Installed plugins can be rebuilt from source without uninstalling and reinstalling. This is useful after a gateway upgrade when the `@agi/sdk` version changes, or when a plugin's source is updated outside of a standard marketplace update.
+
+**Dashboard — per plugin:** Go to Marketplace > Installed. Each installed plugin card has a **Rebuild** button. Clicking it recompiles the plugin's TypeScript source against the current SDK.
+
+**Dashboard — all plugins:** The "Rebuild All" button in the Installed tab header rebuilds every installed plugin in sequence and shows a summary of which succeeded and which failed.
+
+**Automatic on upgrade:** When `upgrade.sh` detects the `@agi/sdk` version has changed, it writes a `.plugins-need-rebuild` marker file. The gateway reads this on next boot and triggers a rebuild pass for all installed plugins before activating them.
+
+---
+
+## Hot-Reload Behavior
+
+Gateway configuration is hot-swappable — all config is read from disk at use time, never cached at startup. No gateway restart is needed for:
+
+- Config value changes (`gateway.json`)
+- Plugin enable/disable toggling in the dashboard
+- Provider API key updates
+- Channel config changes
+
+Plugin activation state (the result of `activate()`) is **not** hot-reloaded. Plugins register their routes, tools, and services at activation time. Changing plugin code requires a rebuild followed by a gateway restart to take effect. The `config:changed` hook allows plugins to react to config writes at runtime without a restart.

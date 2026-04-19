@@ -357,6 +357,12 @@ await build({
     "@agi/channel-sdk": ${JSON.stringify(resolve(agiDir, "packages/channel-sdk/src/index.ts"))},
     "@agi/gateway-core": ${JSON.stringify(resolve(agiDir, "packages/gateway-core/src/index.ts"))},
     "@agi/config": ${JSON.stringify(resolve(agiDir, "config/src/index.ts"))},
+    // Backward compat for marketplace plugins that still import @aionima/*
+    "@aionima/sdk": ${JSON.stringify(resolve(agiDir, "packages/aion-sdk/src/index.ts"))},
+    "@aionima/plugins": ${JSON.stringify(resolve(agiDir, "packages/plugins/src/index.ts"))},
+    "@aionima/channel-sdk": ${JSON.stringify(resolve(agiDir, "packages/channel-sdk/src/index.ts"))},
+    "@aionima/gateway-core": ${JSON.stringify(resolve(agiDir, "packages/gateway-core/src/index.ts"))},
+    "@aionima/config": ${JSON.stringify(resolve(agiDir, "config/src/index.ts"))},
   },
   logLevel: "warning",
 });
@@ -375,6 +381,43 @@ await build({
   } finally {
     try { execSync(`sudo rm -f ${shellEscape(buildScript)}`, { stdio: "pipe" }); } catch { /* ignore */ }
   }
+}
+
+/**
+ * Rebuild a single installed plugin by re-running the esbuild step only.
+ * Does not re-download or re-run npm install.
+ */
+export async function rebuildPlugin(installPath: string): Promise<void> {
+  if (!existsSync(installPath)) {
+    throw new Error(`Plugin directory not found: ${installPath}`);
+  }
+  await buildPlugin(installPath);
+}
+
+export interface RebuildAllResult {
+  rebuilt: string[];
+  failed: string[];
+}
+
+/**
+ * Rebuild all plugins found in cacheDir by re-running the esbuild step.
+ * Returns lists of rebuilt and failed plugin directory names.
+ */
+export async function rebuildAll(cacheDir: string): Promise<RebuildAllResult> {
+  const installed = readdirSync(cacheDir).filter(d =>
+    existsSync(join(cacheDir, d, "package.json"))
+  );
+  const rebuilt: string[] = [];
+  const failed: string[] = [];
+  for (const name of installed) {
+    try {
+      await buildPlugin(join(cacheDir, name));
+      rebuilt.push(name);
+    } catch {
+      failed.push(name);
+    }
+  }
+  return { rebuilt, failed };
 }
 
 /** Uninstall a plugin by removing its install path. */
