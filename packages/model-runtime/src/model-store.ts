@@ -98,11 +98,6 @@ export class ModelStore {
 
   async initialize(): Promise<void> {
     await this.pool.query(SCHEMA_SQL);
-    // Reset stale "running"/"starting" statuses — containers don't survive gateway restarts.
-    // The container manager re-tracks them when models are actually started.
-    await this.pool.query(
-      `UPDATE agi.models SET status = 'ready', container_id = NULL, container_port = NULL, container_name = NULL WHERE status IN ('running', 'starting', 'stopping')`,
-    );
   }
 
   async close(): Promise<void> {

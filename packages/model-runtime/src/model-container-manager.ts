@@ -130,7 +130,7 @@ export class ModelContainerManager {
 
     const port = this.allocatePort();
 
-    const containerName = `aionima-model-${this.sanitizeContainerName(model.id)}`;
+    const containerName = `agi-model-${this.sanitizeContainerName(model.id)}`;
 
     // Remove any stale container with the same name before starting
     try {
@@ -187,9 +187,9 @@ export class ModelContainerManager {
       "-v", `${containerConfig.modelHostPath}:${modelContainerPath}:ro`,
       ...(containerConfig.memoryLimit ? ["--memory", containerConfig.memoryLimit] : []),
       "--restart", "on-failure:3",
-      "--label", "aionima.model=true",
-      "--label", `aionima.model.id=${model.id}`,
-      "--label", `aionima.model.runtime=${containerConfig.runtimeType}`,
+      "--label", "agi.model=true",
+      "--label", `agi.model.id=${model.id}`,
+      "--label", `agi.model.runtime=${containerConfig.runtimeType}`,
       ...envArgs,
       ...gpuFlags,
       image,
@@ -447,22 +447,61 @@ export class ModelContainerManager {
   }
 
   private loadState(): void {
-    if (!existsSync(this.config.statePath)) return;
-
-    let data: PersistedState;
-    try {
-      data = JSON.parse(readFileSync(this.config.statePath, "utf8")) as PersistedState;
-    } catch {
-      return;
+    // First: restore from persisted file (if any)
+    if (existsSync(this.config.statePath)) {
+      try {
+        const data = JSON.parse(readFileSync(this.config.statePath, "utf8")) as PersistedState;
+        for (const state of data.containers) {
+          const { running } = this.inspectContainer(state.containerName);
+          if (!running) continue;
+          this.activeContainers.set(state.modelId, { ...state, status: "running" });
+          this.allocatedPorts.add(state.port);
+        }
+      } catch { /* corrupt file — fall through to discovery */ }
     }
 
-    for (const state of data.containers) {
-      // Verify the container is still alive before restoring state
-      const { running } = this.inspectContainer(state.containerName);
-      if (!running) continue;
+    // Second: discover any running HF model containers not in the persisted file.
+    // This catches containers started by a previous gateway session whose state
+    // file was cleared or lost.
+    try {
+      const output = execFileSync("podman", [
+        "ps", "--format", "{{.Names}}\t{{.Ports}}\t{{.ID}}",
+      ], { encoding: "utf-8", stdio: "pipe", timeout: 10_000 }).trim();
 
-      this.activeContainers.set(state.modelId, { ...state, status: "running" });
-      this.allocatedPorts.add(state.port);
+      for (const line of output.split("\n")) {
+        if (!line) continue;
+        const [name, ports, containerId] = line.split("\t");
+        if (!name?.startsWith("agi-model-")) continue;
+
+        const modelPart = name.slice("agi-model-".length);
+        const modelId = modelPart.replace(/--/g, "/");
+
+        if (this.activeContainers.has(modelId)) continue;
+
+        // Extract port from "127.0.0.1:6000->8080/tcp" format
+        let port = 0;
+        const portMatch = /:(\d+)->\d+\/tcp/.exec(ports ?? "");
+        if (portMatch?.[1]) port = Number(portMatch[1]);
+
+        if (port > 0) {
+          this.activeContainers.set(modelId, {
+            modelId,
+            containerId: containerId ?? "",
+            containerName: name ?? "",
+            port,
+            runtimeType: "general",
+            startedAt: new Date().toISOString(),
+            status: "running",
+            healthCheckPassed: true,
+          });
+          this.allocatedPorts.add(port);
+        }
+      }
+    } catch { /* podman unavailable — skip discovery */ }
+
+    // Re-persist so the discovered containers are saved
+    if (this.activeContainers.size > 0) {
+      this.persistState();
     }
   }
 

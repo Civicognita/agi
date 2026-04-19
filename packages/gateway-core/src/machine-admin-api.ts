@@ -745,7 +745,7 @@ export function registerMachineAdminRoutes(
       // so a synchronous call can never return a response.
       void reply.send({ ok: true });
       setTimeout(() => {
-        const child = execFile("sudo", ["systemctl", "restart", "aionima"], { timeout: 15_000 });
+        const child = execFile("sudo", ["systemctl", "restart", "agi"], { timeout: 15_000 });
         child.unref();
       }, 200);
       return reply;
