@@ -6,9 +6,10 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { Chart } from "@particle-academy/react-fancy";
 import { Card } from "@/components/ui/card";
 import { SectionHeading, FieldGroup } from "./SettingsShared.js";
-import { fetchHfProviders, fetchRegisteredProviders } from "../../api.js";
+import { fetchHfProviders, fetchRegisteredProviders, fetchProviderBalances, fetchBalanceHistory } from "../../api.js";
 import type { HfProviderOption, RegisteredProvider } from "../../api.js";
 import type { AionimaConfig } from "../../types.js";
 
@@ -66,6 +67,8 @@ export function ProvidersSettings({ config, update }: Props) {
   const routerEscalation = ((config.agent as Record<string, unknown> | undefined)?.router as Record<string, unknown> | undefined)?.escalation as boolean ?? false;
 
   const [workerError, setWorkerError] = useState<string | null>(null);
+  const [balanceHistories, setBalanceHistories] = useState<Record<string, number[]>>({});
+  const [currentBalances, setCurrentBalances] = useState<Record<string, number | null>>({});
 
   // Fetch running HF text-generation models to show in provider dropdowns
   useEffect(() => {
@@ -80,6 +83,27 @@ export function ProvidersSettings({ config, update }: Props) {
   // Fetch registered providers from plugin registry
   useEffect(() => {
     fetchRegisteredProviders().then(setRegisteredProviders).catch(() => {});
+  }, []);
+
+  // Fetch provider balances and balance history for sparklines
+  useEffect(() => {
+    fetchProviderBalances().then(balances => {
+      const current: Record<string, number | null> = {};
+      for (const b of balances) current[b.providerId] = b.balance;
+      setCurrentBalances(current);
+
+      // Fetch history for each provider that has balance data
+      Promise.all(
+        balances.filter(b => b.balance !== null).map(async b => {
+          const history = await fetchBalanceHistory(b.providerId);
+          return { id: b.providerId, data: history.map(h => h.balance) };
+        })
+      ).then(results => {
+        const histories: Record<string, number[]> = {};
+        for (const r of results) histories[r.id] = r.data;
+        setBalanceHistories(histories);
+      }).catch(() => {});
+    }).catch(() => {});
   }, []);
 
   // Build combined provider list: built-in + running HF models
@@ -332,6 +356,21 @@ export function ProvidersSettings({ config, update }: Props) {
                   </span>
                 )}
               </div>
+              {currentBalances[provider.id] !== null && currentBalances[provider.id] !== undefined && (
+                <div className="flex items-center gap-2 mt-1">
+                  {(balanceHistories[provider.id]?.length ?? 0) > 1 && (
+                    <Chart.Sparkline
+                      data={balanceHistories[provider.id]!}
+                      width={80}
+                      height={20}
+                      color={currentBalances[provider.id]! < ((provider.currentValues.balanceAlertThreshold as number | undefined) ?? 0) ? "var(--color-red)" : "var(--color-green)"}
+                    />
+                  )}
+                  <span className="text-[11px] font-mono text-muted-foreground">
+                    ${currentBalances[provider.id]?.toFixed(2)}
+                  </span>
+                </div>
+              )}
             </div>
           ))}
           {registeredProviders.length === 0 && (

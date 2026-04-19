@@ -50,4 +50,11 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageApiDeps): v
       requestCount: summary.invocationCount,
     };
   });
+
+  app.get("/api/usage/balance-history", async (req) => {
+    const provider = (req.query as Record<string, string>).provider ?? "";
+    const days = Number((req.query as Record<string, string>).days ?? "7");
+    if (!provider) return { error: "provider required" };
+    return deps.usageStore.getBalanceHistory(provider, days);
+  });
 }

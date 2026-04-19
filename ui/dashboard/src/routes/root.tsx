@@ -30,7 +30,8 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
-import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard, fetchProviderBalances } from "@/api.js";
+import { Chart } from "@particle-academy/react-fancy";
+import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard, fetchProviderBalances, fetchBalanceHistory } from "@/api.js";
 import type { ProviderBalance } from "@/api.js";
 import { LoginPage } from "@/components/LoginPage.js";
 import type { ActivityEntry, DashboardEvent, Notification, ProjectActivity, TimeBucket, UpdateCheck } from "@/types.js";
@@ -153,6 +154,7 @@ export default function RootLayout() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
   const [providerBalances, setProviderBalances] = useState<ProviderBalance[]>([]);
+  const [balanceHistories, setBalanceHistories] = useState<Record<string, number[]>>({});
   const [upgradePhase, setUpgradePhase] = useState<string | null>(null);
   const [upgradeLogs, setUpgradeLogs] = useState<{ step: string; status: string; message: string; timestamp: string }[]>([]);
   const [upgradeDropdown, setUpgradeDropdown] = useState(false);
@@ -232,6 +234,22 @@ export default function RootLayout() {
   useEffect(() => {
     fetchProviderBalances().then(setProviderBalances).catch(() => {});
   }, []);
+
+  // Fetch balance histories whenever providerBalances change
+  useEffect(() => {
+    const withBalance = providerBalances.filter(b => b.balance !== null);
+    if (withBalance.length === 0) return;
+    Promise.all(
+      withBalance.map(async b => {
+        const h = await fetchBalanceHistory(b.providerId);
+        return { id: b.providerId, data: h.map(x => x.balance) };
+      })
+    ).then(results => {
+      const h: Record<string, number[]> = {};
+      for (const r of results) h[r.id] = r.data;
+      setBalanceHistories(h);
+    }).catch(() => {});
+  }, [providerBalances]);
 
   // Recover upgrade log after page reload (e.g. post-restart).
   // If a recent upgrade happened, restore logs so the user sees the full history.
@@ -564,19 +582,44 @@ export default function RootLayout() {
             {!isMobile && contributingEnabled && (
               <Badge className="text-xs bg-indigo-600 text-white">Contributing</Badge>
             )}
-            {/* Provider balance alerts — only shown when a provider is below its threshold */}
-            {providerBalances.filter((b) => b.belowThreshold).length > 0 && (
-              <div className="hidden sm:flex items-center gap-2">
-                {providerBalances.filter((b) => b.belowThreshold).map((b) => (
-                  <span
-                    key={b.providerId}
-                    className={`text-[10px] font-mono ${b.balance !== null && b.balance <= 0 ? "text-red-500" : "text-yellow-500"}`}
-                    title={`${b.providerName} balance: $${b.balance?.toFixed(2) ?? "?"}, threshold: $${b.threshold?.toFixed(2) ?? "?"}`}
-                  >
-                    {b.providerName}: ${b.balance?.toFixed(2) ?? "?"} left
-                  </span>
-                ))}
-              </div>
+            {/* Multi-provider balance popover — shown when any provider has balance data */}
+            {providerBalances.some(b => b.balance !== null) && (
+              <Popover placement="bottom-end" offset={8}>
+                <PopoverTrigger>
+                  <button type="button" className="hidden sm:flex items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors">
+                    <span className="font-mono">
+                      {(() => {
+                        const warning = providerBalances.find(b => b.belowThreshold);
+                        if (warning) return <span className="text-yellow-500">${warning.balance?.toFixed(2)}</span>;
+                        return "Balances";
+                      })()}
+                    </span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[300px] p-4 bg-card border border-border rounded-xl shadow-lg z-[200]">
+                  <div className="text-[12px] font-semibold text-foreground mb-3">Provider Balances</div>
+                  {providerBalances.filter(b => b.balance !== null).map(b => (
+                    <div key={b.providerId} className="flex items-center gap-3 py-2 border-b border-border last:border-b-0">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${b.belowThreshold ? "bg-red-500" : "bg-green-500"}`} />
+                      <span className="text-[11px] flex-1 text-foreground">{b.providerName}</span>
+                      {(balanceHistories[b.providerId]?.length ?? 0) > 1 && (
+                        <Chart.Sparkline
+                          data={balanceHistories[b.providerId]!}
+                          width={60}
+                          height={18}
+                          color={b.belowThreshold ? "var(--color-red)" : "var(--color-green)"}
+                        />
+                      )}
+                      <span className={`text-[11px] font-mono shrink-0 ${b.belowThreshold ? "text-red-500" : "text-foreground"}`}>
+                        ${b.balance?.toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                  {providerBalances.filter(b => b.balance !== null).length === 0 && (
+                    <div className="text-[11px] text-muted-foreground">No balance data available</div>
+                  )}
+                </PopoverContent>
+              </Popover>
             )}
             {/* Active downloads indicator */}
             <ActiveDownloads />

@@ -119,6 +119,32 @@ export class UsageStore {
     try {
       db.exec(`ALTER TABLE usage_log ADD COLUMN original_model TEXT`);
     } catch { /* Column already exists */ }
+
+    // Balance history log — one row per post-completion balance check.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS provider_balance_log (
+        id TEXT NOT NULL PRIMARY KEY,
+        provider TEXT NOT NULL,
+        balance_usd REAL NOT NULL,
+        recorded_at TEXT NOT NULL
+      )
+    `);
+  }
+
+  recordBalance(provider: string, balanceUsd: number): void {
+    const id = ulid();
+    const now = new Date().toISOString();
+    this.db.prepare(
+      "INSERT INTO provider_balance_log (id, provider, balance_usd, recorded_at) VALUES (?, ?, ?, ?)"
+    ).run(id, provider, balanceUsd, now);
+  }
+
+  getBalanceHistory(provider: string, days = 7): Array<{ balance: number; recordedAt: string }> {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const rows = this.db.prepare(
+      "SELECT balance_usd as balance, recorded_at as recordedAt FROM provider_balance_log WHERE provider = ? AND recorded_at >= ? ORDER BY recorded_at"
+    ).all(cutoff, provider) as Array<{ balance: number; recordedAt: string }>;
+    return rows;
   }
 
   record(params: RecordUsageParams): UsageRecord {

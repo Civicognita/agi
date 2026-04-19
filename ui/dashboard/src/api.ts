@@ -2969,3 +2969,9 @@ export async function fetchProviderBalances(): Promise<ProviderBalance[]> {
   if (!res.ok) return [];
   return res.json() as Promise<ProviderBalance[]>;
 }
+
+export async function fetchBalanceHistory(provider: string, days = 7): Promise<Array<{ balance: number; recordedAt: string }>> {
+  const res = await fetch(`/api/usage/balance-history?provider=${encodeURIComponent(provider)}&days=${days}`);
+  if (!res.ok) return [];
+  return res.json() as Promise<Array<{ balance: number; recordedAt: string }>>;
+}

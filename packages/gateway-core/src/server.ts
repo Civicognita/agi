@@ -2755,6 +2755,10 @@ export async function startGatewayServer(
                     if (threshold !== undefined) {
                       try {
                         const balance = await providerDef.checkBalance(providerConfig);
+                        if (balance !== null) {
+                          // Record balance history for sparklines
+                          usageStore.recordBalance(outcome.provider, balance);
+                        }
                         if (balance !== null && balance <= threshold) {
                           dashboardBroadcasterRef?.emitNotification({
                             id: `balance-alert-${Date.now()}`,
