@@ -186,6 +186,7 @@ export interface RuntimeStateDeps {
     getServices(): { id: string; name: string; description: string; containerImage: string; defaultPort: number }[];
     getPluginProvides(pluginId: string): string[];
     getAllPluginProvides(): Map<string, string[]>;
+    getProviders(): { pluginId: string; provider: { id: string; name: string; description?: string; requiresApiKey: boolean; fields?: { id: string; label: string; type: string; placeholder?: string; description?: string; options?: { value: string; label: string }[]; min?: number; max?: number; step?: number }[]; checkBalance?: (config: Record<string, unknown>) => Promise<number | null> } }[];
   };
   /** All discovered plugins (including disabled ones) — for showing full list in GET /api/plugins. */
   discoveredPlugins?: {
@@ -3150,6 +3151,96 @@ export async function createGatewayRuntimeState(
       .filter((p) => allowed.has(p.pluginId))
       .map((p) => ({ ...p.page, pluginId: p.pluginId }));
     return reply.send(pages);
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /api/providers — registered LLM providers with their declared fields
+  // -------------------------------------------------------------------------
+
+  fastify.get("/api/providers", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Providers API only allowed from private network" });
+    }
+
+    const registeredProviders = deps.pluginRegistry?.getProviders() ?? [];
+    const configProviders = deps.configPath
+      ? (() => {
+          try {
+            const raw = readFileSync(deps.configPath!, "utf-8");
+            return (JSON.parse(raw) as Record<string, unknown>).providers as Record<string, Record<string, unknown>> | undefined;
+          } catch {
+            return undefined;
+          }
+        })()
+      : undefined;
+
+    const result = registeredProviders.map((r) => {
+      const providerConfig = configProviders?.[r.provider.id] ?? {};
+      const currentValues = Object.fromEntries(
+        Object.entries(providerConfig).map(([k, v]) => {
+          if (k === "apiKey" && typeof v === "string" && v.length > 0) return [k, "••••••••"];
+          return [k, v];
+        })
+      );
+      return {
+        id: r.provider.id,
+        name: r.provider.name,
+        description: r.provider.description,
+        requiresApiKey: r.provider.requiresApiKey ?? false,
+        fields: r.provider.fields ?? [],
+        currentValues,
+      };
+    });
+
+    return reply.send(result);
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /api/providers/balance — live balance check for each registered provider
+  // -------------------------------------------------------------------------
+
+  fastify.get("/api/providers/balance", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Providers API only allowed from private network" });
+    }
+
+    const registeredProviders = deps.pluginRegistry?.getProviders() ?? [];
+    const configProviders = deps.configPath
+      ? (() => {
+          try {
+            const raw = readFileSync(deps.configPath!, "utf-8");
+            return (JSON.parse(raw) as Record<string, unknown>).providers as Record<string, Record<string, unknown>> | undefined;
+          } catch {
+            return undefined;
+          }
+        })()
+      : undefined;
+
+    const balances = await Promise.all(
+      registeredProviders.map(async (r) => {
+        const providerConfig = configProviders?.[r.provider.id] ?? {};
+        let balance: number | null = null;
+        if (r.provider.checkBalance) {
+          try {
+            balance = await r.provider.checkBalance(providerConfig);
+          } catch {
+            // balance check failed — leave as null
+          }
+        }
+        const threshold = (providerConfig as Record<string, unknown>).balanceAlertThreshold as number | undefined;
+        return {
+          providerId: r.provider.id,
+          providerName: r.provider.name,
+          balance,
+          threshold: threshold ?? null,
+          belowThreshold: balance !== null && threshold !== undefined && balance <= threshold,
+        };
+      })
+    );
+
+    return reply.send(balances);
   });
 
   fastify.get("/api/dashboard/plugin-pages", async (request, reply) => {

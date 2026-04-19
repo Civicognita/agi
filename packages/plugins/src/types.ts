@@ -518,6 +518,19 @@ export type LLMProviderFactory = (config: {
   baseUrl?: string;
 }) => unknown; // Returns LLMProvider — avoids circular dep on gateway-core
 
+/** A configurable field declared by a provider plugin for the Providers settings UI. */
+export interface ProviderField {
+  id: string;
+  label: string;
+  type: "password" | "text" | "number" | "select";
+  placeholder?: string;
+  description?: string;
+  options?: Array<{ value: string; label: string }>;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
 export interface LLMProviderDefinition {
   id: string;           // "anthropic", "openai", "ollama", "groq"
   name: string;         // "Anthropic"
@@ -527,7 +540,16 @@ export interface LLMProviderDefinition {
   requiresApiKey: boolean;
   defaultBaseUrl?: string;
   models?: string[];
+  /** Declarative fields shown in the Providers settings UI. */
+  fields?: ProviderField[];
   factory: LLMProviderFactory;
+  /**
+   * Check the provider's remaining credit balance.
+   * Receives the provider's saved config (apiKey, adminApiKey, etc.).
+   * Returns the USD balance remaining, or null if unavailable/unsupported.
+   * Must not throw — wrap in try/catch at the call site.
+   */
+  checkBalance?: (config: Record<string, unknown>) => Promise<number | null>;
 }
 
 // ---------------------------------------------------------------------------

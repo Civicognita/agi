@@ -49,6 +49,7 @@ export type {
   DashboardDomainPageDefinition,
   LLMProviderDefinition,
   LLMProviderFactory,
+  ProviderField,
   CleanupResource,
   CleanupManifest,
   WorkerDomain,

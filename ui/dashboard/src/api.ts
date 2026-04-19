@@ -2068,6 +2068,33 @@ export async function fetchHfProviders(): Promise<HfProviderOption[]> {
   return res.json() as Promise<HfProviderOption[]>;
 }
 
+export interface ProviderField {
+  id: string;
+  label: string;
+  type: "password" | "text" | "number" | "select";
+  placeholder?: string;
+  description?: string;
+  options?: Array<{ value: string; label: string }>;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+export interface RegisteredProvider {
+  id: string;
+  name: string;
+  description?: string;
+  requiresApiKey: boolean;
+  fields: ProviderField[];
+  currentValues: Record<string, unknown>;
+}
+
+export async function fetchRegisteredProviders(): Promise<RegisteredProvider[]> {
+  const res = await fetch("/api/providers");
+  if (!res.ok) return [];
+  return res.json() as Promise<RegisteredProvider[]>;
+}
+
 export interface MarketplaceUpdatesResponse {
   updates: import("./types.js").PluginMarketplaceUpdate[];
   newInMarketplace: { pluginName: string; version: string; description: string }[];
@@ -2920,4 +2947,25 @@ export async function fetchCurrentPeriodUsage(): Promise<{ totalCostUsd: number;
   const res = await fetch("/api/usage/current-period");
   if (!res.ok) return { totalCostUsd: 0, periodStart: "", requestCount: 0 };
   return res.json() as Promise<{ totalCostUsd: number; periodStart: string; requestCount: number }>;
+}
+
+// ---------------------------------------------------------------------------
+// Provider balance
+// ---------------------------------------------------------------------------
+
+export interface ProviderBalance {
+  providerId: string;
+  providerName: string;
+  /** Remaining USD credit at the provider, or null if unavailable. */
+  balance: number | null;
+  /** User-configured alert threshold in USD, or null if not set. */
+  threshold: number | null;
+  /** True when balance is not null and is at or below threshold. */
+  belowThreshold: boolean;
+}
+
+export async function fetchProviderBalances(): Promise<ProviderBalance[]> {
+  const res = await fetch("/api/providers/balance");
+  if (!res.ok) return [];
+  return res.json() as Promise<ProviderBalance[]>;
 }

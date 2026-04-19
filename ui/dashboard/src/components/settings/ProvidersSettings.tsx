@@ -8,8 +8,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { SectionHeading, FieldGroup } from "./SettingsShared.js";
-import { fetchHfProviders } from "../../api.js";
-import type { HfProviderOption } from "../../api.js";
+import { fetchHfProviders, fetchRegisteredProviders } from "../../api.js";
+import type { HfProviderOption, RegisteredProvider } from "../../api.js";
 import type { AionimaConfig } from "../../types.js";
 
 interface WorkerEntry {
@@ -56,6 +56,7 @@ interface Props {
 export function ProvidersSettings({ config, update }: Props) {
   const [workers, setWorkers] = useState<WorkerEntry[]>([]);
   const [hfProviders, setHfProviders] = useState<HfProviderOption[]>([]);
+  const [registeredProviders, setRegisteredProviders] = useState<RegisteredProvider[]>([]);
 
   const agentProvider = (config.agent as Record<string, unknown> | undefined)?.provider as string ?? "anthropic";
   const agentModel = (config.agent as Record<string, unknown> | undefined)?.model as string ?? "claude-sonnet-4-6";
@@ -74,6 +75,11 @@ export function ProvidersSettings({ config, update }: Props) {
       fetchHfProviders().then(setHfProviders).catch(() => {});
     }, 30_000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Fetch registered providers from plugin registry
+  useEffect(() => {
+    fetchRegisteredProviders().then(setRegisteredProviders).catch(() => {});
   }, []);
 
   // Build combined provider list: built-in + running HF models
@@ -194,28 +200,14 @@ export function ProvidersSettings({ config, update }: Props) {
     }));
   }, [update]);
 
-  const setProviderKey = useCallback((provider: string, apiKey: string) => {
-    if (!apiKey) return;
+  const updateProviderField = useCallback((providerId: string, fieldId: string, value: unknown) => {
     update((prev) => ({
       ...prev,
       providers: {
         ...((prev.providers ?? {}) as Record<string, unknown>),
-        [provider]: {
-          ...(((prev.providers ?? {}) as Record<string, Record<string, unknown>>)[provider] ?? {}),
-          apiKey,
-        },
-      },
-    }));
-  }, [update]);
-
-  const setProviderThreshold = useCallback((provider: string, threshold: number | undefined) => {
-    update((prev) => ({
-      ...prev,
-      providers: {
-        ...((prev.providers ?? {}) as Record<string, unknown>),
-        [provider]: {
-          ...(((prev.providers ?? {}) as Record<string, Record<string, unknown>>)[provider] ?? {}),
-          balanceAlertThreshold: threshold,
+        [providerId]: {
+          ...(((prev.providers ?? {}) as Record<string, Record<string, unknown>>)[providerId] ?? {}),
+          [fieldId]: value,
         },
       },
     }));
@@ -280,55 +272,71 @@ export function ProvidersSettings({ config, update }: Props) {
         )}
       </Card>
 
-      {/* Provider API Keys */}
+      {/* Providers — dynamic from plugin registry */}
       <Card className="p-6 gap-0">
-        <SectionHeading>Provider API Keys</SectionHeading>
+        <SectionHeading>Providers</SectionHeading>
         <p className="text-[12px] text-muted-foreground mb-4">
-          The router can use multiple providers. Enter API keys for each provider you want available.
+          Configure API credentials and settings for each provider. Providers are registered by plugins.
         </p>
-        <div className="space-y-2 max-w-lg">
-          {[
-            { id: "anthropic", label: "Anthropic", needsKey: true },
-            { id: "openai", label: "OpenAI", needsKey: true },
-            { id: "ollama", label: "Ollama", needsKey: false },
-          ].map((p) => {
-            const providersCred = (config.providers ?? {}) as Record<string, { apiKey?: string; balanceAlertThreshold?: number }>;
-            const rawKey = providersCred[p.id]?.apiKey;
-            const hasKey = !!rawKey && rawKey !== "••••••••";
-            const isRedacted = rawKey === "••••••••";
-            const threshold = providersCred[p.id]?.balanceAlertThreshold;
-            return (
-              <div key={p.id} className="flex items-center gap-3 py-1.5">
-                <div className="w-20 text-[12px] text-foreground">{p.label}</div>
-                {p.needsKey ? (
-                  <>
-                    <input
-                      type="password"
-                      placeholder={isRedacted || hasKey ? "Key is set — enter new to replace" : "Enter API key"}
-                      className="flex-1 h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono"
-                      value=""
-                      onChange={(e) => setProviderKey(p.id, e.target.value)}
-                    />
-                    <span className={`text-[12px] ${isRedacted || hasKey ? "text-green-500" : "text-muted-foreground"}`}>
-                      {isRedacted || hasKey ? "✓ Set" : "—"}
-                    </span>
-                    <input
-                      type="number"
-                      placeholder="Alert $"
-                      step="1"
-                      min="0"
-                      title="Alert when monthly spend reaches this USD amount"
-                      className="w-24 h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono"
-                      value={threshold ?? ""}
-                      onChange={(e) => setProviderThreshold(p.id, e.target.value ? Number(e.target.value) : undefined)}
-                    />
-                  </>
-                ) : (
-                  <span className="text-[10px] text-muted-foreground italic">No key needed</span>
+        <div className="space-y-4 max-w-xl">
+          {registeredProviders.map((provider) => (
+            <div key={provider.id} className="space-y-2 pb-3 border-b border-border last:border-b-0">
+              <div className="text-[12px] font-semibold text-foreground">{provider.name}</div>
+              <div className="flex flex-wrap gap-2 items-center">
+                {provider.fields.map((field) => {
+                  const currentVal = provider.currentValues[field.id];
+                  const isRedacted = currentVal === "••••••••";
+
+                  if (field.type === "password") {
+                    return (
+                      <input key={field.id}
+                        type="password"
+                        placeholder={isRedacted ? "Key is set — enter new to replace" : (field.placeholder ?? field.label)}
+                        className="flex-1 min-w-[200px] h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono"
+                        value=""
+                        onChange={(e) => { if (e.target.value) updateProviderField(provider.id, field.id, e.target.value); }}
+                      />
+                    );
+                  }
+                  if (field.type === "number") {
+                    return (
+                      <input key={field.id}
+                        type="number"
+                        placeholder={field.placeholder ?? field.label}
+                        min={field.min}
+                        max={field.max}
+                        step={field.step}
+                        title={field.description ?? field.label}
+                        className="w-28 h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono"
+                        value={(currentVal as number | undefined) ?? ""}
+                        onChange={(e) => updateProviderField(provider.id, field.id, e.target.value ? Number(e.target.value) : undefined)}
+                      />
+                    );
+                  }
+                  if (field.type === "text") {
+                    return (
+                      <input key={field.id}
+                        type="text"
+                        placeholder={field.placeholder ?? field.label}
+                        className="flex-1 min-w-[200px] h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono"
+                        value={(currentVal as string | undefined) ?? ""}
+                        onChange={(e) => updateProviderField(provider.id, field.id, e.target.value || undefined)}
+                      />
+                    );
+                  }
+                  return null;
+                })}
+                {provider.requiresApiKey && (
+                  <span className={`text-[12px] ${provider.currentValues.apiKey ? "text-green-500" : "text-muted-foreground"}`}>
+                    {provider.currentValues.apiKey ? "✓ Set" : "—"}
+                  </span>
                 )}
               </div>
-            );
-          })}
+            </div>
+          ))}
+          {registeredProviders.length === 0 && (
+            <div className="text-[12px] text-muted-foreground italic">No providers registered. Install a provider plugin.</div>
+          )}
         </div>
       </Card>
 

@@ -2744,26 +2744,34 @@ export async function startGatewayServer(
                   costUsd: chatUsageRec.costUsd,
                 });
 
-                // Phase 5: post-completion balance threshold check
+                // Phase 5: post-completion provider balance check
+                // Calls the provider plugin's checkBalance() to get actual
+                // remaining credit from the provider's API — NOT local spend.
                 if (chatUsageRec.costUsd > 0 && outcome.provider) {
-                  const providersCred = (config.providers ?? {}) as Record<string, { balanceAlertThreshold?: number } | undefined>;
-                  const threshold = providersCred[outcome.provider]?.balanceAlertThreshold;
-                  if (threshold !== undefined) {
-                    try {
-                      const now = new Date();
-                      const periodDays = Math.ceil((now.getTime() - new Date(now.getFullYear(), now.getMonth(), 1).getTime()) / 86400000) + 1;
-                      const summary = usageStore.getSummary(periodDays);
-                      if (summary.totalCostUsd >= threshold) {
-                        dashboardBroadcasterRef?.emitNotification({
-                          id: `balance-alert-${Date.now()}`,
-                          type: "warning",
-                          title: "Balance Alert",
-                          body: `API spend ($${summary.totalCostUsd.toFixed(2)}) has reached your alert threshold ($${threshold.toFixed(2)})`,
-                          metadata: { provider: outcome.provider, totalCostUsd: summary.totalCostUsd, threshold },
-                          createdAt: new Date().toISOString(),
-                        });
-                      }
-                    } catch { /* threshold check is non-fatal */ }
+                  const providerDef = pluginRegistry.getProvider(outcome.provider);
+                  if (providerDef?.checkBalance) {
+                    const providerConfig = ((config.providers ?? {}) as Record<string, Record<string, unknown>>)[outcome.provider] ?? {};
+                    const threshold = providerConfig.balanceAlertThreshold as number | undefined;
+                    if (threshold !== undefined) {
+                      try {
+                        const balance = await providerDef.checkBalance(providerConfig);
+                        if (balance !== null && balance <= threshold) {
+                          dashboardBroadcasterRef?.emitNotification({
+                            id: `balance-alert-${Date.now()}`,
+                            type: balance <= 0 ? "error" : "warning",
+                            title: `Low balance: ${providerDef.name}`,
+                            body: `Balance is $${balance.toFixed(2)}, threshold is $${threshold.toFixed(2)}`,
+                            metadata: { provider: outcome.provider, balance, threshold },
+                            createdAt: new Date().toISOString(),
+                          });
+                          // Auto-pause the provider when balance hits zero so the
+                          // router falls back to alternatives automatically.
+                          if (balance <= 0 && llmProvider instanceof AgentRouter) {
+                            llmProvider.disableProvider(outcome.provider);
+                          }
+                        }
+                      } catch { /* balance check is non-fatal */ }
+                    }
                   }
                 }
               } catch (usageErr) {

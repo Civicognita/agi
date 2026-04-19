@@ -162,6 +162,25 @@ export class AgentRouter implements LLMProvider {
     message: string;
   }) => void;
 
+  /**
+   * Providers that have been auto-paused due to zero/negative balance or a
+   * billing error. The router skips these and falls back to alternatives.
+   * Cleared by enableProvider() (e.g. when the user re-enables in Settings).
+   */
+  private readonly disabledProviders = new Set<string>();
+
+  /** Mark a provider as unavailable (zero balance or billing error). */
+  disableProvider(providerId: string): void {
+    this.disabledProviders.add(providerId);
+    this.log.warn(`provider ${providerId} auto-paused (zero balance or billing error)`);
+  }
+
+  /** Re-enable a previously disabled provider. */
+  enableProvider(providerId: string): void {
+    this.disabledProviders.delete(providerId);
+    this.log.info(`provider ${providerId} re-enabled`);
+  }
+
   constructor(
     private readonly getConfig: () => AgentRouterConfig,
     private readonly providerFactory: (type: string, config: Partial<LLMProviderConfig>) => LLMProvider,
@@ -436,18 +455,23 @@ export class AgentRouter implements LLMProvider {
       );
     }
 
-    // If the routing table already targets the user's default provider, use it.
-    if (defaultRoute.provider === config.defaultProvider) {
+    // If the routing table already targets the user's default provider, use it
+    // — unless that provider has been auto-paused (zero balance).
+    if (defaultRoute.provider === config.defaultProvider && !this.disabledProviders.has(defaultRoute.provider)) {
       return defaultRoute;
     }
 
-    // If the routing table's provider has credentials, trust the table.
+    // If the routing table's provider has credentials and is not disabled, trust the table.
     const cred = config.providers[defaultRoute.provider];
-    if (cred?.apiKey || defaultRoute.provider === "ollama") {
+    if ((cred?.apiKey || defaultRoute.provider === "ollama") && !this.disabledProviders.has(defaultRoute.provider)) {
       return defaultRoute;
     }
 
-    // Fall back to whatever the user has configured.
+    // Default provider is disabled — find a fallback.
+    const fallback = this.findFallbackRoute(config, config.defaultProvider);
+    if (fallback) return fallback;
+
+    // Fall back to whatever the user has configured (even if disabled — last resort).
     return { provider: config.defaultProvider, model: config.defaultModel };
   }
 
@@ -460,10 +484,11 @@ export class AgentRouter implements LLMProvider {
     config: AgentRouterConfig,
     failedProvider: string,
   ): RouteTarget | null {
-    // Try other API-key-based providers first
+    // Try other API-key-based providers first (skip disabled ones)
     for (const [name, cred] of Object.entries(config.providers)) {
       if (name === failedProvider || !cred?.apiKey) continue;
       if (name === "ollama") continue; // handle ollama separately below
+      if (this.disabledProviders.has(name)) continue;
       // Pick the cheapest model for the fallback provider
       const economyRoutes = Object.values(ROUTING_TABLE.economy);
       const match = economyRoutes.find((r) => r.provider === name);

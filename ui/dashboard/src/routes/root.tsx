@@ -30,7 +30,8 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
-import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard, fetchCurrentPeriodUsage } from "@/api.js";
+import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard, fetchProviderBalances } from "@/api.js";
+import type { ProviderBalance } from "@/api.js";
 import { LoginPage } from "@/components/LoginPage.js";
 import type { ActivityEntry, DashboardEvent, Notification, ProjectActivity, TimeBucket, UpdateCheck } from "@/types.js";
 
@@ -120,17 +121,6 @@ export default function RootLayout() {
   const hostingHook = useHosting();
   const contributingEnabled = Boolean(configHook.data?.dev?.enabled);
 
-  // Derive the lowest balance alert threshold across all configured providers
-  const balanceThreshold = (() => {
-    const providers = configHook.data?.providers as Record<string, { balanceAlertThreshold?: number }> | undefined;
-    if (!providers) return null;
-    return Object.values(providers).reduce<number | null>((min, p) => {
-      if (p.balanceAlertThreshold !== undefined && (min === null || p.balanceAlertThreshold < min)) {
-        return p.balanceAlertThreshold;
-      }
-      return min;
-    }, null);
-  })();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -162,7 +152,7 @@ export default function RootLayout() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
-  const [periodCost, setPeriodCost] = useState<number>(0);
+  const [providerBalances, setProviderBalances] = useState<ProviderBalance[]>([]);
   const [upgradePhase, setUpgradePhase] = useState<string | null>(null);
   const [upgradeLogs, setUpgradeLogs] = useState<{ step: string; status: string; message: string; timestamp: string }[]>([]);
   const [upgradeDropdown, setUpgradeDropdown] = useState(false);
@@ -238,9 +228,9 @@ export default function RootLayout() {
       .catch(() => {});
   }, []);
 
-  // Fetch current period cost on mount
+  // Fetch provider balances on mount
   useEffect(() => {
-    fetchCurrentPeriodUsage().then((d) => setPeriodCost(d.totalCostUsd)).catch(() => {});
+    fetchProviderBalances().then(setProviderBalances).catch(() => {});
   }, []);
 
   // Recover upgrade log after page reload (e.g. post-restart).
@@ -421,8 +411,8 @@ export default function RootLayout() {
       setUnreadCount((prev) => prev + 1);
     }
     if (event.type === "usage:recorded") {
-      // Refresh period cost whenever usage is recorded
-      fetchCurrentPeriodUsage().then((d) => setPeriodCost(d.totalCostUsd)).catch(() => {});
+      // Refresh provider balances after each completion so alerts stay current
+      fetchProviderBalances().then(setProviderBalances).catch(() => {});
     }
   }, [overviewHook.refresh, hostingHook.refresh, projectsHook.refresh, queryClient]);
 
@@ -574,22 +564,19 @@ export default function RootLayout() {
             {!isMobile && contributingEnabled && (
               <Badge className="text-xs bg-indigo-600 text-white">Contributing</Badge>
             )}
-            {/* Monthly spend indicator */}
-            {periodCost > 0 && (
-              <span
-                className={`text-[10px] font-mono hidden md:inline ${
-                  balanceThreshold !== null
-                    ? periodCost >= balanceThreshold
-                      ? "text-red-500"
-                      : periodCost >= balanceThreshold * 0.8
-                      ? "text-yellow-500"
-                      : "text-muted-foreground"
-                    : "text-muted-foreground"
-                }`}
-                title={`API spend this month${balanceThreshold !== null ? ` (alert at $${balanceThreshold.toFixed(2)})` : ""}`}
-              >
-                ${periodCost.toFixed(2)}
-              </span>
+            {/* Provider balance alerts — only shown when a provider is below its threshold */}
+            {providerBalances.filter((b) => b.belowThreshold).length > 0 && (
+              <div className="hidden sm:flex items-center gap-2">
+                {providerBalances.filter((b) => b.belowThreshold).map((b) => (
+                  <span
+                    key={b.providerId}
+                    className={`text-[10px] font-mono ${b.balance !== null && b.balance <= 0 ? "text-red-500" : "text-yellow-500"}`}
+                    title={`${b.providerName} balance: $${b.balance?.toFixed(2) ?? "?"}, threshold: $${b.threshold?.toFixed(2) ?? "?"}`}
+                  >
+                    {b.providerName}: ${b.balance?.toFixed(2) ?? "?"} left
+                  </span>
+                ))}
+              </div>
             )}
             {/* Active downloads indicator */}
             <ActiveDownloads />
