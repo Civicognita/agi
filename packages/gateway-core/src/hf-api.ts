@@ -351,7 +351,19 @@ export function registerHfRoutes(
   fastify.get("/api/hf/models", async (_request, reply) => {
     try {
       const models = await modelStore.getAll();
-      return reply.send(models);
+      // Cross-reference DB status with actual container state — self-heal stale "running"/"starting"
+      const corrected = models.map(model => {
+        if (model.status === "running" || model.status === "starting") {
+          const container = containerManager.getStatus(model.id);
+          if (!container) {
+            // Container is gone — self-heal the DB (fire-and-forget, don't delay response)
+            void modelStore.updateStatus(model.id, "ready");
+            return { ...model, status: "ready" as const, containerId: undefined, containerPort: undefined, containerName: undefined };
+          }
+        }
+        return model;
+      });
+      return reply.send(corrected);
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }
@@ -462,9 +474,18 @@ export function registerHfRoutes(
           return reply.code(400).send({ error: "modelId is required" });
         }
 
-        const model = await modelStore.getById(modelId);
+        let model = await modelStore.getById(modelId);
         if (!model) {
           return reply.code(404).send({ error: `Model not found: ${modelId}` });
+        }
+
+        // Cross-reference DB status with actual container state — self-heal stale "running"/"starting"
+        if (model.status === "running" || model.status === "starting") {
+          const container = containerManager.getStatus(modelId);
+          if (!container) {
+            void modelStore.updateStatus(modelId, "ready");
+            model = { ...model, status: "ready" as const, containerId: undefined, containerPort: undefined, containerName: undefined };
+          }
         }
 
         const containerStatus = containerManager.getStatus(modelId);

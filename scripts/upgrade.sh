@@ -69,6 +69,19 @@ if [ -d "/opt/aionima" ] && [ ! -d "/opt/agi" ]; then
       emit "migrate" "start" "Renamed container: agi-id-postgres → agi-postgres-17" || true
   fi
 
+  # Database rename: aionima_id → agi
+  if podman exec agi-postgres-17 psql -U postgres -lqt 2>/dev/null | grep -q aionima_id; then
+    emit "migrate" "start" "Migrating database: aionima_id → agi"
+    podman exec agi-postgres-17 psql -U postgres -c "CREATE USER agi WITH PASSWORD 'aionima';" 2>/dev/null || true
+    podman exec agi-postgres-17 psql -U postgres -c "CREATE DATABASE agi OWNER agi;" 2>/dev/null || true
+    podman exec agi-postgres-17 bash -c "pg_dump -U aionima_id aionima_id | psql -U agi -d agi" 2>/dev/null || true
+    # Update Local-ID env
+    if [ -f /opt/agi-local-id/.env ]; then
+      sudo sed -i 's|aionima_id[^@]*@|agi:aionima@|g; s|/aionima_id|/agi|g' /opt/agi-local-id/.env
+    fi
+    emit "migrate" "done" "Database migrated: aionima_id → agi"
+  fi
+
   # Clean up orphaned volumes from the old naming convention
   podman volume rm aionima-id-pgdata 2>/dev/null && \
     emit "migrate" "start" "Removed orphaned volume: aionima-id-pgdata" || true
@@ -367,6 +380,9 @@ if [ -x "$MIGRATE_SCRIPT" ]; then
 else
   emit "migrate" "done" "No migration script"
 fi
+
+# Clean up stale SQLite model index (superseded by PostgreSQL-backed ModelStore)
+rm -f ~/.agi/models/index.db ~/.agi/models/index.db-shm ~/.agi/models/index.db-wal
 
 # ---------------------------------------------------------------------------
 # 8. Ensure data/logs dirs exist

@@ -270,8 +270,8 @@ cmd_services_setup() {
   '
 
   echo "==> Creating ID service database..."
-  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE USER aionima_id WITH PASSWORD 'testpass';\"" 2>/dev/null || true
-  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE DATABASE aionima_id OWNER aionima_id;\"" 2>/dev/null || true
+  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE USER agi WITH PASSWORD 'testpass';\"" 2>/dev/null || true
+  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE DATABASE agi OWNER agi;\"" 2>/dev/null || true
 
   echo "==> Installing Caddy..."
   multipass exec "$VM_NAME" -- bash -c '
@@ -329,7 +329,7 @@ systemctl restart caddy'
 ID_SERVICE_MODE=local
 AIONIMA_ID_BASE_URL=https://id.ai.on
 PORT=4100
-DATABASE_URL=postgres://aionima_id:testpass@localhost/aionima_id
+DATABASE_URL=postgres://agi:testpass@localhost/agi
 ENCRYPTION_KEY=$ENC_KEY
 OWNER_NODE_URL=http://localhost:3100
 ENVEOF

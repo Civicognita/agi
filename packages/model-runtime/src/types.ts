@@ -292,6 +292,8 @@ export interface InstalledModel {
   lastUsedAt?: string;
   /** Error message if status is "error". */
   error?: string;
+  /** ISO timestamp of the last status change. */
+  statusChangedAt?: string;
 
   // Container binding (populated when running)
   containerId?: string;

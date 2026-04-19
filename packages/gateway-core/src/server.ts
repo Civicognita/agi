@@ -1547,7 +1547,7 @@ export async function startGatewayServer(
 
   // Build PostgreSQL connection from ID service config
   const idServiceConfig = (config as Record<string, unknown>).idService as { local?: { databaseUrl?: string } } | undefined;
-  const pgUrl = idServiceConfig?.local?.databaseUrl ?? "postgres://aionima_id:0a117a24fd397009f19dd7146e348f54@localhost:5432/aionima_id";
+  const pgUrl = idServiceConfig?.local?.databaseUrl ?? "postgres://agi:aionima@localhost:5432/agi";
   const pgPool = new Pool({ connectionString: pgUrl });
 
   // ModelStore + DatasetStore require the ID service's Postgres to be
@@ -1689,6 +1689,48 @@ export async function startGatewayServer(
   } else {
     log.info("HF Model Runtime initialized (disabled — enable via Settings > HF Marketplace)");
   }
+
+  // Background health monitor — checks running HF model containers every 30 s.
+  // Resets stale "running"/"starting" DB entries and evicts dead containers
+  // from the in-memory map so they don't block port allocation.
+  const hfHealthMonitorInterval = setInterval(() => {
+    void (async () => {
+      try {
+        const running = modelContainerManager.getRunning();
+        for (const state of running) {
+          const healthy = await modelContainerManager.probeHealth(state.modelId);
+          if (!healthy) {
+            await modelStore.updateStatus(state.modelId, "ready");
+            modelContainerManager.removeFromActive(state.modelId);
+            log.warn(`HF model ${state.modelId} container unhealthy — status reset to ready`);
+            dashboardBroadcasterRef?.emitNotification({
+              id: `hf-model-stopped-${state.modelId}-${Date.now()}`,
+              type: "warning",
+              title: "Model stopped",
+              body: `${state.modelId} container is no longer responding`,
+              metadata: { modelId: state.modelId },
+              createdAt: new Date().toISOString(),
+            });
+          }
+        }
+
+        // Watchdog: reset "starting" models stuck for > 5 minutes with no container
+        const allModels = await modelStore.getAll();
+        for (const model of allModels) {
+          if (model.status === "starting") {
+            const container = modelContainerManager.getStatus(model.id);
+            if (!container) {
+              const changedAt = model.statusChangedAt;
+              if (!changedAt || Date.now() - new Date(changedAt).getTime() > 5 * 60 * 1000) {
+                await modelStore.setError(model.id, "Container start timed out — try again from the Installed tab");
+                log.warn(`HF model ${model.id} start timed out — reset to error`);
+              }
+            }
+          }
+        }
+      } catch { /* health check cycle failed — skip */ }
+    })();
+  }, 30_000);
 
   // -------------------------------------------------------------------------
   // Step 3f: Federation & Identity subsystems
@@ -3945,6 +3987,9 @@ export async function startGatewayServer(
     if (heartbeatScheduler !== null) {
       heartbeatScheduler.stop();
     }
+
+    // Stop HF health monitor
+    clearInterval(hfHealthMonitorInterval);
 
     // Step 1: Stop QueueConsumer polling — drain in-flight messages first
     try {

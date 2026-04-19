@@ -35,6 +35,7 @@ interface ModelRow {
   container_image: string | null;
   source_repo: string | null;
   endpoints_json: string | null;
+  status_changed_at: Date | null;
 }
 
 interface DownloadProgressRow {
@@ -74,6 +75,8 @@ CREATE TABLE IF NOT EXISTS agi.models (
   source_repo TEXT,
   endpoints_json TEXT
 );
+
+ALTER TABLE agi.models ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ DEFAULT NOW();
 
 CREATE TABLE IF NOT EXISTS agi.download_progress (
   model_id TEXT PRIMARY KEY REFERENCES agi.models(id) ON DELETE CASCADE,
@@ -137,6 +140,7 @@ export class ModelStore {
       containerImage: row.container_image ?? undefined,
       sourceRepo: row.source_repo ?? undefined,
       endpoints,
+      statusChangedAt: row.status_changed_at?.toISOString(),
     };
   }
 
@@ -198,7 +202,8 @@ export class ModelStore {
     await this.pool.query(
       `UPDATE agi.models
        SET status = $1,
-           error = CASE WHEN $1 != 'error' THEN NULL ELSE error END
+           error = CASE WHEN $1 != 'error' THEN NULL ELSE error END,
+           status_changed_at = NOW()
        WHERE id = $2`,
       [status, id],
     );
@@ -213,7 +218,7 @@ export class ModelStore {
 
   async setError(id: string, error: string): Promise<void> {
     await this.pool.query(
-      `UPDATE agi.models SET status = 'error', error = $1 WHERE id = $2`,
+      `UPDATE agi.models SET status = 'error', error = $1, status_changed_at = NOW() WHERE id = $2`,
       [error, id],
     );
   }
@@ -224,7 +229,8 @@ export class ModelStore {
        SET container_id = $1,
            container_port = $2,
            container_name = $3,
-           status = 'running'
+           status = 'running',
+           status_changed_at = NOW()
        WHERE id = $4`,
       [containerId, port, containerName, id],
     );

@@ -275,6 +275,20 @@ export class ModelContainerManager {
   }
 
   /**
+   * Remove a model from the active-containers map and free its port allocation.
+   * Used by the background health monitor to evict containers that have stopped
+   * responding without going through the normal stop() flow.
+   */
+  removeFromActive(modelId: string): void {
+    const state = this.activeContainers.get(modelId);
+    if (state) {
+      this.allocatedPorts.delete(state.port);
+      this.activeContainers.delete(modelId);
+      this.persistState();
+    }
+  }
+
+  /**
    * Live health probe against a single running container's /health endpoint.
    * Returns true if the endpoint responds 2xx within 1.5s, false otherwise.
    * Used by the `/api/hf/running` route to surface current (not cached-at-start)
