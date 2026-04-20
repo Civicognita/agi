@@ -209,6 +209,13 @@ export class ModelStore {
     );
   }
 
+  async updateFilePath(id: string, filePath: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE agi.models SET file_path = $1 WHERE id = $2`,
+      [filePath, id],
+    );
+  }
+
   async updateContainerImage(id: string, containerImage: string): Promise<void> {
     await this.pool.query(
       `UPDATE agi.models SET container_image = $1 WHERE id = $2`,
@@ -425,7 +432,25 @@ export class ModelStore {
       const modelId = parts.join("/");
 
       const existing = await this.getById(modelId);
-      if (existing && existing.pipelineTag !== "unknown") continue;
+      if (existing && existing.pipelineTag !== "unknown") {
+        // Fix stale filePath: if it points to the HF cache wrapper instead of the snapshot dir
+        if (existing.filePath && !existing.filePath.includes("/snapshots/")) {
+          const snapshotsCheck = join(existing.filePath, "snapshots");
+          if (existsSync(snapshotsCheck)) {
+            try {
+              const refs = readdirSync(snapshotsCheck).filter(
+                (r) => statSync(join(snapshotsCheck, r)).isDirectory(),
+              );
+              if (refs.length > 0) {
+                const corrected = join(snapshotsCheck, refs[0]!);
+                await this.updateFilePath(modelId, corrected);
+                reconciled++;
+              }
+            } catch { /* ignore */ }
+          }
+        }
+        continue;
+      }
       if (existing) {
         await this.remove(modelId);
       }
