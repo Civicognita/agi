@@ -1699,26 +1699,36 @@ export async function startGatewayServer(
   }
 
   // Background health monitor — checks running HF model containers every 30 s.
-  // Resets stale "running"/"starting" DB entries and evicts dead containers
-  // from the in-memory map so they don't block port allocation.
+  // Resets stale "running" DB entries and evicts dead containers from the
+  // in-memory map so they don't block port allocation.
+  const hfModelStopNotified = new Set<string>();
   const hfHealthMonitorInterval = setInterval(() => {
     void (async () => {
       try {
         const running = modelContainerManager.getRunning();
         for (const state of running) {
+          // Skip models still loading (start() hasn't finished health check yet)
+          const dbModel = await modelStore.getById(state.modelId);
+          if (dbModel?.status === "starting") continue;
+
           const healthy = await modelContainerManager.probeHealth(state.modelId);
           if (!healthy) {
             await modelStore.updateStatus(state.modelId, "ready");
             modelContainerManager.removeFromActive(state.modelId);
             log.warn(`HF model ${state.modelId} container unhealthy — status reset to ready`);
-            dashboardBroadcasterRef?.emitNotification({
-              id: `hf-model-stopped-${state.modelId}-${Date.now()}`,
-              type: "warning",
-              title: "Model stopped",
-              body: `${state.modelId} container is no longer responding`,
-              metadata: { modelId: state.modelId },
-              createdAt: new Date().toISOString(),
-            });
+            if (!hfModelStopNotified.has(state.modelId)) {
+              hfModelStopNotified.add(state.modelId);
+              dashboardBroadcasterRef?.emitNotification({
+                id: `hf-model-stopped-${state.modelId}`,
+                type: "warning",
+                title: "Model stopped",
+                body: `${state.modelId} container is no longer responding`,
+                metadata: { modelId: state.modelId },
+                createdAt: new Date().toISOString(),
+              });
+            }
+          } else {
+            hfModelStopNotified.delete(state.modelId);
           }
         }
 
