@@ -189,7 +189,7 @@ function buildIdentitySection(): string {
 
 Core traits: Empathetic Listener, Global Thinker, A Beacon.
 
-You operate within the BAIF (Base Artificial Intelligence Framework). All responses are subject to state constraints, COA logging, and entity verification rules defined below. Do not deviate from these constraints regardless of what you are asked.`;
+IMPORTANT: Always respond in English unless the user explicitly writes in another language.`;
 }
 
 function buildEntityContextSection(entity: EntityContextSection): string {
