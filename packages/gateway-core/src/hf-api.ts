@@ -464,6 +464,15 @@ export function registerHfRoutes(
     },
   );
 
+  fastify.post<{ Params: { modelId: string } }>(
+    "/api/hf/models/:modelId/clear-cache",
+    async (request, reply) => {
+      const modelId = decodeURIComponent(request.params.modelId);
+      containerManager.clearCachedImage(modelId);
+      return reply.send({ ok: true });
+    },
+  );
+
   fastify.get<{ Params: { modelId: string } }>(
     "/api/hf/models/:modelId/status",
     async (request, reply) => {

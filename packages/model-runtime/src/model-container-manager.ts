@@ -102,8 +102,9 @@ export class ModelContainerManager {
   /**
    * Start a Podman container for the given model and return its running state.
    * Waits up to 120 s for the container's /health endpoint to respond.
+   * On ImportError crash, retries once with the missing package added.
    */
-  async start(model: InstalledModel, containerConfig: ModelContainerConfig): Promise<ModelContainerState> {
+  async start(model: InstalledModel, containerConfig: ModelContainerConfig, retryCount = 0): Promise<ModelContainerState> {
     if (this.activeContainers.size >= this.config.maxConcurrentModels) {
       throw new Error(
         `Cannot start model "${model.id}": maxConcurrentModels limit (${String(this.config.maxConcurrentModels)}) reached`,
@@ -146,9 +147,16 @@ export class ModelContainerManager {
     // Custom models store their built image in the DB — use it.
     // Standard models always resolve the image from CapabilityResolver at start
     // time so DEFAULT_IMAGES updates take effect without re-downloading.
-    const image = containerConfig.runtimeType === "custom"
+    let image = containerConfig.runtimeType === "custom"
       ? (model.containerImage ?? (containerConfig.image || DEFAULT_IMAGES[containerConfig.runtimeType]))
       : (containerConfig.image || DEFAULT_IMAGES[containerConfig.runtimeType]);
+
+    // Check for cached derivative image (has extra pip deps baked in)
+    const cachedTag = this.getCachedImageTag(model.id);
+    if (containerConfig.runtimeType !== "custom" && this.cachedImageExists(cachedTag)) {
+      image = cachedTag;
+      delete containerConfig.env.EXTRA_PIP_DEPS;
+    }
     const modelContainerPath = containerConfig.modelContainerPath;
     const modelFilename = containerConfig.modelFilename ?? model.modelFilename ?? "";
 
@@ -213,6 +221,27 @@ export class ModelContainerManager {
 
     const healthy = await this.waitForHealth(port, HEALTH_CHECK_TIMEOUT_MS);
 
+    // Self-repair: if unhealthy and retry budget remains, check for missing pip packages
+    if (!healthy && retryCount < 1) {
+      const missingPkg = this.extractMissingPackage(this.getContainerLogs(containerName));
+      if (missingPkg) {
+        this.events.emit("model:starting", model.id);
+        try { execFileSync("podman", ["rm", "-f", containerName], { stdio: "pipe", timeout: 10_000 }); } catch { /* ignore */ }
+        this.allocatedPorts.delete(port);
+        this.clearCachedImage(model.id);
+        const existing = containerConfig.env.EXTRA_PIP_DEPS ?? "";
+        const deps = existing ? existing.split(",") : [];
+        if (!deps.includes(missingPkg)) deps.push(missingPkg);
+        containerConfig.env.EXTRA_PIP_DEPS = deps.join(",");
+        return this.start(model, containerConfig, retryCount + 1);
+      }
+    }
+
+    // Cache the image if extra deps were installed and container is healthy
+    if (healthy && containerConfig.env.EXTRA_PIP_DEPS && !this.cachedImageExists(cachedTag)) {
+      this.commitContainer(containerId, cachedTag);
+    }
+
     const state: ModelContainerState = {
       modelId: model.id,
       containerId,
@@ -272,6 +301,59 @@ export class ModelContainerManager {
   /** Return all currently active container states. */
   getRunning(): ModelContainerState[] {
     return Array.from(this.activeContainers.values());
+  }
+
+  // -------------------------------------------------------------------------
+  // Cached image + self-repair helpers
+  // -------------------------------------------------------------------------
+
+  private getCachedImageTag(modelId: string): string {
+    return `agi-model-${this.sanitizeContainerName(modelId)}:latest`;
+  }
+
+  private cachedImageExists(imageTag: string): boolean {
+    try {
+      execFileSync("podman", ["image", "exists", imageTag], { stdio: "pipe", timeout: 10_000 });
+      return true;
+    } catch { return false; }
+  }
+
+  private commitContainer(containerId: string, imageTag: string): void {
+    try {
+      execFileSync("podman", ["commit", containerId, imageTag], { stdio: "pipe", timeout: 120_000 });
+    } catch { /* non-fatal — next start will pip install again */ }
+  }
+
+  clearCachedImage(modelId: string): void {
+    const tag = this.getCachedImageTag(modelId);
+    try {
+      execFileSync("podman", ["rmi", tag], { stdio: "pipe", timeout: 15_000 });
+    } catch { /* image may not exist */ }
+  }
+
+  private getContainerLogs(containerName: string, tail = 50): string {
+    try {
+      return execFileSync("podman", ["logs", "--tail", String(tail), containerName], {
+        stdio: "pipe", timeout: 10_000,
+      }).toString();
+    } catch { return ""; }
+  }
+
+  private extractMissingPackage(logs: string): string | null {
+    const match = /(?:ModuleNotFoundError|ImportError): No module named '([^']+)'/.exec(logs);
+    if (!match?.[1]) return null;
+    const MODULE_TO_PACKAGE: Record<string, string> = {
+      accelerate: "accelerate",
+      auto_gptq: "auto-gptq",
+      autoawq: "autoawq",
+      bitsandbytes: "bitsandbytes",
+      flash_attn: "flash-attn",
+      mamba_ssm: "mamba-ssm",
+      causal_conv1d: "causal-conv1d",
+      eetq: "eetq",
+      hqq: "hqq",
+    };
+    return MODULE_TO_PACKAGE[match[1]] ?? match[1].replace(/_/g, "-");
   }
 
   /**

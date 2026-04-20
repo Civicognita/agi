@@ -8,6 +8,8 @@
  * No npm dependencies — uses only sibling modules and native Node.js.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type {
   HfModelInfo,
   HardwareCapabilities,
@@ -45,6 +47,17 @@ const DIFFUSION_PIPELINE_TAGS = new Set([
   "text-to-image",
   "image-to-image",
 ]);
+
+/** Quantization methods that need extra pip packages. */
+const QUANT_METHOD_DEPS: Record<string, string[]> = {
+  fp8: ["accelerate"],
+  gptq: ["auto-gptq", "accelerate"],
+  awq: ["autoawq", "accelerate"],
+  bnb: ["bitsandbytes", "accelerate"],
+  bitsandbytes: ["bitsandbytes", "accelerate"],
+  eetq: ["eetq", "accelerate"],
+  hqq: ["hqq", "accelerate"],
+};
 
 /** Bytes per gigabyte. */
 const GB = 1024 * 1024 * 1024;
@@ -194,6 +207,34 @@ export class CapabilityResolver {
     private readonly capabilities: HardwareCapabilities,
     private readonly knownModels?: KnownModelsRegistry,
   ) {}
+
+  // ---------------------------------------------------------------------------
+  // detectExtraDeps — read model config to find required pip packages
+  // ---------------------------------------------------------------------------
+
+  detectExtraDeps(model: InstalledModel): string[] {
+    const deps: string[] = [];
+    try {
+      const configPath = join(model.filePath, "config.json");
+      if (existsSync(configPath)) {
+        const config = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+        const qc = config.quantization_config as Record<string, unknown> | undefined;
+        if (qc?.quant_method && typeof qc.quant_method === "string") {
+          const method = qc.quant_method.toLowerCase();
+          deps.push(...(QUANT_METHOD_DEPS[method] ?? []));
+        }
+      }
+      const reqPath = join(model.filePath, "requirements.txt");
+      if (existsSync(reqPath)) {
+        const lines = readFileSync(reqPath, "utf8").split("\n");
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith("#")) deps.push(trimmed);
+        }
+      }
+    } catch { /* model files may not be accessible */ }
+    return [...new Set(deps)];
+  }
 
   // ---------------------------------------------------------------------------
   // resolveRuntimeType
@@ -537,6 +578,12 @@ export class CapabilityResolver {
 
       default: {
         const image = images?.general ?? DEFAULT_IMAGES.general;
+        const extraDeps = this.detectExtraDeps(model);
+        const env: Record<string, string> = {
+          HF_TASK: model.pipelineTag,
+          MODEL_PATH: "/models",
+        };
+        if (extraDeps.length > 0) env.EXTRA_PIP_DEPS = extraDeps.join(",");
         return {
           runtimeType: "general",
           image,
@@ -544,10 +591,7 @@ export class CapabilityResolver {
           modelHostPath: model.filePath,
           modelContainerPath: "/models",
           modelFilename: model.modelFilename,
-          env: {
-            HF_TASK: model.pipelineTag,
-            MODEL_PATH: "/models",
-          },
+          env,
           gpuPassthrough,
           memoryLimit,
           runtimeArgs: [],

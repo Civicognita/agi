@@ -11,6 +11,7 @@ Environment variables:
 
 import os
 import sys
+import subprocess
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -28,6 +29,33 @@ HF_TASK = os.environ.get("HF_TASK", "feature-extraction")
 PORT = int(os.environ.get("PORT", "8000"))
 
 pipeline_instance = None
+
+
+def install_extra_deps():
+    deps = []
+    extra = os.environ.get("EXTRA_PIP_DEPS", "")
+    if extra:
+        deps.extend([d.strip() for d in extra.split(",") if d.strip()])
+    model_dir = MODEL_PATH
+    if os.path.isfile(model_dir):
+        model_dir = os.path.dirname(model_dir)
+    req_file = os.path.join(model_dir, "requirements.txt")
+    if os.path.isfile(req_file):
+        with open(req_file) as f:
+            deps.extend([l.strip() for l in f if l.strip() and not l.startswith("#")])
+    if not deps:
+        return
+    deps = list(dict.fromkeys(deps))
+    log.info(f"Installing extra dependencies: {deps}")
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--no-cache-dir"] + deps,
+            timeout=300,
+        )
+        log.info(f"Extra dependencies installed successfully")
+    except Exception as e:
+        log.error(f"Failed to install extra dependencies: {e}")
+        raise
 
 
 def load_model():
@@ -55,6 +83,7 @@ def load_model():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    install_extra_deps()
     load_model()
     yield
     log.info("Shutting down")
