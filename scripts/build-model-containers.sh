@@ -51,4 +51,12 @@ podman build \
   "${CONTAINERS_DIR}"
 ok "agi-finetune:latest built"
 
+# Aion-Micro system operations model (SmolLM2-135M-Instruct)
+info "Building aion-micro system model image..."
+podman build \
+  -t ghcr.io/civicognita/aion-micro:latest \
+  -f "${CONTAINERS_DIR}/Containerfile.aion-micro" \
+  "${CONTAINERS_DIR}"
+ok "ghcr.io/civicognita/aion-micro:latest built"
+
 ok "Model runtime container images ready"

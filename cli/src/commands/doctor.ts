@@ -401,7 +401,8 @@ export function registerDoctorCommand(program: Command): void {
     .command("doctor")
     .description("Run self-diagnostics")
     .option("--json", "Output results as JSON")
-    .action(async (cmdOpts: { json?: boolean }) => {
+    .option("--with-aion", "Use aion-micro for AI-powered diagnostic analysis")
+    .action(async (cmdOpts: { json?: boolean; withAion?: boolean }) => {
       const opts = program.opts<{ config?: string; host?: string; port?: number }>();
       const groups: CheckGroup[] = [];
 
@@ -455,6 +456,37 @@ export function registerDoctorCommand(program: Command): void {
           if (check.ok) totalPassed++;
           else if (check.warn) totalWarnings++;
           else totalFailed++;
+        }
+      }
+
+      // AI-powered diagnostic analysis via aion-micro
+      if (cmdOpts.withAion) {
+        const gatewayHost = config?.gateway?.host ?? "127.0.0.1";
+        const gatewayPort = config?.gateway?.port ?? 3100;
+        const allChecks = groups.flatMap((g) => g.checks.map((c) => ({ group: g.title, ...c })));
+        try {
+          const res = await fetch(`http://${gatewayHost}:${String(gatewayPort)}/api/admin/diagnose`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ checks: allChecks }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (res.ok) {
+            const data = await res.json() as { analysis?: string };
+            if (data.analysis) {
+              console.log();
+              console.log(`  ${bold("AI Analysis")} ${dim("(aion-micro)")}`);
+              for (const line of data.analysis.split("\n")) {
+                console.log(`  ${line}`);
+              }
+            }
+          } else {
+            console.log();
+            console.log(`  ${dim("AI analysis unavailable — aion-micro image not installed")}`);
+          }
+        } catch {
+          console.log();
+          console.log(`  ${dim("AI analysis unavailable — gateway not reachable")}`);
         }
       }
 

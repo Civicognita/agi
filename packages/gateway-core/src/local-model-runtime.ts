@@ -2,37 +2,28 @@
  * LocalModelRuntime — thin wrapper that routes narrative-generation tasks to a
  * small always-available local model.
  *
- * Today: SmolLM2-360M-Instruct (360M params, Apache 2.0, Hugging Face).
- *   - Runs in the existing "general" runtime container (transformers-server).
- *   - Installed via the HF Marketplace flow like any other model.
- *   - Config: `ops.localModel.modelId` in gateway.json (swappable).
+ * Primary: SmolLM2-360M-Instruct via HF Marketplace container.
+ * Fallback: Aion-Micro (SmolLM2-135M-Instruct, self-contained container).
  *
  * Used by:
  *   - SafemodeInvestigator to turn collected evidence into a readable report.
  *   - `agi doctor --with-aion` to produce narrative health diagnoses.
- *
- * Auto-install is deliberately NOT implemented here yet: the investigator
- * always writes a report even if the model isn't available (heuristic
- * template fallback), so safemode works on first-ever boot.
  */
 
 import type { InferenceGateway } from "@agi/model-runtime";
 import type { ModelStore } from "@agi/model-runtime";
 import type { ComponentLogger } from "./logger.js";
+import type { AionMicroManager } from "./aion-micro-manager.js";
 
 export const DEFAULT_LOCAL_MODEL_ID = "HuggingFaceTB/SmolLM2-360M-Instruct";
 
 export interface LocalModelConfig {
-  /** HF model ID — default: HuggingFaceTB/SmolLM2-360M-Instruct */
   modelId: string;
 }
 
 export interface CompleteOptions {
-  /** Max tokens to generate. */
   maxTokens?: number;
-  /** Temperature (0-1). Default: 0.3 for narrative consistency. */
   temperature?: number;
-  /** System prompt prepended to the user prompt. */
   system?: string;
 }
 
@@ -42,33 +33,27 @@ export class LocalModelRuntime {
     private readonly inferenceGateway: InferenceGateway,
     private readonly config: LocalModelConfig,
     private readonly log: ComponentLogger,
+    private readonly aionMicro?: AionMicroManager,
   ) {}
 
   getModelId(): string {
     return this.config.modelId;
   }
 
-  /**
-   * Returns true if the configured local model is installed AND currently
-   * running. Investigator uses this to decide between LLM-authored or
-   * heuristic reports.
-   */
   async isAvailable(): Promise<boolean> {
     try {
       const model = await this.modelStore.getById(this.config.modelId);
-      if (model === undefined) return false;
-      return model.status === "running";
-    } catch (err) {
-      this.log.warn(`local model availability check failed: ${err instanceof Error ? err.message : String(err)}`);
-      return false;
+      if (model?.status === "running") return true;
+    } catch {
+      // fall through to aion-micro check
     }
+
+    if (this.aionMicro?.isEnabled()) {
+      return this.aionMicro.isRunning() || this.aionMicro.imageExists();
+    }
+    return false;
   }
 
-  /**
-   * Generate a completion from the local model. Returns null if the model
-   * isn't available or the call fails — callers should handle that case
-   * gracefully (typically by falling back to a heuristic template).
-   */
   async complete(prompt: string, opts: CompleteOptions = {}): Promise<string | null> {
     const maxTokens = opts.maxTokens ?? 1024;
     const temperature = opts.temperature ?? 0.3;
@@ -78,6 +63,7 @@ export class LocalModelRuntime {
     }
     messages.push({ role: "user", content: prompt });
 
+    // Try primary model first
     try {
       const resp = await this.inferenceGateway.chatCompletion(this.config.modelId, {
         model: this.config.modelId,
@@ -85,15 +71,34 @@ export class LocalModelRuntime {
         max_tokens: maxTokens,
         temperature,
       });
-      const choice = resp.choices?.[0];
-      const text = choice?.message?.content;
-      if (typeof text !== "string" || text.length === 0) return null;
-      return text;
-    } catch (err) {
-      this.log.warn(
-        `local model complete() failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return null;
+      const text = resp.choices?.[0]?.message?.content;
+      if (typeof text === "string" && text.length > 0) return text;
+    } catch {
+      // fall through to aion-micro
     }
+
+    // Fallback: aion-micro
+    if (this.aionMicro?.isEnabled()) {
+      try {
+        const available = await this.aionMicro.ensureAvailable();
+        if (!available) return null;
+
+        const res = await fetch(`${this.aionMicro.getBaseUrl()}/v1/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages, max_tokens: maxTokens, temperature }),
+          signal: AbortSignal.timeout(60_000),
+        });
+
+        if (!res.ok) return null;
+        const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+        const text = data.choices?.[0]?.message?.content;
+        if (typeof text === "string" && text.length > 0) return text;
+      } catch (err) {
+        this.log.warn(`aion-micro fallback failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    return null;
   }
 }

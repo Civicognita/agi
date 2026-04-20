@@ -46,6 +46,7 @@ import {
 } from "./boot-recovery.js";
 import { safemodeState } from "./safemode-state.js";
 import { LocalModelRuntime, DEFAULT_LOCAL_MODEL_ID } from "./local-model-runtime.js";
+import { AionMicroManager } from "./aion-micro-manager.js";
 import { runInvestigator } from "./safemode-investigator.js";
 import { GatewayAuth } from "./auth.js";
 import { GatewayStateMachine } from "./state-machine.js";
@@ -1651,13 +1652,20 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const opsConfig = (config as Record<string, unknown>).ops as
-    | { localModel?: { modelId?: string } }
+    | { localModel?: { modelId?: string }; aionMicro?: { enabled?: boolean; port?: number; idleTimeoutMs?: number } }
     | undefined;
+
+  const aionMicroManager = new AionMicroManager(
+    opsConfig?.aionMicro,
+    createComponentLogger(logger, "aion-micro"),
+  );
+
   const localModelRuntime = new LocalModelRuntime(
     modelStore,
     inferenceGateway,
     { modelId: opsConfig?.localModel?.modelId ?? DEFAULT_LOCAL_MODEL_ID },
     createComponentLogger(logger, "local-model"),
+    aionMicroManager,
   );
 
   // If we booted into safemode, fire the investigator async (don't block boot).
@@ -2087,7 +2095,7 @@ export async function startGatewayServer(
             };
           },
         }),
-        (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api")),
+        (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
       ],
     },
@@ -3990,6 +3998,9 @@ export async function startGatewayServer(
 
     // Stop HF health monitor
     clearInterval(hfHealthMonitorInterval);
+
+    // Stop aion-micro if running
+    try { await aionMicroManager.stop(); } catch { /* ignore */ }
 
     // Step 1: Stop QueueConsumer polling — drain in-flight messages first
     try {

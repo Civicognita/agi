@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CapabilityResolver } from "./capability-resolver.js";
@@ -8,18 +8,17 @@ import type { HardwareCapabilities, InstalledModel } from "./types.js";
 let tmp: string;
 
 const HARDWARE: HardwareCapabilities = {
-  cpuModel: "test",
-  cpuCores: 4,
-  totalRamBytes: 8 * 1024 * 1024 * 1024,
-  availableRamBytes: 6 * 1024 * 1024 * 1024,
-  totalDiskBytes: 100 * 1024 * 1024 * 1024,
-  availableDiskBytes: 50 * 1024 * 1024 * 1024,
+  canRunLlm: true,
+  canRunDiffusion: false,
+  canRunEmbedding: true,
+  canRunAudio: true,
   hasGpu: false,
-  gpuModel: null,
-  gpuVramBytes: null,
-  tier: "standard",
+  totalVramBytes: 0,
   maxModelSizeBytes: 8 * 1024 * 1024 * 1024,
-  disk: { modelCachePath: "/tmp/models" },
+  recommendedQuantization: "q4_k_m",
+  tier: "standard",
+  summary: "test hardware",
+  capabilityMap: [],
 };
 
 function makeModel(overrides: Partial<InstalledModel> = {}): InstalledModel {

@@ -555,6 +555,20 @@ const HfConfigSchema = z
   })
   .strict();
 
+const AionMicroConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    port: z.number().int().min(1024).default(5200),
+    idleTimeoutMs: z.number().int().positive().default(600_000),
+  })
+  .strict();
+
+const OpsConfigSchema = z
+  .object({
+    aionMicro: AionMicroConfigSchema.optional(),
+  })
+  .strict();
+
 export const AionimaConfigSchema = z
   .object({
     gateway: GatewayConfigSchema.optional(),
@@ -594,6 +608,7 @@ export const AionimaConfigSchema = z
     compliance: ComplianceConfigSchema.optional(),
     chat: ChatConfigSchema.optional(),
     hf: HfConfigSchema.optional(),
+    ops: OpsConfigSchema.optional(),
   })
   .passthrough();
 
@@ -639,3 +654,5 @@ export type ComplianceConfig = z.infer<typeof ComplianceConfigSchema>;
 export type ChatConfig = z.infer<typeof ChatConfigSchema>;
 export type RouterConfig = z.infer<typeof RouterConfigSchema>;
 export type CostMode = z.infer<typeof CostModeSchema>;
+export type OpsConfig = z.infer<typeof OpsConfigSchema>;
+export type AionMicroConfig = z.infer<typeof AionMicroConfigSchema>;
