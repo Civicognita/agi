@@ -52,6 +52,10 @@ export interface AgentRouterConfig {
   defaultModel: string;
   providers: ProviderCredentials;
   baseUrl?: string;
+  /** Per-provider context window sizes for session budget calculation. */
+  contextWindowByProvider?: Record<string, number>;
+  /** Per-worker model overrides from config. */
+  workerOverrides?: Record<string, { provider?: string; model?: string }>;
 }
 
 // ---------------------------------------------------------------------------
