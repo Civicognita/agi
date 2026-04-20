@@ -457,7 +457,8 @@ export class CapabilityResolver {
     images?: { llm?: string; diffusion?: string; general?: string },
   ): ModelContainerConfig {
     const gpuPassthrough = this.capabilities.hasGpu;
-    const memoryBytes = model.fileSizeBytes * 1.5;
+    const RUNTIME_OVERHEAD = 512 * 1024 * 1024; // Python + transformers baseline
+    const memoryBytes = Math.max(model.fileSizeBytes * 1.5 + RUNTIME_OVERHEAD, RUNTIME_OVERHEAD);
     const memoryLimit = formatMemoryLimit(memoryBytes);
 
     switch (model.runtimeType) {
