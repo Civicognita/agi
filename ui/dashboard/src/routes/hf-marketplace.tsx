@@ -1149,7 +1149,7 @@ function InstalledTab() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-[13px] font-semibold truncate">{model.displayName}</p>
-                  <Badge variant="outline" className="text-[10px]">{model.runtimeType}</Badge>
+                  <Badge variant="outline" className={cn("text-[10px]", model.runtimeType === "ollama" && "border-green-500 text-green-500")}>{model.runtimeType === "ollama" ? "Ollama" : model.runtimeType}</Badge>
                   {model.quantization && (
                     <Badge variant="outline" className="text-[10px]">{model.quantization}</Badge>
                   )}
@@ -1184,6 +1184,9 @@ function InstalledTab() {
             )}
 
             <div className="flex items-center gap-2">
+              {model.runtimeType === "ollama" ? (
+                <span className="text-[11px] text-green-500 font-medium px-2">Available via Ollama</span>
+              ) : (
               <Button
                 size="sm"
                 variant={isRunning ? "outline" : "default"}
@@ -1193,6 +1196,7 @@ function InstalledTab() {
               >
                 {isBusy && actionBusy === model.id ? "..." : isRunning ? "Stop" : "Start"}
               </Button>
+              )}
               <Button
                 size="sm"
                 variant="ghost"

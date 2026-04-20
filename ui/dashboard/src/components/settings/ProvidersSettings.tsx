@@ -45,11 +45,7 @@ const MODELS_BY_PROVIDER: Record<string, { id: string; name: string }[]> = {
     { id: "gpt-4o-mini", name: "GPT-4o Mini (fast)" },
     { id: "gpt-4-turbo", name: "GPT-4 Turbo" },
   ],
-  ollama: [
-    { id: "llama3.1", name: "Llama 3.1" },
-    { id: "mistral", name: "Mistral" },
-    { id: "codellama", name: "Code Llama" },
-  ],
+  ollama: [],
 };
 
 // --- Status dot component ---
@@ -162,20 +158,38 @@ export function ProvidersSettings({ config, update }: Props) {
 
   // --- Combined provider lists ---
 
+  // Separate Ollama models from HF-local container models
+  const ollamaProviders = hfProviders.filter((p) => p.id.startsWith("ollama:"));
+  const hfLocalProviders = hfProviders.filter((p) => !p.id.startsWith("ollama:"));
+
   const allProviders: ProviderOption[] = [
     ...BUILTIN_PROVIDERS,
-    ...hfProviders.map((hf) => ({ id: `hf-local:${hf.id}`, name: hf.name })),
+    ...hfLocalProviders.map((hf) => ({ id: `hf-local:${hf.id}`, name: hf.name })),
   ];
 
   const allModels: Record<string, { id: string; name: string }[]> = { ...MODELS_BY_PROVIDER };
-  for (const hf of hfProviders) {
+  // Populate Ollama models dynamically
+  if (ollamaProviders.length > 0) {
+    allModels.ollama = ollamaProviders.map((p) => ({
+      id: p.id.replace("ollama:", ""),
+      name: p.name,
+    }));
+  }
+  for (const hf of hfLocalProviders) {
     allModels[`hf-local:${hf.id}`] = [{ id: hf.id, name: hf.name }];
   }
 
-  // Merge HF running models into the accordion provider list
+  // Merge HF + Ollama models into the accordion provider list
   const allRegistered: RegisteredProvider[] = [
     ...registeredProviders,
-    ...hfProviders.map((hf): RegisteredProvider => ({
+    ...ollamaProviders.map((p): RegisteredProvider => ({
+      id: p.id,
+      name: p.name,
+      fields: [],
+      requiresApiKey: false,
+      currentValues: { _isLocal: true, _isOllama: true, _baseUrl: p.baseUrl },
+    })),
+    ...hfLocalProviders.map((hf): RegisteredProvider => ({
       id: `hf-local:${hf.id}`,
       name: hf.name,
       fields: [],
