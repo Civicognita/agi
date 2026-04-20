@@ -164,4 +164,26 @@ export function registerAdminRoutes(
       port: aionMicro?.getPort() ?? null,
     });
   });
+
+  fastify.post("/api/admin/prompt-preview", async (req, reply) => {
+    const err = guard(req);
+    if (err !== null) return reply.code(403).send({ error: err });
+    const body = req.body as { requestType?: string } | undefined;
+    const { assembleSystemPrompt, estimateTokens } = await import("./system-prompt.js");
+    const requestType = (body?.requestType ?? "chat") as import("./system-prompt.js").RequestType;
+    const prompt = assembleSystemPrompt({
+      requestType,
+      entity: { entityId: "preview", coaAlias: "#E0", displayName: "Preview", verificationTier: "verified", channel: "dashboard" },
+      coaFingerprint: "$A0.#E0.PREVIEW",
+      state: "ONLINE" as import("./types.js").GatewayState,
+      capabilities: { remoteOps: true, tynn: false, memory: true, deletions: false },
+      tools: [],
+    });
+    return reply.send({
+      requestType,
+      prompt,
+      tokenEstimate: estimateTokens(prompt),
+      sections: prompt.split("\n\n").length,
+    });
+  });
 }

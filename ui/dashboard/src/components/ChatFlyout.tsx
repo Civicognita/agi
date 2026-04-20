@@ -183,6 +183,8 @@ export interface ChatFlyoutProps {
 export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithContext, openWithMessage, openRequestId, docked = false }: ChatFlyoutProps) {
   // State
   const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -405,6 +407,10 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
       if (pending) {
         pendingContextRef.current = null;
         ws.send(JSON.stringify({ type: "chat:open", payload: { context: pending } }));
+      }
+      // Auto-create first session if flyout is open with no sessions
+      if (sessionsRef.current.length === 0 && !pending) {
+        ws.send(JSON.stringify({ type: "chat:open", payload: { context: "general" } }));
       }
       // Start heartbeat. Every tick we ping; if we haven't seen a pong within
       // HEARTBEAT_TIMEOUT_MS we declare the WS dead and force-close it so the
