@@ -502,6 +502,7 @@ export class CapabilityResolver {
     const RUNTIME_OVERHEAD = 512 * 1024 * 1024; // Python + transformers baseline
     const memoryBytes = Math.max(model.fileSizeBytes * 1.5 + RUNTIME_OVERHEAD, RUNTIME_OVERHEAD);
     const memoryLimit = formatMemoryLimit(memoryBytes);
+    const extraDeps = model.runtimeType !== "custom" ? this.detectExtraDeps(model) : [];
 
     switch (model.runtimeType) {
       case "llm": {
@@ -511,6 +512,8 @@ export class CapabilityResolver {
         const modelRef = model.modelFilename
           ? `/models/${model.modelFilename}`
           : "/models";
+        const llmEnv: Record<string, string> = {};
+        if (extraDeps.length > 0) llmEnv.EXTRA_PIP_DEPS = extraDeps.join(",");
 
         return {
           runtimeType: "llm",
@@ -519,7 +522,7 @@ export class CapabilityResolver {
           modelHostPath: model.filePath,
           modelContainerPath: "/models",
           modelFilename: model.modelFilename,
-          env: {},
+          env: llmEnv,
           gpuPassthrough,
           memoryLimit,
           runtimeArgs: [
@@ -534,6 +537,11 @@ export class CapabilityResolver {
 
       case "diffusion": {
         const image = images?.diffusion ?? DEFAULT_IMAGES.diffusion;
+        const diffEnv: Record<string, string> = {
+          HF_TASK: model.pipelineTag,
+          MODEL_PATH: "/models",
+        };
+        if (extraDeps.length > 0) diffEnv.EXTRA_PIP_DEPS = extraDeps.join(",");
         return {
           runtimeType: "diffusion",
           image,
@@ -541,10 +549,7 @@ export class CapabilityResolver {
           modelHostPath: model.filePath,
           modelContainerPath: "/models",
           modelFilename: model.modelFilename,
-          env: {
-            HF_TASK: model.pipelineTag,
-            MODEL_PATH: "/models",
-          },
+          env: diffEnv,
           gpuPassthrough,
           memoryLimit,
           runtimeArgs: [],
