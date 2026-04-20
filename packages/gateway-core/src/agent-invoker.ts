@@ -594,19 +594,38 @@ export class AgentInvoker extends EventEmitter {
         return { role: msg.role, content: msg.content };
       });
 
-      const thinkingConfig = { type: "enabled" as const, budget_tokens: 10_000 };
+      // Simple chat requests skip tools — prevents small models from tool-looping
+      // on conversational messages that don't need tools
+      const requestType = promptCtx.requestType ?? "chat";
+      const shouldOfferTools = requestType !== "chat" && providerTools.length > 0;
 
       // Accumulate token usage across all API calls in this invocation
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
 
-      let result = await this.apiClient.invoke({
-        system: systemPrompt,
-        messages: apiMessages,
-        tools: providerTools.length > 0 ? providerTools : undefined,
-        entityId: entity.id,
-        thinking: thinkingConfig,
-      });
+      let result: Awaited<ReturnType<typeof this.apiClient.invoke>>;
+      try {
+        result = await this.apiClient.invoke({
+          system: systemPrompt,
+          messages: apiMessages,
+          tools: shouldOfferTools ? providerTools : undefined,
+          entityId: entity.id,
+        });
+      } catch (firstErr) {
+        // Retry once on connection errors (Ollama idle unload, transient failures)
+        const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+        if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed") || msg.includes("connection")) {
+          await new Promise((r) => setTimeout(r, 2_000));
+          result = await this.apiClient.invoke({
+            system: systemPrompt,
+            messages: apiMessages,
+            tools: shouldOfferTools ? providerTools : undefined,
+            entityId: entity.id,
+          });
+        } else {
+          throw firstErr;
+        }
+      }
       totalInputTokens += result.usage.inputTokens;
       totalOutputTokens += result.usage.outputTokens;
 
@@ -748,7 +767,7 @@ export class AgentInvoker extends EventEmitter {
             messages: accumulatedMessages,
             tools: providerTools.length > 0 ? providerTools : undefined,
             entityId: entity.id,
-            thinking: thinkingConfig,
+            
           },
           assistantContent: prevContentBlocks,
           toolResults,
@@ -805,7 +824,7 @@ export class AgentInvoker extends EventEmitter {
           messages: accumulatedMessages,
           tools: providerTools.length > 0 ? providerTools : undefined,
           entityId: entity.id,
-          thinking: thinkingConfig,
+          
         });
         totalInputTokens += result.usage.inputTokens;
         totalOutputTokens += result.usage.outputTokens;
@@ -862,7 +881,7 @@ export class AgentInvoker extends EventEmitter {
           messages: accumulatedMessages,
           tools: providerTools.length > 0 ? providerTools : undefined,
           entityId: entity.id,
-          thinking: thinkingConfig,
+          
         });
         totalInputTokens += result.usage.inputTokens;
         totalOutputTokens += result.usage.outputTokens;
@@ -924,7 +943,7 @@ export class AgentInvoker extends EventEmitter {
 
           const prevContentBlocks = result.contentBlocks;
           result = await this.apiClient.continueWithToolResults({
-            original: { system: systemPrompt, messages: accumulatedMessages, tools: providerTools.length > 0 ? providerTools : undefined, entityId: entity.id, thinking: thinkingConfig },
+            original: { system: systemPrompt, messages: accumulatedMessages, tools: providerTools.length > 0 ? providerTools : undefined, entityId: entity.id,  },
             assistantContent: prevContentBlocks,
             toolResults,
           });
