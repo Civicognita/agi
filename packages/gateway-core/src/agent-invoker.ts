@@ -63,14 +63,23 @@ const FRIENDLY_TOOL_SUMMARY: Record<string, string> = {
 // Request type classification — heuristic-based, zero LLM cost
 // ---------------------------------------------------------------------------
 
-const SYSTEM_KEYWORDS = /\b(status|restart|upgrade|doctor|service|container|hosting|deploy|config)\b/i;
-const KNOWLEDGE_KEYWORDS = /\b(what is|explain|tell me about|how does|impactiv|mycelium|protocol|lexicon|prime)\b/i;
+const SYSTEM_KEYWORDS = /\b(status|restart|upgrade|doctor|service|container|hosting|deploy|config|podman|caddy|dnsmasq)\b/i;
+const KNOWLEDGE_KEYWORDS = /\b(impactiv|impactinomics|mycelium|protocol|lexicon|prime|civicognita|0scale|0stage|hive.id)\b/i;
+const TOOL_KEYWORDS = /\b(search|find|create|delete|install|uninstall|list|manage|run|build|start|stop)\b/i;
 
 function classifyRequestType(content: string, projectPath?: string): RequestType {
   if (projectPath) return "project";
   if (SYSTEM_KEYWORDS.test(content)) return "system";
   if (KNOWLEDGE_KEYWORDS.test(content)) return "knowledge";
   return "chat";
+}
+
+function shouldOfferTools(content: string, requestType: RequestType): boolean {
+  if (requestType === "chat") return false;
+  if (requestType === "system") return true;
+  if (requestType === "project") return true;
+  if (TOOL_KEYWORDS.test(content)) return true;
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -594,10 +603,11 @@ export class AgentInvoker extends EventEmitter {
         return { role: msg.role, content: msg.content };
       });
 
-      // Simple chat requests skip tools — prevents small models from tool-looping
-      // on conversational messages that don't need tools
       const requestType = promptCtx.requestType ?? "chat";
-      const shouldOfferTools = requestType !== "chat" && providerTools.length > 0;
+      const useTools = shouldOfferTools(
+        typeof sanitized.content === "string" ? sanitized.content : "",
+        requestType,
+      ) && providerTools.length > 0;
 
       // Accumulate token usage across all API calls in this invocation
       let totalInputTokens = 0;
@@ -608,7 +618,7 @@ export class AgentInvoker extends EventEmitter {
         result = await this.apiClient.invoke({
           system: systemPrompt,
           messages: apiMessages,
-          tools: shouldOfferTools ? providerTools : undefined,
+          tools: useTools ? providerTools : undefined,
           entityId: entity.id,
         });
       } catch (firstErr) {
@@ -619,7 +629,7 @@ export class AgentInvoker extends EventEmitter {
           result = await this.apiClient.invoke({
             system: systemPrompt,
             messages: apiMessages,
-            tools: shouldOfferTools ? providerTools : undefined,
+            tools: useTools ? providerTools : undefined,
             entityId: entity.id,
           });
         } else {
