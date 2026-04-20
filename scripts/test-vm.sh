@@ -305,12 +305,29 @@ systemctl restart caddy'
   echo "==> Adding /etc/hosts entries..."
   multipass exec "$VM_NAME" -- bash -c 'grep -q "ai.on" /etc/hosts || echo "127.0.0.1 ai.on id.ai.on db.ai.on test.ai.on" | sudo tee -a /etc/hosts > /dev/null'
 
-  echo "==> Updating host DNS for test.ai.on..."
+  echo "==> Updating host DNS + Caddy for test.ai.on..."
   VM_IP=$(multipass info "$VM_NAME" --format csv | tail -1 | cut -d',' -f3)
+  HOST_IP=$(hostname -I | awk '{print $1}')
+
+  # DNS: point test.ai.on to the HOST (not VM) so LAN clients can reach it
   sudo sed -i '/test\.ai\.on/d' /etc/dnsmasq.d/ai-on.conf
-  echo "address=/test.ai.on/$VM_IP" | sudo tee -a /etc/dnsmasq.d/ai-on.conf
+  echo "address=/test.ai.on/$HOST_IP" | sudo tee -a /etc/dnsmasq.d/ai-on.conf
   sudo systemctl restart dnsmasq
-  echo "    test.ai.on → $VM_IP"
+  echo "    test.ai.on → $HOST_IP (host proxies to VM at $VM_IP)"
+
+  # Caddy: add reverse proxy from host to VM gateway (inside CUSTOM block)
+  if ! grep -q "test.ai.on" /etc/caddy/Caddyfile 2>/dev/null; then
+    sudo sed -i "/# --- END CUSTOM ---/i\\
+\\
+test.ai.on {\\
+    tls internal\\
+    reverse_proxy $VM_IP:3100\\
+}" /etc/caddy/Caddyfile
+    sudo systemctl reload caddy
+    echo "    Caddy proxy added: test.ai.on → $VM_IP:3100"
+  else
+    echo "    Caddy proxy already configured for test.ai.on"
+  fi
 
   echo "==> Building ID service..."
   multipass exec "$VM_NAME" -- bash -c '
