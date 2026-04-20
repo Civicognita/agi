@@ -348,6 +348,20 @@ cmd_doctor() {
     err "not installed"; issues=$((issues + 1))
   fi
 
+  # Ollama
+  label "Ollama:"
+  if command -v ollama &>/dev/null; then
+    if systemctl is-active --quiet ollama 2>/dev/null; then
+      local model_count
+      model_count="$(ollama list 2>/dev/null | tail -n +2 | wc -l)"
+      ok "running (${model_count} model(s))"
+    else
+      warn "installed but not running"
+    fi
+  else
+    warn "not installed (text-gen uses slower transformers runtime)"
+  fi
+
   # dnsmasq
   label "dnsmasq:"
   if systemctl is-active --quiet dnsmasq 2>/dev/null; then
@@ -405,6 +419,26 @@ cmd_config() {
       console.log(typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v));
     " 2>/dev/null
   fi
+}
+
+cmd_ollama() {
+  local subcmd="${1:-status}"
+  shift 2>/dev/null || true
+  if ! command -v ollama &>/dev/null; then
+    err "Ollama not installed. Install with: curl -fsSL https://ollama.ai/install.sh | sh"
+    exit 1
+  fi
+  case "$subcmd" in
+    status)
+      systemctl is-active ollama 2>/dev/null || echo "stopped"
+      ollama list 2>/dev/null
+      ;;
+    start)  sudo systemctl start ollama && ok "Ollama started" ;;
+    stop)   sudo systemctl stop ollama && ok "Ollama stopped" ;;
+    pull)   ollama pull "$@" ;;
+    list)   ollama list ;;
+    *)      ollama "$subcmd" "$@" ;;
+  esac
 }
 
 cmd_test_vm() {
@@ -478,6 +512,7 @@ cmd_help() {
   echo "  incidents       List incident reports (or: incidents view <id>)"
   echo "  config [key]    Read config (full or dot-path key)"
   echo "  projects        List hosted projects"
+  echo "  ollama CMD      Manage Ollama (status|start|stop|pull|list)"
   echo "  test-vm CMD     Manage test VM (status|create|destroy|provision|setup|"
   echo "                  services-setup|services-start|services-stop|services-status|"
   echo "                  test|test-ui|remount)"
@@ -509,6 +544,7 @@ case "${1:-help}" in
   incidents) shift; cmd_incidents "$@" ;;
   config)   cmd_config "${2:-}" ;;
   projects) cmd_projects ;;
+  ollama)   shift; cmd_ollama "$@" ;;
   test-vm)  shift; cmd_test_vm "$@" ;;
   setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;
   setup-prompts) node "$DEPLOY_DIR/cli/dist/index.js" setup-prompts ;;

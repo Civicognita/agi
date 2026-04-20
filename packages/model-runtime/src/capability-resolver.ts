@@ -9,6 +9,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import type {
   HfModelInfo,
@@ -59,6 +60,32 @@ const QUANT_METHOD_DEPS: Record<string, string[]> = {
   hqq: ["hqq", "accelerate"],
 };
 
+/** HuggingFace model ID → Ollama model name mapping. */
+const HF_TO_OLLAMA: Record<string, string> = {
+  "Qwen/Qwen2.5-1.5B-Instruct": "qwen2.5:1.5b-instruct",
+  "Qwen/Qwen2.5-Coder-1.5B-Instruct": "qwen2.5-coder:1.5b-instruct",
+  "Qwen/Qwen2.5-0.5B-Instruct": "qwen2.5:0.5b-instruct",
+  "Qwen/Qwen2.5-7B-Instruct": "qwen2.5:7b-instruct",
+  "Qwen/Qwen2.5-3B-Instruct": "qwen2.5:3b-instruct",
+  "Qwen/Qwen2.5-Coder-7B-Instruct": "qwen2.5-coder:7b-instruct",
+  "meta-llama/Llama-3.1-8B-Instruct": "llama3.1:8b-instruct",
+  "meta-llama/Llama-3.2-1B-Instruct": "llama3.2:1b",
+  "meta-llama/Llama-3.2-3B-Instruct": "llama3.2:3b",
+  "HuggingFaceTB/SmolLM2-135M-Instruct": "smollm2:135m",
+  "HuggingFaceTB/SmolLM2-360M-Instruct": "smollm2:360m",
+  "HuggingFaceTB/SmolLM2-1.7B-Instruct": "smollm2:1.7b",
+  "microsoft/Phi-3.5-mini-instruct": "phi3.5:3.8b",
+  "google/gemma-2-2b-it": "gemma2:2b",
+  "mistralai/Mistral-7B-Instruct-v0.3": "mistral:7b-instruct",
+};
+
+function ollamaAvailable(): boolean {
+  try {
+    execFileSync("which", ["ollama"], { stdio: "pipe", timeout: 3_000 });
+    return true;
+  } catch { return false; }
+}
+
 /** Bytes per gigabyte. */
 const GB = 1024 * 1024 * 1024;
 
@@ -87,8 +114,8 @@ const DEFAULT_IMAGES: Record<ModelRuntimeType, string> = {
   llm: "ghcr.io/civicognita/transformers-server:latest",
   diffusion: "ghcr.io/civicognita/diffusion-server:latest",
   general: "ghcr.io/civicognita/transformers-server:latest",
-  // Custom runtimes have no shared image — resolved per-model via the registry or model.containerImage
   custom: "",
+  ollama: "",
 };
 
 // ---------------------------------------------------------------------------
@@ -264,6 +291,7 @@ export class CapabilityResolver {
       ) ?? false;
 
       if (hasGguf) return "llm";
+      if (ollamaAvailable() && HF_TO_OLLAMA[model.id]) return "ollama";
       if (model.library_name === "transformers") return "general";
       return "llm";
     }
@@ -578,6 +606,21 @@ export class CapabilityResolver {
           env,
           gpuPassthrough,
           memoryLimit,
+          runtimeArgs: [],
+        };
+      }
+
+      case "ollama": {
+        const ollamaName = HF_TO_OLLAMA[model.id] ?? model.id.toLowerCase().replace("/", ":");
+        return {
+          runtimeType: "ollama",
+          image: "",
+          internalPort: 11434,
+          modelHostPath: "",
+          modelContainerPath: "",
+          ollamaModelName: ollamaName,
+          env: {},
+          gpuPassthrough: false,
           runtimeArgs: [],
         };
       }

@@ -612,6 +612,23 @@ export function registerHfRoutes(
             port: c.port,
           };
         });
+
+      // Also include Ollama-served models
+      try {
+        const ollamaRes = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(3_000) });
+        if (ollamaRes.ok) {
+          const data = await ollamaRes.json() as { models?: Array<{ name: string }> };
+          for (const m of data.models ?? []) {
+            providers.push({
+              id: `ollama:${m.name}`,
+              name: `${m.name} (Ollama)`,
+              baseUrl: "http://127.0.0.1:11434",
+              port: 11434,
+            });
+          }
+        }
+      } catch { /* Ollama not running */ }
+
       return reply.send(providers);
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });

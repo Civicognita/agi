@@ -29,17 +29,16 @@ const DEFAULT_IMAGES: Record<ModelRuntimeType, string> = {
   llm: "ghcr.io/civicognita/transformers-server:latest",
   diffusion: "ghcr.io/civicognita/diffusion-server:latest",
   general: "ghcr.io/civicognita/transformers-server:latest",
-  // Custom runtimes have no shared default — image must be provided per-model
-  // via model.containerImage or containerConfig.image (set by CustomContainerBuilder).
   custom: "",
+  ollama: "",
 };
 
 const INTERNAL_PORTS: Record<ModelRuntimeType, number> = {
   llm: 8080,
   diffusion: 8000,
   general: 8000,
-  // Custom runtimes declare their own port via containerConfig.internalPort
   custom: 8000,
+  ollama: 11434,
 };
 
 // ---------------------------------------------------------------------------
@@ -127,6 +126,35 @@ export class ModelContainerManager {
           `Cannot start model: would exceed RAM budget (${usedGB} GB used of ${limitGB} GB limit)`,
         );
       }
+    }
+
+    // Ollama runtime — no container, model served by Ollama daemon
+    if (containerConfig.runtimeType === "ollama" && containerConfig.ollamaModelName) {
+      const ollamaModel = containerConfig.ollamaModelName;
+      this.events.emit("model:starting", model.id);
+      try {
+        execFileSync("ollama", ["pull", ollamaModel], { stdio: "pipe", timeout: 600_000 });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.events.emit("model:error", model.id, `Ollama pull failed: ${msg}`);
+        throw new Error(`Failed to pull Ollama model "${ollamaModel}": ${msg}`);
+      }
+
+      const state: ModelContainerState = {
+        modelId: model.id,
+        containerId: `ollama-${ollamaModel}`,
+        containerName: `ollama-${ollamaModel}`,
+        port: 11434,
+        runtimeType: "ollama",
+        startedAt: new Date().toISOString(),
+        status: "running",
+        healthCheckPassed: true,
+        estimatedRamBytes: containerConfig.estimatedRamBytes ?? model.fileSizeBytes,
+      };
+      this.activeContainers.set(model.id, state);
+      this.persistState();
+      this.events.emit("model:started", model.id, 11434);
+      return state;
     }
 
     const port = this.allocatePort();
@@ -268,22 +296,27 @@ export class ModelContainerManager {
 
     this.events.emit("model:stopping", modelId);
 
-    try {
-      execFileSync("podman", ["stop", "-t", "10", state.containerName], {
-        stdio: "pipe",
-        timeout: 10_000,
-      });
-    } catch {
-      // Container may already be stopped
-    }
+    if (state.runtimeType === "ollama") {
+      try {
+        execFileSync("ollama", ["stop", state.containerName.replace("ollama-", "")], {
+          stdio: "pipe",
+          timeout: 10_000,
+        });
+      } catch { /* model may not be loaded */ }
+    } else {
+      try {
+        execFileSync("podman", ["stop", "-t", "10", state.containerName], {
+          stdio: "pipe",
+          timeout: 10_000,
+        });
+      } catch { /* container may already be stopped */ }
 
-    try {
-      execFileSync("podman", ["rm", "-f", state.containerName], {
-        stdio: "pipe",
-        timeout: 10_000,
-      });
-    } catch {
-      // Container may already be removed
+      try {
+        execFileSync("podman", ["rm", "-f", state.containerName], {
+          stdio: "pipe",
+          timeout: 10_000,
+        });
+      } catch { /* container may already be removed */ }
     }
 
     this.allocatedPorts.delete(state.port);
@@ -379,6 +412,12 @@ export class ModelContainerManager {
   async probeHealth(modelId: string): Promise<boolean> {
     const state = this.activeContainers.get(modelId);
     if (!state) return false;
+    if (state.runtimeType === "ollama") {
+      try {
+        const res = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(3000) });
+        return res.ok;
+      } catch { return false; }
+    }
     try {
       const res = await fetch(`http://localhost:${String(state.port)}/health`, {
         signal: AbortSignal.timeout(1500),
