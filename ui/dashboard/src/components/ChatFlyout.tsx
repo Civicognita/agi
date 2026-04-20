@@ -185,6 +185,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+  const deferredCreateRef = useRef(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -408,8 +409,9 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         pendingContextRef.current = null;
         ws.send(JSON.stringify({ type: "chat:open", payload: { context: pending } }));
       }
-      // Auto-create first session if flyout is open with no sessions
-      if (sessionsRef.current.length === 0 && !pending) {
+      // If a deferred session create was queued (from + button before WS ready), flush it
+      if (deferredCreateRef.current) {
+        deferredCreateRef.current = false;
         ws.send(JSON.stringify({ type: "chat:open", payload: { context: "general" } }));
       }
       // Start heartbeat. Every tick we ping; if we haven't seen a pong within
@@ -812,7 +814,10 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
 
   const createSession = useCallback((context = "general") => {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      deferredCreateRef.current = true;
+      return;
+    }
     ws.send(JSON.stringify({ type: "chat:open", payload: { context } }));
   }, []);
 
