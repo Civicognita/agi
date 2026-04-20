@@ -421,8 +421,8 @@ export function DevSettings({ config, update }: {
         )}
       </Card>}
 
-      {/* Test Infrastructure — only when dev mode is enabled */}
-      {devStatus?.enabled && <TestVmPanel />}
+      {/* Test Infrastructure — always available in Contributing tab */}
+      <TestVmPanel />
     </>
   );
 }
