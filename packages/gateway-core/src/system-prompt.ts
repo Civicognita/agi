@@ -98,8 +98,12 @@ export interface PrimeContext {
   topicIndex?: Record<string, string[]>;
 }
 
+export type RequestType = "chat" | "project" | "entity" | "knowledge" | "system" | "worker" | "taskmaster";
+
 /** Full context required to assemble the system prompt. */
 export interface SystemPromptContext {
+  /** Request type — determines which Layer 2 context sections are included. */
+  requestType?: RequestType;
   entity: EntityContextSection;
   coaFingerprint: string;
   state: GatewayState;
@@ -627,26 +631,32 @@ export function getTierCapabilities(tier: VerificationTier): TierCapabilities {
 /**
  * Assemble the full system prompt from live context.
  *
- * This is the single entry point for prompt construction. Must be called on
- * every invocation — prompt components must not be cached between turns.
+ * Three-layer architecture:
+ *   Layer 1 — Identity Core (~500 tokens): persona, tools, response format, state
+ *   Layer 2 — Request Context (dynamic): only sections relevant to requestType
+ *   Layer 3 — Deep Knowledge (not injected): retrieved via tools at runtime
+ *
+ * Must be called on every invocation — prompt components must not be cached.
  */
 export function assembleSystemPrompt(ctx: SystemPromptContext): string {
-  // Resolve identity section — PRIME truth > persona files > hardcoded
-  let identityContent: string;
+  const rt = ctx.requestType ?? "chat";
+  const sections: string[] = [];
 
+  // -------------------------------------------------------------------------
+  // LAYER 1: Identity Core (always present, ~500 tokens)
+  // -------------------------------------------------------------------------
+
+  // Identity — PRIME truth > persona files > hardcoded
+  let identityContent: string;
   if (ctx.prime?.persona !== undefined || ctx.prime?.purpose !== undefined) {
-    // PRIME truth takes highest priority
     identityContent = buildPrimeIdentitySection(ctx.prime);
   } else if (ctx.persona?.soulPath !== undefined) {
-    // File-based persona takes precedence over hardcoded
     const loaded = loadPersonaFile(ctx.persona.soulPath);
     identityContent = loaded ?? (ctx.devMode === true ? buildDevIdentitySection() : buildIdentitySection());
   } else {
     identityContent = ctx.devMode === true ? buildDevIdentitySection() : buildIdentitySection();
   }
 
-  // Append identity capabilities subsection if identityPath is provided
-  // (only when PRIME truth is not in use, to preserve priority)
   if (
     ctx.prime?.persona === undefined &&
     ctx.prime?.purpose === undefined &&
@@ -658,69 +668,90 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
     }
   }
 
-  const sections = [
-    identityContent,
-    buildEntityContextSection(ctx.entity),
-    ...(ctx.userContext !== undefined ? [buildUserContextSection(ctx.userContext)] : []),
-    buildCOAContextSection(ctx.coaFingerprint),
-    buildStateConstraintsSection(ctx.state, ctx.capabilities),
-    buildToolsSection(ctx.tools),
-  ];
+  sections.push(identityContent);
 
-  // Inject runtime metadata line after identity section (index 1)
+  // Runtime metadata
   if (ctx.runtimeMeta !== undefined) {
-    sections.splice(1, 0, buildRuntimeMetadataSection(ctx.runtimeMeta, ctx.state));
+    sections.push(buildRuntimeMetadataSection(ctx.runtimeMeta, ctx.state));
   }
 
-  // Inject PRIME_DIRECTIVE after COA context (if directive or authority is present)
-  if (ctx.prime !== undefined && (ctx.prime.directive !== undefined || ctx.prime.authority !== undefined)) {
-    // Find COA section index and insert after it
-    const coaIdx = sections.findIndex((s) => s.startsWith("Chain of Accountability:"));
-    const insertAt = coaIdx >= 0 ? coaIdx + 1 : sections.length;
-    sections.splice(insertAt, 0, buildPrimeDirectiveSection(ctx.prime));
-  }
+  // Available tools (always — defines what the agent can do)
+  sections.push(buildToolsSection(ctx.tools));
 
-  // Inject knowledge index from PRIME corpus
-  if (ctx.prime?.topicIndex !== undefined) {
-    const indexSection = buildKnowledgeIndexSection(ctx.prime.topicIndex);
-    if (indexSection.length > 0) {
-      sections.push(indexSection);
-    }
-  }
-
-  // Inject workspace context in dev mode
-  if (ctx.devMode === true && ctx.workspaceRoot !== undefined) {
-    sections.push(buildWorkspaceContextSection(ctx.workspaceRoot, ctx.projectPaths));
-  }
-
-  // Inject Tynn project context in dev mode
-  if (ctx.devMode === true && ctx.tynnContext !== undefined) {
-    sections.push(buildTynnContextSection(ctx.tynnContext));
-  }
-
-  // Inject skills context if matched
-  if (ctx.skills !== undefined && ctx.skills.length > 0) {
-    sections.push(buildSkillsSection(ctx.skills));
-  }
-
-  // Inject memory context if recalled
-  if (ctx.memories !== undefined && ctx.memories.length > 0) {
-    sections.push(buildMemorySection(ctx.memories));
-  }
-
-  // Inject owner context when owner info is available
+  // State + owner (compact, one line each)
+  sections.push(`Operational state: ${ctx.state}`);
   if (ctx.ownerName !== undefined) {
     sections.push(buildOwnerContextSection(ctx.ownerName, ctx.isOwner ?? false));
   }
 
-  // Inject plan workflow instructions when a project context is active
-  if (ctx.projectPath !== undefined) {
+  // Response format (always)
+  sections.push(buildResponseFormatSection());
+
+  // -------------------------------------------------------------------------
+  // LAYER 2: Request Context (dynamic — only for relevant request types)
+  // -------------------------------------------------------------------------
+
+  // Entity context — for entity interactions and most non-chat requests
+  if (rt !== "chat" && rt !== "worker" && rt !== "taskmaster") {
+    sections.push(buildEntityContextSection(ctx.entity));
+    if (ctx.userContext !== undefined) {
+      sections.push(buildUserContextSection(ctx.userContext));
+    }
+  }
+
+  // COA context — for entity interactions
+  if (rt === "entity" || rt === "project" || rt === "system") {
+    sections.push(buildCOAContextSection(ctx.coaFingerprint));
+    if (ctx.prime !== undefined && (ctx.prime.directive !== undefined || ctx.prime.authority !== undefined)) {
+      sections.push(buildPrimeDirectiveSection(ctx.prime));
+    }
+  }
+
+  // State constraints (full) — for entity and system interactions
+  if (rt === "entity" || rt === "system") {
+    sections.push(buildStateConstraintsSection(ctx.state, ctx.capabilities));
+  }
+
+  // Knowledge corpus index — for knowledge queries (agent pulls details via tools)
+  if (rt === "knowledge" || rt === "project") {
+    if (ctx.prime?.topicIndex !== undefined) {
+      const indexSection = buildKnowledgeIndexSection(ctx.prime.topicIndex);
+      if (indexSection.length > 0) {
+        sections.push(indexSection);
+      }
+    }
+  }
+
+  // Project context — for project work
+  if (rt === "project" && ctx.projectPath !== undefined) {
     sections.push(buildProjectContextSection(ctx.projectPath));
     sections.push(buildPlanWorkflowSection());
   }
 
-  sections.push(buildTaskmasterSection());
-  sections.push(buildResponseFormatSection());
+  // Workspace context — for dev mode project work
+  if (ctx.devMode === true && (rt === "project" || rt === "system")) {
+    if (ctx.workspaceRoot !== undefined) {
+      sections.push(buildWorkspaceContextSection(ctx.workspaceRoot, ctx.projectPaths));
+    }
+    if (ctx.tynnContext !== undefined) {
+      sections.push(buildTynnContextSection(ctx.tynnContext));
+    }
+  }
+
+  // TASKMASTER — only when taskmaster is relevant
+  if (rt !== "chat" && rt !== "worker") {
+    sections.push(buildTaskmasterSection());
+  }
+
+  // Skills — always inject if matched (they're request-relevant by definition)
+  if (ctx.skills !== undefined && ctx.skills.length > 0) {
+    sections.push(buildSkillsSection(ctx.skills));
+  }
+
+  // Memory — always inject if recalled (agent explicitly recalled these)
+  if (ctx.memories !== undefined && ctx.memories.length > 0) {
+    sections.push(buildMemorySection(ctx.memories));
+  }
 
   return sections.join("\n\n");
 }

@@ -34,7 +34,7 @@ import {
   computeAvailableTools,
   estimateTokens,
 } from "./system-prompt.js";
-import type { SystemPromptContext, EntityContextSection } from "./system-prompt.js";
+import type { SystemPromptContext, EntityContextSection, RequestType } from "./system-prompt.js";
 import { gateInvocation, isHumanCommand } from "./invocation-gate.js";
 import { sanitize } from "./sanitizer.js";
 
@@ -58,6 +58,20 @@ const FRIENDLY_TOOL_SUMMARY: Record<string, string> = {
   taskmaster_dispatch: "Work dispatched",
   search_prime: "Knowledge searched",
 };
+
+// ---------------------------------------------------------------------------
+// Request type classification — heuristic-based, zero LLM cost
+// ---------------------------------------------------------------------------
+
+const SYSTEM_KEYWORDS = /\b(status|restart|upgrade|doctor|service|container|hosting|deploy|config)\b/i;
+const KNOWLEDGE_KEYWORDS = /\b(what is|explain|tell me about|how does|impactiv|mycelium|protocol|lexicon|prime)\b/i;
+
+function classifyRequestType(content: string, projectPath?: string): RequestType {
+  if (projectPath) return "project";
+  if (SYSTEM_KEYWORDS.test(content)) return "system";
+  if (KNOWLEDGE_KEYWORDS.test(content)) return "knowledge";
+  return "chat";
+}
 
 // ---------------------------------------------------------------------------
 // Tool event helpers — sanitize inputs and extract structured detail
@@ -436,6 +450,7 @@ export class AgentInvoker extends EventEmitter {
       ownerName: this.deps.ownerConfig?.displayName,
       isOwner: request.isOwner,
       projectPath: request.projectContext,
+      requestType: classifyRequestType(typeof sanitized.content === "string" ? sanitized.content : "", request.projectContext),
     };
 
     let systemPrompt = assembleSystemPrompt(promptCtx);
