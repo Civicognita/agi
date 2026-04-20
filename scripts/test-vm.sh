@@ -21,9 +21,12 @@ set -euo pipefail
 
 VM_NAME="agi-test"
 VM_IMAGE="24.04"
-VM_CPUS=2
-VM_MEM="4G"
+VM_CPUS=4
+VM_MEM="8G"
 VM_DISK="20G"
+
+# Structured JSON emitter for gateway streaming
+emit_json() { echo "{\"phase\":\"$1\",\"status\":\"$2\",\"details\":\"${3:-}\"}"; }
 
 # Detect paths: AGI repo dir and workspace root (parent of agi/)
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -103,16 +106,17 @@ cmd_create() {
   ensure_multipass
 
   if vm_exists; then
+    emit_json "create" "skip" "VM already exists"
     echo "VM '$VM_NAME' already exists."
     if ! vm_running; then
       echo "Starting stopped VM..."
       multipass start "$VM_NAME"
     fi
-    echo "Use '$0 destroy' first for a fresh VM."
     cmd_status
     return 0
   fi
 
+  emit_json "create" "start" "Creating VM (${VM_IMAGE}, ${VM_CPUS} CPU, ${VM_MEM} RAM)"
   echo "==> Creating VM '$VM_NAME' (${VM_IMAGE}, ${VM_CPUS} CPU, ${VM_MEM} RAM, ${VM_DISK} disk)..."
 
   # Write cloud-init to a snap-accessible location with readable permissions
@@ -138,6 +142,7 @@ cmd_create() {
   echo "==> Waiting for cloud-init to finish..."
   multipass exec "$VM_NAME" -- cloud-init status --wait 2>/dev/null || true
 
+  emit_json "create" "done" "VM ready"
   echo ""
   echo "VM ready. Run '$0 setup' to install dependencies."
   cmd_status
@@ -184,6 +189,7 @@ cmd_exec() {
 
 cmd_setup() {
   ensure_vm_running
+  emit_json "setup" "start" "Installing dependencies"
 
   echo "==> Checking Node.js installation..."
   if ! multipass exec "$VM_NAME" -- node --version &>/dev/null; then
@@ -214,6 +220,7 @@ cmd_setup() {
   echo "==> Running pnpm install in /mnt/agi..."
   multipass exec "$VM_NAME" -- bash -c 'cd /mnt/agi && pnpm install --frozen-lockfile'
 
+  emit_json "setup" "done" "Dependencies installed"
   echo ""
   echo "Setup complete. Run '$0 test' or 'pnpm test' to run tests."
 }
@@ -252,6 +259,7 @@ cmd_test() {
 
 cmd_services_setup() {
   ensure_vm_running
+  emit_json "services" "start" "Setting up services"
 
   echo "==> Installing PostgreSQL..."
   multipass exec "$VM_NAME" -- sudo apt-get install -y postgresql postgresql-client
@@ -397,6 +405,7 @@ CFGEOF
 }
 OBEOF'
 
+  emit_json "services" "done" "Services setup complete"
   echo "==> Services setup complete."
   echo "    Run '$0 services-start' to start all services."
 }
@@ -521,6 +530,15 @@ cmd_test_services() {
   '
 }
 
+cmd_provision() {
+  emit_json "provision" "start" "Full provisioning: create → setup → services-setup → services-start"
+  cmd_create
+  cmd_setup
+  cmd_services_setup
+  cmd_services_start
+  emit_json "provision" "done" "Test VM fully provisioned — test.ai.on is ready"
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -538,10 +556,11 @@ case "${1:-help}" in
   services-start)   cmd_services_start ;;
   services-stop)    cmd_services_stop ;;
   services-status)  cmd_services_status ;;
+  provision)        cmd_provision ;;
   test-services)    cmd_test_services ;;
   test-ui)          cmd_test_ui "${@:2}" ;;
   help|--help|-h)
-    echo "Usage: $0 {create|destroy|status|ssh|ip|setup|test|remount|exec|services-setup|services-start|services-stop|services-status|test-services|test-ui}"
+    echo "Usage: $0 {create|destroy|status|ssh|ip|setup|provision|test|remount|exec|services-setup|services-start|services-stop|services-status|test-services|test-ui}"
     echo ""
     echo "Commands:"
     echo "  create           Launch a fresh Ubuntu ${VM_IMAGE} VM with all repo mounts"

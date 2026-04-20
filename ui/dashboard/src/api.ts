@@ -459,6 +459,51 @@ export async function switchDevMode(enabled: boolean): Promise<{ ok: boolean; ag
 }
 
 // ---------------------------------------------------------------------------
+// Test VM API
+// ---------------------------------------------------------------------------
+
+export interface TestVmStatus {
+  exists: boolean;
+  running: boolean;
+  ip: string | null;
+  services: {
+    postgres: string;
+    caddy: string;
+    agi: string;
+    id: string;
+  };
+}
+
+export async function fetchTestVmStatus(): Promise<TestVmStatus> {
+  const res = await fetch("/api/test-vm/status");
+  if (!res.ok) return { exists: false, running: false, ip: null, services: { postgres: "unknown", caddy: "unknown", agi: "unknown", id: "unknown" } };
+  return res.json() as Promise<TestVmStatus>;
+}
+
+export async function runTestVmCommand(command: string): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/test-vm/command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command }),
+  });
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export interface TestResults {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  tests: Array<{ name: string; file: string; status: string; duration: number }>;
+}
+
+export async function fetchTestResults(): Promise<TestResults> {
+  const res = await fetch("/api/test-vm/test-results");
+  if (!res.ok) return { total: 0, passed: 0, failed: 0, skipped: 0, tests: [] };
+  return res.json() as Promise<TestResults>;
+}
+
+// ---------------------------------------------------------------------------
 // Config API (outside dashboard prefix — /api/config)
 // ---------------------------------------------------------------------------
 

@@ -407,6 +407,17 @@ cmd_config() {
   fi
 }
 
+cmd_test_vm() {
+  local subcmd="${1:-status}"
+  shift 2>/dev/null || true
+  local script="$DEPLOY_DIR/scripts/test-vm.sh"
+  if [ ! -f "$script" ]; then
+    err "test-vm.sh not found at $script"
+    exit 1
+  fi
+  bash "$script" "$subcmd" "$@"
+}
+
 cmd_projects() {
   echo -e "${BOLD}Hosted Projects${RESET}"
   echo ""
@@ -467,6 +478,9 @@ cmd_help() {
   echo "  incidents       List incident reports (or: incidents view <id>)"
   echo "  config [key]    Read config (full or dot-path key)"
   echo "  projects        List hosted projects"
+  echo "  test-vm CMD     Manage test VM (status|create|destroy|provision|setup|"
+  echo "                  services-setup|services-start|services-stop|services-status|"
+  echo "                  test|test-ui|remount)"
   echo "  setup           Interactive configuration wizard"
   echo "  setup-prompts   Configure persona and heartbeat prompts"
   echo "  channels        Manage channel adapters"
@@ -495,6 +509,7 @@ case "${1:-help}" in
   incidents) shift; cmd_incidents "$@" ;;
   config)   cmd_config "${2:-}" ;;
   projects) cmd_projects ;;
+  test-vm)  shift; cmd_test_vm "$@" ;;
   setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;
   setup-prompts) node "$DEPLOY_DIR/cli/dist/index.js" setup-prompts ;;
   channels) shift; node "$DEPLOY_DIR/cli/dist/index.js" channels "$@" ;;

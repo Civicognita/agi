@@ -1996,6 +1996,126 @@ export async function createGatewayRuntimeState(
   }
 
   // -----------------------------------------------------------------------
+  // Test VM management (private network only, dev mode)
+  // -----------------------------------------------------------------------
+
+  const testVmScript = join(deps.selfRepoPath ?? "/opt/agi", "scripts", "test-vm.sh");
+  const ALLOWED_VM_COMMANDS = new Set([
+    "create", "destroy", "status", "setup", "provision",
+    "services-setup", "services-start", "services-stop", "services-status",
+    "test", "test-ui", "remount",
+  ]);
+
+  fastify.get("/api/test-vm/status", async (request, reply) => {
+    if (!isPrivateNetwork(getClientIp(request.raw))) {
+      return reply.code(403).send({ error: "Private network only" });
+    }
+    try {
+      const info = execFileSync("bash", [testVmScript, "status"], {
+        stdio: "pipe", timeout: 10_000,
+      }).toString();
+
+      const running = info.includes("Running");
+      const ipMatch = /IPv4:\s+(\S+)/.exec(info);
+      const ip = ipMatch?.[1] ?? null;
+
+      let services = { postgres: "unknown", caddy: "unknown", agi: "unknown", id: "unknown" };
+      if (running) {
+        try {
+          const svcOut = execFileSync("bash", [testVmScript, "services-status"], {
+            stdio: "pipe", timeout: 15_000,
+          }).toString();
+          services = {
+            postgres: svcOut.includes("PostgreSQL: active") ? "active" : "inactive",
+            caddy: svcOut.includes("Caddy: active") || svcOut.includes("Caddy:      active") ? "active" : "inactive",
+            agi: svcOut.includes("AGI:        running") || svcOut.includes("AGI: running") ? "running" : "stopped",
+            id: svcOut.includes("ID:         running") || svcOut.includes("ID: running") ? "running" : "stopped",
+          };
+        } catch { /* services-status may fail if services not set up */ }
+      }
+
+      return reply.send({ exists: true, running, ip, services });
+    } catch {
+      return reply.send({ exists: false, running: false, ip: null, services: { postgres: "unknown", caddy: "unknown", agi: "unknown", id: "unknown" } });
+    }
+  });
+
+  fastify.post("/api/test-vm/command", async (request, reply) => {
+    if (!isPrivateNetwork(getClientIp(request.raw))) {
+      return reply.code(403).send({ error: "Private network only" });
+    }
+    const body = request.body as { command?: string } | undefined;
+    const command = body?.command;
+    if (!command || !ALLOWED_VM_COMMANDS.has(command)) {
+      return reply.code(400).send({ error: `Invalid command. Allowed: ${[...ALLOWED_VM_COMMANDS].join(", ")}` });
+    }
+
+    const child = spawn("bash", [testVmScript, command], {
+      cwd: deps.selfRepoPath ?? "/opt/agi",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const broadcast = (phase: string, status: string, message: string) => {
+      const data = { phase, status, message, timestamp: new Date().toISOString() };
+      deps.wsRef?.server?.broadcast("dashboard_event", { type: "system:test-vm", data });
+    };
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      for (const line of chunk.toString("utf-8").split("\n").filter(Boolean)) {
+        try {
+          const parsed = JSON.parse(line) as { phase?: string; status?: string; details?: string };
+          if (parsed.phase) {
+            broadcast(parsed.phase, parsed.status ?? "info", parsed.details ?? line);
+            continue;
+          }
+        } catch { /* not JSON */ }
+        broadcast(command, "info", line);
+      }
+    });
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf-8").trim();
+      if (text) broadcast(command, "warn", text);
+    });
+
+    child.on("close", (code) => {
+      if (code === 0) {
+        broadcast(command, "done", `${command} completed`);
+      } else {
+        broadcast(command, "error", `${command} failed (exit code ${String(code)})`);
+      }
+    });
+
+    return reply.send({ ok: true, command });
+  });
+
+  fastify.get("/api/test-vm/test-results", async (request, reply) => {
+    if (!isPrivateNetwork(getClientIp(request.raw))) {
+      return reply.code(403).send({ error: "Private network only" });
+    }
+    try {
+      const reportDir = join(homedir(), ".agi", "playwright", "report");
+      const indexPath = join(reportDir, "index.html");
+      if (!existsSync(indexPath)) {
+        return reply.send({ total: 0, passed: 0, failed: 0, skipped: 0, tests: [] });
+      }
+      const html = readFileSync(indexPath, "utf-8");
+      const passedMatch = /(\d+) passed/.exec(html);
+      const failedMatch = /(\d+) failed/.exec(html);
+      const skippedMatch = /(\d+) skipped/.exec(html);
+      return reply.send({
+        total: Number(passedMatch?.[1] ?? 0) + Number(failedMatch?.[1] ?? 0) + Number(skippedMatch?.[1] ?? 0),
+        passed: Number(passedMatch?.[1] ?? 0),
+        failed: Number(failedMatch?.[1] ?? 0),
+        skipped: Number(skippedMatch?.[1] ?? 0),
+        tests: [],
+      });
+    } catch {
+      return reply.send({ total: 0, passed: 0, failed: 0, skipped: 0, tests: [] });
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // GET /api/config — read current config (private network only)
   // -----------------------------------------------------------------------
 
