@@ -257,17 +257,15 @@ cmd_services_setup() {
   multipass exec "$VM_NAME" -- sudo apt-get install -y postgresql postgresql-client
 
   echo "==> Configuring PostgreSQL for password auth..."
-  multipass exec "$VM_NAME" -- sudo bash -c '
-    # Enable md5 auth for local TCP connections (default is peer which blocks password login)
+  multipass exec "$VM_NAME" -- bash -c 'sudo bash -c '"'"'
     PG_HBA=$(find /etc/postgresql -name pg_hba.conf 2>/dev/null | head -1)
     if [ -n "$PG_HBA" ]; then
       sed -i "s/^host.*all.*all.*127.0.0.1\/32.*scram-sha-256/host all all 127.0.0.1\/32 md5/" "$PG_HBA"
       sed -i "s/^host.*all.*all.*127.0.0.1\/32.*peer/host all all 127.0.0.1\/32 md5/" "$PG_HBA"
-      # Also ensure there IS a host line for 127.0.0.1
       grep -q "^host.*all.*all.*127.0.0.1" "$PG_HBA" || echo "host all all 127.0.0.1/32 md5" >> "$PG_HBA"
       systemctl restart postgresql
     fi
-  '
+  '"'"''
 
   echo "==> Creating ID service database..."
   multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE USER agi WITH PASSWORD 'testpass';\"" 2>/dev/null || true
@@ -305,9 +303,7 @@ EOF
 systemctl restart caddy'
 
   echo "==> Adding /etc/hosts entries..."
-  multipass exec "$VM_NAME" -- sudo bash -c '
-    grep -q "ai.on id.ai.on" /etc/hosts || echo "127.0.0.1 ai.on id.ai.on db.ai.on test.ai.on" >> /etc/hosts
-  '
+  multipass exec "$VM_NAME" -- bash -c 'grep -q "ai.on" /etc/hosts || echo "127.0.0.1 ai.on id.ai.on db.ai.on test.ai.on" | sudo tee -a /etc/hosts > /dev/null'
 
   echo "==> Updating host DNS for test.ai.on..."
   VM_IP=$(multipass info "$VM_NAME" --format csv | tail -1 | cut -d',' -f3)
@@ -345,18 +341,44 @@ ENVEOF
     pnpm install
     pnpm build
 
-    # Create minimal config
+    # Create minimal config with absolute paths
     mkdir -p ~/.agi
     cat > ~/.agi/gateway.json << CFGEOF
 {
   "gateway": { "host": "0.0.0.0", "port": 3100, "state": "ONLINE" },
   "channels": [],
-  "entities": { "path": "~/.agi/entities.db" },
-  "identity": { "provider": "local-id", "baseUrl": "https://id.ai.on" },
+  "entities": { "path": "$HOME/.agi/entities.db" },
+  "idService": {
+    "dir": "/mnt/agi-local-id",
+    "local": {
+      "enabled": true,
+      "port": 4100,
+      "subdomain": "id",
+      "databaseUrl": "postgres://agi:testpass@localhost/agi",
+      "postgresContainer": false
+    }
+  },
   "workers": {}
 }
 CFGEOF
   '
+
+  echo "==> Writing onboarding state (skip onboarding for test VM)..."
+  multipass exec "$VM_NAME" -- bash -c 'cat > ~/.agi/onboarding-state.json << OBEOF
+{
+  "firstbootCompleted": true,
+  "steps": {
+    "aiKeys": "completed",
+    "aionimaId": "completed",
+    "ownerProfile": "completed",
+    "channels": "completed",
+    "zeroMeMind": "completed",
+    "zeroMeSoul": "completed",
+    "zeroMeSkill": "completed"
+  },
+  "completedAt": "2026-03-07T00:00:00.000Z"
+}
+OBEOF'
 
   echo "==> Services setup complete."
   echo "    Run '$0 services-start' to start all services."
@@ -401,6 +423,9 @@ cmd_services_start() {
 cmd_services_stop() {
   ensure_vm_running
   multipass exec "$VM_NAME" -- bash -c '
+    # Write graceful shutdown marker so AGI does not enter safemode on next start
+    mkdir -p ~/.agi
+    echo "{\"version\":1,\"shutdownAt\":\"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)\",\"reason\":\"sigterm\",\"pid\":$(cat /tmp/agi.pid 2>/dev/null || echo 0),\"projects\":[],\"models\":[]}" > ~/.agi/shutdown-state.json
     [ -f /tmp/agi.pid ] && kill $(cat /tmp/agi.pid) 2>/dev/null && rm /tmp/agi.pid && echo "AGI stopped"
     [ -f /tmp/agi-local-id.pid ] && kill $(cat /tmp/agi-local-id.pid) 2>/dev/null && rm /tmp/agi-local-id.pid && echo "ID stopped"
   '

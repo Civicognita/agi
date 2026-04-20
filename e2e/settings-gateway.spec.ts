@@ -48,10 +48,10 @@ test.describe("Gateway Settings", () => {
     await expect(page.getByText("Routing Mode")).toBeVisible();
   });
 
-  test("Providers tab shows Provider API Keys section", async ({ page }) => {
+  test("Providers tab shows Default Provider & Model section", async ({ page }) => {
     await page.goto("/settings/gateway");
     await page.getByRole("button", { name: "Providers" }).click();
-    await expect(page.getByText("Provider API Keys")).toBeVisible();
+    await expect(page.getByText("Default Provider & Model")).toBeVisible();
   });
 
   test("Identity tab shows owner settings content", async ({ page }) => {
