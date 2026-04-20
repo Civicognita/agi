@@ -83,11 +83,18 @@ export interface MemoryExtraction {
 // Defaults
 // ---------------------------------------------------------------------------
 
+export const PROVIDER_CONTEXT_WINDOWS: Record<string, number> = {
+  anthropic: 200_000,
+  openai: 128_000,
+  ollama: 32_000,
+  "hf-local": 4_096,
+};
+
 const DEFAULT_CONFIG: SessionManagerConfig = {
-  contextWindowTokens: 200_000,
+  contextWindowTokens: 32_000,
   systemPromptBudget: 2_000,
-  toolResultBudget: 20_000,
-  responseBudget: 10_000,
+  toolResultBudget: 8_000,
+  responseBudget: 4_000,
   idleTimeoutMs: 24 * 60 * 60 * 1000, // 24 hours
   compactionThreshold: 0.75,
   sweepIntervalMs: 5 * 60 * 1000, // 5 minutes
