@@ -431,7 +431,22 @@ export class ModelStore {
       }
 
       const displayName = parts[parts.length - 1] ?? modelId;
-      const filePath = join(hubDir, dir);
+
+      // HF cache layout: hub/models--{org}--{name}/snapshots/{ref}/
+      // Resolve to the actual snapshot directory containing config.json.
+      const modelCacheDir = join(hubDir, dir);
+      const snapshotsDir = join(modelCacheDir, "snapshots");
+      let filePath = modelCacheDir;
+      if (existsSync(snapshotsDir)) {
+        try {
+          const refs = readdirSync(snapshotsDir).filter(
+            (r) => statSync(join(snapshotsDir, r)).isDirectory(),
+          );
+          if (refs.length > 0) {
+            filePath = join(snapshotsDir, refs[0]!);
+          }
+        } catch { /* fall back to cache dir */ }
+      }
 
       // Calculate actual file size from disk
       let fileSizeBytes = 0;
