@@ -49,8 +49,11 @@ interface ChatMessage {
     provider: string;
     model: string;
     costMode: string;
+    complexity?: string;
     escalated: boolean;
     estimatedCostUsd: number;
+    inputTokens: number;
+    outputTokens: number;
   };
 }
 
@@ -1274,13 +1277,23 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                       <>
                         <AgentBubble content={msg.content} />
                         {msg.routingMeta && (
-                          <div className="flex items-center gap-2 mt-1 px-1">
+                          <div className="flex items-center gap-2 mt-1 px-1 flex-wrap">
                             <span className="text-[9px] font-mono text-muted-foreground px-1.5 py-0.5 rounded bg-muted/50">
                               {msg.routingMeta.model}
                             </span>
+                            {msg.routingMeta.inputTokens > 0 && (
+                              <span className="text-[9px] font-mono text-muted-foreground" title="Input / Output tokens">
+                                {msg.routingMeta.inputTokens.toLocaleString()} in / {msg.routingMeta.outputTokens.toLocaleString()} out
+                              </span>
+                            )}
                             {msg.routingMeta.estimatedCostUsd > 0 && (
                               <span className="text-[9px] font-mono text-muted-foreground">
                                 ${msg.routingMeta.estimatedCostUsd.toFixed(4)}
+                              </span>
+                            )}
+                            {msg.routingMeta.complexity && (
+                              <span className="text-[9px] font-mono text-muted-foreground px-1 rounded bg-muted/30">
+                                {msg.routingMeta.complexity}
                               </span>
                             )}
                             {msg.routingMeta.escalated && (
