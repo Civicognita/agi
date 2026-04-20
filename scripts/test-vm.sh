@@ -323,19 +323,30 @@ systemctl restart caddy'
   sudo systemctl restart dnsmasq
   echo "    test.ai.on → $HOST_IP (host proxies to VM at $VM_IP)"
 
-  # Caddy: add reverse proxy from host to VM gateway (inside CUSTOM block)
-  if ! grep -q "test.ai.on" /etc/caddy/Caddyfile 2>/dev/null; then
-    sudo sed -i "/# --- END CUSTOM ---/i\\
+  # Caddy: add reverse proxy with offline fallback page
+  # Remove existing block and re-create with correct VM IP
+  sudo sed -i '/^test\.ai\.on {/,/^}/d' /etc/caddy/Caddyfile 2>/dev/null
+  sudo sed -i "/# --- END CUSTOM ---/i\\
 \\
 test.ai.on {\\
     tls internal\\
-    reverse_proxy $VM_IP:3100\\
+    reverse_proxy $VM_IP:3100 {\\
+        fail_duration 1s\\
+    }\\
+    handle_errors {\\
+        rewrite * /test-vm-offline.html\\
+        file_server {\\
+            root /etc/caddy\\
+        }\\
+    }\\
 }" /etc/caddy/Caddyfile
-    sudo systemctl reload caddy
-    echo "    Caddy proxy added: test.ai.on → $VM_IP:3100"
-  else
-    echo "    Caddy proxy already configured for test.ai.on"
+
+  # Install offline page if not present
+  if [ ! -f /etc/caddy/test-vm-offline.html ]; then
+    sudo cp "$REPO_DIR/containers/test-vm-offline.html" /etc/caddy/test-vm-offline.html 2>/dev/null || true
   fi
+  sudo systemctl reload caddy
+  echo "    Caddy proxy: test.ai.on → $VM_IP:3100 (with offline fallback)"
 
   echo "==> Building ID service..."
   multipass exec "$VM_NAME" -- bash -c '
