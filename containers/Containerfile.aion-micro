@@ -16,6 +16,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer; \
 AutoTokenizer.from_pretrained('HuggingFaceTB/SmolLM2-135M-Instruct', cache_dir='/models'); \
 AutoModelForCausalLM.from_pretrained('HuggingFaceTB/SmolLM2-135M-Instruct', cache_dir='/models')"
 
+# Bake in the fine-tuned LoRA adapter (if present)
+COPY aion-micro-lora/ /models/lora/
+
 COPY entrypoint_aion_micro.py /app/entrypoint.py
 WORKDIR /app
 
