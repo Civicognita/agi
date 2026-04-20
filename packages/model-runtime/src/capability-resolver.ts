@@ -434,8 +434,9 @@ export class CapabilityResolver {
       // Filter out non-model files that happen to share model extensions
       if (!isModelFile(name)) continue;
 
-      // Prefer LFS size, then direct size, fall back to 0
+      // Prefer LFS size, then direct size — skip files with no known size
       const sizeBytes = sibling.lfs?.size ?? sibling.size ?? 0;
+      if (sizeBytes === 0) continue;
 
       const quantization: GgufQuantization | null =
         format === "gguf" ? extractGgufQuantization(name) : null;

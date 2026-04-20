@@ -69,9 +69,9 @@ interface RouteTarget {
 
 const ROUTING_TABLE: Record<CostMode, Record<RequestComplexity, RouteTarget>> = {
   local: {
-    simple:   { provider: "ollama", model: "llama3.1" },
-    moderate: { provider: "ollama", model: "llama3.1" },
-    complex:  { provider: "ollama", model: "llama3.1" },
+    simple:   { provider: "hf-local", model: "default" },
+    moderate: { provider: "hf-local", model: "default" },
+    complex:  { provider: "hf-local", model: "default" },
   },
   economy: {
     simple:   { provider: "anthropic", model: "claude-haiku-4-5" },

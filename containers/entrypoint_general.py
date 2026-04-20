@@ -202,6 +202,68 @@ def transcribe(req: TranscribeRequest):
 
 
 # ---------------------------------------------------------------------------
+# Chat completions — OpenAI-compatible for text-generation models
+# ---------------------------------------------------------------------------
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class ChatRequest(BaseModel):
+    model: str | None = None
+    messages: list[ChatMessage]
+    max_tokens: int = 512
+    temperature: float = 0.7
+    stop: list[str] | None = None
+
+@app.post("/v1/chat/completions")
+def chat_completions(req: ChatRequest):
+    if pipeline_instance is None:
+        raise HTTPException(503, "Model not loaded")
+
+    import time
+    start = time.time()
+
+    prompt_parts = []
+    for msg in req.messages:
+        if msg.role == "system":
+            prompt_parts.append(f"<|im_start|>system\n{msg.content}<|im_end|>")
+        elif msg.role == "user":
+            prompt_parts.append(f"<|im_start|>user\n{msg.content}<|im_end|>")
+        elif msg.role == "assistant":
+            prompt_parts.append(f"<|im_start|>assistant\n{msg.content}<|im_end|>")
+    prompt_parts.append("<|im_start|>assistant\n")
+    prompt = "\n".join(prompt_parts)
+
+    try:
+        results = pipeline_instance(
+            prompt,
+            max_new_tokens=req.max_tokens,
+            temperature=max(req.temperature, 0.01),
+            do_sample=req.temperature > 0,
+            return_full_text=False,
+        )
+        generated = results[0]["generated_text"] if results else ""
+    except Exception as e:
+        generated = f"[generation error: {e}]"
+
+    elapsed = time.time() - start
+    return {
+        "id": f"hf-{int(time.time())}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": MODEL_PATH,
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": generated.strip()},
+            "finish_reason": "stop",
+        }],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "timing": {"elapsed_ms": int(elapsed * 1000)},
+    }
+
+
+# ---------------------------------------------------------------------------
 # Generic fallback — for any task not covered above
 # ---------------------------------------------------------------------------
 
