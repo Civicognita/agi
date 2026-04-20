@@ -1719,7 +1719,7 @@ export async function startGatewayServer(
             if (!hfModelStopNotified.has(state.modelId)) {
               hfModelStopNotified.add(state.modelId);
               dashboardBroadcasterRef?.emitNotification({
-                id: `hf-model-stopped-${state.modelId}`,
+                id: `hf-model-stopped-${state.modelId}-${Date.now()}`,
                 type: "warning",
                 title: "Model stopped",
                 body: `${state.modelId} container is no longer responding`,
