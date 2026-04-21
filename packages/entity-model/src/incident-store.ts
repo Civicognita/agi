@@ -7,12 +7,10 @@
  * Compliance: UCS-IR-01 (HIPAA breach ≤60d, GDPR ≤72h, PCI incident support).
  */
 
-import type BetterSqlite3 from "better-sqlite3";
+import { and, eq, isNotNull, lt, or, sql } from "drizzle-orm";
 import { ulid } from "ulid";
-import type { Database } from "./db.js";
-
-type NamedStmt<P extends object> = BetterSqlite3.Statement<[P]>;
-type PosStmt<P extends unknown[]> = BetterSqlite3.Statement<P>;
+import type { Db } from "@agi/db-schema/client";
+import { incidents } from "@agi/db-schema";
 
 export type IncidentSeverity = "critical" | "high" | "medium" | "low" | "info";
 export type IncidentStatus = "detected" | "investigating" | "contained" | "resolved" | "closed";
@@ -48,163 +46,144 @@ export interface CreateIncidentParams {
   createdBy?: string;
 }
 
-interface IncidentRow {
-  id: string;
-  severity: string;
-  status: string;
-  breach_classification: string;
-  title: string;
-  description: string;
-  affected_data_types: string;
-  affected_systems: string;
-  detection_time: string;
-  awareness_time: string;
-  containment_time: string | null;
-  resolution_time: string | null;
-  gdpr_deadline: string | null;
-  hipaa_deadline: string | null;
-  created_by: string;
-  created_at: string;
-  updated_at: string;
+// ---------------------------------------------------------------------------
+// Row mapper
+// ---------------------------------------------------------------------------
+
+function toIso(d: Date | string | null | undefined): string | null {
+  if (!d) return null;
+  return d instanceof Date ? d.toISOString() : String(d);
 }
 
-function toIncident(row: IncidentRow): Incident {
+function toIncident(row: typeof incidents.$inferSelect): Incident {
+  const dataTypes = Array.isArray(row.affectedDataTypes)
+    ? (row.affectedDataTypes as string[])
+    : [];
+  const systems = Array.isArray(row.affectedSystems)
+    ? (row.affectedSystems as string[])
+    : [];
+
   return {
     id: row.id,
     severity: row.severity as IncidentSeverity,
     status: row.status as IncidentStatus,
-    breachClassification: row.breach_classification as BreachClassification,
+    breachClassification: (row.breachClassification ?? "under_review") as BreachClassification,
     title: row.title,
     description: row.description,
-    affectedDataTypes: JSON.parse(row.affected_data_types) as string[],
-    affectedSystems: JSON.parse(row.affected_systems) as string[],
-    detectionTime: row.detection_time,
-    awarenessTime: row.awareness_time,
-    containmentTime: row.containment_time,
-    resolutionTime: row.resolution_time,
-    gdprDeadline: row.gdpr_deadline,
-    hipaaDeadline: row.hipaa_deadline,
-    createdBy: row.created_by,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    affectedDataTypes: dataTypes,
+    affectedSystems: systems,
+    detectionTime: toIso(row.detectionTime) ?? "",
+    awarenessTime: toIso(row.awarenessTime) ?? "",
+    containmentTime: toIso(row.containmentTime),
+    resolutionTime: toIso(row.resolutionTime),
+    gdprDeadline: toIso(row.gdprDeadline),
+    hipaaDeadline: toIso(row.hipaaDeadline),
+    createdBy: row.createdBy,
+    createdAt: toIso(row.createdAt) ?? "",
+    updatedAt: toIso(row.updatedAt) ?? "",
   };
 }
 
-export const CREATE_INCIDENTS = `
-CREATE TABLE IF NOT EXISTS incidents (
-  id                    TEXT NOT NULL PRIMARY KEY,
-  severity              TEXT NOT NULL DEFAULT 'medium',
-  status                TEXT NOT NULL DEFAULT 'detected',
-  breach_classification TEXT NOT NULL DEFAULT 'under_review',
-  title                 TEXT NOT NULL,
-  description           TEXT NOT NULL DEFAULT '',
-  affected_data_types   TEXT NOT NULL DEFAULT '[]',
-  affected_systems      TEXT NOT NULL DEFAULT '[]',
-  detection_time        TEXT NOT NULL,
-  awareness_time        TEXT NOT NULL,
-  containment_time      TEXT,
-  resolution_time       TEXT,
-  gdpr_deadline         TEXT,
-  hipaa_deadline        TEXT,
-  created_by            TEXT NOT NULL DEFAULT 'system',
-  created_at            TEXT NOT NULL,
-  updated_at            TEXT NOT NULL
-)` as const;
+// ---------------------------------------------------------------------------
+// IncidentStore
+// ---------------------------------------------------------------------------
 
 export class IncidentStore {
-  private readonly stmtInsert: NamedStmt<Record<string, unknown>>;
-  private readonly stmtGetAll: PosStmt<[number]>;
-  private readonly stmtGetOne: PosStmt<[string]>;
-  private readonly stmtUpdateStatus: PosStmt<[string, string, string]>;
-  private readonly stmtUpdateBreach: PosStmt<[string, string | null, string | null, string, string]>;
+  constructor(private readonly db: Db) {}
 
-  constructor(private readonly db: Database) {
-    db.exec(CREATE_INCIDENTS);
-
-    this.stmtInsert = db.prepare(`
-      INSERT INTO incidents (id, severity, status, breach_classification, title, description,
-        affected_data_types, affected_systems, detection_time, awareness_time,
-        gdpr_deadline, hipaa_deadline, created_by, created_at, updated_at)
-      VALUES (@id, @severity, @status, @breach_classification, @title, @description,
-        @affected_data_types, @affected_systems, @detection_time, @awareness_time,
-        @gdpr_deadline, @hipaa_deadline, @created_by, @created_at, @updated_at)
-    `);
-
-    this.stmtGetAll = db.prepare(`SELECT * FROM incidents ORDER BY created_at DESC LIMIT ?`);
-    this.stmtGetOne = db.prepare(`SELECT * FROM incidents WHERE id = ?`);
-    this.stmtUpdateStatus = db.prepare(`UPDATE incidents SET status = ?, updated_at = ? WHERE id = ?`);
-    this.stmtUpdateBreach = db.prepare(`UPDATE incidents SET breach_classification = ?, gdpr_deadline = ?, hipaa_deadline = ?, updated_at = ? WHERE id = ?`);
-  }
-
-  create(params: CreateIncidentParams): Incident {
-    const now = new Date().toISOString();
+  async create(params: CreateIncidentParams): Promise<Incident> {
+    const now = new Date();
     const id = ulid();
 
-    // GDPR: 72 hours from awareness
-    const gdprDeadline = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
-    // HIPAA: 60 days from discovery
-    const hipaaDeadline = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
+    const gdprDeadline = new Date(Date.now() + 72 * 60 * 60 * 1000);
+    const hipaaDeadline = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
 
-    this.stmtInsert.run({
+    await this.db.insert(incidents).values({
       id,
-      severity: params.severity,
+      severity: (params.severity ?? "medium") as typeof incidents.$inferInsert["severity"],
       status: "detected",
-      breach_classification: params.breachClassification ?? "under_review",
+      breachClassification: (params.breachClassification ?? "under_review") as typeof incidents.$inferInsert["breachClassification"],
       title: params.title,
       description: params.description,
-      affected_data_types: JSON.stringify(params.affectedDataTypes ?? []),
-      affected_systems: JSON.stringify(params.affectedSystems ?? []),
-      detection_time: now,
-      awareness_time: now,
-      gdpr_deadline: gdprDeadline,
-      hipaa_deadline: hipaaDeadline,
-      created_by: params.createdBy ?? "system",
-      created_at: now,
-      updated_at: now,
+      affectedDataTypes: (params.affectedDataTypes ?? []) as unknown as Record<string, unknown>,
+      affectedSystems: (params.affectedSystems ?? []) as unknown as Record<string, unknown>,
+      detectionTime: now,
+      awarenessTime: now,
+      gdprDeadline,
+      hipaaDeadline,
+      createdBy: params.createdBy ?? "system",
+      createdAt: now,
+      updatedAt: now,
     });
 
-    return this.get(id)!;
+    const record = await this.get(id);
+    return record!;
   }
 
-  get(id: string): Incident | null {
-    const row = this.stmtGetOne.get(id) as IncidentRow | undefined;
+  async get(id: string): Promise<Incident | null> {
+    const [row] = await this.db.select().from(incidents).where(eq(incidents.id, id));
     return row ? toIncident(row) : null;
   }
 
-  list(limit = 50): Incident[] {
-    return (this.stmtGetAll.all(limit) as IncidentRow[]).map(toIncident);
+  async list(limit = 50): Promise<Incident[]> {
+    const rows = await this.db
+      .select()
+      .from(incidents)
+      .orderBy(sql`${incidents.createdAt} DESC`)
+      .limit(limit);
+    return rows.map(toIncident);
   }
 
-  updateStatus(id: string, status: IncidentStatus): void {
-    const now = new Date().toISOString();
-    this.stmtUpdateStatus.run(status, now, id);
+  async updateStatus(id: string, status: IncidentStatus): Promise<void> {
+    const now = new Date();
+    await this.db.update(incidents)
+      .set({ status: status as typeof incidents.$inferInsert["status"], updatedAt: now })
+      .where(eq(incidents.id, id));
 
-    // Auto-set containment/resolution times
     if (status === "contained") {
-      this.db.prepare(`UPDATE incidents SET containment_time = ? WHERE id = ? AND containment_time IS NULL`).run(now, id);
+      await this.db.update(incidents)
+        .set({ containmentTime: now })
+        .where(and(eq(incidents.id, id), sql`${incidents.containmentTime} IS NULL`));
     }
     if (status === "resolved" || status === "closed") {
-      this.db.prepare(`UPDATE incidents SET resolution_time = ? WHERE id = ? AND resolution_time IS NULL`).run(now, id);
+      await this.db.update(incidents)
+        .set({ resolutionTime: now })
+        .where(and(eq(incidents.id, id), sql`${incidents.resolutionTime} IS NULL`));
     }
   }
 
-  updateBreachClassification(id: string, classification: BreachClassification): void {
-    const now = new Date().toISOString();
+  async updateBreachClassification(id: string, classification: BreachClassification): Promise<void> {
+    const now = new Date();
     const gdpr = classification.includes("gdpr") || classification === "reportable_both"
-      ? new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString() : null;
+      ? new Date(Date.now() + 72 * 60 * 60 * 1000) : null;
     const hipaa = classification.includes("hipaa") || classification === "reportable_both"
-      ? new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString() : null;
-    this.stmtUpdateBreach.run(classification, gdpr, hipaa, now, id);
+      ? new Date(Date.now() + 60 * 24 * 60 * 60 * 1000) : null;
+
+    await this.db.update(incidents)
+      .set({
+        breachClassification: classification as typeof incidents.$inferInsert["breachClassification"],
+        gdprDeadline: gdpr,
+        hipaaDeadline: hipaa,
+        updatedAt: now,
+      })
+      .where(eq(incidents.id, id));
   }
 
-  getOverdue(): Incident[] {
-    const now = new Date().toISOString();
-    const rows = this.db.prepare(`
-      SELECT * FROM incidents
-      WHERE status NOT IN ('resolved', 'closed')
-        AND ((gdpr_deadline IS NOT NULL AND gdpr_deadline < ?) OR (hipaa_deadline IS NOT NULL AND hipaa_deadline < ?))
-      ORDER BY created_at DESC
-    `).all(now, now) as IncidentRow[];
+  async getOverdue(): Promise<Incident[]> {
+    const now = new Date();
+    const rows = await this.db
+      .select()
+      .from(incidents)
+      .where(
+        and(
+          sql`${incidents.status} NOT IN ('resolved', 'closed')`,
+          or(
+            and(isNotNull(incidents.gdprDeadline), lt(incidents.gdprDeadline, now)),
+            and(isNotNull(incidents.hipaaDeadline), lt(incidents.hipaaDeadline, now)),
+          ),
+        ),
+      )
+      .orderBy(sql`${incidents.createdAt} DESC`);
     return rows.map(toIncident);
   }
 }

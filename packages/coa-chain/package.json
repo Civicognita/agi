@@ -7,10 +7,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^11.0.0"
+    "@agi/db-schema": "workspace:*",
+    "drizzle-orm": "^0.38.3"
   },
-  "devDependencies": {
-    "@agi/entity-model": "workspace:*",
-    "@types/better-sqlite3": "^7.6.0"
-  }
+  "devDependencies": {}
 }

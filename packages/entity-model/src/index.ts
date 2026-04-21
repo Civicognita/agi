@@ -9,22 +9,9 @@ export type {
   ChannelAccount,
 } from "./types.js";
 
-export {
-  CREATE_ENTITIES,
-  CREATE_CHANNEL_ACCOUNTS,
-  CREATE_COA_CHAINS,
-  CREATE_IMPACT_INTERACTIONS,
-  CREATE_VERIFICATION_REQUESTS,
-  CREATE_SEALS,
-  CREATE_MESSAGE_QUEUE,
-  CREATE_META,
-  CREATE_COMMS_LOG,
-  CREATE_NOTIFICATIONS,
-  ALL_DDL,
-} from "./schema.sql.js";
-
-export type { Database } from "./db.js";
-export { createDatabase } from "./db.js";
+// Database client — re-exported for callers that import from @agi/entity-model
+export { createDbClient } from "@agi/db-schema/client";
+export type { Db as Database } from "@agi/db-schema/client";
 
 export { EntityStore } from "./store.js";
 
@@ -240,23 +227,6 @@ export type {
   ValidationError,
 } from "./migration.js";
 
-export {
-  PG_CREATE_TENANTS,
-  PG_CREATE_ENTITIES,
-  PG_CREATE_CHANNEL_ACCOUNTS,
-  PG_CREATE_COA_CHAINS,
-  PG_CREATE_IMPACT_INTERACTIONS,
-  PG_CREATE_VERIFICATION_REQUESTS,
-  PG_CREATE_SEALS,
-  PG_CREATE_MESSAGE_QUEUE,
-  PG_CREATE_META,
-  PG_CREATE_MEMBERSHIPS,
-  PG_CREATE_SESSIONS,
-  PG_CREATE_INDEXES,
-  PG_ALL_DDL,
-  generateRLSPolicies,
-} from "./pg-schema.js";
-
 // Phase 4 — Federation (GEID)
 export type { GEID, EntityKeypair, IdentityStatement, GEIDMapping, FederationConsent } from "./geid.js";
 export {
@@ -269,18 +239,6 @@ export {
   verifyIdentityStatement,
   publicKeyFromGEID,
 } from "./geid.js";
-
-// Phase 4 — Federation (GEID DDL for PG)
-export const PG_CREATE_GEID_MAPPINGS = `
-CREATE TABLE IF NOT EXISTS geid_mappings (
-  local_entity_id  TEXT NOT NULL REFERENCES entities(id),
-  tenant_id        TEXT NOT NULL REFERENCES tenants(id),
-  geid             TEXT NOT NULL UNIQUE,
-  public_key_pem   TEXT NOT NULL,
-  discoverable     BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (tenant_id, local_entity_id)
-)` as const;
 
 // Phase 4 — Federation (Entity Map)
 export type {
@@ -303,17 +261,6 @@ export {
 export type { COAAddress } from "./geid.js";
 export { formatAddress, parseAddress } from "./geid.js";
 
-// Phase 4 — Federation (Schema)
-export {
-  CREATE_GEID_MAPPINGS,
-  CREATE_FEDERATION_PEERS,
-  CREATE_ENTITY_MAP_CACHE,
-  CREATE_ACCESS_GRANTS,
-  FEDERATION_MIGRATIONS,
-  COA_MIGRATIONS,
-  COA_COMPLIANCE_MIGRATIONS,
-} from "./schema.sql.js";
-
 // Phase 4 — GDPR Compliance
 export type {
   DeletionPhase,
@@ -324,24 +271,24 @@ export type {
 } from "./gdpr.js";
 export { GDPRManager } from "./gdpr.js";
 
-// Compliance — Encryption, Incidents, Consent, Vendors, Sessions
+// Compliance — Incidents, Consent, Vendors, Sessions, Usage
 export type { CryptoProvider } from "./crypto.js";
 export { createCryptoProvider } from "./crypto.js";
 
 export type { Incident, CreateIncidentParams, IncidentSeverity, IncidentStatus, BreachClassification } from "./incident-store.js";
-export { IncidentStore, CREATE_INCIDENTS } from "./incident-store.js";
+export { IncidentStore } from "./incident-store.js";
 
 export type { ConsentRecord, ConsentPurpose } from "./consent-store.js";
-export { ConsentStore, CREATE_CONSENTS } from "./consent-store.js";
+export { ConsentStore } from "./consent-store.js";
 
 export type { Vendor, CreateVendorParams, VendorType, ComplianceStatus } from "./vendor-store.js";
-export { VendorStore, CREATE_VENDORS } from "./vendor-store.js";
+export { VendorStore } from "./vendor-store.js";
 
 export type { Session } from "./session-store.js";
-export { SessionStore, CREATE_SESSIONS, CREATE_API_KEYS } from "./session-store.js";
+export { SessionStore } from "./session-store.js";
 
 export type { UsageRecord, RecordUsageParams, UsageSummary, ProjectCost } from "./usage-store.js";
-export { UsageStore, CREATE_USAGE_LOG, estimateCost } from "./usage-store.js";
+export { UsageStore, estimateCost } from "./usage-store.js";
 
 export { PRICING, MODEL_TIERS, getModelsForMode, getDefaultModelForMode } from "./model-pricing.js";
 export type { CostMode, ModelTier } from "./model-pricing.js";

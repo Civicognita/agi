@@ -36,8 +36,8 @@ export type { SignalMessage, SignalCliConfig } from "./signal-cli-client.js";
 
 /** Minimal EntityStore surface used by the Signal plugin for persistence. */
 export interface SignalEntityStore {
-  upsertPhoneHash(channel: string, hash: string, rawPhone: string): void;
-  lookupPhoneHash(channel: string, hash: string): string | undefined;
+  upsertPhoneHash(channel: string, hash: string, rawPhone: string): Promise<void>;
+  lookupPhoneHash(channel: string, hash: string): Promise<string | undefined>;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ export function createSignalPlugin(
         // Persist to DB so mapping survives restarts
         if (entityStore !== undefined) {
           try {
-            entityStore.upsertPhoneHash(SIGNAL_CHANNEL_ID as string, hashedPhone, rawPhone);
+            await entityStore.upsertPhoneHash(SIGNAL_CHANNEL_ID as string, hashedPhone, rawPhone);
           } catch (err) {
             console.warn("[signal] failed to persist phone hash:", err instanceof Error ? err.message : String(err));
           }
@@ -191,7 +191,7 @@ export function createSignalPlugin(
         // Check in-memory cache first, then fall back to DB.
         let phone = hashToPhone.get(channelUserId);
         if (phone === undefined && entityStore !== undefined) {
-          phone = entityStore.lookupPhoneHash(SIGNAL_CHANNEL_ID as string, channelUserId);
+          phone = await entityStore.lookupPhoneHash(SIGNAL_CHANNEL_ID as string, channelUserId);
           if (phone !== undefined) {
             // Repopulate in-memory cache from DB
             hashToPhone.set(channelUserId, phone);

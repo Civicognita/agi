@@ -593,7 +593,7 @@ export class CapabilityResolver {
         const env: Record<string, string> = {
           MODEL_ID: model.id,
           MODEL_PATH: "/models",
-          ...(def?.env ?? {}),
+          ...def?.env,
         };
 
         return {

@@ -181,14 +181,14 @@ export class DashboardApi {
     const since = params.get("since") ?? undefined;
     const until = params.get("until") ?? undefined;
 
-    const { slices, total } = this.queries.getBreakdown(
+    void this.queries.getBreakdown(
       dimension as BreakdownDimension,
       entityId,
       since,
       until,
-    );
-
-    json(res, { dimension, slices, total });
+    ).then(({ slices, total }) => {
+      json(res, { dimension, slices, total });
+    }).catch(() => error(res, "Failed to fetch breakdown"));
   };
 
   private handleLeaderboard = (_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): void => {
@@ -196,14 +196,14 @@ export class DashboardApi {
     const limit = intParam(params, "limit", 25);
     const offset = intParam(params, "offset", 0);
 
-    const { entries, total } = this.queries.getLeaderboard(windowDays, limit, offset);
-
-    json(res, {
-      entries,
-      windowDays,
-      total,
-      computedAt: new Date().toISOString(),
-    });
+    void this.queries.getLeaderboard(windowDays, limit, offset).then(({ entries, total }) => {
+      json(res, {
+        entries,
+        windowDays,
+        total,
+        computedAt: new Date().toISOString(),
+      });
+    }).catch(() => error(res, "Failed to fetch leaderboard"));
   };
 
   private handleEntityProfile = (

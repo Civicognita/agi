@@ -1,32 +1,34 @@
 /**
- * BackupManager — automated SQLite database backups with retention.
+ * BackupManager — automated Postgres database backups with retention.
  *
+ * Uses pg_dump to produce SQL dumps at ~/.agi/backups/agi_data-<timestamp>.sql.
  * Compliance: UCS-BCM-01 (GDPR Art 32 restore, SOC 2 availability).
  */
 
 import { existsSync, mkdirSync, readdirSync, unlinkSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { Database } from "better-sqlite3";
+import { spawnSync } from "node:child_process";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 
 export interface BackupManagerOptions {
   backupDir: string;
-  databases: { name: string; db: Database }[];
+  /** Postgres connection URL (e.g. "postgresql://user:pass@localhost/agi_data"). */
+  databaseUrl: string;
   retentionDays?: number;
   logger?: Logger;
 }
 
 export class BackupManager {
   private readonly backupDir: string;
-  private readonly databases: { name: string; db: Database }[];
+  private readonly databaseUrl: string;
   private readonly retentionDays: number;
   private readonly log;
   private intervalId: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: BackupManagerOptions) {
     this.backupDir = opts.backupDir;
-    this.databases = opts.databases;
+    this.databaseUrl = opts.databaseUrl;
     this.retentionDays = opts.retentionDays ?? 30;
     this.log = createComponentLogger(opts.logger, "backup");
 
@@ -35,24 +37,34 @@ export class BackupManager {
     }
   }
 
-  /** Run a backup of all registered databases. */
+  /** Run a pg_dump backup of the agi_data database. */
   backup(): { ok: boolean; files: string[]; errors: string[] } {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const files: string[] = [];
     const errors: string[] = [];
 
-    for (const { name, db } of this.databases) {
-      const filename = `${name}-${timestamp}.db`;
-      const filepath = join(this.backupDir, filename);
-      try {
-        db.backup(filepath);
+    const filename = `agi_data-${timestamp}.sql`;
+    const filepath = join(this.backupDir, filename);
+
+    try {
+      const result = spawnSync(
+        "pg_dump",
+        ["--no-password", "--file", filepath, this.databaseUrl],
+        { encoding: "utf-8", timeout: 120_000 },
+      );
+
+      if (result.status !== 0) {
+        const msg = result.stderr?.trim() ?? "pg_dump exited non-zero";
+        errors.push(msg);
+        this.log.error(`backup failed: ${msg}`);
+      } else {
         files.push(filepath);
-        this.log.info(`backup: ${name} → ${filename}`);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        errors.push(`${name}: ${msg}`);
-        this.log.error(`backup failed for ${name}: ${msg}`);
+        this.log.info(`backup: agi_data → ${filename}`);
       }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(msg);
+      this.log.error(`backup error: ${msg}`);
     }
 
     return { ok: errors.length === 0, files, errors };
@@ -66,7 +78,7 @@ export class BackupManager {
     try {
       const entries = readdirSync(this.backupDir);
       for (const entry of entries) {
-        if (!entry.endsWith(".db")) continue;
+        if (!entry.endsWith(".sql")) continue;
         const filepath = join(this.backupDir, entry);
         try {
           const stat = statSync(filepath);
@@ -109,7 +121,7 @@ export class BackupManager {
   listBackups(): { name: string; size: number; created: string }[] {
     if (!existsSync(this.backupDir)) return [];
     return readdirSync(this.backupDir)
-      .filter((f) => f.endsWith(".db"))
+      .filter((f) => f.endsWith(".sql"))
       .map((f) => {
         const filepath = join(this.backupDir, f);
         const stat = statSync(filepath);

@@ -233,7 +233,7 @@ export function registerOnboardingRoutes(
       ...patch,
       steps: {
         ...current.steps,
-        ...(patch.steps ?? {}),
+        ...patch.steps,
       },
     };
 

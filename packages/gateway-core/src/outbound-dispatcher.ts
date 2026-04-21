@@ -59,8 +59,8 @@ export interface OutboundDispatcherDeps {
   getChannelAdapter: (channelId: string) => ChannelOutboundAdapter | undefined;
   /** Synchronous COA chain logger (SQLite-backed). */
   coaLogger: COAChainLogger;
-  /** Resolve entity ULID to COA alias (e.g. "#E0"). */
-  resolveCoaAlias: (entityId: string) => string;
+  /** Resolve entity ULID to COA alias (e.g. "#E0"). Async because the lookup hits Postgres. */
+  resolveCoaAlias: (entityId: string) => Promise<string>;
   /** Gateway resource ID used in COA records (e.g. "$A0"). */
   resourceId: string;
   /** Gateway node ID used in COA records (e.g. "@A0"). */
@@ -92,7 +92,7 @@ export interface OutboundDispatcherDeps {
  */
 export class OutboundDispatcher {
   private readonly getChannelAdapter: (channelId: string) => ChannelOutboundAdapter | undefined;
-  private readonly resolveCoaAlias: (entityId: string) => string;
+  private readonly resolveCoaAlias: (entityId: string) => Promise<string>;
   private readonly resourceId: string;
   private readonly nodeId: string;
   private readonly voicePipeline: VoicePipeline | undefined;
@@ -163,7 +163,8 @@ export class OutboundDispatcher {
     }
 
     // COA entry is created at invocation DONE (agent-invoker), not per outbound message.
-    const coaFingerprint = `${this.resourceId}.${this.resolveCoaAlias(route.entityId)}.${this.nodeId}.delivered`;
+    const alias = await this.resolveCoaAlias(route.entityId);
+    const coaFingerprint = `${this.resourceId}.${alias}.${this.nodeId}.delivered`;
 
     await adapter.send(route.channelUserId, content);
 

@@ -227,7 +227,7 @@ export interface RuntimeStateDeps {
     addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number };
     removeSource(id: number): void;
     syncSource(id: number): Promise<{ ok: boolean; error?: string; mappCount?: number }>;
-    getCatalogWithInstalled(): Array<{ id: string; sourceId: number; author: string; description?: string; category?: string; version?: string; sourcePath: string; installed: boolean }>;
+    getCatalogWithInstalled(): Promise<Array<{ id: string; sourceId: number; author: string; description?: string; category?: string; version?: string; sourcePath: string; installed: boolean }>>;
     install(appId: string, sourceId: number): Promise<{ ok: boolean; error?: string }>;
     uninstall(appId: string, author: string): { ok: boolean; error?: string };
     syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
@@ -251,15 +251,15 @@ export interface RuntimeStateDeps {
     addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string };
     removeSource(id: number): void;
     syncSource(id: number): Promise<{ ok: boolean; error?: string; pluginCount?: number }>;
-    searchCatalog(params: { q?: string; type?: string; category?: string; provides?: string }): { name: string; sourceId: number; installed: boolean; description?: string; type?: string; version?: string; author?: { name: string; email?: string }; category?: string; provides?: string[]; depends?: string[]; tags?: string[]; keywords?: string[]; license?: string; homepage?: string; source: unknown }[];
+    searchCatalog(params: { q?: string; type?: string; category?: string; provides?: string }): Promise<{ name: string; sourceId: number; installed: boolean; description?: string; type?: string; version?: string; author?: { name: string; email?: string }; category?: string; provides?: string[]; depends?: string[]; tags?: string[]; keywords?: string[]; license?: string; homepage?: string; source: unknown }[]>;
     install(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; missingDeps?: string[]; autoInstalled?: string[] }>;
-    uninstall(pluginName: string, force?: boolean): { ok: boolean; error?: string; dependents?: string[] };
-    getInstalled(): { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }[];
-    checkUpdates(): { updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[]; newInMarketplace: { pluginName: string; version: string; description: string }[] };
-    syncLocalCatalog(marketplaceDir: string): { ok: boolean; error?: string; pluginCount?: number };
+    uninstall(pluginName: string, force?: boolean): Promise<{ ok: boolean; error?: string; dependents?: string[] }>;
+    getInstalled(): Promise<{ name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }[]>;
+    checkUpdates(): Promise<{ updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[]; newInMarketplace: { pluginName: string; version: string; description: string }[] }>;
+    syncLocalCatalog(marketplaceDir: string): Promise<{ ok: boolean; error?: string; pluginCount?: number }>;
     reconcileInstalled(marketplaceDir: string): Promise<{ updated: string[]; errors: string[] }>;
     syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
-    backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): void;
+    backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): Promise<void>;
     updatePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }>;
     rebuildPlugin(name: string): Promise<void>;
     rebuildAll(): Promise<{ rebuilt: string[]; failed: string[] }>;
@@ -1965,12 +1965,12 @@ export async function createGatewayRuntimeState(
 
         if (deps.coaLogger && deps.entityStore) {
           const ownerEntity = deps.ownerEntityId
-            ? deps.entityStore.getEntity(deps.ownerEntityId)
+            ? await deps.entityStore.getEntity(deps.ownerEntityId)
             : null;
-          const auditEntity = ownerEntity ?? deps.entityStore.resolveOrCreate("system", "$DEV_MODE", "Dev Mode");
+          const auditEntity = ownerEntity ?? await deps.entityStore.resolveOrCreate("system", "$DEV_MODE", "Dev Mode");
           const actor = session?.username ?? "unknown";
           const ref = `dev.mode:${targetEnabled ? "enabled" : "disabled"}:${actor}`;
-          deps.coaLogger.log({
+          void deps.coaLogger.log({
             resourceId: deps.resourceId ?? "$A0",
             entityId: auditEntity.id,
             entityAlias: auditEntity.coaAlias,
@@ -2655,8 +2655,8 @@ export async function createGatewayRuntimeState(
         ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-marketplace"
         : "/opt/agi-marketplace";
       if (existsSync(marketplaceDir)) {
-        mp.syncLocalCatalog(marketplaceDir);
-        const { updates } = mp.checkUpdates();
+        await mp.syncLocalCatalog(marketplaceDir);
+        const { updates } = await mp.checkUpdates();
         if (updates.length > 0) pluginUpdates = updates;
       }
     }
@@ -3260,15 +3260,15 @@ export async function createGatewayRuntimeState(
 
   // Only show settings/dashboard pages for installed or baked-in plugins
   // (marketplace plugins on disk but not installed should be invisible).
-  const getInstalledOrBakedInIds = (): Set<string> => {
+  const getInstalledOrBakedInIds = async (): Promise<Set<string>> => {
     const ids = new Set<string>();
-    for (const r of deps.marketplaceManager?.getInstalled() ?? []) ids.add(r.name);
+    for (const r of await (deps.marketplaceManager?.getInstalled() ?? Promise.resolve([]))) ids.add(r.name);
     for (const d of deps.discoveredPlugins ?? []) { if (d.bakedIn) ids.add(d.id); }
     return ids;
   };
 
   fastify.get("/api/dashboard/plugin-settings-pages", async (_request, reply) => {
-    const allowed = getInstalledOrBakedInIds();
+    const allowed = await getInstalledOrBakedInIds();
     const pages = (deps.pluginRegistry?.getSettingsPages() ?? [])
       .filter((p) => allowed.has(p.pluginId))
       .map((p) => ({ ...p.page, pluginId: p.pluginId }));
@@ -3367,7 +3367,7 @@ export async function createGatewayRuntimeState(
 
   fastify.get("/api/dashboard/plugin-pages", async (request, reply) => {
     const query = request.query as Record<string, string>;
-    const allowed = getInstalledOrBakedInIds();
+    const allowed = await getInstalledOrBakedInIds();
     const pages = (deps.pluginRegistry?.getDashboardPages(query.domain) ?? [])
       .filter((p) => allowed.has(p.pluginId))
       .map((p) => ({
@@ -3458,7 +3458,7 @@ export async function createGatewayRuntimeState(
 
     fastify.get("/api/marketplace/catalog", async (request, reply) => {
       const query = request.query as Record<string, string>;
-      const items = mp.searchCatalog({
+      const items = await mp.searchCatalog({
         q: query.q,
         type: query.type as string | undefined,
         category: query.category,
@@ -3471,7 +3471,7 @@ export async function createGatewayRuntimeState(
       const discovered = deps.discoveredPlugins ?? [];
       const prefs = deps.pluginPrefs;
       const loadedPlugins = deps.pluginRegistry?.getAll() ?? [];
-      const installedRecords = mp.getInstalled();
+      const installedRecords = await mp.getInstalled();
       const installedNames = new Set(installedRecords.map((r) => r.name));
       const catalogNames = new Set(items.map((i) => i.name));
 
@@ -3561,7 +3561,7 @@ export async function createGatewayRuntimeState(
       }
       // Also hot-load auto-installed dependencies
       if (deps.onPluginInstalled && result.autoInstalled) {
-        const installed = mp.getInstalled();
+        const installed = await mp.getInstalled();
         for (const depName of result.autoInstalled) {
           const depItem = installed.find(i => i.name === depName);
           if (depItem) {
@@ -3614,17 +3614,17 @@ export async function createGatewayRuntimeState(
         }
       }
 
-      const result = mp.uninstall(pluginName, force);
+      const result = await mp.uninstall(pluginName, force);
       if (!result.ok) return reply.code(400).send(result);
       return reply.send(result);
     });
 
     fastify.get("/api/marketplace/installed", async (_request, reply) => {
-      return reply.send(mp.getInstalled());
+      return reply.send(await mp.getInstalled());
     });
 
     fastify.get("/api/marketplace/updates", async (_request, reply) => {
-      return reply.send(mp.checkUpdates());
+      return reply.send(await mp.checkUpdates());
     });
 
     // POST /api/marketplace/update/:pluginName — hot-reload an installed plugin
@@ -3637,7 +3637,8 @@ export async function createGatewayRuntimeState(
       const { pluginName } = request.params;
       const body = request.body as { sourceId?: number } | undefined;
 
-      const installed = mp.getInstalled().find(i => i.name === pluginName);
+      const installedList = await mp.getInstalled();
+      const installed = installedList.find(i => i.name === pluginName);
       if (!installed) return reply.code(404).send({ error: "Plugin not installed" });
       const sourceId = body?.sourceId ?? installed.sourceId;
 
@@ -3703,8 +3704,9 @@ export async function createGatewayRuntimeState(
       const reloaded: string[] = [];
       const reloadErrors: string[] = [];
       if (deps.onPluginUpdated && deps.onPluginDeactivating) {
+        const allInstalled = await mp.getInstalled();
         for (const name of result.updated) {
-          const installed = mp.getInstalled().find(i => i.name === name);
+          const installed = allInstalled.find(i => i.name === name);
           if (!installed) {
             reloadErrors.push(`${name}: not found in installed list`);
             continue;
@@ -3769,7 +3771,8 @@ export async function createGatewayRuntimeState(
       }
 
       if (deps.onPluginUpdated) {
-        const installed = mp.getInstalled().find(i => i.name === name);
+        const rebuildInstalledList = await mp.getInstalled();
+        const installed = rebuildInstalledList.find(i => i.name === name);
         if (installed) {
           const hlResult = await deps.onPluginUpdated(installed.installPath);
           if (!hlResult.loaded) {
@@ -3810,7 +3813,8 @@ export async function createGatewayRuntimeState(
           }
         }
         if (deps.onPluginUpdated) {
-          const installed = mp.getInstalled().find(i => i.name === name);
+          const rebuildAllInstalledList = await mp.getInstalled();
+          const installed = rebuildAllInstalledList.find(i => i.name === name);
           if (installed) {
             try {
               const hlResult = await deps.onPluginUpdated(installed.installPath);
@@ -3958,7 +3962,7 @@ export async function createGatewayRuntimeState(
     const allDiscovered = deps.discoveredPlugins ?? [];
     const disc = allDiscovered.find((d) => d.id === pluginId);
     const loaded = reg?.getAll().find((l) => l.manifest.id === pluginId);
-    const installedRecords = deps.marketplaceManager?.getInstalled() ?? [];
+    const installedRecords = await (deps.marketplaceManager?.getInstalled() ?? Promise.resolve([]));
     const isInstalled = installedRecords.some((r) => r.name === pluginId) || (disc?.bakedIn ?? false);
 
     if (!disc && !loaded) {
@@ -5046,7 +5050,7 @@ export async function createGatewayRuntimeState(
 
     // Catalog
     fastify.get("/api/mapp-marketplace/catalog", async (_request, reply) => {
-      const catalog = mappMp.getCatalogWithInstalled();
+      const catalog = await mappMp.getCatalogWithInstalled();
       // Wrap in { apps } for backward compatibility with dashboard
       return reply.send({ apps: catalog.map((entry) => ({
         definition: { id: entry.id, author: entry.author, description: entry.description, category: entry.category, version: entry.version, source: entry.sourcePath },
@@ -5070,7 +5074,7 @@ export async function createGatewayRuntimeState(
 
       // Register in live registry
       const { MAppDefinitionSchema } = await import("@agi/config");
-      const catalog = mappMp.getCatalogWithInstalled();
+      const catalog = await mappMp.getCatalogWithInstalled();
       const entry = catalog.find((e) => e.id === body.appId);
       if (entry && deps.mappRegistry) {
         const mappsDir = join(homedir(), ".agi", "mapps");
@@ -5110,7 +5114,7 @@ export async function createGatewayRuntimeState(
         const { MAppDefinitionSchema } = await import("@agi/config");
         const mappsDir = join(homedir(), ".agi", "mapps");
         for (const appId of result.updated) {
-          const catalog = mappMp.getCatalogWithInstalled();
+          const catalog = await mappMp.getCatalogWithInstalled();
           const entry = catalog.find((e) => e.id === appId);
           if (!entry) continue;
           try {

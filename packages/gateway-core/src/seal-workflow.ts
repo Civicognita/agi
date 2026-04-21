@@ -99,10 +99,10 @@ export class SealWorkflow {
   // ---------------------------------------------------------------------------
 
   /** Submit a verification request. Delegates to VerificationManager. */
-  submitRequest(
+  async submitRequest(
     entityId: string,
     proof: VerificationProof,
-  ): VerificationRequest {
+  ): Promise<VerificationRequest> {
     return this.vm.submitRequest(entityId, proof);
   }
 
@@ -118,12 +118,12 @@ export class SealWorkflow {
    * @param sealParams - Required if autoSealOnApproval and decision is "approve".
    * @param coaFingerprint - COA fingerprint for the verification record.
    */
-  processReview(
+  async processReview(
     decision: ReviewDecision,
     sealParams?: Omit<SealIssuanceParams, "entityId">,
     coaFingerprint?: string,
-  ): ReviewResult {
-    const { request, newTier } = this.vm.processDecision(
+  ): Promise<ReviewResult> {
+    const { request, newTier } = await this.vm.processDecision(
       decision,
       coaFingerprint,
     );
@@ -135,7 +135,7 @@ export class SealWorkflow {
       decision.decision === "approve" &&
       sealParams !== undefined
     ) {
-      issuance = this.issueSeal({
+      issuance = await this.issueSeal({
         entityId: request.entityId,
         issuedBy: sealParams.issuedBy,
         coa: sealParams.coa,
@@ -159,9 +159,9 @@ export class SealWorkflow {
    *   3. SealSigner produces Ed25519 signature
    *   4. SealBundle assembled for public verification portal
    */
-  issueSeal(params: SealIssuanceParams): SealIssuanceResult {
+  async issueSeal(params: SealIssuanceParams): Promise<SealIssuanceResult> {
     // Step 1: Issue seal in DB (validates alignment, computes checksum)
-    const seal = this.vm.issueSeal(params);
+    const seal = await this.vm.issueSeal(params);
 
     // Step 2: Map to canonical SealPayload for signing
     const payload: SealPayload = {
@@ -202,9 +202,9 @@ export class SealWorkflow {
    * Revoke an entity's seal and verification.
    * Two+ revocations require #E0 (GENESIS) approval for re-verification.
    */
-  revoke(params: RevocationParams): RevocationResult {
-    const { seal, newTier } = this.vm.revoke(params);
-    const revocationCount = this.vm.getRevocationCount(params.entityId);
+  async revoke(params: RevocationParams): Promise<RevocationResult> {
+    const { seal, newTier } = await this.vm.revoke(params);
+    const revocationCount = await this.vm.getRevocationCount(params.entityId);
 
     return {
       seal,
@@ -222,8 +222,8 @@ export class SealWorkflow {
    * Get the active seal bundle for an entity (for portal distribution).
    * Returns null if no active seal exists.
    */
-  getSealBundle(entityId: string): SealBundle | null {
-    const seal = this.vm.getActiveSeal(entityId);
+  async getSealBundle(entityId: string): Promise<SealBundle | null> {
+    const seal = await this.vm.getActiveSeal(entityId);
     if (!seal) return null;
 
     const payload: SealPayload = {
@@ -251,12 +251,12 @@ export class SealWorkflow {
   /**
    * Verify a seal's integrity (DB checksum + Ed25519 signature match).
    */
-  verifySeal(sealId: string): {
+  async verifySeal(sealId: string): Promise<{
     dbValid: boolean;
     signatureValid: boolean;
     seal: EntitySeal | null;
-  } {
-    const dbResult = this.vm.verifySeal(sealId);
+  }> {
+    const dbResult = await this.vm.verifySeal(sealId);
     if (!dbResult.seal) {
       return { dbValid: false, signatureValid: false, seal: null };
     }

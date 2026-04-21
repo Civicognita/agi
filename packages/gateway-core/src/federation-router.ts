@@ -231,7 +231,7 @@ export class FederationRouter {
       }
 
       // All other endpoints require full signature verification
-      const authResult = this.verifyAuth(req);
+      const authResult = await this.verifyAuth(req);
       if (!authResult.valid) {
         return this.errorResponse(401, authResult.errorCode ?? "INVALID_SIGNATURE", authResult.error ?? "Authentication failed");
       }
@@ -356,8 +356,9 @@ export class FederationRouter {
     };
   }
 
-  private handleListPeers(): FederationResponse {
-    const peers = this.node.getTrustedPeers(1).map(p => ({
+  private async handleListPeers(): Promise<FederationResponse> {
+    const peerList = await this.node.getTrustedPeers(1);
+    const peers = peerList.map(p => ({
       nodeId: p.nodeId,
       endpoint: p.endpoint,
       trustLevel: p.trustLevel,
@@ -527,7 +528,7 @@ export class FederationRouter {
     };
   }
 
-  private handleRingAnnounce(req: FederationRequest): FederationResponse {
+  private async handleRingAnnounce(req: FederationRequest): Promise<FederationResponse> {
     if (!req.body) {
       return this.errorResponse(400, "INTERNAL_ERROR", "Missing request body");
     }
@@ -541,9 +542,9 @@ export class FederationRouter {
 
     // Register any new peers from the announcement
     for (const peer of request.knownPeers) {
-      if (!this.node.getPeer(peer.nodeId) && peer.nodeId !== this.node.getNodeId()) {
+      if (!await this.node.getPeer(peer.nodeId) && peer.nodeId !== this.node.getNodeId()) {
         try {
-          this.node.addPeer(peer.nodeId, peer.endpoint, "", "peer-of-peer", 0);
+          await this.node.addPeer(peer.nodeId, peer.endpoint, "", "peer-of-peer", 0);
         } catch {
           // Max peers reached — skip
         }
@@ -551,7 +552,8 @@ export class FederationRouter {
     }
 
     // Return our known peers
-    const myPeers = this.node.getTrustedPeers(1).map(p => ({
+    const trustedPeers = await this.node.getTrustedPeers(1);
+    const myPeers = trustedPeers.map(p => ({
       nodeId: p.nodeId,
       endpoint: p.endpoint,
       trustLevel: p.trustLevel,
@@ -590,13 +592,13 @@ export class FederationRouter {
   // Auth middleware
   // -------------------------------------------------------------------------
 
-  private verifyAuth(req: FederationRequest): {
+  private async verifyAuth(req: FederationRequest): Promise<{
     valid: boolean;
     nodeId?: string;
     trustLevel?: TrustLevel;
     error?: string;
     errorCode?: FederationErrorCode;
-  } {
+  }> {
     const sigHeader = req.headers["authorization"] ?? req.headers["mycelium-sig"];
     if (!sigHeader) {
       return { valid: false, error: "Missing Mycelium-Sig header", errorCode: "INVALID_SIGNATURE" };
@@ -618,7 +620,7 @@ export class FederationRouter {
       return { valid: false, nodeId: result.nodeId, error: "Invalid signature", errorCode: "INVALID_SIGNATURE" };
     }
 
-    const peer = this.node.getPeer(result.nodeId);
+    const peer = await this.node.getPeer(result.nodeId);
     if (!peer) {
       return { valid: false, nodeId: result.nodeId, error: "Unknown node", errorCode: "UNTRUSTED_NODE" };
     }
@@ -630,11 +632,11 @@ export class FederationRouter {
   // Trust gating
   // -------------------------------------------------------------------------
 
-  private requireTrust<T>(
+  private requireTrust(
     currentTrust: TrustLevel | null,
     requiredTrust: TrustLevel,
-    handler: () => T,
-  ): T | FederationResponse {
+    handler: () => Promise<FederationResponse> | FederationResponse,
+  ): Promise<FederationResponse> | FederationResponse {
     if (currentTrust === null || currentTrust < requiredTrust) {
       return this.errorResponse(403, "UNTRUSTED_NODE", `Requires trust level ${requiredTrust}, current: ${currentTrust ?? 0}`);
     }

@@ -73,7 +73,7 @@ export class HeartbeatScheduler {
       if (prompt.length === 0) return;
 
       // Create/resolve system entity for heartbeat
-      const systemEntity = this.deps.entityStore.resolveOrCreate(
+      const systemEntity = await this.deps.entityStore.resolveOrCreate(
         "system",
         "$HEARTBEAT",
         "Heartbeat System",

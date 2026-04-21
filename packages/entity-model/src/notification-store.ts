@@ -1,27 +1,11 @@
-import type BetterSqlite3 from "better-sqlite3";
+/**
+ * NotificationStore — in-app notification queue (drizzle/Postgres).
+ */
+
+import { eq, inArray, lt, sql } from "drizzle-orm";
 import { ulid } from "ulid";
-
-import type { Database } from "./db.js";
-
-// ---------------------------------------------------------------------------
-// Statement type aliases
-// ---------------------------------------------------------------------------
-
-type NamedStmt<P extends object> = BetterSqlite3.Statement<[P]>;
-type PosStmt<P extends unknown[]> = BetterSqlite3.Statement<P>;
-
-// ---------------------------------------------------------------------------
-// Named-parameter shapes
-// ---------------------------------------------------------------------------
-
-interface InsertParams {
-  id: string;
-  type: string;
-  title: string;
-  body: string;
-  metadata: string | null;
-  created_at: string;
-}
+import type { Db } from "@agi/db-schema/client";
+import { notifications } from "@agi/db-schema";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -45,28 +29,18 @@ export interface CreateNotificationParams {
 }
 
 // ---------------------------------------------------------------------------
-// Row type
+// Row mapper
 // ---------------------------------------------------------------------------
 
-interface NotificationRow {
-  id: string;
-  type: string;
-  title: string;
-  body: string;
-  metadata: string | null;
-  read: number;
-  created_at: string;
-}
-
-function rowToNotification(row: NotificationRow): Notification {
+function rowToNotification(row: typeof notifications.$inferSelect): Notification {
   return {
     id: row.id,
     type: row.type,
     title: row.title,
     body: row.body,
-    metadata: row.metadata !== null ? JSON.parse(row.metadata) as unknown : null,
-    read: row.read === 1,
-    createdAt: row.created_at,
+    metadata: row.metadata ?? null,
+    read: row.read,
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
 }
 
@@ -75,51 +49,20 @@ function rowToNotification(row: NotificationRow): Notification {
 // ---------------------------------------------------------------------------
 
 export class NotificationStore {
-  private readonly stmtInsert: NamedStmt<InsertParams>;
-  private readonly stmtGetRecent: PosStmt<[number]>;
-  private readonly stmtGetRecentUnread: PosStmt<[number]>;
-  private readonly stmtCountUnread: PosStmt<[]>;
-  private readonly stmtMarkAllRead: PosStmt<[]>;
-  private readonly stmtCleanup: PosStmt<[string]>;
+  constructor(private readonly db: Db) {}
 
-  constructor(private readonly db: Database) {
-    this.stmtInsert = db.prepare<InsertParams>(`
-      INSERT INTO notifications (id, type, title, body, metadata, read, created_at)
-      VALUES (@id, @type, @title, @body, @metadata, 0, @created_at)
-    `);
-
-    this.stmtGetRecent = db.prepare<[number]>(`
-      SELECT * FROM notifications ORDER BY created_at DESC LIMIT ?
-    `);
-
-    this.stmtGetRecentUnread = db.prepare<[number]>(`
-      SELECT * FROM notifications WHERE read = 0 ORDER BY created_at DESC LIMIT ?
-    `);
-
-    this.stmtCountUnread = db.prepare<[]>(`
-      SELECT COUNT(*) as count FROM notifications WHERE read = 0
-    `);
-
-    this.stmtMarkAllRead = db.prepare<[]>(`
-      UPDATE notifications SET read = 1 WHERE read = 0
-    `);
-
-    this.stmtCleanup = db.prepare<[string]>(`
-      DELETE FROM notifications WHERE created_at < ?
-    `);
-  }
-
-  create(params: CreateNotificationParams): Notification {
+  async create(params: CreateNotificationParams): Promise<Notification> {
     const id = ulid();
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    this.stmtInsert.run({
+    await this.db.insert(notifications).values({
       id,
       type: params.type,
       title: params.title,
       body: params.body,
-      metadata: params.metadata !== undefined ? JSON.stringify(params.metadata) : null,
-      created_at: now,
+      metadata: (params.metadata !== undefined ? params.metadata : null) as Record<string, unknown> | null,
+      read: false,
+      createdAt: now,
     });
 
     return {
@@ -129,33 +72,50 @@ export class NotificationStore {
       body: params.body,
       metadata: params.metadata ?? null,
       read: false,
-      createdAt: now,
+      createdAt: now.toISOString(),
     };
   }
 
-  getRecent(opts?: { limit?: number; unreadOnly?: boolean }): Notification[] {
+  async getRecent(opts?: { limit?: number; unreadOnly?: boolean }): Promise<Notification[]> {
     const limit = opts?.limit ?? 50;
+    const query = this.db
+      .select()
+      .from(notifications)
+      .orderBy(sql`${notifications.createdAt} DESC`)
+      .limit(limit);
+
     const rows = opts?.unreadOnly
-      ? (this.stmtGetRecentUnread.all(limit) as NotificationRow[])
-      : (this.stmtGetRecent.all(limit) as NotificationRow[]);
+      ? await query.where(eq(notifications.read, false))
+      : await query;
+
     return rows.map(rowToNotification);
   }
 
-  countUnread(): number {
-    return (this.stmtCountUnread.get() as { count: number }).count;
+  async countUnread(): Promise<number> {
+    const [row] = await this.db
+      .select({ cnt: sql<number>`COUNT(*)` })
+      .from(notifications)
+      .where(eq(notifications.read, false));
+    return row?.cnt ?? 0;
   }
 
-  markRead(ids: string[]): void {
+  async markRead(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
-    const placeholders = ids.map(() => "?").join(",");
-    this.db.prepare(`UPDATE notifications SET read = 1 WHERE id IN (${placeholders})`).run(...ids);
+    await this.db.update(notifications)
+      .set({ read: true })
+      .where(inArray(notifications.id, ids));
   }
 
-  markAllRead(): void {
-    this.stmtMarkAllRead.run();
+  async markAllRead(): Promise<void> {
+    await this.db.update(notifications)
+      .set({ read: true })
+      .where(eq(notifications.read, false));
   }
 
-  cleanup(olderThan: string): number {
-    return this.stmtCleanup.run(olderThan).changes;
+  async cleanup(olderThan: string): Promise<number> {
+    const result = await this.db
+      .delete(notifications)
+      .where(lt(notifications.createdAt, new Date(olderThan)));
+    return (result as unknown as { rowCount?: number | null }).rowCount ?? 0;
   }
 }

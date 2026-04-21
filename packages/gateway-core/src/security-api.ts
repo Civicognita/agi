@@ -54,7 +54,7 @@ export function registerSecurityRoutes(fastify: FastifyInstance, deps: SecurityR
   fastify.get("/api/security/scans", async (req, reply) => {
     if (!guard(req, reply)) return;
     const query = req.query as { projectPath?: string; limit?: string; offset?: string };
-    return reply.send(scanStore.listScanRuns({
+    return reply.send(await scanStore.listScanRuns({
       projectPath: query.projectPath,
       limit: query.limit ? parseInt(query.limit, 10) : undefined,
       offset: query.offset ? parseInt(query.offset, 10) : undefined,
@@ -63,7 +63,7 @@ export function registerSecurityRoutes(fastify: FastifyInstance, deps: SecurityR
 
   fastify.get<{ Params: { id: string } }>("/api/security/scans/:id", async (req, reply) => {
     if (!guard(req, reply)) return;
-    const run = scanStore.getScanRun(req.params.id);
+    const run = await scanStore.getScanRun(req.params.id);
     if (!run) return reply.code(404).send({ error: "Scan not found" });
     return reply.send(run);
   });
@@ -83,13 +83,13 @@ export function registerSecurityRoutes(fastify: FastifyInstance, deps: SecurityR
       maxFindings: body.maxFindings,
     };
     // Run scan in background, return immediately with the scan ID
-    const runs = scanStore.listScanRuns({ limit: 1 });
-    const runCountBefore = runs.length;
+    const runsBefore = await scanStore.listScanRuns({ limit: 1 });
+    const runCountBefore = runsBefore.length;
     scanRunner.runScan(config).catch((err: unknown) => {
       console.error("[security-api] scan failed:", err);
     });
     // Poll the store for the newly created run
-    const newRuns = scanStore.listScanRuns({ limit: 1 });
+    const newRuns = await scanStore.listScanRuns({ limit: 1 });
     const scanId = newRuns.length > runCountBefore ? (newRuns[0]?.id ?? "unknown") : "unknown";
     return reply.code(202).send({ scanId, status: "running" });
   });
@@ -115,7 +115,7 @@ export function registerSecurityRoutes(fastify: FastifyInstance, deps: SecurityR
       limit?: string;
       offset?: string;
     };
-    return reply.send(scanStore.queryFindings({
+    return reply.send(await scanStore.queryFindings({
       severity: query.severity as FindingSeverity | undefined,
       scanType: query.scanType,
       status: query.status as FindingStatus | undefined,
@@ -127,7 +127,7 @@ export function registerSecurityRoutes(fastify: FastifyInstance, deps: SecurityR
 
   fastify.get<{ Params: { id: string } }>("/api/security/scans/:id/findings", async (req, reply) => {
     if (!guard(req, reply)) return;
-    return reply.send(scanStore.getFindings(req.params.id));
+    return reply.send(await scanStore.getFindings(req.params.id));
   });
 
   fastify.put<{ Params: { id: string } }>("/api/security/findings/:id/status", async (req, reply) => {
@@ -138,7 +138,7 @@ export function registerSecurityRoutes(fastify: FastifyInstance, deps: SecurityR
     if (!validStatuses.includes(status as FindingStatus)) {
       return reply.code(400).send({ error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` });
     }
-    const updated = scanStore.updateFindingStatus(req.params.id, status as FindingStatus);
+    const updated = await scanStore.updateFindingStatus(req.params.id, status as FindingStatus);
     if (!updated) return reply.code(404).send({ error: "Finding not found" });
     return reply.send({ ok: true });
   });
@@ -150,6 +150,6 @@ export function registerSecurityRoutes(fastify: FastifyInstance, deps: SecurityR
   fastify.get("/api/security/summary", async (req, reply) => {
     if (!guard(req, reply)) return;
     const query = req.query as { projectPath?: string };
-    return reply.send(scanStore.getSummary(query.projectPath));
+    return reply.send(await scanStore.getSummary(query.projectPath));
   });
 }

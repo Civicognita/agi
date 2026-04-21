@@ -225,13 +225,13 @@ export class FederationNode {
   /**
    * Add a peer node (from manual config or discovery).
    */
-  addPeer(
+  async addPeer(
     nodeId: string,
     endpoint: string,
     publicKey: string,
     method: DiscoveryMethod,
     trustLevel: TrustLevel = 0,
-  ): PeerNode {
+  ): Promise<PeerNode> {
     if (this.peerStore) {
       return this.peerStore.addPeer(nodeId, endpoint, publicKey, method, trustLevel);
     }
@@ -259,7 +259,7 @@ export class FederationNode {
   /**
    * Update a peer after a successful handshake.
    */
-  recordHandshake(nodeId: string, assignedTrust: TrustLevel): PeerNode | null {
+  async recordHandshake(nodeId: string, assignedTrust: TrustLevel): Promise<PeerNode | null> {
     if (this.peerStore) {
       return this.peerStore.recordHandshake(nodeId, assignedTrust);
     }
@@ -279,7 +279,7 @@ export class FederationNode {
   /**
    * Record a communication failure with a peer.
    */
-  recordFailure(nodeId: string): void {
+  async recordFailure(nodeId: string): Promise<void> {
     if (this.peerStore) {
       return this.peerStore.recordFailure(nodeId);
     }
@@ -296,7 +296,7 @@ export class FederationNode {
   /**
    * Get a specific peer.
    */
-  getPeer(nodeId: string): PeerNode | null {
+  async getPeer(nodeId: string): Promise<PeerNode | null> {
     if (this.peerStore) {
       return this.peerStore.getPeer(nodeId);
     }
@@ -306,7 +306,7 @@ export class FederationNode {
   /**
    * Get all known peers.
    */
-  getAllPeers(): PeerNode[] {
+  async getAllPeers(): Promise<PeerNode[]> {
     if (this.peerStore) {
       return this.peerStore.getAllPeers();
     }
@@ -316,7 +316,7 @@ export class FederationNode {
   /**
    * Get peers at or above a given trust level.
    */
-  getTrustedPeers(minTrust: TrustLevel): PeerNode[] {
+  async getTrustedPeers(minTrust: TrustLevel): Promise<PeerNode[]> {
     if (this.peerStore) {
       return this.peerStore.getTrustedPeers(minTrust);
     }
@@ -326,7 +326,7 @@ export class FederationNode {
   /**
    * Remove a peer.
    */
-  removePeer(nodeId: string): boolean {
+  async removePeer(nodeId: string): Promise<boolean> {
     if (this.peerStore) {
       return this.peerStore.removePeer(nodeId);
     }
@@ -336,7 +336,7 @@ export class FederationNode {
   /**
    * Update a peer's trust level.
    */
-  setTrustLevel(nodeId: string, level: TrustLevel): boolean {
+  async setTrustLevel(nodeId: string, level: TrustLevel): Promise<boolean> {
     if (this.peerStore) {
       return this.peerStore.setTrustLevel(nodeId, level);
     }

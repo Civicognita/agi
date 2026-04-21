@@ -183,12 +183,12 @@ export class QueueConsumer extends EventEmitter {
    * One poll tick — dequeue up to one inbound and one outbound message if
    * concurrency permits, then dispatch each asynchronously.
    */
-  private poll(): void {
+  private async poll(): Promise<void> {
     if (this.inFlight >= this.concurrency) {
       return;
     }
 
-    const inboundMsg = this.messageQueue.dequeue("inbound");
+    const inboundMsg = await this.messageQueue.dequeue("inbound");
     if (inboundMsg !== null) {
       void this.processMessage(inboundMsg, "inbound");
     }
@@ -197,7 +197,7 @@ export class QueueConsumer extends EventEmitter {
       return;
     }
 
-    const outboundMsg = this.messageQueue.dequeue("outbound");
+    const outboundMsg = await this.messageQueue.dequeue("outbound");
     if (outboundMsg !== null) {
       void this.processMessage(outboundMsg, "outbound");
     }

@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.40",
+  "version": "0.4.41",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -10,6 +10,8 @@
   "scripts": {
     "build": "pnpm --filter @agi/dashboard build && tsdown",
     "build:marketplace": "tsx scripts/build-marketplace.ts",
+    "migrate:agi_data": "tsx scripts/migrate-to-agi_data.ts",
+    "migrate:agi_data:dry": "tsx scripts/migrate-to-agi_data.ts --dry-run",
     "build:dashboard": "pnpm --filter @agi/dashboard build",
     "start": "tsx cli/src/index.ts run",
     "cli": "tsx cli/src/index.ts",
@@ -40,9 +42,12 @@
     "tm:jobs": "npx tsx .bots/lib/cli.ts jobs"
   },
   "dependencies": {
+    "@agi/db-schema": "workspace:*",
     "@types/pg": "^8.20.0",
     "ansi-to-html": "^0.7.2",
     "better-sqlite3": "^11.0.0",
+    "drizzle-kit": "^0.30.4",
+    "drizzle-orm": "^0.38.3",
     "node-pty": "^1.1.0",
     "pg": "^8.20.0",
     "playwright": "^1.58.2"

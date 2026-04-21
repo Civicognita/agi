@@ -65,8 +65,8 @@ const dashboardRouter = router({
       since: z.string().optional(),
       until: z.string().optional(),
     }))
-    .query(({ ctx, input }) => {
-      const { slices, total } = ctx.queries.getBreakdown(
+    .query(async ({ ctx, input }) => {
+      const { slices, total } = await ctx.queries.getBreakdown(
         input.by,
         input.entityId,
         input.since,
@@ -81,8 +81,8 @@ const dashboardRouter = router({
       limit: z.number().int().positive().default(25),
       offset: z.number().int().nonnegative().default(0),
     }))
-    .query(({ ctx, input }) => {
-      const { entries, total } = ctx.queries.getLeaderboard(
+    .query(async ({ ctx, input }) => {
+      const { entries, total } = await ctx.queries.getLeaderboard(
         input.windowDays,
         input.limit,
         input.offset,

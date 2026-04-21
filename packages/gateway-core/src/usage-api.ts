@@ -43,7 +43,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageApiDeps): v
     const now = new Date();
     const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const days = Math.ceil((now.getTime() - periodStart.getTime()) / 86400000) + 1;
-    const summary = deps.usageStore.getSummary(days);
+    const summary = await deps.usageStore.getSummary(days);
     return {
       totalCostUsd: summary.totalCostUsd,
       periodStart: periodStart.toISOString(),

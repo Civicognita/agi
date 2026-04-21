@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import type { Database, Statement } from "better-sqlite3";
+import { and, eq, asc, sql } from "drizzle-orm";
 
+import type { Db } from "@agi/db-schema/client";
+import { coaChains } from "@agi/db-schema";
 import type { COAWorkType } from "./types.js";
 import { formatFingerprint } from "./format.js";
 
@@ -36,132 +38,33 @@ export interface COAChainRow {
   createdAt: string;
 }
 
-/** Raw row shape returned by better-sqlite3 */
-interface RawChainRow {
-  fingerprint: string;
-  resource_id: string;
-  entity_id: string;
-  node_id: string;
-  chain_counter: number;
-  work_type: string;
-  ref: string | null;
-  action: string | null;
-  payload_hash: string | null;
-  fork_id: string | null;
-  source_ip: string | null;
-  integrity_hash: string | null;
-  created_at: string;
-}
-
-function toChainRow(raw: RawChainRow): COAChainRow {
-  return {
-    fingerprint: raw.fingerprint,
-    resourceId: raw.resource_id,
-    entityId: raw.entity_id,
-    nodeId: raw.node_id,
-    chainCounter: raw.chain_counter,
-    workType: raw.work_type,
-    ref: raw.ref,
-    action: raw.action,
-    payloadHash: raw.payload_hash,
-    forkId: raw.fork_id,
-    sourceIp: raw.source_ip,
-    integrityHash: raw.integrity_hash,
-    createdAt: raw.created_at,
-  };
-}
-
 function buildChainSegment(counter: number): string {
   return `C${String(counter).padStart(3, "0")}`;
 }
 
-export class COAChainLogger {
-  private readonly stmtInsert: Statement;
-  private readonly stmtMaxCounter: Statement<[string, string]>;
-  private readonly stmtGetChain: Statement<[string, number, number]>;
-  private readonly stmtGetRecord: Statement<[string]>;
+function rowToCOAChainRow(row: typeof coaChains.$inferSelect): COAChainRow {
+  return {
+    fingerprint: row.fingerprint,
+    resourceId: row.resourceId,
+    entityId: row.entityId,
+    nodeId: row.nodeId,
+    chainCounter: row.chainCounter,
+    workType: row.workType,
+    ref: row.ref ?? null,
+    action: row.action ?? null,
+    payloadHash: row.payloadHash ?? null,
+    forkId: row.forkId ?? null,
+    sourceIp: row.sourceIp ?? null,
+    integrityHash: row.integrityHash ?? null,
+    // Convert Date to ISO string to preserve existing string contract
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+  };
+}
 
+export class COAChainLogger {
   private lastIntegrityHash = "";
 
-  constructor(private db: Database) {
-    this.stmtInsert = db.prepare(`
-      INSERT INTO coa_chains (
-        fingerprint,
-        resource_id,
-        entity_id,
-        node_id,
-        chain_counter,
-        work_type,
-        ref,
-        action,
-        payload_hash,
-        fork_id,
-        source_ip,
-        integrity_hash,
-        created_at
-      ) VALUES (
-        @fingerprint,
-        @resource_id,
-        @entity_id,
-        @node_id,
-        @chain_counter,
-        @work_type,
-        @ref,
-        @action,
-        @payload_hash,
-        @fork_id,
-        @source_ip,
-        @integrity_hash,
-        @created_at
-      )
-    `);
-
-    this.stmtMaxCounter = db.prepare(`
-      SELECT COALESCE(MAX(chain_counter), 0) AS max_counter
-      FROM coa_chains
-      WHERE resource_id = ? AND entity_id = ?
-    `);
-
-    this.stmtGetChain = db.prepare(`
-      SELECT
-        fingerprint,
-        resource_id,
-        entity_id,
-        node_id,
-        chain_counter,
-        work_type,
-        ref,
-        action,
-        payload_hash,
-        fork_id,
-        source_ip,
-        integrity_hash,
-        created_at
-      FROM coa_chains
-      WHERE entity_id = ?
-      ORDER BY chain_counter ASC
-      LIMIT ? OFFSET ?
-    `);
-
-    this.stmtGetRecord = db.prepare(`
-      SELECT
-        fingerprint,
-        resource_id,
-        entity_id,
-        node_id,
-        chain_counter,
-        work_type,
-        ref,
-        action,
-        payload_hash,
-        fork_id,
-        source_ip,
-        integrity_hash,
-        created_at
-      FROM coa_chains
-      WHERE fingerprint = ?
-    `);
-  }
+  constructor(private readonly db: Db) {}
 
   /**
    * Log a new COA record atomically.
@@ -172,7 +75,7 @@ export class COAChainLogger {
    *
    * @returns The fingerprint string for the newly inserted record.
    */
-  log(params: LogEntryParams): string {
+  async log(params: LogEntryParams): Promise<string> {
     const {
       resourceId,
       entityId,
@@ -190,79 +93,103 @@ export class COAChainLogger {
     // entityId when no alias is provided (backwards-compatible).
     const fingerprintEntity = entityAlias ?? entityId;
 
-    const insertAtomic = this.db.transaction(() => {
-      const maxRow = this.stmtMaxCounter.get(resourceId, entityId) as {
-        max_counter: number;
-      };
-      const nextCounter = maxRow.max_counter + 1;
+    const fingerprint = await this.db.transaction(async (tx) => {
+      const [maxRow] = await tx
+        .select({ maxCounter: sql<number>`COALESCE(MAX(${coaChains.chainCounter}), 0)` })
+        .from(coaChains)
+        .where(
+          and(
+            eq(coaChains.resourceId, resourceId),
+            eq(coaChains.entityId, entityId),
+          ),
+        );
 
+      const nextCounter = (maxRow?.maxCounter ?? 0) + 1;
       const chainSegment = buildChainSegment(nextCounter);
-      const fingerprint = formatFingerprint({
+      const fp = formatFingerprint({
         resource: resourceId,
         entity: fingerprintEntity,
         node: nodeId,
         chain: chainSegment,
       });
 
-      const createdAt = new Date().toISOString();
+      const createdAt = new Date();
 
       // Compute HMAC integrity chain: hash(entry fields + previous hash)
-      const entryData = `${fingerprint}|${resourceId}|${entityId}|${nodeId}|${String(nextCounter)}|${workType}|${ref ?? ""}|${action ?? ""}|${payloadHash ?? ""}|${sourceIp ?? ""}|${createdAt}|${this.lastIntegrityHash}`;
+      const entryData = `${fp}|${resourceId}|${entityId}|${nodeId}|${String(nextCounter)}|${workType}|${ref ?? ""}|${action ?? ""}|${payloadHash ?? ""}|${sourceIp ?? ""}|${createdAt.toISOString()}|${this.lastIntegrityHash}`;
       const integrityHash = createHash("sha256").update(entryData).digest("hex");
       this.lastIntegrityHash = integrityHash;
 
-      this.stmtInsert.run({
-        fingerprint,
-        resource_id: resourceId,
-        entity_id: entityId,
-        node_id: nodeId,
-        chain_counter: nextCounter,
-        work_type: workType,
+      await tx.insert(coaChains).values({
+        fingerprint: fp,
+        resourceId,
+        entityId,
+        nodeId,
+        chainCounter: nextCounter,
+        workType,
         ref: ref ?? null,
         action: action ?? null,
-        payload_hash: payloadHash ?? null,
-        fork_id: forkId ?? null,
-        source_ip: sourceIp ?? null,
-        integrity_hash: integrityHash,
-        created_at: createdAt,
+        payloadHash: payloadHash ?? null,
+        forkId: forkId ?? null,
+        sourceIp: sourceIp ?? null,
+        integrityHash,
+        createdAt,
       });
 
-      return fingerprint;
+      return fp;
     });
 
-    return insertAtomic() as string;
+    return fingerprint;
   }
 
   /**
    * Get the latest chain counter for an entity on a resource.
    * Returns 0 if no records exist yet.
    */
-  getLatestCounter(resourceId: string, entityId: string): number {
-    const row = this.stmtMaxCounter.get(resourceId, entityId) as {
-      max_counter: number;
-    };
-    return row.max_counter;
+  async getLatestCounter(resourceId: string, entityId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ maxCounter: sql<number>`COALESCE(MAX(${coaChains.chainCounter}), 0)` })
+      .from(coaChains)
+      .where(
+        and(
+          eq(coaChains.resourceId, resourceId),
+          eq(coaChains.entityId, entityId),
+        ),
+      );
+    return row?.maxCounter ?? 0;
   }
 
   /**
    * Get all chain records for an entity, ordered by chain_counter ascending.
    */
-  getChain(
+  async getChain(
     entityId: string,
-    opts?: { limit?: number; offset?: number }
-  ): COAChainRow[] {
+    opts?: { limit?: number; offset?: number },
+  ): Promise<COAChainRow[]> {
     const limit = opts?.limit ?? 100;
     const offset = opts?.offset ?? 0;
-    const rows = this.stmtGetChain.all(entityId, limit, offset) as RawChainRow[];
-    return rows.map(toChainRow);
+
+    const rows = await this.db
+      .select()
+      .from(coaChains)
+      .where(eq(coaChains.entityId, entityId))
+      .orderBy(asc(coaChains.chainCounter))
+      .limit(limit)
+      .offset(offset);
+
+    return rows.map(rowToCOAChainRow);
   }
 
   /**
    * Get a single record by its fingerprint string.
    * Returns null if not found.
    */
-  getRecord(fingerprint: string): COAChainRow | null {
-    const row = this.stmtGetRecord.get(fingerprint) as RawChainRow | undefined;
-    return row ? toChainRow(row) : null;
+  async getRecord(fingerprint: string): Promise<COAChainRow | null> {
+    const [row] = await this.db
+      .select()
+      .from(coaChains)
+      .where(eq(coaChains.fingerprint, fingerprint));
+
+    return row ? rowToCOAChainRow(row) : null;
   }
 }

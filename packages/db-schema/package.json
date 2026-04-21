@@ -1,0 +1,35 @@
+{
+  "name": "@agi/db-schema",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Unified drizzle schema + Postgres client for agi_data. Shared by all AGI services and Local-ID — single source of truth per feedback_single_source_of_truth_db memory.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./auth": "./src/auth.ts",
+    "./entities": "./src/entities.ts",
+    "./audit": "./src/audit.ts",
+    "./compliance": "./src/compliance.ts",
+    "./platform": "./src/platform.ts",
+    "./marketplaces": "./src/marketplaces.ts",
+    "./hf": "./src/hf.ts",
+    "./security": "./src/security.ts"
+  },
+  "scripts": {
+    "generate": "drizzle-kit generate",
+    "migrate": "drizzle-kit migrate",
+    "push": "drizzle-kit push",
+    "studio": "drizzle-kit studio",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.38.3",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "drizzle-kit": "^0.30.4",
+    "typescript": "^5.7.0"
+  }
+}

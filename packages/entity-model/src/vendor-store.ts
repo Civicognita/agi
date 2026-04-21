@@ -4,8 +4,10 @@
  * Compliance: UCS-VEND-01 (HIPAA BAA, GDPR Art 28, PCI 12.8.4).
  */
 
+import { eq, sql } from "drizzle-orm";
 import { ulid } from "ulid";
-import type { Database } from "./db.js";
+import type { Db } from "@agi/db-schema/client";
+import { vendors } from "@agi/db-schema";
 
 export type VendorType = "llm_provider" | "oauth_provider" | "voice_provider" | "hosting" | "analytics" | "payment" | "other";
 export type ComplianceStatus = "compliant" | "review_needed" | "non_compliant" | "unknown";
@@ -34,118 +36,114 @@ export interface CreateVendorParams {
   certifications?: string[];
 }
 
-export const CREATE_VENDORS = `
-CREATE TABLE IF NOT EXISTS vendors (
-  id                TEXT NOT NULL PRIMARY KEY,
-  name              TEXT NOT NULL UNIQUE,
-  type              TEXT NOT NULL DEFAULT 'other',
-  description       TEXT NOT NULL DEFAULT '',
-  compliance_status TEXT NOT NULL DEFAULT 'unknown',
-  dpa_signed        INTEGER NOT NULL DEFAULT 0,
-  baa_signed        INTEGER NOT NULL DEFAULT 0,
-  last_review_date  TEXT,
-  next_review_date  TEXT,
-  certifications    TEXT NOT NULL DEFAULT '[]',
-  created_at        TEXT NOT NULL,
-  updated_at        TEXT NOT NULL
-)` as const;
+// ---------------------------------------------------------------------------
+// Row mapper
+// ---------------------------------------------------------------------------
 
-interface VendorRow {
-  id: string;
-  name: string;
-  type: string;
-  description: string;
-  compliance_status: string;
-  dpa_signed: number;
-  baa_signed: number;
-  last_review_date: string | null;
-  next_review_date: string | null;
-  certifications: string;
-  created_at: string;
-  updated_at: string;
+function toIso(d: Date | string | null | undefined): string | null {
+  if (!d) return null;
+  return d instanceof Date ? d.toISOString() : String(d);
 }
 
-function toVendor(row: VendorRow): Vendor {
+function toVendor(row: typeof vendors.$inferSelect): Vendor {
   return {
     id: row.id,
     name: row.name,
     type: row.type as VendorType,
-    description: row.description,
-    complianceStatus: row.compliance_status as ComplianceStatus,
-    dpaSigned: row.dpa_signed === 1,
-    baaSigned: row.baa_signed === 1,
-    lastReviewDate: row.last_review_date,
-    nextReviewDate: row.next_review_date,
-    certifications: JSON.parse(row.certifications) as string[],
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    description: row.description ?? "",
+    complianceStatus: (row.complianceStatus ?? "unknown") as ComplianceStatus,
+    dpaSigned: row.dpaSigned,
+    baaSigned: row.baaSigned,
+    lastReviewDate: toIso(row.lastReviewDate),
+    nextReviewDate: toIso(row.nextReviewDate),
+    certifications: Array.isArray(row.certifications) ? (row.certifications as string[]) : [],
+    createdAt: toIso(row.createdAt) ?? "",
+    updatedAt: toIso(row.updatedAt) ?? "",
   };
 }
 
+// ---------------------------------------------------------------------------
+// VendorStore
+// ---------------------------------------------------------------------------
+
 export class VendorStore {
-  constructor(private readonly db: Database) {
-    db.exec(CREATE_VENDORS);
-  }
+  constructor(private readonly db: Db) {}
 
-  upsert(params: CreateVendorParams): Vendor {
-    const now = new Date().toISOString();
+  async upsert(params: CreateVendorParams): Promise<Vendor> {
+    const now = new Date();
     const id = ulid();
-    // Annual review cycle (PCI 12.8.4)
-    const nextReview = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+    const nextReview = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
 
-    this.db.prepare(`
-      INSERT INTO vendors (id, name, type, description, dpa_signed, baa_signed, certifications, next_review_date, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT (name) DO UPDATE SET type = ?, description = ?, updated_at = ?
-    `).run(
-      id, params.name, params.type, params.description ?? "", params.dpaSigned ? 1 : 0,
-      params.baaSigned ? 1 : 0, JSON.stringify(params.certifications ?? []), nextReview, now, now,
-      params.type, params.description ?? "", now,
-    );
+    await this.db.insert(vendors).values({
+      id,
+      name: params.name,
+      type: params.type,
+      description: params.description ?? "",
+      dpaSigned: params.dpaSigned ?? false,
+      baaSigned: params.baaSigned ?? false,
+      certifications: (params.certifications ?? []) as unknown as Record<string, unknown>,
+      nextReviewDate: nextReview,
+      createdAt: now,
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: vendors.name,
+      set: { type: params.type, description: params.description ?? "", updatedAt: now },
+    });
 
-    return this.getByName(params.name)!;
+    const record = await this.getByName(params.name);
+    return record!;
   }
 
-  getByName(name: string): Vendor | null {
-    const row = this.db.prepare(`SELECT * FROM vendors WHERE name = ?`).get(name) as VendorRow | undefined;
+  async getByName(name: string): Promise<Vendor | null> {
+    const [row] = await this.db.select().from(vendors).where(eq(vendors.name, name));
     return row ? toVendor(row) : null;
   }
 
-  list(): Vendor[] {
-    return (this.db.prepare(`SELECT * FROM vendors ORDER BY name`).all() as VendorRow[]).map(toVendor);
+  async list(): Promise<Vendor[]> {
+    const rows = await this.db.select().from(vendors).orderBy(vendors.name);
+    return rows.map(toVendor);
   }
 
-  updateCompliance(id: string, status: ComplianceStatus): void {
-    const now = new Date().toISOString();
-    this.db.prepare(`UPDATE vendors SET compliance_status = ?, last_review_date = ?, next_review_date = ?, updated_at = ? WHERE id = ?`)
-      .run(status, now, new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), now, id);
+  async updateCompliance(id: string, status: ComplianceStatus): Promise<void> {
+    const now = new Date();
+    await this.db.update(vendors).set({
+      complianceStatus: status as typeof vendors.$inferInsert["complianceStatus"],
+      lastReviewDate: now,
+      nextReviewDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+      updatedAt: now,
+    }).where(eq(vendors.id, id));
   }
 
-  updateDpa(id: string, signed: boolean): void {
-    this.db.prepare(`UPDATE vendors SET dpa_signed = ?, updated_at = ? WHERE id = ?`).run(signed ? 1 : 0, new Date().toISOString(), id);
+  async updateDpa(id: string, signed: boolean): Promise<void> {
+    await this.db.update(vendors).set({ dpaSigned: signed, updatedAt: new Date() }).where(eq(vendors.id, id));
   }
 
-  updateBaa(id: string, signed: boolean): void {
-    this.db.prepare(`UPDATE vendors SET baa_signed = ?, updated_at = ? WHERE id = ?`).run(signed ? 1 : 0, new Date().toISOString(), id);
+  async updateBaa(id: string, signed: boolean): Promise<void> {
+    await this.db.update(vendors).set({ baaSigned: signed, updatedAt: new Date() }).where(eq(vendors.id, id));
   }
 
-  getOverdueReviews(): Vendor[] {
-    const now = new Date().toISOString();
-    return (this.db.prepare(`SELECT * FROM vendors WHERE next_review_date IS NOT NULL AND next_review_date < ? ORDER BY next_review_date`).all(now) as VendorRow[]).map(toVendor);
+  async getOverdueReviews(): Promise<Vendor[]> {
+    const now = new Date();
+    const rows = await this.db
+      .select()
+      .from(vendors)
+      .where(sql`${vendors.nextReviewDate} IS NOT NULL AND ${vendors.nextReviewDate} < ${now.toISOString()}`)
+      .orderBy(vendors.nextReviewDate);
+    return rows.map(toVendor);
   }
 
   /** Auto-populate vendors from config (providers, OAuth, voice). */
-  seedFromConfig(config: Record<string, unknown>): void {
+  async seedFromConfig(config: Record<string, unknown>): Promise<void> {
     const providers = config.providers as Record<string, unknown> | undefined;
     if (providers) {
       for (const name of Object.keys(providers)) {
-        this.upsert({ name: `${name} (LLM)`, type: "llm_provider", description: `${name} LLM API provider` });
+        await this.upsert({ name: `${name} (LLM)`, type: "llm_provider", description: `${name} LLM API provider` });
       }
     }
     const identity = config.identity as { oauth?: Record<string, unknown> } | undefined;
     if (identity?.oauth) {
       for (const name of Object.keys(identity.oauth)) {
-        this.upsert({ name: `${name} (OAuth)`, type: "oauth_provider", description: `${name} OAuth identity provider` });
+        await this.upsert({ name: `${name} (OAuth)`, type: "oauth_provider", description: `${name} OAuth identity provider` });
       }
     }
   }

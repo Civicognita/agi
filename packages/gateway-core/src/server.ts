@@ -20,7 +20,9 @@ import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { ulid } from "ulid";
 import { dispatchJobsDir } from "./dispatch-paths.js";
-import { createDatabase, EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@agi/entity-model";
+import { EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@agi/entity-model";
+import type { Entity } from "@agi/entity-model";
+import { createDbClient } from "@agi/db-schema/client";
 import { BackupManager } from "./backup-manager.js";
 import { registerComplianceRoutes } from "./compliance-api.js";
 import { registerSecurityRoutes } from "./security-api.js";
@@ -103,6 +105,7 @@ import { ServiceManager } from "./service-manager.js";
 import { bridgePluginCapabilities, unbridgePluginCapabilities } from "./plugin-bridges.js";
 import { ScheduledTaskManager } from "./scheduled-task-manager.js";
 import { MarketplaceManager } from "@agi/marketplace";
+import { MarketplaceStore } from "@agi/marketplace";
 import { FederationNode, generateNodeKeypair } from "./federation-node.js";
 import { FederationRouter } from "./federation-router.js";
 import { FederationPeerStore } from "./federation-peer-store.js";
@@ -118,7 +121,6 @@ import { registerWorkerApi } from "./worker-api.js";
 import { registerUsageRoutes } from "./usage-api.js";
 import { appendUpgradeLog } from "./upgrade-log.js";
 import { EventEmitter } from "node:events";
-import { Pool } from "pg";
 import {
   HardwareProfiler,
   HfHubClient,
@@ -339,8 +341,7 @@ export async function startGatewayServer(
   // These are shared across InboundRouter, OutboundDispatcher, DashboardQueries.
   // -------------------------------------------------------------------------
 
-  const dbPath = config.entities?.path ?? "./data/entities.db";
-  const db = createDatabase(dbPath);
+  const { db, pool: dbPool } = createDbClient();
   const entityStore = new EntityStore(db);
   const messageQueue = new MessageQueue(db);
   const coaLogger = new COAChainLogger(db);
@@ -349,20 +350,21 @@ export async function startGatewayServer(
   const incidentStore = new IncidentStore(db);
   const vendorStore = new VendorStore(db);
   const complianceSessionStore = new ComplianceSessionStore(db);
-  // ConsentStore initialized — tables created on construction, available for future consent API
+  // ConsentStore instantiated — available for future consent API routes
   void new ConsentStore(db);
   const usageStore = new UsageStore(db);
 
-  // Seed vendors from configured providers
-  vendorStore.seedFromConfig(config as Record<string, unknown>);
+  // Seed vendors from configured providers (async — fire-and-forget at boot)
+  void vendorStore.seedFromConfig(config as Record<string, unknown>);
 
   // Start backup manager if enabled
   let backupManager: BackupManager | undefined;
   if (config.backup?.enabled !== false) {
     const backupDir = (config.backup?.dir ?? join(homedir(), ".agi", "backups")).replace(/^~/, homedir());
+    const databaseUrl = process.env.DATABASE_URL ?? "postgres://agi:aionima@localhost:5432/agi_data";
     backupManager = new BackupManager({
       backupDir,
-      databases: [{ name: "entities", db }],
+      databaseUrl,
       retentionDays: config.backup?.retentionDays ?? 30,
       logger,
     });
@@ -416,10 +418,10 @@ export async function startGatewayServer(
         (entry): entry is [string, string] => entry[1] !== undefined,
       );
 
-      let ownerEntity: ReturnType<EntityStore["resolveOrCreate"]> | undefined;
+      let ownerEntity: Entity | undefined;
 
       for (const [channel, channelUserId] of channelEntries) {
-        const existing = entityStore.getEntityByChannel(channel, channelUserId);
+        const existing = await entityStore.getEntityByChannel(channel, channelUserId);
         if (existing !== null) {
           ownerEntity = existing;
           break;
@@ -429,12 +431,12 @@ export async function startGatewayServer(
       // If no existing entity found, create one from the first channel
       if (ownerEntity === undefined) {
         const [firstChannel, firstUserId] = channelEntries[0]!;
-        ownerEntity = entityStore.resolveOrCreate(firstChannel, firstUserId, ownerConfig.displayName);
+        ownerEntity = await entityStore.resolveOrCreate(firstChannel, firstUserId, ownerConfig.displayName);
       }
 
       // Link all channels to the resolved entity
       for (const [channel, channelUserId] of channelEntries) {
-        entityStore.upsertChannelAccount({
+        await entityStore.upsertChannelAccount({
           entityId: ownerEntity.id,
           channel,
           channelUserId,
@@ -443,11 +445,11 @@ export async function startGatewayServer(
 
       // Ensure the owner entity is sealed (full access)
       if (ownerEntity.verificationTier !== "sealed") {
-        entityStore.updateEntity(ownerEntity.id, { verificationTier: "sealed" });
+        await entityStore.updateEntity(ownerEntity.id, { verificationTier: "sealed" });
       }
       // Update display name if it was "Unknown"
       if (ownerEntity.displayName === "Unknown") {
-        entityStore.updateEntity(ownerEntity.id, { displayName: ownerConfig.displayName });
+        await entityStore.updateEntity(ownerEntity.id, { displayName: ownerConfig.displayName });
       }
       ownerEntityId = ownerEntity.id;
       log.info(`owner entity resolved: ${ownerEntity.coaAlias} (${ownerEntity.displayName}) — sealed`);
@@ -513,7 +515,13 @@ export async function startGatewayServer(
   const outboundDispatcher = new OutboundDispatcher({
     getChannelAdapter: (channelId: string) => channelRegistry.getChannel(channelId)?.plugin.outbound,
     coaLogger,
-    resolveCoaAlias: (entityId: string) => entityStore.getEntity(entityId)?.coaAlias ?? "#E?",
+    // Look up the entity's COA alias for each outbound dispatch. Falls back to
+    // "#E?" on miss — entity might have been deleted between message enqueue
+    // and dispatch, which is rare but not pathological.
+    resolveCoaAlias: async (entityId: string) => {
+      const entity = await entityStore.getEntity(entityId);
+      return entity?.coaAlias ?? "#E?";
+    },
     resourceId,
     nodeId,
     voicePipeline,
@@ -847,7 +855,7 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const scanRegistry = new ScanProviderRegistry();
-  const scanStore = new ScanStore();
+  const scanStore = new ScanStore(db);
   const scanRunner = new ScanRunner(scanRegistry, scanStore, {
     debug: (msg: string) => log.debug(msg),
     info: (msg: string) => log.info(msg),
@@ -889,19 +897,20 @@ export async function startGatewayServer(
         if (bootstrapContent.trim().length > 0) {
           log.info("first-run bootstrap: executing identity anchoring...");
 
-          const systemEntity = entityStore.resolveOrCreate("system", "$BOOTSTRAP", "System Bootstrap");
+          const systemEntity = await entityStore.resolveOrCreate("system", "$BOOTSTRAP", "System Bootstrap");
 
+          const bootstrapCoaFingerprint = await coaLogger.log({
+            resourceId,
+            entityId: systemEntity.id,
+            entityAlias: systemEntity.coaAlias,
+            nodeId,
+            workType: "action",
+          });
           await agentInvoker.process({
             entity: systemEntity,
             channel: "system",
             content: bootstrapContent,
-            coaFingerprint: coaLogger.log({
-              resourceId,
-              entityId: systemEntity.id,
-              entityAlias: systemEntity.coaAlias,
-              nodeId,
-              workType: "action",
-            }),
+            coaFingerprint: bootstrapCoaFingerprint,
             queueMessageId: "bootstrap-init",
           });
 
@@ -947,7 +956,7 @@ export async function startGatewayServer(
           throw new Error(`Queue message ${message.id} missing entityId in payload`);
         }
 
-        const entity = entityStore.getEntity(entityId);
+        const entity = await entityStore.getEntity(entityId);
         if (entity === null) {
           // Throw so QueueConsumer.processMessage() calls fail() — do NOT call
           // fail() here because processMessage() also calls complete() on normal return.
@@ -1077,10 +1086,10 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   // Create the marketplace manager early so we can auto-install required plugins.
-  const marketplaceDbPath = join(dirname(dbPath), "marketplace.db");
   const pluginCacheDir = join(homedir(), ".agi", "plugins", "cache");
+  const marketplaceStore = new MarketplaceStore(db);
   const marketplaceManager = new MarketplaceManager({
-    dbPath: marketplaceDbPath,
+    store: marketplaceStore,
     workspaceRoot,
     cacheDir: pluginCacheDir,
     installDir: process.cwd(),
@@ -1138,13 +1147,13 @@ export async function startGatewayServer(
         for (const req of reqData.plugins) {
           // Check if installed AND has a built dist/index.js.
           // If the cache entry exists but wasn't built, force-reinstall.
-          const isInDb = marketplaceManager.isInstalled(req.id);
+          const isInDb = await marketplaceManager.isInstalled(req.id);
           const cacheEntry = join(pluginCacheDir, req.id);
           const hasBuilt = existsSync(join(cacheEntry, "dist", "index.js"));
 
           if (isInDb && !hasBuilt) {
             log.info(`repairing unbuilt install for required plugin: ${req.id}`);
-            marketplaceManager.uninstall(req.id, true);
+            await marketplaceManager.uninstall(req.id, true);
           }
 
           if (!isInDb || !hasBuilt) {
@@ -1167,14 +1176,16 @@ export async function startGatewayServer(
       // If a plugin is installed, came from the default source, is no longer required,
       // AND is no longer in the synced catalog, clean it up.
       const requiredIds = new Set(reqData.plugins.map((p) => p.id));
-      const installed = marketplaceManager.getInstalled();
-      const catalogEntries = marketplaceManager.searchCatalog({});
+      const [installed, catalogEntries] = await Promise.all([
+        marketplaceManager.getInstalled(),
+        marketplaceManager.searchCatalog({}),
+      ]);
       const catalogNames = new Set(catalogEntries.map((c) => c.name));
       for (const item of installed) {
         if (!requiredIds.has(item.name) && !catalogNames.has(item.name)) {
           log.info(`auto-uninstalling removed plugin: ${item.name} (not in catalog or required list)`);
           try {
-            marketplaceManager.uninstall(item.name, true);
+            await marketplaceManager.uninstall(item.name, true);
           } catch (err) {
             log.warn(`failed to auto-uninstall ${item.name}: ${err instanceof Error ? err.message : String(err)}`);
           }
@@ -1224,9 +1235,9 @@ export async function startGatewayServer(
     if (defaultSourceId !== undefined) {
       let backfilled = 0;
       for (const ip of installedDiscovery.plugins) {
-        if (!marketplaceManager.isInstalled(ip.manifest.id)) {
-          const catalog = marketplaceManager.searchCatalog({ q: ip.manifest.id });
-          const match = catalog.find(c => c.name === ip.manifest.id);
+        if (!await marketplaceManager.isInstalled(ip.manifest.id)) {
+          const catalogEntries = await marketplaceManager.searchCatalog({ q: ip.manifest.id });
+          const match = catalogEntries.find(c => c.name === ip.manifest.id);
           marketplaceManager.backfillInstalled({
             name: ip.manifest.id,
             sourceId: match?.sourceId ?? defaultSourceId,
@@ -1360,7 +1371,7 @@ export async function startGatewayServer(
             // marketplace catalog has a matching plugin and auto-install it
             // so the user doesn't have to manually browse Settings → Plugins.
             const catalogName = `provider-${agentProvider}`;
-            const catalog = marketplaceManager.searchCatalog({});
+            const catalog = await marketplaceManager.searchCatalog({});
             const match = catalog.find((p) => p.name === catalogName || p.name === agentProvider);
             if (match && !match.installed) {
               log.info(`auto-installing provider plugin "${match.name}" from marketplace (config references "${agentProvider}")`);
@@ -1546,18 +1557,12 @@ export async function startGatewayServer(
     apiToken: ((config as Record<string, unknown>).hf as { apiToken?: string } | undefined)?.apiToken,
   });
 
-  // Build PostgreSQL connection from ID service config
-  const idServiceConfig = (config as Record<string, unknown>).idService as { local?: { databaseUrl?: string } } | undefined;
-  const pgUrl = idServiceConfig?.local?.databaseUrl ?? "postgres://agi:aionima@localhost:5432/agi";
-  const pgPool = new Pool({ connectionString: pgUrl });
-
-  // ModelStore + DatasetStore require the ID service's Postgres to be
-  // reachable. Degrade gracefully when it isn't — a gateway with HF models
+  // ModelStore + DatasetStore use the shared db connection.
+  // Degrade gracefully when Postgres is unreachable — a gateway with HF models
   // unavailable is better than a gateway that refuses to boot. Test VMs
   // and fresh installs (before `agi-local-id` is up) hit this path.
-  const modelStore = new ModelStore(pgPool);
+  const modelStore = new ModelStore(db);
   try {
-    await modelStore.initialize();
     const reconciledModels = await modelStore.reconcileFromDisk(
       hfCacheDir,
       async (modelId) => {
@@ -1569,17 +1574,12 @@ export async function startGatewayServer(
       log.info(`HF model store: reconciled ${String(reconciledModels)} model(s) from disk`);
     }
   } catch (err) {
-    log.warn(`ModelStore (HF models) disabled — Postgres unreachable at ${pgUrl}: ${err instanceof Error ? err.message : String(err)}`);
+    log.warn(`ModelStore (HF models) disabled — Postgres unreachable: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const datasetsCacheDir = join(homedir(), ".agi", "datasets");
   mkdirSync(join(datasetsCacheDir, "hub"), { recursive: true });
-  const datasetStore = new DatasetStore(pgPool);
-  try {
-    await datasetStore.initialize();
-  } catch (err) {
-    log.warn(`DatasetStore disabled — Postgres unreachable: ${err instanceof Error ? err.message : String(err)}`);
-  }
+  const datasetStore = new DatasetStore(db);
 
   const profile = hardwareProfiler.scan();
 
@@ -1902,9 +1902,7 @@ export async function startGatewayServer(
 
   // MagicApp state store — persistent app instance state across crashes/reloads
   const { MagicAppStateStore } = await import("./magic-app-state-store.js");
-  const magicAppStateStore = new MagicAppStateStore(
-    join(homedir(), ".agi", "magic-app-state.db"),
-  );
+  const magicAppStateStore = new MagicAppStateStore(db);
 
   const { httpServer, wsServer } = await createGatewayRuntimeState(
     {
@@ -2201,7 +2199,7 @@ export async function startGatewayServer(
     wsServer.sendTo(targetConnId, type, enriched);
   };
 
-  wsServer.on("message", (connectionId: string, message: WSMessage) => {
+  wsServer.on("message", (connectionId: string, message: WSMessage) => { void (async () => {
     // Update the owner → connection mapping on every message
     if (ownerEntityId !== undefined) {
       ownerConnectionMap.set(ownerEntityId, connectionId);
@@ -2289,13 +2287,13 @@ export async function startGatewayServer(
         }
 
         // Resolve the channelUserId for this entity+channel pairing
-        const replyEntity = entityStore.getEntity(entityId);
+        const replyEntity = await entityStore.getEntity(entityId);
         if (replyEntity === null) {
           log.warn(`reply_request: entity ${entityId} not found`);
           break;
         }
 
-        const channelAccounts = entityStore.getChannelAccounts(entityId);
+        const channelAccounts = await entityStore.getChannelAccounts(entityId);
         const account = channelAccounts.find((ca) => ca.channel === replyChannel);
         if (account === undefined) {
           log.warn(`reply_request: no channel account for entity ${entityId} on channel ${replyChannel}`);
@@ -2481,7 +2479,7 @@ export async function startGatewayServer(
           chatContent = chatText;
         }
 
-        const chatEntity = entityStore.getEntity(ownerEntityId);
+        const chatEntity = await entityStore.getEntity(ownerEntityId);
         if (chatEntity === null) {
           wsServer.sendTo(connectionId, "chat:error", { error: "Owner entity not found" });
           break;
@@ -2537,7 +2535,7 @@ export async function startGatewayServer(
           }
         }
 
-        const chatCoaFingerprint = coaLogger.log({
+        const chatCoaFingerprint = await coaLogger.log({
           resourceId,
           entityId: ownerEntityId,
           entityAlias: chatEntity.coaAlias,
@@ -2783,7 +2781,7 @@ export async function startGatewayServer(
             let chatUsageRec: { costUsd: number } | undefined;
             if (outcome.usage && outcome.model) {
               try {
-                chatUsageRec = usageStore.record({
+                chatUsageRec = await usageStore.record({
                   entityId: ownerEntityId,
                   projectPath: chatProjectPath,
                   provider: outcome.provider ?? "unknown",
@@ -2817,7 +2815,7 @@ export async function startGatewayServer(
                         const balance = await providerDef.checkBalance(providerConfig);
                         if (balance !== null) {
                           // Record balance history for sparklines
-                          usageStore.recordBalance(outcome.provider, balance);
+                          void usageStore.recordBalance(outcome.provider, balance);
                         }
                         if (balance !== null && balance <= threshold) {
                           dashboardBroadcasterRef?.emitNotification({
@@ -3144,9 +3142,9 @@ export async function startGatewayServer(
           });
 
           // Trigger a background agent invocation with the sync prompt
-          const syncEntity = entityStore.getEntity(ownerEntityId);
+          const syncEntity = await entityStore.getEntity(ownerEntityId);
           if (syncEntity !== null) {
-            const syncCoaFingerprint = coaLogger.log({
+            const syncCoaFingerprint = await coaLogger.log({
               resourceId,
               entityId: ownerEntityId,
               entityAlias: syncEntity.coaAlias,
@@ -3405,7 +3403,7 @@ export async function startGatewayServer(
         // Unknown message type — ignore
         break;
     }
-  });
+  })(); });
 
   wsServer.on("disconnection", (connectionId: string) => {
     subscriptions.delete(connectionId);
@@ -3457,7 +3455,7 @@ export async function startGatewayServer(
     projectPath: string;
   }): Promise<void> {
     if (ownerEntityId === undefined) return;
-    const entity = entityStore.getEntity(ownerEntityId);
+    const entity = await entityStore.getEntity(ownerEntityId);
     if (entity === null) return;
 
     // Drain injected notes for this session — the content of this autonomous
@@ -3467,7 +3465,7 @@ export async function startGatewayServer(
     if (notes.length === 0) return;
     const content = notes.join("\n\n---\n\n");
 
-    const coaFingerprint = coaLogger.log({
+    const coaFingerprint = await coaLogger.log({
       resourceId,
       entityId: entity.id,
       entityAlias: entity.coaAlias,
@@ -3553,7 +3551,7 @@ export async function startGatewayServer(
   //   (b) If the session is idle (no active invocation), fire an autonomous
   //       follow-up turn so Aion processes the note without waiting for the
   //       user to message. Without (b), the note sits in the queue forever.
-  workerRuntime.on("runtime:event", (event: { type: string; jobId: string; [key: string]: unknown }) => {
+  workerRuntime.on("runtime:event", (event: { type: string; jobId: string; [key: string]: unknown }) => { void (async () => {
     const origin = jobOriginBySessionKey.get(event.jobId);
 
     // Auto-advance the linked plan step regardless of session presence —
@@ -3582,7 +3580,7 @@ export async function startGatewayServer(
       const tokens = event.tokens as { input: number; output: number } | undefined;
       if (tokens !== undefined && ownerEntityId !== undefined) {
         try {
-          const workerUsageRec = usageStore.record({
+          const workerUsageRec = await usageStore.record({
             entityId: ownerEntityId,
             projectPath: origin?.projectPath ?? "",
             provider: "anthropic",
@@ -3642,7 +3640,7 @@ export async function startGatewayServer(
     if (event.type === "report_ready" || event.type === "job_failed") {
       jobOriginBySessionKey.delete(event.jobId);
     }
-  });
+  })(); });
 
   // Wire worker runtime events to the dashboard broadcaster.
   if (dashboardBroadcaster !== null) {
@@ -4065,7 +4063,6 @@ export async function startGatewayServer(
       log.error(`error stopping model containers: ${err instanceof Error ? err.message : String(err)}`);
     }
     modelAgentBridge.destroy();
-    await pgPool.end();
 
     // Step 5g2: Stop scheduled tasks
     scheduledTaskManager.stop();
@@ -4094,9 +4091,9 @@ export async function startGatewayServer(
       });
     });
 
-    // Step 8: Close database
+    // Step 8: Close database pool
     try {
-      db.close();
+      await dbPool.end();
     } catch (err) {
       log.error(`error closing database: ${err instanceof Error ? err.message : String(err)}`);
     }

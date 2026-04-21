@@ -142,8 +142,8 @@ function mountWebhook(
 
 /** Minimal surface used for WhatsApp phone hash persistence. */
 interface PhoneHashStore {
-  upsertPhoneHash(channel: string, hash: string, rawPhone: string): void;
-  lookupPhoneHash(channel: string, hash: string): string | undefined;
+  upsertPhoneHash(channel: string, hash: string, rawPhone: string): Promise<void>;
+  lookupPhoneHash(channel: string, hash: string): Promise<string | undefined>;
 }
 
 export interface GatewaySidecarsDeps {

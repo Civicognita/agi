@@ -1019,7 +1019,7 @@ export class AgentInvoker extends EventEmitter {
       // -----------------------------------------------------------------------
       // Step 8: COA log: message_out
       // -----------------------------------------------------------------------
-      const outboundFingerprint = this.deps.coaLogger.log({
+      const outboundFingerprint = await this.deps.coaLogger.log({
         resourceId: this.deps.resourceId,
         entityId: entity.id,
         entityAlias: entity.coaAlias,
