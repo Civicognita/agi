@@ -78,6 +78,10 @@ export { ModelContainerManager } from "./model-container-manager.js";
 // Capability Resolver
 export { CapabilityResolver } from "./capability-resolver.js";
 
+// Model Capabilities (static registry for UI indicators)
+export { resolveModelCapability } from "./model-capabilities.js";
+export type { ModelCapability } from "./model-capabilities.js";
+
 // Inference Gateway
 export { InferenceGateway } from "./inference-gateway.js";
 

@@ -381,13 +381,15 @@ export class OllamaProvider implements LLMProvider {
       } catch (err) {
         lastError = err;
 
-        // Clear error for connection refused (Ollama not running)
+        // Friendly error for connection refused — Ollama may be idle-unloaded,
+        // restarting, or genuinely not running. Callers see this only after the
+        // agent-invoker's retry has also failed.
         if (
           err instanceof Error &&
           (err.message.includes("ECONNREFUSED") || err.message.includes("fetch failed"))
         ) {
           throw new Error(
-            `Cannot connect to Ollama at ${baseUrl}. Is Ollama running? Start it with: ollama serve`,
+            `Ollama isn't responding yet. It may be reloading the model — try again in a moment. If it keeps failing, check that Ollama is running at ${baseUrl}.`,
           );
         }
 

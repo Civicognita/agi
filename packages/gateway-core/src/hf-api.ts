@@ -25,7 +25,7 @@ import type {
   CustomContainerBuilder,
 } from "@agi/model-runtime";
 import type { ModelAgentBridge } from "@agi/model-runtime";
-import { getBuildLog } from "@agi/model-runtime";
+import { getBuildLog, resolveModelCapability } from "@agi/model-runtime";
 import type { FineTuneManager } from "./finetune-manager.js";
 
 // ---------------------------------------------------------------------------
@@ -141,11 +141,13 @@ export function registerHfRoutes(
       const enriched = models.map((model) => {
         const { compatibility, reason } = capabilityResolver.assessCompatibility(model);
         const estimate = capabilityResolver.estimateResources(model);
+        const capability = resolveModelCapability(model.id, "huggingface");
         return {
           ...model,
           compatibility,
           compatibilityReason: reason,
           estimate,
+          capability,
         };
       });
 

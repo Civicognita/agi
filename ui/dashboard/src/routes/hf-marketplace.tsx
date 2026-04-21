@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { ModelCapabilityBadges } from "@/components/ModelCapabilityBadges.js";
 import {
   Dialog,
   DialogContent,
@@ -354,6 +355,7 @@ function ModelCard({ model, onSelect }: { model: HFModelSearchResult; onSelect: 
         <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded", getCompatibilityColor(model.compatibility))}>
           {getCompatibilityLabel(model.compatibility)}
         </span>
+        <ModelCapabilityBadges capability={model.capability} compact />
       </div>
 
       <div className="flex items-center gap-3 text-[11px] text-muted-foreground">

@@ -54,6 +54,12 @@ interface ChatMessage {
     estimatedCostUsd: number;
     inputTokens: number;
     outputTokens: number;
+    /** Dynamic-context request type (chat/project/entity/knowledge/system/worker/taskmaster). */
+    requestType?: string;
+    /** How the request type was determined. */
+    classifierUsed?: string;
+    /** Context layers included in the assembled system prompt. */
+    contextLayers?: string[];
   };
 }
 
@@ -580,7 +586,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                   ? { ...s, thinking: false, toolActivity: [], progressText: undefined }
                   : s
               ));
-              setError("Session recovery unavailable — your last exchange may be incomplete. Please try again.");
+              setError("We lost sight of your last message (the gateway may have restarted). Your next message will start a fresh exchange.");
             }
             break;
           }
@@ -675,6 +681,9 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                 costMode: string;
                 escalated: boolean;
                 estimatedCostUsd: number;
+                requestType?: string;
+                classifierUsed?: string;
+                contextLayers?: string[];
               };
             };
             if (!p.sessionId) break;
@@ -1288,27 +1297,58 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                       <>
                         <AgentBubble content={msg.content} />
                         {msg.routingMeta && (
-                          <div className="flex items-center gap-2 mt-1 px-1 flex-wrap">
-                            <span className="text-[9px] font-mono text-muted-foreground px-1.5 py-0.5 rounded bg-muted/50">
-                              {msg.routingMeta.model}
-                            </span>
-                            {msg.routingMeta.inputTokens > 0 && (
-                              <span className="text-[9px] font-mono text-muted-foreground" title="Input / Output tokens">
-                                {msg.routingMeta.inputTokens.toLocaleString()} in / {msg.routingMeta.outputTokens.toLocaleString()} out
+                          <div className="flex flex-col gap-1 mt-1 px-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[9px] font-mono text-muted-foreground px-1.5 py-0.5 rounded bg-muted/50">
+                                {msg.routingMeta.model}
                               </span>
-                            )}
-                            {msg.routingMeta.estimatedCostUsd > 0 && (
-                              <span className="text-[9px] font-mono text-muted-foreground">
-                                ${msg.routingMeta.estimatedCostUsd.toFixed(4)}
-                              </span>
-                            )}
-                            {msg.routingMeta.complexity && (
-                              <span className="text-[9px] font-mono text-muted-foreground px-1 rounded bg-muted/30">
-                                {msg.routingMeta.complexity}
-                              </span>
-                            )}
-                            {msg.routingMeta.escalated && (
-                              <span className="text-[9px] text-yellow-500 font-mono">escalated</span>
+                              {msg.routingMeta.inputTokens > 0 && (
+                                <span className="text-[9px] font-mono text-muted-foreground" title="Input / Output tokens">
+                                  {msg.routingMeta.inputTokens.toLocaleString()} in / {msg.routingMeta.outputTokens.toLocaleString()} out
+                                </span>
+                              )}
+                              {msg.routingMeta.estimatedCostUsd > 0 && (
+                                <span className="text-[9px] font-mono text-muted-foreground">
+                                  ${msg.routingMeta.estimatedCostUsd.toFixed(4)}
+                                </span>
+                              )}
+                              {msg.routingMeta.complexity && (
+                                <span className="text-[9px] font-mono text-muted-foreground px-1 rounded bg-muted/30">
+                                  {msg.routingMeta.complexity}
+                                </span>
+                              )}
+                              {msg.routingMeta.escalated && (
+                                <span className="text-[9px] text-yellow-500 font-mono">escalated</span>
+                              )}
+                            </div>
+                            {(msg.routingMeta.requestType !== undefined || (msg.routingMeta.contextLayers?.length ?? 0) > 0) && (
+                              <details className="group" data-testid="routing-details">
+                                <summary className="text-[9px] font-mono text-muted-foreground cursor-pointer hover:text-foreground select-none">
+                                  Routing {msg.routingMeta.requestType ? `· ${msg.routingMeta.requestType}` : ""}
+                                </summary>
+                                <div className="pl-3 mt-1 space-y-0.5 text-[9px] font-mono text-muted-foreground">
+                                  {msg.routingMeta.requestType && (
+                                    <div>
+                                      <span className="text-foreground/60">type: </span>
+                                      <span>{msg.routingMeta.requestType}</span>
+                                      {msg.routingMeta.classifierUsed && (
+                                        <span className="text-muted-foreground/60"> ({msg.routingMeta.classifierUsed})</span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {(msg.routingMeta.contextLayers?.length ?? 0) > 0 && (
+                                    <div>
+                                      <span className="text-foreground/60">layers: </span>
+                                      <span>{msg.routingMeta.contextLayers!.join(" · ")}</span>
+                                    </div>
+                                  )}
+                                  <div>
+                                    <span className="text-foreground/60">route: </span>
+                                    <span>{msg.routingMeta.provider}/{msg.routingMeta.model}</span>
+                                    <span className="text-muted-foreground/60"> · {msg.routingMeta.costMode}</span>
+                                  </div>
+                                </div>
+                              </details>
                             )}
                           </div>
                         )}
@@ -1418,8 +1458,19 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           )}
 
           {error !== null && (
-            <div className="px-2.5 py-1.5 rounded-md bg-secondary text-red text-xs">
-              {error}
+            <div
+              className="px-2.5 py-1.5 rounded-md bg-secondary text-red text-xs flex items-start justify-between gap-2"
+              data-testid="chat-error"
+            >
+              <span className="flex-1">{error}</span>
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                className="text-[11px] text-muted-foreground hover:text-foreground cursor-pointer bg-transparent border-none"
+                aria-label="Dismiss error"
+              >
+                Dismiss
+              </button>
             </div>
           )}
 

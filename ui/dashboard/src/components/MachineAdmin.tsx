@@ -30,6 +30,7 @@ import {
   disableSambaShare,
 } from "@/api.js";
 import type { LinuxUser, SSHKey, DashboardUserInfo, DashboardRole, SambaShare } from "@/types.js";
+import { HardwareScanner } from "@/components/HardwareScanner.js";
 
 // ---------------------------------------------------------------------------
 // Shared section heading
@@ -341,6 +342,14 @@ export function MachineAdmin() {
           </button>
         </div>
       )}
+
+      {/* ================================================================= */}
+      {/* Hardware Section */}
+      {/* ================================================================= */}
+      <Card className="p-6 gap-0">
+        <SectionHeading>Hardware</SectionHeading>
+        <HardwareScanner />
+      </Card>
 
       {/* ================================================================= */}
       {/* Agents Section */}

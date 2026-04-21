@@ -84,6 +84,12 @@ export interface LLMResponse {
     selectedProvider: string;
     escalated: boolean;
     reason: string;
+    /** Dynamic-context request type (chat/project/entity/...). Attached by agent-invoker. */
+    requestType?: string;
+    /** How the request type was determined. */
+    classifierUsed?: "heuristic" | "aion-micro";
+    /** Context layers included in the assembled system prompt (e.g. ["identity", "project"]). */
+    contextLayers?: string[];
   };
 }
 

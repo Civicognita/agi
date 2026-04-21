@@ -1278,6 +1278,12 @@ export interface HFModelResourceEstimate {
   loadTimeSeconds: number | null;
 }
 
+export interface ModelCapabilityInfo {
+  contextWindow: number;
+  toolSupport: boolean;
+  source: "family" | "provider-default" | "unknown";
+}
+
 export interface HFModelSearchResult {
   id: string;
   modelId: string;
@@ -1293,6 +1299,8 @@ export interface HFModelSearchResult {
   compatibility: HFCompatibility;
   compatibilityReason: string;
   estimate: HFModelResourceEstimate;
+  /** Static model-capability info for UI indicators. Null when unknown. */
+  capability: ModelCapabilityInfo | null;
 }
 
 export interface HFModelVariant {

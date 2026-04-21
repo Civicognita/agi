@@ -19,7 +19,7 @@ import {
   Compass, FileText, GitBranch, Store, ScrollText, Rocket,
   SlidersHorizontal, Activity, Blocks, ShieldHalf, ShieldCheck,
   AlertTriangle, Building2, HardDrive, Fingerprint, Sparkles, Cpu,
-  Shield, ArrowLeft,
+  Shield, ArrowLeft, FileSearch,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -86,6 +86,7 @@ const builtinSections: NavSectionWithMode[] = [
     { to: "/system/backups", label: "Backups", icon: HardDrive },
     { to: "/system/security", label: "Security", icon: ShieldCheck },
     { to: "/system/identity", label: "Identity", icon: Fingerprint },
+    { to: "/system/prompt-inspector", label: "Prompt Inspector", icon: FileSearch },
     { to: "/settings", label: "Settings", icon: SlidersHorizontal },
   ]},
 ];

@@ -13,6 +13,8 @@ import { Accordion, Chart } from "@particle-academy/react-fancy";
 import { Card } from "@/components/ui/card";
 import { SectionHeading, FieldGroup } from "./SettingsShared.js";
 import { fetchHfProviders, fetchRegisteredProviders, fetchProviderBalances, fetchBalanceHistory } from "../../api.js";
+import { ModelCapabilityBadges } from "@/components/ModelCapabilityBadges.js";
+import { resolveModelCapabilityClient } from "@/lib/model-capabilities-client.js";
 import type { HfProviderOption, RegisteredProvider } from "../../api.js";
 import type { AionimaConfig } from "../../types.js";
 
@@ -336,6 +338,13 @@ export function ProvidersSettings({ config, update }: Props) {
               ))}
             </select>
           </FieldGroup>
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-[11px] text-muted-foreground">Capabilities:</span>
+          <ModelCapabilityBadges
+            capability={resolveModelCapabilityClient(agentModel, agentProvider)}
+            compact
+          />
         </div>
         {currentModels.length > 0 && (
           <div className="flex gap-2 mt-2 flex-wrap" data-testid="model-quick-switch">

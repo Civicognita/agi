@@ -2852,6 +2852,9 @@ export async function startGatewayServer(
                   costMode: outcome.routingMeta.costMode ?? "unknown",
                   escalated: outcome.routingMeta.escalated ?? false,
                   estimatedCostUsd: chatUsageRec?.costUsd ?? 0,
+                  requestType: outcome.routingMeta.requestType,
+                  classifierUsed: outcome.routingMeta.classifierUsed,
+                  contextLayers: outcome.routingMeta.contextLayers,
                 }
               : undefined;
 

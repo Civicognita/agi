@@ -3030,3 +3030,34 @@ export async function fetchBalanceHistory(provider: string, days = 7): Promise<A
   if (!res.ok) return [];
   return res.json() as Promise<Array<{ balance: number; recordedAt: string }>>;
 }
+
+export type PromptPreviewRequestType =
+  | "chat"
+  | "project"
+  | "entity"
+  | "knowledge"
+  | "system"
+  | "worker"
+  | "taskmaster";
+
+export interface PromptPreview {
+  requestType: PromptPreviewRequestType;
+  prompt: string;
+  tokenEstimate: number;
+  sections: number;
+}
+
+export async function fetchPromptPreview(
+  requestType: PromptPreviewRequestType = "chat",
+): Promise<PromptPreview> {
+  const res = await fetch("/api/admin/prompt-preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requestType }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<PromptPreview>;
+}

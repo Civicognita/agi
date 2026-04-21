@@ -41,6 +41,7 @@ import BackupsPage from "./routes/system-backups.js";
 import SecuritySettingsPage from "./routes/settings-security.js";
 import SystemSecurityPage from "./routes/system-security.js";
 import IdentityServicePage from "./routes/system-identity.js";
+import PromptInspectorPage from "./routes/prompt-inspector.js";
 import MagicAppsPage from "./routes/magic-apps.js";
 import MagicAppDetailPage from "./routes/magic-app-detail.js";
 import MagicAppsAdminPage from "./routes/magic-apps-admin.js";
@@ -108,6 +109,7 @@ export const router = createBrowserRouter([
       { path: "system/backups", element: <BackupsPage /> },
       { path: "system/security", element: <SystemSecurityPage /> },
       { path: "system/identity", element: <IdentityServicePage /> },
+      { path: "system/prompt-inspector", element: <PromptInspectorPage /> },
       // Redirects: old system/* paths → new locations
       { path: "system/plugins", element: <Navigate to="/gateway/marketplace" replace /> },
       { path: "system/workflows", element: <Navigate to="/gateway/workflows" replace /> },

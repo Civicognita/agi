@@ -74,6 +74,39 @@ function classifyRequestType(content: string, projectPath?: string): RequestType
   return "chat";
 }
 
+/**
+ * Which Layer 2 context sections `assembleSystemPrompt` includes for a request
+ * type. Mirrors the switching logic in system-prompt.ts so the UI can tell
+ * operators what Aion actually saw.
+ */
+function deriveContextLayers(requestType: string): string[] {
+  const layers = ["identity"];
+  switch (requestType) {
+    case "project":
+      layers.push("project", "workspace");
+      break;
+    case "entity":
+      layers.push("entity", "coa");
+      break;
+    case "knowledge":
+      layers.push("knowledge-index");
+      break;
+    case "system":
+      layers.push("state", "hosting");
+      break;
+    case "worker":
+      layers.push("worker-task");
+      break;
+    case "taskmaster":
+      layers.push("taskmaster", "worker-catalog");
+      break;
+    case "chat":
+    default:
+      break;
+  }
+  return layers;
+}
+
 function shouldOfferTools(content: string, requestType: RequestType): boolean {
   if (requestType === "chat") return false;
   if (requestType === "system") return true;
@@ -186,7 +219,7 @@ export interface InvocationRequest {
 }
 
 export type InvocationOutcome =
-  | { type: "response"; text: string; toolsUsed: string[]; coaFingerprint: string; taskmasterEmissions: string[]; model: string; provider: string; usage: { inputTokens: number; outputTokens: number }; toolCount: number; loopCount: number; routingMeta?: { costMode: string; complexity: string; selectedModel: string; selectedProvider: string; escalated: boolean; reason: string } }
+  | { type: "response"; text: string; toolsUsed: string[]; coaFingerprint: string; taskmasterEmissions: string[]; model: string; provider: string; usage: { inputTokens: number; outputTokens: number }; toolCount: number; loopCount: number; routingMeta?: { costMode: string; complexity: string; selectedModel: string; selectedProvider: string; escalated: boolean; reason: string; requestType?: string; classifierUsed?: "heuristic" | "aion-micro"; contextLayers?: string[] } }
   | { type: "queued"; reason: string; entityNotification: string }
   | { type: "human_routed"; content: string }
   | { type: "log_only" }
@@ -1048,6 +1081,15 @@ export class AgentInvoker extends EventEmitter {
         coaFingerprint: outboundFingerprint,
       });
 
+      const enrichedRoutingMeta = result.routingMeta
+        ? {
+            ...result.routingMeta,
+            requestType: promptCtx.requestType,
+            classifierUsed: "heuristic" as const,
+            contextLayers: deriveContextLayers(promptCtx.requestType ?? "chat"),
+          }
+        : undefined;
+
       return {
         type: "response",
         text: cleanedText,
@@ -1059,7 +1101,7 @@ export class AgentInvoker extends EventEmitter {
         usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
         toolCount: toolsUsed.length,
         loopCount,
-        routingMeta: result.routingMeta,
+        routingMeta: enrichedRoutingMeta,
       };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
