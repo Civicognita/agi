@@ -212,7 +212,7 @@ export function ProvidersSettings({ config, update }: Props) {
       update((prev) => ({
         ...prev,
         agent: {
-          ...(prev.agent ?? {}),
+          ...prev.agent,
           provider: "hf-local",
           model: modelId,
           baseUrl: hf?.baseUrl ?? "http://127.0.0.1:6000",
@@ -224,14 +224,14 @@ export function ProvidersSettings({ config, update }: Props) {
     const defaultModel = models?.[0]?.id ?? "claude-sonnet-4-6";
     update((prev) => ({
       ...prev,
-      agent: { ...(prev.agent ?? {}), provider: providerKey, model: defaultModel },
+      agent: { ...prev.agent, provider: providerKey, model: defaultModel },
     }));
   }, [update, hfProviders]);
 
   const setAionModel = useCallback((model: string) => {
     update((prev) => ({
       ...prev,
-      agent: { ...(prev.agent ?? {}), model },
+      agent: { ...prev.agent, model },
     }));
   }, [update]);
 
@@ -239,9 +239,9 @@ export function ProvidersSettings({ config, update }: Props) {
     update((prev) => ({
       ...prev,
       agent: {
-        ...(prev.agent ?? {}),
+        ...prev.agent,
         router: {
-          ...((prev.agent as Record<string, unknown> | undefined)?.router ?? {}),
+          ...(prev.agent as Record<string, unknown> | undefined)?.router,
           costMode: mode,
         },
       },
@@ -252,9 +252,9 @@ export function ProvidersSettings({ config, update }: Props) {
     update((prev) => ({
       ...prev,
       agent: {
-        ...(prev.agent ?? {}),
+        ...prev.agent,
         router: {
-          ...((prev.agent as Record<string, unknown> | undefined)?.router ?? {}),
+          ...(prev.agent as Record<string, unknown> | undefined)?.router,
           escalation: enabled,
         },
       },
@@ -267,7 +267,7 @@ export function ProvidersSettings({ config, update }: Props) {
       providers: {
         ...((prev.providers ?? {}) as Record<string, unknown>),
         [providerId]: {
-          ...(((prev.providers ?? {}) as Record<string, Record<string, unknown>>)[providerId] ?? {}),
+          ...((prev.providers ?? {}) as Record<string, Record<string, unknown>>)[providerId],
           [fieldId]: value,
         },
       },

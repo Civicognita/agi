@@ -34,7 +34,7 @@ function setChannelField(
   value: unknown,
 ): ChannelConfig[] {
   const ch = getChannelConfig(channels, id);
-  const cfg = { ...(ch.config ?? {}), [field]: value };
+  const cfg = { ...ch.config, [field]: value };
   return setChannelConfig(channels, id, { config: cfg });
 }
 

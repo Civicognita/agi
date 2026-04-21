@@ -60,7 +60,7 @@ function setChannelField(
   value: unknown,
 ): ChannelConfig[] {
   const ch = getChannelConfig(channels, id);
-  const cfg = { ...(ch.config ?? {}), [field]: value };
+  const cfg = { ...ch.config, [field]: value };
   return setChannelConfig(channels, id, { config: cfg });
 }
 
@@ -678,7 +678,7 @@ export function Settings({ config, saving, saveMessage, onSave }: SettingsProps)
                 const next = e.target.value as Provider;
                 update((prev) => ({
                   ...prev,
-                  agent: { ...(prev.agent ?? {}), provider: next, model: "" },
+                  agent: { ...prev.agent, provider: next, model: "" },
                 }));
               }}
             >
@@ -698,7 +698,7 @@ export function Settings({ config, saving, saveMessage, onSave }: SettingsProps)
                 value={(draft.agent as Record<string, unknown> | undefined)?.["model"] as string ?? ""}
                 onChange={(e) => update((prev) => ({
                   ...prev,
-                  agent: { ...(prev.agent ?? {}), model: e.target.value },
+                  agent: { ...prev.agent, model: e.target.value },
                 }))}
               >
                 {agentModels.map((m) => (
@@ -715,7 +715,7 @@ export function Settings({ config, saving, saveMessage, onSave }: SettingsProps)
               value={(draft.agent as Record<string, unknown> | undefined)?.["replyMode"] as string ?? "autonomous"}
               onChange={(e) => update((prev) => ({
                 ...prev,
-                agent: { ...(prev.agent ?? {}), replyMode: e.target.value },
+                agent: { ...prev.agent, replyMode: e.target.value },
               }))}
             >
               <option value="autonomous">Autonomous</option>
