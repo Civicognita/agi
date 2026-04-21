@@ -476,7 +476,7 @@ ID service configuration. Controls the location and tracking of the local ID ser
 {
   "idService": {
     "dir": "/opt/agi-local-id",
-    "source": "git@github.com:Civicognita/aionima-local-id.git",
+    "source": "git@github.com:Civicognita/agi-local-id.git",
     "branch": "main",
     "local": {
       "enabled": false,
@@ -491,7 +491,7 @@ ID service configuration. Controls the location and tracking of the local ID ser
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `dir` | string | `"/opt/agi-local-id"` | Path to the ID service directory |
-| `source` | string | `"git@github.com:Civicognita/aionima-local-id.git"` | Git remote URL |
+| `source` | string | `"git@github.com:Civicognita/agi-local-id.git"` | Git remote URL |
 | `branch` | string | `"main"` | Branch to track |
 | `local.enabled` | boolean | `false` | Enable local ID service |
 | `local.port` | number | `3200` | HTTP port |
@@ -507,7 +507,7 @@ Plugin marketplace configuration. Controls where the official marketplace repo i
 {
   "marketplace": {
     "dir": "/opt/agi-marketplace",
-    "source": "git@github.com:Civicognita/aionima-marketplace.git",
+    "source": "git@github.com:Civicognita/agi-marketplace.git",
     "branch": "main"
   }
 }
@@ -516,7 +516,7 @@ Plugin marketplace configuration. Controls where the official marketplace repo i
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `dir` | string | `"/opt/agi-marketplace"` | Path to the official marketplace directory |
-| `source` | string | `"git@github.com:Civicognita/aionima-marketplace.git"` | Git remote URL |
+| `source` | string | `"git@github.com:Civicognita/agi-marketplace.git"` | Git remote URL |
 | `branch` | string | `"main"` | Branch to track |
 
 ### mappMarketplace
@@ -527,7 +527,7 @@ MApp marketplace configuration. Controls where the official MApp marketplace rep
 {
   "mappMarketplace": {
     "dir": "/opt/agi-mapp-marketplace",
-    "source": "git@github.com:Civicognita/aionima-mapp-marketplace.git",
+    "source": "git@github.com:Civicognita/agi-mapp-marketplace.git",
     "branch": "main"
   }
 }
@@ -536,7 +536,7 @@ MApp marketplace configuration. Controls where the official MApp marketplace rep
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `dir` | string | `"/opt/agi-mapp-marketplace"` | Path to the official MApp marketplace directory |
-| `source` | string | `"git@github.com:Civicognita/aionima-mapp-marketplace.git"` | Git remote URL |
+| `source` | string | `"git@github.com:Civicognita/agi-mapp-marketplace.git"` | Git remote URL |
 | `branch` | string | `"main"` | Branch to track |
 
 ### dev
@@ -550,11 +550,11 @@ Developer mode configuration. When enabled, AGI switches all core repos to owner
     "agiRepo": "git@github.com:wishborn/agi.git",
     "primeRepo": "git@github.com:wishborn/aionima.git",
     "primeDir": "/opt/agi-prime_dev",
-    "marketplaceRepo": "git@github.com:wishborn/aionima-marketplace.git",
+    "marketplaceRepo": "git@github.com:wishborn/agi-marketplace.git",
     "marketplaceDir": "/opt/agi-marketplace_dev",
-    "idRepo": "git@github.com:wishborn/aionima-local-id.git",
+    "idRepo": "git@github.com:wishborn/agi-local-id.git",
     "idDir": "/opt/agi-local-id_dev",
-    "mappMarketplaceRepo": "git@github.com:wishborn/aionima-mapp-marketplace.git",
+    "mappMarketplaceRepo": "git@github.com:wishborn/agi-mapp-marketplace.git",
     "mappMarketplaceDir": "/opt/agi-mapp-marketplace_dev"
   }
 }

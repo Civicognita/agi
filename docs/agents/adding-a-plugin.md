@@ -1,6 +1,6 @@
 # Adding a New Plugin
 
-This guide covers creating a plugin for the Aionima marketplace. All plugins live in the marketplace repo (`Civicognita/aionima-marketplace`), not in the AGI repo. Use any existing plugin in `plugins/plugin-*/` in the marketplace repo as reference.
+This guide covers creating a plugin for the Aionima marketplace. All plugins live in the marketplace repo (`Civicognita/agi-marketplace`), not in the AGI repo. Use any existing plugin in `plugins/plugin-*/` in the marketplace repo as reference.
 
 ## What Plugins Can Do
 
@@ -38,7 +38,7 @@ Plugins receive an `AionimaPluginAPI` instance during `activate()` and can:
 ## Step 1: Create the Plugin in the Marketplace Repo
 
 ```bash
-cd /path/to/aionima-marketplace
+cd /path/to/agi-marketplace
 mkdir -p plugins/plugin-<name>/src
 ```
 

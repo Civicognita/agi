@@ -1,6 +1,6 @@
 [Unit]
 Description=Aionima Local ID Service — OAuth credential broker
-Documentation=https://github.com/Civicognita/aionima-local-id
+Documentation=https://github.com/Civicognita/agi-local-id
 After=network.target agi.service
 Wants=agi.service
 

@@ -986,7 +986,7 @@ Response:
 [
   {
     "id": 1,
-    "ref": "Civicognita/aionima-marketplace",
+    "ref": "Civicognita/agi-marketplace",
     "sourceType": "github",
     "name": "Official Marketplace",
     "description": "Aionima official plugins",

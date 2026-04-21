@@ -94,7 +94,7 @@ export type MarketplaceSourceType = "github" | "url" | "local";
 
 export interface MarketplaceSource {
   id: number;
-  /** Original reference as the user provided it (e.g. "Civicognita/aionima-marketplace"). */
+  /** Original reference as the user provided it (e.g. "Civicognita/agi-marketplace"). */
   ref: string;
   /** Resolved source type. */
   sourceType: MarketplaceSourceType;

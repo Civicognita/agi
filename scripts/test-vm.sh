@@ -137,7 +137,7 @@ cmd_create() {
   echo "==> Mounting workspace repos..."
   mount_repo "$REPO_DIR"                          "/mnt/agi"                 "AGI"
   mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/agi-prime"           "PRIME"
-  mount_repo "$WORKSPACE_DIR/aionima-local-id"     "/mnt/agi-local-id"        "ID"
+  mount_repo "$WORKSPACE_DIR/agi-local-id"         "/mnt/agi-local-id"        "ID"
 
   echo "==> Waiting for cloud-init to finish..."
   multipass exec "$VM_NAME" -- cloud-init status --wait 2>/dev/null || true
@@ -237,7 +237,7 @@ cmd_remount() {
 
   mount_repo "$REPO_DIR"                          "/mnt/agi"                 "AGI"
   mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/agi-prime"           "PRIME"
-  mount_repo "$WORKSPACE_DIR/aionima-local-id"     "/mnt/agi-local-id"        "ID"
+  mount_repo "$WORKSPACE_DIR/agi-local-id"         "/mnt/agi-local-id"        "ID"
 
   echo "Done."
 }

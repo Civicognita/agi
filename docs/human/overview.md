@@ -78,7 +78,7 @@ aionima/
 └── aionima.example.json    Example configuration to copy from
 ```
 
-> **Note:** All plugins live in the [MARKETPLACE repo](https://github.com/Civicognita/aionima-marketplace), not in this monorepo. This includes service plugins (MySQL, PostgreSQL, Redis, Adminer), runtime plugins (Node.js, PHP), project-type plugins (Web App, Mobile App, Literature, Media, Monorepo, Ops), the editor plugin, LLM provider plugins (Anthropic, OpenAI, Ollama), and channel plugins (Telegram, Discord, Gmail, Signal, WhatsApp). Only the core packages and SDK live here. Runtime data and configuration live in `~/.agi/` — see [Runtime Data Paths](#runtime-data-paths) below.
+> **Note:** All plugins live in the [MARKETPLACE repo](https://github.com/Civicognita/agi-marketplace), not in this monorepo. This includes service plugins (MySQL, PostgreSQL, Redis, Adminer), runtime plugins (Node.js, PHP), project-type plugins (Web App, Mobile App, Literature, Media, Monorepo, Ops), the editor plugin, LLM provider plugins (Anthropic, OpenAI, Ollama), and channel plugins (Telegram, Discord, Gmail, Signal, WhatsApp). Only the core packages and SDK live here. Runtime data and configuration live in `~/.agi/` — see [Runtime Data Paths](#runtime-data-paths) below.
 
 ---
 

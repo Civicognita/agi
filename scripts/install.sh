@@ -14,7 +14,7 @@ PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
 PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/agi-prime}"
 # Plugin and MApp marketplaces are fetched from GitHub on demand by the gateway.
 # No local clones needed.
-ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
+ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/agi-local-id.git}"
 ID_DIR="${AIONIMA_ID_DIR:-/opt/agi-local-id}"
 BRANCH="${AIONIMA_BRANCH:-main}"
 SKIP_HARDENING="${AIONIMA_SKIP_HARDENING:-}"
@@ -277,7 +277,7 @@ chown "$AIONIMA_USER:$AIONIMA_USER" "$INSTALL_DIR/.deployed-commit"
 #
 # Ongoing upgrades are handled by `scripts/upgrade.sh` which reads
 # `~/.agi/gateway.json` → `idService.local.enabled` and restarts the
-# `aionima-local-id` service whenever the ID source changes.
+# `agi-id` service whenever the ID source changes.
 # ---------------------------------------------------------------------------
 if [ -d "$ID_DIR/.git" ]; then
   echo "==> Setting up local ID service..."

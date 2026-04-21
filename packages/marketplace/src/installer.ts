@@ -37,7 +37,7 @@ export interface InstallContext {
   workspaceRoot: string;
   /** Cache directory for cloned/downloaded plugins. Defaults to .plugins/cache. */
   cacheDir?: string;
-  /** Marketplace source reference (e.g. "Civicognita/aionima-marketplace") for resolving relative-path sources. */
+  /** Marketplace source reference (e.g. "Civicognita/agi-marketplace") for resolving relative-path sources. */
   sourceRef?: string;
 }
 

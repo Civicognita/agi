@@ -1,6 +1,6 @@
 # MagicApps
 
-MagicApps (MApps) are JSON-defined packaged applications that bundle UI, container serving, and agentic capabilities into a single declarative unit. They are distributed via the **MApp Marketplace** repo (`@Civicognita/aionima-mapp-marketplace`).
+MagicApps (MApps) are JSON-defined packaged applications that bundle UI, container serving, and agentic capabilities into a single declarative unit. They are distributed via the **MApp Marketplace** repo (`@Civicognita/agi-mapp-marketplace`).
 
 ## What is a MagicApp?
 

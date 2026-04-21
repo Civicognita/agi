@@ -1090,7 +1090,7 @@ export async function startGatewayServer(
   // The branch matches the gateway's update channel so plugin catalog
   // versions align with the subscribed release track.
   const updateChannel = config.gateway?.updateChannel ?? "main";
-  const marketplaceRef = `Civicognita/aionima-marketplace#${updateChannel}`;
+  const marketplaceRef = `Civicognita/agi-marketplace#${updateChannel}`;
   const existingSources = marketplaceManager.getSources();
   if (existingSources.length === 0) {
     marketplaceManager.addSource(marketplaceRef, "Aionima");
@@ -1468,7 +1468,7 @@ export async function startGatewayServer(
   // Seed official MApp Marketplace source if none exist
   {
     const mappSources = mappMarketplaceManager.getSources();
-    const mappRef = `Civicognita/aionima-mapp-marketplace#${updateChannel}`;
+    const mappRef = `Civicognita/agi-mapp-marketplace#${updateChannel}`;
     if (mappSources.length === 0) {
       mappMarketplaceManager.addSource(mappRef, "Aionima MApps");
       log.info(`mapp-marketplace: seeded default source (${mappRef})`);

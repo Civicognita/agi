@@ -218,17 +218,17 @@ function repoChecks(config: AionimaConfig): CheckGroup {
     {
       name: "Plugin Marketplace",
       path: config.marketplace?.dir ?? "/opt/agi-marketplace",
-      repo: "https://github.com/Civicognita/aionima-marketplace.git",
+      repo: "https://github.com/Civicognita/agi-marketplace.git",
     },
     {
       name: "MApp Marketplace",
       path: mappMarketplaceConfig?.dir ?? "/opt/agi-mapp-marketplace",
-      repo: "https://github.com/Civicognita/aionima-mapp-marketplace.git",
+      repo: "https://github.com/Civicognita/agi-mapp-marketplace.git",
     },
     {
       name: "ID service",
       path: config.idService?.dir ?? "/opt/agi-local-id",
-      repo: "https://github.com/Civicognita/aionima-local-id.git",
+      repo: "https://github.com/Civicognita/agi-local-id.git",
     },
   ];
 

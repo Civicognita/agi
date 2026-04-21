@@ -144,7 +144,7 @@ Refer to the `ai-apps` skill for detailed patterns covering: financial forecasti
 
 ## Plugin Marketplace (Plugins)
 
-Aionima is extensible via plugins. The **Plugin Marketplace** (`aionima-marketplace` on GitHub) is a catalog of plugins that extend platform capabilities — new channel adapters, new tools, integrations.
+Aionima is extensible via plugins. The **Plugin Marketplace** (`agi-marketplace` on GitHub) is a catalog of plugins that extend platform capabilities — new channel adapters, new tools, integrations.
 
 This is separate from the MApp Marketplace. When a user says "marketplace" clarify which one they mean:
 - Plugin Marketplace — extends what the platform can do (new tools, new channels)

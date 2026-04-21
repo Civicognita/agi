@@ -158,7 +158,7 @@ pnpm test:e2e:ui       # Playwright UI tests (host browser → VM)
 pnpm test:all          # All tiers
 ```
 
-The VM mounts all workspace repos: AGI → `/mnt/agi`, PRIME → `/mnt/aionima-prime`, ID → `/mnt/aionima-local-id`. A test config fixture at `test/fixtures/gateway-test.json` points to these mount paths.
+The VM mounts all workspace repos: AGI → `/mnt/agi`, PRIME → `/mnt/aionima-prime`, ID → `/mnt/agi-local-id`. A test config fixture at `test/fixtures/gateway-test.json` points to these mount paths.
 
 CI (GitHub Actions) sets `AIONIMA_TEST_VM=1` to bypass the host guard — it runs vitest directly since GitHub Actions is already isolated.
 
@@ -182,13 +182,13 @@ The system is built from **independent git repos** — not submodules.
 |------|----------------|----------|--------|
 | AGI | `/opt/agi` | (dev workspace) | `@Civicognita/agi` |
 | PRIME | `/opt/agi-prime` | `/opt/agi-prime_dev` | `@Civicognita/aionima` |
-| ID | `/opt/agi-local-id` | `/opt/agi-local-id_dev` | `@Civicognita/aionima-local-id` |
-| Plugin Marketplace | `/opt/agi-marketplace` | `/opt/agi-marketplace_dev` | `@Civicognita/aionima-marketplace` |
-| MApp Marketplace | `/opt/agi-mapp-marketplace` | — | `@Civicognita/aionima-mapp-marketplace` |
+| ID | `/opt/agi-local-id` | `/opt/agi-local-id_dev` | `@Civicognita/agi-local-id` |
+| Plugin Marketplace | `/opt/agi-marketplace` | `/opt/agi-marketplace_dev` | `@Civicognita/agi-marketplace` |
+| MApp Marketplace | `/opt/agi-mapp-marketplace` | — | `@Civicognita/agi-mapp-marketplace` |
 
 AGI resolves repo paths at runtime from config (`prime.dir`, `idService.dir`, `marketplace.dir`, `mappMarketplace.dir`). Dev mode (`dev.enabled: true`) switches to dev directories automatically.
 
-**Two marketplaces:** The **Plugin Marketplace** (`aionima-marketplace`) contains code plugins (runtimes, stacks, workers, settings pages) discovered at boot via `discoverMarketplacePlugins()`. The **MApp Marketplace** (`aionima-mapp-marketplace`) contains declarative JSON MagicApps installed on-demand from the dashboard. These are separate repos — do not confuse them.
+**Two marketplaces:** The **Plugin Marketplace** (`agi-marketplace`) contains code plugins (runtimes, stacks, workers, settings pages) discovered at boot via `discoverMarketplacePlugins()`. The **MApp Marketplace** (`agi-mapp-marketplace`) contains declarative JSON MagicApps installed on-demand from the dashboard. These are separate repos — do not confuse them.
 
 ### Protocol Versioning
 

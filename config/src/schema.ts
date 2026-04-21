@@ -360,15 +360,15 @@ const DevConfigSchema = z
     /** Dev directory for PRIME fork. */
     primeDir: z.string().default("/opt/agi-prime_dev"),
     /** Git remote URL for marketplace fork. */
-    marketplaceRepo: z.string().default("git@github.com:wishborn/aionima-marketplace.git"),
+    marketplaceRepo: z.string().default("git@github.com:wishborn/agi-marketplace.git"),
     /** Dev directory for marketplace fork. */
     marketplaceDir: z.string().default("/opt/agi-marketplace_dev"),
     /** Git remote URL for ID service fork. */
-    idRepo: z.string().default("git@github.com:wishborn/aionima-local-id.git"),
+    idRepo: z.string().default("git@github.com:wishborn/agi-local-id.git"),
     /** Dev directory for ID service fork. */
     idDir: z.string().default("/opt/agi-local-id_dev"),
     /** Git remote URL for MApp marketplace fork. */
-    mappMarketplaceRepo: z.string().default("git@github.com:wishborn/aionima-mapp-marketplace.git"),
+    mappMarketplaceRepo: z.string().default("git@github.com:wishborn/agi-mapp-marketplace.git"),
     /** Dev directory for MApp marketplace fork. */
     mappMarketplaceDir: z.string().default("/opt/agi-mapp-marketplace_dev"),
   })
@@ -412,7 +412,7 @@ const MarketplaceConfigSchema = z
     /** Git remote URL for the marketplace source. */
     source: z
       .string()
-      .default("git@github.com:Civicognita/aionima-marketplace.git"),
+      .default("git@github.com:Civicognita/agi-marketplace.git"),
     /** Branch to track. */
     branch: z.string().default("main"),
   })
@@ -425,7 +425,7 @@ const MAppMarketplaceConfigSchema = z
     /** Git remote URL for the MApp marketplace source. */
     source: z
       .string()
-      .default("git@github.com:Civicognita/aionima-mapp-marketplace.git"),
+      .default("git@github.com:Civicognita/agi-mapp-marketplace.git"),
     /** Branch to track. */
     branch: z.string().default("main"),
   })
@@ -474,7 +474,7 @@ const IdServiceConfigSchema = z
     /** Path to the ID service directory. */
     dir: z.string().default("/opt/agi-local-id"),
     /** Git remote URL for the ID service source. */
-    source: z.string().default("git@github.com:Civicognita/aionima-local-id.git"),
+    source: z.string().default("git@github.com:Civicognita/agi-local-id.git"),
     /** Branch to track. */
     branch: z.string().default("main"),
     /** Local self-hosting configuration. */

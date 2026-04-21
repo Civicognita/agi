@@ -105,7 +105,7 @@ export function checkProtocolCompatibility(
     const nameToManifest: Record<string, ProtocolManifest | null> = {
       "aionima-prime": prime,
       "aionima-bots": bots,
-      "aionima-local-id": id,
+      "agi-local-id": id,
     };
 
     for (const [depName, requiredRange] of Object.entries(agi.requires)) {

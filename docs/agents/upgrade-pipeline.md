@@ -73,7 +73,7 @@ When `idService.local.enabled` is `true` in `~/.agi/gateway.json`, upgrade.sh bu
 1. `npm install` — installs **all** dependencies (not `--omit=dev`) because `tsc` is a devDependency
 2. `npm run build` — compiles TypeScript to `dist/`
 3. `npx drizzle-kit migrate` — runs database migrations (non-fatal)
-4. `sudo systemctl restart aionima-local-id` — restarts the service if running
+4. `sudo systemctl restart agi-local-id` — restarts the service if running
 
 **Important:** The ID service's HTML view templates live in `src/views/` and are resolved at runtime from `process.cwd()`, not from `dist/`. This is because `tsc` only compiles `.ts` files — it does not copy `.html` files. The systemd unit sets `WorkingDirectory=/opt/agi-local-id`, so `process.cwd()` always points to the project root.
 
@@ -129,7 +129,7 @@ Each repo has a `protocol.json`:
 **ID** (`protocol.json`):
 ```json
 {
-  "name": "aionima-local-id",
+  "name": "agi-local-id",
   "version": "1.0.0",
   "protocol": "1.0.0"
 }

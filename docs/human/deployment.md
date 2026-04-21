@@ -44,10 +44,10 @@ git clone git@github.com:Civicognita/agi.git /opt/agi
 git clone git@github.com:Civicognita/aionima.git /opt/agi-prime
 
 # MARKETPLACE (plugin marketplace — optional)
-git clone git@github.com:Civicognita/aionima-marketplace.git /opt/agi-marketplace
+git clone git@github.com:Civicognita/agi-marketplace.git /opt/agi-marketplace
 
 # ID (identity service — optional)
-git clone git@github.com:Civicognita/aionima-local-id.git /opt/agi-local-id
+git clone git@github.com:Civicognita/agi-local-id.git /opt/agi-local-id
 ```
 
 ### Step 2 -- Install Node.js and pnpm
@@ -161,7 +161,7 @@ When `idService.local.enabled` is `true` in the config, the ID service is built 
 1. `npm install` — installs all dependencies (including devDependencies like `typescript`)
 2. `npm run build` — compiles TypeScript
 3. `npx drizzle-kit migrate` — runs database migrations (non-fatal if it fails)
-4. `sudo systemctl restart aionima-local-id` — restarts the service
+4. `sudo systemctl restart agi-local-id` — restarts the service
 
 ### Phase 4 -- Protocol Compatibility Check
 

@@ -10,7 +10,7 @@ PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
 # Marketplace repos are NOT pulled locally — plugins are fetched from GitHub
 # on demand by the gateway's plugin marketplace manager.
 ID_DIR="${AIONIMA_ID_DIR:-/opt/agi-local-id}"
-ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
+ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/agi-local-id.git}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
 
 # Release channel — controls which branch all repos pull from.
