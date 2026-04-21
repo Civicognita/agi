@@ -206,7 +206,11 @@ async function migrateLocalIdPostgres(
     for (const row of sourceRows) {
       const patched = patchForSharedSchema(src, row);
       const cols = Object.keys(patched);
-      const vals = Object.values(patched);
+      const vals = Object.values(patched).map((v) =>
+        v !== null && typeof v === "object" && !(v instanceof Date)
+          ? JSON.stringify(v)
+          : v,
+      );
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
       await destPool.query(
         `INSERT INTO ${dst} (${cols.join(", ")}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
@@ -248,7 +252,14 @@ async function migrateSqliteSources(
 
   // entities.db — splits into many tables. The entity-store historically
   // owned coa_chains, impact, audits, compliance, comms, usage, and more.
+  //
+  // **Order matters**: `entities` first so that FK-bearing children
+  // (coa_chains.entity_id, channel_accounts.entity_id, etc.) find their
+  // parent when inserted. Local-ID's Postgres entities (user entities) and
+  // the SQLite entities (agent/gateway entities $A/@A) are merged into the
+  // same row set — `ON CONFLICT DO NOTHING` de-dupes by id.
   const entityTableMap: Array<[string, string]> = [
+    ["entities", "entities"],
     ["coa_chains", "coa_chains"],
     ["impact_interactions", "impact_interactions"],
     ["comms_log", "comms_log"],
@@ -344,7 +355,12 @@ async function copySqliteTables(
       for (const row of rows) {
         const coerced = coerceSqliteRow(row);
         const cols = Object.keys(coerced);
-        const vals = Object.values(coerced);
+        // pg-node with raw SQL doesn't auto-stringify Objects for jsonb
+        // columns — it just calls toString() which yields "[object Object]".
+        // Pre-stringify any object/array so pg gets well-formed JSON text.
+        const vals = Object.values(coerced).map((v) =>
+          v !== null && typeof v === "object" ? JSON.stringify(v) : v,
+        );
         const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
         try {
           await destPool.query(
@@ -353,9 +369,16 @@ async function copySqliteTables(
           );
           counts[dstTable].dest += 1;
         } catch (e) {
+          const pgErr = e as {
+            message: string;
+            detail?: string;
+            column?: string;
+            constraint?: string;
+          };
+          const extra = pgErr.detail ?? pgErr.column ?? pgErr.constraint ?? "";
           log(
             "load",
-            `warn: ${srcTable} row failed (${(e as Error).message.split("\n")[0]})`,
+            `warn: ${srcTable} row failed (${pgErr.message.split("\n")[0]}${extra ? ` [${extra}]` : ""})`,
           );
         }
       }
@@ -369,13 +392,34 @@ async function copySqliteTables(
   }
 }
 
+/**
+ * Shared schema dropped the `_json` suffix on several columns that were
+ * TEXT-holding-JSON in SQLite (now native jsonb). Map both the key and the
+ * parsed value at once. Returns `null` to drop the column entirely.
+ */
+const COLUMN_RENAMES: Record<string, string | null> = {
+  // scan_runs
+  config_json: "config",
+  finding_counts_json: "finding_counts",
+  scanner_results_json: "scanner_results",
+  // security_findings
+  cwe_json: "cwe",
+  owasp_json: "owasp",
+  evidence_json: "evidence",
+  remediation_json: "remediation",
+  standards_json: "standards",
+};
+
 function coerceSqliteRow(row: Record<string, unknown>): Record<string, unknown> {
   // SQLite holds JSON in TEXT columns and booleans as 0/1 integers. We convert
   // anything that looks like a JSON object/array back to a native value so
   // pg's type driver stores it as jsonb, and we flip known boolean columns.
   const out: Record<string, unknown> = {};
   const booleanCols = /^(discoverable|granted|signed|verified|read|dpa_signed|baa_signed|escalated)$/;
-  for (const [key, value] of Object.entries(row)) {
+  for (const [rawKey, value] of Object.entries(row)) {
+    const renamed = COLUMN_RENAMES[rawKey];
+    if (renamed === null) continue;
+    const key = renamed ?? rawKey;
     if (typeof value === "string" && (value.startsWith("{") || value.startsWith("["))) {
       try {
         out[key] = JSON.parse(value);

@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.41",
+  "version": "0.4.42",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -8,7 +8,8 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @agi/dashboard build && tsdown",
+    "build": "pnpm --filter @agi/db-schema build && pnpm --filter @agi/dashboard build && tsdown",
+    "build:db-schema": "pnpm --filter @agi/db-schema build",
     "build:marketplace": "tsx scripts/build-marketplace.ts",
     "migrate:agi_data": "tsx scripts/migrate-to-agi_data.ts",
     "migrate:agi_data:dry": "tsx scripts/migrate-to-agi_data.ts --dry-run",

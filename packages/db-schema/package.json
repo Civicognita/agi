@@ -5,18 +5,49 @@
   "type": "module",
   "description": "Unified drizzle schema + Postgres client for agi_data. Shared by all AGI services and Local-ID — single source of truth per feedback_single_source_of_truth_db memory.",
   "exports": {
-    ".": "./src/index.ts",
-    "./client": "./src/client.ts",
-    "./auth": "./src/auth.ts",
-    "./entities": "./src/entities.ts",
-    "./audit": "./src/audit.ts",
-    "./compliance": "./src/compliance.ts",
-    "./platform": "./src/platform.ts",
-    "./marketplaces": "./src/marketplaces.ts",
-    "./hf": "./src/hf.ts",
-    "./security": "./src/security.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./auth": {
+      "types": "./dist/auth.d.ts",
+      "default": "./dist/auth.js"
+    },
+    "./entities": {
+      "types": "./dist/entities.d.ts",
+      "default": "./dist/entities.js"
+    },
+    "./audit": {
+      "types": "./dist/audit.d.ts",
+      "default": "./dist/audit.js"
+    },
+    "./compliance": {
+      "types": "./dist/compliance.d.ts",
+      "default": "./dist/compliance.js"
+    },
+    "./platform": {
+      "types": "./dist/platform.d.ts",
+      "default": "./dist/platform.js"
+    },
+    "./marketplaces": {
+      "types": "./dist/marketplaces.d.ts",
+      "default": "./dist/marketplaces.js"
+    },
+    "./hf": {
+      "types": "./dist/hf.d.ts",
+      "default": "./dist/hf.js"
+    },
+    "./security": {
+      "types": "./dist/security.d.ts",
+      "default": "./dist/security.js"
+    }
   },
   "scripts": {
+    "build": "tsc",
     "generate": "drizzle-kit generate",
     "migrate": "drizzle-kit migrate",
     "push": "drizzle-kit push",

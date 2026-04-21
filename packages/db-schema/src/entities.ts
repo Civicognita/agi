@@ -36,14 +36,17 @@ export const entityScopeEnum = pgEnum("entity_scope", [
 
 /**
  * Verification tier — progression from unverified → trusted via proof review.
- * `disabled` is a terminal state for entities that have been deactivated
- * (e.g., a user was removed but their historical COA records must persist).
+ * `sealed` is the legacy pre-consolidation equivalent of `trusted` (kept for
+ * back-compat with rows migrated out of SQLite). `disabled` is a terminal
+ * state for entities that have been deactivated (e.g., a user was removed
+ * but their historical COA records must persist).
  */
 export const verificationTierEnum = pgEnum("verification_tier", [
   "unverified",
   "pending",
   "verified",
   "trusted",
+  "sealed",
   "disabled",
 ]);
 

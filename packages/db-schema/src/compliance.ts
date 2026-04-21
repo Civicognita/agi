@@ -46,6 +46,10 @@ export const vendorComplianceStatusEnum = pgEnum("vendor_compliance_status", [
   "approved",
   "rejected",
   "terminated",
+  // Legacy values kept for pre-consolidation vendor rows. `compliant` was the
+  // SQLite-era synonym for `approved`; rows are migrated as-is rather than
+  // remapped so historical audit trails stay accurate.
+  "compliant",
 ]);
 
 export const verificationStatusEnum = pgEnum("verification_status", [
