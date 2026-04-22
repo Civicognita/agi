@@ -494,6 +494,122 @@ cmd_projects() {
 # Usage
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# HF models + providers (tynn #86)
+#
+# Wraps the gateway's /api/hf/* + /api/models endpoints so the CLI stays in
+# lockstep with the dashboard. All state changes go through the gateway —
+# we never shell out to podman or the filesystem directly, so hardware
+# checks, disk budgets, and modelStore lifecycle tracking stay authoritative.
+# ---------------------------------------------------------------------------
+
+cmd_models() {
+  local action="${1:-list}"
+  shift || true
+  local gw_url="http://127.0.0.1:3100"
+  local fmt
+  fmt="$(command -v jq >/dev/null && echo "jq ." || echo "cat")"
+
+  case "$action" in
+    list|"")
+      info "Installed HF models"
+      curl -s "$gw_url/api/hf/models" | ($fmt)
+      ;;
+    running)
+      info "Running model containers"
+      curl -s "$gw_url/api/hf/models?status=running" | ($fmt)
+      ;;
+    status)
+      local id="${1:-}"
+      if [ -z "$id" ]; then
+        err "Usage: agi models status <model-id>"
+        exit 1
+      fi
+      curl -s "$gw_url/api/hf/models/$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$id")" | ($fmt)
+      ;;
+    install)
+      local id="${1:-}"
+      if [ -z "$id" ]; then
+        err "Usage: agi models install <model-id>"
+        exit 1
+      fi
+      info "Requesting install for $id (backend streams progress)…"
+      curl -s -X POST "$gw_url/api/hf/install" \
+        -H "Content-Type: application/json" \
+        --data "$(python3 -c "import json,sys;print(json.dumps({'modelId':sys.argv[1]}))" "$id")" \
+        | ($fmt)
+      ;;
+    start|stop|remove)
+      local id="${1:-}"
+      if [ -z "$id" ]; then
+        err "Usage: agi models $action <model-id>"
+        exit 1
+      fi
+      local method="POST"
+      [ "$action" = "remove" ] && method="DELETE"
+      local encoded
+      encoded="$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$id")"
+      curl -s -X "$method" "$gw_url/api/hf/models/$encoded/$action" | ($fmt)
+      ;;
+    search)
+      local query="${*:-}"
+      if [ -z "$query" ]; then
+        err "Usage: agi models search <query>"
+        exit 1
+      fi
+      curl -s "$gw_url/api/hf/search?q=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$query")" | ($fmt)
+      ;;
+    hardware)
+      curl -s "$gw_url/api/hf/hardware" | ($fmt)
+      ;;
+    *)
+      err "Unknown models action: $action"
+      echo "  Actions: list, running, status <id>, install <id>, start <id>, stop <id>, remove <id>, search <query>, hardware"
+      exit 1
+      ;;
+  esac
+}
+
+cmd_providers() {
+  local action="${1:-list}"
+  shift || true
+  local gw_url="http://127.0.0.1:3100"
+  local fmt
+  fmt="$(command -v jq >/dev/null && echo "jq ." || echo "cat")"
+
+  case "$action" in
+    list|"")
+      info "Configured providers"
+      curl -s "$gw_url/api/hf/providers" | ($fmt)
+      ;;
+    status)
+      curl -s "$gw_url/api/models" | ($fmt)
+      ;;
+    set-default)
+      local provider="${1:-}"
+      local model="${2:-}"
+      if [ -z "$provider" ]; then
+        err "Usage: agi providers set-default <provider> [<model>]"
+        exit 1
+      fi
+      local body
+      if [ -n "$model" ]; then
+        body="$(python3 -c "import json,sys;print(json.dumps({'provider':sys.argv[1],'model':sys.argv[2]}))" "$provider" "$model")"
+      else
+        body="$(python3 -c "import json,sys;print(json.dumps({'provider':sys.argv[1]}))" "$provider")"
+      fi
+      curl -s -X POST "$gw_url/api/settings/provider-default" \
+        -H "Content-Type: application/json" \
+        --data "$body" | ($fmt)
+      ;;
+    *)
+      err "Unknown providers action: $action"
+      echo "  Actions: list, status, set-default <provider> [<model>]"
+      exit 1
+      ;;
+  esac
+}
+
 cmd_help() {
   echo -e "${BOLD}agi${RESET} — Aionima Gateway CLI"
   echo ""
@@ -512,6 +628,9 @@ cmd_help() {
   echo "  incidents       List incident reports (or: incidents view <id>)"
   echo "  config [key]    Read config (full or dot-path key)"
   echo "  projects        List hosted projects"
+  echo "  models CMD      Manage HF models (list|running|status|install|start|"
+  echo "                  stop|remove|search|hardware)"
+  echo "  providers CMD   Manage LLM providers (list|status|set-default)"
   echo "  ollama CMD      Manage Ollama (status|start|stop|pull|list)"
   echo "  test-vm CMD     Manage test VM (status|create|destroy|provision|setup|"
   echo "                  services-setup|services-start|services-stop|services-status|"
@@ -544,6 +663,8 @@ case "${1:-help}" in
   incidents) shift; cmd_incidents "$@" ;;
   config)   cmd_config "${2:-}" ;;
   projects) cmd_projects ;;
+  models)    shift; cmd_models "$@" ;;
+  providers) shift; cmd_providers "$@" ;;
   ollama)   shift; cmd_ollama "$@" ;;
   test-vm)  shift; cmd_test_vm "$@" ;;
   setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;
