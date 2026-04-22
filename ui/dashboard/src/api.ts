@@ -442,7 +442,16 @@ export async function fetchDevStatus(): Promise<import("./types.js").DevStatus> 
   return res.json() as Promise<import("./types.js").DevStatus>;
 }
 
-export async function switchDevMode(enabled: boolean): Promise<{ ok: boolean; agi: string; prime: string; bots: string }> {
+/** POST /api/dev/switch response — includes per-repo provisioning outcome. */
+export interface DevSwitchResponse {
+  ok: boolean;
+  enabled: boolean;
+  provisionedProjects?: string[];
+  provisionFailures?: Array<{ slug: string; reason: string }>;
+  note?: string;
+}
+
+export async function switchDevMode(enabled: boolean): Promise<DevSwitchResponse> {
   const token = getDashboardToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -455,7 +464,7 @@ export async function switchDevMode(enabled: boolean): Promise<{ ok: boolean; ag
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
-  return res.json() as Promise<{ ok: boolean; agi: string; prime: string; bots: string }>;
+  return res.json() as Promise<DevSwitchResponse>;
 }
 
 // ---------------------------------------------------------------------------

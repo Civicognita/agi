@@ -66,18 +66,32 @@ export async function fetchOwnerToken(
 }
 
 /**
- * Inject the owner's token into an HTTPS git URL so clones authenticate
- * as the fork owner. GitHub's convention: `https://x-access-token:TOKEN@host/...`.
+ * Inject the owner's token into a git URL so clones authenticate as the
+ * fork owner. GitHub's convention: `https://x-access-token:TOKEN@host/...`.
  *
- * Returns the original URL unchanged if:
- *   - repoUrl is not HTTPS
- *   - repoUrl already contains credentials (has `@` before the host)
- *   - repoUrl doesn't target github.com (unsupported token shape elsewhere)
+ * Handles three input shapes:
+ *   - `https://github.com/owner/repo.git`  → inject credentials
+ *   - `git@github.com:owner/repo.git`       → rewrite to HTTPS + inject (SSH
+ *     → HTTPS fallback, tynn #253 — no SSH key required on the host)
+ *   - Everything else                        → unchanged
+ *
+ * Returns the original URL unchanged if it already carries credentials
+ * (authority contains `@` before the final host segment).
  */
 export function injectTokenIntoCloneUrl(
   repoUrl: string,
   token: string,
 ): string {
+  const encoded = encodeURIComponent(token);
+
+  // SSH form: `git@github.com:owner/repo.git` — rewrite to HTTPS so we can
+  // attach token credentials. Matches GitHub's SSH shorthand only.
+  const sshMatch = repoUrl.match(/^git@(github\.com):(.+)$/);
+  if (sshMatch) {
+    const [, host, path] = sshMatch;
+    return `https://x-access-token:${encoded}@${host}/${path}`;
+  }
+
   if (!repoUrl.startsWith("https://")) return repoUrl;
   // If the URL already has user@host shape, don't double-inject.
   const afterScheme = repoUrl.slice("https://".length);
@@ -90,5 +104,5 @@ export function injectTokenIntoCloneUrl(
   // injection patterns which aren't covered here.
   if (!authority.endsWith("github.com")) return repoUrl;
 
-  return `https://x-access-token:${encodeURIComponent(token)}@${authority}${afterScheme.slice(slash)}`;
+  return `https://x-access-token:${encoded}@${authority}${afterScheme.slice(slash)}`;
 }

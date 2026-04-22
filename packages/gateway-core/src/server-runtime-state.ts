@@ -1906,8 +1906,12 @@ export async function createGatewayRuntimeState(
           writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
         }
 
-        // Provision fork repos into workspace when enabling dev mode
+        // Provision fork repos into workspace when enabling dev mode.
+        // Track failures per-repo so the switch response can surface them
+        // to the dashboard (tynn #252) instead of silently dropping the
+        // error into the log.
         const provisionedProjects: string[] = [];
+        const provisionFailures: Array<{ slug: string; reason: string }> = [];
         if (targetEnabled) {
           const projectDir = (deps.workspaceProjects ?? [])[0];
           if (projectDir && existsSync(projectDir)) {
@@ -1965,7 +1969,9 @@ export async function createGatewayRuntimeState(
                 writeFileSync(metaPath, JSON.stringify(meta, null, 2) + "\n", "utf-8");
                 provisionedProjects.push(repo.slug);
               } catch (cloneErr) {
-                log.warn(`dev: failed to provision ${repo.slug}: ${cloneErr instanceof Error ? cloneErr.message : String(cloneErr)}`);
+                const reason = cloneErr instanceof Error ? cloneErr.message : String(cloneErr);
+                log.warn(`dev: failed to provision ${repo.slug}: ${reason}`);
+                provisionFailures.push({ slug: repo.slug, reason });
               }
             }
           }
@@ -2013,13 +2019,21 @@ export async function createGatewayRuntimeState(
           });
         }
 
+        const failureNote = provisionFailures.length > 0
+          ? ` ${provisionFailures.length} repo${provisionFailures.length === 1 ? "" : "s"} failed: ${provisionFailures.map((f) => f.slug).join(", ")}.`
+          : "";
+
         return reply.send({
           ok: true,
           enabled: targetEnabled,
           provisionedProjects,
+          // `provisionFailures` is always present in the response (possibly
+          // empty) so the dashboard can render a failure list without
+          // branching on undefined.
+          provisionFailures,
           note: targetEnabled && provisionedProjects.length > 0
-            ? `Provisioned ${provisionedProjects.length} repos. Restart required for path changes to take effect.`
-            : "Restart required for path changes to take effect",
+            ? `Provisioned ${provisionedProjects.length} repos. Restart required for path changes to take effect.${failureNote}`
+            : `Restart required for path changes to take effect.${failureNote}`,
         });
       } catch (err) {
         return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
