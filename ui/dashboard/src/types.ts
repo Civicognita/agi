@@ -840,6 +840,15 @@ export interface DevStatus {
   marketplace?: { remote: string; branch: string };
   mappMarketplace?: { remote: string; branch: string };
   provisionedProjects?: string[];
+  /** True only when every /opt/* origin matches its dev.*Repo config.
+   *  When false with enabled=true, surface a yellow "Run agi upgrade
+   *  to complete Dev Mode migration" callout. Part of v0.4.66's
+   *  one-time origin-rewrite mechanism (ensure_origin_remote in
+   *  upgrade.sh). */
+  originsAligned?: boolean;
+  /** Human-readable list of misaligned origins when originsAligned is
+   *  false. Each entry is "<dir>: <current-url> (expected <dev-repo>)". */
+  originMisaligned?: string[];
 }
 
 /** System connection status from GET /api/system/connections. */

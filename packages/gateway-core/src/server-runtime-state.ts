@@ -1920,12 +1920,59 @@ export async function createGatewayRuntimeState(
       const effectiveMarketplaceDir = pickDir(marketplaceDir, "marketplace");
       const effectiveMappMarketplaceDir = pickDir(mappMarketplaceDir, "mapp-marketplace");
 
+      // Phase H.2 — origins alignment check. When Dev Mode is enabled,
+      // each /opt/*/.git origin should be pointing at the owner's fork
+      // (via v0.4.66's `ensure_origin_remote` in upgrade.sh). If any
+      // origin is still Civicognita, the one-time migration hasn't run
+      // yet — the dashboard surfaces a yellow callout prompting
+      // `agi upgrade`.
+      let originsAligned = false;
+      const originMisaligned: string[] = [];
+      if (enabled) {
+        try {
+          const cfg = deps.configPath
+            ? JSON.parse(readFileSync(deps.configPath, "utf-8")) as {
+                dev?: { agiRepo?: string; primeRepo?: string; idRepo?: string };
+              }
+            : {};
+          const probes: Array<[string, string, string | undefined]> = [
+            ["agi", "/opt/agi", cfg.dev?.agiRepo],
+            ["prime", "/opt/agi-prime", cfg.dev?.primeRepo],
+            ["id", "/opt/agi-local-id", cfg.dev?.idRepo],
+          ];
+          let aligned = true;
+          for (const [name, dir, expected] of probes) {
+            if (!existsSync(join(dir, ".git"))) {
+              // Dir missing — not misalignment, skip.
+              continue;
+            }
+            if (!expected) {
+              aligned = false;
+              originMisaligned.push(`${name}: no dev.${name}Repo in config`);
+              continue;
+            }
+            const current = getRemote(dir);
+            if (current !== expected) {
+              aligned = false;
+              originMisaligned.push(`${name}: ${current ?? "(unknown)"} (expected ${expected})`);
+            }
+          }
+          originsAligned = aligned;
+        } catch {
+          // Can't read config — leave originsAligned false but don't
+          // populate misalignment list (we don't know the expected).
+          originsAligned = false;
+        }
+      }
+
       return reply.send({
         enabled,
         githubAuthenticated,
         githubAccount,
         githubTokenExpiresAt,
         githubTokenScopes,
+        originsAligned,
+        originMisaligned: originMisaligned.length > 0 ? originMisaligned : undefined,
         agi: { remote: getRemote(agiDir), branch: getBranch(agiDir) },
         prime: { remote: getRemote(effectivePrimeDir), branch: getBranch(effectivePrimeDir), entries: primeEntries },
         bots: { remote: getRemote(botsDir), branch: getBranch(botsDir) },

@@ -219,13 +219,32 @@ ensure_https_remote "$ID_DIR"
 # workspace clones — the same treatment was missing here for /opt/agi.
 ensure_origin_remote() {
   local dir="$1" expected="$2" label="$3"
-  [ -d "$dir/.git" ] || return
-  [ -n "$expected" ] || return
+  # Phase H.3 — always emit a verify line after the check, whether the
+  # rewrite was needed or not. Dashboard upgrade log shows the final
+  # origin alignment so owners can see at a glance that Dev Mode is
+  # wired correctly end-to-end.
+  if [ ! -d "$dir/.git" ]; then
+    emit "$label" "skip" "dir missing: $dir"
+    return
+  fi
+  if [ -z "$expected" ]; then
+    emit "$label" "skip" "no expected URL configured"
+    return
+  fi
   local current
-  current="$(git -C "$dir" remote get-url origin 2>/dev/null)" || return
-  if [ "$current" != "$expected" ]; then
-    git -C "$dir" remote set-url origin "$expected" 2>/dev/null && \
-      emit "$label" "info" "origin repointed: $expected"
+  current="$(git -C "$dir" remote get-url origin 2>/dev/null)" || {
+    emit "$label" "error" "could not read origin URL for $dir"
+    return
+  }
+  if [ "$current" = "$expected" ]; then
+    emit "$label" "verify" "origin aligned: $expected"
+    return
+  fi
+  if git -C "$dir" remote set-url origin "$expected" 2>/dev/null; then
+    emit "$label" "info" "origin repointed: $current -> $expected"
+    emit "$label" "verify" "origin aligned: $expected"
+  else
+    emit "$label" "error" "failed to rewrite origin (still: $current)"
   fi
 }
 ensure_origin_remote "$DEPLOY_DIR" "$AGI_REPO"   "origin-agi"

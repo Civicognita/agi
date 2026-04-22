@@ -4,7 +4,7 @@
 
 import { existsSync } from "node:fs";
 import { access, constants, readFile } from "node:fs/promises";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { resolve, join } from "node:path";
 import type { Command } from "commander";
@@ -344,21 +344,94 @@ function hostingChecks(config: AionimaConfig): CheckGroup | null {
   return { title: "Hosting", checks };
 }
 
+function getOriginUrl(dir: string): string | null {
+  try {
+    return execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 3000,
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
 function devChecks(config: AionimaConfig): CheckGroup | null {
   if (!config.dev?.enabled) return null;
 
   const checks: Check[] = [];
-  const dirs = [
-    { name: "Dev PRIME", path: config.dev.primeDir ?? "/opt/agi-prime_dev" },
-    { name: "Dev Marketplace", path: config.dev.marketplaceDir ?? "/opt/agi-marketplace_dev" },
+
+  // Origin alignment — since v0.4.66's `ensure_origin_remote` in
+  // upgrade.sh repoints /opt/agi* origins to the owner's fork on each
+  // upgrade cycle. If any origin is still pointing at Civicognita
+  // despite Dev Mode being enabled, `agi upgrade` hasn't completed the
+  // one-time migration yet. Flag red with a one-line remediation.
+  type OriginCheck = {
+    name: string;
+    dir: string;
+    expectedRepo: string | undefined;
+  };
+  const originChecks: OriginCheck[] = [
+    { name: "AGI origin", dir: "/opt/agi", expectedRepo: config.dev.agiRepo },
+    { name: "PRIME origin", dir: "/opt/agi-prime", expectedRepo: config.dev.primeRepo },
+    { name: "ID origin", dir: "/opt/agi-local-id", expectedRepo: config.dev.idRepo },
   ];
 
-  for (const dir of dirs) {
-    const exists = dirExists(dir.path);
+  for (const { name, dir, expectedRepo } of originChecks) {
+    if (!dirExists(dir)) {
+      checks.push({
+        name: `${name}: ${dir} not present`,
+        ok: false,
+        fix: "Run the AGI installer first.",
+      });
+      continue;
+    }
+    const current = getOriginUrl(dir);
+    if (current === null) {
+      checks.push({
+        name: `${name}: could not read ${dir}/.git/config`,
+        ok: false,
+        fix: "Check that the directory is a valid git repo and readable by the current user.",
+      });
+      continue;
+    }
+    if (!expectedRepo || expectedRepo.length === 0) {
+      // Dev Mode is on but this fork URL isn't configured. Probably an
+      // older install that toggled Dev Mode before v0.4.64 populated
+      // the dev.*Repo fields. User needs to re-toggle Dev Mode.
+      const repoSlug = name.toLowerCase().split(" ")[0];
+      checks.push({
+        name: `${name}: no dev.${repoSlug}Repo configured`,
+        ok: false,
+        warn: true,
+        fix: "Toggle Dev Mode off then on in the dashboard — /api/dev/switch will populate the fork URLs.",
+      });
+      continue;
+    }
+    const aligned = current === expectedRepo;
     checks.push({
-      name: `${dir.name} (${dir.path})`,
-      ok: exists,
-      fix: exists ? undefined : `Clone dev fork to ${dir.path}`,
+      name: `${name}: ${current}`,
+      ok: aligned,
+      warn: !aligned,
+      fix: aligned
+        ? undefined
+        : `Expected ${expectedRepo}. Run \`agi upgrade\` — ensure_origin_remote in upgrade.sh rewrites this on every cycle.`,
+    });
+  }
+
+  // NPU hardware check — Phase K.7 feeds in here too. If the kernel
+  // exposes /dev/accel/accel0 the AMD XDNA NPU is present. That alone
+  // doesn't mean it's USABLE (userspace from the agi-lemonade-runtime
+  // plugin handles that), but the hardware probe is a good first signal.
+  const npuPresent = dirExists("/dev/accel/accel0");
+  if (npuPresent || dirExists("/sys/class/accel")) {
+    checks.push({
+      name: "NPU hardware: /dev/accel/accel0",
+      ok: npuPresent,
+      warn: !npuPresent,
+      fix: npuPresent
+        ? undefined
+        : "NPU driver sysfs entry present but device node missing — reload amdxdna kernel module.",
     });
   }
 

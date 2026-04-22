@@ -218,6 +218,30 @@ export function DevSettings({ config, update }: {
           </div>
         )}
 
+        {/* Phase H.2 — origin alignment callout. Dev Mode is on but one or
+            more /opt/* origins are still pointing at Civicognita. The fix
+            is a single `agi upgrade` — upgrade.sh's `ensure_origin_remote`
+            rewrites the origin on each cycle. Shows only after the
+            githubAuthenticated block so it doesn't drown out that gate. */}
+        {devStatus !== null && devStatus.enabled && devStatus.originsAligned === false && (
+          <div className="mt-3 p-3 rounded-md bg-yellow/10 border border-yellow/40">
+            <p className="text-sm text-card-foreground flex items-center gap-2">
+              <span className="text-yellow">⚠</span>
+              Origin rewrite pending — re-run <code className="px-1 py-0.5 rounded bg-surface0 text-xs">agi upgrade</code>
+            </p>
+            <p className="text-[13px] text-muted-foreground mt-1">
+              Dev Mode is enabled but one or more service directories still point at the canonical Civicognita origin. The next upgrade cycle rewrites them to your fork. After that, every subsequent upgrade pulls directly from your fork — no PR round-trip needed.
+            </p>
+            {devStatus.originMisaligned && devStatus.originMisaligned.length > 0 && (
+              <ul className="mt-2 text-[12px] text-muted-foreground font-mono list-none space-y-0.5">
+                {devStatus.originMisaligned.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
         {!loading && devStatus === null && (
           <div className="mt-3 p-3 rounded-md bg-surface0 border border-overlay0">
             <p className="text-sm text-card-foreground">Contributing mode status unavailable</p>
