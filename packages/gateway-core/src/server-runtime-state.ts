@@ -966,7 +966,14 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Projects API only allowed from private network" });
     }
     const projectDirs = deps.workspaceProjects ?? [];
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; description?: string; magicApps?: string[] }[] = [];
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; description?: string; magicApps?: string[]; coreCollection?: string }[] = [];
+
+    // Expand top-level entries into (fullPath, coreCollection) pairs.
+    // A directory that contains a `collection.json` with
+    // `type: "aionima-collection"` is treated as a group — we skip the
+    // parent and list its children as projects, each flagged with the
+    // collection slug so the dashboard can render them as "core".
+    const expanded: Array<{ fullPath: string; name: string; coreCollection?: string }> = [];
     for (const dir of projectDirs) {
       try {
         const entries = readdirSync(dir, { withFileTypes: true });
@@ -974,36 +981,79 @@ export async function createGatewayRuntimeState(
           if (!entry.isDirectory()) continue;
           if (entry.name.startsWith(".")) continue;
           const fullPath = resolvePath(dir, entry.name);
-          const hasGit = existsSync(join(fullPath, ".git"));
-          let tynnToken: string | null = null;
-          let metaType: string | null = null;
-          let metaCategory: string | null = null;
-          let metaDescription: string | undefined;
-          let metaMagicApps: string[] | undefined;
-          const metaPath = projectConfigPath(fullPath);
-          if (existsSync(metaPath)) {
+
+          // Detect Aionima core collection: walk into it, skip the parent.
+          const collectionPath = join(fullPath, "collection.json");
+          if (existsSync(collectionPath)) {
             try {
-              const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string; magicApps?: string[] };
-              tynnToken = meta.tynnToken ?? null;
-              metaType = meta.type ?? null;
-              metaCategory = meta.category ?? null;
-              metaDescription = meta.description;
-              metaMagicApps = meta.magicApps;
-            } catch { /* ignore malformed metadata */ }
+              const collection = JSON.parse(readFileSync(collectionPath, "utf-8")) as { type?: string };
+              if (collection.type === "aionima-collection") {
+                const childEntries = readdirSync(fullPath, { withFileTypes: true });
+                for (const ce of childEntries) {
+                  if (!ce.isDirectory() || ce.name.startsWith(".")) continue;
+                  expanded.push({
+                    fullPath: resolvePath(fullPath, ce.name),
+                    name: ce.name,
+                    coreCollection: "aionima",
+                  });
+                }
+                continue;
+              }
+            } catch { /* malformed collection.json — fall through and treat as normal project */ }
           }
-          const hosting = deps.hostingManager
-            ? deps.hostingManager.getProjectHostingInfo(fullPath)
-            : { enabled: false, type: "static", hostname: entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), docRoot: null, startCommand: null, port: null, mode: "production" as const, internalPort: null, status: "unconfigured" as const, url: null };
-          const detectedHosting = deps.hostingManager
-            ? deps.hostingManager.detectProjectDefaults(fullPath)
-            : undefined;
-          const projectTypeId = metaType ?? detectedHosting?.projectType ?? "static";
-          const registry = deps.hostingManager?.getProjectTypeRegistry();
-          const typeDef = registry?.get(projectTypeId);
-          const projectType = typeDef ? { id: typeDef.id, label: typeDef.label, category: typeDef.category, hostable: typeDef.hostable, hasCode: typeDef.hasCode, tools: typeDef.tools } : undefined;
-          const category = metaCategory ?? projectType?.category ?? null;
-          projects.push({ name: entry.name, path: fullPath, hasGit, tynnToken, hosting, detectedHosting, projectType, category: category ?? undefined, description: metaDescription, magicApps: metaMagicApps });
+
+          // Skip underscore-prefixed (reserved for collections we haven't
+          // identified). Matches hosting-manager's skip rule.
+          if (entry.name.startsWith("_")) continue;
+
+          expanded.push({ fullPath, name: entry.name });
         }
+      } catch { /* directory may not exist */ }
+    }
+
+    for (const { fullPath, name: entryName, coreCollection } of expanded) {
+      try {
+        const hasGit = existsSync(join(fullPath, ".git"));
+        let tynnToken: string | null = null;
+        let metaType: string | null = null;
+        let metaCategory: string | null = null;
+        let metaDescription: string | undefined;
+        let metaMagicApps: string[] | undefined;
+        const metaPath = projectConfigPath(fullPath);
+        if (existsSync(metaPath)) {
+          try {
+            const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string; magicApps?: string[] };
+            tynnToken = meta.tynnToken ?? null;
+            metaType = meta.type ?? null;
+            metaCategory = meta.category ?? null;
+            metaDescription = meta.description;
+            metaMagicApps = meta.magicApps;
+          } catch { /* ignore malformed metadata */ }
+        }
+        const hosting = deps.hostingManager
+          ? deps.hostingManager.getProjectHostingInfo(fullPath)
+          : { enabled: false, type: "static", hostname: entryName.toLowerCase().replace(/[^a-z0-9]+/g, "-"), docRoot: null, startCommand: null, port: null, mode: "production" as const, internalPort: null, status: "unconfigured" as const, url: null };
+        const detectedHosting = deps.hostingManager
+          ? deps.hostingManager.detectProjectDefaults(fullPath)
+          : undefined;
+        const projectTypeId = metaType ?? detectedHosting?.projectType ?? "static";
+        const registry = deps.hostingManager?.getProjectTypeRegistry();
+        const typeDef = registry?.get(projectTypeId);
+        const projectType = typeDef ? { id: typeDef.id, label: typeDef.label, category: typeDef.category, hostable: typeDef.hostable, hasCode: typeDef.hasCode, tools: typeDef.tools } : undefined;
+        const category = metaCategory ?? projectType?.category ?? null;
+        projects.push({
+          name: entryName,
+          path: fullPath,
+          hasGit,
+          tynnToken,
+          hosting,
+          detectedHosting,
+          projectType,
+          category: category ?? undefined,
+          description: metaDescription,
+          magicApps: metaMagicApps,
+          coreCollection,
+        });
       } catch { /* directory may not exist */ }
     }
     return reply.send(projects);

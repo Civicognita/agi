@@ -63,6 +63,11 @@ export function ProjectDetail({
   const project = projects.find((p) => projectSlug(p.path) === slug);
   const isSacred = project ? (isSacredProject(project) || project.projectType?.id === "aionima") : false;
   const canViewSacred = Boolean(contributingEnabled);
+  // Core fork = provisioned by Dev Mode into the `_aionima/` collection.
+  // These get a drastically reduced UX — only Editor + Repository tabs.
+  // No hosting, no environment, no taskmaster, no plugins — they are
+  // source trees the owner submits PRs from, not deployables.
+  const isCoreFork = project?.coreCollection === "aionima" || project?.projectType?.id === "aionima";
 
   const [editName, setEditName] = useState<string | null>(null);
   const [editTynnToken, setEditTynnToken] = useState<string | null>(null);
@@ -293,23 +298,26 @@ export function ProjectDetail({
         )}
       </div>
 
+      {/* Aionima core forks get a restricted tab set. No Details,
+          hosting, environment, or plugin tabs — those projects are
+          source trees users contribute PRs against, not deployables. */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
         <TabsList variant="line">
-          <TabsTrigger value="details">Details</TabsTrigger>
+          {!isCoreFork && <TabsTrigger value="details">Details</TabsTrigger>}
           <TabsTrigger value="files">Editor</TabsTrigger>
           <TabsTrigger value="repository">Repository</TabsTrigger>
-          {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
+          {!isCoreFork && onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
             <TabsTrigger value="hosting">Development</TabsTrigger>
           )}
-          {project.projectType?.hasCode && (
+          {!isCoreFork && project.projectType?.hasCode && (
             <TabsTrigger value="environment">Environment</TabsTrigger>
           )}
-          <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>
-          <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>
-          {pluginPanels.map((p) => (
+          {!isCoreFork && <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>}
+          {!isCoreFork && <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>}
+          {!isCoreFork && pluginPanels.map((p) => (
             <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
           ))}
-          {project.projectType?.hasCode && (
+          {!isCoreFork && project.projectType?.hasCode && (
             <TabsTrigger value="security">Security</TabsTrigger>
           )}
         </TabsList>

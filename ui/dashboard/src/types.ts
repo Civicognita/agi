@@ -375,6 +375,9 @@ export interface ProjectInfo {
   category?: string;
   description?: string;
   magicApps?: string[];
+  /** When set, this project is a child of a named collection (e.g. "aionima"
+   *  for Dev Mode core forks). Dashboard groups + restricts UX accordingly. */
+  coreCollection?: string;
 }
 
 /** Git info for a workspace project, returned by GET /api/projects/info. */
