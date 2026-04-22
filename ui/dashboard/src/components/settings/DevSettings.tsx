@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SectionHeading, FieldGroup } from "./SettingsShared.js";
-import { fetchDevStatus, switchDevMode, fetchPrimeStatus, switchPrimeSource, startDeviceFlow, pollDeviceFlow, fetchTestVmStatus, runTestVmCommand, fetchTestResults } from "../../api.js";
+import { fetchDevStatus, switchDevMode, fetchPrimeStatus, switchPrimeSource, fetchTestVmStatus, runTestVmCommand, fetchTestResults } from "../../api.js";
 import type { TestVmStatus, TestResults } from "../../api.js";
 import type { DevStatus, PrimeStatus, AionimaConfig } from "../../types.js";
 
@@ -38,14 +38,6 @@ function RepoCard({ name, remote, branch, entries, isOwnerFork }: {
   );
 }
 
-interface GithubFlowState {
-  status: "idle" | "connecting" | "connected" | "error";
-  userCode?: string;
-  verificationUri?: string;
-  accountLabel?: string;
-  error?: string;
-}
-
 export function DevSettings({ config, update }: {
   config: AionimaConfig;
   update: (fn: (prev: AionimaConfig) => AionimaConfig) => void;
@@ -55,9 +47,12 @@ export function DevSettings({ config, update }: {
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Inline GitHub device flow for the auth gate
-  const [githubFlow, setGithubFlow] = useState<GithubFlowState>({ status: "idle" });
-  const githubPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // GitHub connection is owned by Local-ID (id.ai.on) — the Contributing
+  // tab never handles the OAuth handshake itself. This tab just opens the
+  // Local-ID connect flow in a popup and polls `/api/dev/status` (which
+  // proxies Local-ID's connections table) until the handle appears.
+  const [connectPopupOpen, setConnectPopupOpen] = useState(false);
+  const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // PRIME source controls
   const [primeStatus, setPrimeStatus] = useState<PrimeStatus | null>(null);
@@ -91,69 +86,62 @@ export function DevSettings({ config, update }: {
       .finally(() => setPrimeLoading(false));
   }, []);
 
-  // Cleanup GitHub poll on unmount. Ref holds a setTimeout handle now (we
-  // switched from setInterval so we can honor GitHub's slow_down cadence).
+  // Cleanup devStatus poll on unmount
   useEffect(() => {
     return () => {
-      if (githubPollRef.current) clearTimeout(githubPollRef.current);
+      if (statusPollRef.current) clearInterval(statusPollRef.current);
     };
   }, []);
 
-  const handleGithubConnect = useCallback(async () => {
-    if (githubPollRef.current) clearTimeout(githubPollRef.current);
-    setGithubFlow({ status: "connecting" });
-    try {
-      const data = await startDeviceFlow("github");
-      setGithubFlow({
-        status: "connecting",
-        userCode: data.userCode,
-        verificationUri: data.verificationUri,
-      });
-      const dc = data.deviceCode;
+  /**
+   * Open Local-ID's own connect flow in a popup. All identity services
+   * (GitHub device flow, token storage, OAuth brokering) live in Local-ID
+   * — the Contributing tab doesn't re-implement them. After opening the
+   * popup we start polling `/api/dev/status` every 5s; when
+   * `githubAuthenticated` flips true we stop polling, close any lingering
+   * spinner, and the Dev Mode toggle becomes enabled.
+   */
+  const handleGithubConnect = useCallback(() => {
+    if (statusPollRef.current) clearInterval(statusPollRef.current);
 
-      // GitHub's device flow REQUIRES honoring the server-returned `interval`
-      // — polling faster than the interval causes GitHub to return `slow_down`
-      // which compounds (each slow_down grows the interval). Previously a
-      // hard-coded 3s interval forced us into an ever-growing slow_down spiral
-      // and the flow would stall "waiting for authorization" even after the
-      // user granted on github.com. We drive the poll via setTimeout so we
-      // can pick up the interval the server tells us after each response.
-      const scheduleNextPoll = (delaySec: number) => {
-        githubPollRef.current = setTimeout(() => {
-          void (async () => {
-            try {
-              const result = await pollDeviceFlow(dc);
-              if (result.status === "completed") {
-                setGithubFlow({ status: "connected", accountLabel: result.accountLabel });
-                // Re-fetch dev status so the toggle becomes enabled
-                const updated = await fetchDevStatus();
-                setDevStatus(updated);
-                return; // stop polling
-              } else if (result.status === "expired" || result.status === "error") {
-                setGithubFlow({
-                  status: "error",
-                  error: result.error ?? "Authorization expired. Please try again.",
-                });
-                return; // stop polling
-              }
-              // Still pending — schedule next poll at server-advised interval
-              // (or fall back to 5s if the server didn't tell us).
-              scheduleNextPoll(result.interval ?? 5);
-            } catch {
-              // Network blip — retry in a moment, don't give up
-              scheduleNextPoll(5);
-            }
-          })();
-        }, Math.max(1, delaySec) * 1000) as unknown as ReturnType<typeof setInterval>;
-      };
+    // Popup centered on the parent window. 520×720 fits Local-ID's login +
+    // connect screens with room for OAuth redirect screens inside.
+    const w = 520, h = 720;
+    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
+    const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
+    const popup = window.open(
+      "https://id.ai.on/dashboard",
+      "agi-id-connect",
+      `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=yes,status=yes,resizable=yes`,
+    );
+    setConnectPopupOpen(true);
 
-      scheduleNextPoll(data.interval ?? 5);
-    } catch (err) {
-      setGithubFlow({
-        status: "error",
-        error: err instanceof Error ? err.message : "Connection failed",
-      });
-    }
+    // Poll /api/dev/status every 5s — same cadence Local-ID polls GitHub at,
+    // so we don't hammer Local-ID any faster than it hammers GitHub. Stop
+    // when connected OR the popup closed and we've already confirmed.
+    statusPollRef.current = setInterval(() => {
+      void (async () => {
+        try {
+          const updated = await fetchDevStatus();
+          setDevStatus(updated);
+          if (updated.githubAuthenticated) {
+            if (statusPollRef.current) clearInterval(statusPollRef.current);
+            statusPollRef.current = null;
+            setConnectPopupOpen(false);
+            // Nudge the popup closed if the user hasn't closed it themselves
+            try { popup?.close(); } catch { /* blocked by some browsers */ }
+          } else if (popup && popup.closed) {
+            // User closed the popup without completing — stop polling;
+            // the retry button re-opens.
+            if (statusPollRef.current) clearInterval(statusPollRef.current);
+            statusPollRef.current = null;
+            setConnectPopupOpen(false);
+          }
+        } catch {
+          // Network blip — keep polling
+        }
+      })();
+    }, 5000);
   }, []);
 
   const handleToggle = useCallback(async () => {
@@ -232,82 +220,43 @@ export function DevSettings({ config, update }: {
             </button>
           </div>
         </div>
-        {/* GitHub auth gate — shown when not authenticated and contributing mode is off */}
+        {/* GitHub auth gate — delegated to Local-ID (id.ai.on).
+            Identity is handled there, NEVER here. This block just opens a
+            popup to Local-ID's connect flow and watches /api/dev/status
+            for the handle to appear. */}
         {devStatus !== null && !devStatus.enabled && !devStatus.githubAuthenticated && (
           <div className="mt-3 p-3 rounded-md bg-surface0 border border-overlay0">
             <p className="text-sm text-card-foreground">GitHub authentication required</p>
             <p className="text-[13px] text-muted-foreground mt-1">
               Contributing mode clones owner forks of the AGI, PRIME, ID, and Marketplace repositories.
-              Connect your GitHub account to continue.
+              Identity is handled by the Aionima ID service at{" "}
+              <a href="https://id.ai.on/dashboard" target="_blank" rel="noopener noreferrer" className="text-primary underline">id.ai.on</a>
+              {" "}— connect your GitHub account there.
             </p>
 
-            {githubFlow.status === "idle" && (
-              <div className="mt-2">
-                <Button variant="outline" size="sm" onClick={() => void handleGithubConnect()}>
-                  Connect GitHub
-                </Button>
-              </div>
-            )}
-
-            {githubFlow.status === "connecting" && !githubFlow.userCode && (
-              <p className="mt-2 text-[12px] text-muted-foreground">Starting device flow...</p>
-            )}
-
-            {githubFlow.status === "connecting" && githubFlow.userCode && (
-              <div className="mt-3 p-3 rounded-lg bg-muted/30 border border-border">
-                <div className="text-[11px] text-muted-foreground mb-1">
-                  Visit this URL and enter the code:
-                </div>
-                <div className="mb-2">
-                  <a
-                    href={githubFlow.verificationUri}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[12px] text-primary underline font-mono break-all"
-                  >
-                    {githubFlow.verificationUri}
-                  </a>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[16px] font-mono font-bold tracking-widest text-foreground">
-                    {githubFlow.userCode}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void navigator.clipboard.writeText(githubFlow.userCode!)}
-                    className="text-[10px] px-2 py-0.5 rounded border border-border hover:bg-accent transition-colors"
-                  >
-                    Copy
-                  </button>
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-2 flex items-center gap-1">
+            <div className="mt-2 flex items-center gap-3">
+              <Button variant="outline" size="sm" onClick={handleGithubConnect}>
+                {connectPopupOpen ? "Reopen ID Connect" : "Open ID Connect"}
+              </Button>
+              {connectPopupOpen && (
+                <span className="text-[12px] text-muted-foreground flex items-center gap-1">
                   <span className="animate-pulse">●</span>
-                  <span>Waiting for authorization...</span>
-                </div>
-              </div>
-            )}
+                  Waiting for ID to complete the GitHub handshake...
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
-            {githubFlow.status === "connected" && (
-              <div className="mt-2 flex items-center gap-2">
-                <Badge variant="outline" className="text-green border-green/50">
-                  ✓ {githubFlow.accountLabel ?? "GitHub connected"}
-                </Badge>
-                <span className="text-[12px] text-muted-foreground">Toggle contributing mode above.</span>
-              </div>
-            )}
-
-            {githubFlow.status === "error" && (
-              <div className="mt-2 text-[11px] text-destructive flex items-center gap-1 flex-wrap">
-                <span>{githubFlow.error}</span>
-                <button
-                  type="button"
-                  onClick={() => void handleGithubConnect()}
-                  className="underline"
-                >
-                  Try again
-                </button>
-              </div>
-            )}
+        {/* Connected state — show the account + reassure the flow is done */}
+        {devStatus !== null && devStatus.githubAuthenticated && (
+          <div className="mt-3 p-3 rounded-md bg-surface0 border border-overlay0 flex items-center gap-3">
+            <Badge variant="outline" className="text-green border-green/50">
+              ✓ GitHub connected{devStatus.githubAccount ? ` as ${devStatus.githubAccount}` : ""}
+            </Badge>
+            <span className="text-[12px] text-muted-foreground">
+              Managed in <a href="https://id.ai.on/dashboard" target="_blank" rel="noopener noreferrer" className="text-primary underline">id.ai.on</a>
+            </span>
           </div>
         )}
 
