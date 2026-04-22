@@ -154,7 +154,7 @@ papa.ai.on {
     expect(projSection).toContain("reverse_proxy localhost:4002");
   });
 
-  it("adds handle_errors 502 503 504 fallback block in each project block", () => {
+  it("adds a 5xx-filtered handle_errors fallback block in each project block", () => {
     const out = buildCaddyfileContent({
       ...baseOpts,
       projects: [{ hostname: "my-app", port: 4001 }],
@@ -162,7 +162,14 @@ papa.ai.on {
     const projStart = out.indexOf("# === PROJECT DOMAINS ===");
     const projEnd = out.indexOf("# === END PROJECT DOMAINS ===");
     const projSection = out.slice(projStart, projEnd);
-    expect(projSection).toContain("handle_errors 502 503 504 {");
+    // Caddy 2.6 compatibility — use expression-matcher form, not the
+    // status-code filter (`handle_errors 502 503 504`) which requires
+    // Caddy 2.8+.
+    expect(projSection).toContain("handle_errors {");
+    expect(projSection).not.toContain("handle_errors 502 503 504");
+    expect(projSection).toContain("@5xx expression");
+    expect(projSection).toContain("{http.error.status_code} >= 500");
+    expect(projSection).toContain("handle @5xx {");
     expect(projSection).toContain("respond `");
     expect(projSection).toContain("503");
     expect(projSection).toContain("Container not running");
