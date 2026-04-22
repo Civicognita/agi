@@ -50,7 +50,12 @@ export interface ForkResolveResult {
   error?: string;
 }
 
-const CANONICAL_OWNER = "Civicognita";
+export const CANONICAL_OWNER = "Civicognita";
+
+/** Full `upstream` remote URL for a given core-repo spec. */
+export function upstreamRemoteUrl(spec: CoreRepoSpec): string {
+  return `https://github.com/${CANONICAL_OWNER}/${spec.upstream}.git`;
+}
 
 /**
  * Resolve (or create) the owner's fork for every core repo.
@@ -61,7 +66,7 @@ export async function resolveOrCreateForks(
 ): Promise<ForkResolveResult[]> {
   const results: ForkResolveResult[] = [];
   for (const spec of CORE_REPOS) {
-    const upstreamUrl = `https://github.com/${CANONICAL_OWNER}/${spec.upstream}.git`;
+    const upstreamUrl = upstreamRemoteUrl(spec);
     try {
       const existing = await lookupFork(ownerToken, ownerLogin, spec.upstream);
       if (existing) {

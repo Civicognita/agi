@@ -28,9 +28,19 @@ _DEV_CFG="$(node -e "
 " 2>/dev/null || echo '{"enabled":false,"agi":"","prime":"","id":""}')"
 
 _dev_enabled="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).enabled))")"
+_dev_agi="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).agi))")"
 _dev_prime="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).prime))")"
 _dev_id="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).id))")"
 
+# AGI self-repo: Dev Mode needs this too. Without it, /opt/agi's origin
+# stays pinned to Civicognita, so owner commits pushed to wishborn/agi
+# never reach the production gateway until they land upstream. This
+# defeats the entire Dev Mode "work in fork → see it live" promise.
+if [ "$_dev_enabled" = "true" ] && [ -n "$_dev_agi" ]; then
+  AGI_REPO="${AIONIMA_AGI_REPO:-$_dev_agi}"
+else
+  AGI_REPO="${AIONIMA_AGI_REPO:-https://github.com/Civicognita/agi.git}"
+fi
 if [ "$_dev_enabled" = "true" ] && [ -n "$_dev_prime" ]; then
   PRIME_REPO="${AIONIMA_PRIME_REPO:-$_dev_prime}"
 else
@@ -200,6 +210,27 @@ ensure_https_remote() {
 ensure_https_remote "$DEPLOY_DIR"
 ensure_https_remote "$PRIME_DIR"
 ensure_https_remote "$ID_DIR"
+
+# Repoint `origin` to the right upstream when Dev Mode toggles. Idempotent:
+# if the existing origin matches, this is a no-op. If it doesn't (Dev Mode
+# just flipped, or the env override changed), we rewrite it so the next
+# `git fetch origin` pulls from the intended source. Mirrors what
+# `/api/dev/switch` already does for the `_aionima/<slug>/` core-fork
+# workspace clones — the same treatment was missing here for /opt/agi.
+ensure_origin_remote() {
+  local dir="$1" expected="$2" label="$3"
+  [ -d "$dir/.git" ] || return
+  [ -n "$expected" ] || return
+  local current
+  current="$(git -C "$dir" remote get-url origin 2>/dev/null)" || return
+  if [ "$current" != "$expected" ]; then
+    git -C "$dir" remote set-url origin "$expected" 2>/dev/null && \
+      emit "$label" "info" "origin repointed: $expected"
+  fi
+}
+ensure_origin_remote "$DEPLOY_DIR" "$AGI_REPO"   "origin-agi"
+ensure_origin_remote "$PRIME_DIR"  "$PRIME_REPO" "origin-prime"
+ensure_origin_remote "$ID_DIR"     "$ID_REPO"    "origin-id"
 
 # ---------------------------------------------------------------------------
 # Snapshot versions BEFORE pull (must happen before git checkout changes package.json)

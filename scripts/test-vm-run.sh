@@ -14,7 +14,7 @@ E2E_SCRIPT="$SCRIPT_DIR/test-e2e-vm.sh"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FIXTURE_CONFIG="$REPO_DIR/test/fixtures/gateway-test.json"
 
-VM_NAME="aionima-test"
+VM_NAME="agi-test"
 
 # ---------------------------------------------------------------------------
 # Preflight: ensure VM is created, running, and set up

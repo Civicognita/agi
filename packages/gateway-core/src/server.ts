@@ -1995,6 +1995,7 @@ export async function startGatewayServer(
       pluginPrefs,
       primeLoader,
       primeDir,
+      aionMicro: aionMicroManager,
       botsDir: undefined, // Workers are file-driven prompts
       marketplaceManager,
       onPluginInstalled: async (installPath: string) => {

@@ -14,6 +14,7 @@ import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile,
 import type { FileNode } from "../api.js";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
+import { CoreForkRepoPanel } from "./CoreForkRepoPanel.js";
 import { HostingPanel } from "./HostingPanel.js";
 import { EnvManager } from "./EnvManager.js";
 import { TaskmasterTab } from "./TaskmasterTab.js";
@@ -655,7 +656,9 @@ export function ProjectDetail({
 
         <TabsContent value="repository" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <div className="rounded-xl bg-card border border-border p-4">
-            {project.hasGit ? (
+            {isCoreFork && project?.coreForkSlug ? (
+              <CoreForkRepoPanel slug={project.coreForkSlug} />
+            ) : project.hasGit ? (
               <>
                 <div className="flex items-center justify-end mb-2">
                   <Button size="sm" variant="outline" className="text-[11px] h-7" onClick={handleRefreshRepo}>

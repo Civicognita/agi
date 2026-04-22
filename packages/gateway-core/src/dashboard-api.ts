@@ -140,8 +140,9 @@ export class DashboardApi {
   private handleOverview = (_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): void => {
     const windowDays = intParam(params, "windowDays", 90);
     const recentLimit = intParam(params, "recentLimit", 20);
-    const overview = this.queries.getOverview(windowDays, recentLimit);
-    json(res, overview);
+    void this.queries.getOverview(windowDays, recentLimit)
+      .then((overview) => { json(res, overview); })
+      .catch(() => error(res, "Failed to fetch overview"));
   };
 
   private handleTimeline = (_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): void => {
@@ -155,19 +156,19 @@ export class DashboardApi {
     const since = params.get("since") ?? undefined;
     const until = params.get("until") ?? undefined;
 
-    const buckets = this.queries.getTimeline(
+    void this.queries.getTimeline(
       bucket as TimeBucket,
       entityId,
       since,
       until,
-    );
-
-    json(res, {
-      buckets,
-      bucket,
-      since: since ?? "all-time",
-      until: until ?? "now",
-    });
+    ).then((buckets) => {
+      json(res, {
+        buckets,
+        bucket,
+        since: since ?? "all-time",
+        until: until ?? "now",
+      });
+    }).catch(() => error(res, "Failed to fetch timeline"));
   };
 
   private handleBreakdown = (_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): void => {
@@ -219,18 +220,19 @@ export class DashboardApi {
     }
 
     const windowDays = intParam(params, "windowDays", 90);
-    const profile = this.queries.getEntityProfile(entityId, windowDays);
-
-    if (profile === null) {
-      error(res, "Entity not found", 404);
-      return;
-    }
-
-    json(res, profile);
+    void this.queries.getEntityProfile(entityId, windowDays)
+      .then((profile) => {
+        if (profile === null) {
+          error(res, "Entity not found", 404);
+          return;
+        }
+        json(res, profile);
+      })
+      .catch(() => error(res, "Failed to fetch entity profile"));
   };
 
   private handleCOA = (_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): void => {
-    const result = this.queries.getCOAEntries({
+    void this.queries.getCOAEntries({
       entityId: params.get("entityId") ?? undefined,
       fingerprint: params.get("fingerprint") ?? undefined,
       workType: params.get("workType") ?? undefined,
@@ -238,8 +240,8 @@ export class DashboardApi {
       until: params.get("until") ?? undefined,
       limit: intParam(params, "limit", 50),
       offset: intParam(params, "offset", 0),
-    });
-
-    json(res, result);
+    })
+      .then((result) => { json(res, result); })
+      .catch(() => error(res, "Failed to fetch COA entries"));
   };
 }

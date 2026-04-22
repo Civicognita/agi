@@ -183,6 +183,160 @@ def diagnose(req: DiagnoseRequest):
     return {"analysis": content, "model": MODEL_ID}
 
 
+class MergeConflictRequest(BaseModel):
+    file_path: str
+    ours_label: str
+    theirs_label: str
+    conflict_text: str
+
+
+def _split_conflict_hunks(text: str) -> tuple[list[str], list[dict[str, str]]]:
+    """Walk a file with conflict markers and extract each `<<<<<<< ... =======
+    ... >>>>>>>` region. Returns `(prefix_parts, hunks)` where `prefix_parts`
+    is a list of text fragments (in order) and `hunks` is a list of
+    `{ours, theirs}` dicts. Prefixes + hunks alternate, so the caller can
+    reconstruct by zipping them.
+    """
+    out_prefixes: list[str] = []
+    hunks: list[dict[str, str]] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        # Look for the start marker on its own line.
+        start = text.find("<<<<<<<", i)
+        if start == -1:
+            out_prefixes.append(text[i:])
+            break
+        # Ensure the marker is at the start of a line.
+        if start > 0 and text[start - 1] != "\n":
+            i = start + 7
+            continue
+        out_prefixes.append(text[i:start])
+        # Skip to newline after <<<<<<< label
+        line_end = text.find("\n", start)
+        if line_end == -1:
+            out_prefixes.append(text[start:])
+            break
+        sep = text.find("\n=======", line_end)
+        if sep == -1:
+            out_prefixes.append(text[start:])
+            break
+        close = text.find("\n>>>>>>>", sep)
+        if close == -1:
+            out_prefixes.append(text[start:])
+            break
+        # Include trailing newline in both sides so the reconstructed
+        # file preserves line structure. `sep` points at the \n before
+        # `=======`, and `close` points at the \n before `>>>>>>>` —
+        # each hunk side runs from after its header newline up through
+        # (and including) that delimiting newline.
+        #   sep + 8 = position right after `\n=======` (so next char is
+        #             the \n terminating the `=======` line).
+        #   sep + 9 = start of `theirs` content proper.
+        ours = text[line_end + 1 : sep + 1]
+        theirs = text[sep + 9 : close + 1] if sep + 9 <= close + 1 else ""
+        hunks.append({"ours": ours, "theirs": theirs})
+        # Advance past the closing `>>>>>>>` line.
+        close_end = text.find("\n", close + 1)
+        i = close_end + 1 if close_end != -1 else n
+    return out_prefixes, hunks
+
+
+def _resolve_hunk_deterministic(ours: str, theirs: str) -> tuple[str, str] | None:
+    """Deterministic resolutions for trivial cases. Returns `(resolved, reason)`
+    or None when the conflict needs model assistance (or manual review)."""
+    if ours == theirs:
+        return ours, "both sides identical"
+    if ours.strip() == theirs.strip():
+        # Whitespace-only conflict: prefer upstream to respect their style.
+        return theirs, "whitespace-only — preferred upstream"
+    if ours.strip() == "":
+        # Fork deleted, upstream added: keep the addition.
+        return theirs, "fork deleted, upstream added"
+    if theirs.strip() == "":
+        # Upstream deleted, fork added: keep the addition.
+        return ours, "upstream deleted, fork added"
+    return None
+
+
+@app.post("/v1/resolve-merge-conflict")
+def resolve_merge_conflict(req: MergeConflictRequest):
+    """Resolve a single file's merge conflicts. Returns `high` confidence
+    only when every hunk can be resolved deterministically OR the model
+    emits an unambiguous pick. Everything else falls back to `low` so the
+    caller refuses to auto-commit.
+    """
+    prefixes, hunks = _split_conflict_hunks(req.conflict_text)
+    if not hunks:
+        # No conflict markers — nothing to resolve.
+        return {
+            "resolved_text": req.conflict_text,
+            "confidence": "high",
+            "unresolved_hunks": [],
+        }
+
+    resolved_parts: list[str] = []
+    unresolved: list[str] = []
+    overall_high = True
+
+    for idx, hunk in enumerate(hunks):
+        ours = hunk["ours"]
+        theirs = hunk["theirs"]
+        det = _resolve_hunk_deterministic(ours, theirs)
+        if det is not None:
+            resolved_text, _reason = det
+            resolved_parts.append(resolved_text)
+            continue
+
+        # Non-trivial — ask the model for a directional pick. We do NOT
+        # ask it to synthesize new code; only to pick a side. This keeps
+        # the 135M model in its comfort zone.
+        messages = [
+            ChatMessage(role="system", content=(
+                "You are reviewing a merge conflict for the AGI platform. The user's fork "
+                "('ours') has local work; upstream ('theirs') has the canonical release. "
+                "Your ONLY job is to pick which side to keep. Respond with exactly one of: "
+                "OURS, THEIRS, or UNCLEAR. Pick UNCLEAR if both sides have meaningful content "
+                "that neither overrides nor trivially merges."
+            )),
+            ChatMessage(role="user", content=(
+                f"File: {req.file_path}\n\nOURS (fork):\n{ours[:1500]}\n\n"
+                f"THEIRS (upstream):\n{theirs[:1500]}\n\nYour pick:"
+            )),
+        ]
+        answer = generate(messages, max_tokens=16, temperature=0.0).strip().upper()
+        pick = "UNCLEAR"
+        if answer.startswith("OURS"):
+            pick = "OURS"
+        elif answer.startswith("THEIRS"):
+            pick = "THEIRS"
+        if pick == "OURS":
+            resolved_parts.append(ours)
+        elif pick == "THEIRS":
+            resolved_parts.append(theirs)
+        else:
+            overall_high = False
+            unresolved.append(f"hunk {idx + 1} in {req.file_path}: model unsure")
+            # Preserve the original conflict markers so a human can resolve.
+            resolved_parts.append(
+                f"<<<<<<< {req.ours_label}\n{ours}=======\n{theirs}>>>>>>> {req.theirs_label}\n"
+            )
+
+    # Reassemble: prefix[0] + resolved[0] + prefix[1] + resolved[1] + ... + prefix[last]
+    result_parts: list[str] = []
+    for i, p in enumerate(prefixes):
+        result_parts.append(p)
+        if i < len(resolved_parts):
+            result_parts.append(resolved_parts[i])
+    resolved_text = "".join(result_parts)
+
+    return {
+        "resolved_text": resolved_text,
+        "confidence": "high" if overall_high else "low",
+        "unresolved_hunks": unresolved,
+    }
+
+
 class ConfigRequest(BaseModel):
     model_config_json: dict[str, Any]
     model_id: str

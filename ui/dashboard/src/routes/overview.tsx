@@ -24,8 +24,14 @@ import { useRootContext } from "./root.js";
 export default function OverviewPage() {
   const { overview, liveActivity, timelineBucket, setTimelineBucket } = useRootContext();
 
+  // Defensive coalesce: if an older/broken backend ever returns `overview`
+  // without `recentActivity` (e.g. an un-awaited async handler), render with
+  // just the live buffer instead of throwing "not iterable" at runtime.
+  const recentActivity = Array.isArray(overview.data?.recentActivity)
+    ? overview.data.recentActivity
+    : [];
   const allActivity = overview.data !== null
-    ? [...liveActivity, ...overview.data.recentActivity]
+    ? [...liveActivity, ...recentActivity]
       .filter((e, i, arr) => arr.findIndex((a) => a.id === e.id) === i)
       .slice(0, 30)
     : liveActivity;
