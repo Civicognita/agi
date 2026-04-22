@@ -39,7 +39,7 @@ export function OverviewCards({ data }: OverviewCardsProps) {
     },
     {
       label: "Activity",
-      value: String(data.recentActivity.length),
+      value: String(Array.isArray(data.recentActivity) ? data.recentActivity.length : 0),
       sub: "Recent events tracked",
       accent: "border-l-red",
     },
