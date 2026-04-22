@@ -712,7 +712,12 @@ export class HostingManager {
       try {
         const entries = readdirSync(dir, { withFileTypes: true });
         for (const entry of entries) {
-          if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+          // Skip hidden dirs (`.git`, `.agi`) AND the underscore-prefixed
+          // `_aionima/` collection that holds Dev Mode's core-repo forks.
+          // Those are NOT deployable projects — they're source trees the
+          // owner contributes to and submits PRs from; hosting them as
+          // virtual hosts would produce bogus *.ai.on entries.
+          if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name.startsWith("_")) continue;
           const fullPath = resolvePath(dir, entry.name);
 
           // Auto-migrate old framework types → broad type + stack

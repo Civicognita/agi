@@ -1993,10 +1993,36 @@ export async function createGatewayRuntimeState(
             // works for public forks but fails with 404 on private ones.
             const ownerToken = await fetchOwnerToken({ provider: "github", role: "owner" });
 
+            // Core forks live in a special `_aionima/` collection inside
+            // the workspace — NOT scattered next to regular projects. The
+            // `_`-prefix excludes the parent from hosting discovery (see
+            // hosting-manager's readdirSync walker). Each child inherits
+            // the `type: "aionima"` restricted UX so users see only the
+            // Editor + Repository tabs, not full project-config settings.
+            const coreCollectionDir = join(projectDir, "_aionima");
+            if (!existsSync(coreCollectionDir)) {
+              mkdirSync(coreCollectionDir, { recursive: true });
+              // Marker so the dashboard can identify this as "Aionima Core".
+              writeFileSync(
+                join(coreCollectionDir, "collection.json"),
+                JSON.stringify(
+                  {
+                    type: "aionima-collection",
+                    name: "Aionima Core",
+                    description: "Forks of the AGI platform repos — submit contributions as PRs.",
+                    createdAt: new Date().toISOString(),
+                  },
+                  null,
+                  2,
+                ) + "\n",
+                "utf-8",
+              );
+            }
+
             for (const repo of CORE_REPOS) {
               const repoUrl = devCfg[repo.repoKey] as string | undefined;
               if (!repoUrl) continue;
-              const targetDir = join(projectDir, repo.slug);
+              const targetDir = join(coreCollectionDir, repo.slug);
               const cloneUrl = ownerToken
                 ? injectTokenIntoCloneUrl(repoUrl, ownerToken.accessToken)
                 : repoUrl;
