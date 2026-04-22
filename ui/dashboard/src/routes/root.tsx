@@ -10,7 +10,7 @@ import { EditorFlyout } from "@/components/EditorFlyout.js";
 import { TerminalFlyout } from "@/components/TerminalFlyout.js";
 import { WhoDBFlyout } from "@/components/WhoDBFlyout.js";
 
-import { cn } from "@/lib/utils";
+import { cn, safeArray } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AppSidebar } from "@/components/AppSidebar.js";
@@ -228,7 +228,7 @@ export default function RootLayout() {
         // un-awaited Promise that serialized as {}), coerce to an empty
         // array so the subsequent WS notification:new handler doesn't
         // crash with "_e is not iterable" on [event.data, ...prev].
-        setNotifications(Array.isArray(items) ? items : []);
+        setNotifications(safeArray<Notification>(items));
         setUnreadCount(typeof count === "number" ? count : 0);
       })
       .catch(() => {});
@@ -430,11 +430,10 @@ export default function RootLayout() {
     }
     if (event.type === "notification:new") {
       setNotifications((prev) => {
-        // Belt-and-braces: if a bad initial fetch planted a non-array
-        // into state, don't crash the whole app — recover with a
-        // clean list seeded from the new event.
-        const base = Array.isArray(prev) ? prev : [];
-        return [event.data, ...base].slice(0, 100);
+        // Belt-and-braces via safeArray: if a bad initial fetch planted
+        // a non-array into state, don't crash the whole app — recover
+        // with a clean list seeded from the new event.
+        return [event.data, ...safeArray<Notification>(prev)].slice(0, 100);
       });
       setUnreadCount((prev) => (typeof prev === "number" ? prev : 0) + 1);
     }
