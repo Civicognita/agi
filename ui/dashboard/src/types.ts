@@ -298,7 +298,8 @@ export type DashboardEvent =
   | { type: "tm:report_ready"; data: WorkerReportReady }
   | { type: "notification:new"; data: Notification }
   | { type: "config:changed"; data: { changedKeys: string[]; timestamp: string } }
-  | { type: "usage:recorded"; data: { source: "chat" | "worker"; projectPath: string; costUsd: number } };
+  | { type: "usage:recorded"; data: { source: "chat" | "worker"; projectPath: string; costUsd: number } }
+  | { type: "dev:core-fork-updated"; data: { slug: string; newSha: string; agentic: boolean } };
 
 /** Structured log entry streamed from the gateway. */
 export interface LogEntry {
@@ -378,7 +379,32 @@ export interface ProjectInfo {
   /** When set, this project is a child of a named collection (e.g. "aionima"
    *  for Dev Mode core forks). Dashboard groups + restricts UX accordingly. */
   coreCollection?: string;
+  /** For core forks only: the CORE_REPOS spec slug ("agi", "prime", "id",
+   *  "marketplace", "mapp-marketplace"). Lets the dashboard call the
+   *  `/api/dev/core-forks/:slug/merge` endpoint without parsing the path. */
+  coreForkSlug?: string;
 }
+
+/** A single row returned by GET /api/dev/core-forks/status. */
+export interface CoreForkStatus {
+  slug: string;
+  displayName: string;
+  branch: string;
+  currentSha: string | null;
+  upstreamSha: string | null;
+  /** Commits on the fork that upstream doesn't have. */
+  ahead: number;
+  /** Commits on upstream that haven't been merged into the fork yet. */
+  behind: number;
+  lastFetchedAt: string;
+  error?: string;
+}
+
+/** Response shape of POST /api/dev/core-forks/:slug/merge. */
+export type CoreForkMergeResult =
+  | { ok: true; ff: boolean; agentic: boolean; newSha: string; pushed: boolean }
+  | { ok: false; conflict: true; agentic: boolean; reviewNeeded?: boolean; files: string[]; aionSummary?: string; reason?: string }
+  | { ok: false; conflict: false; reason: string };
 
 /** Git info for a workspace project, returned by GET /api/projects/info. */
 export interface ProjectGitInfo {

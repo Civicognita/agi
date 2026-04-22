@@ -207,4 +207,50 @@ export class AionMicroManager {
       return "";
     }
   }
+
+  /**
+   * Ask aion-micro to resolve a single merge-conflict file. The caller
+   * passes the raw file contents with `<<<<<<<`/`=======`/`>>>>>>>`
+   * markers intact; aion-micro returns a fully resolved version plus a
+   * confidence label. Callers MUST refuse to commit `low`-confidence
+   * or partially-resolved results.
+   */
+  async resolveMergeConflict(
+    filePath: string,
+    oursLabel: string,
+    theirsLabel: string,
+    conflictText: string,
+  ): Promise<{ resolvedText: string; confidence: "high" | "low"; unresolvedHunks: string[] } | null> {
+    const available = await this.ensureAvailable();
+    if (!available) return null;
+
+    this.resetIdleTimer();
+    try {
+      const res = await fetch(`${this.getBaseUrl()}/v1/resolve-merge-conflict`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          file_path: filePath,
+          ours_label: oursLabel,
+          theirs_label: theirsLabel,
+          conflict_text: conflictText,
+        }),
+        signal: AbortSignal.timeout(90_000),
+      });
+      if (!res.ok) return null;
+      const data = await res.json() as {
+        resolved_text?: string;
+        confidence?: "high" | "low";
+        unresolved_hunks?: string[];
+      };
+      if (typeof data.resolved_text !== "string") return null;
+      return {
+        resolvedText: data.resolved_text,
+        confidence: data.confidence === "high" ? "high" : "low",
+        unresolvedHunks: Array.isArray(data.unresolved_hunks) ? data.unresolved_hunks : [],
+      };
+    } catch {
+      return null;
+    }
+  }
 }

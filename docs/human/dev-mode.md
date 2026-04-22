@@ -93,3 +93,26 @@ Response includes the directories that will be active after restart:
   "note": "Restart required for path changes to take effect"
 }
 ```
+
+## Merging upstream into your fork
+
+Once Dev Mode has provisioned the five owner forks under `~/_projects/_aionima/`, each one shows up in the dashboard Projects list with a restricted UX: only an **Editor** and a **Repository** tab. The Repository tab is specialised for core forks.
+
+The tab surfaces three numbers: the branch the gateway is subscribed to (from `gateway.updateChannel`), the fork's HEAD SHA, and the upstream (Civicognita) HEAD SHA. Two badges — `↑ N ahead`, `↓ N behind` — summarise divergence vs `upstream/<branch>`.
+
+When upstream has moved ahead of your fork, the **Merge upstream → origin** button lights up. Clicking it walks three escalation steps automatically:
+
+1. **Fast-forward.** If your fork is purely behind (no local commits), the merge is a straight `git merge --ff-only`. The result pushes to `origin` so the next `agi upgrade` picks it up.
+2. **Merge commit.** If both sides have commits but no textual conflicts, a three-way merge commit is created with message `Merge upstream/<branch> into <branch>`.
+3. **Agentic resolution.** On a real conflict, the button flips to show the conflicting files and offers **Let Aion-Micro try**. Aion-Micro (a local SmolLM2-135M container) attempts to resolve each hunk with either deterministic rules (identical, whitespace-only, side-deletion) or an `OURS`/`THEIRS`/`UNCLEAR` pick. Only `high`-confidence resolutions get committed; anything else leaves the conflict markers in the working tree so you can finish the merge in the Editor tab.
+
+The **Open PR to upstream** button next to it opens a pre-filled GitHub compare URL (`Civicognita/<repo>/compare/<branch>...<your-login>:<branch>`) in a new tab — the fastest path to submitting work back upstream.
+
+### API reference
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/dev/core-forks/status` | Returns `{ forks: CoreForkStatus[], branch }` for all five core forks. Bounded `git fetch upstream` per repo. |
+| `POST` | `/api/dev/core-forks/:slug/merge` | Body `{ strategy?: "ff-only" \| "agentic" }`. Returns a `CoreForkMergeResult` — either `{ ok: true, ff, agentic, newSha, pushed }` on success, `{ ok: false, conflict: true, files, ... }` on conflict, or `{ ok: false, conflict: false, reason }` on refusal (dirty tree, unknown slug). |
+
+Both routes require the same private-network + admin-role guard as `/api/dev/status`.

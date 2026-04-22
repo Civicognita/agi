@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { DashboardEvent, LogEntry, AionimaConfig, ReportSummary, ReportDetail, HFModelSearchResult } from "./types.js";
+import type { DashboardEvent, LogEntry, AionimaConfig, ReportSummary, ReportDetail, HFModelSearchResult, CoreForkStatus } from "./types.js";
 import {
   fetchOverview, fetchConfig, saveConfig,
   fetchProjects, createProject, updateProject, deleteProject,
@@ -183,9 +183,29 @@ export function useProjectConfigWS() {
         case "config:changed":
           void queryClient.invalidateQueries({ queryKey: ["config"] });
           break;
+        case "dev:core-fork-updated":
+          void queryClient.invalidateQueries({ queryKey: ["dev", "core-forks", "status"] });
+          break;
       }
     }, [queryClient]),
   );
+}
+
+// ---------------------------------------------------------------------------
+// useCoreForkStatus — ahead/behind vs upstream for all five core forks
+// ---------------------------------------------------------------------------
+
+export function useCoreForkStatus() {
+  return useQuery({
+    queryKey: ["dev", "core-forks", "status"],
+    queryFn: async (): Promise<{ forks: CoreForkStatus[]; branch?: string; error?: string }> => {
+      const res = await fetch("/api/dev/core-forks/status");
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+      return (await res.json()) as { forks: CoreForkStatus[]; branch?: string; error?: string };
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
 }
 
 // ---------------------------------------------------------------------------

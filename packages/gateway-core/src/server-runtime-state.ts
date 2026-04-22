@@ -246,6 +246,8 @@ export interface RuntimeStateDeps {
   webhookSecret?: string;
   /** PrimeLoader instance — enables GET /api/prime/status + POST /api/prime/switch. */
   primeLoader?: import("./prime-loader.js").PrimeLoader;
+  /** AionMicroManager — enables agentic merge conflict resolution for core forks. */
+  aionMicro?: import("./aion-micro-manager.js").AionMicroManager;
   /** Resolved prime directory path. */
   primeDir?: string;
   /** Resolved bots directory path. */
@@ -975,14 +977,14 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Projects API only allowed from private network" });
     }
     const projectDirs = deps.workspaceProjects ?? [];
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; description?: string; magicApps?: string[]; coreCollection?: string }[] = [];
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string }[] = [];
 
-    // Expand top-level entries into (fullPath, coreCollection) pairs.
+    // Expand top-level entries into (fullPath, coreCollection, coreForkSlug) triples.
     // A directory that contains a `collection.json` with
     // `type: "aionima-collection"` is treated as a group — we skip the
     // parent and list its children as projects, each flagged with the
     // collection slug so the dashboard can render them as "core".
-    const expanded: Array<{ fullPath: string; name: string; coreCollection?: string }> = [];
+    const expanded: Array<{ fullPath: string; name: string; coreCollection?: string; coreForkSlug?: string }> = [];
     for (const dir of projectDirs) {
       try {
         const entries = readdirSync(dir, { withFileTypes: true });
@@ -1004,6 +1006,7 @@ export async function createGatewayRuntimeState(
                     fullPath: resolvePath(fullPath, ce.name),
                     name: ce.name,
                     coreCollection: "aionima",
+                    coreForkSlug: ce.name,
                   });
                 }
                 continue;
@@ -1020,7 +1023,7 @@ export async function createGatewayRuntimeState(
       } catch { /* directory may not exist */ }
     }
 
-    for (const { fullPath, name: entryName, coreCollection } of expanded) {
+    for (const { fullPath, name: entryName, coreCollection, coreForkSlug } of expanded) {
       try {
         const hasGit = existsSync(join(fullPath, ".git"));
         let tynnToken: string | null = null;
@@ -1062,6 +1065,7 @@ export async function createGatewayRuntimeState(
           description: metaDescription,
           magicApps: metaMagicApps,
           coreCollection,
+          coreForkSlug,
         });
       } catch { /* directory may not exist */ }
     }
@@ -1932,6 +1936,135 @@ export async function createGatewayRuntimeState(
     });
 
     // -----------------------------------------------------------------------
+    // GET /api/dev/core-forks/status — ahead/behind per core fork (tynn #276)
+    // -----------------------------------------------------------------------
+    //
+    // Surfaces each of the five `_aionima/<slug>/` clones with its
+    // ahead/behind count vs `upstream/<branch>`. Branch defaults to
+    // `gateway.updateChannel` — whatever release channel the owner's
+    // gateway subscribes to. Fetch is bounded per-repo so one slow
+    // network link can't stall the whole listing.
+
+    fastify.get("/api/dev/core-forks/status", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+
+      const projectsRoot = (deps.workspaceProjects ?? [])[0];
+      if (!projectsRoot) {
+        return reply.send({ forks: [], error: "no workspace projects dir configured" });
+      }
+      const coreCollectionDir = join(projectsRoot, "_aionima");
+      if (!existsSync(coreCollectionDir)) {
+        return reply.send({ forks: [], error: "core-fork collection not provisioned — enable Dev Mode" });
+      }
+
+      let branch = "main";
+      if (deps.configPath !== undefined) {
+        try {
+          const cfg = JSON.parse(readFileSync(deps.configPath, "utf-8")) as {
+            gateway?: { updateChannel?: string };
+          };
+          if (typeof cfg.gateway?.updateChannel === "string" && cfg.gateway.updateChannel.length > 0) {
+            branch = cfg.gateway.updateChannel;
+          }
+        } catch { /* fall back to main */ }
+      }
+
+      const { getAllCoreForkStatuses } = await import("./dev-mode-merge.js");
+      const forks = await getAllCoreForkStatuses(coreCollectionDir, branch);
+      return reply.send({ forks, branch });
+    });
+
+    // -----------------------------------------------------------------------
+    // POST /api/dev/core-forks/:slug/merge — merge upstream into owner fork
+    // -----------------------------------------------------------------------
+    //
+    // Body `{ strategy?: "ff-only" | "agentic" }`, default `"ff-only"`.
+    // Attempts ff → merge-commit → (if strategy === "agentic") aion-micro
+    // assisted resolution. Successful merges get pushed to origin so the
+    // next `agi upgrade` picks them up; failures return a structured
+    // conflict response that the dashboard can render.
+
+    fastify.post("/api/dev/core-forks/:slug/merge", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+
+      const { slug } = request.params as { slug: string };
+      const { CORE_REPOS: CORE_REPO_SPECS } = await import("./dev-mode-forks.js");
+      const spec = CORE_REPO_SPECS.find((s) => s.slug === slug);
+      if (!spec) {
+        return reply.code(404).send({ error: `unknown core fork: ${slug}` });
+      }
+
+      const projectsRoot = (deps.workspaceProjects ?? [])[0];
+      if (!projectsRoot) {
+        return reply.code(500).send({ error: "no workspace projects dir configured" });
+      }
+      const targetDir = join(projectsRoot, "_aionima", spec.slug);
+      if (!existsSync(targetDir)) {
+        return reply.code(404).send({ error: `fork not provisioned — toggle Dev Mode to provision ${slug}` });
+      }
+
+      let branch = "main";
+      if (deps.configPath !== undefined) {
+        try {
+          const cfg = JSON.parse(readFileSync(deps.configPath, "utf-8")) as {
+            gateway?: { updateChannel?: string };
+          };
+          if (typeof cfg.gateway?.updateChannel === "string" && cfg.gateway.updateChannel.length > 0) {
+            branch = cfg.gateway.updateChannel;
+          }
+        } catch { /* fall back to main */ }
+      }
+
+      const body = (request.body as { strategy?: string } | undefined) ?? {};
+      const strategy: "ff-only" | "agentic" = body.strategy === "agentic" ? "agentic" : "ff-only";
+
+      const { attemptMerge } = await import("./dev-mode-merge.js");
+      const mergeLog = createComponentLogger(deps.logger ?? undefined, "dev-merge");
+      const result = await attemptMerge({
+        targetDir,
+        spec,
+        branch,
+        strategy,
+        aionMicro: strategy === "agentic" ? deps.aionMicro : undefined,
+        log: mergeLog,
+      });
+
+      // Notify the dashboard to re-poll status after a successful merge.
+      if (result.ok) {
+        try {
+          deps.wsRef?.server?.broadcast("dashboard_event", {
+            type: "dev:core-fork-updated" as const,
+            data: {
+              slug: spec.slug,
+              newSha: result.newSha,
+              agentic: result.agentic,
+            },
+          });
+        } catch { /* best-effort */ }
+      }
+
+      return reply.send(result);
+    });
+
+    // -----------------------------------------------------------------------
     // POST /api/dev/switch — toggle dev mode (private network only)
     // -----------------------------------------------------------------------
 
@@ -2061,13 +2194,13 @@ export async function createGatewayRuntimeState(
                 devCfg = (cfgRaw.dev as Record<string, unknown>) ?? {};
               } catch { /* use empty defaults */ }
             }
-            const CORE_REPOS: Array<{ slug: string; name: string; repoKey: string }> = [
-              { slug: "agi", name: "AGI", repoKey: "agiRepo" },
-              { slug: "prime", name: "PRIME", repoKey: "primeRepo" },
-              { slug: "id", name: "ID", repoKey: "idRepo" },
-              { slug: "marketplace", name: "Marketplace", repoKey: "marketplaceRepo" },
-              { slug: "mapp-marketplace", name: "MApp Marketplace", repoKey: "mappMarketplaceRepo" },
-            ];
+            const { CORE_REPOS: CORE_REPO_SPECS, upstreamRemoteUrl: upstreamRemoteUrlFn } = await import("./dev-mode-forks.js");
+            const CORE_REPOS: Array<{ slug: string; name: string; repoKey: string; upstreamUrl: string }> = CORE_REPO_SPECS.map((s) => ({
+              slug: s.slug,
+              name: s.displayName,
+              repoKey: s.configKey,
+              upstreamUrl: upstreamRemoteUrlFn(s),
+            }));
 
             // Fetch the owner's GitHub token once for all clones — Dev Mode
             // forks live under wishborn/*, which may be private. HTTPS with
@@ -2132,6 +2265,23 @@ export async function createGatewayRuntimeState(
                   } catch {
                     /* non-fatal — clone succeeded, token stays in origin */
                   }
+                  // Configure `upstream` remote so the Repository tab can
+                  // compare the fork against the canonical Civicognita repo.
+                  // Without this, `git rev-list upstream/<branch>...HEAD`
+                  // fails and the dashboard has no way to show ahead/behind
+                  // against the release channel.
+                  try {
+                    execFileSync("git", ["remote", "add", "upstream", repo.upstreamUrl], {
+                      cwd: targetDir, stdio: "pipe",
+                    });
+                  } catch {
+                    /* already configured — overwrite below */
+                    try {
+                      execFileSync("git", ["remote", "set-url", "upstream", repo.upstreamUrl], {
+                        cwd: targetDir, stdio: "pipe",
+                      });
+                    } catch { /* ignore */ }
+                  }
                 }
                 // Migrate legacy clones that still have a token-bearing origin
                 // (produced by earlier versions of Dev Mode). Safe no-op if
@@ -2147,6 +2297,30 @@ export async function createGatewayRuntimeState(
                     log.info(`dev: scrubbed token from ${repo.slug} origin URL`);
                   }
                 } catch { /* ignore */ }
+                // Retrofit `upstream` remote on clones made before this
+                // commit. Newer clones set it inside the if-not-exists
+                // block above; pre-existing clones (the five that landed
+                // in earlier v0.4.x iterations) reach this code path
+                // instead and get the remote added on the next toggle.
+                try {
+                  let hasUpstream = false;
+                  try {
+                    execFileSync("git", ["remote", "get-url", "upstream"], {
+                      cwd: targetDir, stdio: "pipe",
+                    });
+                    hasUpstream = true;
+                  } catch { /* missing — add below */ }
+                  if (hasUpstream) {
+                    execFileSync("git", ["remote", "set-url", "upstream", repo.upstreamUrl], {
+                      cwd: targetDir, stdio: "pipe",
+                    });
+                  } else {
+                    execFileSync("git", ["remote", "add", "upstream", repo.upstreamUrl], {
+                      cwd: targetDir, stdio: "pipe",
+                    });
+                    log.info(`dev: added upstream remote for ${repo.slug}`);
+                  }
+                } catch { /* non-fatal — merge UI will surface the error */ }
                 // Write/update project.json with aionima type
                 const metaPath = projectConfigPath(targetDir);
                 mkdirSync(dirname(metaPath), { recursive: true });
@@ -2197,7 +2371,7 @@ export async function createGatewayRuntimeState(
               reason: "passwordless sudo required for dnsmasq / Caddy setup — grant NOPASSWD in /etc/sudoers.d/ to enable test VM provisioning",
             });
           } else try {
-            const vmIpRaw = execSync("multipass info aionima-test --format csv 2>/dev/null", { encoding: "utf-8", stdio: "pipe", timeout: 5000 });
+            const vmIpRaw = execSync("multipass info agi-test --format csv 2>/dev/null", { encoding: "utf-8", stdio: "pipe", timeout: 5000 });
             const vmIpLine = vmIpRaw.trim().split("\n").pop() ?? "";
             const vmIp = vmIpLine.split(",")[2]?.trim();
             if (vmIp && vmIp.length > 0) {
@@ -2208,10 +2382,10 @@ export async function createGatewayRuntimeState(
 
               // Update VM Caddy — add test.ai.on site
               const caddySnippet = `\\ntest.ai.on {\\n  tls internal\\n  reverse_proxy localhost:3100\\n}`;
-              execSync(`multipass exec aionima-test -- sudo bash -c "grep -q 'test.ai.on' /etc/caddy/Caddyfile || echo -e '${caddySnippet}' >> /etc/caddy/Caddyfile && sudo systemctl restart caddy"`, { stdio: "pipe", timeout: 15000 });
+              execSync(`multipass exec agi-test -- sudo bash -c "grep -q 'test.ai.on' /etc/caddy/Caddyfile || echo -e '${caddySnippet}' >> /etc/caddy/Caddyfile && sudo systemctl restart caddy"`, { stdio: "pipe", timeout: 15000 });
 
               // Update VM /etc/hosts
-              execSync(`multipass exec aionima-test -- sudo bash -c "grep -q 'test.ai.on' /etc/hosts || sudo sed -i 's/ai.on/ai.on test.ai.on/' /etc/hosts"`, { stdio: "pipe", timeout: 5000 });
+              execSync(`multipass exec agi-test -- sudo bash -c "grep -q 'test.ai.on' /etc/hosts || sudo sed -i 's/ai.on/ai.on test.ai.on/' /etc/hosts"`, { stdio: "pipe", timeout: 5000 });
 
               log.info("dev: test.ai.on provisioned (VM IP: " + vmIp + ")");
             }
