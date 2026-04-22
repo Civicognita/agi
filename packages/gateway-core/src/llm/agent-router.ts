@@ -31,6 +31,13 @@ export interface RouterConfig {
   maxEscalationsPerTurn: number;
   simpleThresholdTokens: number;
   complexThresholdTokens: number;
+  /** Phase K.1 — "local wins when present" mode. When true AND a
+   *  Lemonade (or ollama) local provider is configured, route every
+   *  turn through local except when `costMode === "max"` (the explicit
+   *  "escalate me to the paid API" hint). Default: true. Set to false
+   *  to preserve pre-K behavior where API providers handle non-local
+   *  cost-modes even if Lemonade is available. */
+  localFirst?: boolean;
 }
 
 export interface RoutingDecision {
@@ -73,9 +80,13 @@ interface RouteTarget {
 
 const ROUTING_TABLE: Record<CostMode, Record<RequestComplexity, RouteTarget>> = {
   local: {
-    simple:   { provider: "ollama", model: "default" },
-    moderate: { provider: "ollama", model: "default" },
-    complex:  { provider: "ollama", model: "default" },
+    // Phase K.1 — prefer Lemonade (NPU/GPU/CPU auto-routing OpenAI-compatible
+    // server) over ollama when both are configured. resolveRoute()
+    // substitutes the actual primary local provider based on what's
+    // registered; `ollama` stays as the fallback sentinel.
+    simple:   { provider: "lemonade", model: "default" },
+    moderate: { provider: "lemonade", model: "default" },
+    complex:  { provider: "lemonade", model: "default" },
   },
   economy: {
     simple:   { provider: "anthropic", model: "claude-haiku-4-5" },
@@ -431,7 +442,13 @@ export class AgentRouter implements LLMProvider {
    * Resolve the target provider/model for a given cost mode and complexity.
    *
    * Priority:
-   *   1. Local mode: use the user's configured local provider or ollama.
+   *   0. **Local wins when present (Phase K.1)**: if `router.localFirst`
+   *      is true AND a Lemonade provider is configured AND costMode is
+   *      not "max" (the explicit escalation hint), route through
+   *      Lemonade regardless of cost-mode. API providers only fire on
+   *      max-mode turns. See RouterConfig.localFirst docs.
+   *   1. Local mode: use the user's configured local provider or ollama
+   *      (now prefers lemonade if configured).
    *   2. Routing table match when the user's default provider aligns.
    *   3. Routing table when the target provider has credentials.
    *   4. Fall back to the user's default provider/model.
@@ -441,9 +458,28 @@ export class AgentRouter implements LLMProvider {
     costMode: CostMode,
     complexity: RequestComplexity,
   ): RouteTarget {
+    // Phase K.1 — local-first gate. Fires when the owner has a
+    // Lemonade runtime installed + enabled and hasn't explicitly
+    // escalated this turn via costMode="max". Effect: simple/moderate/
+    // complex turns all route to Lemonade, which internally auto-picks
+    // NPU > GPU > CPU backend. Default localFirst is true; flip to
+    // false in gateway.json `router.localFirst` to revert to pre-K
+    // behavior if a regression surfaces.
+    const localFirst = config.router.localFirst !== false; // default true
+    const hasLemonade = Boolean(config.providers["lemonade"]);
+    if (localFirst && hasLemonade && costMode !== "max") {
+      return { provider: "lemonade", model: "default" };
+    }
+
     const defaultRoute = ROUTING_TABLE[costMode][complexity];
 
     if (costMode === "local") {
+      // Prefer lemonade when configured — the ROUTING_TABLE entry is
+      // already "lemonade" but an older config without lemonade
+      // configured needs the fallback chain below.
+      if (config.providers["lemonade"]) {
+        return { provider: "lemonade", model: "default" };
+      }
       if (
         config.defaultProvider === "ollama" ||
         config.defaultProvider === "hf-local"
@@ -451,11 +487,12 @@ export class AgentRouter implements LLMProvider {
         return { provider: config.defaultProvider, model: config.defaultModel };
       }
       if (config.providers["ollama"]) {
-        return defaultRoute;
+        return { provider: "ollama", model: "default" };
       }
       throw new Error(
         "Cost mode is 'local' but no local provider is configured. " +
-          "Set your provider to 'ollama' or start a HuggingFace local model.",
+          "Install the agi-lemonade-runtime plugin, set your provider " +
+          "to 'ollama', or start a HuggingFace local model.",
       );
     }
 
