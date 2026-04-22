@@ -224,8 +224,12 @@ export default function RootLayout() {
   useEffect(() => {
     fetchNotifications({ limit: 50 })
       .then(({ notifications: items, unreadCount: count }) => {
-        setNotifications(items);
-        setUnreadCount(count);
+        // Defensive: if the server returned a bad shape (e.g. an
+        // un-awaited Promise that serialized as {}), coerce to an empty
+        // array so the subsequent WS notification:new handler doesn't
+        // crash with "_e is not iterable" on [event.data, ...prev].
+        setNotifications(Array.isArray(items) ? items : []);
+        setUnreadCount(typeof count === "number" ? count : 0);
       })
       .catch(() => {});
   }, []);
@@ -425,8 +429,14 @@ export default function RootLayout() {
       setUpdateCheck(event.data);
     }
     if (event.type === "notification:new") {
-      setNotifications((prev) => [event.data, ...prev].slice(0, 100));
-      setUnreadCount((prev) => prev + 1);
+      setNotifications((prev) => {
+        // Belt-and-braces: if a bad initial fetch planted a non-array
+        // into state, don't crash the whole app — recover with a
+        // clean list seeded from the new event.
+        const base = Array.isArray(prev) ? prev : [];
+        return [event.data, ...base].slice(0, 100);
+      });
+      setUnreadCount((prev) => (typeof prev === "number" ? prev : 0) + 1);
     }
     if (event.type === "usage:recorded") {
       // Refresh provider balances after each completion so alerts stay current
