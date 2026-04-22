@@ -62,13 +62,17 @@ export const DEFAULT_MARKER_PATH = join(homedir(), ".agi", "shutdown-state.json"
 // External-dep defaults
 // ---------------------------------------------------------------------------
 
-// PostgreSQL is managed by the agi-postgres plugin (shared container system).
-// We no longer rely on a hardcoded container name — we check the port instead.
-// Kept as a deprecated alias for backward compatibility with existing shutdown
-// markers that may still reference this name.
+// PostgreSQL and Local-ID both run as rootless Podman containers on the
+// shared `aionima` network. We don't rely on a hardcoded service unit any
+// more — we check the published loopback port and, if not responding, try
+// to start the known container by name. Constants are kept as fallback
+// names for shutdown markers written before the containerization.
 export const ID_POSTGRES_CONTAINER = "agi-postgres-17";
+export const ID_SERVICE_CONTAINER = "agi-local-id";
+/** Legacy host-process unit name — retired to `.retired-to-container`. */
 export const ID_SERVICE_UNIT = "agi-id.service";
 export const ID_POSTGRES_PORT = 5432;
+export const ID_SERVICE_PORT = 3200;
 
 // ---------------------------------------------------------------------------
 // Read / write / delete marker
@@ -321,14 +325,43 @@ async function reconcileExternalsByName(
     }
   }
 
-  // ---- ID systemd unit ----
+  // ---- Local-ID container ----
+  // The identity service used to run as a host-level systemd unit
+  // (`agi-id.service`). It's now a rootless Podman container on the
+  // `aionima` network, published loopback-only. Probe the port first —
+  // if it's responding, nothing to do. Otherwise start the known
+  // container by name. The legacy `systemctl` path is a last-resort
+  // fallback for hosts still mid-migration.
   let idAction: "none" | "started" | "failed" = "none";
-  const idActive = systemctlIsActive(serviceName);
-  if (idActive) {
+  let idState = "unknown";
+
+  const idPortUp = await probeTcp("127.0.0.1", ID_SERVICE_PORT, 2_000);
+  if (idPortUp) {
     idAction = "none";
+    idState = "active";
   } else {
-    log.info(`[boot-recovery] ${serviceName} not active — starting`);
-    idAction = systemctlStart(serviceName, log) ? "started" : "failed";
+    const containerState = podmanContainerState(ID_SERVICE_CONTAINER);
+    if (containerState === "running") {
+      idState = "running-but-port-closed";
+      idAction = "failed";
+      log.warn(`[boot-recovery] ${ID_SERVICE_CONTAINER} is running but port ${String(ID_SERVICE_PORT)} isn't responding`);
+    } else if (containerState === "exited" || containerState === "created") {
+      log.info(`[boot-recovery] ${ID_SERVICE_CONTAINER} container ${containerState} — starting`);
+      idAction = podmanStart(ID_SERVICE_CONTAINER, log) ? "started" : "failed";
+      idState = containerState;
+    } else {
+      // No container yet — last-resort fallback to legacy systemd unit
+      // for hosts that haven't gone through the containerization upgrade.
+      const legacyActive = systemctlIsActive(serviceName);
+      if (legacyActive) {
+        idAction = "none";
+        idState = "active-legacy";
+      } else {
+        log.info(`[boot-recovery] no container or active unit for Local-ID — trying legacy unit ${serviceName}`);
+        idAction = systemctlStart(serviceName, log) ? "started" : "failed";
+        idState = "legacy";
+      }
+    }
   }
 
   // ---- Wait for Postgres to accept connections ----
@@ -336,7 +369,7 @@ async function reconcileExternalsByName(
 
   return {
     postgres: { action: pgAction, state: pgState },
-    idService: { action: idAction, state: idActive ? "active" : "inactive" },
+    idService: { action: idAction, state: idState },
     postgresReady: pgReady,
   };
 }

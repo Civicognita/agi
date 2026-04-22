@@ -260,31 +260,48 @@ ID_LOCAL_ENABLED=$(node -e "
 if [ "$ID_LOCAL_ENABLED" = "1" ] && [ -d "$ID_DIR" ]; then
   emit "build-id" "start"
 
-  # Install dependencies
-  if (cd "$ID_DIR" && npm install 2>&1); then
-    # Build TypeScript
-    if (cd "$ID_DIR" && npm run build 2>&1); then
-      # Run migrations (requires .env to be sourced)
-      if [ -f "$ID_DIR/.env" ]; then
-        (cd "$ID_DIR" && set -a && source .env && set +a && npx drizzle-kit migrate 2>&1) || \
-          emit "build-id" "warn" "ID migration failed (non-fatal)"
-      fi
-      emit "build-id" "done" "Local ID service built and migrated"
+  # One-time retirement of the legacy host-process systemd unit. Local-ID now
+  # runs as a rootless Podman container on the `aionima` network; the old
+  # agi-id.service is preserved with a `.retired-to-container` suffix as a
+  # rollback breadcrumb but is no longer active.
+  if [ -f /etc/systemd/system/agi-id.service ]; then
+    emit "migrate" "start" "Retiring legacy agi-id.service (now containerized)"
+    sudo systemctl stop agi-id 2>/dev/null || true
+    sudo systemctl disable agi-id 2>/dev/null || true
+    sudo mv /etc/systemd/system/agi-id.service /etc/systemd/system/agi-id.service.retired-to-container
+    sudo systemctl daemon-reload
+    # Also kill any orphan node process still bound to 3200 (e.g. from a
+    # pre-retirement run that was adopted by PID 1).
+    orphan_pid="$(ss -tlnp 2>/dev/null | awk '/:3200/ {print}' | grep -oP 'pid=\K[0-9]+' | head -1)"
+    if [ -n "$orphan_pid" ]; then
+      kill "$orphan_pid" 2>/dev/null || true
+    fi
+  fi
 
-      # Restart ID service only if version changed
-      id_version_after="$(cd "$ID_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
-      if [ "$id_version_before" != "$id_version_after" ]; then
-        if systemctl is-active --quiet agi-id 2>/dev/null; then
-          emit "restart-id" "start" "ID version changed: $id_version_before → $id_version_after"
-          sudo systemctl restart agi-id
-          emit "restart-id" "done" "Local ID service restarted"
-        fi
+  # Build the Local-ID container image from /opt/agi-local-id. The Dockerfile
+  # there bundles the committed schema copy, runs npm ci, tsc, and drizzle-kit
+  # generate. No host-side install/build pass is needed any more.
+  id_image_tag="localhost/agi-local-id:latest"
+  id_version_after="$(cd "$ID_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
+  if (cd "$ID_DIR" && podman build -t "$id_image_tag" -t "localhost/agi-local-id:$id_version_after" . 2>&1); then
+    emit "build-id" "done" "Local ID image built: $id_image_tag ($id_version_after)"
+
+    # Restart the container only if the version changed.
+    if [ "$id_version_before" != "$id_version_after" ]; then
+      emit "restart-id" "start" "ID version changed: $id_version_before → $id_version_after"
+      # systemd user unit (generated via `podman generate systemd --new`)
+      # manages lifecycle. If present, use it; fall back to direct podman
+      # restart for hosts that haven't run install.sh's systemd-unit step.
+      if systemctl --user list-unit-files agi-local-id.service 2>/dev/null | grep -q agi-local-id; then
+        systemctl --user restart agi-local-id 2>&1 | head -3 || true
+      else
+        podman restart agi-local-id 2>/dev/null || \
+          emit "restart-id" "warn" "agi-local-id container not running yet — run install.sh to wire systemd user unit"
       fi
-    else
-      emit "build-id" "error" "ID service build failed"
+      emit "restart-id" "done" "Local ID container restarted"
     fi
   else
-    emit "build-id" "error" "ID service npm install failed"
+    emit "build-id" "error" "Local ID image build failed"
   fi
 fi
 

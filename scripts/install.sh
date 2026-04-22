@@ -319,29 +319,59 @@ IDENVEOF
     echo "         and add the connection string to $ID_ENV, then restart agi-id."
   fi
 
-  # 9c. Install deps + build
-  echo "  Building ID service..."
-  run_as "cd '$ID_DIR' && npm install --omit=dev 2>&1 | tail -1"
-  run_as "cd '$ID_DIR' && npm run build 2>&1 | tail -1"
+  # 9c. Build the Local-ID container image. The Dockerfile there runs
+  # npm ci + tsc + drizzle-kit generate entirely inside the build stage;
+  # no host-side install is needed. Only AGI itself runs as a host process;
+  # everything else runs in a rootless Podman container.
+  echo "  Building Local-ID container image..."
+  run_as "cd '$ID_DIR' && podman build -t localhost/agi-local-id:latest . 2>&1 | tail -3"
 
-  # 9d. Run database migrations (safe no-op if already applied)
-  if grep -q "^DATABASE_URL=" "$ID_ENV"; then
-    echo "  Running ID database migrations..."
-    run_as "cd '$ID_DIR' && set -a && source .env && set +a && npx drizzle-kit migrate 2>&1 | tail -3" || \
-      echo "  [WARN] Migrations skipped or failed — see logs"
-  fi
+  # 9d. Ensure the `aionima` container network exists (shared with
+  # agi-postgres-17 so the services can reach each other by name).
+  run_as "podman network inspect aionima >/dev/null 2>&1 || podman network create aionima"
 
-  # 9e. Install + enable systemd unit
-  ID_SERVICE_FILE="$INSTALL_DIR/scripts/agi-id.service"
-  ID_DEST_SERVICE="/etc/systemd/system/agi-id.service"
-  if [ -f "$ID_SERVICE_FILE" ]; then
-    sed "s/%AIONIMA_USER%/$AIONIMA_USER/g" "$ID_SERVICE_FILE" > "$ID_DEST_SERVICE"
-    systemctl daemon-reload
-    systemctl enable agi-id 2>/dev/null || true
-    echo "  [OK] agi-id.service installed and enabled"
-  else
-    echo "  [WARN] $ID_SERVICE_FILE missing — skipping systemd unit install"
-  fi
+  # 9e. Enable linger so user-level systemd services survive logout.
+  loginctl enable-linger "$AIONIMA_USER" 2>/dev/null || true
+
+  # 9f. Generate and install the user-level systemd unit that manages the
+  # container. `podman generate systemd --new` produces a unit that
+  # creates/destroys the container on start/stop (rather than one that
+  # expects a pre-existing container). The container's DATABASE_URL is
+  # rewritten to reach Postgres via the container network name.
+  ID_USER_SYSTEMD_DIR="/home/$AIONIMA_USER/.config/systemd/user"
+  run_as "mkdir -p '$ID_USER_SYSTEMD_DIR'"
+
+  # Seed/refresh the container so we can generate a unit from it. If it
+  # already exists, recreate against the latest image.
+  run_as "podman rm -f agi-local-id 2>/dev/null || true"
+
+  # Patch DATABASE_URL for the container — localhost in .env refers to the
+  # host, but a container on the aionima network reaches Postgres by
+  # service name `agi-postgres-17`.
+  ID_ENV_CONTAINER="/tmp/agi-id.container.env"
+  sed 's|@localhost:5432/|@agi-postgres-17:5432/|' "$ID_ENV" > "$ID_ENV_CONTAINER"
+  chmod 600 "$ID_ENV_CONTAINER"
+  chown "$AIONIMA_USER:$AIONIMA_USER" "$ID_ENV_CONTAINER"
+
+  run_as "podman run -d \
+    --name agi-local-id \
+    --restart=always \
+    --network=aionima \
+    --env-file='$ID_ENV_CONTAINER' \
+    -v /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt:/etc/ssl/certs/caddy-local-root.crt:ro \
+    -e NODE_EXTRA_CA_CERTS=/etc/ssl/certs/caddy-local-root.crt \
+    -p 127.0.0.1:3200:3200 \
+    localhost/agi-local-id:latest 2>&1" || \
+      echo "  [WARN] podman run failed; retry via dashboard after agi-postgres-17 is up"
+
+  # Now generate the systemd user unit from the running container.
+  run_as "podman generate systemd --new --name agi-local-id --restart-policy=always > '$ID_USER_SYSTEMD_DIR/agi-local-id.service'" || \
+    echo "  [WARN] podman generate systemd failed — container will still run via --restart=always"
+  run_as "systemctl --user daemon-reload" || true
+  run_as "systemctl --user enable agi-local-id.service 2>/dev/null || true"
+  echo "  [OK] agi-local-id container running, user systemd unit enabled"
+
+  rm -f "$ID_ENV_CONTAINER"
 fi
 
 # ---------------------------------------------------------------------------
