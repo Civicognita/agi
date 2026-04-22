@@ -39,7 +39,22 @@ interface RouteMatch {
 // ---------------------------------------------------------------------------
 
 function json(res: ServerResponse, data: unknown, status = 200): void {
-  const body = JSON.stringify(data);
+  // Idempotent guard: if headers were already sent (e.g. a previous
+  // response finished and then a catch handler tried to also respond),
+  // silently skip. Without this guard, a double-send crashes the whole
+  // Node process with ERR_HTTP_HEADERS_SENT and systemd restarts the
+  // gateway. That's how one bad payload was crash-looping the service.
+  if (res.headersSent || res.writableEnded) return;
+  let body: string;
+  try {
+    body = JSON.stringify(data);
+  } catch {
+    // JSON.stringify can throw on BigInts / circular refs. Fall back to
+    // a minimal error body rather than letting the throw propagate and
+    // drop the connection — the client at least gets *something*.
+    body = '{"error":"serialization_failed"}';
+    status = 500;
+  }
   res.writeHead(status, {
     "Content-Type": "application/json",
     "Content-Length": Buffer.byteLength(body),
