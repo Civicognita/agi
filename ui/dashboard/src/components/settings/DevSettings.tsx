@@ -91,15 +91,16 @@ export function DevSettings({ config, update }: {
       .finally(() => setPrimeLoading(false));
   }, []);
 
-  // Cleanup GitHub poll on unmount
+  // Cleanup GitHub poll on unmount. Ref holds a setTimeout handle now (we
+  // switched from setInterval so we can honor GitHub's slow_down cadence).
   useEffect(() => {
     return () => {
-      if (githubPollRef.current) clearInterval(githubPollRef.current);
+      if (githubPollRef.current) clearTimeout(githubPollRef.current);
     };
   }, []);
 
   const handleGithubConnect = useCallback(async () => {
-    if (githubPollRef.current) clearInterval(githubPollRef.current);
+    if (githubPollRef.current) clearTimeout(githubPollRef.current);
     setGithubFlow({ status: "connecting" });
     try {
       const data = await startDeviceFlow("github");
@@ -109,28 +110,44 @@ export function DevSettings({ config, update }: {
         verificationUri: data.verificationUri,
       });
       const dc = data.deviceCode;
-      githubPollRef.current = setInterval(() => {
-        void (async () => {
-          try {
-            const result = await pollDeviceFlow(dc);
-            if (result.status === "completed") {
-              if (githubPollRef.current) clearInterval(githubPollRef.current);
-              setGithubFlow({ status: "connected", accountLabel: result.accountLabel });
-              // Re-fetch dev status so the toggle becomes enabled
-              const updated = await fetchDevStatus();
-              setDevStatus(updated);
-            } else if (result.status === "expired" || result.status === "error") {
-              if (githubPollRef.current) clearInterval(githubPollRef.current);
-              setGithubFlow({
-                status: "error",
-                error: result.error ?? "Authorization expired. Please try again.",
-              });
+
+      // GitHub's device flow REQUIRES honoring the server-returned `interval`
+      // — polling faster than the interval causes GitHub to return `slow_down`
+      // which compounds (each slow_down grows the interval). Previously a
+      // hard-coded 3s interval forced us into an ever-growing slow_down spiral
+      // and the flow would stall "waiting for authorization" even after the
+      // user granted on github.com. We drive the poll via setTimeout so we
+      // can pick up the interval the server tells us after each response.
+      const scheduleNextPoll = (delaySec: number) => {
+        githubPollRef.current = setTimeout(() => {
+          void (async () => {
+            try {
+              const result = await pollDeviceFlow(dc);
+              if (result.status === "completed") {
+                setGithubFlow({ status: "connected", accountLabel: result.accountLabel });
+                // Re-fetch dev status so the toggle becomes enabled
+                const updated = await fetchDevStatus();
+                setDevStatus(updated);
+                return; // stop polling
+              } else if (result.status === "expired" || result.status === "error") {
+                setGithubFlow({
+                  status: "error",
+                  error: result.error ?? "Authorization expired. Please try again.",
+                });
+                return; // stop polling
+              }
+              // Still pending — schedule next poll at server-advised interval
+              // (or fall back to 5s if the server didn't tell us).
+              scheduleNextPoll(result.interval ?? 5);
+            } catch {
+              // Network blip — retry in a moment, don't give up
+              scheduleNextPoll(5);
             }
-          } catch {
-            // Keep polling on network errors
-          }
-        })();
-      }, 3000);
+          })();
+        }, Math.max(1, delaySec) * 1000) as unknown as ReturnType<typeof setInterval>;
+      };
+
+      scheduleNextPoll(data.interval ?? 5);
     } catch (err) {
       setGithubFlow({
         status: "error",

@@ -2357,7 +2357,14 @@ async function getIdServiceUrl(): Promise<string> {
 export async function startDeviceFlow(
   provider: string,
   role = "owner",
-): Promise<{ deviceCode: string; userCode: string; verificationUri: string; expiresIn: number }> {
+): Promise<{
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  expiresIn: number;
+  /** Seconds the client should wait between polls (GitHub's minimum cadence). */
+  interval?: number;
+}> {
   const idUrl = await getIdServiceUrl();
   const res = await fetch(`${idUrl}/api/auth/device-flow/start`, {
     method: "POST",
@@ -2368,19 +2375,27 @@ export async function startDeviceFlow(
     const err = await res.json().catch(() => ({ error: "Failed" })) as { error?: string };
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
-  return res.json() as Promise<{ deviceCode: string; userCode: string; verificationUri: string; expiresIn: number }>;
+  return res.json() as Promise<{
+    deviceCode: string;
+    userCode: string;
+    verificationUri: string;
+    expiresIn: number;
+    interval?: number;
+  }>;
 }
 
 export async function pollDeviceFlow(deviceCode: string): Promise<{
   status: string;
   provider?: string;
   accountLabel?: string;
+  /** Seconds to wait before the next poll — honor this to avoid GitHub slow_down. */
+  interval?: number;
   error?: string;
 }> {
   const idUrl = await getIdServiceUrl();
   const res = await fetch(`${idUrl}/api/auth/device-flow/poll?deviceCode=${encodeURIComponent(deviceCode)}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<{ status: string; provider?: string; accountLabel?: string; error?: string }>;
+  return res.json() as Promise<{ status: string; provider?: string; accountLabel?: string; interval?: number; error?: string }>;
 }
 
 export async function fetchDeviceFlowStatus(): Promise<
