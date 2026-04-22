@@ -30,6 +30,7 @@ import type { DashboardQueries } from "./dashboard-queries.js";
 import { GatewayWebSocketServer } from "./ws-server.js";
 import { handlePlanRequest } from "./plan-api.js";
 import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model";
+import { fetchOwnerToken, injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 import { appRouter, type AppContext } from "@agi/trpc-api";
@@ -1906,15 +1907,26 @@ export async function createGatewayRuntimeState(
               { slug: "mapp-marketplace", name: "MApp Marketplace", repoKey: "mappMarketplaceRepo" },
             ];
 
+            // Fetch the owner's GitHub token once for all clones — Dev Mode
+            // forks live under wishborn/*, which may be private. HTTPS with
+            // x-access-token injects credentials; unauthenticated fallback
+            // works for public forks but fails with 404 on private ones.
+            const ownerToken = await fetchOwnerToken({ provider: "github", role: "owner" });
+
             for (const repo of CORE_REPOS) {
               const repoUrl = devCfg[repo.repoKey] as string | undefined;
               if (!repoUrl) continue;
               const targetDir = join(projectDir, repo.slug);
+              const cloneUrl = ownerToken
+                ? injectTokenIntoCloneUrl(repoUrl, ownerToken.accessToken)
+                : repoUrl;
               try {
-                // Clone if directory doesn't exist
+                // Clone if directory doesn't exist. Use execFileSync (no
+                // shell) so the authenticated URL isn't logged / eligible
+                // for accidental shell interpolation.
                 if (!existsSync(targetDir)) {
                   mkdirSync(targetDir, { recursive: true });
-                  execSync(`git clone ${JSON.stringify(repoUrl)} .`, {
+                  execFileSync("git", ["clone", cloneUrl, "."], {
                     cwd: targetDir, stdio: "pipe", timeout: 120_000,
                   });
                 }
