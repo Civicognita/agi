@@ -37,9 +37,19 @@ import type {
 function rowToPluginEntry(
   row: typeof pluginsMarketplace.$inferSelect,
 ): MarketplacePluginEntry & { sourceRef: string } {
+  // The `source` column actually holds the trust-tier label
+  // ("official" / "third-party"), NOT the install-path source. The
+  // real install source (relative path like "./plugins/plugin-X" or
+  // a GitHubSource object) lives in the `manifest` JSONB column.
+  // Without reading from manifest, installer.ts gets row.sourceRef
+  // (the GitHub ref) as the "source" and tries to find it as a
+  // literal subdirectory, which fails with
+  // "Subdirectory 'wishborn/agi-marketplace#dev' not found".
+  const manifestSource = (row.manifest as Record<string, unknown> | null)?.["source"];
+  const resolvedSource = (manifestSource ?? row.sourceRef) as MarketplacePluginEntry["source"];
   return {
     name: row.name,
-    source: row.sourceRef as MarketplacePluginEntry["source"],
+    source: resolvedSource,
     description: row.description ?? undefined,
     type: (row.type as MarketplaceItemType) ?? "plugin",
     version: row.version,
