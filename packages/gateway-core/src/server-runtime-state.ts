@@ -2693,19 +2693,19 @@ export async function createGatewayRuntimeState(
     fastify.get("/api/usage/summary", async (request, reply) => {
       if (!isPrivateNetwork(getClientIp(request.raw))) return reply.code(403).send({ error: "Private network only" });
       const days = Number((request.query as { days?: string }).days) || 30;
-      return reply.send(uStore.getSummary(days));
+      return reply.send(await uStore.getSummary(days));
     });
 
     fastify.get("/api/usage/by-project", async (request, reply) => {
       if (!isPrivateNetwork(getClientIp(request.raw))) return reply.code(403).send({ error: "Private network only" });
       const days = Number((request.query as { days?: string }).days) || 30;
-      return reply.send({ projects: uStore.getByProject(days) });
+      return reply.send({ projects: await uStore.getByProject(days) });
     });
 
     fastify.get("/api/usage/by-project-source", async (request, reply) => {
       if (!isPrivateNetwork(getClientIp(request.raw))) return reply.code(403).send({ error: "Private network only" });
       const days = Number((request.query as { days?: string }).days) || 30;
-      return reply.send({ projects: uStore.getByProjectAndSource(days) });
+      return reply.send({ projects: await uStore.getByProjectAndSource(days) });
     });
 
     fastify.get("/api/usage/history", async (request, reply) => {
@@ -2713,7 +2713,7 @@ export async function createGatewayRuntimeState(
       const query = request.query as { days?: string; bucket?: string };
       const days = Number(query.days) || 30;
       const bucket = query.bucket === "hour" ? "hour" : "day";
-      return reply.send({ history: uStore.getHistory(days, bucket) });
+      return reply.send({ history: await uStore.getHistory(days, bucket) });
     });
   }
 
@@ -5314,7 +5314,7 @@ export async function createGatewayRuntimeState(
     fastify.get("/api/magic-apps/instances", async (_request, reply) => {
       // TODO: derive userEntityId from auth session; for now use owner
       const userId = deps.ownerEntityId ?? "#E0";
-      return reply.send({ instances: store.listInstances(userId) });
+      return reply.send({ instances: await store.listInstances(userId) });
     });
 
     // POST /api/magic-apps/instances — open a new instance (requires projectPath)
