@@ -23,12 +23,14 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       selfDestroying: false,
-      // cacheId namespaces the workbox precache so upgrading the AGI version
-      // forces the browser to adopt the new SW and evict any stale cache
-      // partitions, even for static assets whose content hashes haven't changed.
-      cacheId: `agi-${AGI_VERSION}`,
       includeAssets: ["favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png", "logo.png", "logo-small.png"],
       workbox: {
+        // cacheId namespaces all workbox cache names with the AGI version.
+        // When the version bumps (every code-change commit), the precache
+        // partition name changes from e.g. "workbox-precache-v2" to
+        // "agi-0.4.44-precache-v2", so cleanupOutdatedCaches evicts the old
+        // partition even for static assets whose content hashes haven't changed.
+        cacheId: `agi-${AGI_VERSION}`,
         // Never precache index.html — it must always come from the network
         // so it references the latest hashed JS/CSS filenames after an upgrade.
         // JS/CSS files have content hashes so cached versions are naturally unique.

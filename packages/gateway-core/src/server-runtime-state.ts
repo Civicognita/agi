@@ -1806,20 +1806,40 @@ export async function createGatewayRuntimeState(
 
       const primeEntries = deps.primeLoader !== undefined ? deps.primeLoader.index() : 0;
 
-      // Check if GitHub is authenticated by querying Local-ID (identity lives there, not AGI)
+      // Query Local-ID for the GitHub connection's state so the dashboard
+      // can surface account label + token expiry (tynn #254). Local-ID
+      // lives at id.ai.on and is the canonical identity store; AGI just
+      // reads through it.
       let githubAuthenticated = false;
+      let githubAccount: string | null = null;
+      let githubTokenExpiresAt: string | null = null;
+      let githubTokenScopes: string | null = null;
       try {
         const idUrl = resolveIdUrl(deps.configPath);
         const idRes = await fetch(`${idUrl}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
         if (idRes.ok) {
-          const conns = await idRes.json() as Array<{ provider: string }>;
-          githubAuthenticated = conns.some((c) => c.provider === "github");
+          const conns = (await idRes.json()) as Array<{
+            provider: string;
+            accountLabel?: string | null;
+            tokenExpiresAt?: string | null;
+            scopes?: string | null;
+          }>;
+          const gh = conns.find((c) => c.provider === "github");
+          if (gh) {
+            githubAuthenticated = true;
+            githubAccount = gh.accountLabel ?? null;
+            githubTokenExpiresAt = gh.tokenExpiresAt ?? null;
+            githubTokenScopes = gh.scopes ?? null;
+          }
         }
       } catch { /* ID service unreachable — treat as not authenticated */ }
 
       return reply.send({
         enabled,
         githubAuthenticated,
+        githubAccount,
+        githubTokenExpiresAt,
+        githubTokenScopes,
         agi: { remote: getRemote(workspaceRoot) },
         prime: { remote: getRemote(primeDir), branch: getBranch(primeDir), entries: primeEntries },
         bots: { remote: getRemote(botsDir), branch: getBranch(botsDir) },

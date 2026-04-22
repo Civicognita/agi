@@ -798,6 +798,12 @@ export interface PrimeStatus {
 export interface DevStatus {
   enabled: boolean;
   githubAuthenticated: boolean;
+  /** GitHub login/handle of the owner's connected account, if any. */
+  githubAccount?: string | null;
+  /** ISO timestamp the stored OAuth token expires at, or null if non-expiring. */
+  githubTokenExpiresAt?: string | null;
+  /** Space-delimited scopes granted to the stored token. */
+  githubTokenScopes?: string | null;
   agi: { remote: string };
   prime: { remote: string; branch: string; entries: number };
   bots?: { remote: string; branch: string };
