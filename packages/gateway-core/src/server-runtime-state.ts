@@ -2108,7 +2108,36 @@ export async function createGatewayRuntimeState(
                   execFileSync("git", ["clone", cloneUrl, "."], {
                     cwd: targetDir, stdio: "pipe", timeout: 120_000,
                   });
+                  // SECURITY: the clone URL embedded the OAuth token as
+                  // `https://x-access-token:TOKEN@github.com/...`. git
+                  // persists whatever we clone from as `origin`. Leaving
+                  // the token in `.git/config` means it shows up in any
+                  // `git remote -v` and any API that exposes the remote.
+                  // Rewrite origin to the clean fork URL (no credentials).
+                  // Future fetch/push will use `GIT_ASKPASS`/credential
+                  // helpers, NOT an embedded URL.
+                  try {
+                    execFileSync("git", ["remote", "set-url", "origin", repoUrl], {
+                      cwd: targetDir, stdio: "pipe",
+                    });
+                  } catch {
+                    /* non-fatal — clone succeeded, token stays in origin */
+                  }
                 }
+                // Migrate legacy clones that still have a token-bearing origin
+                // (produced by earlier versions of Dev Mode). Safe no-op if
+                // the URL is already clean.
+                try {
+                  const current = execFileSync("git", ["remote", "get-url", "origin"], {
+                    cwd: targetDir, stdio: "pipe",
+                  }).toString().trim();
+                  if (current.includes("x-access-token:") || /:gh[a-z]_[A-Za-z0-9]+@/.test(current)) {
+                    execFileSync("git", ["remote", "set-url", "origin", repoUrl], {
+                      cwd: targetDir, stdio: "pipe",
+                    });
+                    log.info(`dev: scrubbed token from ${repo.slug} origin URL`);
+                  }
+                } catch { /* ignore */ }
                 // Write/update project.json with aionima type
                 const metaPath = projectConfigPath(targetDir);
                 mkdirSync(dirname(metaPath), { recursive: true });
