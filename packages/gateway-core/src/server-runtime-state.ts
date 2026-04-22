@@ -1884,18 +1884,41 @@ export async function createGatewayRuntimeState(
         }
       } catch { /* ID service unreachable — treat as not authenticated */ }
 
+      // When Dev Mode is ON, the authoritative clones live under the
+      // `_aionima/` core collection in the projects workspace — NOT the
+      // /opt/* deploy dirs. Prefer the collection paths if they exist,
+      // fall back to the legacy dirs. Without this preference, the
+      // Repository Status panel rendered stale Civicognita remotes from
+      // the /opt/ deploys even after Dev Mode successfully cloned the
+      // forks into _aionima/.
+      const projectsRoot = (deps.workspaceProjects ?? [])[0];
+      const coreCollectionRoot = projectsRoot ? join(projectsRoot, "_aionima") : null;
+      const pickDir = (legacy: string, slug: string): string => {
+        if (enabled && coreCollectionRoot) {
+          const corePath = join(coreCollectionRoot, slug);
+          if (existsSync(join(corePath, ".git"))) return corePath;
+        }
+        return legacy;
+      };
+
+      const agiDir = pickDir(workspaceRoot, "agi");
+      const effectivePrimeDir = pickDir(primeDir, "prime");
+      const effectiveIdDir = pickDir(idDir, "id");
+      const effectiveMarketplaceDir = pickDir(marketplaceDir, "marketplace");
+      const effectiveMappMarketplaceDir = pickDir(mappMarketplaceDir, "mapp-marketplace");
+
       return reply.send({
         enabled,
         githubAuthenticated,
         githubAccount,
         githubTokenExpiresAt,
         githubTokenScopes,
-        agi: { remote: getRemote(workspaceRoot) },
-        prime: { remote: getRemote(primeDir), branch: getBranch(primeDir), entries: primeEntries },
+        agi: { remote: getRemote(agiDir), branch: getBranch(agiDir) },
+        prime: { remote: getRemote(effectivePrimeDir), branch: getBranch(effectivePrimeDir), entries: primeEntries },
         bots: { remote: getRemote(botsDir), branch: getBranch(botsDir) },
-        id: { remote: getRemote(idDir), branch: getBranch(idDir) },
-        marketplace: { remote: getRemote(marketplaceDir), branch: getBranch(marketplaceDir) },
-        mappMarketplace: { remote: getRemote(mappMarketplaceDir), branch: getBranch(mappMarketplaceDir) },
+        id: { remote: getRemote(effectiveIdDir), branch: getBranch(effectiveIdDir) },
+        marketplace: { remote: getRemote(effectiveMarketplaceDir), branch: getBranch(effectiveMarketplaceDir) },
+        mappMarketplace: { remote: getRemote(effectiveMappMarketplaceDir), branch: getBranch(effectiveMappMarketplaceDir) },
       });
     });
 
