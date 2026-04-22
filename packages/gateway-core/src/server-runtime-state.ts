@@ -1976,8 +1976,34 @@ export async function createGatewayRuntimeState(
             }
           }
 
-          // Provision test.ai.on for Playwright UI testing (best-effort)
-          try {
+          // Provision test.ai.on for Playwright UI testing (best-effort).
+          // Precondition checks (tynn #256) — skip cleanly with a clear
+          // provisionFailure entry rather than silently crashing if
+          // multipass or sudo isn't available.
+          const haveMultipass = (() => {
+            try {
+              execFileSync("which", ["multipass"], { stdio: "pipe", timeout: 3000 });
+              return true;
+            } catch { return false; }
+          })();
+          const haveSudo = (() => {
+            try {
+              execFileSync("sudo", ["-n", "true"], { stdio: "pipe", timeout: 3000 });
+              return true;
+            } catch { return false; }
+          })();
+
+          if (!haveMultipass) {
+            provisionFailures.push({
+              slug: "test-vm",
+              reason: "multipass not installed — run `sudo snap install multipass` to enable test VM provisioning",
+            });
+          } else if (!haveSudo) {
+            provisionFailures.push({
+              slug: "test-vm",
+              reason: "passwordless sudo required for dnsmasq / Caddy setup — grant NOPASSWD in /etc/sudoers.d/ to enable test VM provisioning",
+            });
+          } else try {
             const vmIpRaw = execSync("multipass info aionima-test --format csv 2>/dev/null", { encoding: "utf-8", stdio: "pipe", timeout: 5000 });
             const vmIpLine = vmIpRaw.trim().split("\n").pop() ?? "";
             const vmIp = vmIpLine.split(",")[2]?.trim();
@@ -1997,7 +2023,9 @@ export async function createGatewayRuntimeState(
               log.info("dev: test.ai.on provisioned (VM IP: " + vmIp + ")");
             }
           } catch (testVmErr) {
-            log.warn(`dev: test.ai.on provisioning skipped — ${testVmErr instanceof Error ? testVmErr.message : String(testVmErr)}`);
+            const reason = testVmErr instanceof Error ? testVmErr.message : String(testVmErr);
+            log.warn(`dev: test.ai.on provisioning failed — ${reason}`);
+            provisionFailures.push({ slug: "test-vm", reason });
           }
         }
 
@@ -2065,7 +2093,15 @@ export async function createGatewayRuntimeState(
       const ipMatch = /IPv4:\s+(\S+)/.exec(info);
       const ip = ipMatch?.[1] ?? null;
 
-      let services = { postgres: "unknown", caddy: "unknown", agi: "unknown", id: "unknown" };
+      // Test-VM services are reported from inside the VM via
+      // `test-vm.sh services-status`. We surface only what the host
+      // dashboard actually renders: postgres, caddy, agi. The VM's ID
+      // service is VM-internal — it's not probed from the host, and the
+      // dashboard's red/green ID light tracks the HOST's Local-ID
+      // (reported separately via /api/system/connections). Removing the
+      // `id` field here avoids a cross-namespace "red light" when the
+      // host ID is up but the VM ID isn't (tynn #259).
+      let services = { postgres: "unknown", caddy: "unknown", agi: "unknown" };
       if (running) {
         try {
           const svcOut = execFileSync("bash", [testVmScript, "services-status"], {
@@ -2075,14 +2111,13 @@ export async function createGatewayRuntimeState(
             postgres: svcOut.includes("PostgreSQL: active") ? "active" : "inactive",
             caddy: svcOut.includes("Caddy: active") || svcOut.includes("Caddy:      active") ? "active" : "inactive",
             agi: svcOut.includes("AGI:        running") || svcOut.includes("AGI: running") ? "running" : "stopped",
-            id: svcOut.includes("ID:         running") || svcOut.includes("ID: running") ? "running" : "stopped",
           };
         } catch { /* services-status may fail if services not set up */ }
       }
 
       return reply.send({ exists: true, running, ip, services });
     } catch {
-      return reply.send({ exists: false, running: false, ip: null, services: { postgres: "unknown", caddy: "unknown", agi: "unknown", id: "unknown" } });
+      return reply.send({ exists: false, running: false, ip: null, services: { postgres: "unknown", caddy: "unknown", agi: "unknown" } });
     }
   });
 

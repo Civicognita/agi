@@ -479,13 +479,12 @@ export interface TestVmStatus {
     postgres: string;
     caddy: string;
     agi: string;
-    id: string;
   };
 }
 
 export async function fetchTestVmStatus(): Promise<TestVmStatus> {
   const res = await fetch("/api/test-vm/status");
-  if (!res.ok) return { exists: false, running: false, ip: null, services: { postgres: "unknown", caddy: "unknown", agi: "unknown", id: "unknown" } };
+  if (!res.ok) return { exists: false, running: false, ip: null, services: { postgres: "unknown", caddy: "unknown", agi: "unknown" } };
   return res.json() as Promise<TestVmStatus>;
 }
 

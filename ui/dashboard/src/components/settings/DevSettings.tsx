@@ -460,8 +460,16 @@ function TestVmPanel() {
     ws.onopen = () => ws.send(JSON.stringify({ type: "dashboard:subscribe" }));
     ws.onmessage = (ev) => {
       try {
-        const msg = JSON.parse(ev.data as string) as { type?: string; data?: { type?: string; data?: { phase: string; status: string; message: string; timestamp: string } } };
-        const event = msg.data;
+        // Server broadcasts via `wsServer.broadcast("dashboard_event", { type, data })`
+        // which wraps the second arg as `payload` (see ws-server.ts:143). Read
+        // `msg.payload` — not `msg.data` — or events silently never match and
+        // the "Running..." spinner hangs forever (tynn #257).
+        const msg = JSON.parse(ev.data as string) as {
+          type?: string;
+          payload?: { type?: string; data?: { phase: string; status: string; message: string; timestamp: string } };
+        };
+        if (msg.type !== "dashboard_event") return;
+        const event = msg.payload;
         if (event?.type === "system:test-vm" && event.data) {
           setOutput((prev) => [...prev, event.data!]);
           setShowOutput(true);

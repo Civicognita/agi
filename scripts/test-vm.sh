@@ -22,8 +22,15 @@ set -euo pipefail
 VM_NAME="agi-test"
 VM_IMAGE="24.04"
 VM_CPUS=4
-VM_MEM="8G"
-VM_DISK="20G"
+# Memory bumped 8G → 12G (tynn #258). Full test suite + AGI gateway +
+# Postgres + Caddy inside the VM routinely pushed past 8G during
+# vitest runs, triggering OOM kills that showed up as "AGI service
+# crashed mid-run" in the dashboard. 12G leaves headroom for the test
+# worker + TS compile + pg checkpoints. Override via env if the host
+# can't spare it: `VM_MEM=10G ./scripts/test-vm.sh create`.
+VM_MEM="${VM_MEM:-12G}"
+VM_CPUS="${VM_CPUS:-4}"
+VM_DISK="${VM_DISK:-20G}"
 
 # Structured JSON emitter for gateway streaming
 emit_json() { echo "{\"phase\":\"$1\",\"status\":\"$2\",\"details\":\"${3:-}\"}"; }
