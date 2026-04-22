@@ -97,9 +97,13 @@ export default function AdminDashboardPage() {
   const projectList = projectsHook.projects;
 
   // Derive project-type breakdown for the Projects StatCard subtitle.
+  // ProjectInfo.type doesn't exist — the actual fields are
+  // `projectType.id` (e.g. "aionima", "web", "monorepo") and `category`
+  // (e.g. "monorepo", "literature"). Fall back in that order so the
+  // card shows meaningful counts instead of "unknown N".
   const projectsByType = new Map<string, number>();
   for (const p of projectList) {
-    const t = (p as Record<string, unknown>).type as string | undefined ?? "unknown";
+    const t = p.projectType?.id ?? p.category ?? "unknown";
     projectsByType.set(t, (projectsByType.get(t) ?? 0) + 1);
   }
   const topProjectTypes = [...projectsByType.entries()]
