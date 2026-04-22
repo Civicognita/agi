@@ -35,9 +35,26 @@ VM_DISK="${VM_DISK:-20G}"
 # Structured JSON emitter for gateway streaming
 emit_json() { echo "{\"phase\":\"$1\",\"status\":\"$2\",\"details\":\"${3:-}\"}"; }
 
-# Detect paths: AGI repo dir and workspace root (parent of agi/)
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-WORKSPACE_DIR="$(cd "$REPO_DIR/.." && pwd)"
+# Detect paths: AGI repo dir and workspace root (parent of agi/).
+# Use `-P` so symlinks get resolved — if this script is invoked via a
+# symlinked path (e.g. a user-workspace convenience link like
+# ~/temp_core/agi → ~/_projects/_aionima/agi), we still want the VM
+# mounts anchored at the *physical* Dev-Mode workspace, NOT the user's
+# scratchpad. temp_core is the user's workspace, not AGI's.
+REPO_DIR="$(cd -P "$(dirname "$0")/.." && pwd)"
+WORKSPACE_DIR="$(cd -P "$REPO_DIR/.." && pwd)"
+
+# Sibling layout detection: Dev-Mode provisioned workspace uses slugs
+# (prime, id, marketplace, mapp-marketplace) under `_aionima/`. Ops /
+# vanilla installs use the legacy dashed names (agi-prime, agi-local-id)
+# under /opt. Pick the right set for mount sources.
+if [ "$(basename "$WORKSPACE_DIR")" = "_aionima" ]; then
+  PRIME_PATH="$WORKSPACE_DIR/prime"
+  ID_PATH="$WORKSPACE_DIR/id"
+else
+  PRIME_PATH="$WORKSPACE_DIR/agi-prime"
+  ID_PATH="$WORKSPACE_DIR/agi-local-id"
+fi
 
 # Cloud-init: install Node 22, pnpm, and build deps so the VM is ready faster
 CLOUD_INIT=$(cat <<'YAML'
@@ -143,8 +160,8 @@ cmd_create() {
 
   echo "==> Mounting workspace repos..."
   mount_repo "$REPO_DIR"                          "/mnt/agi"                 "AGI"
-  mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/agi-prime"           "PRIME"
-  mount_repo "$WORKSPACE_DIR/agi-local-id"         "/mnt/agi-local-id"        "ID"
+  mount_repo "$PRIME_PATH"                        "/mnt/agi-prime"           "PRIME"
+  mount_repo "$ID_PATH"                           "/mnt/agi-local-id"        "ID"
 
   echo "==> Waiting for cloud-init to finish..."
   multipass exec "$VM_NAME" -- cloud-init status --wait 2>/dev/null || true
@@ -243,8 +260,8 @@ cmd_remount() {
   multipass umount "$VM_NAME":/mnt/agi-local-id 2>/dev/null || true
 
   mount_repo "$REPO_DIR"                          "/mnt/agi"                 "AGI"
-  mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/agi-prime"           "PRIME"
-  mount_repo "$WORKSPACE_DIR/agi-local-id"         "/mnt/agi-local-id"        "ID"
+  mount_repo "$PRIME_PATH"                        "/mnt/agi-prime"           "PRIME"
+  mount_repo "$ID_PATH"                           "/mnt/agi-local-id"        "ID"
 
   echo "Done."
 }
