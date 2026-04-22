@@ -208,8 +208,18 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
     blocks.push(`${fqdn} {`);
     blocks.push(`    tls internal`);
     blocks.push(`    reverse_proxy localhost:${String(project.port)}`);
-    blocks.push(`    handle_errors 502 503 504 {`);
-    blocks.push(`        respond \`${offlineHtml}\` 503`);
+    // `handle_errors <status_codes...>` (filter form) needs Caddy 2.8+.
+    // Plenty of deployments are still on 2.6.x which rejects that syntax
+    // with "Wrong argument count or unexpected line ending after '502'"
+    // and fails the whole reload. Use the expression-matcher form that
+    // works on 2.6 through 2.8 uniformly — still limits the offline
+    // page to 5xx responses so legitimate 4xx from the backend (403,
+    // 404, etc.) aren't hidden behind a "container not running" page.
+    blocks.push(`    handle_errors {`);
+    blocks.push(`        @5xx expression \`{http.error.status_code} >= 500\``);
+    blocks.push(`        handle @5xx {`);
+    blocks.push(`            respond \`${offlineHtml}\` 503`);
+    blocks.push(`        }`);
     blocks.push(`    }`);
     blocks.push(`}\n`);
   }
