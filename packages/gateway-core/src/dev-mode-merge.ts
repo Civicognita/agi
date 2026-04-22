@@ -168,21 +168,19 @@ export async function getAllCoreForkStatuses(
 }
 
 /**
- * Ensure the `upstream` remote points at the canonical Civicognita URL.
- * Runs as a belt-and-braces step before merge ops so a legacy clone
- * that never went through the retrofit loop doesn't fail quietly.
+ * Ensure the `upstream` remote is configured, but don't overwrite a
+ * pre-existing one. The authoritative place that sets `upstream` is
+ * `/api/dev/switch` (retrofit loop) — this is a belt-and-braces step
+ * for clones that somehow ended up without the remote. Rewriting a
+ * valid existing remote would break local overrides (e.g. tests that
+ * pin `upstream` to a tmp bare repo, or owners who fork-of-fork).
  */
 function ensureUpstreamRemote(targetDir: string, spec: CoreRepoSpec, log: ComponentLogger): void {
-  const expected = upstreamRemoteUrl(spec);
   const current = gitSilent(["remote", "get-url", "upstream"], targetDir, REV_LIST_TIMEOUT_MS);
-  if (current.ok && current.stdout.trim() === expected) return;
-  if (current.ok) {
-    gitSilent(["remote", "set-url", "upstream", expected], targetDir, REV_LIST_TIMEOUT_MS);
-    log.info(`dev-merge: repointed ${spec.slug} upstream → ${expected}`);
-  } else {
-    gitSilent(["remote", "add", "upstream", expected], targetDir, REV_LIST_TIMEOUT_MS);
-    log.info(`dev-merge: added ${spec.slug} upstream remote`);
-  }
+  if (current.ok) return; // remote already exists — trust it
+  const expected = upstreamRemoteUrl(spec);
+  gitSilent(["remote", "add", "upstream", expected], targetDir, REV_LIST_TIMEOUT_MS);
+  log.info(`dev-merge: added ${spec.slug} upstream remote (was missing)`);
 }
 
 /**
