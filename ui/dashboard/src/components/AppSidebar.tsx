@@ -79,6 +79,7 @@ const builtinSections: NavSectionWithMode[] = [
   { mode: "admin", title: "System", items: [
     { to: "/system", label: "Resources", exact: true, icon: Activity },
     { to: "/system/services", label: "Services", icon: Blocks },
+    { to: "/system/agents", label: "Agents", icon: Cpu },
     { to: "/system/admin", label: "Machine", icon: ShieldHalf },
     { to: "/system/changelog", label: "Changelog", icon: ScrollText },
     { to: "/system/incidents", label: "Incidents", icon: AlertTriangle },
