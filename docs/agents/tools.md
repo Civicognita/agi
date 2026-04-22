@@ -252,7 +252,7 @@ Path traversal sequences (`..`, absolute paths) are rejected.
 
 ### `manage_project`
 
-Manage workspace projects (list, create, update, inspect, delete).
+Manage workspace projects (list, create, update, inspect, delete, host, unhost, restart, diagnose).
 
 | Field | Value |
 |-------|-------|
@@ -265,15 +265,41 @@ Only registered when `workspace.projects` directories are configured.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `action` | string (required) | One of `"list"`, `"create"`, `"update"`, `"info"`, `"delete"` |
+| `action` | string (required) | One of `"list"`, `"create"`, `"update"`, `"info"`, `"delete"`, `"host"`, `"unhost"`, `"restart"`, `"diagnose"` |
 | `name` | string | Project name (for `create` and `update`) |
-| `path` | string | Project path (for `update`, `info`, `delete`) |
+| `path` | string | Project path (for `update`, `info`, `delete`, `restart`, `diagnose`) |
 | `repoRemote` | string | Git clone URL (for `create` only) |
 | `category` | string | Project category: `"web"`, `"app"`, `"literature"`, `"media"`, `"administration"`, `"ops"`, `"monorepo"` |
 | `tynnToken` | string | Tynn project token (for `create` and `update`; empty string or `null` to clear) |
 | `confirm` | boolean | Must be `true` to confirm a `delete` operation |
 
 Sacred projects (`agi`, `prime`, `id`, `marketplace`, `mapp-marketplace`) cannot be modified or deleted.
+
+#### `diagnose` action
+
+Use `diagnose` when a hosted project container is failing to start or crashing. The tool reads the last 50 lines of container logs and checks `dmesg` for OOM events, then classifies the failure into one of:
+
+| Class | Trigger | Remediation |
+|-------|---------|-------------|
+| `disk_full` | `ENOSPC`, `no space left on device` | Free disk space; prune unused images |
+| `port_conflict` | `EADDRINUSE` | Stop conflicting process or change port |
+| `missing_build_artifact` | `MODULE_NOT_FOUND`, missing `dist/` | Run the project build and restart |
+| `oom_killed` | OOM kill in logs or dmesg | Increase memory limit or reduce usage |
+| `connection_refused` | `ECONNREFUSED` | Verify dependent services are running |
+| `permission_denied` | `EACCES`, `EPERM` | Fix file/socket permissions |
+| `container_exited` | Generic exit, no pattern match | Review raw log tail |
+| `healthy` | No error signals | Check DNS and Caddy routing |
+
+**Output shape:**
+
+```json
+{
+  "class": "missing_build_artifact",
+  "message": "Build artifact missing",
+  "remediation": "Run pnpm build and restart the container.",
+  "rawLogTail": "...last 50 log lines..."
+}
+```
 
 ---
 

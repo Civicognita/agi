@@ -164,6 +164,23 @@ CI (GitHub Actions) sets `AIONIMA_TEST_VM=1` to bypass the host guard — it run
 
 - **Pre-ship (mandatory):** Before every commit+push, run `pnpm build && pnpm typecheck`. Also curl-test backend API endpoints to verify they work. Never ship untested code.
 
+### Pre-push hook
+
+A git hook at `scripts/hooks/pre-push` blocks pushes to `dev` and `main` unless the VM unit test suite passes. Install it once on your dev machine:
+
+```bash
+bash scripts/install-dev-hooks.sh
+```
+
+The hook runs `scripts/test-vm-run.sh unit` (vitest inside the Multipass VM). It is skipped on any branch other than `dev` and `main`.
+
+**Bypass (emergency only):**
+
+```bash
+AGI_ALLOW_UNTESTED_PUSH=1 git push   # env var bypass — logs a warning
+git push --no-verify                  # standard git bypass — no log
+```
+
 ## Git Workflow
 
 - Always check `git status` for ALL outstanding changes — not just current-task files

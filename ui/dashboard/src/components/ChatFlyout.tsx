@@ -21,6 +21,7 @@ import { applyInjectionConsumed, shouldShowLivePill, applyStallTimeout, groupByT
 import type { ChatSessionShape, ChatMessageShape } from "./chat-flyout-reducers.js";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useIsMobile, useConfig } from "@/hooks.js";
 import { ContentRenderer } from "@particle-academy/react-fancy";
 import { Copy as CopyIcon, Check as CheckIcon } from "lucide-react";
@@ -60,6 +61,15 @@ interface ChatMessage {
     classifierUsed?: string;
     /** Context layers included in the assembled system prompt. */
     contextLayers?: string[];
+    /** Per-section token breakdown for this turn. */
+    tokenBreakdown?: {
+      identity: number;
+      context: number;
+      memory: number;
+      skills: number;
+      history: number;
+      response: number;
+    };
   };
 }
 
@@ -183,6 +193,87 @@ export interface ChatFlyoutProps {
 }
 
 // ---------------------------------------------------------------------------
+// TokenBreakdownModal — per-turn token section breakdown
+// ---------------------------------------------------------------------------
+
+interface TokenBreakdownEntry {
+  label: string;
+  tokens: number;
+  description: string;
+}
+
+function TokenBreakdownModal({
+  open,
+  onClose,
+  breakdown,
+  totalIn,
+  totalOut,
+}: {
+  open: boolean;
+  onClose: () => void;
+  breakdown: NonNullable<ChatMessage["routingMeta"]>["tokenBreakdown"] | undefined;
+  totalIn: number;
+  totalOut: number;
+}) {
+  if (!open) return null;
+
+  const rows: TokenBreakdownEntry[] = breakdown
+    ? [
+        { label: "Identity", tokens: breakdown.identity, description: "Persona, tools manifest, owner context, response format" },
+        { label: "Context", tokens: breakdown.context, description: "Entity, COA, project, state constraints, knowledge index" },
+        { label: "Memory", tokens: breakdown.memory, description: "Recalled memories injected from entity memory store" },
+        { label: "Skills", tokens: breakdown.skills, description: "Matched skill snippets injected into the prompt" },
+        { label: "History", tokens: breakdown.history, description: "Conversation history window passed to the model" },
+        { label: "Response", tokens: breakdown.response, description: "Model output tokens for this turn" },
+      ]
+    : [];
+
+  const promptTotal = rows.slice(0, -1).reduce((s, r) => s + r.tokens, 0);
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-sm w-full">
+        <DialogHeader>
+          <DialogTitle className="text-sm font-semibold">Token Breakdown</DialogTitle>
+        </DialogHeader>
+        {breakdown ? (
+          <div className="mt-2 space-y-3">
+            <table className="w-full text-[11px] font-mono">
+              <thead>
+                <tr className="text-muted-foreground">
+                  <th className="text-left pb-1 font-normal">Section</th>
+                  <th className="text-right pb-1 font-normal">Tokens</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/40">
+                {rows.map((row) => (
+                  <tr key={row.label} title={row.description}>
+                    <td className="py-1 text-foreground/80">{row.label}</td>
+                    <td className="py-1 text-right tabular-nums">{row.tokens.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="border-t border-border pt-2 text-[10px] font-mono text-muted-foreground space-y-0.5">
+              <div className="flex justify-between">
+                <span>Prompt total (est.)</span>
+                <span className="tabular-nums">{promptTotal.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Reported in / out</span>
+                <span className="tabular-nums">{totalIn.toLocaleString()} / {totalOut.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-2 text-[11px] text-muted-foreground">Breakdown not available for this turn.</p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -201,6 +292,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [tokenBreakdownMsg, setTokenBreakdownMsg] = useState<ChatMessage | null>(null);
   const isMobile = useIsMobile();
 
   // Display names for chat bubbles. User name comes from the gateway config's
@@ -1303,9 +1395,14 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                                 {msg.routingMeta.model}
                               </span>
                               {msg.routingMeta.inputTokens > 0 && (
-                                <span className="text-[9px] font-mono text-muted-foreground" title="Input / Output tokens">
+                                <button
+                                  type="button"
+                                  className="text-[9px] font-mono text-muted-foreground hover:text-foreground transition-colors cursor-pointer bg-transparent border-0 p-0"
+                                  title="Click to see token breakdown by section"
+                                  onClick={() => setTokenBreakdownMsg(msg as unknown as ChatMessage)}
+                                >
                                   {msg.routingMeta.inputTokens.toLocaleString()} in / {msg.routingMeta.outputTokens.toLocaleString()} out
-                                </span>
+                                </button>
                               )}
                               {msg.routingMeta.estimatedCostUsd > 0 && (
                                 <span className="text-[9px] font-mono text-muted-foreground">
@@ -1643,13 +1740,22 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // When a plan is selected, it slides in on the left as a peer panel.
   if (docked) {
     return (
-      <div data-testid="chat-flyout" className="flex h-full border-l border-border bg-background" style={{ width: "50%" }}>
-        {planPane}
-        <div className={cn("flex flex-col h-full min-w-0", selectedPlanId ? "flex-1" : "w-full")}>
-          {panelHeader}
-          {panelBody}
+      <>
+        <div data-testid="chat-flyout" className="flex h-full border-l border-border bg-background" style={{ width: "50%" }}>
+          {planPane}
+          <div className={cn("flex flex-col h-full min-w-0", selectedPlanId ? "flex-1" : "w-full")}>
+            {panelHeader}
+            {panelBody}
+          </div>
         </div>
-      </div>
+        <TokenBreakdownModal
+          open={tokenBreakdownMsg !== null}
+          onClose={() => setTokenBreakdownMsg(null)}
+          breakdown={tokenBreakdownMsg?.routingMeta?.tokenBreakdown}
+          totalIn={tokenBreakdownMsg?.routingMeta?.inputTokens ?? 0}
+          totalOut={tokenBreakdownMsg?.routingMeta?.outputTokens ?? 0}
+        />
+      </>
     );
   }
 
@@ -1666,25 +1772,34 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     // overlay starts at top-14 (≈56px, matching the header's py-3 layout);
     // on mobile top-12 (≈48px, matching py-2). The header itself stays
     // sticky at top-0 z-[100], visible + clickable above the flyout.
-    <div data-testid="chat-flyout" className="fixed inset-x-0 top-12 md:top-14 bottom-0 z-[200] flex justify-end pointer-events-none">
-      {!isFullscreen && (
-        <div className={cn("bg-black/10", isMobile ? "absolute inset-0" : "flex-1")} />
-      )}
-      {planPane !== null && !isMobile && (
-        <div className="h-full border-l border-border bg-background shrink-0 pointer-events-auto w-[min(50vw,900px)] min-w-[520px]">
-          {planPane}
+    <>
+      <div data-testid="chat-flyout" className="fixed inset-x-0 top-12 md:top-14 bottom-0 z-[200] flex justify-end pointer-events-none">
+        {!isFullscreen && (
+          <div className={cn("bg-black/10", isMobile ? "absolute inset-0" : "flex-1")} />
+        )}
+        {planPane !== null && !isMobile && (
+          <div className="h-full border-l border-border bg-background shrink-0 pointer-events-auto w-[min(50vw,900px)] min-w-[520px]">
+            {planPane}
+          </div>
+        )}
+        <div className={cn(
+          "flex flex-col bg-background pointer-events-auto",
+          isMobile
+            ? "absolute bottom-0 left-0 right-0 h-[90dvh] border-t border-border rounded-t-2xl"
+            : cn("h-full", isFullscreen ? "w-screen" : "w-[33vw] max-w-full border-l border-border"),
+        )}>
+          {panelHeader}
+          {panelBody}
         </div>
-      )}
-      <div className={cn(
-        "flex flex-col bg-background pointer-events-auto",
-        isMobile
-          ? "absolute bottom-0 left-0 right-0 h-[90dvh] border-t border-border rounded-t-2xl"
-          : cn("h-full", isFullscreen ? "w-screen" : "w-[33vw] max-w-full border-l border-border"),
-      )}>
-        {panelHeader}
-        {panelBody}
       </div>
-    </div>
+      <TokenBreakdownModal
+        open={tokenBreakdownMsg !== null}
+        onClose={() => setTokenBreakdownMsg(null)}
+        breakdown={tokenBreakdownMsg?.routingMeta?.tokenBreakdown}
+        totalIn={tokenBreakdownMsg?.routingMeta?.inputTokens ?? 0}
+        totalOut={tokenBreakdownMsg?.routingMeta?.outputTokens ?? 0}
+      />
+    </>
   );
 }
 

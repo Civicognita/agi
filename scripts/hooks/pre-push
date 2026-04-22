@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# scripts/hooks/pre-push — git pre-push hook
+#
+# Enforces the VM test suite before any push to `dev` or `main`.
+#
+# Install (run once on your dev machine):
+#   bash scripts/install-dev-hooks.sh
+#
+# Bypass (escape hatch — emergency only):
+#   AGI_ALLOW_UNTESTED_PUSH=1 git push
+#   git push --no-verify
+#
+# Branches enforced: dev, main
+# Branches skipped:  any other branch (feature/*, test/*, experimental/*, etc.)
+set -euo pipefail
+
+BOLD="\033[1m"
+RED="\033[31m"
+YELLOW="\033[33m"
+GREEN="\033[32m"
+RESET="\033[0m"
+
+# ---------------------------------------------------------------------------
+# Determine the branch being pushed
+# ---------------------------------------------------------------------------
+
+# git pre-push receives lines of: <local_ref> <local_sha1> <remote_ref> <remote_sha1>
+# We read stdin into an array and extract the branch from the remote ref.
+PUSHED_BRANCH=""
+while IFS=' ' read -r _local_ref _local_sha _remote_ref _remote_sha; do
+  if [[ "$_remote_ref" =~ refs/heads/(.+) ]]; then
+    PUSHED_BRANCH="${BASH_REMATCH[1]}"
+    break
+  fi
+done
+
+# Fallback: check current HEAD branch
+if [[ -z "$PUSHED_BRANCH" ]]; then
+  PUSHED_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+fi
+
+# ---------------------------------------------------------------------------
+# Skip on non-enforced branches
+# ---------------------------------------------------------------------------
+
+ENFORCED_BRANCHES=("dev" "main")
+should_enforce=false
+for b in "${ENFORCED_BRANCHES[@]}"; do
+  if [[ "$PUSHED_BRANCH" == "$b" ]]; then
+    should_enforce=true
+    break
+  fi
+done
+
+if [[ "$should_enforce" == "false" ]]; then
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Check bypass flags
+# ---------------------------------------------------------------------------
+
+if [[ "${AGI_ALLOW_UNTESTED_PUSH:-}" == "1" ]]; then
+  echo -e "${YELLOW}[pre-push] AGI_ALLOW_UNTESTED_PUSH=1 — skipping VM test suite.${RESET}"
+  echo -e "${YELLOW}           Push is NOT test-gated. This should be an emergency only.${RESET}"
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Run VM test suite
+# ---------------------------------------------------------------------------
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TEST_RUNNER="$REPO_DIR/scripts/test-vm-run.sh"
+
+echo ""
+echo -e "${BOLD}[pre-push] Running VM unit test suite before push to '$PUSHED_BRANCH'...${RESET}"
+echo ""
+
+if [[ ! -x "$TEST_RUNNER" ]]; then
+  echo -e "${RED}[pre-push] Error: test runner not found at $TEST_RUNNER${RESET}" >&2
+  echo -e "${RED}           Cannot gate push — aborting for safety.${RESET}" >&2
+  echo -e "${RED}           To bypass: AGI_ALLOW_UNTESTED_PUSH=1 git push${RESET}" >&2
+  exit 1
+fi
+
+if bash "$TEST_RUNNER" unit; then
+  echo ""
+  echo -e "${GREEN}${BOLD}[pre-push] All tests passed. Proceeding with push.${RESET}"
+  echo ""
+  exit 0
+else
+  echo ""
+  echo -e "${RED}${BOLD}[pre-push] Tests failed — push blocked.${RESET}"
+  echo ""
+  echo -e "${RED}  Fix the failing tests before pushing to '$PUSHED_BRANCH'.${RESET}"
+  echo ""
+  echo -e "  To bypass in an emergency:${RESET}"
+  echo -e "    ${YELLOW}AGI_ALLOW_UNTESTED_PUSH=1 git push${RESET}"
+  echo -e "    ${YELLOW}git push --no-verify${RESET}"
+  echo ""
+  exit 1
+fi

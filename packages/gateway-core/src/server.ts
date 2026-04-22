@@ -2874,6 +2874,7 @@ export async function startGatewayServer(
                   requestType: outcome.routingMeta.requestType,
                   classifierUsed: outcome.routingMeta.classifierUsed,
                   contextLayers: outcome.routingMeta.contextLayers,
+                  tokenBreakdown: outcome.routingMeta.tokenBreakdown,
                 }
               : undefined;
 

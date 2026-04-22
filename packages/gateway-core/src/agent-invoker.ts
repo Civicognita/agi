@@ -30,11 +30,11 @@ import type { ToolRegistry, ToolExecutionResult } from "./tool-registry.js";
 import type { RateLimiter } from "./rate-limiter.js";
 
 import {
-  assembleSystemPrompt,
+  assembleSystemPromptWithBreakdown,
   computeAvailableTools,
   estimateTokens,
 } from "./system-prompt.js";
-import type { SystemPromptContext, EntityContextSection, RequestType } from "./system-prompt.js";
+import type { SystemPromptContext, EntityContextSection, RequestType, SystemPromptTokenBreakdown } from "./system-prompt.js";
 import { gateInvocation, isHumanCommand } from "./invocation-gate.js";
 import { sanitize } from "./sanitizer.js";
 
@@ -219,7 +219,7 @@ export interface InvocationRequest {
 }
 
 export type InvocationOutcome =
-  | { type: "response"; text: string; toolsUsed: string[]; coaFingerprint: string; taskmasterEmissions: string[]; model: string; provider: string; usage: { inputTokens: number; outputTokens: number }; toolCount: number; loopCount: number; routingMeta?: { costMode: string; complexity: string; selectedModel: string; selectedProvider: string; escalated: boolean; reason: string; requestType?: string; classifierUsed?: "heuristic" | "aion-micro"; contextLayers?: string[] } }
+  | { type: "response"; text: string; toolsUsed: string[]; coaFingerprint: string; taskmasterEmissions: string[]; model: string; provider: string; usage: { inputTokens: number; outputTokens: number }; toolCount: number; loopCount: number; routingMeta?: { costMode: string; complexity: string; selectedModel: string; selectedProvider: string; escalated: boolean; reason: string; requestType?: string; classifierUsed?: "heuristic" | "aion-micro"; contextLayers?: string[]; tokenBreakdown?: SystemPromptTokenBreakdown } }
   | { type: "queued"; reason: string; entityNotification: string }
   | { type: "human_routed"; content: string }
   | { type: "log_only" }
@@ -495,7 +495,8 @@ export class AgentInvoker extends EventEmitter {
       requestType: classifyRequestType(typeof sanitized.content === "string" ? sanitized.content : "", request.projectContext),
     };
 
-    let systemPrompt = assembleSystemPrompt(promptCtx);
+    const { prompt: baseSystemPrompt, breakdown: promptBreakdown } = assembleSystemPromptWithBreakdown(promptCtx);
+    let systemPrompt = baseSystemPrompt;
 
     // BuilderChat mode: prepend the builder system prompt
     if (request.builderMode) {
@@ -1081,12 +1082,18 @@ export class AgentInvoker extends EventEmitter {
         coaFingerprint: outboundFingerprint,
       });
 
+      const historyTokens = history.tokenEstimate;
       const enrichedRoutingMeta = result.routingMeta
         ? {
             ...result.routingMeta,
             requestType: promptCtx.requestType,
             classifierUsed: "heuristic" as const,
             contextLayers: deriveContextLayers(promptCtx.requestType ?? "chat"),
+            tokenBreakdown: {
+              ...promptBreakdown,
+              history: historyTokens,
+              response: totalOutputTokens,
+            },
           }
         : undefined;
 

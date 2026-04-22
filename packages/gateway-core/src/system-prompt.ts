@@ -763,3 +763,160 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.5);
 }
+
+/**
+ * Per-section token breakdown for a single invocation.
+ * Sections map to the logical groups in the system prompt.
+ */
+export interface SystemPromptTokenBreakdown {
+  /** Identity core: persona + runtime metadata + tools + state + response format. */
+  identity: number;
+  /** Context layer injected for the request type (entity, project, COA, state, etc.). */
+  context: number;
+  /** Recalled memories injected into the prompt. */
+  memory: number;
+  /** Matched skill snippets injected into the prompt. */
+  skills: number;
+  /** History window token estimate (assembled by AgentSessionManager, not counted here). */
+  history: number;
+  /** LLM output tokens for this turn. */
+  response: number;
+}
+
+/**
+ * Assemble the system prompt AND compute a per-section token estimate.
+ *
+ * Mirrors `assembleSystemPrompt` exactly but tracks which text was emitted
+ * for each logical section so the dashboard can display a breakdown.
+ */
+export function assembleSystemPromptWithBreakdown(
+  ctx: SystemPromptContext,
+  opts?: { historyTokens?: number; responseTokens?: number },
+): { prompt: string; breakdown: SystemPromptTokenBreakdown } {
+  const rt = ctx.requestType ?? "chat";
+  const identitySections: string[] = [];
+  const contextSections: string[] = [];
+  const memorySections: string[] = [];
+  const skillSections: string[] = [];
+
+  // -------------------------------------------------------------------------
+  // LAYER 1: Identity Core
+  // -------------------------------------------------------------------------
+
+  let identityContent: string;
+  if (ctx.prime?.persona !== undefined || ctx.prime?.purpose !== undefined) {
+    identityContent = buildPrimeIdentitySection(ctx.prime);
+  } else if (ctx.persona?.soulPath !== undefined) {
+    const loaded = loadPersonaFile(ctx.persona.soulPath);
+    identityContent = loaded ?? (ctx.devMode === true ? buildDevIdentitySection() : buildIdentitySection());
+  } else {
+    identityContent = ctx.devMode === true ? buildDevIdentitySection() : buildIdentitySection();
+  }
+
+  if (
+    ctx.prime?.persona === undefined &&
+    ctx.prime?.purpose === undefined &&
+    ctx.persona?.identityPath !== undefined
+  ) {
+    const capabilitiesContent = loadPersonaFile(ctx.persona.identityPath);
+    if (capabilitiesContent !== undefined) {
+      identityContent = `${identityContent}\n\n${capabilitiesContent}`;
+    }
+  }
+
+  identitySections.push(identityContent);
+
+  if (ctx.runtimeMeta !== undefined) {
+    identitySections.push(buildRuntimeMetadataSection(ctx.runtimeMeta, ctx.state));
+  }
+
+  identitySections.push(buildToolsSection(ctx.tools));
+  identitySections.push(`Operational state: ${ctx.state}`);
+
+  if (ctx.ownerName !== undefined) {
+    identitySections.push(buildOwnerContextSection(ctx.ownerName, ctx.isOwner ?? false));
+  }
+
+  identitySections.push(buildResponseFormatSection());
+
+  // -------------------------------------------------------------------------
+  // LAYER 2: Request Context
+  // -------------------------------------------------------------------------
+
+  if (rt !== "chat" && rt !== "worker" && rt !== "taskmaster") {
+    contextSections.push(buildEntityContextSection(ctx.entity));
+    if (ctx.userContext !== undefined) {
+      contextSections.push(buildUserContextSection(ctx.userContext));
+    }
+  }
+
+  if (rt === "entity" || rt === "project" || rt === "system") {
+    contextSections.push(buildCOAContextSection(ctx.coaFingerprint));
+    if (ctx.prime !== undefined && (ctx.prime.directive !== undefined || ctx.prime.authority !== undefined)) {
+      contextSections.push(buildPrimeDirectiveSection(ctx.prime));
+    }
+  }
+
+  if (rt === "entity" || rt === "system") {
+    contextSections.push(buildStateConstraintsSection(ctx.state, ctx.capabilities));
+  }
+
+  if (rt === "knowledge" || rt === "project") {
+    if (ctx.prime?.topicIndex !== undefined) {
+      const indexSection = buildKnowledgeIndexSection(ctx.prime.topicIndex);
+      if (indexSection.length > 0) {
+        contextSections.push(indexSection);
+      }
+    }
+  }
+
+  if (rt === "project" && ctx.projectPath !== undefined) {
+    contextSections.push(buildProjectContextSection(ctx.projectPath));
+    contextSections.push(buildPlanWorkflowSection());
+  }
+
+  if (ctx.devMode === true && (rt === "project" || rt === "system")) {
+    if (ctx.workspaceRoot !== undefined) {
+      contextSections.push(buildWorkspaceContextSection(ctx.workspaceRoot, ctx.projectPaths));
+    }
+    if (ctx.tynnContext !== undefined) {
+      contextSections.push(buildTynnContextSection(ctx.tynnContext));
+    }
+  }
+
+  if (rt !== "chat" && rt !== "worker") {
+    contextSections.push(buildTaskmasterSection());
+  }
+
+  // -------------------------------------------------------------------------
+  // Skills and Memory
+  // -------------------------------------------------------------------------
+
+  if (ctx.skills !== undefined && ctx.skills.length > 0) {
+    skillSections.push(buildSkillsSection(ctx.skills));
+  }
+
+  if (ctx.memories !== undefined && ctx.memories.length > 0) {
+    memorySections.push(buildMemorySection(ctx.memories));
+  }
+
+  // -------------------------------------------------------------------------
+  // Assemble
+  // -------------------------------------------------------------------------
+
+  const all = [...identitySections, ...contextSections, ...skillSections, ...memorySections];
+  const prompt = all.join("\n\n");
+
+  const joinOverhead = Math.max(0, all.length - 1) * 1; // "\n\n" ≈ 1 token each
+
+  const breakdown: SystemPromptTokenBreakdown = {
+    identity: estimateTokens(identitySections.join("\n\n")) + joinOverhead,
+    context: contextSections.length > 0 ? estimateTokens(contextSections.join("\n\n")) : 0,
+    memory: memorySections.length > 0 ? estimateTokens(memorySections.join("\n\n")) : 0,
+    skills: skillSections.length > 0 ? estimateTokens(skillSections.join("\n\n")) : 0,
+    history: opts?.historyTokens ?? 0,
+    response: opts?.responseTokens ?? 0,
+  };
+
+  return { prompt, breakdown };
+}

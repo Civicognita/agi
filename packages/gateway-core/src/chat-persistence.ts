@@ -54,6 +54,21 @@ export interface PersistedChatMessage {
     costMode: string;
     escalated: boolean;
     estimatedCostUsd: number;
+    /** Dynamic-context request type. */
+    requestType?: string;
+    /** How the request type was determined. */
+    classifierUsed?: string;
+    /** Context layers included in the assembled system prompt. */
+    contextLayers?: string[];
+    /** Per-section token breakdown. Populated from v0.4.53 onwards. */
+    tokenBreakdown?: {
+      identity: number;
+      context: number;
+      memory: number;
+      skills: number;
+      history: number;
+      response: number;
+    };
   };
 }
 
