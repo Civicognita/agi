@@ -545,11 +545,15 @@ cmd_models() {
         err "Usage: agi models $action <model-id>"
         exit 1
       fi
-      local method="POST"
-      [ "$action" = "remove" ] && method="DELETE"
       local encoded
       encoded="$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$id")"
-      curl -s -X "$method" "$gw_url/api/hf/models/$encoded/$action" | ($fmt)
+      # The gateway uses DELETE /api/hf/models/:id for remove (no path
+      # suffix), POST /api/hf/models/:id/start|stop for lifecycle.
+      if [ "$action" = "remove" ]; then
+        curl -s -X DELETE "$gw_url/api/hf/models/$encoded" | ($fmt)
+      else
+        curl -s -X POST "$gw_url/api/hf/models/$encoded/$action" | ($fmt)
+      fi
       ;;
     search)
       local query="${*:-}"
@@ -592,13 +596,16 @@ cmd_providers() {
         err "Usage: agi providers set-default <provider> [<model>]"
         exit 1
       fi
+      # Uses PATCH /api/config — the agent's default provider + model live
+      # on `config.agent.provider` / `config.agent.model`. The gateway
+      # hot-reloads config so no restart is needed.
       local body
       if [ -n "$model" ]; then
-        body="$(python3 -c "import json,sys;print(json.dumps({'provider':sys.argv[1],'model':sys.argv[2]}))" "$provider" "$model")"
+        body="$(python3 -c "import json,sys;print(json.dumps({'agent':{'provider':sys.argv[1],'model':sys.argv[2]}}))" "$provider" "$model")"
       else
-        body="$(python3 -c "import json,sys;print(json.dumps({'provider':sys.argv[1]}))" "$provider")"
+        body="$(python3 -c "import json,sys;print(json.dumps({'agent':{'provider':sys.argv[1]}}))" "$provider")"
       fi
-      curl -s -X POST "$gw_url/api/settings/provider-default" \
+      curl -s -X PATCH "$gw_url/api/config" \
         -H "Content-Type: application/json" \
         --data "$body" | ($fmt)
       ;;
