@@ -2801,6 +2801,20 @@ export async function fetchHFAuthStatus(): Promise<{ authenticated: boolean; use
   return hfGet<{ authenticated: boolean; username?: string }>("/api/hf/auth/status");
 }
 
+export interface HFContainerStats {
+  name: string;
+  modelId: string;
+  cpuPct: string;
+  memUsage: string;
+  memLimit: string;
+  netIO: string;
+  blockIO: string;
+}
+
+export async function fetchHFContainerStats(): Promise<{ containers: HFContainerStats[] }> {
+  return hfGet<{ containers: HFContainerStats[] }>("/api/hf/models/stats");
+}
+
 // ---------------------------------------------------------------------------
 // HuggingFace Dataset API
 // ---------------------------------------------------------------------------

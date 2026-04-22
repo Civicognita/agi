@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { ulid } from "ulid";
 import { dispatchJobsDir } from "./dispatch-paths.js";
+import { resolveMarketplaceSource } from "./dev-mode-sources.js";
 import { EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@agi/entity-model";
 import type { Entity } from "@agi/entity-model";
 import { createDbClient } from "@agi/db-schema/client";
@@ -132,6 +133,7 @@ import {
   ModelAgentBridge,
   KnownModelsRegistry,
   CustomContainerBuilder,
+  cleanupHubOrphans,
 } from "@agi/model-runtime";
 import type { ModelRuntimeEventEmitter } from "@agi/model-runtime";
 import { registerHfRoutes } from "./hf-api.js";
@@ -1095,17 +1097,18 @@ export async function startGatewayServer(
     installDir: process.cwd(),
   });
 
-  // Seed default marketplace source if none exist yet.
-  // The branch matches the gateway's update channel so plugin catalog
-  // versions align with the subscribed release track.
+  // Seed default marketplace source. Dev Mode routes to the owner's fork;
+  // otherwise Civicognita on the configured update channel. The resolver
+  // is pure (see `dev-mode-sources.ts`), so the auto-sync scheduled task
+  // below re-evaluates on every tick — toggling Dev Mode takes effect at
+  // the next poll without requiring a restart.
   const updateChannel = config.gateway?.updateChannel ?? "main";
-  const marketplaceRef = `Civicognita/agi-marketplace#${updateChannel}`;
+  const marketplaceRef = resolveMarketplaceSource(config, "plugin");
   const existingSources = marketplaceManager.getSources();
   if (existingSources.length === 0) {
     marketplaceManager.addSource(marketplaceRef, "Aionima");
     log.info(`plugin-marketplace: seeded default source (${marketplaceRef})`);
   } else {
-    // Ensure the source ref matches the current update channel
     const defaultSource = existingSources[0]!;
     if (defaultSource.ref !== marketplaceRef) {
       marketplaceManager.removeSource(defaultSource.id);
@@ -1479,7 +1482,7 @@ export async function startGatewayServer(
   // Seed official MApp Marketplace source if none exist
   {
     const mappSources = mappMarketplaceManager.getSources();
-    const mappRef = `Civicognita/agi-mapp-marketplace#${updateChannel}`;
+    const mappRef = resolveMarketplaceSource(config, "mapp");
     if (mappSources.length === 0) {
       mappMarketplaceManager.addSource(mappRef, "Aionima MApps");
       log.info(`mapp-marketplace: seeded default source (${mappRef})`);
@@ -1573,6 +1576,23 @@ export async function startGatewayServer(
     if (reconciledModels > 0) {
       log.info(`HF model store: reconciled ${String(reconciledModels)} model(s) from disk`);
     }
+
+    // GC pass — run after reconcile so legitimate models are in the DB first.
+    // Fire-and-forget; failures are logged but never crash the gateway.
+    cleanupHubOrphans(hfCacheDir, modelStore)
+      .then((gcResult) => {
+        if (gcResult.removed.length > 0) {
+          log.info(
+            `HF hub GC: removed ${String(gcResult.removed.length)} orphaned model director${gcResult.removed.length === 1 ? "y" : "ies"}: ${gcResult.removed.join(", ")}`,
+          );
+        }
+        if (gcResult.errors.length > 0) {
+          log.warn(`HF hub GC errors: ${gcResult.errors.join("; ")}`);
+        }
+      })
+      .catch((err) => {
+        log.warn(`HF hub GC failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
   } catch (err) {
     log.warn(`ModelStore (HF models) disabled — Postgres unreachable: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -1644,6 +1664,7 @@ export async function startGatewayServer(
     knownModelsRegistry,
     customContainerBuilder,
     fineTuneManager,
+    hfCacheDir,
     isEnabled: () => Boolean(((config as Record<string, unknown>).hf as { enabled?: boolean } | undefined)?.enabled),
   };
 
@@ -3827,6 +3848,33 @@ export async function startGatewayServer(
     intervalMs: 30 * 60 * 1000, // 30 minutes
     handler: async () => {
       try {
+        // Re-resolve the marketplace source each tick so Dev Mode toggles
+        // take effect without a restart (tynn #250/#251). We read config
+        // fresh from disk because gateway.json is hot-swappable.
+        let liveConfig: Parameters<typeof resolveMarketplaceSource>[0] = config;
+        try {
+          const cfgPath = join(homedir(), ".agi", "gateway.json");
+          if (existsSync(cfgPath)) {
+            liveConfig = JSON.parse(readFileSync(cfgPath, "utf-8")) as typeof liveConfig;
+          }
+        } catch {
+          // Fall back to the boot-time config snapshot
+        }
+
+        for (const [manager, kind, label] of [
+          [marketplaceManager, "plugin" as const, "plugin"],
+          [mappMarketplaceManager, "mapp" as const, "mapp"],
+        ] as const) {
+          const desiredRef = resolveMarketplaceSource(liveConfig, kind);
+          const sources = manager.getSources();
+          const current = sources[0];
+          if (current && current.ref !== desiredRef) {
+            manager.removeSource(current.id);
+            manager.addSource(desiredRef, label === "plugin" ? "Aionima" : "Aionima MApps");
+            log.info(`${label}-marketplace: source swapped (dev-mode toggle) → ${desiredRef}`);
+          }
+        }
+
         const result = await marketplaceManager.syncAndUpdateAll();
         if (result.updated.length > 0) {
           log.info(`marketplace auto-sync: updated ${result.updated.join(", ")}`);

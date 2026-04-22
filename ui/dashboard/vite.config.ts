@@ -1,16 +1,32 @@
 import path from "node:path";
+import { createRequire } from "node:module";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 
+const require = createRequire(import.meta.url);
+// Read the root package.json version so the SW cache name is versioned.
+// When version bumps (every code-change commit), any stale precache partition
+// is evicted by cleanupOutdatedCaches even if individual asset hashes match.
+const rootPkg = require("../../package.json") as { version: string };
+const AGI_VERSION = rootPkg.version;
+
 export default defineConfig({
+  define: {
+    // Exposes the AGI version to runtime code (e.g. for diagnostics / about page).
+    __AGI_VERSION__: JSON.stringify(AGI_VERSION),
+  },
   plugins: [
     react(),
     tailwindcss(),
     VitePWA({
       registerType: "autoUpdate",
       selfDestroying: false,
+      // cacheId namespaces the workbox precache so upgrading the AGI version
+      // forces the browser to adopt the new SW and evict any stale cache
+      // partitions, even for static assets whose content hashes haven't changed.
+      cacheId: `agi-${AGI_VERSION}`,
       includeAssets: ["favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png", "logo.png", "logo-small.png"],
       workbox: {
         // Never precache index.html — it must always come from the network

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{PROJECT_NAME}} — Container Offline</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0f1117; color: #e4e4e7; font-family: system-ui, -apple-system, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .card { background: #1a1b23; border: 1px solid #27272a; border-radius: 12px; padding: 48px; max-width: 480px; width: 100%; text-align: center; margin: 24px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; margin-right: 8px; vertical-align: middle; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 12px; }
+  .subtitle { color: #a1a1aa; font-size: 14px; line-height: 1.6; margin-bottom: 24px; }
+  .name { color: #e4e4e7; font-weight: 500; }
+  .action { display: inline-block; background: #3f3f46; color: #e4e4e7; text-decoration: none; padding: 8px 20px; border-radius: 6px; font-size: 13px; transition: background 0.15s; }
+  .action:hover { background: #52525b; }
+  .hint { color: #71717a; font-size: 12px; margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1><span class="dot"></span>Container not running</h1>
+  <p class="subtitle">
+    The project <span class="name">{{PROJECT_NAME}}</span> is currently offline.
+    Its container may have stopped or failed to start.
+  </p>
+  <a class="action" href="https://ai.on/projects">View in dashboard</a>
+  <p class="hint">Start the container from Projects to restore access.</p>
+</div>
+</body>
+</html>

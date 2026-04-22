@@ -153,4 +153,27 @@ papa.ai.on {
     expect(projSection).toContain("shop.ai.on {");
     expect(projSection).toContain("reverse_proxy localhost:4002");
   });
+
+  it("adds handle_errors 502 503 504 fallback block in each project block", () => {
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      projects: [{ hostname: "my-app", port: 4001 }],
+    });
+    const projStart = out.indexOf("# === PROJECT DOMAINS ===");
+    const projEnd = out.indexOf("# === END PROJECT DOMAINS ===");
+    const projSection = out.slice(projStart, projEnd);
+    expect(projSection).toContain("handle_errors 502 503 504 {");
+    expect(projSection).toContain("respond `");
+    expect(projSection).toContain("503");
+    expect(projSection).toContain("Container not running");
+    expect(projSection).toContain("my-app");
+  });
+
+  it("uses the provided name in the offline page when name differs from hostname", () => {
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      projects: [{ hostname: "my-app", port: 4001, name: "My Blog" }],
+    });
+    expect(out).toContain("My Blog");
+  });
 });

@@ -6,12 +6,45 @@ set -uo pipefail
 
 DEPLOY_DIR="${AIONIMA_DEPLOY_DIR:-/opt/agi}"
 PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/agi-prime}"
-PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
-# Marketplace repos are NOT pulled locally — plugins are fetched from GitHub
-# on demand by the gateway's plugin marketplace manager.
 ID_DIR="${AIONIMA_ID_DIR:-/opt/agi-local-id}"
-ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/agi-local-id.git}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
+
+# Dev Mode resolution. When `dev.enabled` is true in ~/.agi/gateway.json,
+# upgrade pulls from the owner's forks instead of Civicognita. Same
+# priority order as the gateway's marketplace manager (tynn #249):
+# env override → dev.*Repo fork → canonical Civicognita.
+_DEV_CFG="$(node -e "
+  try {
+    const c = JSON.parse(require('fs').readFileSync(
+      require('path').join(require('os').homedir(), '.agi/gateway.json'), 'utf-8'));
+    const dev = c.dev ?? {};
+    console.log(JSON.stringify({
+      enabled: dev.enabled === true,
+      agi: dev.agiRepo ?? '',
+      prime: dev.primeRepo ?? '',
+      id: dev.idRepo ?? '',
+    }));
+  } catch { console.log('{\"enabled\":false,\"agi\":\"\",\"prime\":\"\",\"id\":\"\"}'); }
+" 2>/dev/null || echo '{"enabled":false,"agi":"","prime":"","id":""}')"
+
+_dev_enabled="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).enabled))")"
+_dev_prime="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).prime))")"
+_dev_id="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).id))")"
+
+if [ "$_dev_enabled" = "true" ] && [ -n "$_dev_prime" ]; then
+  PRIME_REPO="${AIONIMA_PRIME_REPO:-$_dev_prime}"
+else
+  PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
+fi
+if [ "$_dev_enabled" = "true" ] && [ -n "$_dev_id" ]; then
+  ID_REPO="${AIONIMA_ID_REPO:-$_dev_id}"
+else
+  ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/agi-local-id.git}"
+fi
+
+# Marketplace repos are NOT pulled locally by this script — plugins are
+# fetched from GitHub on demand by the gateway's plugin marketplace
+# manager, which has its own Dev Mode fork handling.
 
 # Release channel — controls which branch all repos pull from.
 # Priority: env var > config file > "main"

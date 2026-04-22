@@ -93,3 +93,7 @@ export { CustomContainerBuilder, getBuildLog, clearBuildLog } from "./custom-con
 
 // Agent Bridge
 export { ModelAgentBridge } from "./agent-bridge.js";
+
+// Hub Cleanup — orphaned model directory GC
+export { cleanupHubOrphans, cleanupStaleSnapshots } from "./hub-cleanup.js";
+export type { HubCleanupResult } from "./hub-cleanup.js";

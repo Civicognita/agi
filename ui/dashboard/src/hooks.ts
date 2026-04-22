@@ -27,6 +27,7 @@ import {
   searchHFModels,
   fetchHFInstalledModels,
   fetchHFRunningModels,
+  fetchHFContainerStats,
   searchHFDatasets,
   fetchHFInstalledDatasets,
   listFineTuneJobs,
@@ -756,6 +757,14 @@ export function useHFRunningModels() {
     queryKey: ["hf", "running"],
     queryFn: fetchHFRunningModels,
     refetchInterval: 5_000,
+  });
+}
+
+export function useHFContainerStats() {
+  return useQuery({
+    queryKey: ["hf", "container-stats"],
+    queryFn: fetchHFContainerStats,
+    refetchInterval: 10_000,
   });
 }
 

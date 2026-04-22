@@ -75,7 +75,7 @@ export interface BuildCaddyfileOptions {
   whodbPort?: number;
   idService?: { enabled?: boolean; subdomain?: string; port?: number };
   pluginSubdomainRoutes: Array<{ subdomain: string; target: number | "gateway" }>;
-  projects: Array<{ hostname: string; port: number }>;
+  projects: Array<{ hostname: string; port: number; name?: string }>;
   existingCaddyfile: string;
 }
 
@@ -173,9 +173,44 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
 
   for (const project of opts.projects) {
     const fqdn = `${project.hostname}.${opts.baseDomain}`;
+    // Project name for display in the offline page — use provided name, or
+    // derive a human-readable label from the hostname slug (e.g. "my-app" → "my-app").
+    const displayName = (project.name ?? project.hostname).replace(/[^\w\s-]/g, "");
+    const dashboardUrl = `https://${opts.baseDomain}/projects`;
+    // Compact single-line HTML body — no quotes or braces in the string to avoid
+    // Caddyfile parsing conflicts. We use single-backtick heredoc-style with
+    // Caddy's `respond` directive which accepts a body as the first argument.
+    const offlineHtml = [
+      `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">`,
+      `<meta name="viewport" content="width=device-width,initial-scale=1">`,
+      `<title>${displayName} - Container Offline</title>`,
+      `<style>*{box-sizing:border-box;margin:0;padding:0}`,
+      `body{background:#0f1117;color:#e4e4e7;font-family:system-ui,sans-serif;`,
+      `display:flex;align-items:center;justify-content:center;min-height:100vh}`,
+      `.card{background:#1a1b23;border:1px solid #27272a;border-radius:12px;`,
+      `padding:48px;max-width:480px;width:100%;text-align:center;margin:24px}`,
+      `.dot{display:inline-block;width:8px;height:8px;border-radius:50%;`,
+      `background:#f59e0b;margin-right:8px;vertical-align:middle}`,
+      `h1{font-size:20px;font-weight:600;margin-bottom:12px}`,
+      `.sub{color:#a1a1aa;font-size:14px;line-height:1.6;margin-bottom:24px}`,
+      `.name{color:#e4e4e7;font-weight:500}`,
+      `.btn{display:inline-block;background:#3f3f46;color:#e4e4e7;`,
+      `text-decoration:none;padding:8px 20px;border-radius:6px;font-size:13px}`,
+      `.hint{color:#71717a;font-size:12px;margin-top:16px}</style></head>`,
+      `<body><div class="card"><h1><span class="dot"></span>Container not running</h1>`,
+      `<p class="sub">The project <span class="name">${displayName}</span>`,
+      ` is currently offline. Its container may have stopped or failed to start.</p>`,
+      `<a class="btn" href="${dashboardUrl}">View in dashboard</a>`,
+      `<p class="hint">Start the container from Projects to restore access.</p>`,
+      `</div></body></html>`,
+    ].join("");
+
     blocks.push(`${fqdn} {`);
     blocks.push(`    tls internal`);
     blocks.push(`    reverse_proxy localhost:${String(project.port)}`);
+    blocks.push(`    handle_errors 502 503 504 {`);
+    blocks.push(`        respond \`${offlineHtml}\` 503`);
+    blocks.push(`    }`);
     blocks.push(`}\n`);
   }
 
