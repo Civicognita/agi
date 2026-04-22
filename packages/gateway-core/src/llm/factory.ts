@@ -65,7 +65,8 @@ export function createSingleProvider(
     case "lemonade":
       // Phase K.2 — Lemonade serves OpenAI-compatible /v1/chat/completions
       // with auto-routing between NPU / GPU / CPU internally. No API key
-      // required; default port 8000 matches the upstream SDK default.
+      // required; default port 13305 matches the installed lemonade-server
+      // package (the PPA ships systemd unit bound to that port).
       // The matching settings page + install lifecycle are in the
       // `agi-lemonade-runtime` marketplace plugin.
       return new OpenAIProvider({
@@ -73,7 +74,7 @@ export function createSingleProvider(
         defaultModel: config.defaultModel ?? "default",
         maxTokens: config.maxTokens ?? 8192,
         maxRetries: config.maxRetries ?? 2,
-        baseUrl: config.baseUrl ?? "http://127.0.0.1:8000",
+        baseUrl: config.baseUrl ?? "http://127.0.0.1:13305",
       });
 
     case "hf-local": {
