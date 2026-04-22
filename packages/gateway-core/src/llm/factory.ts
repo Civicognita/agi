@@ -62,6 +62,20 @@ export function createSingleProvider(
         baseUrl: config.baseUrl ?? "http://127.0.0.1:11434",
       });
 
+    case "lemonade":
+      // Phase K.2 — Lemonade serves OpenAI-compatible /v1/chat/completions
+      // with auto-routing between NPU / GPU / CPU internally. No API key
+      // required; default port 8000 matches the upstream SDK default.
+      // The matching settings page + install lifecycle are in the
+      // `agi-lemonade-runtime` marketplace plugin.
+      return new OpenAIProvider({
+        apiKey: "not-needed",
+        defaultModel: config.defaultModel ?? "default",
+        maxTokens: config.maxTokens ?? 8192,
+        maxRetries: config.maxRetries ?? 2,
+        baseUrl: config.baseUrl ?? "http://127.0.0.1:8000",
+      });
+
     case "hf-local": {
       // Resolve the actual port from ModelAgentBridge if available.
       // The bridge registers running text-generation models with their
@@ -202,6 +216,7 @@ export function createAgentRouter(config: AionimaConfig, logger?: Logger): LLMPr
       maxEscalationsPerTurn?: number;
       simpleThresholdTokens?: number;
       complexThresholdTokens?: number;
+      localFirst?: boolean;
     };
   } | undefined ?? {};
 
@@ -215,6 +230,11 @@ export function createAgentRouter(config: AionimaConfig, logger?: Logger): LLMPr
       maxEscalationsPerTurn: agent.router?.maxEscalationsPerTurn ?? 1,
       simpleThresholdTokens: agent.router?.simpleThresholdTokens ?? 500,
       complexThresholdTokens: agent.router?.complexThresholdTokens ?? 2000,
+      // Phase K.1 — default "local wins when present" mode. When a
+      // Lemonade provider is configured, every non-max turn routes
+      // through it. Owners revert to pre-K behavior by setting
+      // `agent.router.localFirst: false` in gateway.json.
+      localFirst: agent.router?.localFirst ?? true,
     },
     defaultProvider: agent.provider ?? "anthropic",
     defaultModel: agent.model ?? "claude-sonnet-4-6",
