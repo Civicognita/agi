@@ -140,6 +140,10 @@ export interface RuntimeStateDeps {
   workspaceRoot?: string;
   /** Path to the aionima source repo (enables update detection + upgrade). */
   selfRepoPath?: string;
+  /** Running AGI version (from root package.json). Surfaced on /health so
+   *  the dashboard's version-mismatch detector can force-reload stale tabs
+   *  after an upgrade. */
+  agiVersion?: string;
   /** Optional logger instance. */
   logger?: Logger;
   /**
@@ -650,6 +654,11 @@ export async function createGatewayRuntimeState(
       uptime: process.uptime(),
       channels: channelRegistry.getRunningChannels().length,
       sessions: agentSessionManager.count,
+      // Client-side version-mismatch detector polls `/health` and
+      // reloads the page when this drifts from the build-time
+      // __AGI_VERSION__. Stops users from hitting TypeError crashes
+      // from stale JS after an `agi upgrade` restart.
+      version: deps.agiVersion ?? "unknown",
     });
   });
 

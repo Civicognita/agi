@@ -58,6 +58,33 @@ export function useOverview(windowDays = 90) {
 }
 
 // ---------------------------------------------------------------------------
+// Version-mismatch auto-reload
+//
+// Called on every WS reconnect. If /health's `version` field differs from
+// the value Vite baked into this bundle at build time (__AGI_VERSION__),
+// the server has been upgraded and this tab is running stale JS. Reload
+// before the stale code hits an API response it can't parse.
+// ---------------------------------------------------------------------------
+let versionReloadScheduled = false;
+async function checkVersionAndReload(): Promise<void> {
+  if (versionReloadScheduled) return;
+  try {
+    const res = await fetch("/health", { cache: "no-store" });
+    if (!res.ok) return;
+    const body = (await res.json()) as { version?: string };
+    const serverVersion = body.version;
+    if (!serverVersion || serverVersion === "unknown") return;
+    if (serverVersion === __AGI_VERSION__) return;
+    versionReloadScheduled = true;
+    // Defer slightly so any in-flight saves can settle.
+    setTimeout(() => { window.location.reload(); }, 300);
+  } catch {
+    // Network hiccup — skip this round, we'll try again on the next
+    // reconnect.
+  }
+}
+
+// ---------------------------------------------------------------------------
 // useDashboardWS — WebSocket subscription (invalidates queries on events)
 // ---------------------------------------------------------------------------
 
@@ -110,6 +137,12 @@ export function useDashboardWS(
       ws.onclose = () => {
         wsRef.current = null;
         if (!cancelledRef.current) {
+          // After a reconnect, the gateway may have restarted on a new
+          // version. If /health reports a different version than this
+          // tab's build, the JS we have is stale — force a full reload
+          // to avoid "TypeError: _e is not iterable" crashes from
+          // shape drift. Runs lazily so the WS reconnect isn't blocked.
+          void checkVersionAndReload();
           setTimeout(connect, 3000);
         }
       };

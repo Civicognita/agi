@@ -21,6 +21,28 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import { ulid } from "ulid";
 import { dispatchJobsDir } from "./dispatch-paths.js";
 import { resolveMarketplaceSource } from "./dev-mode-sources.js";
+
+/**
+ * Read the AGI version from package.json at the configured deploy root,
+ * with graceful fallback. Used by `/health` so the dashboard can force-
+ * reload stale tabs after an upgrade.
+ */
+function resolveAgiVersion(selfRepoPath: string | undefined): string {
+  const candidates = [
+    selfRepoPath ? join(selfRepoPath, "package.json") : null,
+    join(process.cwd(), "package.json"),
+  ].filter((p): p is string => p !== null);
+  for (const candidate of candidates) {
+    try {
+      const raw = readFileSync(candidate, "utf-8");
+      const pkg = JSON.parse(raw) as { version?: string };
+      if (typeof pkg.version === "string" && pkg.version.length > 0) return pkg.version;
+    } catch {
+      /* try next */
+    }
+  }
+  return "unknown";
+}
 import { EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@agi/entity-model";
 import type { Entity } from "@agi/entity-model";
 import { createDbClient } from "@agi/db-schema/client";
@@ -1943,6 +1965,7 @@ export async function startGatewayServer(
       workspaceProjects: projectPaths,
       workspaceRoot,
       selfRepoPath: config.workspace?.selfRepo,
+      agiVersion: resolveAgiVersion(config.workspace?.selfRepo),
       webhookSecret: config.workspace?.webhookSecret,
       logger,
       hostingManager,
