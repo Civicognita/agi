@@ -1874,14 +1874,19 @@ export async function createGatewayRuntimeState(
       const targetEnabled = body.enabled;
 
       // Enabling dev mode requires GitHub authentication (checked via Local-ID)
+      let ownerGithubLogin: string | null = null;
       if (targetEnabled) {
         let hasGithub = false;
         try {
           const idUrl = resolveIdUrl(deps.configPath);
           const idRes = await fetch(`${idUrl}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
           if (idRes.ok) {
-            const conns = await idRes.json() as Array<{ provider: string }>;
-            hasGithub = conns.some((c) => c.provider === "github");
+            const conns = await idRes.json() as Array<{ provider: string; accountLabel?: string | null }>;
+            const gh = conns.find((c) => c.provider === "github");
+            if (gh) {
+              hasGithub = true;
+              ownerGithubLogin = gh.accountLabel?.trim() ?? null;
+            }
           }
         } catch { /* ID service unreachable */ }
         if (!hasGithub) {
@@ -1892,13 +1897,64 @@ export async function createGatewayRuntimeState(
         }
       }
 
+      // When flipping ON, resolve (or fork) each of the canonical repos
+      // into the owner's GitHub account FIRST, then persist the fork
+      // URLs into `dev.*Repo`. Previously the toggle wrote `{enabled:
+      // true}` with nothing else and the clone loop silently no-op'd
+      // because the URLs were undefined. Owners reasonably expect the
+      // toggle to provision everything.
+      const forkFailures: Array<{ slug: string; reason: string }> = [];
+      let devRepoPatch: Record<string, string> = {};
+      let forkNotes: Array<{ slug: string; created: boolean; upstream: string }> = [];
+      if (targetEnabled) {
+        // Grab the owner's token from Local-ID so we can hit the GitHub API.
+        const tokenInfo = await fetchOwnerToken({ provider: "github", role: "owner" });
+        if (!tokenInfo) {
+          return reply.code(502).send({
+            error: "GitHub token unavailable from Local-ID. Reconnect your GitHub account at https://id.ai.on/dashboard.",
+            reason: "token_missing",
+          });
+        }
+        if (!ownerGithubLogin) {
+          return reply.code(502).send({
+            error: "Local-ID didn't return a GitHub login. Reconnect your GitHub account.",
+            reason: "github_login_missing",
+          });
+        }
+        const { resolveOrCreateForks } = await import("./dev-mode-forks.js");
+        const forks = await resolveOrCreateForks(tokenInfo.accessToken, ownerGithubLogin);
+        for (const f of forks) {
+          if (f.cloneUrl) {
+            // Map slug → dev.*Repo key
+            const keyMap: Record<string, string> = {
+              "agi": "agiRepo",
+              "prime": "primeRepo",
+              "id": "idRepo",
+              "marketplace": "marketplaceRepo",
+              "mapp-marketplace": "mappMarketplaceRepo",
+            };
+            const cfgKey = keyMap[f.slug];
+            if (cfgKey) devRepoPatch[cfgKey] = f.cloneUrl;
+            forkNotes.push({ slug: f.slug, created: f.created, upstream: f.upstreamUrl });
+          } else {
+            forkFailures.push({ slug: f.slug, reason: f.error ?? "fork resolution failed" });
+          }
+        }
+      }
+
       // Dev mode now switches which directory is used (not git remotes).
       // Update config file to toggle dev.enabled — path resolution happens at next boot.
       try {
         if (deps.configPath !== undefined) {
           const raw = readFileSync(deps.configPath, "utf-8");
           const cfg = JSON.parse(raw) as Record<string, unknown>;
-          cfg.dev = { ...(cfg.dev as Record<string, unknown> ?? {}), enabled: targetEnabled };
+          // Persist fork URLs alongside `enabled` so the clone loop + the
+          // auto-sync task resolver (dev-mode-sources.ts) see them.
+          cfg.dev = {
+            ...(cfg.dev as Record<string, unknown> ?? {}),
+            enabled: targetEnabled,
+            ...devRepoPatch,
+          };
           // Backward compat — also set agent.devMode
           const agent = (cfg.agent as Record<string, unknown>) ?? {};
           agent.devMode = targetEnabled;
@@ -2047,8 +2103,15 @@ export async function createGatewayRuntimeState(
           });
         }
 
-        const failureNote = provisionFailures.length > 0
-          ? ` ${provisionFailures.length} repo${provisionFailures.length === 1 ? "" : "s"} failed: ${provisionFailures.map((f) => f.slug).join(", ")}.`
+        // Merge fork-resolution failures with clone-provisioning failures
+        // so the UI renders one combined list.
+        const allFailures = [...forkFailures, ...provisionFailures];
+        const failureNote = allFailures.length > 0
+          ? ` ${allFailures.length} item${allFailures.length === 1 ? "" : "s"} failed: ${allFailures.map((f) => f.slug).join(", ")}.`
+          : "";
+        const createdCount = forkNotes.filter((n) => n.created).length;
+        const forkNote = createdCount > 0
+          ? ` Created ${createdCount} new fork${createdCount === 1 ? "" : "s"} on GitHub.`
           : "";
 
         return reply.send({
@@ -2058,10 +2121,13 @@ export async function createGatewayRuntimeState(
           // `provisionFailures` is always present in the response (possibly
           // empty) so the dashboard can render a failure list without
           // branching on undefined.
-          provisionFailures,
+          provisionFailures: allFailures,
+          // Per-repo fork outcome — dashboard can render "reused X" vs
+          // "created X" to match the user's expectation.
+          forks: forkNotes,
           note: targetEnabled && provisionedProjects.length > 0
-            ? `Provisioned ${provisionedProjects.length} repos. Restart required for path changes to take effect.${failureNote}`
-            : `Restart required for path changes to take effect.${failureNote}`,
+            ? `Provisioned ${provisionedProjects.length} repos.${forkNote} Restart required for path changes to take effect.${failureNote}`
+            : `Restart required for path changes to take effect.${forkNote}${failureNote}`,
         });
       } catch (err) {
         return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });

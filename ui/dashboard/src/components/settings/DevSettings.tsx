@@ -324,8 +324,12 @@ export function DevSettings({ config, update }: {
         </Card>
       )}
 
-      {/* PRIME Source Controls — only shown when contributing mode is on */}
-      {devStatus?.enabled && <Card className="p-6 gap-0 mb-4">
+      {/* PRIME Source Controls — legacy per-PRIME switcher. Only shown
+          when Dev Mode is OFF, since Dev Mode's unified provisioning
+          already owns PRIME alongside AGI, ID, and the marketplaces.
+          Leaving both surfaces visible confused the source-of-truth (one
+          says "wishborn fork", the other says "Civicognita canonical"). */}
+      {devStatus !== null && !devStatus.enabled && <Card className="p-6 gap-0 mb-4">
         <SectionHeading>PRIME Source</SectionHeading>
         {primeLoading ? (
           <p className="text-sm text-muted-foreground">Loading PRIME status...</p>
