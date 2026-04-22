@@ -380,6 +380,56 @@ cmd_doctor() {
     warn "not responding"; issues=$((issues + 1))
   fi
 
+  # Dev Mode origin alignment (Phase H.1) — only shown when Dev Mode is on.
+  # Checks each /opt/*/.git origin against the corresponding dev.*Repo
+  # from gateway.json so owners can see whether v0.4.66's
+  # ensure_origin_remote has completed the one-time flip.
+  local dev_enabled dev_agi_repo dev_prime_repo dev_id_repo
+  dev_enabled="$(node -e "try{const c=JSON.parse(require('fs').readFileSync('${CONFIG_FILE}','utf-8'));console.log(c.dev?.enabled===true?'true':'false')}catch{console.log('false')}" 2>/dev/null)"
+  if [ "$dev_enabled" = "true" ]; then
+    dev_agi_repo="$(node -e "try{const c=JSON.parse(require('fs').readFileSync('${CONFIG_FILE}','utf-8'));process.stdout.write(c.dev?.agiRepo??'')}catch{}" 2>/dev/null)"
+    dev_prime_repo="$(node -e "try{const c=JSON.parse(require('fs').readFileSync('${CONFIG_FILE}','utf-8'));process.stdout.write(c.dev?.primeRepo??'')}catch{}" 2>/dev/null)"
+    dev_id_repo="$(node -e "try{const c=JSON.parse(require('fs').readFileSync('${CONFIG_FILE}','utf-8'));process.stdout.write(c.dev?.idRepo??'')}catch{}" 2>/dev/null)"
+    _check_origin() {
+      local name="$1" dir="$2" expected="$3"
+      label "$name:"
+      if [ ! -d "$dir/.git" ]; then
+        warn "$dir not a git repo"; return
+      fi
+      local current
+      current="$(git -C "$dir" remote get-url origin 2>/dev/null)" || {
+        warn "could not read origin"; return
+      }
+      if [ -z "$expected" ]; then
+        warn "no dev.*Repo configured — toggle Dev Mode off then on in dashboard"
+        return
+      fi
+      if [ "$current" = "$expected" ]; then
+        ok "origin → $current"
+      else
+        warn "origin → $current (expected $expected) — run 'agi upgrade'"
+        issues=$((issues + 1))
+      fi
+    }
+    _check_origin "AGI origin" "/opt/agi" "$dev_agi_repo"
+    _check_origin "PRIME origin" "/opt/agi-prime" "$dev_prime_repo"
+    _check_origin "ID origin" "/opt/agi-local-id" "$dev_id_repo"
+  fi
+
+  # NPU hardware probe (Phase H.1, feeds Phase K.7) — only shown when the
+  # AMD XDNA accel subsystem is present at all. Having the device node
+  # means the kernel sees the NPU; actually USING it requires the
+  # agi-lemonade-runtime plugin's userspace (XRT + FastFlowLM).
+  if [ -e /sys/class/accel/accel0 ] || [ -d /sys/class/accel ]; then
+    label "NPU hardware:"
+    if [ -c /dev/accel/accel0 ]; then
+      ok "/dev/accel/accel0 (amdxdna)"
+    else
+      warn "/dev/accel/accel0 missing — reload amdxdna kernel module"
+      issues=$((issues + 1))
+    fi
+  fi
+
   # Disk
   label "Disk:"
   local disk_pct
