@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ModelCapabilityBadges } from "@/components/ModelCapabilityBadges.js";
 import { LemonadeBanner } from "@/components/LemonadeBanner.js";
+import { LemonadeTab } from "@/components/hf/LemonadeTab.js";
 import {
   Dialog,
   DialogContent,
@@ -64,7 +65,7 @@ import type {
 // Tab setup
 // ---------------------------------------------------------------------------
 
-type Tab = "models" | "installed" | "running" | "datasets" | "finetune";
+type Tab = "models" | "installed" | "running" | "datasets" | "finetune" | "lemonade";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "models", label: "Models" },
@@ -72,6 +73,7 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "running", label: "Running" },
   { id: "datasets", label: "Datasets" },
   { id: "finetune", label: "Fine-Tune" },
+  { id: "lemonade", label: "Lemonade" },
 ];
 
 export default function HFMarketplacePage() {
@@ -104,6 +106,7 @@ export default function HFMarketplacePage() {
         {activeTab === "running" && <RunningTab />}
         {activeTab === "datasets" && <DatasetsTab />}
         {activeTab === "finetune" && <FineTuneTab />}
+        {activeTab === "lemonade" && <LemonadeTab />}
       </div>
     </PageScroll>
   );
