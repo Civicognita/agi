@@ -1774,6 +1774,15 @@ export async function fetchMachineInfo(): Promise<import("./types.js").MachineIn
   return res.json() as Promise<import("./types.js").MachineInfo>;
 }
 
+export async function fetchMachineHardware(): Promise<import("./types.js").MachineHardware> {
+  const res = await fetch("/api/machine/hardware");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").MachineHardware>;
+}
+
 export async function setMachineHostname(hostname: string): Promise<{ ok: boolean; hostname: string }> {
   const res = await fetch("/api/machine/hostname", {
     method: "POST",

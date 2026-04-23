@@ -658,6 +658,25 @@ export function useMachineInfo() {
 }
 
 // ---------------------------------------------------------------------------
+// useMachineHardware — full hardware snapshot (motherboard, BIOS, OS,
+// CPU detail, memory, storage, network). Refetches on a slow cadence
+// since hardware doesn't change often.
+// ---------------------------------------------------------------------------
+
+export function useMachineHardware() {
+  const query = useQuery({
+    queryKey: ["machine", "hardware"],
+    queryFn: () => import("./api.js").then((m) => m.fetchMachineHardware()),
+    refetchInterval: 5 * 60_000,
+  });
+  return {
+    data: query.data ?? null,
+    loading: query.isLoading,
+    error: query.error?.message ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // useLinuxUsers — TanStack Query + mutations
 // ---------------------------------------------------------------------------
 

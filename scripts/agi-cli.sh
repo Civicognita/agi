@@ -838,6 +838,79 @@ cmd_providers() {
   esac
 }
 
+cmd_marketplace() {
+  local action="${1:-list}"
+  shift || true
+  local gw="http://127.0.0.1:3100"
+  local jq_or_cat
+  jq_or_cat='jq .'
+  command -v jq >/dev/null 2>&1 || jq_or_cat='cat'
+
+  case "$action" in
+    list|catalog)
+      curl -sS "$gw/api/marketplace/catalog?type=plugin" | eval "$jq_or_cat"
+      ;;
+    installed)
+      curl -sS "$gw/api/marketplace/installed" | eval "$jq_or_cat"
+      ;;
+    sources)
+      curl -sS "$gw/api/marketplace/sources" | eval "$jq_or_cat"
+      ;;
+    sync)
+      # Sync every configured source. Dashboard normally batches this on
+      # boot; this command lets the owner force a re-sync after pushing
+      # marketplace changes (e.g. after a plugin rename or version bump).
+      info "syncing every marketplace source..."
+      local sources_json
+      sources_json="$(curl -sS "$gw/api/marketplace/sources")"
+      echo "$sources_json" | python3 -c "
+import json, sys, subprocess
+sources = json.load(sys.stdin)
+for s in sources:
+    sid = s.get('id')
+    ref = s.get('ref', '?')
+    print(f'  syncing source {sid} ({ref})...', flush=True)
+    r = subprocess.run(
+        ['curl', '-sS', '-X', 'POST', f'$gw/api/marketplace/sources/{sid}/sync'],
+        capture_output=True, text=True,
+    )
+    try:
+        result = json.loads(r.stdout)
+        ok = result.get('ok')
+        count = result.get('pluginCount', '?')
+        err = result.get('error', '')
+        if ok:
+            print(f'    ok ({count} plugins)')
+        else:
+            print(f'    FAILED: {err}')
+    except Exception as e:
+        print(f'    parse error: {e}')
+"
+      ;;
+    install)
+      local name="${1:-}"
+      [ -z "$name" ] && { err "Usage: agi marketplace install <plugin-name>"; exit 1; }
+      info "installing $name..."
+      curl -sS -X POST "$gw/api/marketplace/install" \
+        -H "Content-Type: application/json" \
+        --data "$(printf '{"name":"%s"}' "$name")" | eval "$jq_or_cat"
+      ;;
+    uninstall|remove)
+      local name="${1:-}"
+      [ -z "$name" ] && { err "Usage: agi marketplace uninstall <plugin-name>"; exit 1; }
+      info "uninstalling $name..."
+      curl -sS -X POST "$gw/api/marketplace/uninstall" \
+        -H "Content-Type: application/json" \
+        --data "$(printf '{"name":"%s"}' "$name")" | eval "$jq_or_cat"
+      ;;
+    *)
+      err "Unknown marketplace action: $action"
+      echo "  Actions: list, installed, sources, sync, install <name>, uninstall <name>"
+      exit 1
+      ;;
+  esac
+}
+
 cmd_lemonade() {
   local action="${1:-status}"
   local gw="http://127.0.0.1:3100"
@@ -955,6 +1028,8 @@ cmd_help() {
   echo "  models CMD      Manage HF models (list|running|status|install|start|"
   echo "                  stop|remove|search|hardware)"
   echo "  providers CMD   Manage LLM providers (list|status|set-default)"
+  echo "  marketplace CMD Plugin Marketplace ops"
+  echo "                  (list|installed|sources|sync|install <n>|uninstall <n>)"
   echo "  lemonade CMD    Manage Lemonade local AI server"
   echo "                  (status|models|pull|load|unload|delete|backends)"
   echo "  ollama CMD      Manage Ollama (status|start|stop|pull|list)"
@@ -991,6 +1066,7 @@ case "${1:-help}" in
   projects) cmd_projects ;;
   models)    shift; cmd_models "$@" ;;
   providers) shift; cmd_providers "$@" ;;
+  marketplace) shift; cmd_marketplace "$@" ;;
   lemonade) shift; cmd_lemonade "$@" ;;
   ollama)   shift; cmd_ollama "$@" ;;
   test-vm)  shift; cmd_test_vm "$@" ;;

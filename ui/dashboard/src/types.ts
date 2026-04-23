@@ -760,6 +760,62 @@ export interface MachineInfo {
   totalMemoryGB: number;
 }
 
+/** Complete hardware/firmware/OS snapshot returned by /api/machine/hardware. */
+export interface MachineHardware {
+  identity: {
+    hostname: string;
+    manufacturer: string;
+    productName: string;
+    serialNumber: string;
+    family: string;
+    chassisType: string;
+  };
+  firmware: {
+    biosVendor: string;
+    biosVersion: string;
+    biosReleaseDate: string;
+  };
+  motherboard: {
+    manufacturer: string;
+    productName: string;
+    version: string;
+    serialNumber: string;
+  };
+  os: {
+    platform: string;
+    distro: string;
+    distroVersionId: string;
+    kernel: string;
+    arch: string;
+    nodeVersion: string;
+  };
+  cpu: {
+    model: string;
+    cores: number;
+    threads: number;
+    arch: string;
+    flags: string[];
+    vendorId: string;
+  };
+  memory: {
+    totalBytes: number;
+    totalGB: number;
+  };
+  storage: Array<{
+    name: string;
+    size: string;
+    model: string;
+    type: string;
+    mountpoint: string | null;
+  }>;
+  network: Array<{
+    name: string;
+    mac: string;
+    addresses: string[];
+    state: string;
+  }>;
+}
+
 export interface LinuxUser {
   username: string;
   uid: number;

@@ -49,6 +49,110 @@ function getClientIp(req: IncomingMessage & { ip?: string }): string {
 }
 
 // ---------------------------------------------------------------------------
+// Hardware/firmware probes — populate the Machine page's "complete snapshot"
+// view. Every probe runs `dmidecode` / `lsblk` / `ip` etc. with a short
+// timeout and degrades gracefully on failure.
+// ---------------------------------------------------------------------------
+
+function safeRun(file: string, args: string[], timeoutMs = 5_000, useSudo = false): string {
+  try {
+    const cmd = useSudo ? "sudo" : file;
+    const argv = useSudo ? ["-n", file, ...args] : args;
+    return execFileSync(cmd, argv, { timeout: timeoutMs, stdio: "pipe" }).toString().trim();
+  } catch {
+    return "";
+  }
+}
+
+function dmi(field: string): string {
+  // dmidecode requires root. The gateway runs as a non-root user with
+  // sudoers entry for `dmidecode -s *`; falls back to empty when blocked.
+  return safeRun("dmidecode", ["-s", field], 5_000, true);
+}
+
+function probeFirmware() {
+  return {
+    manufacturer:           dmi("system-manufacturer"),
+    productName:            dmi("system-product-name"),
+    serialNumber:           dmi("system-serial-number"),
+    sku:                    dmi("system-version"),
+    family:                 dmi("system-family"),
+    baseboardManufacturer:  dmi("baseboard-manufacturer"),
+    baseboardProductName:   dmi("baseboard-product-name"),
+    baseboardVersion:       dmi("baseboard-version"),
+    baseboardSerialNumber:  dmi("baseboard-serial-number"),
+    biosVendor:             dmi("bios-vendor"),
+    biosVersion:            dmi("bios-version"),
+    biosReleaseDate:        dmi("bios-release-date"),
+    chassisType:            dmi("chassis-type"),
+  };
+}
+
+function probeStorage(): Array<{ name: string; size: string; model: string; type: string; mountpoint: string | null }> {
+  const out = safeRun("lsblk", ["-J", "-o", "NAME,SIZE,MODEL,TYPE,MOUNTPOINT"]);
+  if (!out) return [];
+  try {
+    const data = JSON.parse(out) as { blockdevices?: Array<{ name: string; size: string; model?: string; type: string; mountpoint?: string | null; children?: Array<{ name: string; size: string; type: string; mountpoint?: string | null }> }> };
+    const devs: Array<{ name: string; size: string; model: string; type: string; mountpoint: string | null }> = [];
+    for (const d of data.blockdevices ?? []) {
+      if (d.type === "disk") {
+        devs.push({ name: d.name, size: d.size, model: d.model ?? "", type: d.type, mountpoint: d.mountpoint ?? null });
+        for (const c of d.children ?? []) {
+          if (c.type === "part") {
+            devs.push({ name: c.name, size: c.size, model: "", type: c.type, mountpoint: c.mountpoint ?? null });
+          }
+        }
+      }
+    }
+    return devs;
+  } catch {
+    return [];
+  }
+}
+
+function probeNetworkInterfaces(): Array<{ name: string; mac: string; addresses: string[]; state: string }> {
+  const out = safeRun("ip", ["-j", "addr", "show"], 3_000);
+  if (!out) return [];
+  try {
+    const data = JSON.parse(out) as Array<{
+      ifname: string; address?: string; operstate?: string;
+      addr_info?: Array<{ family: string; local: string; prefixlen: number }>;
+    }>;
+    return data
+      .filter((iface) => iface.ifname !== "lo")
+      .map((iface) => ({
+        name: iface.ifname,
+        mac: iface.address ?? "",
+        state: iface.operstate ?? "UNKNOWN",
+        addresses: (iface.addr_info ?? []).map((a) => `${a.local}/${String(a.prefixlen)}`),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function probeCpuDetail() {
+  const lscpu = safeRun("lscpu", []);
+  const field = (label: string): string => {
+    const m = new RegExp(`^${label}\\s*:\\s*(.+)$`, "m").exec(lscpu);
+    return m?.[1]?.trim() ?? "";
+  };
+  const flagsLine = field("Flags");
+  const allFlags = flagsLine ? flagsLine.split(/\s+/) : [];
+  // Cherry-pick the meaningful flags (virt, AVX, accel) — full flag list
+  // is hundreds long and noisy.
+  const interesting = ["vmx", "svm", "avx", "avx2", "avx512f", "sse4_1", "sse4_2", "aes", "sha_ni", "rdrand", "ept", "npt"];
+  return {
+    model: field("Model name") || cpus()[0]?.model || "Unknown",
+    cores: Number(field("Core(s) per socket") || "0") * Number(field("Socket(s)") || "1") || cpus().length,
+    threads: Number(field("CPU(s)") || "0") || cpus().length,
+    arch: arch(),
+    flags: allFlags.filter((f) => interesting.includes(f)),
+    vendorId: field("Vendor ID"),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Route registration
 // ---------------------------------------------------------------------------
 
@@ -89,30 +193,33 @@ export function registerMachineAdminRoutes(
 
       // Parse /etc/os-release for distro info
       let distro = "Unknown";
+      let distroVersionId = "";
+      let distroId = "";
       try {
         const osRelease = readFileSync("/etc/os-release", "utf-8");
         const prettyMatch = osRelease.match(/^PRETTY_NAME="?(.+?)"?$/m);
         if (prettyMatch?.[1]) distro = prettyMatch[1];
+        const verMatch = osRelease.match(/^VERSION_ID="?(.+?)"?$/m);
+        if (verMatch?.[1]) distroVersionId = verMatch[1];
+        const idMatch = osRelease.match(/^ID=(.+)$/m);
+        if (idMatch?.[1]) distroId = idMatch[1].replace(/"/g, "");
       } catch { /* ignore */ }
 
       // Kernel version
-      let kernel = "Unknown";
-      try {
-        kernel = execFileSync("uname", ["-r"], { timeout: 5000 }).toString().trim();
-      } catch { /* ignore */ }
+      const kernel = safeRun("uname", ["-r"]) || "Unknown";
+      const kernelFull = safeRun("uname", ["-a"]);
 
       // Primary IP
       let ip = "Unknown";
-      try {
-        const hostIp = execFileSync("hostname", ["-I"], { timeout: 5000 }).toString().trim();
-        const first = hostIp.split(/\s+/)[0];
-        if (first) ip = first;
-      } catch { /* ignore */ }
+      const hostIp = safeRun("hostname", ["-I"]);
+      const first = hostIp.split(/\s+/)[0];
+      if (first) ip = first;
 
       const cpuModel = cpus()[0]?.model ?? "Unknown";
       const totalMemoryGB = Math.round(totalmem() / (1024 * 1024 * 1024) * 10) / 10;
 
       return reply.send({
+        // Backwards-compatible fields (existing UI consumers)
         hostname: hn,
         os: process.platform,
         kernel,
@@ -121,9 +228,96 @@ export function registerMachineAdminRoutes(
         ip,
         cpuModel,
         totalMemoryGB,
+        // Extended snapshot fields (Machine page complete view)
+        os_detail: {
+          platform: process.platform,
+          distro,
+          distroId,
+          distroVersionId,
+          kernel,
+          kernelFull,
+          arch: arch(),
+          nodeVersion: process.version,
+        },
       });
     } catch (e) {
       log.error(`Failed to get machine info: ${e instanceof Error ? e.message : String(e)}`);
+      return reply.code(500).send({ error: e instanceof Error ? e.message : "Unknown error" });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/machine/hardware — complete machine snapshot.
+  //
+  // This is the Machine page's primary data source: identity + firmware
+  // (motherboard, BIOS, chassis), CPU detail (cores, flags, vendor),
+  // memory, storage devices, network interfaces, OS detail. The HF
+  // Marketplace ALSO consumes this for compatibility assessment — its
+  // own /api/hf/hardware endpoint returns a subset projection of this
+  // same data, never a separate probe.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/machine/hardware", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+
+    try {
+      const fw = probeFirmware();
+      const cpu = probeCpuDetail();
+      const storage = probeStorage();
+      const networkInterfaces = probeNetworkInterfaces();
+
+      // OS / kernel
+      let distro = "Unknown";
+      let distroVersionId = "";
+      try {
+        const osRelease = readFileSync("/etc/os-release", "utf-8");
+        const prettyMatch = osRelease.match(/^PRETTY_NAME="?(.+?)"?$/m);
+        if (prettyMatch?.[1]) distro = prettyMatch[1];
+        const verMatch = osRelease.match(/^VERSION_ID="?(.+?)"?$/m);
+        if (verMatch?.[1]) distroVersionId = verMatch[1];
+      } catch { /* ignore */ }
+
+      const totalMemoryBytes = totalmem();
+
+      return reply.send({
+        identity: {
+          hostname: hostname(),
+          manufacturer: fw.manufacturer,
+          productName: fw.productName,
+          serialNumber: fw.serialNumber,
+          family: fw.family,
+          chassisType: fw.chassisType,
+        },
+        firmware: {
+          biosVendor: fw.biosVendor,
+          biosVersion: fw.biosVersion,
+          biosReleaseDate: fw.biosReleaseDate,
+        },
+        motherboard: {
+          manufacturer: fw.baseboardManufacturer,
+          productName: fw.baseboardProductName,
+          version: fw.baseboardVersion,
+          serialNumber: fw.baseboardSerialNumber,
+        },
+        os: {
+          platform: process.platform,
+          distro,
+          distroVersionId,
+          kernel: safeRun("uname", ["-r"]) || "Unknown",
+          arch: arch(),
+          nodeVersion: process.version,
+        },
+        cpu,
+        memory: {
+          totalBytes: totalMemoryBytes,
+          totalGB: Math.round(totalMemoryBytes / (1024 * 1024 * 1024) * 10) / 10,
+        },
+        storage,
+        network: networkInterfaces,
+      });
+    } catch (e) {
+      log.error(`Failed to get machine hardware snapshot: ${e instanceof Error ? e.message : String(e)}`);
       return reply.code(500).send({ error: e instanceof Error ? e.message : "Unknown error" });
     }
   });
