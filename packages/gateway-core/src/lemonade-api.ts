@@ -35,6 +35,27 @@ export interface LemonadeApiDeps {
 
 const DEFAULT_LEMONADE_URL = "http://127.0.0.1:13305";
 
+/** Extract a human-readable error message from a Lemonade response body.
+ *  Lemonade returns three different error shapes depending on the endpoint:
+ *    - { error: "string" }                     (some pull/install errors)
+ *    - { error: { message: "...", code, type } }  (most validation errors)
+ *    - { error: { ... }, ... }                 (other shapes)
+ *  Stringifying with `String(obj)` yields the literal "[object Object]",
+ *  which is what we used to ship. This walks the common shapes and falls
+ *  back to JSON for unknown ones. */
+function extractErrorMessage(parsed: unknown): string | null {
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const e = (parsed as { error?: unknown }).error;
+  if (e === undefined || e === null) return null;
+  if (typeof e === "string") return e;
+  if (typeof e === "object") {
+    const msg = (e as { message?: unknown }).message;
+    if (typeof msg === "string") return msg;
+    return JSON.stringify(e);
+  }
+  return String(e);
+}
+
 function resolveBaseUrl(getConfig: () => AionimaConfig): string {
   const config = getConfig();
   const providers = (config.providers as Record<string, { baseUrl?: string }> | undefined) ?? {};
@@ -74,9 +95,7 @@ async function lemonadeFetch<T>(
       parsed = text;
     }
     if (!res.ok) {
-      const errMsg = typeof parsed === "object" && parsed !== null && "error" in parsed
-        ? String((parsed as { error: unknown }).error)
-        : `Lemonade ${res.status}: ${text.slice(0, 200)}`;
+      const errMsg = extractErrorMessage(parsed) ?? `Lemonade ${res.status}: ${text.slice(0, 200)}`;
       return { ok: false, status: res.status, error: errMsg };
     }
     return { ok: true, data: parsed as T };
@@ -169,13 +188,16 @@ export function registerLemonadeRoutes(
   // POST /api/lemonade/models/load — { model } load model into memory
   // -------------------------------------------------------------------------
 
+  // Lemonade quirk: /pull accepts {model}, but /load /unload /delete
+  // expect {model_name}. The proxy hides this — callers always send
+  // `model` and we translate at the boundary.
   fastify.post("/api/lemonade/models/load", async (request, reply) => {
     const body = request.body as { model?: string } | undefined;
     if (!body?.model) return reply.code(400).send({ error: "model is required" });
     const baseUrl = resolveBaseUrl(getConfig);
     const result = await lemonadeFetch<unknown>(
       baseUrl, "/api/v1/load",
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: body.model }), timeoutMs: 60_000 },
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model_name: body.model }), timeoutMs: 60_000 },
     );
     if (!result.ok) return reply.code(result.status).send({ error: result.error });
     return reply.send({ ok: true, model: body.model });
@@ -191,7 +213,7 @@ export function registerLemonadeRoutes(
     const baseUrl = resolveBaseUrl(getConfig);
     const result = await lemonadeFetch<unknown>(
       baseUrl, "/api/v1/unload",
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: body.model }), timeoutMs: 30_000 },
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model_name: body.model }), timeoutMs: 30_000 },
     );
     if (!result.ok) return reply.code(result.status).send({ error: result.error });
     return reply.send({ ok: true, model: body.model });
@@ -208,7 +230,7 @@ export function registerLemonadeRoutes(
     logger?.info(`lemonade delete: ${body.model}`);
     const result = await lemonadeFetch<unknown>(
       baseUrl, "/api/v1/delete",
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: body.model }), timeoutMs: 30_000 },
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model_name: body.model }), timeoutMs: 30_000 },
     );
     if (!result.ok) return reply.code(result.status).send({ error: result.error });
     return reply.send({ ok: true, model: body.model });

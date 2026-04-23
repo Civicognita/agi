@@ -571,6 +571,36 @@ cmd_doctor() {
     fi
   fi
 
+  # Lemonade local AI server — the AGI-native local LLM backplane.
+  # Goes through /api/lemonade/status (the proxy we own) so the row
+  # reflects what AGI sees, not what a direct Lemonade probe would say.
+  local lemonade_resp
+  lemonade_resp="$(curl -sS --max-time 5 http://127.0.0.1:3100/api/lemonade/status 2>/dev/null || true)"
+  if [ -n "$lemonade_resp" ]; then
+    label "Lemonade:"
+    local lemonade_running lemonade_version lemonade_loaded lemonade_recipes
+    lemonade_running="$(echo "$lemonade_resp" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('running', False))" 2>/dev/null || echo False)"
+    if [ "$lemonade_running" = "True" ]; then
+      lemonade_version="$(echo "$lemonade_resp" | python3 -c "import json,sys; print(json.load(sys.stdin).get('version', '?'))" 2>/dev/null)"
+      lemonade_loaded="$(echo "$lemonade_resp" | python3 -c "import json,sys; print(json.load(sys.stdin).get('modelLoaded') or '(none)')" 2>/dev/null)"
+      lemonade_recipes="$(echo "$lemonade_resp" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+recipes=d.get('recipes') or {}
+installed=[]
+for r,info in recipes.items():
+    for be,bi in info.get('backends',{}).items():
+        if bi.get('state')=='installed':
+            installed.append(f'{r}:{be}')
+print(','.join(installed) if installed else '(none)')
+" 2>/dev/null)"
+      ok "v${lemonade_version} — backends:${lemonade_recipes} loaded:${lemonade_loaded}"
+    else
+      warn "reachable via /api/lemonade/status but reports running=false"
+      issues=$((issues + 1))
+    fi
+  fi
+
   # Disk
   label "Disk:"
   local disk_pct
