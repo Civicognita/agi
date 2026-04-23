@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { Cpu, AlertCircle } from "lucide-react";
 
 interface LemonadeStatus {
