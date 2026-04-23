@@ -30,7 +30,6 @@ import {
   disableSambaShare,
 } from "@/api.js";
 import type { LinuxUser, SSHKey, DashboardUserInfo, DashboardRole, SambaShare } from "@/types.js";
-import { HardwareScanner } from "@/components/HardwareScanner.js";
 
 // ---------------------------------------------------------------------------
 // Shared section heading
@@ -490,12 +489,14 @@ export function MachineAdmin() {
       )}
 
       {/* ================================================================= */}
-      {/* Hardware Section */}
+      {/* Hardware Section                                                  */}
+      {/* The complete machine snapshot (motherboard/BIOS/OS/CPU/memory/    */}
+      {/* storage/network) lives in HardwareSnapshotCard above, mounted     */}
+      {/* earlier in the render tree. The old HardwareScanner was removed   */}
+      {/* in task #295 (story #99) because it gated on hf.enabled and       */}
+      {/* framed its output as HF compatibility tier, not a raw snapshot.   */}
+      {/* HF compatibility tier info lives on the HF Marketplace page.     */}
       {/* ================================================================= */}
-      <Card className="p-6 gap-0">
-        <SectionHeading>Hardware</SectionHeading>
-        <HardwareScanner />
-      </Card>
 
       {/* ================================================================= */}
       {/* Agents Section */}

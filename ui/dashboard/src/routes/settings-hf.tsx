@@ -1,7 +1,7 @@
 /**
  * Settings > HF Marketplace — capabilities, storage, and authentication.
  *
- * Hardware profile lives on System > Machine — see `components/HardwareScanner.tsx`.
+ * Complete machine snapshot lives on System > Machine (HardwareSnapshotCard). HF-specific compatibility tier info stays on this page.
  */
 
 import { useCallback, useEffect, useState } from "react";
