@@ -157,11 +157,15 @@ export function registerAdminRoutes(
   fastify.get("/api/admin/aion-micro/status", async (req, reply) => {
     const err = guard(req);
     if (err !== null) return reply.code(403).send({ error: err });
+    if (!aionMicro || !aionMicro.isEnabled()) {
+      return reply.send({ enabled: false, reachable: false });
+    }
+    const reachable = await aionMicro.ensureAvailable();
     return reply.send({
-      enabled: aionMicro?.isEnabled() ?? false,
-      running: aionMicro?.isRunning() ?? false,
-      imageAvailable: aionMicro?.imageExists() ?? false,
-      port: aionMicro?.getPort() ?? null,
+      enabled: true,
+      reachable,
+      model: aionMicro.getModel(),
+      lemonadeBaseUrl: aionMicro.getLemonadeBaseUrl(),
     });
   });
 

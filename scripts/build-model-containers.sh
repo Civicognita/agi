@@ -51,12 +51,10 @@ podman build \
   "${CONTAINERS_DIR}"
 ok "agi-finetune:latest built"
 
-# Aion-Micro system operations model (SmolLM2-135M-Instruct)
-info "Building aion-micro system model image..."
-podman build \
-  -t ghcr.io/civicognita/aion-micro:latest \
-  -f "${CONTAINERS_DIR}/Containerfile.aion-micro" \
-  "${CONTAINERS_DIR}"
-ok "ghcr.io/civicognita/aion-micro:latest built"
+# K.4: aion-micro is no longer a custom container — it's a fine-tuned
+# GGUF served by the agi-lemonade-runtime plugin. The model lives on
+# HuggingFace Hub (default: wishborn/aion-micro-v1) and is pulled via
+# `agi lemonade pull`. Training data + adapter live at agi/aion-micro/
+# for reproducibility and future re-training.
 
 ok "Model runtime container images ready"

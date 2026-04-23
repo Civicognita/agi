@@ -4086,8 +4086,7 @@ export async function startGatewayServer(
     // Stop HF health monitor
     clearInterval(hfHealthMonitorInterval);
 
-    // Stop aion-micro if running
-    try { await aionMicroManager.stop(); } catch { /* ignore */ }
+    // K.4: aion-micro is now Lemonade-backed — no container to stop.
 
     // Step 1: Stop QueueConsumer polling — drain in-flight messages first
     try {

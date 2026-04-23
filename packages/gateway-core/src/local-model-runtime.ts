@@ -49,7 +49,7 @@ export class LocalModelRuntime {
     }
 
     if (this.aionMicro?.isEnabled()) {
-      return this.aionMicro.isRunning() || this.aionMicro.imageExists();
+      return await this.aionMicro.ensureAvailable();
     }
     return false;
   }
@@ -77,22 +77,15 @@ export class LocalModelRuntime {
       // fall through to aion-micro
     }
 
-    // Fallback: aion-micro
+    // Fallback: aion-micro (Lemonade-backed since K.4)
     if (this.aionMicro?.isEnabled()) {
       try {
-        const available = await this.aionMicro.ensureAvailable();
-        if (!available) return null;
-
-        const res = await fetch(`${this.aionMicro.getBaseUrl()}/v1/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages, max_tokens: maxTokens, temperature }),
-          signal: AbortSignal.timeout(60_000),
+        const text = await this.aionMicro.complete({
+          system: opts.system,
+          prompt,
+          maxTokens,
+          temperature,
         });
-
-        if (!res.ok) return null;
-        const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-        const text = data.choices?.[0]?.message?.content;
         if (typeof text === "string" && text.length > 0) return text;
       } catch (err) {
         this.log.warn(`aion-micro fallback failed: ${err instanceof Error ? err.message : String(err)}`);
