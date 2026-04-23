@@ -2,10 +2,12 @@
 # Unified Aionima test runner — routes all test tiers through the VM.
 #
 # Usage:
-#   test-vm-run.sh unit          # Vitest unit tests inside VM
-#   test-vm-run.sh e2e           # System e2e tests (install + API + onboarding)
-#   test-vm-run.sh e2e:ui        # Playwright against VM from host
-#   test-vm-run.sh all           # Everything
+#   test-vm-run.sh unit              # Vitest unit tests inside VM
+#   test-vm-run.sh e2e               # System e2e tests (install + API + onboarding)
+#   test-vm-run.sh e2e:ui            # Playwright against VM from host
+#   test-vm-run.sh spot <feature>    # Per-feature spot test against VM
+#                                    # features: hardware, marketplace, lemonade, project-types, all
+#   test-vm-run.sh all               # Everything (unit + e2e + e2e:ui + spot:all)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -97,6 +99,50 @@ run_e2e() {
 }
 
 # ---------------------------------------------------------------------------
+# Tier: Spot tests (per-feature integration assertions inside VM)
+# ---------------------------------------------------------------------------
+run_spot() {
+  local feature="${1:-all}"
+  local spot_dir="/mnt/agi/test/spot-tests"
+
+  case "$feature" in
+    hardware|marketplace|lemonade|project-types)
+      echo
+      echo "================================================================"
+      echo "  Spot Test: $feature"
+      echo "================================================================"
+      multipass exec "$VM_NAME" -- bash "${spot_dir}/${feature}.sh"
+      ;;
+    all)
+      echo
+      echo "================================================================"
+      echo "  Spot Tests: ALL features"
+      echo "================================================================"
+      local failed=0
+      for f in hardware marketplace lemonade project-types; do
+        echo
+        echo "--- $f ---"
+        if ! multipass exec "$VM_NAME" -- bash "${spot_dir}/${f}.sh"; then
+          failed=$((failed + 1))
+        fi
+      done
+      echo
+      if [ "$failed" -eq 0 ]; then
+        echo "All spot tests passed."
+      else
+        echo "$failed spot test(s) failed."
+        return 1
+      fi
+      ;;
+    *)
+      echo "Unknown spot feature: $feature" >&2
+      echo "Available: hardware, marketplace, lemonade, project-types, all" >&2
+      return 1
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Tier: E2E UI tests (Playwright from host against VM)
 # ---------------------------------------------------------------------------
 run_e2e_ui() {
@@ -130,6 +176,11 @@ case "$TIER" in
     preflight
     run_e2e_ui
     ;;
+  spot)
+    preflight
+    shift
+    run_spot "${1:-all}"
+    ;;
   all)
     preflight
     PASS=0
@@ -138,6 +189,7 @@ case "$TIER" in
     run_unit && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
     run_e2e && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
     run_e2e_ui && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
+    run_spot all && PASS=$((PASS + 1)) || FAIL=$((FAIL + 1))
 
     echo ""
     echo "================================================================"
