@@ -9,7 +9,7 @@
  */
 
 import { and, asc, count, countDistinct, desc, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
-import type { Db } from "@agi/db-schema/client";
+import type { AnyDb } from "@agi/db-schema/client";
 import { coaChains, entities, impactInteractions } from "@agi/db-schema";
 
 import type {
@@ -73,7 +73,7 @@ function bucketExpression(bucket: TimeBucket): ReturnType<typeof sql> {
 // ---------------------------------------------------------------------------
 
 export class DashboardQueries {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: AnyDb) {}
 
   // ---------------------------------------------------------------------------
   // Overview

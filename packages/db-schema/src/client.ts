@@ -8,9 +8,20 @@
 
 import { Pool, type PoolConfig } from "pg";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import * as schema from "./index.js";
 
 export type Db = NodePgDatabase<typeof schema>;
+
+/**
+ * Widened DB type that accepts any drizzle Postgres driver bound to the
+ * `@agi/db-schema` set. Used by services that want to run against node-postgres
+ * in production AND in-process pglite under test. Production code should still
+ * prefer the concrete `Db` (= NodePgDatabase); only test harnesses and
+ * infrastructure that genuinely needs driver polymorphism should use `AnyDb`.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnyDb = PgDatabase<PgQueryResultHKT, typeof schema, any>;
 
 export interface DbClient {
   pool: Pool;
