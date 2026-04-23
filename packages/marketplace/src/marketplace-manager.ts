@@ -274,7 +274,9 @@ export class MarketplaceManager {
         const unresolvedDeps: string[] = [];
 
         for (const dep of missing) {
-          const depPlugin = allCatalog.find(p => p.name === dep);
+          const depPlugin = allCatalog.find(p =>
+            p.name === dep || (Array.isArray(p.aliases) && p.aliases.includes(dep)),
+          );
           if (!depPlugin) {
             unresolvedDeps.push(dep);
             continue;

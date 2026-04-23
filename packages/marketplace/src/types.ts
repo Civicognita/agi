@@ -70,6 +70,15 @@ export interface MarketplacePluginEntry {
   provides?: string[];
   /** Plugin IDs this plugin depends on. */
   depends?: string[];
+  /**
+   * Previous names this plugin used. Catalog resolution treats both `name`
+   * and any entry in `aliases` as matching identifiers. Used to handle
+   * plugin renames without orphaning existing `requires:` references in
+   * stack manifests or other plugins. Phase M (v0.4.0): `aionima-*` slugs
+   * → `agi-*` slugs. Aliases preserved so older marketplace.json files
+   * keep resolving the renamed plugins.
+   */
+  aliases?: string[];
   trustTier?: TrustTier;
   integrityHash?: string;
   signedBy?: string;
