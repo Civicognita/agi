@@ -476,18 +476,19 @@ else
   emit "build" "skip" "Build up to date (source unchanged)"
 fi
 
-# Apply DB schema changes via drizzle-kit push. Additive changes (new
-# columns, new tables) apply cleanly without prompting. Destructive
-# changes (column drops, type changes) prompt and would block — those
-# require explicit migration work and shouldn't ship through upgrade.sh.
-# Failure here is non-fatal: the gateway can still boot for additive-
-# missing scenarios where the in-flight code reads but doesn't write
-# the new columns.
-emit "db-push" "start" "Pushing DB schema changes (additive only)"
-if (cd "$DEPLOY_DIR" && timeout 60 pnpm --filter @agi/db-schema push 2>&1 | sed 's/\x1b\[[0-9;]*m//g'); then
-  emit "db-push" "done" "DB schema in sync"
-else
-  emit "db-push" "warn" "drizzle-kit push reported issues — check above. Continuing in degraded mode."
+# Apply DB schema changes via the targeted psql migration script.
+# drizzle-kit push doesn't work (CJS/NodeNext mismatch in schema files);
+# migrate-db.sh runs idempotent ALTER TABLE … IF NOT EXISTS statements
+# instead. Additive only — destructive changes need explicit migration
+# work that doesn't ship through this path.
+DB_MIGRATE_SCRIPT="$DEPLOY_DIR/scripts/migrate-db.sh"
+if [ -x "$DB_MIGRATE_SCRIPT" ]; then
+  emit "db-push" "start" "Applying DB schema migrations"
+  if bash "$DB_MIGRATE_SCRIPT" 2>&1 | sed 's/\x1b\[[0-9;]*m//g'; then
+    emit "db-push" "done" "DB schema in sync"
+  else
+    emit "db-push" "warn" "DB migration script reported issues — see above"
+  fi
 fi
 
 # Build HF model runtime container images (if containers/ dir exists)
