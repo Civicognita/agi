@@ -750,15 +750,45 @@ cmd_models() {
       ;;
     install)
       local id="${1:-}"
+      local backend="${2:-auto}"
       if [ -z "$id" ]; then
-        err "Usage: agi models install <model-id>"
+        err "Usage: agi models install <model-id> [backend]"
+        echo "  backend: auto (default — Lemonade for GGUF, HF for everything else)"
+        echo "           lemonade — force Lemonade pull"
+        echo "           hf       — force HF Podman install"
         exit 1
       fi
-      info "Requesting install for $id (backend streams progress)…"
-      curl -s -X POST "$gw_url/api/hf/install" \
-        -H "Content-Type: application/json" \
-        --data "$(python3 -c "import json,sys;print(json.dumps({'modelId':sys.argv[1]}))" "$id")" \
-        | ($fmt)
+      # K.3 slice 3 auto-detect: model names ending in -GGUF (or matching
+      # the Lemonade catalog) route through Lemonade. Everything else
+      # uses the existing HF Podman install path. Explicit `lemonade` or
+      # `hf` second arg forces the route.
+      local route="$backend"
+      if [ "$route" = "auto" ]; then
+        case "$id" in
+          *-GGUF|*-gguf|*.gguf) route="lemonade" ;;
+          *) route="hf" ;;
+        esac
+        info "auto-routing to $route based on model name"
+      fi
+      case "$route" in
+        lemonade)
+          info "Pulling $id via Lemonade…"
+          curl -s -X POST "$gw_url/api/lemonade/models/pull" \
+            -H "Content-Type: application/json" \
+            --data "$(printf '{"model":"%s"}' "$id")" | ($fmt)
+          ;;
+        hf)
+          info "Requesting HF install for $id (backend streams progress)…"
+          curl -s -X POST "$gw_url/api/hf/install" \
+            -H "Content-Type: application/json" \
+            --data "$(python3 -c "import json,sys;print(json.dumps({'modelId':sys.argv[1]}))" "$id")" \
+            | ($fmt)
+          ;;
+        *)
+          err "Unknown backend: $route (use 'auto', 'lemonade', or 'hf')"
+          exit 1
+          ;;
+      esac
       ;;
     start|stop|remove)
       local id="${1:-}"
@@ -789,7 +819,7 @@ cmd_models() {
       ;;
     *)
       err "Unknown models action: $action"
-      echo "  Actions: list, running, status <id>, install <id>, start <id>, stop <id>, remove <id>, search <query>, hardware"
+      echo "  Actions: list, running, status <id>, install <id> [auto|lemonade|hf], start <id>, stop <id>, remove <id>, search <query>, hardware"
       exit 1
       ;;
   esac
