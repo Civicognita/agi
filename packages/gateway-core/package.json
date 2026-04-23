@@ -7,21 +7,21 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.90.0",
-    "@fastify/static": "^9.0.0",
     "@agi/channel-sdk": "workspace:*",
-    "@agi/db-schema": "workspace:*",
-    "@agi/sdk": "workspace:*",
-    "@agi/security": "workspace:*",
     "@agi/coa-chain": "workspace:*",
+    "@agi/db-schema": "workspace:*",
     "@agi/entity-model": "workspace:*",
     "@agi/marketplace": "workspace:*",
     "@agi/memory": "workspace:*",
     "@agi/model-runtime": "workspace:*",
     "@agi/plugins": "workspace:*",
+    "@agi/sdk": "workspace:*",
+    "@agi/security": "workspace:*",
     "@agi/skills": "workspace:*",
     "@agi/trpc-api": "workspace:*",
     "@agi/voice": "workspace:*",
+    "@anthropic-ai/sdk": "^0.90.0",
+    "@fastify/static": "^9.0.0",
     "@trpc/server": "^11.0.0",
     "drizzle-orm": "^0.38.3",
     "fastify": "^5.7.4",
@@ -32,6 +32,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.4.4",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0"
   }

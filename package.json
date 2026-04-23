@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.102",
+  "version": "0.4.103",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -72,6 +72,9 @@
       "electron",
       "esbuild",
       "node-pty"
-    ]
+    ],
+    "overrides": {
+      "drizzle-orm": "0.38.4"
+    }
   }
 }
