@@ -58,10 +58,12 @@ export const pluginsMarketplace = pgTable(
     homepage: text("homepage"),
     provides: jsonb("provides"),
     depends: jsonb("depends"),
-    // aliases jsonb — declared in code but disabled until the migration
-    // mechanism in task #289 lands. Leaving this commented so future
-    // re-enable is one diff, not a hunt.
-    // aliases: jsonb("aliases"),
+    /** Previous names this plugin used. Catalog matcher resolves either
+     *  the primary name OR any alias (see MarketplacePluginEntry.aliases
+     *  + marketplace-manager dependency lookup). Persists Phase M's
+     *  aionima-* → agi-* rename mapping so older requires: arrays in
+     *  stack manifests keep resolving. */
+    aliases: jsonb("aliases"),
     trustTier: text("trust_tier"),
     integrityHash: text("integrity_hash"),
     signedBy: text("signed_by"),

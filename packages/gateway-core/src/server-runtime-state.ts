@@ -3957,6 +3957,15 @@ export async function createGatewayRuntimeState(
       return reply.send(result);
     });
 
+    fastify.post("/api/marketplace/dedupe", async (_request, reply) => {
+      const fn = (mp as unknown as { dedupeCatalog?: () => Promise<{ removed: number; orphanRefs: string[] }> }).dedupeCatalog;
+      if (typeof fn !== "function") {
+        return reply.code(501).send({ ok: false, error: "dedupeCatalog not implemented on this manager" });
+      }
+      const result = await fn.call(mp);
+      return reply.send({ ok: true, ...result });
+    });
+
     fastify.get("/api/marketplace/catalog", async (request, reply) => {
       const query = request.query as Record<string, string>;
       const items = await mp.searchCatalog({

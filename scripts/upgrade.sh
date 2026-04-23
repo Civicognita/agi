@@ -476,6 +476,20 @@ else
   emit "build" "skip" "Build up to date (source unchanged)"
 fi
 
+# Apply DB schema changes via drizzle-kit push. Additive changes (new
+# columns, new tables) apply cleanly without prompting. Destructive
+# changes (column drops, type changes) prompt and would block — those
+# require explicit migration work and shouldn't ship through upgrade.sh.
+# Failure here is non-fatal: the gateway can still boot for additive-
+# missing scenarios where the in-flight code reads but doesn't write
+# the new columns.
+emit "db-push" "start" "Pushing DB schema changes (additive only)"
+if (cd "$DEPLOY_DIR" && timeout 60 pnpm --filter @agi/db-schema push 2>&1 | sed 's/\x1b\[[0-9;]*m//g'); then
+  emit "db-push" "done" "DB schema in sync"
+else
+  emit "db-push" "warn" "drizzle-kit push reported issues — check above. Continuing in degraded mode."
+fi
+
 # Build HF model runtime container images (if containers/ dir exists)
 MODEL_CONTAINERS_SCRIPT="$DEPLOY_DIR/scripts/build-model-containers.sh"
 if [ -x "$MODEL_CONTAINERS_SCRIPT" ]; then

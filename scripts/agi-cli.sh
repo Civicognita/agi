@@ -856,6 +856,12 @@ cmd_marketplace() {
     sources)
       curl -sS "$gw/api/marketplace/sources" | eval "$jq_or_cat"
       ;;
+    dedupe|vacuum)
+      # Remove orphan catalog rows whose sourceRef isn't in the active
+      # sources list. Catches cruft from older syncs or deleted sources.
+      info "vacuuming orphan marketplace catalog rows..."
+      curl -sS -X POST "$gw/api/marketplace/dedupe" | eval "$jq_or_cat"
+      ;;
     sync)
       # Sync every configured source. Dashboard normally batches this on
       # boot; this command lets the owner force a re-sync after pushing
@@ -905,7 +911,7 @@ for s in sources:
       ;;
     *)
       err "Unknown marketplace action: $action"
-      echo "  Actions: list, installed, sources, sync, install <name>, uninstall <name>"
+      echo "  Actions: list, installed, sources, sync, dedupe, install <name>, uninstall <name>"
       exit 1
       ;;
   esac
@@ -1029,7 +1035,7 @@ cmd_help() {
   echo "                  stop|remove|search|hardware)"
   echo "  providers CMD   Manage LLM providers (list|status|set-default)"
   echo "  marketplace CMD Plugin Marketplace ops"
-  echo "                  (list|installed|sources|sync|install <n>|uninstall <n>)"
+  echo "                  (list|installed|sources|sync|dedupe|install <n>|uninstall <n>)"
   echo "  lemonade CMD    Manage Lemonade local AI server"
   echo "                  (status|models|pull|load|unload|delete|backends)"
   echo "  ollama CMD      Manage Ollama (status|start|stop|pull|list)"

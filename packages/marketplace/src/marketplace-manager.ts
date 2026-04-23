@@ -158,7 +158,25 @@ export class MarketplaceManager {
     }
 
     const diff = await this.store.syncPlugins(ref, result.catalog.plugins);
+
+    // Vacuum orphan catalog rows whose sourceRef is no longer in the
+    // active sources list. Catches cruft from older syncs (different ref
+    // formats, deleted sources, plugin renames). Cheap when nothing to
+    // remove; non-fatal on failure.
+    try {
+      const activeRefs = Array.from(this.sourceIdToRef.values());
+      await this.store.cleanupOrphanRows(activeRefs);
+    } catch { /* non-fatal */ }
+
     return { ok: true, diff };
+  }
+
+  /** Manual catalog vacuum — removes rows whose sourceRef isn't in the
+   *  active sources list. Same logic that runs after every syncSource(),
+   *  exposed separately so it can be triggered without a fresh sync. */
+  async dedupeCatalog(): Promise<{ removed: number; orphanRefs: string[] }> {
+    const activeRefs = Array.from(this.sourceIdToRef.values());
+    return await this.store.cleanupOrphanRows(activeRefs);
   }
 
   /**

@@ -61,7 +61,7 @@ function rowToPluginEntry(
     homepage: row.homepage ?? undefined,
     provides: Array.isArray(row.provides) ? row.provides as string[] : undefined,
     depends: Array.isArray(row.depends) ? row.depends as string[] : undefined,
-    // aliases: deferred — see comment at INSERT site.
+    aliases: Array.isArray(row.aliases) ? row.aliases as string[] : undefined,
     trustTier: (row.trustTier as TrustTier | null) ?? undefined,
     integrityHash: row.integrityHash ?? undefined,
     signedBy: row.signedBy ?? undefined,
@@ -173,10 +173,7 @@ export class MarketplaceStore {
             homepage: p.homepage ?? null,
             provides: (p.provides ?? null) as unknown[] | null,
             depends: (p.depends ?? null) as unknown[] | null,
-            // aliases: deferred — schema column declared but not yet
-            // migrated into the live DB. See task #289 (catalog dedupe +
-            // DB schema migration mechanism). Re-enable once the upgrade
-            // pipeline runs `drizzle-kit push` against the live table.
+            aliases: (p.aliases ?? null) as unknown[] | null,
             trustTier: p.trustTier ?? (isOfficial ? "official" : "unknown"),
             integrityHash: p.integrityHash ?? null,
             signedBy: p.signedBy ?? null,
@@ -231,6 +228,42 @@ export class MarketplaceStore {
         ),
       );
     return row ? rowToPluginEntry(row) : undefined;
+  }
+
+  /**
+   * Vacuum orphan catalog rows whose sourceRef is not in the active
+   * sources list. Catches duplicates left behind by:
+   *   - Older syncs that used a different sourceRef format
+   *   - Sources that have been deleted from the user-configured list
+   *   - Migration artifacts (e.g. plugins renamed from aionima-* → agi-*)
+   *
+   * Returns count of removed rows. Safe to call repeatedly — no-op when
+   * no orphans exist.
+   */
+  async cleanupOrphanRows(activeSourceRefs: string[]): Promise<{ removed: number; orphanRefs: string[] }> {
+    if (activeSourceRefs.length === 0) {
+      return { removed: 0, orphanRefs: [] };
+    }
+    // Identify orphan source refs first (so we can report them).
+    const allRefsRows = await this.db
+      .selectDistinct({ sourceRef: pluginsMarketplace.sourceRef })
+      .from(pluginsMarketplace);
+    const allRefs = allRefsRows.map((r) => r.sourceRef);
+    const activeSet = new Set(activeSourceRefs);
+    const orphanRefs = allRefs.filter((r) => !activeSet.has(r));
+
+    if (orphanRefs.length === 0) {
+      return { removed: 0, orphanRefs: [] };
+    }
+
+    // Drizzle uses inArray for the equivalent of SQL IN (...). Imported lazily.
+    const { inArray } = await import("drizzle-orm");
+    const result = await this.db
+      .delete(pluginsMarketplace)
+      .where(inArray(pluginsMarketplace.sourceRef, orphanRefs))
+      .returning({ id: pluginsMarketplace.id });
+
+    return { removed: result.length, orphanRefs };
   }
 
   // -------------------------------------------------------------------------
