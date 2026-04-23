@@ -465,6 +465,130 @@ async function gatewayChecks(config: AionimaConfig): Promise<CheckGroup> {
   return { title: "Gateway", checks };
 }
 
+/**
+ * Lemonade runtime checks — Phase K.7 of the v0.4.0 closing plan.
+ *
+ * Probes `/api/lemonade/status` through the gateway. When the runtime
+ * plugin isn't installed the gateway returns 503; that single "not
+ * installed" finding supersedes the remaining checks. Otherwise we
+ * surface version, running-state, backend availability, and provider
+ * registration. NPU hardware presence is already flagged by devChecks
+ * (Dev Mode group) so we don't duplicate it here.
+ */
+async function lemonadeChecks(config: AionimaConfig): Promise<CheckGroup | null> {
+  const host = config.gateway?.host ?? "127.0.0.1";
+  const port = config.gateway?.port ?? 3100;
+  const client = new GatewayClient(host, port);
+  const gatewayReachable = await client.ping();
+  if (!gatewayReachable) {
+    // Gateway itself is down; suppressing this group prevents a noisy
+    // cascade of failures that really all point at "gateway not running".
+    return null;
+  }
+
+  const checks: Check[] = [];
+  const status = await client.lemonadeStatus();
+
+  if (status === null) {
+    checks.push({
+      name: "Lemonade runtime: not installed (proxy 503)",
+      ok: false,
+      warn: true,
+      fix: "Install the agi-lemonade-runtime plugin from the Plugin Marketplace.",
+    });
+    // Config-side check still runs — catches the case where provider is
+    // configured but the runtime plugin was removed.
+    const hasProvider = Boolean(config.providers?.["lemonade"]);
+    checks.push({
+      name: `Lemonade provider in config: ${hasProvider ? "present" : "absent"}`,
+      ok: hasProvider,
+      warn: !hasProvider,
+      fix: hasProvider
+        ? undefined
+        : "Once the plugin is installed, /api/dev/switch (or Settings > Providers) registers the provider.",
+    });
+    return { title: "Lemonade", checks };
+  }
+
+  // Runtime plugin reachable — drill into version, backends, provider.
+  const versionLabel = status.version ? ` v${status.version}` : "";
+  checks.push({
+    name: `Lemonade runtime: installed${versionLabel}`,
+    ok: Boolean(status.installed),
+    warn: !status.installed,
+    fix: status.installed
+      ? undefined
+      : "Plugin reports installed=false — reinstall via the Plugin Marketplace.",
+  });
+
+  checks.push({
+    name: `Lemonade server: ${status.running ? "running" : "stopped"}`,
+    ok: Boolean(status.running),
+    warn: !status.running,
+    fix: status.running
+      ? undefined
+      : "Start the Lemonade service from the plugin's Settings page or the CLI tool.",
+  });
+
+  // Backends — each reports independently. At least one needs to be
+  // available for Lemonade to serve; warn if all three are missing.
+  const npuAvailable = Boolean(status.devices?.amd_npu?.available);
+  const igpuAvailable = Boolean(status.devices?.amd_igpu?.available);
+  const cpuAvailable = Boolean(status.devices?.cpu?.available);
+  checks.push({
+    name: `Lemonade backend: AMD NPU ${npuAvailable ? "available" : "unavailable"}`,
+    ok: npuAvailable,
+    warn: !npuAvailable,
+    fix: npuAvailable
+      ? undefined
+      : "Optional backend — AMD XDNA NPU not detected by Lemonade. CPU/iGPU still work.",
+  });
+  checks.push({
+    name: `Lemonade backend: AMD iGPU ${igpuAvailable ? "available" : "unavailable"}`,
+    ok: igpuAvailable,
+    warn: !igpuAvailable,
+    fix: igpuAvailable
+      ? undefined
+      : "Optional backend — AMD integrated GPU not detected by Lemonade.",
+  });
+  checks.push({
+    name: `Lemonade backend: CPU ${cpuAvailable ? "available" : "unavailable"}`,
+    ok: cpuAvailable,
+    warn: !cpuAvailable,
+    fix: cpuAvailable
+      ? undefined
+      : "CPU backend unexpectedly absent — Lemonade normally always has CPU available.",
+  });
+
+  // Active model loaded — not a hard requirement but signals readiness.
+  if (status.activeModel !== undefined && status.activeModel !== null && status.activeModel !== "") {
+    checks.push({
+      name: `Lemonade active model: ${status.activeModel}`,
+      ok: true,
+    });
+  } else {
+    checks.push({
+      name: "Lemonade active model: none loaded",
+      ok: false,
+      warn: true,
+      fix: "Pull a model via the Lemonade plugin's Models page, or via the lemonade_pull agent tool.",
+    });
+  }
+
+  // Config-side provider registration.
+  const hasProvider = Boolean(config.providers?.["lemonade"]);
+  checks.push({
+    name: `Lemonade provider in config: ${hasProvider ? "present" : "absent"}`,
+    ok: hasProvider,
+    warn: !hasProvider,
+    fix: hasProvider
+      ? undefined
+      : "Provider auto-registers when the plugin activates; re-enable the plugin if this row stays absent.",
+  });
+
+  return { title: "Lemonade", checks };
+}
+
 // ---------------------------------------------------------------------------
 // Command registration
 // ---------------------------------------------------------------------------
@@ -495,6 +619,9 @@ export function registerDoctorCommand(program: Command): void {
         if (dev) groups.push(dev);
 
         groups.push(await gatewayChecks(config));
+
+        const lemonade = await lemonadeChecks(config);
+        if (lemonade) groups.push(lemonade);
       }
 
       // JSON output
