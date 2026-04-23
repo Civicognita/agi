@@ -195,9 +195,17 @@ export class DashboardQueries {
       .orderBy(asc(bucketExpr));
 
     return rows.map((row) => ({
-      bucketStart: row.bucketStart instanceof Date
-        ? row.bucketStart.toISOString()
-        : String(row.bucketStart ?? ""),
+      // Normalize bucketStart to ISO regardless of driver. node-postgres
+      // returns Date; pglite returns a Postgres timestamp string like
+      // "2026-04-01 00:00:00-06". Parse either through Date to get a
+      // stable ISO form for consumers.
+      bucketStart: (() => {
+        const raw = row.bucketStart;
+        if (raw instanceof Date) return raw.toISOString();
+        if (raw === null || raw === undefined) return "";
+        const parsed = new Date(String(raw));
+        return Number.isNaN(parsed.valueOf()) ? String(raw) : parsed.toISOString();
+      })(),
       totalImp: row.totalImp,
       positiveImp: row.positiveImp,
       negativeImp: row.negativeImp,

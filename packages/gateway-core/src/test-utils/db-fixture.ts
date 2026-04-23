@@ -159,6 +159,14 @@ export async function createTestDb(): Promise<TestDbContext> {
   const pg = new PGlite();
   const db = drizzle(pg, { schema });
 
+  // Pin session to UTC so date_trunc / interval math match production
+  // (which runs agi_data behind a PG 17 container with TIME ZONE 'UTC'
+  // set via POSTGRES_TZ env). Without this, pglite falls back to the
+  // host timezone, which produces confusing test results like
+  // date_trunc('day', '2026-04-23T18:00Z') → '2026-04-23T06:00Z' on
+  // a CDT host.
+  await pg.exec(`SET TIME ZONE 'UTC';`);
+
   // Run the DDL. pglite supports DO $$ blocks and full CREATE TABLE syntax.
   await pg.exec(SCHEMA_DDL);
 

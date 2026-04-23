@@ -233,85 +233,85 @@ describe("DashboardQueries.getOverview", () => {
   });
 });
 
-describe.skip("DashboardQueries.getRecentActivity", () => {
-  it("returns empty array when no interactions exist", () => {
-    expect(queries.getRecentActivity()).toEqual([]);
+describe("DashboardQueries.getRecentActivity", () => {
+  it("returns empty array when no interactions exist", async () => {
+    expect(await queries.getRecentActivity()).toEqual([]);
   });
 
   it("returns activity entries in descending order by createdAt", async () => {
-    const e = store.createEntity({ type: "E", displayName: "Tester" });
-    const fp1 = insertCOAChain(e.id, "message_in");
-    recorder.record({ entityId: e.id, coaFingerprint: fp1, quant: 1, boolLabel: "TRUE" });
+    const e = await store.createEntity({ type: "E", displayName: "Tester" });
+    const fp1 = await insertCOAChain(e.id, "message_in");
+    await recorder.record({ entityId: e.id, coaFingerprint: fp1, quant: 1, boolLabel: "TRUE" });
     await new Promise((r) => setTimeout(r, 5));
-    const fp2 = insertCOAChain(e.id, "message_in");
-    recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 2, boolLabel: "0TRUE" });
+    const fp2 = await insertCOAChain(e.id, "message_in");
+    await recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 2, boolLabel: "0TRUE" });
 
-    const activity = queries.getRecentActivity(10);
+    const activity = await queries.getRecentActivity(10);
     expect(activity.length).toBe(2);
     // Most recent first
     expect(activity[0]!.createdAt >= activity[1]!.createdAt).toBe(true);
   });
 
-  it("joins entity displayName correctly", () => {
-    const e = store.createEntity({ type: "E", displayName: "TestUser" });
-    const fp = insertCOAChain(e.id);
-    recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
+  it("joins entity displayName correctly", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "TestUser" });
+    const fp = await insertCOAChain(e.id);
+    await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
 
-    const activity = queries.getRecentActivity();
+    const activity = await queries.getRecentActivity();
     expect(activity[0]!.entityName).toBe("TestUser");
   });
 
-  it("returns 'Unknown' for entities with no display_name match", () => {
+  it("returns 'Unknown' for entities with no display_name match", async () => {
     // Insert an impact interaction with an entity_id that doesn't exist in entities
     // (bypass FK by disabling pragma - but the safer approach is to just verify existing behavior)
     // Instead, test that known entity names appear in activity
-    seedTestData();
-    const activity = queries.getRecentActivity(20);
+    await seedTestData();
+    const activity = await queries.getRecentActivity(20);
     const names = activity.map((a) => a.entityName);
     expect(names).toContain("Alice");
     expect(names).toContain("Bob");
     expect(names).toContain("Civicognita");
   });
 
-  it("respects the limit parameter", () => {
-    seedTestData();
-    const limited = queries.getRecentActivity(2);
+  it("respects the limit parameter", async () => {
+    await seedTestData();
+    const limited = await queries.getRecentActivity(2);
     expect(limited.length).toBe(2);
   });
 
-  it("returns channel and workType from the interaction record", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp = insertCOAChain(e.id, "message_in");
-    recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE", channel: "telegram", workType: "message_in" });
+  it("returns channel and workType from the interaction record", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp = await insertCOAChain(e.id, "message_in");
+    await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE", channel: "telegram", workType: "message_in" });
 
-    const activity = queries.getRecentActivity(1);
+    const activity = await queries.getRecentActivity(1);
     expect(activity[0]!.channel).toBe("telegram");
     expect(activity[0]!.workType).toBe("message_in");
   });
 
-  it("returns null for channel and workType when not set", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp = insertCOAChain(e.id);
-    recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
+  it("returns null for channel and workType when not set", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp = await insertCOAChain(e.id);
+    await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
 
-    const activity = queries.getRecentActivity(1);
+    const activity = await queries.getRecentActivity(1);
     expect(activity[0]!.channel).toBeNull();
     expect(activity[0]!.workType).toBeNull();
   });
 });
 
-describe.skip("DashboardQueries.getTimeline", () => {
-  it("returns empty array when no interactions exist", () => {
-    const result = queries.getTimeline("day");
+describe("DashboardQueries.getTimeline", () => {
+  it("returns empty array when no interactions exist", async () => {
+    const result = await queries.getTimeline("day");
     expect(result).toEqual([]);
   });
 
-  it("returns buckets with all required fields", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp = insertCOAChain(e.id);
-    recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
+  it("returns buckets with all required fields", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp = await insertCOAChain(e.id);
+    await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
 
-    const buckets = queries.getTimeline("day");
+    const buckets = await queries.getTimeline("day");
     expect(buckets.length).toBeGreaterThan(0);
     const bucket = buckets[0]!;
     expect(typeof bucket.bucketStart).toBe("string");
@@ -321,119 +321,127 @@ describe.skip("DashboardQueries.getTimeline", () => {
     expect(typeof bucket.interactionCount).toBe("number");
   });
 
-  it("day bucket format matches YYYY-MM-DDT00:00:00Z pattern", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp = insertCOAChain(e.id);
-    recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
+  it("day bucket snaps to 00:00:00 and parses as Date", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp = await insertCOAChain(e.id);
+    await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
 
-    const buckets = queries.getTimeline("day");
-    expect(buckets[0]!.bucketStart).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00Z$/);
+    const buckets = await queries.getTimeline("day");
+    expect(buckets[0]!.bucketStart).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00/);
+    expect(Number.isNaN(new Date(buckets[0]!.bucketStart).valueOf())).toBe(false);
   });
 
-  it("hour bucket format matches YYYY-MM-DDTHH:00:00Z pattern", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp = insertCOAChain(e.id);
-    recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
+  it("hour bucket snaps to :00:00 and parses as Date", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp = await insertCOAChain(e.id);
+    await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
 
-    const buckets = queries.getTimeline("hour");
-    expect(buckets[0]!.bucketStart).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:00:00Z$/);
+    const buckets = await queries.getTimeline("hour");
+    expect(buckets[0]!.bucketStart).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:00:00/);
   });
 
-  it("week bucket format starts with YYYY-W pattern", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp = insertCOAChain(e.id);
-    recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
+  it("week bucket starts on a Monday at 00:00:00", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp = await insertCOAChain(e.id);
+    await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
 
-    const buckets = queries.getTimeline("week");
-    expect(buckets[0]!.bucketStart).toMatch(/^\d{4}-W\d{2}$/);
+    const buckets = await queries.getTimeline("week");
+    // Postgres date_trunc('week', ...) returns the Monday 00:00 of that
+    // ISO week. The normalized ISO string has a midnight time component
+    // and Monday's weekday (1).
+    expect(buckets[0]!.bucketStart).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00/);
+    const d = new Date(buckets[0]!.bucketStart);
+    expect(Number.isNaN(d.valueOf())).toBe(false);
+    // getUTCDay returns 0=Sun..6=Sat. Postgres week starts Monday (1).
+    expect(d.getUTCDay()).toBe(1);
   });
 
-  it("month bucket format matches YYYY-MM-01T00:00:00Z pattern", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp = insertCOAChain(e.id);
-    recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
+  it("month bucket snaps to YYYY-MM-01T00:00:00", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp = await insertCOAChain(e.id);
+    await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
 
-    const buckets = queries.getTimeline("month");
-    expect(buckets[0]!.bucketStart).toMatch(/^\d{4}-\d{2}-01T00:00:00Z$/);
+    const buckets = await queries.getTimeline("month");
+    expect(buckets[0]!.bucketStart).toMatch(/^\d{4}-\d{2}-01T00:00:00/);
   });
 
-  it("correctly separates positiveImp and negativeImp", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp1 = insertCOAChain(e.id);
-    const fp2 = insertCOAChain(e.id);
-    recorder.record({ entityId: e.id, coaFingerprint: fp1, quant: 1, boolLabel: "TRUE" }); // +0.5
-    recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "FALSE" }); // -0.5
+  it("correctly separates positiveImp and negativeImp", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp1 = await insertCOAChain(e.id);
+    const fp2 = await insertCOAChain(e.id);
+    await recorder.record({ entityId: e.id, coaFingerprint: fp1, quant: 1, boolLabel: "TRUE" }); // +0.5
+    await recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "FALSE" }); // -0.5
 
-    const buckets = queries.getTimeline("day");
+    const buckets = await queries.getTimeline("day");
     expect(buckets.length).toBe(1);
     expect(buckets[0]!.positiveImp).toBeCloseTo(0.5);
     expect(buckets[0]!.negativeImp).toBeCloseTo(-0.5);
     expect(buckets[0]!.totalImp).toBeCloseTo(0);
   });
 
-  it("filters by entityId when provided", () => {
-    const { id1, id2 } = seedTestData();
-    const result = queries.getTimeline("day", id1);
+  it("filters by entityId when provided", async () => {
+    const { id1, id2 } = await seedTestData();
+    const result = await queries.getTimeline("day", id1);
     // All interactions in result should belong to id1 - verify by checking totals
     // Alice has: TRUE(0.5) + 0TRUE(1.0) + FALSE(-0.5) = 1.0 total
     const totalImp = result.reduce((sum, b) => sum + b.totalImp, 0);
     expect(totalImp).toBeCloseTo(1.0);
 
-    const allEntries = queries.getRecentActivity(20);
+    const allEntries = await queries.getRecentActivity(20);
     const e2Activities = allEntries.filter((a) => a.entityId === id2);
     // Bob has different total — filtering by id1 should exclude Bob's records
     expect(e2Activities.length).toBeGreaterThan(0);
   });
 
   it("filters by since date", async () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
+    const e = await store.createEntity({ type: "E", displayName: "User" });
     // Insert interaction at a fixed past timestamp
-    const pastFp = insertCOAChainAt(e.id, "2020-01-01T00:00:00Z");
-    insertInteractionAt(e.id, pastFp, 1.0, "2020-01-01T12:00:00Z"); // 1.0 in 2020
+    const pastFp = await insertCOAChainAt(e.id, "2020-01-01T00:00:00Z");
+    await insertInteractionAt(e.id, pastFp, 1.0, "2020-01-01T12:00:00Z"); // 1.0 in 2020
 
     const now = new Date().toISOString();
-    const fp2 = insertCOAChain(e.id);
-    recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "TRUE" }); // 0.5 now
+    const fp2 = await insertCOAChain(e.id);
+    await recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "TRUE" }); // 0.5 now
 
-    const result = queries.getTimeline("day", undefined, now);
+    const result = await queries.getTimeline("day", undefined, now);
     // Only the recent record should be in the result
     const total = result.reduce((sum, b) => sum + b.totalImp, 0);
     expect(total).toBeCloseTo(0.5);
   });
 
-  it("filters by until date", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
+  it("filters by until date", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
     // Insert interaction at a fixed past timestamp
-    const pastFp = insertCOAChainAt(e.id, "2020-01-01T00:00:00Z");
-    insertInteractionAt(e.id, pastFp, 1.0, "2020-01-01T12:00:00Z"); // 1.0 in 2020
+    const pastFp = await insertCOAChainAt(e.id, "2020-01-01T00:00:00Z");
+    await insertInteractionAt(e.id, pastFp, 1.0, "2020-01-01T12:00:00Z"); // 1.0 in 2020
 
-    const fp2 = insertCOAChain(e.id);
-    recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "TRUE" }); // 0.5 now
+    const fp2 = await insertCOAChain(e.id);
+    await recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "TRUE" }); // 0.5 now
 
     // Until 2021 — only the 2020 record should be included
-    const result = queries.getTimeline("day", undefined, undefined, "2021-01-01T00:00:00Z");
+    const result = await queries.getTimeline("day", undefined, undefined, "2021-01-01T00:00:00Z");
     const total = result.reduce((sum, b) => sum + b.totalImp, 0);
     expect(total).toBeCloseTo(1.0);
   });
 
-  it("filters by both entityId and date range", () => {
-    const { id1 } = seedTestData();
+  it("filters by both entityId and date range", async () => {
+    const { id1 } = await seedTestData();
     const future = new Date(Date.now() + 86_400_000).toISOString();
     const past = new Date(Date.now() - 86_400_000).toISOString();
 
-    const result = queries.getTimeline("day", id1, past, future);
+    const result = await queries.getTimeline("day", id1, past, future);
     // Should have at least one bucket for Alice
     expect(result.length).toBeGreaterThan(0);
   });
 
-  it("returns buckets ordered ASC by bucketStart", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp1 = insertCOAChainAt(e.id, "2024-01-01T12:00:00Z");
-    recorder.record({ entityId: e.id, coaFingerprint: fp1, quant: 1, boolLabel: "TRUE" });
-    const fp2 = insertCOAChainAt(e.id, "2024-03-01T12:00:00Z");
-    recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "TRUE" });
+  it("returns buckets ordered ASC by bucketStart", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp1 = await insertCOAChainAt(e.id, "2024-01-01T12:00:00Z");
+    await recorder.record({ entityId: e.id, coaFingerprint: fp1, quant: 1, boolLabel: "TRUE" });
+    const fp2 = await insertCOAChainAt(e.id, "2024-03-01T12:00:00Z");
+    await recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "TRUE" });
 
-    const buckets = queries.getTimeline("day");
+    const buckets = await queries.getTimeline("day");
     if (buckets.length >= 2) {
       for (let i = 1; i < buckets.length; i++) {
         expect(buckets[i]!.bucketStart >= buckets[i - 1]!.bucketStart).toBe(true);
