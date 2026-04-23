@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
-# Unified Aionima test runner — routes all test tiers through the VM.
+# Unified Aionima test runner — routes all test tiers through whatever
+# environment is configured (VM by default, host with RUN_LOCAL=1).
+#
+# Renamed from test-vm-run.sh in v0.4.95 (Phase J task #282) — the old
+# name implied a hard VM dependency that doesn't reflect what the kit
+# does today. Spot/unit tests can be run locally with RUN_LOCAL=1 set,
+# bypassing the multipass VM preflight; e2e:ui still routes via the
+# Caddy hostname (host or VM).
 #
 # Usage:
-#   test-vm-run.sh unit              # Vitest unit tests inside VM
-#   test-vm-run.sh e2e               # System e2e tests (install + API + onboarding)
-#   test-vm-run.sh e2e:ui            # Playwright against VM from host
-#   test-vm-run.sh spot <feature>    # Per-feature spot test against VM
-#                                    # features: hardware, marketplace, lemonade, project-types, all
-#   test-vm-run.sh all               # Everything (unit + e2e + e2e:ui + spot:all)
+#   test-run.sh unit              # Vitest unit tests inside VM (or host with RUN_LOCAL=1)
+#   test-run.sh e2e               # System e2e tests (install + API + onboarding)
+#   test-run.sh e2e:ui            # Playwright against the gateway hostname
+#   test-run.sh spot <feature>    # Per-feature spot test
+#                                 # features: hardware, marketplace, lemonade, project-types, all
+#   test-run.sh all               # Everything (unit + e2e + e2e:ui + spot:all)
+#
+# Environment overrides:
+#   RUN_LOCAL=1          Skip VM preflight; run tests against the host gateway
+#   AIONIMA_TEST_VM=1    Required by vitest's runtime guard (set automatically)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -20,11 +31,22 @@ VM_NAME="agi-test"
 
 # ---------------------------------------------------------------------------
 # Preflight: ensure VM is created, running, and set up
+#
+# Skipped entirely when RUN_LOCAL=1 — tests then run against the host
+# gateway (whatever's at http://127.0.0.1:3100). Use this for fast local
+# iteration; use the default VM mode for the canonical "fresh-state"
+# guarantees the test suite was designed around.
 # ---------------------------------------------------------------------------
 preflight() {
+  if [ "${RUN_LOCAL:-0}" = "1" ]; then
+    echo "RUN_LOCAL=1 — skipping VM preflight, testing against host gateway"
+    return 0
+  fi
+
   if ! command -v multipass &>/dev/null; then
     echo "Error: multipass is not installed." >&2
     echo "Install with: sudo snap install multipass" >&2
+    echo "(or set RUN_LOCAL=1 to skip the VM and test against the host gateway)" >&2
     exit 1
   fi
 
@@ -105,24 +127,34 @@ run_spot() {
   local feature="${1:-all}"
   local spot_dir="/mnt/agi/test/spot-tests"
 
+  # When RUN_LOCAL=1, run spot tests against the host gateway directly.
+  # Otherwise use multipass exec against the VM (where /mnt/agi is mounted).
+  local exec_prefix=""
+  local spot_path="$spot_dir"
+  if [ "${RUN_LOCAL:-0}" != "1" ]; then
+    exec_prefix="multipass exec $VM_NAME --"
+  else
+    spot_path="$REPO_DIR/test/spot-tests"
+  fi
+
   case "$feature" in
     hardware|marketplace|lemonade|project-types)
       echo
       echo "================================================================"
-      echo "  Spot Test: $feature"
+      echo "  Spot Test: $feature ($([ "${RUN_LOCAL:-0}" = "1" ] && echo "host" || echo "VM"))"
       echo "================================================================"
-      multipass exec "$VM_NAME" -- bash "${spot_dir}/${feature}.sh"
+      $exec_prefix bash "${spot_path}/${feature}.sh"
       ;;
     all)
       echo
       echo "================================================================"
-      echo "  Spot Tests: ALL features"
+      echo "  Spot Tests: ALL features ($([ "${RUN_LOCAL:-0}" = "1" ] && echo "host" || echo "VM"))"
       echo "================================================================"
       local failed=0
       for f in hardware marketplace lemonade project-types; do
         echo
         echo "--- $f ---"
-        if ! multipass exec "$VM_NAME" -- bash "${spot_dir}/${f}.sh"; then
+        if ! $exec_prefix bash "${spot_path}/${f}.sh"; then
           failed=$((failed + 1))
         fi
       done

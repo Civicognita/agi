@@ -58,7 +58,10 @@ export const pluginsMarketplace = pgTable(
     homepage: text("homepage"),
     provides: jsonb("provides"),
     depends: jsonb("depends"),
-    aliases: jsonb("aliases"),
+    // aliases jsonb — declared in code but disabled until the migration
+    // mechanism in task #289 lands. Leaving this commented so future
+    // re-enable is one diff, not a hunt.
+    // aliases: jsonb("aliases"),
     trustTier: text("trust_tier"),
     integrityHash: text("integrity_hash"),
     signedBy: text("signed_by"),

@@ -61,7 +61,7 @@ function rowToPluginEntry(
     homepage: row.homepage ?? undefined,
     provides: Array.isArray(row.provides) ? row.provides as string[] : undefined,
     depends: Array.isArray(row.depends) ? row.depends as string[] : undefined,
-    aliases: Array.isArray(row.aliases) ? row.aliases as string[] : undefined,
+    // aliases: deferred — see comment at INSERT site.
     trustTier: (row.trustTier as TrustTier | null) ?? undefined,
     integrityHash: row.integrityHash ?? undefined,
     signedBy: row.signedBy ?? undefined,
@@ -173,7 +173,10 @@ export class MarketplaceStore {
             homepage: p.homepage ?? null,
             provides: (p.provides ?? null) as unknown[] | null,
             depends: (p.depends ?? null) as unknown[] | null,
-            aliases: (p.aliases ?? null) as unknown[] | null,
+            // aliases: deferred — schema column declared but not yet
+            // migrated into the live DB. See task #289 (catalog dedupe +
+            // DB schema migration mechanism). Re-enable once the upgrade
+            // pipeline runs `drizzle-kit push` against the live table.
             trustTier: p.trustTier ?? (isOfficial ? "official" : "unknown"),
             integrityHash: p.integrityHash ?? null,
             signedBy: p.signedBy ?? null,
