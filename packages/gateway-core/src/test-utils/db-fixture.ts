@@ -102,6 +102,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS entities_coa_alias_idx ON entities (coa_alias)
 CREATE INDEX IF NOT EXISTS entities_parent_idx ON entities (parent_entity_id);
 CREATE INDEX IF NOT EXISTS entities_user_idx ON entities (user_id);
 
+-- geid_local (from packages/db-schema/src/entities.ts) — required by
+-- EntityStore.createEntity which auto-generates a GEID keypair per entity.
+CREATE TABLE IF NOT EXISTS geid_local (
+  entity_id TEXT PRIMARY KEY REFERENCES entities (id) ON DELETE CASCADE,
+  geid TEXT NOT NULL,
+  public_key_pem TEXT NOT NULL,
+  private_key_pem TEXT,
+  discoverable BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS geid_local_geid_idx ON geid_local (geid);
+
 -- coa_chains (from packages/db-schema/src/audit.ts)
 CREATE TABLE IF NOT EXISTS coa_chains (
   fingerprint TEXT PRIMARY KEY,
@@ -141,7 +153,7 @@ CREATE INDEX IF NOT EXISTS impact_interactions_coa_idx ON impact_interactions (c
 `;
 
 /** Tables this fixture creates. Used by reset() to TRUNCATE. */
-const FIXTURE_TABLES = ["impact_interactions", "coa_chains", "entities"] as const;
+const FIXTURE_TABLES = ["impact_interactions", "coa_chains", "geid_local", "entities"] as const;
 
 export async function createTestDb(): Promise<TestDbContext> {
   const pg = new PGlite();

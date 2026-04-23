@@ -7,7 +7,7 @@
 
 import { and, eq, gte, sql } from "drizzle-orm";
 import { ulid } from "ulid";
-import type { Db } from "@agi/db-schema/client";
+import type { AnyDb } from "@agi/db-schema/client";
 import { impactInteractions } from "@agi/db-schema";
 
 // ---------------------------------------------------------------------------
@@ -83,7 +83,7 @@ function rowToInteraction(row: typeof impactInteractions.$inferSelect): ImpactIn
 // ---------------------------------------------------------------------------
 
 export class ImpactRecorder {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: AnyDb) {}
 
   async record(params: RecordImpactParams): Promise<ImpactInteraction> {
     const bonus = params.bonus ?? 0;

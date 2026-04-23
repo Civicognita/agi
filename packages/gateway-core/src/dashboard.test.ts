@@ -1,9 +1,13 @@
-// @ts-nocheck -- blocks on pg-backed test harness; tracked in _plans/phase2-tests-pg.md
+// @ts-nocheck -- Phase I.4 migration in progress. Upmigrated blocks use the
+// drizzle/pglite fixture + EntityStore/ImpactRecorder async API. Remaining
+// describe.skip blocks still reference the old sqlite-era db.prepare()
+// helpers; @ts-nocheck suppresses those until they're migrated too. Tracked
+// in _plans/phase2-tests-pg.md and task #290.
 /**
  * Dashboard Tests — Tasks #149, #153, #154
  *
  * Comprehensive tests for:
- *   1. DashboardQueries  — SQLite aggregation queries
+ *   1. DashboardQueries  — drizzle/Postgres aggregation queries
  *   2. DashboardApi      — HTTP route handlers
  *   3. DashboardEventBroadcaster — WebSocket event broadcasting
  */
@@ -12,12 +16,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { EventEmitter } from "node:events";
 
-import {
-  createDatabase,
-  EntityStore,
-  ImpactRecorder,
-} from "@agi/entity-model";
-import type { Database } from "@agi/entity-model";
+import { EntityStore, ImpactRecorder } from "@agi/entity-model";
+import { coaChains, impactInteractions } from "@agi/db-schema";
 
 import { DashboardQueries } from "./dashboard-queries.js";
 import { DashboardApi } from "./dashboard-api.js";
@@ -31,11 +31,13 @@ import type {
   DashboardOverview,
 } from "./dashboard-types.js";
 
+import { createTestDb, type TestDbContext } from "./test-utils/db-fixture.js";
+
 // ---------------------------------------------------------------------------
 // Shared test infrastructure
 // ---------------------------------------------------------------------------
 
-let db: Database;
+let ctx: TestDbContext;
 let store: EntityStore;
 let recorder: ImpactRecorder;
 let queries: DashboardQueries;
@@ -47,26 +49,36 @@ let fpCounter = 0;
  * Insert a raw coa_chains row. The impact_interactions table has a FK on
  * coa_fingerprint so we need this before calling recorder.record().
  */
-function insertCOAChain(entityId: string, workType = "message_in"): string {
+async function insertCOAChain(entityId: string, workType = "message_in"): Promise<string> {
   fpCounter++;
   const fingerprint = `$A0.#E0.@A0.C${String(fpCounter).padStart(3, "0")}`;
-  db.prepare(
-    `INSERT INTO coa_chains (fingerprint, resource_id, entity_id, node_id, chain_counter, work_type, created_at)
-     VALUES (?, '$A0', ?, '@A0', ?, ?, ?)`
-  ).run(fingerprint, entityId, fpCounter, workType, new Date().toISOString());
+  await ctx.db.insert(coaChains).values({
+    fingerprint,
+    resourceId: "$A0",
+    entityId,
+    nodeId: "@A0",
+    chainCounter: fpCounter,
+    workType,
+    createdAt: new Date(),
+  });
   return fingerprint;
 }
 
 /**
  * Insert a raw coa_chains row with an explicit created_at timestamp.
  */
-function insertCOAChainAt(entityId: string, createdAt: string, workType = "message_in"): string {
+async function insertCOAChainAt(entityId: string, createdAt: string, workType = "message_in"): Promise<string> {
   fpCounter++;
   const fingerprint = `$A0.#E0.@A0.C${String(fpCounter).padStart(3, "0")}`;
-  db.prepare(
-    `INSERT INTO coa_chains (fingerprint, resource_id, entity_id, node_id, chain_counter, work_type, created_at)
-     VALUES (?, '$A0', ?, '@A0', ?, ?, ?)`
-  ).run(fingerprint, entityId, fpCounter, workType, createdAt);
+  await ctx.db.insert(coaChains).values({
+    fingerprint,
+    resourceId: "$A0",
+    entityId,
+    nodeId: "@A0",
+    chainCounter: fpCounter,
+    workType,
+    createdAt: new Date(createdAt),
+  });
   return fingerprint;
 }
 
@@ -77,76 +89,75 @@ let interactionCounter = 0;
  * Insert a raw impact_interaction row at a specific timestamp.
  * Used when we need to control the created_at for timeline/breakdown date filter tests.
  */
-function insertInteractionAt(
+async function insertInteractionAt(
   entityId: string,
   coaFingerprint: string,
   impScore: number,
   createdAt: string,
   opts: { channel?: string; workType?: string } = {},
-): void {
+): Promise<void> {
   interactionCounter++;
   const id = `RAWTEST${String(interactionCounter).padStart(19, "0")}`;
-  db.prepare(
-    `INSERT INTO impact_interactions (id, entity_id, coa_fingerprint, channel, work_type, quant, value_0bool, bonus, imp_score, created_at)
-     VALUES (?, ?, ?, ?, ?, 1, ?, 0, ?, ?)`
-  ).run(
+  await ctx.db.insert(impactInteractions).values({
     id,
     entityId,
     coaFingerprint,
-    opts.channel ?? null,
-    opts.workType ?? null,
+    channel: opts.channel ?? null,
+    workType: opts.workType ?? null,
+    quant: 1,
+    value0bool: impScore,
+    bonus: 0,
     impScore,
-    impScore,
-    createdAt,
-  );
+    createdAt: new Date(createdAt),
+  });
 }
 
-function seedTestData(): {
+async function seedTestData(): Promise<{
   id1: string;
   id2: string;
   id3: string;
-} {
-  const e1 = store.createEntity({ type: "E", displayName: "Alice" });
-  const e2 = store.createEntity({ type: "E", displayName: "Bob" });
-  const e3 = store.createEntity({ type: "O", displayName: "Civicognita" });
+}> {
+  const e1 = await store.createEntity({ type: "E", displayName: "Alice" });
+  const e2 = await store.createEntity({ type: "E", displayName: "Bob" });
+  const e3 = await store.createEntity({ type: "O", displayName: "Civicognita" });
 
-  const fp1 = insertCOAChain(e1.id, "message_in");
-  const fp2 = insertCOAChain(e1.id, "tool_use");
-  const fp3 = insertCOAChain(e2.id, "message_in");
-  const fp4 = insertCOAChain(e3.id, "commit");
-  const fp5 = insertCOAChain(e1.id, "verification");
-  const fp6 = insertCOAChain(e2.id, "task_dispatch");
+  const fp1 = await insertCOAChain(e1.id, "message_in");
+  const fp2 = await insertCOAChain(e1.id, "tool_use");
+  const fp3 = await insertCOAChain(e2.id, "message_in");
+  const fp4 = await insertCOAChain(e3.id, "commit");
+  const fp5 = await insertCOAChain(e1.id, "verification");
+  const fp6 = await insertCOAChain(e2.id, "task_dispatch");
 
-  recorder.record({ entityId: e1.id, coaFingerprint: fp1, quant: 1, boolLabel: "TRUE", channel: "telegram", workType: "message_in" });
-  recorder.record({ entityId: e1.id, coaFingerprint: fp2, quant: 1, boolLabel: "0TRUE", channel: "telegram", workType: "tool_use" });
-  recorder.record({ entityId: e2.id, coaFingerprint: fp3, quant: 1, boolLabel: "TRUE", channel: "discord", workType: "message_in" });
-  recorder.record({ entityId: e3.id, coaFingerprint: fp4, quant: 1, boolLabel: "0TRUE", channel: "telegram", workType: "commit" });
-  recorder.record({ entityId: e1.id, coaFingerprint: fp5, quant: 1, boolLabel: "FALSE", channel: "signal", workType: "verification" });
-  recorder.record({ entityId: e2.id, coaFingerprint: fp6, quant: 1, boolLabel: "0+", channel: "discord", workType: "task_dispatch" });
+  await recorder.record({ entityId: e1.id, coaFingerprint: fp1, quant: 1, boolLabel: "TRUE", channel: "telegram", workType: "message_in" });
+  await recorder.record({ entityId: e1.id, coaFingerprint: fp2, quant: 1, boolLabel: "0TRUE", channel: "telegram", workType: "tool_use" });
+  await recorder.record({ entityId: e2.id, coaFingerprint: fp3, quant: 1, boolLabel: "TRUE", channel: "discord", workType: "message_in" });
+  await recorder.record({ entityId: e3.id, coaFingerprint: fp4, quant: 1, boolLabel: "0TRUE", channel: "telegram", workType: "commit" });
+  await recorder.record({ entityId: e1.id, coaFingerprint: fp5, quant: 1, boolLabel: "FALSE", channel: "signal", workType: "verification" });
+  await recorder.record({ entityId: e2.id, coaFingerprint: fp6, quant: 1, boolLabel: "0+", channel: "discord", workType: "task_dispatch" });
 
   return { id1: e1.id, id2: e2.id, id3: e3.id };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   fpCounter = 0;
   interactionCounter = 0;
-  db = createDatabase(":memory:");
-  store = new EntityStore(db);
-  recorder = new ImpactRecorder(db);
-  queries = new DashboardQueries(db);
+  ctx = await createTestDb();
+  store = new EntityStore(ctx.db);
+  recorder = new ImpactRecorder(ctx.db);
+  queries = new DashboardQueries(ctx.db);
 });
 
-afterEach(() => {
-  db.close();
+afterEach(async () => {
+  await ctx.close();
 });
 
 // ---------------------------------------------------------------------------
 // 1. DashboardQueries
 // ---------------------------------------------------------------------------
 
-describe.skip("DashboardQueries.getOverview", () => {
-  it("returns zero totals when database is empty", () => {
-    const overview = queries.getOverview();
+describe("DashboardQueries.getOverview", () => {
+  it("returns zero totals when database is empty", async () => {
+    const overview = await queries.getOverview();
     expect(overview.totalImp).toBe(0);
     expect(overview.windowImp).toBe(0);
     expect(overview.entityCount).toBe(0);
@@ -156,62 +167,62 @@ describe.skip("DashboardQueries.getOverview", () => {
     expect(overview.recentActivity).toEqual([]);
   });
 
-  it("returns correct totalImp and interactionCount after seeding", () => {
-    seedTestData();
-    const overview = queries.getOverview();
+  it("returns correct totalImp and interactionCount after seeding", async () => {
+    await seedTestData();
+    const overview = await queries.getOverview();
     // TRUE=0.5, 0TRUE=1.0, TRUE=0.5, 0TRUE=1.0, FALSE=-0.5, 0+=0.25
     expect(overview.totalImp).toBeCloseTo(2.75);
     expect(overview.interactionCount).toBe(6);
   });
 
-  it("returns correct entityCount", () => {
-    seedTestData();
-    const overview = queries.getOverview();
+  it("returns correct entityCount", async () => {
+    await seedTestData();
+    const overview = await queries.getOverview();
     expect(overview.entityCount).toBe(3);
   });
 
-  it("returns avgImpPerInteraction as totalImp / interactionCount", () => {
-    seedTestData();
-    const overview = queries.getOverview();
+  it("returns avgImpPerInteraction as totalImp / interactionCount", async () => {
+    await seedTestData();
+    const overview = await queries.getOverview();
     expect(overview.avgImpPerInteraction).toBeCloseTo(overview.totalImp / overview.interactionCount);
   });
 
-  it("returns topChannel as the most used channel", () => {
-    seedTestData();
-    const overview = queries.getOverview();
+  it("returns topChannel as the most used channel", async () => {
+    await seedTestData();
+    const overview = await queries.getOverview();
     // telegram: 3, discord: 2, signal: 1
     expect(overview.topChannel).toBe("telegram");
   });
 
-  it("returns computedAt as a valid ISO timestamp", () => {
-    const overview = queries.getOverview();
+  it("returns computedAt as a valid ISO timestamp", async () => {
+    const overview = await queries.getOverview();
     expect(() => new Date(overview.computedAt)).not.toThrow();
     expect(overview.computedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  it("windowImp is non-zero when interactions exist within window", () => {
-    seedTestData();
-    const overview = queries.getOverview(90);
+  it("windowImp is non-zero when interactions exist within window", async () => {
+    await seedTestData();
+    const overview = await queries.getOverview(90);
     expect(overview.windowImp).toBeCloseTo(2.75);
   });
 
-  it("windowImp is zero when windowDays=0 (all interactions are too old)", () => {
-    seedTestData();
+  it("windowImp is zero when windowDays=0 (all interactions are too old)", async () => {
+    await seedTestData();
     // windowDays=0 means since = now, all existing records are at or slightly before now
-    const overview = queries.getOverview(0);
+    const overview = await queries.getOverview(0);
     // May be 0 or close depending on timing. The key thing is windowDays param is passed.
     expect(typeof overview.windowImp).toBe("number");
   });
 
-  it("recentActivity is populated and limited by recentLimit", () => {
-    seedTestData();
-    const overview = queries.getOverview(90, 3);
+  it("recentActivity is populated and limited by recentLimit", async () => {
+    await seedTestData();
+    const overview = await queries.getOverview(90, 3);
     expect(overview.recentActivity.length).toBeLessThanOrEqual(3);
   });
 
-  it("recentActivity entries have required fields", () => {
-    seedTestData();
-    const overview = queries.getOverview();
+  it("recentActivity entries have required fields", async () => {
+    await seedTestData();
+    const overview = await queries.getOverview();
     for (const entry of overview.recentActivity) {
       expect(typeof entry.id).toBe("string");
       expect(typeof entry.entityId).toBe("string");

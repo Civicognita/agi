@@ -6,7 +6,7 @@
 
 import { eq, and, count, sql } from "drizzle-orm";
 import { ulid } from "ulid";
-import type { Db } from "@agi/db-schema/client";
+import type { AnyDb } from "@agi/db-schema/client";
 import { entities, channelAccounts, geidLocal, meta } from "@agi/db-schema";
 import { generateEntityKeypair, type GEID } from "./geid.js";
 import type { Entity, ChannelAccount, VerificationTier } from "./types.js";
@@ -47,7 +47,7 @@ function rowToChannelAccount(row: typeof channelAccounts.$inferSelect): ChannelA
  * Pass the `Db` handle from `createDbClient().db`.
  */
 export class EntityStore {
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: AnyDb) {}
 
   // ---------------------------------------------------------------------------
   // Entity operations
