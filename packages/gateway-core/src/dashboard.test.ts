@@ -450,16 +450,16 @@ describe("DashboardQueries.getTimeline", () => {
   });
 });
 
-describe.skip("DashboardQueries.getBreakdown", () => {
-  it("returns empty slices when no interactions exist", () => {
-    const result = queries.getBreakdown("domain");
+describe("DashboardQueries.getBreakdown", () => {
+  it("returns empty slices when no interactions exist", async () => {
+    const result = await queries.getBreakdown("domain");
     expect(result.slices).toEqual([]);
     expect(result.total).toBe(0);
   });
 
-  it("domain breakdown maps work_type to impactinomics domains", () => {
-    seedTestData();
-    const result = queries.getBreakdown("domain");
+  it("domain breakdown maps work_type to impactinomics domains", async () => {
+    await seedTestData();
+    const result = await queries.getBreakdown("domain");
     const keys = result.slices.map((s) => s.key);
     // community (message_in), technology (tool_use), governance (verification),
     // innovation (commit), operations (task_dispatch)
@@ -470,158 +470,158 @@ describe.skip("DashboardQueries.getBreakdown", () => {
     expect(keys).toContain("operations");
   });
 
-  it("domain breakdown aggregates correctly for community domain", () => {
+  it("domain breakdown aggregates correctly for community domain", async () => {
     // message_in and message_out both map to "community"
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp1 = insertCOAChain(e.id, "message_in");
-    const fp2 = insertCOAChain(e.id, "message_in");
-    recorder.record({ entityId: e.id, coaFingerprint: fp1, quant: 1, boolLabel: "0TRUE", workType: "message_in" }); // 1.0
-    recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "0TRUE", workType: "message_out" }); // 1.0
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp1 = await insertCOAChain(e.id, "message_in");
+    const fp2 = await insertCOAChain(e.id, "message_in");
+    await recorder.record({ entityId: e.id, coaFingerprint: fp1, quant: 1, boolLabel: "0TRUE", workType: "message_in" }); // 1.0
+    await recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "0TRUE", workType: "message_out" }); // 1.0
 
-    const result = queries.getBreakdown("domain");
+    const result = await queries.getBreakdown("domain");
     const communitySlice = result.slices.find((s) => s.key === "community");
     expect(communitySlice).toBeDefined();
     expect(communitySlice!.totalImp).toBeCloseTo(2.0);
     expect(communitySlice!.count).toBe(2);
   });
 
-  it("channel breakdown groups by channel", () => {
-    seedTestData();
-    const result = queries.getBreakdown("channel");
+  it("channel breakdown groups by channel", async () => {
+    await seedTestData();
+    const result = await queries.getBreakdown("channel");
     const keys = result.slices.map((s) => s.key);
     expect(keys).toContain("telegram");
     expect(keys).toContain("discord");
     expect(keys).toContain("signal");
   });
 
-  it("channel breakdown excludes null channels", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp = insertCOAChain(e.id);
-    recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
+  it("channel breakdown excludes null channels", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp = await insertCOAChain(e.id);
+    await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
     // No channel set — should not appear in breakdown
 
-    const result = queries.getBreakdown("channel");
+    const result = await queries.getBreakdown("channel");
     expect(result.slices).toEqual([]);
   });
 
-  it("workType breakdown groups by work_type", () => {
-    seedTestData();
-    const result = queries.getBreakdown("workType");
+  it("workType breakdown groups by work_type", async () => {
+    await seedTestData();
+    const result = await queries.getBreakdown("workType");
     const keys = result.slices.map((s) => s.key);
     expect(keys).toContain("message_in");
     expect(keys).toContain("tool_use");
     expect(keys).toContain("commit");
   });
 
-  it("percentage values sum to approximately 100 when total != 0", () => {
-    seedTestData();
-    const result = queries.getBreakdown("channel");
+  it("percentage values sum to approximately 100 when total != 0", async () => {
+    await seedTestData();
+    const result = await queries.getBreakdown("channel");
     const totalPct = result.slices.reduce((sum, s) => sum + s.percentage, 0);
     // Percentages are based on positive totals only; with mixed signs may not sum to 100
     // However, each slice's percentage is (sliceImp / total) * 100
     expect(typeof totalPct).toBe("number");
   });
 
-  it("slices are sorted by totalImp descending", () => {
-    seedTestData();
-    const result = queries.getBreakdown("channel");
+  it("slices are sorted by totalImp descending", async () => {
+    await seedTestData();
+    const result = await queries.getBreakdown("channel");
     for (let i = 1; i < result.slices.length; i++) {
       expect(result.slices[i - 1]!.totalImp >= result.slices[i]!.totalImp).toBe(true);
     }
   });
 
-  it("filters by entityId when provided", () => {
-    const { id1 } = seedTestData();
-    const result = queries.getBreakdown("channel", id1);
+  it("filters by entityId when provided", async () => {
+    const { id1 } = await seedTestData();
+    const result = await queries.getBreakdown("channel", id1);
     // Alice only used telegram and signal
     const keys = result.slices.map((s) => s.key);
     expect(keys).not.toContain("discord");
   });
 
-  it("filters by since date", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
+  it("filters by since date", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
     // Insert old interaction directly with a 2020 timestamp
-    const pastFp = insertCOAChainAt(e.id, "2020-01-01T00:00:00Z");
-    insertInteractionAt(e.id, pastFp, 1.0, "2020-01-01T12:00:00Z", { channel: "old-channel", workType: "message_in" });
+    const pastFp = await insertCOAChainAt(e.id, "2020-01-01T00:00:00Z");
+    await insertInteractionAt(e.id, pastFp, 1.0, "2020-01-01T12:00:00Z", { channel: "old-channel", workType: "message_in" });
     // Insert recent interaction via recorder
-    const fp2 = insertCOAChain(e.id, "message_in");
-    recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "TRUE", channel: "new-channel", workType: "message_in" });
+    const fp2 = await insertCOAChain(e.id, "message_in");
+    await recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "TRUE", channel: "new-channel", workType: "message_in" });
 
     const since = new Date(Date.now() - 1000).toISOString();
-    const result = queries.getBreakdown("channel", undefined, since);
+    const result = await queries.getBreakdown("channel", undefined, since);
     const keys = result.slices.map((s) => s.key);
     expect(keys).toContain("new-channel");
     expect(keys).not.toContain("old-channel");
   });
 
-  it("filters by until date", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
+  it("filters by until date", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
     // Insert old interaction directly with a 2020 timestamp
-    const pastFp = insertCOAChainAt(e.id, "2020-01-01T00:00:00Z");
-    insertInteractionAt(e.id, pastFp, 1.0, "2020-01-01T12:00:00Z", { channel: "old-channel", workType: "message_in" });
+    const pastFp = await insertCOAChainAt(e.id, "2020-01-01T00:00:00Z");
+    await insertInteractionAt(e.id, pastFp, 1.0, "2020-01-01T12:00:00Z", { channel: "old-channel", workType: "message_in" });
     // Insert recent interaction via recorder
-    const fp2 = insertCOAChain(e.id, "message_in");
-    recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "TRUE", channel: "new-channel", workType: "message_in" });
+    const fp2 = await insertCOAChain(e.id, "message_in");
+    await recorder.record({ entityId: e.id, coaFingerprint: fp2, quant: 1, boolLabel: "TRUE", channel: "new-channel", workType: "message_in" });
 
-    const result = queries.getBreakdown("channel", undefined, undefined, "2021-01-01T00:00:00Z");
+    const result = await queries.getBreakdown("channel", undefined, undefined, "2021-01-01T00:00:00Z");
     const keys = result.slices.map((s) => s.key);
     expect(keys).toContain("old-channel");
     expect(keys).not.toContain("new-channel");
   });
 
-  it("domain breakdown null workType maps to community", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp = insertCOAChain(e.id);
+  it("domain breakdown null workType maps to community", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp = await insertCOAChain(e.id);
     // Record with no workType — maps to community
-    recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "0TRUE" });
+    await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "0TRUE" });
 
-    const result = queries.getBreakdown("domain");
+    const result = await queries.getBreakdown("domain");
     const communitySlice = result.slices.find((s) => s.key === "community");
     expect(communitySlice).toBeDefined();
   });
 });
 
-describe.skip("DashboardQueries.getLeaderboard", () => {
-  it("returns empty entries when no interactions exist", () => {
-    const result = queries.getLeaderboard();
+describe("DashboardQueries.getLeaderboard", () => {
+  it("returns empty entries when no interactions exist", async () => {
+    const result = await queries.getLeaderboard();
     expect(result.entries).toEqual([]);
     expect(result.total).toBe(0);
   });
 
-  it("returns entries ranked by windowImp descending", () => {
-    seedTestData();
-    const result = queries.getLeaderboard(365);
+  it("returns entries ranked by windowImp descending", async () => {
+    await seedTestData();
+    const result = await queries.getLeaderboard(365);
     // Entities should be ordered by window total IMP descending
     for (let i = 1; i < result.entries.length; i++) {
       expect(result.entries[i - 1]!.windowImp >= result.entries[i]!.windowImp).toBe(true);
     }
   });
 
-  it("rank starts at 1 for the top entry", () => {
-    seedTestData();
-    const result = queries.getLeaderboard(365);
+  it("rank starts at 1 for the top entry", async () => {
+    await seedTestData();
+    const result = await queries.getLeaderboard(365);
     expect(result.entries[0]!.rank).toBe(1);
   });
 
-  it("rank increments sequentially", () => {
-    seedTestData();
-    const result = queries.getLeaderboard(365);
+  it("rank increments sequentially", async () => {
+    await seedTestData();
+    const result = await queries.getLeaderboard(365);
     for (let i = 0; i < result.entries.length; i++) {
       expect(result.entries[i]!.rank).toBe(i + 1);
     }
   });
 
-  it("rank accounts for offset in pagination", () => {
-    seedTestData();
-    const page2 = queries.getLeaderboard(365, 2, 2);
+  it("rank accounts for offset in pagination", async () => {
+    await seedTestData();
+    const page2 = await queries.getLeaderboard(365, 2, 2);
     if (page2.entries.length > 0) {
       expect(page2.entries[0]!.rank).toBe(3);
     }
   });
 
-  it("returns entityId and entityName for each entry", () => {
-    seedTestData();
-    const result = queries.getLeaderboard(365);
+  it("returns entityId and entityName for each entry", async () => {
+    await seedTestData();
+    const result = await queries.getLeaderboard(365);
     for (const entry of result.entries) {
       expect(typeof entry.entityId).toBe("string");
       expect(typeof entry.entityName).toBe("string");
@@ -629,179 +629,179 @@ describe.skip("DashboardQueries.getLeaderboard", () => {
     }
   });
 
-  it("returns verificationTier defaulting to 'unverified'", () => {
-    seedTestData();
-    const result = queries.getLeaderboard(365);
+  it("returns verificationTier defaulting to 'unverified'", async () => {
+    await seedTestData();
+    const result = await queries.getLeaderboard(365);
     for (const entry of result.entries) {
       expect(typeof entry.verificationTier).toBe("string");
     }
   });
 
-  it("currentBonus is min(positiveWindow/100, 2.0)", () => {
-    const e = store.createEntity({ type: "E", displayName: "BigWinner" });
-    const fp = insertCOAChain(e.id);
+  it("currentBonus is min(positiveWindow/100, 2.0)", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "BigWinner" });
+    const fp = await insertCOAChain(e.id);
     // positive window = 0.5, bonus = min(0.5/100, 2.0) = 0.005
-    recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
+    await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
 
-    const result = queries.getLeaderboard(365);
+    const result = await queries.getLeaderboard(365);
     const entry = result.entries.find((e) => e.entityName === "BigWinner");
     expect(entry).toBeDefined();
     expect(entry!.currentBonus).toBeCloseTo(0.5 / 100);
     expect(entry!.currentBonus).toBeLessThanOrEqual(2.0);
   });
 
-  it("respects limit parameter", () => {
-    seedTestData();
-    const result = queries.getLeaderboard(365, 2);
+  it("respects limit parameter", async () => {
+    await seedTestData();
+    const result = await queries.getLeaderboard(365, 2);
     expect(result.entries.length).toBeLessThanOrEqual(2);
   });
 
-  it("total reflects all entities with interactions in window", () => {
-    seedTestData();
-    const result = queries.getLeaderboard(365);
+  it("total reflects all entities with interactions in window", async () => {
+    await seedTestData();
+    const result = await queries.getLeaderboard(365);
     expect(result.total).toBe(3);
   });
 
-  it("excludes entities with no interactions in the window", () => {
-    const e1 = store.createEntity({ type: "E", displayName: "ActiveUser" });
-    const fp = insertCOAChain(e1.id);
-    recorder.record({ entityId: e1.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
+  it("excludes entities with no interactions in the window", async () => {
+    const e1 = await store.createEntity({ type: "E", displayName: "ActiveUser" });
+    const fp = await insertCOAChain(e1.id);
+    await recorder.record({ entityId: e1.id, coaFingerprint: fp, quant: 1, boolLabel: "TRUE" });
     // Create entity with no interactions
-    store.createEntity({ type: "E", displayName: "Inactive" });
+    await store.createEntity({ type: "E", displayName: "Inactive" });
 
-    const result = queries.getLeaderboard(365);
+    const result = await queries.getLeaderboard(365);
     expect(result.total).toBe(1);
     expect(result.entries[0]!.entityName).toBe("ActiveUser");
   });
 });
 
-describe.skip("DashboardQueries.getEntityProfile", () => {
-  it("returns null for nonexistent entity", () => {
-    const result = queries.getEntityProfile("nonexistent-id");
+describe("DashboardQueries.getEntityProfile", () => {
+  it("returns null for nonexistent entity", async () => {
+    const result = await queries.getEntityProfile("nonexistent-id");
     expect(result).toBeNull();
   });
 
-  it("returns full profile for existing entity", () => {
-    const { id1 } = seedTestData();
-    const profile = queries.getEntityProfile(id1);
+  it("returns full profile for existing entity", async () => {
+    const { id1 } = await seedTestData();
+    const profile = await queries.getEntityProfile(id1);
     expect(profile).not.toBeNull();
     expect(profile!.entityId).toBe(id1);
     expect(profile!.entityName).toBe("Alice");
   });
 
-  it("returns entityType from entities table", () => {
-    const e = store.createEntity({ type: "O", displayName: "OrgTest" });
-    const profile = queries.getEntityProfile(e.id);
+  it("returns entityType from entities table", async () => {
+    const e = await store.createEntity({ type: "O", displayName: "OrgTest" });
+    const profile = await queries.getEntityProfile(e.id);
     expect(profile!.entityType).toBe("O");
   });
 
-  it("returns verificationTier from entities table", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const profile = queries.getEntityProfile(e.id);
+  it("returns verificationTier from entities table", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const profile = await queries.getEntityProfile(e.id);
     expect(profile!.verificationTier).toBe("unverified");
   });
 
-  it("returns coaAlias from entities table", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const profile = queries.getEntityProfile(e.id);
+  it("returns coaAlias from entities table", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const profile = await queries.getEntityProfile(e.id);
     expect(profile!.coaAlias).toMatch(/^#E\d+$/);
   });
 
-  it("lifetimeImp is sum of all impScores for entity", () => {
-    const { id1 } = seedTestData();
-    const profile = queries.getEntityProfile(id1);
+  it("lifetimeImp is sum of all impScores for entity", async () => {
+    const { id1 } = await seedTestData();
+    const profile = await queries.getEntityProfile(id1);
     // Alice: TRUE(0.5) + 0TRUE(1.0) + FALSE(-0.5) = 1.0
     expect(profile!.lifetimeImp).toBeCloseTo(1.0);
   });
 
-  it("lifetimeImp is 0 for entity with no interactions", () => {
-    const e = store.createEntity({ type: "E", displayName: "Empty" });
-    const profile = queries.getEntityProfile(e.id);
+  it("lifetimeImp is 0 for entity with no interactions", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "Empty" });
+    const profile = await queries.getEntityProfile(e.id);
     expect(profile!.lifetimeImp).toBe(0);
   });
 
-  it("windowImp reflects rolling window balance", () => {
-    const { id1 } = seedTestData();
-    const profile = queries.getEntityProfile(id1, 90);
+  it("windowImp reflects rolling window balance", async () => {
+    const { id1 } = await seedTestData();
+    const profile = await queries.getEntityProfile(id1, 90);
     // All interactions are recent, so windowImp should match lifetimeImp
     expect(profile!.windowImp).toBeCloseTo(1.0);
   });
 
-  it("distinctEventTypes counts unique work_types for entity", () => {
-    const { id1 } = seedTestData();
-    const profile = queries.getEntityProfile(id1);
+  it("distinctEventTypes counts unique work_types for entity", async () => {
+    const { id1 } = await seedTestData();
+    const profile = await queries.getEntityProfile(id1);
     // Alice has: message_in, tool_use, verification — 3 distinct work types
     expect(profile!.distinctEventTypes).toBe(3);
   });
 
-  it("distinctEventTypes is 0 for entity with no interactions", () => {
-    const e = store.createEntity({ type: "E", displayName: "Empty" });
-    const profile = queries.getEntityProfile(e.id);
+  it("distinctEventTypes is 0 for entity with no interactions", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "Empty" });
+    const profile = await queries.getEntityProfile(e.id);
     expect(profile!.distinctEventTypes).toBe(0);
   });
 
-  it("currentBonus is capped at 2.0", () => {
-    const e = store.createEntity({ type: "E", displayName: "Capped" });
+  it("currentBonus is capped at 2.0", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "Capped" });
     // Record 201 interactions at 0TRUE = 201 * 1.0 = 201 positive window
     // bonus = min(201/100, 2.0) = 2.0
     for (let i = 0; i < 3; i++) {
-      const fp = insertCOAChain(e.id);
-      recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 100, boolLabel: "0TRUE" });
+      const fp = await insertCOAChain(e.id);
+      await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 100, boolLabel: "0TRUE" });
     }
-    const profile = queries.getEntityProfile(e.id, 365);
+    const profile = await queries.getEntityProfile(e.id, 365);
     expect(profile!.currentBonus).toBe(2.0);
   });
 
-  it("domainBreakdown is populated for entity with interactions", () => {
-    const { id1 } = seedTestData();
-    const profile = queries.getEntityProfile(id1);
+  it("domainBreakdown is populated for entity with interactions", async () => {
+    const { id1 } = await seedTestData();
+    const profile = await queries.getEntityProfile(id1);
     expect(profile!.domainBreakdown.length).toBeGreaterThan(0);
   });
 
-  it("channelBreakdown is populated for entity with channel interactions", () => {
-    const { id1 } = seedTestData();
-    const profile = queries.getEntityProfile(id1);
+  it("channelBreakdown is populated for entity with channel interactions", async () => {
+    const { id1 } = await seedTestData();
+    const profile = await queries.getEntityProfile(id1);
     // Alice has telegram and signal channels
     const channelKeys = profile!.channelBreakdown.map((s) => s.key);
     expect(channelKeys).toContain("telegram");
     expect(channelKeys).toContain("signal");
   });
 
-  it("recentActivity is populated for entity with interactions", () => {
-    const { id1 } = seedTestData();
-    const profile = queries.getEntityProfile(id1);
+  it("recentActivity is populated for entity with interactions", async () => {
+    const { id1 } = await seedTestData();
+    const profile = await queries.getEntityProfile(id1);
     expect(profile!.recentActivity.length).toBeGreaterThan(0);
     expect(profile!.recentActivity.every((a) => a.entityId === id1)).toBe(true);
   });
 
-  it("publicFields includes standard visible fields", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const profile = queries.getEntityProfile(e.id);
+  it("publicFields includes standard visible fields", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const profile = await queries.getEntityProfile(e.id);
     expect(profile!.publicFields).toContain("entityName");
     expect(profile!.publicFields).toContain("verificationTier");
   });
 
-  it("skillsAuthored and recognitionsReceived are placeholder zeros", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const profile = queries.getEntityProfile(e.id);
+  it("skillsAuthored and recognitionsReceived are placeholder zeros", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const profile = await queries.getEntityProfile(e.id);
     expect(profile!.skillsAuthored).toBe(0);
     expect(profile!.recognitionsReceived).toBe(0);
   });
 });
 
-describe.skip("DashboardQueries.getCOAEntries", () => {
-  it("returns empty entries when coa_chains is empty", () => {
-    const result = queries.getCOAEntries({});
+describe("DashboardQueries.getCOAEntries", () => {
+  it("returns empty entries when coa_chains is empty", async () => {
+    const result = await queries.getCOAEntries({});
     expect(result.entries).toEqual([]);
     expect(result.total).toBe(0);
     expect(result.hasMore).toBe(false);
   });
 
-  it("returns all COA entries with correct field mapping", () => {
-    const e = store.createEntity({ type: "E", displayName: "Alice" });
-    insertCOAChain(e.id, "message_in");
+  it("returns all COA entries with correct field mapping", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "Alice" });
+    await insertCOAChain(e.id, "message_in");
 
-    const result = queries.getCOAEntries({});
+    const result = await queries.getCOAEntries({});
     expect(result.entries.length).toBe(1);
     const entry = result.entries[0]!;
     expect(typeof entry.fingerprint).toBe("string");
@@ -814,80 +814,80 @@ describe.skip("DashboardQueries.getCOAEntries", () => {
     expect(typeof entry.createdAt).toBe("string");
   });
 
-  it("joins entity displayName via entityId", () => {
-    const e = store.createEntity({ type: "E", displayName: "TestEntity" });
-    insertCOAChain(e.id);
+  it("joins entity displayName via entityId", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "TestEntity" });
+    await insertCOAChain(e.id);
 
-    const result = queries.getCOAEntries({});
+    const result = await queries.getCOAEntries({});
     expect(result.entries[0]!.entityName).toBe("TestEntity");
   });
 
-  it("impScore is null when no matching impact_interaction", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    insertCOAChain(e.id);
+  it("impScore is null when no matching impact_interaction", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    await insertCOAChain(e.id);
 
-    const result = queries.getCOAEntries({});
+    const result = await queries.getCOAEntries({});
     expect(result.entries[0]!.impScore).toBeNull();
   });
 
-  it("impScore is set when matching impact_interaction exists", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    const fp = insertCOAChain(e.id);
-    recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "0TRUE" });
+  it("impScore is set when matching impact_interaction exists", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    const fp = await insertCOAChain(e.id);
+    await recorder.record({ entityId: e.id, coaFingerprint: fp, quant: 1, boolLabel: "0TRUE" });
 
-    const result = queries.getCOAEntries({});
+    const result = await queries.getCOAEntries({});
     expect(result.entries[0]!.impScore).toBeCloseTo(1.0);
   });
 
-  it("filters by entityId", () => {
-    const e1 = store.createEntity({ type: "E", displayName: "Alice" });
-    const e2 = store.createEntity({ type: "E", displayName: "Bob" });
-    insertCOAChain(e1.id);
-    insertCOAChain(e2.id);
+  it("filters by entityId", async () => {
+    const e1 = await store.createEntity({ type: "E", displayName: "Alice" });
+    const e2 = await store.createEntity({ type: "E", displayName: "Bob" });
+    await insertCOAChain(e1.id);
+    await insertCOAChain(e2.id);
 
-    const result = queries.getCOAEntries({ entityId: e1.id });
+    const result = await queries.getCOAEntries({ entityId: e1.id });
     expect(result.entries.length).toBe(1);
     expect(result.entries[0]!.entityId).toBe(e1.id);
   });
 
-  it("fingerprint search filters by partial match", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    insertCOAChain(e.id);
+  it("fingerprint search filters by partial match", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    await insertCOAChain(e.id);
 
-    const result = queries.getCOAEntries({ fingerprint: "$A0" });
+    const result = await queries.getCOAEntries({ fingerprint: "$A0" });
     expect(result.entries.length).toBeGreaterThan(0);
     for (const entry of result.entries) {
       expect(entry.fingerprint).toContain("$A0");
     }
   });
 
-  it("fingerprint search returns empty for non-matching pattern", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    insertCOAChain(e.id);
+  it("fingerprint search returns empty for non-matching pattern", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    await insertCOAChain(e.id);
 
-    const result = queries.getCOAEntries({ fingerprint: "ZZZNOTFOUND" });
+    const result = await queries.getCOAEntries({ fingerprint: "ZZZNOTFOUND" });
     expect(result.entries).toEqual([]);
   });
 
-  it("filters by workType", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    insertCOAChain(e.id, "message_in");
-    insertCOAChain(e.id, "commit");
+  it("filters by workType", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    await insertCOAChain(e.id, "message_in");
+    await insertCOAChain(e.id, "commit");
 
-    const result = queries.getCOAEntries({ workType: "commit" });
+    const result = await queries.getCOAEntries({ workType: "commit" });
     expect(result.entries.length).toBe(1);
     expect(result.entries[0]!.workType).toBe("commit");
   });
 
-  it("pagination with limit and offset", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
+  it("pagination with limit and offset", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
     for (let i = 0; i < 5; i++) {
-      insertCOAChain(e.id);
+      await insertCOAChain(e.id);
     }
 
-    const page1 = queries.getCOAEntries({ limit: 2, offset: 0 });
-    const page2 = queries.getCOAEntries({ limit: 2, offset: 2 });
-    const page3 = queries.getCOAEntries({ limit: 2, offset: 4 });
+    const page1 = await queries.getCOAEntries({ limit: 2, offset: 0 });
+    const page2 = await queries.getCOAEntries({ limit: 2, offset: 2 });
+    const page3 = await queries.getCOAEntries({ limit: 2, offset: 4 });
 
     expect(page1.entries.length).toBe(2);
     expect(page2.entries.length).toBe(2);
@@ -898,72 +898,72 @@ describe.skip("DashboardQueries.getCOAEntries", () => {
     expect(page3.hasMore).toBe(false);
   });
 
-  it("hasMore is false when all entries fit within limit", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    insertCOAChain(e.id);
+  it("hasMore is false when all entries fit within limit", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    await insertCOAChain(e.id);
 
-    const result = queries.getCOAEntries({ limit: 10, offset: 0 });
+    const result = await queries.getCOAEntries({ limit: 10, offset: 0 });
     expect(result.hasMore).toBe(false);
   });
 
-  it("hasMore is true when there are more records beyond limit+offset", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
+  it("hasMore is true when there are more records beyond limit+offset", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
     for (let i = 0; i < 3; i++) {
-      insertCOAChain(e.id);
+      await insertCOAChain(e.id);
     }
 
-    const result = queries.getCOAEntries({ limit: 1, offset: 0 });
+    const result = await queries.getCOAEntries({ limit: 1, offset: 0 });
     expect(result.hasMore).toBe(true);
   });
 
-  it("total count matches regardless of limit/offset", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
+  it("total count matches regardless of limit/offset", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
     for (let i = 0; i < 4; i++) {
-      insertCOAChain(e.id);
+      await insertCOAChain(e.id);
     }
 
-    const page1 = queries.getCOAEntries({ limit: 1, offset: 0 });
-    const page2 = queries.getCOAEntries({ limit: 1, offset: 3 });
+    const page1 = await queries.getCOAEntries({ limit: 1, offset: 0 });
+    const page2 = await queries.getCOAEntries({ limit: 1, offset: 3 });
     expect(page1.total).toBe(4);
     expect(page2.total).toBe(4);
   });
 
-  it("entries are ordered by created_at DESC", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    insertCOAChainAt(e.id, "2024-01-01T00:00:00Z");
-    insertCOAChainAt(e.id, "2024-06-01T00:00:00Z");
+  it("entries are ordered by created_at DESC", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    await insertCOAChainAt(e.id, "2024-01-01T00:00:00Z");
+    await insertCOAChainAt(e.id, "2024-06-01T00:00:00Z");
 
-    const result = queries.getCOAEntries({});
+    const result = await queries.getCOAEntries({});
     expect(result.entries.length).toBe(2);
     expect(result.entries[0]!.createdAt >= result.entries[1]!.createdAt).toBe(true);
   });
 
-  it("filters by since date", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    insertCOAChainAt(e.id, "2020-01-01T00:00:00Z");
-    insertCOAChainAt(e.id, "2024-01-01T00:00:00Z");
+  it("filters by since date", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    await insertCOAChainAt(e.id, "2020-01-01T00:00:00Z");
+    await insertCOAChainAt(e.id, "2024-01-01T00:00:00Z");
 
-    const result = queries.getCOAEntries({ since: "2023-01-01T00:00:00Z" });
+    const result = await queries.getCOAEntries({ since: "2023-01-01T00:00:00Z" });
     expect(result.entries.length).toBe(1);
     expect(result.entries[0]!.createdAt).toContain("2024");
   });
 
-  it("filters by until date", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
-    insertCOAChainAt(e.id, "2020-01-01T00:00:00Z");
-    insertCOAChainAt(e.id, "2024-01-01T00:00:00Z");
+  it("filters by until date", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
+    await insertCOAChainAt(e.id, "2020-01-01T00:00:00Z");
+    await insertCOAChainAt(e.id, "2024-01-01T00:00:00Z");
 
-    const result = queries.getCOAEntries({ until: "2021-01-01T00:00:00Z" });
+    const result = await queries.getCOAEntries({ until: "2021-01-01T00:00:00Z" });
     expect(result.entries.length).toBe(1);
     expect(result.entries[0]!.createdAt).toContain("2020");
   });
 
-  it("defaults to limit=50 when no limit provided", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
+  it("defaults to limit=50 when no limit provided", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
     for (let i = 0; i < 3; i++) {
-      insertCOAChain(e.id);
+      await insertCOAChain(e.id);
     }
-    const result = queries.getCOAEntries({});
+    const result = await queries.getCOAEntries({});
     // With 3 items and default limit 50, all should be returned
     expect(result.entries.length).toBe(3);
   });
