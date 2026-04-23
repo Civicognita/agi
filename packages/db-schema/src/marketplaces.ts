@@ -58,6 +58,7 @@ export const pluginsMarketplace = pgTable(
     homepage: text("homepage"),
     provides: jsonb("provides"),
     depends: jsonb("depends"),
+    aliases: jsonb("aliases"),
     trustTier: text("trust_tier"),
     integrityHash: text("integrity_hash"),
     signedBy: text("signed_by"),
