@@ -60,8 +60,11 @@ export type {
 
 export { PIPELINE_TAG_TO_TOOL, LLM_PIPELINE_TAGS } from "./types.js";
 
-// Hardware Profiler
-export { HardwareProfiler } from "./hardware-profiler.js";
+// HardwareProfiler moved to gateway-core/src/machine/hardware-profiler.ts
+// (task #293) — hardware introspection is core AGI, not HF-specific.
+// Types (HardwareProfile/HardwareCapabilities/GpuInfo/CapabilityEntry)
+// stay here because capability-resolver + agent-bridge consume them
+// for HF-side compatibility decisions.
 
 // HuggingFace Hub Client
 export { HfHubClient } from "./hf-hub-client.js";

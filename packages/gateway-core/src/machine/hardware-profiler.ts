@@ -14,7 +14,7 @@ import type {
   HardwareProfile,
   HardwareCapabilities,
   CapabilityEntry,
-} from "./types.js";
+} from "@agi/model-runtime";
 
 // ---------------------------------------------------------------------------
 // Constants

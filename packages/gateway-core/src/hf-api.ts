@@ -15,7 +15,6 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import type { FastifyInstance } from "fastify";
 import type {
-  HardwareProfiler,
   HfHubClient,
   ModelStore,
   DatasetStore,
@@ -27,6 +26,7 @@ import type {
 } from "@agi/model-runtime";
 import type { ModelAgentBridge } from "@agi/model-runtime";
 import { getBuildLog, resolveModelCapability, cleanupHubOrphans } from "@agi/model-runtime";
+import type { HardwareProfiler } from "./machine/hardware-profiler.js";
 import type { FineTuneManager } from "./finetune-manager.js";
 
 // ---------------------------------------------------------------------------

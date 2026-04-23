@@ -144,8 +144,8 @@ import { registerWorkerApi } from "./worker-api.js";
 import { registerUsageRoutes } from "./usage-api.js";
 import { appendUpgradeLog } from "./upgrade-log.js";
 import { EventEmitter } from "node:events";
+import { HardwareProfiler } from "./machine/hardware-profiler.js";
 import {
-  HardwareProfiler,
   HfHubClient,
   ModelStore,
   DatasetStore,
