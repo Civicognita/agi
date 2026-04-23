@@ -159,6 +159,7 @@ import {
 } from "@agi/model-runtime";
 import type { ModelRuntimeEventEmitter } from "@agi/model-runtime";
 import { registerHfRoutes } from "./hf-api.js";
+import { registerLemonadeRoutes } from "./lemonade-api.js";
 import { FineTuneManager } from "./finetune-manager.js";
 
 // ---------------------------------------------------------------------------
@@ -2148,6 +2149,10 @@ export async function startGatewayServer(
         }),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
+        (f) => registerLemonadeRoutes(f, {
+          getConfig: () => config,
+          logger: createComponentLogger(logger, "lemonade-api"),
+        }),
       ],
     },
     { host, port },

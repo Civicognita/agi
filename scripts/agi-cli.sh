@@ -808,6 +808,102 @@ cmd_providers() {
   esac
 }
 
+cmd_lemonade() {
+  local action="${1:-status}"
+  local gw="http://127.0.0.1:3100"
+  local jq_or_cat
+  jq_or_cat='jq .'
+  command -v jq >/dev/null 2>&1 || jq_or_cat='cat'
+
+  case "$action" in
+    status)
+      curl -sS "$gw/api/lemonade/status" | eval "$jq_or_cat"
+      ;;
+    models|list)
+      curl -sS "$gw/api/lemonade/models" | eval "$jq_or_cat"
+      ;;
+    pull)
+      local model="${2:-}"
+      [ -z "$model" ] && { err "Usage: agi lemonade pull <model>"; exit 1; }
+      info "pulling $model from Lemonade catalog (this can take a while)..."
+      curl -sS -X POST "$gw/api/lemonade/models/pull" \
+        -H "Content-Type: application/json" \
+        --data "$(printf '{"model":"%s"}' "$model")" | eval "$jq_or_cat"
+      ;;
+    load)
+      local model="${2:-}"
+      [ -z "$model" ] && { err "Usage: agi lemonade load <model>"; exit 1; }
+      curl -sS -X POST "$gw/api/lemonade/models/load" \
+        -H "Content-Type: application/json" \
+        --data "$(printf '{"model":"%s"}' "$model")" | eval "$jq_or_cat"
+      ;;
+    unload)
+      local model="${2:-}"
+      [ -z "$model" ] && { err "Usage: agi lemonade unload <model>"; exit 1; }
+      curl -sS -X POST "$gw/api/lemonade/models/unload" \
+        -H "Content-Type: application/json" \
+        --data "$(printf '{"model":"%s"}' "$model")" | eval "$jq_or_cat"
+      ;;
+    delete|rm)
+      local model="${2:-}"
+      [ -z "$model" ] && { err "Usage: agi lemonade delete <model>"; exit 1; }
+      curl -sS -X POST "$gw/api/lemonade/models/delete" \
+        -H "Content-Type: application/json" \
+        --data "$(printf '{"model":"%s"}' "$model")" | eval "$jq_or_cat"
+      ;;
+    backends)
+      local sub="${2:-list}"
+      case "$sub" in
+        list)
+          # Backends are part of /status — extract from the recipes block.
+          curl -sS "$gw/api/lemonade/status" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+recipes = d.get('recipes') or {}
+if not recipes:
+    print('(Lemonade not reachable)')
+    sys.exit(0)
+print(f\"{'recipe:backend':30s}  state\")
+print('-' * 60)
+for r, info in sorted(recipes.items()):
+    for be, bi in info.get('backends', {}).items():
+        print(f\"{r+':'+be:30s}  {bi.get('state','?')}\")
+"
+          ;;
+        install)
+          local spec="${3:-}"
+          [ -z "$spec" ] && { err "Usage: agi lemonade backends install <recipe>:<backend>  (e.g. llamacpp:rocm)"; exit 1; }
+          local recipe="${spec%%:*}"
+          local backend="${spec##*:}"
+          info "installing backend $recipe:$backend (download can be hundreds of MB)..."
+          curl -sS -X POST "$gw/api/lemonade/backends/install" \
+            -H "Content-Type: application/json" \
+            --data "$(printf '{"recipe":"%s","backend":"%s"}' "$recipe" "$backend")" | eval "$jq_or_cat"
+          ;;
+        uninstall)
+          local spec="${3:-}"
+          [ -z "$spec" ] && { err "Usage: agi lemonade backends uninstall <recipe>:<backend>"; exit 1; }
+          local recipe="${spec%%:*}"
+          local backend="${spec##*:}"
+          curl -sS -X POST "$gw/api/lemonade/backends/uninstall" \
+            -H "Content-Type: application/json" \
+            --data "$(printf '{"recipe":"%s","backend":"%s"}' "$recipe" "$backend")" | eval "$jq_or_cat"
+          ;;
+        *)
+          err "Unknown backends action: $sub"
+          echo "  Actions: list, install <recipe>:<backend>, uninstall <recipe>:<backend>"
+          exit 1
+          ;;
+      esac
+      ;;
+    *)
+      err "Unknown lemonade action: $action"
+      echo "  Actions: status, models, pull <m>, load <m>, unload <m>, delete <m>, backends [list|install|uninstall]"
+      exit 1
+      ;;
+  esac
+}
+
 cmd_help() {
   echo -e "${BOLD}agi${RESET} — Aionima Gateway CLI"
   echo ""
@@ -829,6 +925,8 @@ cmd_help() {
   echo "  models CMD      Manage HF models (list|running|status|install|start|"
   echo "                  stop|remove|search|hardware)"
   echo "  providers CMD   Manage LLM providers (list|status|set-default)"
+  echo "  lemonade CMD    Manage Lemonade local AI server"
+  echo "                  (status|models|pull|load|unload|delete|backends)"
   echo "  ollama CMD      Manage Ollama (status|start|stop|pull|list)"
   echo "  test-vm CMD     Manage test VM (status|create|destroy|provision|setup|"
   echo "                  services-setup|services-start|services-stop|services-status|"
@@ -863,6 +961,7 @@ case "${1:-help}" in
   projects) cmd_projects ;;
   models)    shift; cmd_models "$@" ;;
   providers) shift; cmd_providers "$@" ;;
+  lemonade) shift; cmd_lemonade "$@" ;;
   ollama)   shift; cmd_ollama "$@" ;;
   test-vm)  shift; cmd_test_vm "$@" ;;
   setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;
