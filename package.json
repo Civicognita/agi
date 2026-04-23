@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.83",
+  "version": "0.4.84",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -37,10 +37,7 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "check": "tsc --noEmit && pnpm lint",
-    "typecheck": "tsc --noEmit",
-    "tm": "npx tsx .bots/lib/cli.ts",
-    "tm:status": "npx tsx .bots/lib/cli.ts status",
-    "tm:jobs": "npx tsx .bots/lib/cli.ts jobs"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@agi/db-schema": "workspace:*",

@@ -18,7 +18,7 @@ import { dispatchJobsDir } from "../dispatch-paths.js";
 
 export interface TaskmasterCancelConfig {
   /** Test-only override. Production leaves this unset and uses dispatchJobsDir. */
-  botsDir?: string;
+  dispatchDirOverride?: string;
   /**
    * Called after the dispatch file has been removed (if any). The runtime
    * listener flips state index → "failed" with the cancel reason and, for
@@ -39,8 +39,8 @@ export function createTaskmasterCancelHandler(config: TaskmasterCancelConfig): T
     }
     const reason = String(input.reason ?? "Cancelled by Aion").trim() || "Cancelled by Aion";
 
-    const jobsDir = config.botsDir !== undefined
-      ? join(config.botsDir, "jobs")
+    const jobsDir = config.dispatchDirOverride !== undefined
+      ? join(config.dispatchDirOverride, "jobs")
       : dispatchJobsDir(projectPath);
     const jobFile = join(jobsDir, `${jobId}.json`);
 

@@ -20,7 +20,7 @@ export interface TaskmasterHandoffConfig {
   /** Called when a handoff is raised. Wired by server.ts to re-emit as a runtime event. */
   onHandoff?: (args: { jobId: string; question: string; projectPath: string; coaReqId?: string }) => void;
   /** Optional override for the dispatch base dir. Tests use this. */
-  botsDir?: string;
+  dispatchDirOverride?: string;
 }
 
 export function createTaskmasterHandoffHandler(config: TaskmasterHandoffConfig): ToolHandler {
@@ -42,8 +42,8 @@ export function createTaskmasterHandoffHandler(config: TaskmasterHandoffConfig):
 
     // Stamp the question onto the dispatch file so the UI can surface it on
     // reload even if the WS frame is missed.
-    const jobsDir = config.botsDir !== undefined
-      ? join(config.botsDir, "jobs")
+    const jobsDir = config.dispatchDirOverride !== undefined
+      ? join(config.dispatchDirOverride, "jobs")
       : dispatchJobsDir(projectPath);
     const jobFile = join(jobsDir, `${jobId}.json`);
     let coaReqId: string | undefined;

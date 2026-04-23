@@ -250,8 +250,6 @@ export interface RuntimeStateDeps {
   aionMicro?: import("./aion-micro-manager.js").AionMicroManager;
   /** Resolved prime directory path. */
   primeDir?: string;
-  /** Resolved bots directory path. */
-  botsDir?: string;
   /** MarketplaceManager — Claude Code-compatible plugin marketplace. */
   marketplaceManager?: {
     getSources(): { id: number; ref: string; sourceType: string; name: string; description?: string; lastSyncedAt: string | null; pluginCount: number }[];
@@ -480,7 +478,7 @@ function parseGitStatus(raw: string): {
  *   2. GET /api/trpc/* — tRPC router (dashboard, config, system procedures)
  *   3. GET /api/dashboard/* — legacy routes via DashboardApi (backward compat)
  *   4. GET /api/channels — auth-gated channel list
- *   5. /api/plans/*, /api/projects/*, /api/bots/*, /api/reload, /api/config, /api/system/*
+ *   5. /api/plans/*, /api/projects/*, /api/taskmaster/*, /api/reload, /api/config, /api/system/*
  *   6. Static dashboard files (SPA with fallback to index.html)
  *   7. 404 fallback
  */
@@ -1829,7 +1827,6 @@ export async function createGatewayRuntimeState(
   {
     const workspaceRoot = deps.workspaceRoot ?? process.cwd();
     const primeDir = deps.primeDir ?? join(workspaceRoot, ".aionima");
-    const botsDir = deps.botsDir ?? join(workspaceRoot, ".bots");
     const idDir = ((deps.config as Record<string, unknown> | undefined)?.idService as Record<string, string> | undefined)?.dir ?? "/opt/agi-local-id";
     const marketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.marketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-marketplace";
     const mappMarketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.mappMarketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-mapp-marketplace";
@@ -1975,7 +1972,6 @@ export async function createGatewayRuntimeState(
         originMisaligned: originMisaligned.length > 0 ? originMisaligned : undefined,
         agi: { remote: getRemote(agiDir), branch: getBranch(agiDir) },
         prime: { remote: getRemote(effectivePrimeDir), branch: getBranch(effectivePrimeDir), entries: primeEntries },
-        bots: { remote: getRemote(botsDir), branch: getBranch(botsDir) },
         id: { remote: getRemote(effectiveIdDir), branch: getBranch(effectiveIdDir) },
         marketplace: { remote: getRemote(effectiveMarketplaceDir), branch: getBranch(effectiveMarketplaceDir) },
         mappMarketplace: { remote: getRemote(effectiveMappMarketplaceDir), branch: getBranch(effectiveMappMarketplaceDir) },

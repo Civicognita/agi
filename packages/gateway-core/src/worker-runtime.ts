@@ -4,9 +4,6 @@
  * Manages concurrent job execution, tool loops, and bridges runtime events
  * to the DashboardEventBroadcaster. Worker prompts are loaded from
  * prompts/workers/ via WorkerPromptLoader.
- *
- * Previously this dynamically imported from .bots/lib/ — now all execution
- * logic is inlined into gateway-core.
  */
 
 import { EventEmitter } from "node:events";
@@ -528,7 +525,7 @@ export class WorkerRuntime extends EventEmitter {
   }
 
   // -------------------------------------------------------------------------
-  // Inline worker execution — replaces .bots/lib/runtime.ts
+  // Inline worker execution
   // -------------------------------------------------------------------------
 
   private async runWorker(

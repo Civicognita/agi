@@ -13,7 +13,8 @@ import { dispatchJobsDir } from "../dispatch-paths.js";
 import { join } from "node:path";
 
 export interface WorkerDispatchConfig {
-  botsDir?: string;
+  /** Test-only override for the dispatch base dir. Production leaves this unset and uses dispatchJobsDir(projectPath). */
+  dispatchDirOverride?: string;
   onJobCreated?: (args: {
     jobId: string;
     coaReqId: string;
@@ -71,8 +72,8 @@ export function createWorkerDispatchHandler(
       });
     }
 
-    const jobsDir = config.botsDir !== undefined
-      ? join(config.botsDir, "jobs")
+    const jobsDir = config.dispatchDirOverride !== undefined
+      ? join(config.dispatchDirOverride, "jobs")
       : dispatchJobsDir(projectPath);
 
     try {

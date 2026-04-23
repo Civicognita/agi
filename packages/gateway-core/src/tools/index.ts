@@ -162,8 +162,8 @@ export interface ToolRegistrationConfig {
   projectDirs?: string[];
   /** ProjectConfigManager for validated project config I/O. */
   projectConfigManager?: import("../project-config-manager.js").ProjectConfigManager;
-  /** Optional override for the TaskMaster dispatch base dir. Production leaves this unset (defaults to ~/.agi/{projectSlug}/dispatch/). */
-  botsDir?: string;
+  /** Optional override for the TaskMaster dispatch base dir. Production leaves this unset (defaults to ~/.agi/{projectSlug}/dispatch/). Tests use it to redirect dispatch writes. */
+  dispatchDirOverride?: string;
   /** Callback fired when taskmaster_dispatch creates a job. */
   onJobCreated?: (args: {
     jobId: string;
@@ -215,8 +215,8 @@ export function registerAllTools(
   registry: ToolRegistry,
   config: ToolRegistrationConfig,
 ): number {
-  const toolConfig = { workspaceRoot: config.workspaceRoot, botsDir: config.botsDir };
-  const tmToolConfig = { botsDir: config.botsDir };
+  const toolConfig = { workspaceRoot: config.workspaceRoot, dispatchDirOverride: config.dispatchDirOverride };
+  const tmToolConfig = { dispatchDirOverride: config.dispatchDirOverride };
   let count = 0;
 
   const register = (

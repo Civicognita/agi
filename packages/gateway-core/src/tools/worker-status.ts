@@ -15,7 +15,7 @@ import { dispatchJobsDir, loadLiveJobOverlay, mergeJobStatus } from "../dispatch
 
 export interface WorkerStatusConfig {
   /** Override the dispatch base dir. Tests use this; production leaves it unset. */
-  botsDir?: string;
+  dispatchDirOverride?: string;
   /** Override the state dir (defaults to ~/.agi/state). Tests use this. */
   stateDir?: string;
 }
@@ -56,8 +56,8 @@ export function createWorkerStatusHandler(
     }
 
     const jobId = input.jobId !== undefined ? String(input.jobId).trim() : undefined;
-    const jobsDir = config.botsDir !== undefined
-      ? join(config.botsDir, "jobs")
+    const jobsDir = config.dispatchDirOverride !== undefined
+      ? join(config.dispatchDirOverride, "jobs")
       : dispatchJobsDir(projectPath);
     const overlay = loadLiveJobOverlay(config.stateDir);
 

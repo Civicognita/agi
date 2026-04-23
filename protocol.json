@@ -6,7 +6,6 @@
   "mappSchema": "1.0.0",
   "requires": {
     "agi-prime": ">=1.0.0",
-    "agi-bots": ">=1.0.0",
     "agi-local-id": ">=1.0.0"
   }
 }

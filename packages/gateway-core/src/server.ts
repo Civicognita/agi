@@ -412,7 +412,7 @@ export async function startGatewayServer(
 
   // Protocol compatibility check — selfRepo is the AGI repo path (used by upgrade system)
   const agiRoot = config.workspace?.selfRepo ?? config.workspace?.root ?? process.cwd();
-  const protocolResult = checkProtocolCompatibility(agiRoot, primeDir, null, idDir);
+  const protocolResult = checkProtocolCompatibility(agiRoot, primeDir, idDir);
   if (!protocolResult.compatible) {
     for (const err of protocolResult.errors) {
       log.warn(`Protocol compatibility: ${err}`);
@@ -704,7 +704,6 @@ export async function startGatewayServer(
     primeLoader,
     projectDirs: projectPaths,
     projectConfigManager,
-    botsDir: undefined, // Workers are file-driven prompts
     imageBlobStore,
     hostingManagerRef,
     stackRegistryRef,
@@ -1996,8 +1995,7 @@ export async function startGatewayServer(
       primeLoader,
       primeDir,
       aionMicro: aionMicroManager,
-      botsDir: undefined, // Workers are file-driven prompts
-      marketplaceManager,
+        marketplaceManager,
       onPluginInstalled: async (installPath: string) => {
         try {
           // installPath is the plugin's own directory (e.g. ~/.agi/plugins/cache/<id>).
@@ -3955,8 +3953,8 @@ export async function startGatewayServer(
       }
       Object.assign(configObj, freshConfig);
 
-      // Hot-swap LLM provider when agent or bots config changes
-      if (event.changedKeys.some((k) => k === "agent" || k === "bots")) {
+      // Hot-swap LLM provider when agent config changes
+      if (event.changedKeys.some((k) => k === "agent")) {
         try {
           llmProvider = createAgentRouter(event.config, logger);
           wireProviderErrorCallback(llmProvider);

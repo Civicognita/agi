@@ -7,7 +7,7 @@
  *   config.*     — gateway.json read/write
  *   system.*     — update check + upgrade trigger
  *   plans.*      — plan CRUD
- *   bots.*       — work queue
+ *   taskmaster.* — work queue
  */
 
 import { z } from "zod";

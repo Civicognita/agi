@@ -433,7 +433,7 @@ async function fetchStats() {
 
 async function fetchJobs() {
   try {
-    const res = await fetch(gatewayUrl + "/api/bots/jobs");
+    const res = await fetch(gatewayUrl + "/api/taskmaster/jobs");
     const data = await res.json();
     const jobs = Array.isArray(data) ? data : data.jobs || [];
     isWorking = jobs.some((j) => j.status === "running");
@@ -471,7 +471,7 @@ function connectWs() {
     try {
       const msg = JSON.parse(event.data);
       if (msg.type === "overview:updated") { fetchHealth(); fetchStats(); }
-      else if (msg.type === "bots:job_update") {
+      else if (msg.type === "tm:job_update") {
         const j = msg.payload || msg.data || {};
         if (j.status === "running") isWorking = true;
         addActivity("job", `${j.worker || j.id || "worker"}: ${j.status || "updated"}`);

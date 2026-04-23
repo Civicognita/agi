@@ -835,7 +835,6 @@ export interface DevStatus {
   githubTokenScopes?: string | null;
   agi: { remote: string };
   prime: { remote: string; branch: string; entries: number };
-  bots?: { remote: string; branch: string };
   id?: { remote: string; branch: string };
   marketplace?: { remote: string; branch: string };
   mappMarketplace?: { remote: string; branch: string };

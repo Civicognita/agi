@@ -1,6 +1,5 @@
 {
   "prime": { "dir": "/mnt/agi-prime" },
-  "bots": { "dir": "/mnt/agi-bots" },
   "idService": { "dir": "/mnt/agi-local-id" },
   "gateway": { "port": 3100 },
   "workspace": {

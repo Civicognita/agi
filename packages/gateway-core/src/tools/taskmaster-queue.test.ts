@@ -68,7 +68,7 @@ describe("taskmaster_dispatch handler", () => {
   });
 
   describe("zero-config default path", () => {
-    it("writes to ~/.agi/{projectSlug}/dispatch/jobs/ with no botsDir configured", async () => {
+    it("writes to ~/.agi/{projectSlug}/dispatch/jobs/ with no dispatchDirOverride configured", async () => {
       const res = parse(await createWorkerDispatchHandler({})({
         projectPath: PROJECT_PATH,
         description: "summarize README",
