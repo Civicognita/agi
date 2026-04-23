@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ModelCapabilityBadges } from "@/components/ModelCapabilityBadges.js";
+import { LemonadeBanner } from "@/components/LemonadeBanner.js";
 import {
   Dialog,
   DialogContent,
@@ -79,6 +80,7 @@ export default function HFMarketplacePage() {
   return (
     <PageScroll>
       <div>
+        <LemonadeBanner context="marketplace" />
         {/* Tab bar */}
         <div className="flex gap-1 mb-6 border-b border-border">
           {tabs.map((tab) => (
