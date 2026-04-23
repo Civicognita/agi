@@ -571,13 +571,31 @@ cmd_doctor() {
     fi
   fi
 
-  # Lemonade local AI server — the AGI-native local LLM backplane.
+  # Lemonade local AI server — the AGI-native local LLM backplane (Phase K.7).
   # Goes through /api/lemonade/status (the proxy we own) so the row
   # reflects what AGI sees, not what a direct Lemonade probe would say.
+  # Always renders — invisible "plugin not installed" is the whole bug K.7
+  # set out to fix. Four possible states surfaced explicitly:
+  #   1. plugin not installed      → /api/lemonade/status 503/empty
+  #   2. plugin installed, stopped → status JSON but running=false
+  #   3. plugin running, no model  → running=true, modelLoaded=null
+  #   4. plugin running, happy     → running=true with model + backends
+  label "Lemonade:"
   local lemonade_resp
   lemonade_resp="$(curl -sS --max-time 5 http://127.0.0.1:3100/api/lemonade/status 2>/dev/null || true)"
+  # Distinguish "empty" from "JSON-but-error" — empty means the proxy didn't
+  # respond at all, which is how the gateway signals "plugin not installed".
+  local lemonade_is_json="False"
   if [ -n "$lemonade_resp" ]; then
-    label "Lemonade:"
+    lemonade_is_json="$(echo "$lemonade_resp" | python3 -c "import json,sys
+try:
+  d=json.load(sys.stdin)
+  print('True' if isinstance(d, dict) else 'False')
+except Exception:
+  print('False')
+" 2>/dev/null || echo False)"
+  fi
+  if [ "$lemonade_is_json" = "True" ]; then
     local lemonade_running lemonade_version lemonade_loaded lemonade_recipes
     lemonade_running="$(echo "$lemonade_resp" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('running', False))" 2>/dev/null || echo False)"
     if [ "$lemonade_running" = "True" ]; then
@@ -594,11 +612,18 @@ for r,info in recipes.items():
             installed.append(f'{r}:{be}')
 print(','.join(installed) if installed else '(none)')
 " 2>/dev/null)"
-      ok "v${lemonade_version} — backends:${lemonade_recipes} loaded:${lemonade_loaded}"
+      if [ "$lemonade_loaded" = "(none)" ]; then
+        warn "v${lemonade_version} running — backends:${lemonade_recipes} but no model loaded. Pull one: 'agi lemonade pull <model>'"
+      else
+        ok "v${lemonade_version} running — backends:${lemonade_recipes} loaded:${lemonade_loaded}"
+      fi
     else
-      warn "reachable via /api/lemonade/status but reports running=false"
+      warn "/api/lemonade/status responded but running=false — start the plugin from the dashboard or 'agi lemonade status'"
       issues=$((issues + 1))
     fi
+  else
+    warn "not installed (no /api/lemonade/status response) — install agi-lemonade-runtime from the Plugin Marketplace"
+    issues=$((issues + 1))
   fi
 
   # Disk
