@@ -416,17 +416,158 @@ cmd_doctor() {
     _check_origin "ID origin" "/opt/agi-local-id" "$dev_id_repo"
   fi
 
-  # NPU hardware probe (Phase H.1, feeds Phase K.7) — only shown when the
-  # AMD XDNA accel subsystem is present at all. Having the device node
-  # means the kernel sees the NPU; actually USING it requires the
-  # agi-lemonade-runtime plugin's userspace (XRT + FastFlowLM).
-  if [ -e /sys/class/accel/accel0 ] || [ -d /sys/class/accel ]; then
-    label "NPU hardware:"
+  # NPU readiness probe — the chain that must be healthy for Lemonade/FLM
+  # to use the AMD XDNA 2 NPU: device node → signed amdxdna module loaded →
+  # FLM recognizes the device. Each step fails with a specific remediation
+  # so the user knows exactly which knob to turn.
+  if [ -e /sys/class/accel/accel0 ] || [ -d /sys/class/accel ] || [ -e /dev/accel/accel0 ]; then
+    label "NPU device:"
     if [ -c /dev/accel/accel0 ]; then
-      ok "/dev/accel/accel0 (amdxdna)"
+      ok "/dev/accel/accel0"
     else
       warn "/dev/accel/accel0 missing — reload amdxdna kernel module"
       issues=$((issues + 1))
+    fi
+
+    label "amdxdna module:"
+    # Read /proc/modules directly instead of piping lsmod → grep: the pipe
+    # form triggers SIGPIPE under pipefail and returns 141, inverting the if.
+    local loaded_signer=""
+    if grep -q '^amdxdna ' /proc/modules 2>/dev/null; then
+      local modinfo_out
+      modinfo_out="$(modinfo amdxdna 2>/dev/null || true)"
+      loaded_signer="$(echo "$modinfo_out" | awk -F': *' '/^signer:/ {print $2; exit}')"
+      if [ -n "$loaded_signer" ]; then
+        ok "loaded (signer: $loaded_signer)"
+      else
+        ok "loaded (unsigned — Secure Boot disabled)"
+      fi
+    else
+      warn "not loaded — try: sudo modprobe amdxdna (and 'agi doctor' again)"
+      issues=$((issues + 1))
+    fi
+
+    # Secure Boot / MOK enrollment. Uses `mokutil --test-key` (non-root
+    # friendly) for enrolled detection; `--list-new` needs root so we fall
+    # back to `sudo -n` and then to a marker file written by the installer.
+    if dpkg -l amdxdna-dkms 2>/dev/null | grep -q '^ii'; then
+      local sb_state
+      sb_state="$(mokutil --sb-state 2>/dev/null || true)"
+      if echo "$sb_state" | grep -qi 'SecureBoot enabled'; then
+        label "MOK enrollment:"
+        local mok_file=/var/lib/shim-signed/mok/MOK.der
+        local mok_pending_marker=/var/lib/aionima/mok-enrollment-pending
+        if [ ! -r "$mok_file" ]; then
+          err "MOK file missing at $mok_file — re-run agi-lemonade-runtime installer"
+          issues=$((issues + 1))
+        else
+          local test_out
+          test_out="$(mokutil --test-key "$mok_file" 2>&1 || true)"
+          if echo "$test_out" | grep -qi 'is already enrolled'; then
+            ok "Aionima MOK enrolled (Secure Boot compatible)"
+          else
+            local new_out
+            new_out="$(sudo -n mokutil --list-new 2>/dev/null || true)"
+            local mok_fp
+            mok_fp="$(openssl x509 -in "$mok_file" -inform DER -noout -fingerprint -sha1 2>/dev/null | cut -d= -f2 | tr -d : | tr '[:upper:]' '[:lower:]')"
+            local new_fps
+            new_fps="$(echo "$new_out" | grep -oE '[0-9a-f]{2}(:[0-9a-f]{2}){19}' | tr -d : | tr '[:upper:]' '[:lower:]')"
+            if [ -n "$mok_fp" ] && echo "$new_fps" | grep -qx "$mok_fp"; then
+              warn "pending — reboot and enroll at MokManager (password: aionima)"
+            elif [ -f "$mok_pending_marker" ]; then
+              warn "pending — reboot and enroll at MokManager (password: see $mok_pending_marker)"
+            else
+              err "MOK not enrolled — signed amdxdna module cannot load under Secure Boot. Reinstall agi-lemonade-runtime plugin to queue enrollment."
+              issues=$((issues + 1))
+            fi
+          fi
+        fi
+      fi
+    fi
+
+    # IOMMU domain type for the NPU — amdxdna needs translated (DMA) mode
+    # to bind SVA. Ubuntu's default on platform-attached devices is
+    # identity (passthrough), which causes FLM to report "No NPU device
+    # found" even with everything else healthy.
+    local npu_bdf="" iommu_group_type=""
+    npu_bdf="$(lspci -D -nn 2>/dev/null | awk '/17f0|1502/ && /Signal processing/ {print $1; exit}')"
+    if [ -n "$npu_bdf" ] && [ -L "/sys/bus/pci/devices/$npu_bdf/iommu_group" ]; then
+      local iommu_group
+      iommu_group="$(readlink -f "/sys/bus/pci/devices/$npu_bdf/iommu_group" | sed 's|.*/||')"
+      iommu_group_type="$(cat "/sys/kernel/iommu_groups/$iommu_group/type" 2>/dev/null || echo unknown)"
+      label "NPU IOMMU domain:"
+      case "$iommu_group_type" in
+        DMA|DMA-FQ)
+          ok "$iommu_group_type (SVA-compatible)"
+          ;;
+        identity)
+          if [ -f /var/lib/aionima/iommu-reboot-pending ]; then
+            warn "identity — reboot pending (GRUB cmdline updated by plugin installer)"
+          elif grep -q 'amd_iommu=force_isolation' /proc/cmdline 2>/dev/null; then
+            warn "identity — cmdline has force_isolation but driver may have claimed device early; reboot typically fixes this"
+          else
+            err "identity (passthrough) — blocks SVA binding. Add 'amd_iommu=force_isolation iommu.passthrough=0' to GRUB_CMDLINE_LINUX_DEFAULT and reboot. Reinstall agi-lemonade-runtime plugin to auto-fix."
+            issues=$((issues + 1))
+          fi
+          ;;
+        *)
+          warn "$iommu_group_type — unexpected; expected DMA for NPU SVA support"
+          ;;
+      esac
+    fi
+
+    # NPU PCIe capabilities. The amdxdna driver calls iommu_sva_bind_device
+    # on every open() — no non-SVA code path. AMD IOMMU's SVA enable gate
+    # requires PASID + ATS + PRI on the endpoint. Some BIOS/AGESA revisions
+    # expose PASID but omit ATS/PRI; when that happens, SVA returns
+    # EOPNOTSUPP and no userspace can open /dev/accel/accel0. This is a
+    # BIOS/firmware issue, not a Linux one — surface it as such so the user
+    # doesn't burn hours chasing kernel configs.
+    local npu_has_pasid=0 npu_has_ats=0 npu_has_pri=0
+    if [ -n "$npu_bdf" ] && command -v lspci >/dev/null 2>&1; then
+      label "NPU PCIe caps:"
+      local caps_out
+      caps_out="$(sudo -n lspci -vv -s "$npu_bdf" 2>/dev/null || lspci -v -s "$npu_bdf" 2>/dev/null || true)"
+      echo "$caps_out" | grep -qiE 'Process Address Space ID|PASID' && npu_has_pasid=1
+      echo "$caps_out" | grep -qiE 'Address Translation Service|\bATS\b' && npu_has_ats=1
+      echo "$caps_out" | grep -qiE 'Page Request Interface|\bPRI\b' && npu_has_pri=1
+      # Render: ✓ present, ✗ missing. PASID alone ≠ SVA-capable.
+      local caps_str="PASID:"
+      [ "$npu_has_pasid" -eq 1 ] && caps_str="${caps_str}ok" || caps_str="${caps_str}missing"
+      caps_str="$caps_str ATS:"
+      [ "$npu_has_ats" -eq 1 ] && caps_str="${caps_str}ok" || caps_str="${caps_str}missing"
+      caps_str="$caps_str PRI:"
+      [ "$npu_has_pri" -eq 1 ] && caps_str="${caps_str}ok" || caps_str="${caps_str}missing"
+      if [ "$npu_has_pasid" -eq 1 ] && [ "$npu_has_ats" -eq 1 ] && [ "$npu_has_pri" -eq 1 ]; then
+        ok "$caps_str"
+      elif [ "$npu_has_pasid" -eq 1 ]; then
+        err "$caps_str — BIOS-level blocker. NPU endpoint is missing ATS/PRI, which AMD IOMMU requires for SVA binding. amdxdna has no non-SVA path, so no userspace can open the device. Fix path: (1) BIOS → enable IOMMU + SR-IOV + PCIe ARI + any AMD IPU/NPU toggles; (2) update motherboard BIOS to the latest AGESA — Ryzen AI ATS/PRI exposure has shipped in several 2025-26 AGESA revisions; (3) if neither works, this NPU cannot be used from Linux on current firmware. Practical unblock: 'lemonade backends install llamacpp:rocm' uses the Radeon 890M iGPU instead."
+        issues=$((issues + 1))
+      else
+        warn "$caps_str — unexpected; NPU should advertise at least PASID"
+      fi
+    fi
+
+    # FastFlowLM + Lemonade userspace readiness. Capture output first to
+    # avoid SIGPIPE/pipefail inverting the check.
+    if command -v flm >/dev/null 2>&1; then
+      label "FastFlowLM:"
+      local flm_out
+      flm_out="$(flm validate 2>&1 || true)"
+      if echo "$flm_out" | grep -qi 'no npu device found'; then
+        # Tailor the remediation to the most-likely root cause we've
+        # already detected so the user sees ONE actionable line.
+        if [ "$npu_has_pasid" -eq 1 ] && { [ "$npu_has_ats" -eq 0 ] || [ "$npu_has_pri" -eq 0 ]; }; then
+          err "flm validate: No NPU device found — NPU missing PCIe ATS/PRI caps (see NPU PCIe caps above, BIOS-level blocker)."
+        elif [ "$iommu_group_type" = "identity" ]; then
+          err "flm validate: No NPU device found — IOMMU in passthrough mode blocks SVA binding (see above)."
+        else
+          err "flm validate: No NPU device found — check dmesg for 'amdxdna' errors."
+        fi
+        issues=$((issues + 1))
+      else
+        ok "flm validate passes"
+      fi
     fi
   fi
 
