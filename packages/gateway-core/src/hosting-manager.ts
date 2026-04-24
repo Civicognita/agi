@@ -71,11 +71,55 @@ export interface ResolvedStartCommand {
 export interface BuildCaddyfileOptions {
   baseDomain: string;
   domainAliases?: string[];
+  /**
+   * Port the AGI gateway listens on. Reached via `host.containers.internal`
+   * from within the aionima network (where Caddy now lives), since the
+   * gateway itself stays on the host.
+   */
   gatewayPort: number;
+  /**
+   * WhoDB shares the aionima network — Caddy reaches it by container DNS
+   * (`agi-whodb:8080`). `whodbPort` is the CONTAINER-INTERNAL port (8080),
+   * not a host port. `whodbContainerName` defaults to `agi-whodb`.
+   */
   whodbPort?: number;
-  idService?: { enabled?: boolean; subdomain?: string; port?: number };
-  pluginSubdomainRoutes: Array<{ subdomain: string; target: number | "gateway" }>;
-  projects: Array<{ hostname: string; port: number; name?: string }>;
+  whodbContainerName?: string;
+  /**
+   * Local-ID runs on the aionima network as `agi-local-id`. `port` is the
+   * container-internal listen port. `containerName` overrides the default
+   * when the unit uses a non-default name.
+   */
+  idService?: {
+    enabled?: boolean;
+    subdomain?: string;
+    port?: number;
+    containerName?: string;
+  };
+  /**
+   * Subdomain routes declared by plugins. `target` is a container-internal
+   * port when `containerName` is provided (aionima DNS route); falls back
+   * to `host.containers.internal:<target>` when only a port is given, or
+   * the gateway for `target === "gateway"`.
+   */
+  pluginSubdomainRoutes: Array<{
+    subdomain: string;
+    target: number | "gateway";
+    containerName?: string;
+  }>;
+  /**
+   * Per-project hosting. `containerName` + `internalPort` are what Caddy
+   * uses now that it lives on aionima. `port` is retained as a nullable
+   * legacy field; when non-null and `containerName` is absent, Caddy falls
+   * back to `host.containers.internal:${port}` so half-migrated installs
+   * still serve.
+   */
+  projects: Array<{
+    hostname: string;
+    port?: number | null;
+    containerName?: string | null;
+    internalPort?: number | null;
+    name?: string;
+  }>;
   existingCaddyfile: string;
 }
 
@@ -105,9 +149,13 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
   blocks.push(SYSTEM_BEGIN);
   blocks.push("");
 
-  const gw = `localhost:${String(opts.gatewayPort)}`;
+  // Caddy now lives in a rootless container on the aionima podman network
+  // (story #100). Every upstream is either a container DNS name on that
+  // network OR `host.containers.internal` when we need to reach the host.
+  // Gateway stays on the host; all other services are reached by podman DNS.
+  const gw = `host.containers.internal:${String(opts.gatewayPort)}`;
 
-  // Gateway (dashboard)
+  // Gateway (dashboard) — reached by Caddy-on-aionima via the host bridge.
   const gatewayDomains = [opts.baseDomain, ...(opts.domainAliases ?? [])].join(", ");
   blocks.push(`${gatewayDomains} {`);
   blocks.push(`    tls internal`);
@@ -115,13 +163,13 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
   blocks.push(`}\n`);
 
   // WhoDB database explorer — always-on infrastructure at db.{baseDomain}.
-  // WhoDB sets `X-Frame-Options: deny` and may set `Content-Security-Policy`
-  // with a restrictive `frame-ancestors` directive; both block the dashboard's
+  // Resolved via aionima DNS (`agi-whodb:8080`), not a host port. WhoDB sets
+  // `X-Frame-Options: deny` and may set `Content-Security-Policy` with a
+  // restrictive `frame-ancestors` directive; both block the dashboard's
   // WhoDB iframe. Strip them at the proxy so the dashboard can embed WhoDB
   // while keeping it accessible standalone at https://db.{baseDomain}.
-  // Replace with a permissive CSP that still locks framing to the owner's
-  // own domain family (ai.on and any configured aliases).
-  const whodbPort = opts.whodbPort ?? 5050;
+  const whodbContainer = opts.whodbContainerName ?? "agi-whodb";
+  const whodbInternalPort = opts.whodbPort ?? 8080;
   const whodbFrameOrigins = [opts.baseDomain, ...(opts.domainAliases ?? [])]
     .map((d) => `https://${d} https://*.${d}`)
     .join(" ");
@@ -130,23 +178,35 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
   blocks.push(`    header -X-Frame-Options`);
   blocks.push(`    header -Content-Security-Policy`);
   blocks.push(`    header Content-Security-Policy "frame-ancestors 'self' ${whodbFrameOrigins}"`);
-  blocks.push(`    reverse_proxy localhost:${String(whodbPort)}`);
+  blocks.push(`    reverse_proxy ${whodbContainer}:${String(whodbInternalPort)}`);
   blocks.push(`}\n`);
 
-  // Local ID service — when enabled, reverse-proxy id.{baseDomain} to the ID service port
+  // Local ID service — when enabled, reverse-proxy id.{baseDomain} to the
+  // ID container on aionima. No host port binding; only AGI binds host ports.
   if (opts.idService?.enabled) {
     const idSubdomain = opts.idService.subdomain ?? "id";
-    const idPort = opts.idService.port ?? 3200;
+    const idContainer = opts.idService.containerName ?? "agi-local-id";
+    const idInternalPort = opts.idService.port ?? 3200;
     blocks.push(`${idSubdomain}.${opts.baseDomain} {`);
     blocks.push(`    tls internal`);
-    blocks.push(`    reverse_proxy localhost:${String(idPort)}`);
+    blocks.push(`    reverse_proxy ${idContainer}:${String(idInternalPort)}`);
     blocks.push(`}\n`);
   }
 
-  // Plugin-registered subdomain routes
+  // Plugin-registered subdomain routes. When the route declares a
+  // containerName, Caddy resolves it on aionima; otherwise (legacy route
+  // with only a port) we fall back to host.containers.internal so pre-
+  // migration plugins still serve through Caddy while they migrate.
   for (const route of opts.pluginSubdomainRoutes) {
     const fqdn = `${route.subdomain}.${opts.baseDomain}`;
-    const target = route.target === "gateway" ? gw : `localhost:${String(route.target)}`;
+    let target: string;
+    if (route.target === "gateway") {
+      target = gw;
+    } else if (route.containerName) {
+      target = `${route.containerName}:${String(route.target)}`;
+    } else {
+      target = `host.containers.internal:${String(route.target)}`;
+    }
     blocks.push(`${fqdn} {`);
     blocks.push(`    tls internal`);
     blocks.push(`    reverse_proxy ${target}`);
@@ -205,9 +265,24 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
       `</div></body></html>`,
     ].join("");
 
+    // Caddy-on-aionima reaches the project container by podman DNS name
+    // (`agi-<hostname>:<internalPort>`). Fall back to `host.containers.internal`
+    // when a project hasn't been re-launched yet after migration — that path
+    // still reaches the container's old host-port binding if present.
+    let projectUpstream: string;
+    if (project.containerName && project.internalPort) {
+      projectUpstream = `${project.containerName}:${String(project.internalPort)}`;
+    } else if (project.port) {
+      projectUpstream = `host.containers.internal:${String(project.port)}`;
+    } else {
+      // No route available (project has no container yet). Emit a placeholder
+      // host.containers.internal line so the 5xx handler shows the offline
+      // page; this matches legacy behavior.
+      projectUpstream = `host.containers.internal:${String(project.port ?? 0)}`;
+    }
     blocks.push(`${fqdn} {`);
     blocks.push(`    tls internal`);
-    blocks.push(`    reverse_proxy localhost:${String(project.port)}`);
+    blocks.push(`    reverse_proxy ${projectUpstream}`);
     // `handle_errors <status_codes...>` (filter form) needs Caddy 2.8+.
     // Plenty of deployments are still on 2.6.x which rejects that syntax
     // with "Wrong argument count or unexpected line ending after '502'"
@@ -2010,8 +2085,13 @@ export class HostingManager {
       idService: this.config.idService,
       pluginSubdomainRoutes: this.pluginReg?.getSubdomainRoutes().map(({ route }) => route) ?? [],
       projects: Array.from(this.projects.values())
-        .filter((p) => p.meta.enabled && p.meta.port !== null)
-        .map((p) => ({ hostname: p.meta.hostname, port: p.meta.port as number })),
+        .filter((p) => p.meta.enabled)
+        .map((p) => ({
+          hostname: p.meta.hostname,
+          port: p.meta.port,
+          containerName: p.containerName ?? (p.meta.hostname ? `agi-${p.meta.hostname}` : null),
+          internalPort: p.meta.internalPort,
+        })),
       existingCaddyfile: existing,
     });
 
