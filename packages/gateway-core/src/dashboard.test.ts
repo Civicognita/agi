@@ -1015,10 +1015,11 @@ function makeMockReq(method: string, url: string): IncomingMessage {
   } as unknown as IncomingMessage;
 }
 
-describe.skip("DashboardApi.handle — route matching", () => {
+describe("DashboardApi.handle — route matching", () => {
   let api: DashboardApi;
 
   beforeEach(() => {
+    // queries is set up by the module-level beforeEach with a fresh pglite fixture.
     api = new DashboardApi({ queries });
   });
 

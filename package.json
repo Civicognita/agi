@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.139",
+  "version": "0.4.140",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -19,6 +19,7 @@
     "dev": "tsx watch cli/src/index.ts run",
     "dev:dashboard": "pnpm --filter @agi/dashboard dev",
     "test": "bash scripts/test-run.sh unit",
+    "t": "bash scripts/agi-test.sh",
     "test:e2e": "bash scripts/test-run.sh e2e",
     "test:e2e:ui": "bash scripts/test-run.sh e2e:ui",
     "test:all": "bash scripts/test-run.sh all",
