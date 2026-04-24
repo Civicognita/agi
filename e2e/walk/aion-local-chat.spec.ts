@@ -44,17 +44,40 @@ test.describe("Phase 10 — Aion + Ollama chat smoke", () => {
     await page.goto("/");
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
-    // Open chat flyout. Sidebar has a chat icon button; also there may be a
-    // header chat button. Try several common anchors.
+    // Force gateway state to ONLINE via WS so invocation-gate.ts doesn't
+    // short-circuit with its "Aionima is currently offline" canned response.
+    // Reset happens on gateway restart; the state machine is manually-settable
+    // per server.ts:2297 "state_change" WS handler.
+    await page.evaluate(async () => {
+      await new Promise<void>((resolve) => {
+        const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const ws = new WebSocket(`${proto}//${window.location.host}/`);
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ type: "state_change", payload: { to: "ONLINE" } }));
+          setTimeout(() => { ws.close(); resolve(); }, 1_000);
+        };
+        ws.onerror = () => resolve();
+      });
+    });
+
+    // Open chat flyout (header chat icon).
     const chatBtn = page.getByRole("button", { name: /chat/i }).first();
     if (await chatBtn.isVisible({ timeout: 5_000 }).catch(() => false)) {
       await chatBtn.click();
     }
     await page.screenshot({ path: path.join(snapshotsDir, "aion-chat-opened.png"), fullPage: true });
 
-    // Find a text input in the flyout. Typical pattern: textarea or input
-    // with placeholder like "Message Aionima" / "Type a message" / etc.
-    const input = page.locator("textarea, input[type='text']").filter({ hasText: "" }).last();
+    // Chat flyout shows "Click + to start a new chat" placeholder; the input
+    // only appears after a session is created. Click the + button to start.
+    const plusBtn = page.getByRole("button", { name: "+" }).or(page.locator("button:has-text('+')")).first();
+    if (await plusBtn.isVisible({ timeout: 5_000 }).catch(() => false)) {
+      await plusBtn.click();
+      await page.waitForTimeout(1_000);
+    }
+    await page.screenshot({ path: path.join(snapshotsDir, "aion-chat-session.png"), fullPage: true });
+
+    // Now find the textarea input in the flyout.
+    const input = page.locator("textarea").last();
     const inputVisible = await input.isVisible({ timeout: 10_000 }).catch(() => false);
 
     await test.info().attach("flyout-open-summary", {
@@ -74,13 +97,22 @@ test.describe("Phase 10 — Aion + Ollama chat smoke", () => {
     test.skip(!inputVisible, "Chat flyout input not reachable — owner-entity setup likely required; file as follow-up");
 
     // Send a trivial prompt to Ollama.
-    await input.fill("Reply with just the word ACK.");
+    await input.fill("What is five plus two? Respond with only the digits of the answer, nothing else.");
     await input.press("Enter");
 
-    // Wait up to 90 s for a response — qwen2.5:3b on CPU is slow.
-    // Use text content as the signal: "ACK" should appear somewhere below
-    // the input when Ollama responds.
-    await expect(page.getByText(/ACK|ack/i).first()).toBeVisible({ timeout: 90_000 });
+    // Wait up to 5 min for a response. qwen2.5:3b on CPU with the full
+    // Aionima system prompt (~5KB) is slow — observed router log line
+    // `[router] route: local/complex → ollama/qwen2.5:3b`. First-token
+    // latency + generation of ~30-50 tokens is the bulk of the wall clock.
+    // Expected answer: "7". The prompt never contains the digit 7, so
+    // matching on /\b7\b/ in page text implies Aion's reply produced it.
+    // Fail fast on the "currently offline" canned string.
+    await expect.poll(async () => {
+      const content = await page.locator("body").textContent({ timeout: 2_000 }).catch(() => "");
+      if (content?.includes("currently offline")) return "offline-canned";
+      if (/\b7\b/.test(content ?? "")) return "got-answer";
+      return "waiting";
+    }, { timeout: 300_000, intervals: [5_000] }).toBe("got-answer");
 
     await page.screenshot({ path: path.join(snapshotsDir, "aion-chat-ack.png"), fullPage: true });
     expect(pageErrors).toEqual([]);

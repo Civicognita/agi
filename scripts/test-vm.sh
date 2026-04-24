@@ -522,6 +522,29 @@ cmd_services_start() {
     echo "    ollama: $(systemctl is-active ollama) · models: $(ollama list 2>/dev/null | tail -n +2 | awk "{print \$1}" | paste -sd, -)"
   '
 
+  # Seed the owner entity so chat:send doesn't error "Owner not configured".
+  # Uses the onboarding-api endpoint which creates ~/.agi/gateway.json's
+  # owner block + registers with ID service (non-fatal if ID is down).
+  # We also need owner.channels.telegram so server.ts loads ownerEntityId
+  # from the entity store (otherwise ownerEntityId is undefined and
+  # chat:send short-circuits with "Owner not configured" per server.ts:2486).
+  echo "==> Seeding owner entity for chat tests..."
+  multipass exec "$VM_NAME" -- bash -lc '
+    GW=http://127.0.0.1:3100
+    curl -s -X POST $GW/api/onboarding/owner-profile \
+      -H "Content-Type: application/json" \
+      -d "{\"displayName\":\"Wishborn\",\"dmPolicy\":\"open\"}" >/dev/null 2>&1
+    python3 - << "PYEOF"
+import json, os
+p = os.path.expanduser("~/.agi/gateway.json")
+cfg = json.load(open(p))
+cfg.setdefault("owner", {})
+cfg["owner"]["channels"] = {"telegram": "owner-0"}
+json.dump(cfg, open(p, "w"), indent=2)
+PYEOF
+    echo "    owner block: $(python3 -c \"import json;print(json.load(open('$HOME/.agi/gateway.json'))['owner'])\")"
+  '
+
   # Keep the Playwright bridge stanza in VM Caddy. The :80 reverse_proxy
   # to 127.0.0.1:3100 lets host-side Playwright reach the AGI gateway
   # (which binds loopback-only) at http://<VM_IP>/. Gets regenerated
