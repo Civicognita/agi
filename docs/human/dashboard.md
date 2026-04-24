@@ -76,6 +76,10 @@ MApp lifecycle events (mint, install, publish, execute) are tracked in the COA c
 
 The Projects section lists hosted projects — code repositories or web applications running on the local network via Caddy reverse proxy. Each project shows its hostname, status, runtime type, and quick controls (start/stop/restart container).
 
+A **Marketplace** card group at the top of the page provides quick entry to the Plugin Marketplace and the MagicApps Marketplace, with live "installed" counts for each. Clicking a tile jumps straight to that marketplace view.
+
+![Projects page with Marketplace tiles](./screenshots/projects.png)
+
 This section is only populated if `hosting.enabled` is `true` in `gateway.json`.
 
 #### Database in the Development Tab

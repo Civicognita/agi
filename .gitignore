@@ -32,3 +32,9 @@ ui/dashboard/vendor/
 nexus-claw*
 .ai/
 .aionima-project.json
+
+# Dashboard walk snapshots — captured locally by e2e/walk/dashboard-walk.spec.ts.
+# Only verified screenshots get promoted to docs/human/screenshots/ by hand.
+e2e/walk/snapshots/
+# Temporary drizzle-push artifact dir from packages/db-schema/drizzle-push.config.ts
+packages/db-schema/drizzle-push-tmp/
