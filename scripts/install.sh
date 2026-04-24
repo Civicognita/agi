@@ -333,45 +333,43 @@ IDENVEOF
   # 9e. Enable linger so user-level systemd services survive logout.
   loginctl enable-linger "$AIONIMA_USER" 2>/dev/null || true
 
-  # 9f. Generate and install the user-level systemd unit that manages the
-  # container. `podman generate systemd --new` produces a unit that
-  # creates/destroys the container on start/stop (rather than one that
-  # expects a pre-existing container). The container's DATABASE_URL is
-  # rewritten to reach Postgres via the container network name.
-  ID_USER_SYSTEMD_DIR="/home/$AIONIMA_USER/.config/systemd/user"
-  run_as "mkdir -p '$ID_USER_SYSTEMD_DIR'"
+  # 9f. Install the persistent user-level systemd unit that manages the
+  # ID container. Story #100 moved off the old `podman generate systemd`
+  # scratch output (which pointed at /tmp/agi-id.container.env, a path
+  # that wipes on reboot and left ID dead across reboots). Instead:
+  #   - Write the DATABASE_URL-rewritten env to a persistent user path
+  #     at ~/.config/agi-local-id/container.env
+  #   - Install the committed unit template from scripts/agi-local-id.service
+  #     that references %h/.config/agi-local-id/container.env
+  #   - No host port binding — the container lives on the aionima network
+  #     and is reached by Caddy-on-aionima via podman DNS (agi-local-id:3200)
+  ID_USER_HOME="/home/$AIONIMA_USER"
+  ID_USER_SYSTEMD_DIR="$ID_USER_HOME/.config/systemd/user"
+  ID_USER_ENV_DIR="$ID_USER_HOME/.config/agi-local-id"
+  ID_USER_ENV_FILE="$ID_USER_ENV_DIR/container.env"
 
-  # Seed/refresh the container so we can generate a unit from it. If it
-  # already exists, recreate against the latest image.
-  run_as "podman rm -f agi-local-id 2>/dev/null || true"
+  run_as "mkdir -p '$ID_USER_SYSTEMD_DIR' '$ID_USER_ENV_DIR'"
 
   # Patch DATABASE_URL for the container — localhost in .env refers to the
   # host, but a container on the aionima network reaches Postgres by
-  # service name `agi-postgres-17`.
-  ID_ENV_CONTAINER="/tmp/agi-id.container.env"
-  sed 's|@localhost:5432/|@agi-postgres-17:5432/|' "$ID_ENV" > "$ID_ENV_CONTAINER"
-  chmod 600 "$ID_ENV_CONTAINER"
-  chown "$AIONIMA_USER:$AIONIMA_USER" "$ID_ENV_CONTAINER"
+  # service name `agi-postgres-17`. Write directly to the persistent path;
+  # no /tmp hop.
+  sed 's|@localhost:5432/|@agi-postgres-17:5432/|' "$ID_ENV" > "$ID_USER_ENV_FILE"
+  chmod 600 "$ID_USER_ENV_FILE"
+  chown "$AIONIMA_USER:$AIONIMA_USER" "$ID_USER_ENV_FILE"
 
-  run_as "podman run -d \
-    --name agi-local-id \
-    --restart=always \
-    --network=aionima \
-    --env-file='$ID_ENV_CONTAINER' \
-    -v /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt:/etc/ssl/certs/caddy-local-root.crt:ro \
-    -e NODE_EXTRA_CA_CERTS=/etc/ssl/certs/caddy-local-root.crt \
-    -p 127.0.0.1:3200:3200 \
-    localhost/agi-local-id:latest 2>&1" || \
-      echo "  [WARN] podman run failed; retry via dashboard after agi-postgres-17 is up"
+  # Install the committed unit template (no transient /tmp references)
+  cp "$INSTALL_DIR/scripts/agi-local-id.service" "$ID_USER_SYSTEMD_DIR/agi-local-id.service"
+  chown "$AIONIMA_USER:$AIONIMA_USER" "$ID_USER_SYSTEMD_DIR/agi-local-id.service"
 
-  # Now generate the systemd user unit from the running container.
-  run_as "podman generate systemd --new --name agi-local-id --restart-policy=always > '$ID_USER_SYSTEMD_DIR/agi-local-id.service'" || \
-    echo "  [WARN] podman generate systemd failed — container will still run via --restart=always"
+  # Seed the container so it's running when the unit activates. Recreate
+  # against the latest image if one already exists from a prior install.
+  run_as "podman rm -f agi-local-id 2>/dev/null || true"
+
   run_as "systemctl --user daemon-reload" || true
-  run_as "systemctl --user enable agi-local-id.service 2>/dev/null || true"
-  echo "  [OK] agi-local-id container running, user systemd unit enabled"
-
-  rm -f "$ID_ENV_CONTAINER"
+  run_as "systemctl --user enable --now agi-local-id.service" || \
+    echo "  [WARN] systemctl enable/start agi-local-id failed; retry via dashboard after agi-postgres-17 is up"
+  echo "  [OK] agi-local-id container on aionima (no host port), persistent env at $ID_USER_ENV_FILE"
 fi
 
 # ---------------------------------------------------------------------------

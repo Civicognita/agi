@@ -244,7 +244,14 @@ export class SharedContainerManager {
       "run", "-d",
       "--name", containerName,
       "--replace",
-      "-p", `${port}:${config.internalPort}`,
+      // Shared DB containers live on aionima so project/ID containers
+      // reach them by DNS name (e.g. `agi-postgres-17`). Keep the
+      // `-p 127.0.0.1:<port>` binding too — the AGI gateway is still a
+      // host process (not containerized), and reaches shared databases
+      // via loopback. Once the gateway itself is containerized on
+      // aionima (follow-up to story #100), drop this `-p`.
+      "--network=aionima",
+      "-p", `127.0.0.1:${String(port)}:${String(config.internalPort)}`,
       "--label", "agi.managed=true",
       "--label", `agi.shared-key=${container.sharedKey}`,
     ];

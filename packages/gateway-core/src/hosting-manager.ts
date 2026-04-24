@@ -123,6 +123,32 @@ export interface BuildCaddyfileOptions {
   existingCaddyfile: string;
 }
 
+/**
+ * Analyze a Caddyfile custom block for stale `localhost:` upstreams. After
+ * story #100, Caddy runs inside a rootless container on the aionima network;
+ * `localhost` inside that container resolves to the container itself, so any
+ * user-written `reverse_proxy localhost:<port>` line in the CUSTOM block
+ * silently breaks after the migration. This function flags those lines so
+ * HostingManager can surface a warning to the log / dashboard.
+ *
+ * Returns an array of warnings; each entry is the stale directive line
+ * (trimmed) so the operator can find it in their CUSTOM block.
+ */
+export function findStaleCustomUpstreams(customBlock: string): string[] {
+  if (!customBlock) return [];
+  const warnings: string[] = [];
+  for (const rawLine of customBlock.split("\n")) {
+    const line = rawLine.trim();
+    // Match `reverse_proxy localhost:<num>` or `reverse_proxy 127.0.0.1:<num>`
+    // — either form now means "the Caddy container itself" (wrong), not "the
+    // host" (what the user probably intended).
+    if (/^reverse_proxy\s+(localhost|127\.0\.0\.1):\d+\b/.test(line)) {
+      warnings.push(line);
+    }
+  }
+  return warnings;
+}
+
 export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
   const SYSTEM_BEGIN = "# === SYSTEM DOMAINS ===";
   const SYSTEM_END = "# === END SYSTEM DOMAINS ===";
