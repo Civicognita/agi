@@ -56,6 +56,14 @@ const ROUTES: RouteCase[] = [
   { path: "/settings/security", label: "settings-security" },
   { path: "/settings/hf", label: "settings-hf" },
   { path: "/comms", label: "comms" },
+  // Batch 2 — no-fixture admin/system routes
+  { path: "/gateway/onboarding", label: "gateway-onboarding" },
+  { path: "/system/agents", label: "system-agents" },
+  { path: "/system/admin", label: "system-admin" },
+  { path: "/system/vendors", label: "system-vendors" },
+  { path: "/system/backups", label: "system-backups" },
+  { path: "/system/identity", label: "system-identity" },
+  { path: "/system/prompt-inspector", label: "system-prompt-inspector" },
 ];
 
 const snapshotsDir = path.join(walkDir, "snapshots");

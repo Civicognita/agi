@@ -35,8 +35,6 @@ export default function OverviewPage() {
       .slice(0, 30)
     : liveActivity;
 
-  if (overview.data === null) return null;
-
   return (
     <PageScroll>
       <Tabs defaultValue="usage">
@@ -45,48 +43,78 @@ export default function OverviewPage() {
           <TabsTrigger value="impactinomics">Impactinomics</TabsTrigger>
         </TabsList>
 
-        {/* Usage & Cost — live data; default tab. */}
+        {/* Usage & Cost — live data; default tab. Doesn't depend on overview.data. */}
         <TabsContent value="usage" className="mt-4">
           <UsageSection days={30} />
         </TabsContent>
 
         {/* Impactinomics — content exists but is stubbed until 0PRIME/MINT
-            is operational. Overlay tells the user what they're looking at. */}
+            is operational. Overlay tells the user what they're looking at.
+            Skeleton placeholder while overview.data is still loading so the
+            page never renders as an empty main area. */}
         <TabsContent value="impactinomics" className="mt-4">
           <ComingSoonOverlay caption="Impact scoring, COA<>COI registration, and MINT ledger updates need 0PRIME to be operational. This tab will light up when the Hive mind is online.">
-            <div className="flex flex-col gap-6">
-              <OverviewCards data={overview.data} />
+            {overview.data === null ? (
+              <OverviewSkeleton />
+            ) : (
+              <div className="flex flex-col gap-6">
+                <OverviewCards data={overview.data} />
 
-              <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6">
-                <div className="flex flex-col gap-6">
-                  {/* Timeline controls */}
-                  <div className="flex gap-1">
-                    {(["hour", "day", "week", "month"] as TimeBucket[]).map((b) => (
-                      <button
-                        key={b}
-                        onClick={() => setTimelineBucket(b)}
-                        className={cn(
-                          "px-2.5 py-2 md:py-1 rounded-md border text-[11px] cursor-pointer transition-colors",
-                          timelineBucket === b
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : "bg-transparent text-foreground border-border hover:bg-secondary",
-                        )}
-                      >
-                        {b}
-                      </button>
-                    ))}
+                <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6">
+                  <div className="flex flex-col gap-6">
+                    {/* Timeline controls */}
+                    <div className="flex gap-1">
+                      {(["hour", "day", "week", "month"] as TimeBucket[]).map((b) => (
+                        <button
+                          key={b}
+                          onClick={() => setTimelineBucket(b)}
+                          className={cn(
+                            "px-2.5 py-2 md:py-1 rounded-md border text-[11px] cursor-pointer transition-colors",
+                            timelineBucket === b
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "bg-transparent text-foreground border-border hover:bg-secondary",
+                          )}
+                        >
+                          {b}
+                        </button>
+                      ))}
+                    </div>
+                    <TimelineChart bucket={timelineBucket} />
+                    <BreakdownChart dimension="domain" />
                   </div>
-                  <TimelineChart bucket={timelineBucket} />
-                  <BreakdownChart dimension="domain" />
+                  <ActivityFeed entries={allActivity} />
                 </div>
-                <ActivityFeed entries={allActivity} />
-              </div>
 
-              <BreakdownChart dimension="channel" />
-            </div>
+                <BreakdownChart dimension="channel" />
+              </div>
+            )}
           </ComingSoonOverlay>
         </TabsContent>
       </Tabs>
     </PageScroll>
+  );
+}
+
+function OverviewSkeleton() {
+  return (
+    <div className="flex flex-col gap-6" data-testid="overview-skeleton">
+      {/* Cards row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="rounded-xl border border-border bg-card p-4 h-[110px] animate-pulse">
+            <div className="h-3 w-20 bg-muted rounded mb-3" />
+            <div className="h-7 w-28 bg-muted rounded mb-2" />
+            <div className="h-3 w-32 bg-muted rounded" />
+          </div>
+        ))}
+      </div>
+      {/* Chart + feed row */}
+      <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6">
+        <div className="rounded-xl border border-border bg-card h-[280px] animate-pulse" />
+        <div className="rounded-xl border border-border bg-card h-[280px] animate-pulse" />
+      </div>
+      {/* Secondary chart */}
+      <div className="rounded-xl border border-border bg-card h-[200px] animate-pulse" />
+    </div>
   );
 }
