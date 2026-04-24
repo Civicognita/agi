@@ -2,6 +2,8 @@
 
 This document describes how a message travels from a channel adapter to the Claude API and back. Understanding the pipeline helps you configure the agent, debug unexpected responses, and tune performance.
 
+For the **framework-level** view — how the invocation stages, sessions, tool registry, and provider router are composed into the Agent Development Framework (ADF) — see [adf.md](./adf.md). This doc describes the *flow*; that doc describes the *framework*.
+
 ---
 
 ## Overview
