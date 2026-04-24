@@ -1468,7 +1468,10 @@ export class HostingManager {
         mode: hosted.meta.mode,
       };
 
-      const internalPort = hosted.meta.internalPort ?? magicAppConfig.internalPort;
+      // Ensure meta.internalPort reflects the effective port so the
+      // regenerated Caddyfile routes to the right container port.
+      // Takes effect on next project write via updateProject.
+      hosted.meta.internalPort = hosted.meta.internalPort ?? magicAppConfig.internalPort;
 
       const args: string[] = [
         "run", "-d",
@@ -1477,7 +1480,10 @@ export class HostingManager {
         "--label", "agi.managed=true",
         "--label", `agi.hostname=${hosted.meta.hostname}`,
         "--label", `agi.project=${hosted.path}`,
-        "-p", `127.0.0.1:${String(hosted.meta.port)}:${String(internalPort)}`,
+        // Story #100 — only AGI binds host ports. Project containers live on
+        // the aionima network and are reached by Caddy-on-aionima via
+        // podman DNS (`${containerName}:${internalPort}`). No `-p` mapping.
+        "--network=aionima",
       ];
 
       for (const vol of magicAppConfig.volumeMounts(ctx)) {
@@ -1529,7 +1535,7 @@ export class HostingManager {
         mode: hosted.meta.mode,
       };
 
-      const internalPort = hosted.meta.internalPort ?? stackConfig.internalPort;
+      hosted.meta.internalPort = hosted.meta.internalPort ?? stackConfig.internalPort;
 
       const args: string[] = [
         "run", "-d",
@@ -1538,7 +1544,8 @@ export class HostingManager {
         "--label", "agi.managed=true",
         "--label", `agi.hostname=${hosted.meta.hostname}`,
         "--label", `agi.project=${hosted.path}`,
-        "-p", `127.0.0.1:${String(hosted.meta.port)}:${String(internalPort)}`,
+        // Story #100 — aionima network, no host port binding.
+        "--network=aionima",
       ];
 
       for (const vol of stackConfig.volumeMounts(ctx)) {
@@ -1647,7 +1654,8 @@ export class HostingManager {
       "--label", "agi.managed=true",
       "--label", `agi.hostname=${hosted.meta.hostname}`,
       "--label", `agi.project=${hosted.path}`,
-      "-p", `127.0.0.1:${String(hosted.meta.port)}:${String(internalPort)}`,
+      // Story #100 — legacy-path project container joins aionima.
+      "--network=aionima",
     ];
 
     // Collected across branches: the user-level command tokens (post-image).
@@ -2472,12 +2480,13 @@ export class HostingManager {
         "--name", containerName,
         "--restart=always",
         "--label", "agi.infra=true",
-        "-p", `127.0.0.1:${String(port)}:8080`,
+        // Story #100 — aionima network, Caddy reaches by `agi-whodb:8080`.
+        "--network=aionima",
         "-v", "whodb-data:/data",
         ...envArgs,
         "docker.io/clidey/whodb:latest",
       ], { stdio: "pipe", timeout: 60_000 });
-      this.log.info(`WhoDB started on port ${String(port)}`);
+      this.log.info(`WhoDB started on aionima network as ${containerName}`);
     } catch (err) {
       this.log.warn(`failed to start WhoDB: ${err instanceof Error ? err.message : String(err)}`);
     }
