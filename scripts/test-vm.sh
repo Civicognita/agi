@@ -337,25 +337,29 @@ cmd_services_setup() {
     sudo apt-get update && sudo apt-get install -y caddy
   '
 
-  echo "==> Configuring Caddy..."
+  echo "==> Configuring VM Caddy (static — hosting disabled in test VM)..."
+  # Test VM is its own "production" instance. Hosting is disabled so
+  # hosting-manager doesn't regenerate the Caddyfile; the static file
+  # below is the source of truth. The `ai.on, test.ai.on` combined block
+  # lets the same gateway handle both internal (ai.on from inside the VM)
+  # and external (test.ai.on from the host) requests via a single cert +
+  # reverse-proxy. Host DNS handles routing test.ai.on → VM_IP.
   multipass exec "$VM_NAME" -- sudo bash -c 'cat > /etc/caddy/Caddyfile << '"'"'EOF'"'"'
 {
-  local_certs
+    local_certs
+    servers {
+        protocols h1
+    }
 }
 
-ai.on {
-  tls internal
-  reverse_proxy localhost:3100
+ai.on, test.ai.on {
+    tls internal
+    reverse_proxy localhost:3100
 }
 
 id.ai.on {
-  tls internal
-  reverse_proxy localhost:4100
-}
-
-test.ai.on {
-  tls internal
-  reverse_proxy localhost:3100
+    tls internal
+    reverse_proxy localhost:4100
 }
 EOF
 systemctl restart caddy'
@@ -522,7 +526,7 @@ cmd_services_start() {
   # We also need owner.channels.telegram so server.ts loads ownerEntityId
   # from the entity store (otherwise ownerEntityId is undefined and
   # chat:send short-circuits with "Owner not configured" per server.ts:2486).
-  echo "==> Seeding owner entity for chat tests..."
+  echo "==> Seeding owner entity for chat tests + disabling hosting..."
   multipass exec "$VM_NAME" -- bash -lc '
     GW=http://127.0.0.1:3100
     curl -s -X POST $GW/api/onboarding/owner-profile \
@@ -534,9 +538,12 @@ p = os.path.expanduser("~/.agi/gateway.json")
 cfg = json.load(open(p))
 cfg.setdefault("owner", {})
 cfg["owner"]["channels"] = {"telegram": "owner-0"}
+# Test VM is NOT hosting user projects — disable so hosting-manager does
+# not regenerate the Caddyfile and wipe the static ai.on/test.ai.on blocks.
+cfg.setdefault("hosting", {})["enabled"] = False
 json.dump(cfg, open(p, "w"), indent=2)
 PYEOF
-    echo "    owner block: $(python3 -c \"import json;print(json.load(open('$HOME/.agi/gateway.json'))['owner'])\")"
+    echo "    owner + hosting block: $(python3 -c \"import json;d=json.load(open('$HOME/.agi/gateway.json'));print('owner=',d['owner'],'hosting=',d['hosting'])\")"
   '
 
   # Wire the gateway to Ollama with costMode=local for Phase 10 acceptance
