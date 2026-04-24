@@ -18,7 +18,13 @@
 # ---------------------------------------------------------------------------
 set -uo pipefail
 
-DEPLOY_DIR="${AIONIMA_DIR:-/opt/agi}"
+# DEPLOY_DIR: where the AGI repo lives. Detect via script location (follow
+# symlinks so /usr/local/bin/agi → /opt/agi/scripts/agi-cli.sh resolves to
+# /opt/agi; and → /mnt/agi/scripts/agi-cli.sh resolves to /mnt/agi). Honor
+# AIONIMA_DIR override for unusual installs.
+_AGI_SCRIPT="${BASH_SOURCE[0]}"
+while [ -L "$_AGI_SCRIPT" ]; do _AGI_SCRIPT="$(readlink -f "$_AGI_SCRIPT")"; done
+DEPLOY_DIR="${AIONIMA_DIR:-$(cd -P "$(dirname "$_AGI_SCRIPT")/.." && pwd)}"
 AGI_DIR="${HOME}/.agi"
 CONFIG_FILE="${AGI_DIR}/gateway.json"
 LOG_DIR="${AGI_DIR}/logs"
@@ -44,6 +50,21 @@ label() { printf "${BOLD}%-18s${RESET}" "$1"; }
 
 is_running() {
   systemctl is-active --quiet "$SERVICE" 2>/dev/null
+}
+
+# Detect test-VM mode. The test VM has three distinguishing signals that
+# real production never has simultaneously:
+#   1. Hostname is "agi-test" (set by multipass).
+#   2. AGI source is at /mnt/agi (bind-mounted from host workspace).
+#   3. No systemd agi.service unit (the VM runs the gateway as a plain
+#      `node cli/dist/index.js run` nohup job, not as a system service).
+# When in test VM: upgrade = rebuild from /mnt/agi directly (no git pull,
+# no release channel). When in production: delegate to upgrade.sh which
+# pulls from gateway.updateChannel and builds /opt/agi.
+is_test_vm() {
+  [ "$(cat /etc/hostname 2>/dev/null)" = "agi-test" ] \
+    && [ -d /mnt/agi ] \
+    && [ -f /mnt/agi/package.json ]
 }
 
 # ---------------------------------------------------------------------------
@@ -166,6 +187,37 @@ cmd_logs_follow() {
 }
 
 cmd_upgrade() {
+  # Test-VM mode: source is already mounted + up to date via the host
+  # bind mount. Just rebuild + restart the nohup gateway process. No
+  # git pull, no release channel, no /opt/agi.
+  if is_test_vm; then
+    info "Test-VM upgrade — rebuilding from /mnt/agi (no pull)"
+    cd /mnt/agi
+    pnpm --filter @agi/db-schema build 2>&1 | tail -3 || { err "db-schema build failed"; exit 1; }
+    pnpm --filter @agi/dashboard build 2>&1 | tail -3 || { err "dashboard build failed"; exit 1; }
+    pnpm exec tsdown 2>&1 | tail -3 || { err "tsdown build failed"; exit 1; }
+    # Restart the gateway nohup job managed by scripts/test-vm.sh services-start
+    [ -f /tmp/agi.pid ] && kill "$(cat /tmp/agi.pid)" 2>/dev/null || true
+    sleep 1
+    nohup node cli/dist/index.js run > /tmp/agi.log 2>&1 &
+    echo $! > /tmp/agi.pid
+    # Wait for port 3100 (reliably bound after boot)
+    local tries=0
+    while ! curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3100/api/system/stats | grep -q "^2"; do
+      tries=$((tries + 1))
+      [ "$tries" -gt 20 ] && break
+      sleep 2
+    done
+    if curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3100/api/system/stats | grep -q "^2"; then
+      ok "Test-VM gateway restarted on new build"
+    else
+      err "Test-VM gateway did not come back up"
+      warn "Check: tail /tmp/agi.log"
+      exit 1
+    fi
+    return 0
+  fi
+
   if ! [ -d "$DEPLOY_DIR" ]; then
     err "Deploy directory not found: $DEPLOY_DIR"
     exit 1

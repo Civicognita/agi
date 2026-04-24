@@ -155,15 +155,22 @@ run_e2e() {
   if [ -z "$PATTERN" ]; then die "e2e: missing <pattern>. Use 'agi test --e2e --list' to see candidates." 2; fi
   local spec
   spec="$(resolve_e2e_spec "$PATTERN")" || die "no e2e specs matched '$PATTERN'" 2
-  local vm_ip
-  vm_ip="$(multipass info "$VM_NAME" --format csv | tail -1 | cut -d',' -f3)"
-  # Ensure the :80 bridge is up before running Playwright on the host.
-  if ! curl -s --connect-timeout 3 -o /dev/null -w "%{http_code}" "http://$vm_ip/api/system/stats" | grep -q "^2"; then
-    log "VM gateway unreachable at http://$vm_ip/ — running services-start"
-    bash "$VM_TEST_SCRIPT" services-start >/dev/null 2>&1 || true
+  # Playwright targets the VM's own production hostname. DNS is wired so
+  # test.ai.on resolves directly to the VM IP, and the VM's own Caddy
+  # serves it with internal TLS + reverse_proxy to 127.0.0.1:3100. No
+  # host-side proxy hop. The VM IS its own production instance.
+  local base_url="https://test.ai.on"
+  # Verify reachability — if test.ai.on DNS isn't set up, fall back to
+  # the VM IP directly (unencrypted, just for the one run).
+  if ! curl -sk --connect-timeout 3 -o /dev/null -w "%{http_code}" "$base_url/api/system/stats" | grep -q "^2"; then
+    local vm_ip
+    vm_ip="$(multipass info "$VM_NAME" --format csv | tail -1 | cut -d',' -f3)"
+    log "test.ai.on unreachable — verify host DNS points at $vm_ip; run 'pnpm test:vm:services-setup' to rewire"
+    log "falling back to https://$vm_ip directly for this run"
+    base_url="https://$vm_ip"
   fi
-  log "e2e → $spec (against http://$vm_ip/)"
-  (cd "$REPO_DIR" && BASE_URL="http://$vm_ip" npx playwright test "$spec" --reporter=list)
+  log "e2e → $spec (against $base_url)"
+  (cd "$REPO_DIR" && BASE_URL="$base_url" npx playwright test "$spec" --reporter=list)
 }
 
 run_e2e_ui() {

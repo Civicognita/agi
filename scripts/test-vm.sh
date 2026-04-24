@@ -285,6 +285,15 @@ cmd_services_setup() {
   ensure_vm_running
   emit_json "services" "start" "Setting up services"
 
+  echo "==> Installing agi CLI symlink in VM..."
+  # Install /usr/local/bin/agi → /mnt/agi/scripts/agi-cli.sh so the test
+  # VM has the same CLI surface as a real host. `agi` inside the VM auto-
+  # detects test-mode via is_test_vm() and branches behavior (upgrade
+  # rebuilds from mount, no git pull). `agi test <pat>` becomes the
+  # canonical test invocation both inside VM and from host.
+  multipass exec "$VM_NAME" -- sudo ln -sf /mnt/agi/scripts/agi-cli.sh /usr/local/bin/agi
+  multipass exec "$VM_NAME" -- sudo chmod +x /mnt/agi/scripts/agi-cli.sh /mnt/agi/scripts/agi-test.sh
+
   echo "==> Installing PostgreSQL..."
   multipass exec "$VM_NAME" -- sudo apt-get install -y postgresql postgresql-client
 
@@ -354,51 +363,36 @@ systemctl restart caddy'
   echo "==> Adding /etc/hosts entries..."
   multipass exec "$VM_NAME" -- bash -c 'grep -q "ai.on" /etc/hosts || echo "127.0.0.1 ai.on id.ai.on db.ai.on test.ai.on" | sudo tee -a /etc/hosts > /dev/null'
 
-  echo "==> Updating host DNS + Caddy for test.ai.on..."
+  echo "==> Updating host DNS for test.ai.on → VM direct..."
   VM_IP=$(multipass info "$VM_NAME" --format csv | tail -1 | cut -d',' -f3)
-  HOST_IP=$(hostname -I | awk '{print $1}')
 
-  # DNS: point test.ai.on to the HOST (not VM) so LAN clients can reach it
+  # test.ai.on is the VM's own production hostname served by the VM's
+  # own Caddy. Host DNS points directly at the VM IP — no host-side
+  # Caddy proxying needed. This is architecturally correct: the VM is
+  # a self-contained "production" instance, not a sub-route of the host
+  # gateway. LAN clients that need to reach test.ai.on must either
+  # query this host's dnsmasq or add a /etc/hosts entry themselves.
   sudo sed -i '/test\.ai\.on/d' /etc/dnsmasq.d/ai-on.conf
-  echo "address=/test.ai.on/$HOST_IP" | sudo tee -a /etc/dnsmasq.d/ai-on.conf
+  echo "address=/test.ai.on/$VM_IP" | sudo tee -a /etc/dnsmasq.d/ai-on.conf
   sudo systemctl restart dnsmasq
-  echo "    test.ai.on → $HOST_IP (host proxies to VM at $VM_IP)"
+  echo "    test.ai.on → $VM_IP (direct to VM Caddy)"
 
-  # Caddy: add reverse proxy with offline fallback page
-  # Remove existing block and re-create with correct VM IP
-  sudo sed -i '/^test\.ai\.on {/,/^}/d' /etc/caddy/Caddyfile 2>/dev/null
-  sudo sed -i "/# --- END CUSTOM ---/i\\
-\\
-test.ai.on {\\
-    tls internal\\
-    reverse_proxy $VM_IP:3100 {\\
-        fail_duration 1s\\
-    }\\
-    handle_errors {\\
-        rewrite * /test-vm-offline.html\\
-        file_server {\\
-            root /etc/caddy\\
-        }\\
-    }\\
-}" /etc/caddy/Caddyfile
+  # No host-Caddy test.ai.on stanza — DNS points straight at the VM and
+  # the VM's own Caddy serves test.ai.on. Clean up any legacy stanza from
+  # pre-2026-04-24 test-vm setups (which used the host as a reverse proxy
+  # to the VM — architecturally wrong; VM is self-contained).
+  sudo sed -i '/^test\.ai\.on {/,/^}/d' /etc/caddy/Caddyfile 2>/dev/null || true
 
-  # Install offline page if not present
-  if [ ! -f /etc/caddy/test-vm-offline.html ]; then
-    sudo cp "$REPO_DIR/containers/test-vm-offline.html" /etc/caddy/test-vm-offline.html 2>/dev/null || true
-  fi
-
-  # Reload Caddy — post-Story-#100 the host runs Caddy as a podman container
-  # (rootless, owned by the invoking user). Fall back to systemd unit for
-  # pre-#100 installs that still have the apt-managed caddy.service.
+  # Reload Caddy if it's running to pick up the stanza removal.
   if podman container exists agi-caddy >/dev/null 2>&1; then
     podman exec agi-caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
-      && echo "    Caddy proxy: test.ai.on → $VM_IP:3100 (via agi-caddy container)" \
+      && echo "    host agi-caddy reloaded (legacy stanza removed)" \
       || echo "    WARN: agi-caddy reload failed; run 'agi doctor' to diagnose"
   elif sudo systemctl is-active --quiet caddy 2>/dev/null; then
     sudo systemctl reload caddy
-    echo "    Caddy proxy: test.ai.on → $VM_IP:3100 (via systemd caddy)"
+    echo "    host systemd caddy reloaded (legacy stanza removed)"
   else
-    echo "    WARN: no host Caddy found (neither agi-caddy container nor systemd caddy); test.ai.on routing is incomplete"
+    echo "    host Caddy not present — not required now that DNS points direct at VM"
   fi
 
   echo "==> Building ID service..."
@@ -543,28 +537,6 @@ cfg["owner"]["channels"] = {"telegram": "owner-0"}
 json.dump(cfg, open(p, "w"), indent=2)
 PYEOF
     echo "    owner block: $(python3 -c \"import json;print(json.load(open('$HOME/.agi/gateway.json'))['owner'])\")"
-  '
-
-  # Keep the Playwright bridge stanza in VM Caddy. The :80 reverse_proxy
-  # to 127.0.0.1:3100 lets host-side Playwright reach the AGI gateway
-  # (which binds loopback-only) at http://<VM_IP>/. Gets regenerated
-  # away any time the hosting-manager writes a fresh Caddyfile, so we
-  # re-add it idempotently. See tynn #310.
-  echo "==> Ensuring Playwright bridge in VM Caddy..."
-  multipass exec "$VM_NAME" -- bash -lc '
-    if ! grep -q "PLAYWRIGHT-BRIDGE" /etc/caddy/Caddyfile 2>/dev/null; then
-      sudo tee -a /etc/caddy/Caddyfile > /dev/null << "EOF"
-
-# === PLAYWRIGHT-BRIDGE ===
-:80 {
-    reverse_proxy 127.0.0.1:3100
-}
-EOF
-      sudo systemctl reload caddy >/dev/null 2>&1
-      echo "    appended :80 bridge, Caddy reloaded"
-    else
-      echo "    bridge already present"
-    fi
   '
 
   # Wire the gateway to Ollama with costMode=local for Phase 10 acceptance
