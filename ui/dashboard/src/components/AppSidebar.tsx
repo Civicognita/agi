@@ -253,8 +253,13 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = fa
   // Desktop — collapsible Sidebar
   // ---------------------------------------------------------------------------
 
+  // Wrapped in a div with the testid because the react-fancy <Sidebar>
+  // component doesn't forward `data-testid` to its rendered DOM root.
+  // Playwright specs target `[data-testid='app-sidebar']` — this wrapper
+  // makes that selector match the visible sidebar element.
   return (
-    <Sidebar defaultCollapsed={false} collapseMode="icons" data-testid="app-sidebar" className="!w-[200px] [&_button]:w-full [&_a]:w-full">
+    <div data-testid="app-sidebar">
+    <Sidebar defaultCollapsed={false} collapseMode="icons" className="!w-[200px] [&_button]:w-full [&_a]:w-full">
       {/* Logo */}
       <div className="px-3 py-3 border-b border-border">
         <Link to="/" className="flex items-center gap-2 text-foreground no-underline">
@@ -305,5 +310,6 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = fa
         <Sidebar.Toggle />
       </div>
     </Sidebar>
+    </div>
   );
 }
