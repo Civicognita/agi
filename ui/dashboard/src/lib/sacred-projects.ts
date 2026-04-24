@@ -4,8 +4,8 @@ export const SACRED_PROJECTS = [
   { id: "agi", name: "AGI" },
   { id: "prime", name: "PRIME" },
   { id: "id", name: "ID" },
-  { id: "marketplace", name: "Marketplace" },
-  { id: "mapp-marketplace", name: "MApp Marketplace" },
+  { id: "marketplace", name: "Plugins" },
+  { id: "mapp-marketplace", name: "MagicApps" },
 ] as const;
 
 const SACRED_IDS = new Set(SACRED_PROJECTS.map((p) => p.id));
