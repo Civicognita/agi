@@ -7,11 +7,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { Star } from "lucide-react";
+import { Sparkles, Star, Store } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SACRED_PROJECTS, isSacredProject, matchSacredProject } from "@/lib/sacred-projects.js";
+import { fetchMagicApps, fetchPlugins } from "../api.js";
 import {
   Dialog,
   DialogContent,
@@ -56,8 +57,23 @@ export function Projects({
 }: ProjectsProps) {
   const [showModal, setShowModal] = useState(false);
   const [showSetupTerminal, setShowSetupTerminal] = useState(false);
+  const [pluginCount, setPluginCount] = useState<number | null>(null);
+  const [mappCount, setMappCount] = useState<number | null>(null);
   const navigate = useNavigate();
   const isContributing = Boolean(contributingEnabled);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      fetchPlugins().catch(() => []),
+      fetchMagicApps().catch(() => []),
+    ]).then(([plugins, mapps]) => {
+      if (cancelled) return;
+      setPluginCount(plugins.length);
+      setMappCount(mapps.length);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const sacredEntries = isContributing
     ? SACRED_PROJECTS.map((sacred) => ({
@@ -120,6 +136,68 @@ export function Projects({
           No projects found. Click "Add Project" to create one.
         </div>
       )}
+
+      {/* Marketplace tiles — quick entry to Plugins + MagicApps browsers */}
+      <div className="mb-6" data-testid="marketplace-section">
+        <div className="flex items-center gap-2 mb-3">
+          <Store className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-[13px] font-semibold text-foreground">Marketplace</h3>
+        </div>
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
+          <div
+            onClick={() => void navigate("/gateway/marketplace")}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void navigate("/gateway/marketplace"); } }}
+            role="button"
+            tabIndex={0}
+            className={cn(
+              "rounded-xl bg-card border border-border transition-colors duration-150 cursor-pointer",
+              "hover:border-blue focus-visible:outline-none focus-visible:border-blue",
+            )}
+            data-testid="marketplace-tile-plugins"
+          >
+            <div className="p-4 flex items-start gap-3">
+              <div className="rounded-lg bg-blue/10 p-2">
+                <Store className="h-5 w-5 text-blue" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[15px] font-semibold text-card-foreground">Plugins</div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">
+                  Install + manage gateway plugins
+                </div>
+                <div className="text-[12px] text-muted-foreground mt-1" data-testid="marketplace-tile-plugins-count">
+                  {pluginCount === null ? "…" : `${pluginCount} installed`}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div
+            onClick={() => void navigate("/magic-apps")}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void navigate("/magic-apps"); } }}
+            role="button"
+            tabIndex={0}
+            className={cn(
+              "rounded-xl bg-card border border-border transition-colors duration-150 cursor-pointer",
+              "hover:border-blue focus-visible:outline-none focus-visible:border-blue",
+            )}
+            data-testid="marketplace-tile-magicapps"
+          >
+            <div className="p-4 flex items-start gap-3">
+              <div className="rounded-lg bg-yellow/10 p-2">
+                <Sparkles className="h-5 w-5 text-yellow" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[15px] font-semibold text-card-foreground">MagicApps</div>
+                <div className="text-[11px] text-muted-foreground mt-0.5">
+                  Install + launch MApps
+                </div>
+                <div className="text-[12px] text-muted-foreground mt-1" data-testid="marketplace-tile-magicapps-count">
+                  {mappCount === null ? "…" : `${mappCount} installed`}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* Sacred Projects — Contributing mode only */}
       {isContributing && (
