@@ -502,6 +502,46 @@ cmd_services_start() {
     echo "  AGI PID: $(cat /tmp/agi.pid)"
   '
 
+  # Ensure Ollama + the acceptance-test local model are installed and running.
+  # Phase 10 (#322) of the alpha-stable-1 sweep — Aion must be able to reach
+  # a local model when costMode=local. Idempotent: the install script + the
+  # pull are both skip-if-present. The initial pull is ~1.9 GB for qwen2.5:3b.
+  echo "==> Ensuring Ollama + qwen2.5:3b..."
+  multipass exec "$VM_NAME" -- bash -lc '
+    if ! which ollama >/dev/null 2>&1; then
+      curl -fsSL https://ollama.com/install.sh | sh >/dev/null 2>&1
+    fi
+    sudo systemctl enable --now ollama >/dev/null 2>&1 || true
+    for i in 1 2 3 4 5; do
+      curl -s -o /dev/null http://127.0.0.1:11434/api/tags && break
+      sleep 2
+    done
+    if ! ollama list 2>/dev/null | grep -q "qwen2.5:3b"; then
+      ollama pull qwen2.5:3b >/dev/null 2>&1
+    fi
+    echo "    ollama: $(systemctl is-active ollama) · models: $(ollama list 2>/dev/null | tail -n +2 | awk "{print \$1}" | paste -sd, -)"
+  '
+
+  # Wire the gateway to Ollama with costMode=local for Phase 10 acceptance
+  # (#323). Hot-config-reloaded — no restart required to pick up. Idempotent.
+  echo "==> Wiring gateway for Ollama + local-only routing..."
+  multipass exec "$VM_NAME" -- bash -lc '
+    python3 - << "PYEOF"
+import json, os
+p = os.path.expanduser("~/.agi/gateway.json")
+cfg = json.load(open(p)) if os.path.exists(p) else {}
+cfg.setdefault("agent", {})
+cfg["agent"]["provider"] = "ollama"
+cfg["agent"]["model"] = "qwen2.5:3b"
+cfg["agent"].setdefault("router", {})
+cfg["agent"]["router"]["costMode"] = "local"
+cfg["agent"]["router"]["escalation"] = False
+cfg["ollama"] = {"baseUrl": "http://127.0.0.1:11434"}
+json.dump(cfg, open(p, "w"), indent=2)
+PYEOF
+    echo "    agent.provider=ollama · agent.model=qwen2.5:3b · router.costMode=local"
+  '
+
   echo "==> Checking health..."
   multipass exec "$VM_NAME" -- bash -c '
     sleep 2
