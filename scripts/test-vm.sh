@@ -509,6 +509,32 @@ cmd_services_start() {
     echo "  ID:   $(curl -sk https://id.ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
   '
 
+  # Seed the 11 official MApps in the test VM so MApp-walk/render tests
+  # have fixtures. Pull the marketplace catalog first, then POST install
+  # for each app. Idempotent — subsequent boots re-POST and the server
+  # short-circuits on already-installed entries. Implements alpha-stable-1
+  # exit criterion #4 (tynn task #304).
+  echo "==> Seeding official MApps from marketplace..."
+  multipass exec "$VM_NAME" -- bash -lc '
+    GW=http://127.0.0.1:3100
+    for i in 1 2 3 4 5; do
+      curl -s -o /dev/null -w "%{http_code}" $GW/api/system/stats | grep -q "200" && break
+      sleep 2
+    done
+    curl -s -X POST $GW/api/mapp-marketplace/pull >/dev/null 2>&1 || true
+    APPS=(admin-editor code-browser dashboard-viewer dev-workbench gallery media-studio mind-mapper ops-monitor project-analyzer reader runbook-editor)
+    OK=0
+    for app in "${APPS[@]}"; do
+      if curl -s -X POST -H "Content-Type: application/json" \
+          -d "{\"appId\":\"$app\",\"sourceId\":1}" \
+          $GW/api/mapp-marketplace/install 2>/dev/null | grep -q "\"ok\":true"; then
+        OK=$((OK + 1))
+      fi
+    done
+    INSTALLED=$(curl -s $GW/api/dashboard/magic-apps | grep -o "\"id\":" | wc -l)
+    echo "    installed: $INSTALLED / 11"
+  '
+
   # Auto-exit safemode if boot landed in it. The test VM gets killed by
   # multipass abruptly more often than a dev host does, so every second
   # boot tends to start in safemode — which blocks mutation endpoints AND
