@@ -108,6 +108,29 @@ const domainRouteMap: Record<string, string> = {
   knowledge: "/knowledge", gateway: "/gateway", settings: "/settings", system: "/system",
 };
 
+/**
+ * Derive the testid for a nav item from its route path + label. Shape:
+ * `nav-<domain>-<label-slug>`. Matches what the Playwright e2e suite
+ * expects (navigation.spec.ts / dashboard-overview.spec.ts).
+ *
+ * `domain` is the leading path segment mapped via `domainRouteMap` keys
+ * (with `comms` → `communication` for the historic test fixture naming).
+ * `label-slug` is the item's label kebab-cased.
+ */
+function deriveNavTestId(to: string, label: string): string {
+  const firstSeg = to.split("/").filter(Boolean)[0] ?? "";
+  let domain: string;
+  if (firstSeg === "") domain = "impactinomics"; // root path
+  else if (firstSeg === "comms") domain = "communication";
+  else if (firstSeg === "coa" || firstSeg === "reports") domain = "impactinomics";
+  else if (firstSeg === "admin") domain = "impactinomics";
+  else if (firstSeg === "hf-marketplace") domain = "gateway";
+  else if (firstSeg === "magic-apps") domain = "gateway";
+  else domain = firstSeg;
+  const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `nav-${domain}-${slug}`;
+}
+
 const domainTitleMap: Record<string, string> = {
   impactinomics: "Overview", projects: "Projects", comms: "Communication",
   knowledge: "Knowledge", gateway: "Gateway", settings: "Settings", system: "System",
@@ -276,12 +299,14 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = fa
               ? currentPath === item.to
               : currentPath === item.to || currentPath.startsWith(item.to + "/");
             const Icon = item.icon;
+            const testId = deriveNavTestId(item.to, item.label);
             return (
               <Sidebar.Item
                 key={item.to}
                 active={isActive}
                 icon={Icon ? <Icon className="w-4 h-4" /> : undefined}
                 onClick={() => navigate(item.to)}
+                data-testid={testId}
               >
                 {item.label}
               </Sidebar.Item>
