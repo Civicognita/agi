@@ -1111,6 +1111,10 @@ cmd_help() {
   echo "  test-vm CMD     Manage test VM (status|create|destroy|provision|setup|"
   echo "                  services-setup|services-start|services-stop|services-status|"
   echo "                  test|test-ui|remount)"
+  echo "  test [KIND] PAT Run the test suite (--unit|--e2e|--e2e-ui|--spot|--all|--list)"
+  echo "                  agi test dashboard            — unit (default)"
+  echo "                  agi test --e2e mapps-walk     — Playwright against VM"
+  echo "                  agi test --spot hardware      — spot feature test"
   echo "  setup           Interactive configuration wizard"
   echo "  setup-prompts   Configure persona and heartbeat prompts"
   echo "  channels        Manage channel adapters"
@@ -1145,6 +1149,7 @@ case "${1:-help}" in
   lemonade) shift; cmd_lemonade "$@" ;;
   ollama)   shift; cmd_ollama "$@" ;;
   test-vm)  shift; cmd_test_vm "$@" ;;
+  test)     shift; bash "$DEPLOY_DIR/scripts/agi-test.sh" "$@" ;;
   setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;
   setup-prompts) node "$DEPLOY_DIR/cli/dist/index.js" setup-prompts ;;
   channels) shift; node "$DEPLOY_DIR/cli/dist/index.js" channels "$@" ;;
