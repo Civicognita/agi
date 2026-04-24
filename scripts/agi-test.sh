@@ -146,8 +146,13 @@ run_unit() {
   if [ -z "$PATTERN" ]; then die "unit: missing <pattern>. Use 'agi test --list' to see candidates." 2; fi
   local spec
   spec="$(resolve_unit_spec "$PATTERN")" || die "no unit specs matched '$PATTERN'" 2
-  log "unit → $spec (in $VM_NAME)"
-  multipass exec "$VM_NAME" -- bash -lc "cd /mnt/agi && AIONIMA_TEST_VM=1 pnpm exec vitest run '$spec' --reporter=basic"
+  log "unit → $spec (in $VM_NAME, max 5 min)"
+  # `timeout 300` kills the invocation after 5 minutes so a hung test
+  # doesn't block the host shell indefinitely. Vitest inside the VM
+  # occasionally leaves worker processes pinned (open DB handles, unresolved
+  # async handlers). Post-hang residue can be cleared with:
+  #   multipass exec agi-test -- pkill -9 -f vitest
+  multipass exec "$VM_NAME" -- bash -lc "cd /mnt/agi && timeout 300 env AIONIMA_TEST_VM=1 pnpm exec vitest run '$spec' --reporter=basic"
 }
 
 run_e2e() {
