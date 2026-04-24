@@ -716,6 +716,17 @@ export class HostingManager {
   }
 
   private isCaddyInstalled(): boolean {
+    // Post Story #100, Caddy runs as the rootless `agi-caddy` podman container
+    // (user-scope systemd unit). The legacy `which caddy` check only finds an
+    // apt-installed binary on the host, which is typically absent after the
+    // containerization. Treat a known agi-caddy container as "installed" too.
+    try {
+      const containerCheck = execSync("podman container exists agi-caddy", { stdio: "pipe", timeout: 5000 });
+      // `container exists` exits 0 if present, non-zero otherwise (caught below)
+      if (containerCheck !== undefined) return true;
+    } catch {
+      // Fall through to the apt-binary check
+    }
     try {
       execSync("which caddy", { stdio: "pipe", timeout: 5000 });
       return true;
@@ -725,6 +736,19 @@ export class HostingManager {
   }
 
   private isCaddyRunning(): boolean {
+    // Prefer the containerized agi-caddy status; fall back to the system-scope
+    // systemd caddy.service for pre-#100 installs. The user-scope agi-caddy
+    // unit isn't reachable from `systemctl is-active` (that hits system scope)
+    // so we check podman directly.
+    try {
+      const status = execSync(
+        "podman ps --filter name=^agi-caddy$ --format '{{.Status}}'",
+        { stdio: "pipe", timeout: 5000 },
+      ).toString().trim();
+      if (status.startsWith("Up")) return true;
+    } catch {
+      // Fall through to the legacy systemd check
+    }
     try {
       const result = execSync("systemctl is-active caddy", { stdio: "pipe", timeout: 5000 }).toString().trim();
       return result === "active";
