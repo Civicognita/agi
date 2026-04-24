@@ -522,6 +522,28 @@ cmd_services_start() {
     echo "    ollama: $(systemctl is-active ollama) · models: $(ollama list 2>/dev/null | tail -n +2 | awk "{print \$1}" | paste -sd, -)"
   '
 
+  # Keep the Playwright bridge stanza in VM Caddy. The :80 reverse_proxy
+  # to 127.0.0.1:3100 lets host-side Playwright reach the AGI gateway
+  # (which binds loopback-only) at http://<VM_IP>/. Gets regenerated
+  # away any time the hosting-manager writes a fresh Caddyfile, so we
+  # re-add it idempotently. See tynn #310.
+  echo "==> Ensuring Playwright bridge in VM Caddy..."
+  multipass exec "$VM_NAME" -- bash -lc '
+    if ! grep -q "PLAYWRIGHT-BRIDGE" /etc/caddy/Caddyfile 2>/dev/null; then
+      sudo tee -a /etc/caddy/Caddyfile > /dev/null << "EOF"
+
+# === PLAYWRIGHT-BRIDGE ===
+:80 {
+    reverse_proxy 127.0.0.1:3100
+}
+EOF
+      sudo systemctl reload caddy >/dev/null 2>&1
+      echo "    appended :80 bridge, Caddy reloaded"
+    else
+      echo "    bridge already present"
+    fi
+  '
+
   # Wire the gateway to Ollama with costMode=local for Phase 10 acceptance
   # (#323). Hot-config-reloaded — no restart required to pick up. Idempotent.
   echo "==> Wiring gateway for Ollama + local-only routing..."
