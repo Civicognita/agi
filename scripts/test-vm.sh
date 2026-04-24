@@ -299,9 +299,26 @@ cmd_services_setup() {
     fi
   '"'"''
 
-  echo "==> Creating ID service database..."
-  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE USER agi WITH PASSWORD 'testpass';\"" 2>/dev/null || true
-  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE DATABASE agi OWNER agi;\"" 2>/dev/null || true
+  echo "==> Creating gateway database (agi_data)..."
+  # Credentials must match @agi/db-schema default connection string
+  # (postgres://agi:aionima@localhost:5432/agi_data) — see
+  # packages/db-schema/src/client.ts. Previously used testpass + db `agi`,
+  # which left the gateway unable to connect in test VMs.
+  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE USER agi WITH PASSWORD 'aionima';\"" 2>/dev/null || \
+    multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"ALTER USER agi WITH PASSWORD 'aionima';\""
+  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE DATABASE agi_data OWNER agi;\"" 2>/dev/null || true
+
+  echo "==> Pushing drizzle schema to agi_data..."
+  # drizzle-kit push from ./drizzle-push.config.ts which points at the built
+  # dist/*.js (the TS sources use NodeNext .js imports that drizzle-kit's CJS
+  # loader can't resolve). Requires @agi/db-schema to have been built first.
+  multipass exec "$VM_NAME" -- bash -lc '
+    cd /mnt/agi
+    pnpm --filter @agi/db-schema build >/dev/null 2>&1 || true
+    cd packages/db-schema
+    DATABASE_URL="postgres://agi:aionima@localhost:5432/agi_data" \
+      pnpm exec drizzle-kit push --config=drizzle-push.config.ts --force 2>&1 | tail -5
+  '
 
   echo "==> Installing Caddy..."
   multipass exec "$VM_NAME" -- bash -c '
@@ -369,8 +386,20 @@ test.ai.on {\\
   if [ ! -f /etc/caddy/test-vm-offline.html ]; then
     sudo cp "$REPO_DIR/containers/test-vm-offline.html" /etc/caddy/test-vm-offline.html 2>/dev/null || true
   fi
-  sudo systemctl reload caddy
-  echo "    Caddy proxy: test.ai.on → $VM_IP:3100 (with offline fallback)"
+
+  # Reload Caddy — post-Story-#100 the host runs Caddy as a podman container
+  # (rootless, owned by the invoking user). Fall back to systemd unit for
+  # pre-#100 installs that still have the apt-managed caddy.service.
+  if podman container exists agi-caddy >/dev/null 2>&1; then
+    podman exec agi-caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
+      && echo "    Caddy proxy: test.ai.on → $VM_IP:3100 (via agi-caddy container)" \
+      || echo "    WARN: agi-caddy reload failed; run 'agi doctor' to diagnose"
+  elif sudo systemctl is-active --quiet caddy 2>/dev/null; then
+    sudo systemctl reload caddy
+    echo "    Caddy proxy: test.ai.on → $VM_IP:3100 (via systemd caddy)"
+  else
+    echo "    WARN: no host Caddy found (neither agi-caddy container nor systemd caddy); test.ai.on routing is incomplete"
+  fi
 
   echo "==> Building ID service..."
   multipass exec "$VM_NAME" -- bash -c '
@@ -478,6 +507,23 @@ cmd_services_start() {
     sleep 2
     echo "  AGI:  $(curl -sk https://ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
     echo "  ID:   $(curl -sk https://id.ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
+  '
+
+  # Auto-exit safemode if boot landed in it. The test VM gets killed by
+  # multipass abruptly more often than a dev host does, so every second
+  # boot tends to start in safemode — which blocks mutation endpoints AND
+  # redirects all routes to the Admin Dashboard, breaking e2e specs that
+  # navigate to /projects, /magic-apps, etc. See tynn task #310.
+  echo "==> Clearing safemode if active..."
+  multipass exec "$VM_NAME" -- bash -c '
+    for i in 1 2 3 4 5; do
+      if curl -s -X POST http://127.0.0.1:3100/api/admin/safemode/exit 2>/dev/null | grep -q "\"ok\":true"; then
+        echo "    safemode cleared"
+        exit 0
+      fi
+      sleep 2
+    done
+    echo "    safemode endpoint did not respond — likely not in safemode"
   '
 }
 
