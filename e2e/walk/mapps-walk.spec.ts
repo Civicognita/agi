@@ -25,6 +25,18 @@ async function openNetworkIdle(page: import("@playwright/test").Page, url: strin
 }
 
 test.describe("MApps walk", () => {
+  // MApp instances are persisted server-side and survive page reloads, so a
+  // modal left open by one test shows up in the next test. DELETE any active
+  // instance before each test so we get a clean /magic-apps render.
+  test.beforeEach(async ({ request }) => {
+    const res = await request.get("/api/magic-apps/instances").catch(() => null);
+    if (!res?.ok()) return;
+    const body = await res.json().catch(() => ({ instances: [] })) as { instances: Array<{ instanceId: string }> };
+    for (const inst of body.instances) {
+      await request.delete(`/api/magic-apps/instances/${encodeURIComponent(inst.instanceId)}`).catch(() => null);
+    }
+  });
+
   test("editor wizard — all 5 steps reachable", async ({ page }) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
@@ -84,33 +96,46 @@ test.describe("MApps walk", () => {
   // Whether the picker shows compatible projects depends on the app's
   // `projectCategories` filter vs. the project's own category (see
   // packages/aion-sdk/src/define-magic-app.ts).
-  for (const { label, file } of [
-    { label: "Reader", file: "mapp-open-reader.png" },
-    { label: "Ops Monitor", file: "mapp-open-ops-monitor.png" },
-    { label: "Runbook Editor", file: "mapp-open-runbook-editor.png" },
+  // MApps are project-anchored: clicking a tile opens a picker; picking a
+  // project mounts the MApp panel. Walk all three representative MApps
+  // (viewer / tool / production) end-to-end against a compatible fixture.
+  for (const { label, project, file } of [
+    { label: "Reader", project: "sample-literature", file: "mapp-panel-reader.png" },
+    { label: "Code Browser", project: "sample-monorepo", file: "mapp-panel-code-browser.png" },
+    { label: "Runbook Editor", project: "sample-ops", file: "mapp-panel-runbook-editor.png" },
   ]) {
-    test(`click ${label} — project picker opens`, async ({ page }) => {
+    test(`open ${label} against ${project} — panel renders`, async ({ page }) => {
       const pageErrors: string[] = [];
       page.on("pageerror", (e) => pageErrors.push(e.message));
 
       await openNetworkIdle(page, "/magic-apps");
+      // Wait for the grid to hydrate — "Viewer" heading anchors the page.
+      await expect(page.getByText("Viewer", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
       await page.getByText(label, { exact: true }).first().click();
-      await page.waitForTimeout(1_500);
+
+      // Picker is open — pick the fixture project.
+      await expect(page.getByText(new RegExp(`Open ${label} for`, "i"))).toBeVisible({ timeout: 10_000 });
+      await page.getByText(project, { exact: true }).first().click();
+
+      // Floating modal with the MApp panel should mount. Allow a beat for
+      // container container-start (if the app declares one).
+      await page.waitForTimeout(3_000);
       await page.screenshot({ path: path.join(snapshotsDir, file), fullPage: true });
 
-      // The picker's heading is "Open <label> for..."
-      await expect(page.getByText(new RegExp(`Open ${label} for`, "i"))).toBeVisible({ timeout: 10_000 });
-
-      // Capture whether any compatible project was offered.
-      const noCompatible = await page
-        .getByText(/No compatible projects for this app/i)
-        .isVisible({ timeout: 1_000 })
+      // Pass if no pageerrors and we can see the MApp name in the modal
+      // chrome (the instance title bar shows the MApp name).
+      const modalTitleVisible = await page
+        .getByRole("dialog")
+        .or(page.locator("[role=dialog]"))
+        .or(page.locator("[data-testid=mapp-panel]"))
+        .first()
+        .isVisible({ timeout: 3_000 })
         .catch(() => false);
 
-      await test.info().attach(`${label.toLowerCase().replace(/\s+/g, "-")}-summary`, {
+      await test.info().attach(`${label.toLowerCase().replace(/\s+/g, "-")}-open-summary`, {
         body: JSON.stringify({
-          pickerOpened: true,
-          noCompatibleProjects: noCompatible,
+          pickedProject: project,
+          modalVisible: modalTitleVisible,
           pageErrors: pageErrors.length,
           firstPageError: pageErrors[0]?.slice(0, 200) ?? null,
         }, null, 2),
