@@ -770,7 +770,6 @@ export async function createGatewayRuntimeState(
 
     const idLocal = idCfg?.local as Record<string, unknown> | undefined;
     if (idLocal?.enabled) {
-      const port = (idLocal.port as number) ?? 3200;
       const hostingCfg = deps.configPath ? (() => {
         try {
           const raw = JSON.parse(readFileSync(deps.configPath!, "utf-8")) as Record<string, unknown>;
@@ -781,10 +780,16 @@ export async function createGatewayRuntimeState(
       const subdomain = (idLocal.subdomain as string) ?? "id";
       const url = `https://${subdomain}.${baseDomain}`;
 
+      // Story #100 — ID no longer binds a host port; reach it through
+      // Caddy at its public URL instead of `localhost:${port}`. The
+      // gateway already trusts the Caddy root CA (installed by
+      // hosting-setup.sh), so the internal cert validates. This path
+      // works regardless of whether the gateway is on-host or later
+      // moves into a container on aionima.
       try {
         const [healthRes, funcRes] = await Promise.all([
-          fetch(`http://localhost:${port}/health`, { signal: AbortSignal.timeout(3000) }).catch(() => null),
-          fetch(`http://localhost:${port}/federation/whoami`, { signal: AbortSignal.timeout(3000) }).catch(() => null),
+          fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) }).catch(() => null),
+          fetch(`${url}/federation/whoami`, { signal: AbortSignal.timeout(3000) }).catch(() => null),
         ]);
 
         if (healthRes?.ok && funcRes?.ok) {
