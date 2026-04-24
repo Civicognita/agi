@@ -509,6 +509,31 @@ cmd_services_start() {
     echo "  ID:   $(curl -sk https://id.ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
   '
 
+  # Categorize the sample project fixtures so every official MApp has at
+  # least one compatible project in the picker. Writes ~/.agi/{slug}/project.json
+  # for the three fixtures whose category can't be inferred from content:
+  # sample-ops (ops), sample-admin (administration), sample-monorepo (monorepo).
+  # See tynn #312. Idempotent — overwrites existing configs with the same shape.
+  echo "==> Categorizing sample project fixtures..."
+  multipass exec "$VM_NAME" -- bash -lc '
+    declare -A CATS
+    CATS[sample-ops]="ops"
+    CATS[sample-admin]="administration"
+    CATS[sample-monorepo]="monorepo"
+    for name in sample-ops sample-admin sample-monorepo; do
+      slug="mnt-agi-test-fixtures-projects-$name"
+      mkdir -p ~/.agi/$slug
+      cat > ~/.agi/$slug/project.json << EOF
+{
+  "name": "$name",
+  "createdAt": "2026-04-24T00:00:00.000Z",
+  "category": "${CATS[$name]}"
+}
+EOF
+    done
+    echo "    seeded 3 category configs (ops, administration, monorepo)"
+  '
+
   # Seed the 11 official MApps in the test VM so MApp-walk/render tests
   # have fixtures. Pull the marketplace catalog first, then POST install
   # for each app. Idempotent — subsequent boots re-POST and the server
