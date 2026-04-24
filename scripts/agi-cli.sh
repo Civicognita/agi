@@ -324,10 +324,19 @@ cmd_doctor() {
     warn "missing (will use defaults)";
   fi
 
-  # Caddy
+  # Caddy — story #100 moved Caddy into a rootless user-scope container
+  # on the aionima network. Prefer the containerized form; fall back to
+  # legacy system Caddy only for pre-migration hosts.
   label "Caddy:"
-  if systemctl is-active --quiet caddy 2>/dev/null; then
-    ok "running"
+  if sudo -u "$SUDO_USER" XDG_RUNTIME_DIR=/run/user/$(id -u "$SUDO_USER" 2>/dev/null) \
+       systemctl --user is-active --quiet agi-caddy 2>/dev/null \
+     || systemctl --user is-active --quiet agi-caddy 2>/dev/null; then
+    ok "agi-caddy (containerized, aionima) running"
+  elif podman container exists agi-caddy 2>/dev/null \
+     && [ "$(podman container inspect -f '{{.State.Status}}' agi-caddy 2>/dev/null)" = "running" ]; then
+    ok "agi-caddy (containerized) running"
+  elif systemctl is-active --quiet caddy 2>/dev/null; then
+    warn "legacy system caddy active — story #100 cutover incomplete"; issues=$((issues + 1))
   elif command -v caddy &>/dev/null; then
     warn "installed but not running"; issues=$((issues + 1))
   else
