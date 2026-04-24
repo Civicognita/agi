@@ -328,7 +328,12 @@ cmd_doctor() {
   # on the aionima network. Prefer the containerized form; fall back to
   # legacy system Caddy only for pre-migration hosts.
   label "Caddy:"
-  if sudo -u "$SUDO_USER" XDG_RUNTIME_DIR=/run/user/$(id -u "$SUDO_USER" 2>/dev/null) \
+  # SUDO_USER is only set when the script was launched via sudo. Doctor
+  # is designed to work both ways (plain user invocation and sudo), so
+  # default to the current user when SUDO_USER is absent rather than
+  # crashing under `set -u`.
+  local _sudo_user="${SUDO_USER:-$(whoami)}"
+  if sudo -u "$_sudo_user" XDG_RUNTIME_DIR=/run/user/$(id -u "$_sudo_user" 2>/dev/null) \
        systemctl --user is-active --quiet agi-caddy 2>/dev/null \
      || systemctl --user is-active --quiet agi-caddy 2>/dev/null; then
     ok "agi-caddy (containerized, aionima) running"
