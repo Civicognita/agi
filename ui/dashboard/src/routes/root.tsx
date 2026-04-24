@@ -771,7 +771,10 @@ export default function RootLayout() {
               const initial = ownerName.charAt(0).toUpperCase();
               return (
                 <Popover placement="bottom-end" offset={8}>
-                  <PopoverTrigger className="pl-2 border-l border-border flex items-center gap-2 hover:opacity-80 transition-opacity">
+                  <PopoverTrigger
+                    className="pl-2 border-l border-border flex items-center gap-2 hover:opacity-80 transition-opacity"
+                    data-testid="header-owner-avatar"
+                  >
                     <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold cursor-pointer">
                       {initial}
                     </div>

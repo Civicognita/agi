@@ -61,7 +61,7 @@ test.describe("Sidebar Navigation", () => {
 
   test("chat button in sidebar opens ChatFlyout", async ({ page }) => {
     await page.goto("/");
-    const chatButton = page.getByTestId("sidebar-chat-button");
+    const chatButton = page.getByTestId("header-chat-button");
     await expect(chatButton).toBeVisible();
 
     await chatButton.click();

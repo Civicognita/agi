@@ -29,29 +29,27 @@ test.describe("Chat flyout — persona verification", () => {
 
   test("chat flyout header has Expand + X controls", async ({ page }) => {
     await page.getByTestId("header-chat-button").click();
-    await expect(page.getByRole("button", { name: "Expand" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "X" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Expand", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "X", exact: true })).toBeVisible();
   });
 
   test("clicking X closes the chat flyout", async ({ page }) => {
     await page.getByTestId("header-chat-button").click();
-    await expect(page.getByText("Chat", { exact: true })).toBeVisible();
+    // "Chat" text also appears in sidebar context; match the flyout's own region.
+    await expect(page.getByTestId("chat-flyout")).toBeVisible();
 
-    await page.getByRole("button", { name: "X" }).click();
-    // After close the "Chat" header is gone (ChatFlyout returns null)
-    await expect(page.getByText("Chat", { exact: true })).not.toBeVisible({ timeout: 3_000 });
+    await page.getByRole("button", { name: "X", exact: true }).click();
+    await expect(page.getByTestId("chat-flyout")).not.toBeVisible({ timeout: 3_000 });
   });
 
   test("profile popover shows owner display name", async ({ page }) => {
-    // Owner initial circle in the header → click → ProfileCard popover
-    const initial = page.locator(".w-7.h-7.rounded-full").first();
-    // Only run this if the initial is rendered (owner config present)
-    const hasInitial = await initial.isVisible().catch(() => false);
-    test.skip(!hasInitial, "Owner profile not configured in this test environment");
+    // Owner initial button in the header — testid header-owner-avatar
+    const avatar = page.getByTestId("header-owner-avatar");
+    const hasAvatar = await avatar.isVisible({ timeout: 5_000 }).catch(() => false);
+    test.skip(!hasAvatar, "Owner profile not configured in this test environment");
 
-    await initial.click();
-    // ProfileCard should render — at minimum the display name text should appear.
-    // We don't assert a specific name because it varies across test environments.
+    await avatar.click();
+    // ProfileCard should render inside the popover.
     await expect(page.locator("[role='dialog'], [data-popover-content]").first()).toBeVisible({ timeout: 3_000 });
   });
 });
