@@ -105,6 +105,25 @@ export function MAppEditor({ initialDefinition, onSave, onClose }: MAppEditorPro
     setDirty(false);
   }, [state, onSave]);
 
+  // Validate invariants that would produce a broken MAppDefinition. Magic
+  // pages (`pageType: "magic"`) require (a) they aren't the first page and
+  // (b) the preceding page declares `processPage`. The Editor used to show
+  // these as paragraphs in the magic-page info block but let Save through
+  // anyway — so authors could ship a MApp that can never render its magic
+  // page. Gate Save on these invariants, don't just warn.
+  const validationErrors = useMemo(() => {
+    const errs: string[] = [];
+    state.pages.forEach((page, idx) => {
+      if (page.pageType !== "magic") return;
+      if (idx === 0) {
+        errs.push(`Page ${idx + 1}: magic page cannot be the first page.`);
+      } else if (!state.pages[idx - 1]?.processPage) {
+        errs.push(`Page ${idx + 1}: preceding page needs a processing prompt.`);
+      }
+    });
+    return errs;
+  }, [state.pages]);
+
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
       <div className="bg-card border border-border rounded-xl shadow-2xl w-[850px] max-h-[90vh] flex flex-col">
@@ -141,9 +160,25 @@ export function MAppEditor({ initialDefinition, onSave, onClose }: MAppEditorPro
         {/* Footer */}
         <div className="px-4 py-3 border-t border-border flex items-center justify-between">
           <Button variant="secondary" size="sm" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}>Back</Button>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            {validationErrors.length > 0 && (
+              <span
+                data-testid="mapp-editor-validation-errors"
+                title={validationErrors.join("\n")}
+                className="text-[11px] text-red"
+              >
+                {validationErrors.length} error{validationErrors.length === 1 ? "" : "s"}
+              </span>
+            )}
             {step < 4 && <Button size="sm" variant="outline" onClick={() => setStep((s) => s + 1)}>Next</Button>}
-            <Button size="sm" onClick={handleSave}>Save MApp</Button>
+            <Button
+              size="sm"
+              onClick={handleSave}
+              disabled={validationErrors.length > 0}
+              title={validationErrors.length > 0 ? validationErrors.join("\n") : undefined}
+            >
+              Save MApp
+            </Button>
           </div>
         </div>
       </div>
