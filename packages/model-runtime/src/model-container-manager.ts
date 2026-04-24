@@ -219,7 +219,13 @@ export class ModelContainerManager {
     const args: string[] = [
       "run", "-d",
       "--name", containerName,
-      "-p", `${String(port)}:${String(internalPort)}`,
+      // Explicit `127.0.0.1:` prefix so these model servers aren't exposed
+      // on the LAN. Previously bound to all interfaces (0.0.0.0) which is
+      // a security regression — the inference API is unauthenticated. The
+      // gateway (host process) reaches these via loopback. When gateway is
+      // eventually containerized on aionima (story #100 follow-up), drop
+      // the `-p` entirely and reach the model by container DNS instead.
+      "-p", `127.0.0.1:${String(port)}:${String(internalPort)}`,
       "-v", `${containerConfig.modelHostPath}:${modelContainerPath}:ro`,
       ...(containerConfig.memoryLimit ? ["--memory", containerConfig.memoryLimit] : []),
       "--restart", "on-failure:3",

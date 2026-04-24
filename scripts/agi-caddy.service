@@ -28,8 +28,8 @@ ExecStart=/usr/bin/podman run \
 	-v /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
 	-v %h/.local/share/agi-caddy/data:/data \
 	-v %h/.local/share/agi-caddy/config:/config \
-	-p 127.0.0.1:8080:80 \
-	-p 127.0.0.1:8443:443 \
+	-p 80:80 \
+	-p 443:443 \
 	docker.io/caddy:2.8-alpine
 
 ExecStop=/usr/bin/podman stop --ignore -t 10 --cidfile=%t/%n.ctr-id
