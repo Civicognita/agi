@@ -712,6 +712,7 @@ print(','.join(installed) if installed else '(none)')
   label "Hosted projects:"
   local total_enabled=0
   local down_names=""
+  local flapping_names=""
   local running_containers
   running_containers="$(podman ps --format '{{.Names}}' 2>/dev/null || true)"
   for config_dir in "$AGI_DIR"/*/; do
@@ -738,17 +739,36 @@ print(','.join(installed) if installed else '(none)')
     local container="${probe##*|}"
     if ! printf '%s\n' "$running_containers" | grep -qx "$container"; then
       down_names="${down_names}${down_names:+, }${proj_name}"
+    else
+      # Container is up — probe RestartCount for chronic-fail detection
+      # (story #110 t359). --restart=always (current podman policy)
+      # silently restarts crashed containers; without this surface, a
+      # project flapping 50 times an hour reads as "up" everywhere.
+      # Threshold of 3 = generous for transient hiccups, tight enough
+      # that a real misconfig shows up.
+      local restart_count
+      restart_count="$(podman inspect --format '{{.RestartCount}}' "$container" 2>/dev/null || echo 0)"
+      if [ -n "$restart_count" ] && [ "$restart_count" -gt 3 ] 2>/dev/null; then
+        flapping_names="${flapping_names}${flapping_names:+, }${proj_name}(${restart_count}x)"
+      fi
     fi
   done
   if [ "$total_enabled" -eq 0 ]; then
     ok "no enabled projects"
-  elif [ -z "$down_names" ]; then
+  elif [ -z "$down_names" ] && [ -z "$flapping_names" ]; then
     ok "${total_enabled}/${total_enabled} up"
   else
-    local down_count
-    down_count="$(printf '%s\n' "$down_names" | tr ',' '\n' | wc -l | tr -d ' ')"
-    warn "${down_count}/${total_enabled} down: ${down_names} — see 'agi projects' for detail"
-    issues=$((issues + 1))
+    if [ -n "$down_names" ]; then
+      local down_count
+      down_count="$(printf '%s\n' "$down_names" | tr ',' '\n' | wc -l | tr -d ' ')"
+      warn "${down_count}/${total_enabled} down: ${down_names} — see 'agi projects' for detail"
+      issues=$((issues + 1))
+    fi
+    if [ -n "$flapping_names" ]; then
+      label "Flapping projects:"
+      warn "${flapping_names} — auto-restarted multiple times; check 'agi projects logs <slug>'"
+      issues=$((issues + 1))
+    fi
   fi
 
   echo ""

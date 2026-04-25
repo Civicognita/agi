@@ -88,7 +88,7 @@ Run infrastructure health checks.
 agi doctor
 ```
 
-Checks: Node.js version, pnpm, deploy directory, config file, Caddy, Podman (rootless), Ollama, dnsmasq, gateway HTTP response, NPU readiness (when available), Lemonade backend, disk usage, **hosted-project state** (`N/M up` summary with names of any down projects — see `agi projects` for the full list).
+Checks: Node.js version, pnpm, deploy directory, config file, Caddy, Podman (rootless), Ollama, dnsmasq, gateway HTTP response, NPU readiness (when available), Lemonade backend, disk usage, **hosted-project state** (`N/M up` summary with names of any down projects — see `agi projects` for the full list), **flapping projects** (running but with `RestartCount > 3` — surfaces containers that are technically "up" but crash-looping under podman's `--restart=always` policy).
 
 Exits with the issue count as a one-line summary at the bottom.
 
