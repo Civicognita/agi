@@ -244,6 +244,35 @@ The dashboard chat renders agent responses through react-fancy's `ContentRendere
 
 `buildResponseFormatSection()` in `packages/gateway-core/src/system-prompt.ts` tells the agent when to emit each tag, what nesting limits apply, and that tags must not be wrapped in code fences. Update BOTH sides together — if you add a new tag to `content-renderer-setup.tsx`, extend the response-format instructions so the agent knows it exists.
 
+## Cost-Mode Trimming for Local Models
+
+Small local models (3B–7B) cannot usefully consume the full prompt — TaskMaster orchestration, plan-workflow guidance, knowledge-index references, and the verbose chat-markup paragraph in the response-format section are wasted tokens that displace history and tool definitions inside a 4K–8K context window.
+
+When `config.agent.router.costMode === "local"`, `assembleSystemPrompt()` and `assembleSystemPromptWithBreakdown()` in `packages/gateway-core/src/system-prompt.ts` switch to a trimmed shape:
+
+| Section | Cloud / Balanced / Max | Local |
+|---------|------------------------|-------|
+| Identity (PRIME or hardcoded) | full | full |
+| Runtime metadata | full | full |
+| Tools list | full | full |
+| Operational state | full | full |
+| Owner context | full | full |
+| Response format | `buildResponseFormatSection()` (~800 tokens, full chat-markup contract) | `buildLocalResponseFormatSection()` (~80 tokens, capability discipline + plain-text rules) |
+| Entity / user context | per `requestType` | per `requestType` |
+| COA + PRIME directive | per `requestType` | per `requestType` |
+| State constraints | per `requestType` | per `requestType` |
+| Knowledge index | per `requestType` | **omitted** |
+| Project context | per `requestType` | per `requestType` |
+| Plan workflow | per `requestType` | **omitted** |
+| Workspace + Tynn | dev mode only | dev mode only |
+| TASKMASTER section | per `requestType` | **omitted** |
+| Skills | matched only | matched only |
+| Memory | recalled only | recalled only |
+
+Total savings on a project-context turn are roughly 2,400 tokens (TaskMaster ≈ 822, plan-workflow ≈ 857, response-format delta ≈ 720). The cost mode is read live per turn via `AgentInvokerDeps.getCostMode` (wired in `packages/gateway-core/src/server.ts`), so a Settings toggle from Cloud → Local takes effect on the next message — no restart required.
+
+To exercise the trimming in tests, set `costMode: "local"` directly on `SystemPromptContext` — see `packages/gateway-core/src/system-prompt-cost-mode.test.ts`.
+
 ## Prompt Section Ordering
 
 The assembled system prompt should follow this order, from most static to most dynamic:

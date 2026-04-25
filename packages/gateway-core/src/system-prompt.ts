@@ -141,6 +141,14 @@ export interface SystemPromptContext {
   isOwner?: boolean;
   /** Active project path — when set, injects plan workflow instructions. */
   projectPath?: string;
+  /**
+   * Router cost mode for this turn — when `"local"`, the assembler trims
+   * Taskmaster, plan-workflow, knowledge-index, and the verbose chat-markup
+   * paragraph from the response-format section so smaller local models
+   * (3B–7B) don't choke on the prompt. Identity, tools, state, owner, COA,
+   * and entity context are preserved.
+   */
+  costMode?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +322,14 @@ Status transitions (via \`update_plan\`): \`draft\` > \`reviewing\` > \`approved
 Step transitions happen automatically via \`planRef\`. You manage the plan's top-level status transitions and mark steps you handle yourself as \`complete\`.`;
 }
 
+
+function buildLocalResponseFormatSection(): string {
+  return `Response rules:
+- Use only the tools listed above. If the user asks for something not in the list, say so plainly — do not invent capabilities.
+- Do not fabricate tool results. If a tool fails, report the failure.
+- Reply in the user's language. Keep responses concise.
+- Do not expose internal IDs (entity, COA, TID) unless explicitly asked for system info.`;
+}
 
 function buildResponseFormatSection(): string {
   return `Capability discipline (read before every response):
@@ -640,6 +656,7 @@ export function getTierCapabilities(tier: VerificationTier): TierCapabilities {
  */
 export function assembleSystemPrompt(ctx: SystemPromptContext): string {
   const rt = ctx.requestType ?? "chat";
+  const isLocal = ctx.costMode === "local";
   const sections: string[] = [];
 
   // -------------------------------------------------------------------------
@@ -684,8 +701,8 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
     sections.push(buildOwnerContextSection(ctx.ownerName, ctx.isOwner ?? false));
   }
 
-  // Response format (always)
-  sections.push(buildResponseFormatSection());
+  // Response format (always — compact variant for local mode)
+  sections.push(isLocal ? buildLocalResponseFormatSection() : buildResponseFormatSection());
 
   // -------------------------------------------------------------------------
   // LAYER 2: Request Context (dynamic — only for relevant request types)
@@ -712,8 +729,9 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
     sections.push(buildStateConstraintsSection(ctx.state, ctx.capabilities));
   }
 
-  // Knowledge corpus index — for knowledge queries (agent pulls details via tools)
-  if (rt === "knowledge" || rt === "project") {
+  // Knowledge corpus index — for knowledge queries (agent pulls details via tools).
+  // Skipped under local mode: small models can't usefully pull on a topic index.
+  if (!isLocal && (rt === "knowledge" || rt === "project")) {
     if (ctx.prime?.topicIndex !== undefined) {
       const indexSection = buildKnowledgeIndexSection(ctx.prime.topicIndex);
       if (indexSection.length > 0) {
@@ -722,10 +740,13 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
     }
   }
 
-  // Project context — for project work
+  // Project context — for project work. Plan workflow is instruction-heavy
+  // and gets dropped in local mode; project path itself is preserved.
   if (rt === "project" && ctx.projectPath !== undefined) {
     sections.push(buildProjectContextSection(ctx.projectPath));
-    sections.push(buildPlanWorkflowSection());
+    if (!isLocal) {
+      sections.push(buildPlanWorkflowSection());
+    }
   }
 
   // Workspace context — for dev mode project work
@@ -738,8 +759,9 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
     }
   }
 
-  // TASKMASTER — only when taskmaster is relevant
-  if (rt !== "chat" && rt !== "worker") {
+  // TASKMASTER — only when taskmaster is relevant. Local models can't
+  // dispatch effectively, so we never inject this section under local mode.
+  if (!isLocal && rt !== "chat" && rt !== "worker") {
     sections.push(buildTaskmasterSection());
   }
 
@@ -794,6 +816,7 @@ export function assembleSystemPromptWithBreakdown(
   opts?: { historyTokens?: number; responseTokens?: number },
 ): { prompt: string; breakdown: SystemPromptTokenBreakdown } {
   const rt = ctx.requestType ?? "chat";
+  const isLocal = ctx.costMode === "local";
   const identitySections: string[] = [];
   const contextSections: string[] = [];
   const memorySections: string[] = [];
@@ -837,7 +860,7 @@ export function assembleSystemPromptWithBreakdown(
     identitySections.push(buildOwnerContextSection(ctx.ownerName, ctx.isOwner ?? false));
   }
 
-  identitySections.push(buildResponseFormatSection());
+  identitySections.push(isLocal ? buildLocalResponseFormatSection() : buildResponseFormatSection());
 
   // -------------------------------------------------------------------------
   // LAYER 2: Request Context
@@ -861,7 +884,7 @@ export function assembleSystemPromptWithBreakdown(
     contextSections.push(buildStateConstraintsSection(ctx.state, ctx.capabilities));
   }
 
-  if (rt === "knowledge" || rt === "project") {
+  if (!isLocal && (rt === "knowledge" || rt === "project")) {
     if (ctx.prime?.topicIndex !== undefined) {
       const indexSection = buildKnowledgeIndexSection(ctx.prime.topicIndex);
       if (indexSection.length > 0) {
@@ -872,7 +895,9 @@ export function assembleSystemPromptWithBreakdown(
 
   if (rt === "project" && ctx.projectPath !== undefined) {
     contextSections.push(buildProjectContextSection(ctx.projectPath));
-    contextSections.push(buildPlanWorkflowSection());
+    if (!isLocal) {
+      contextSections.push(buildPlanWorkflowSection());
+    }
   }
 
   if (ctx.devMode === true && (rt === "project" || rt === "system")) {
@@ -884,7 +909,7 @@ export function assembleSystemPromptWithBreakdown(
     }
   }
 
-  if (rt !== "chat" && rt !== "worker") {
+  if (!isLocal && rt !== "chat" && rt !== "worker") {
     contextSections.push(buildTaskmasterSection());
   }
 

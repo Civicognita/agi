@@ -187,6 +187,11 @@ export interface AgentInvokerDeps {
   /** Returns the configured per-turn tool-loop cap (0 = uncapped). Called per
    *  turn so config hot-reload takes effect. Defaults to uncapped. */
   getMaxToolLoops?: () => number;
+  /** Returns the active router cost mode for this turn. Read live so a Settings
+   *  toggle (Cloud → Local) takes effect on the next message without restart.
+   *  When the result is `"local"`, the system prompt assembler trims sections
+   *  small models can't usefully consume (Taskmaster, plan workflow, etc.). */
+  getCostMode?: () => string;
 }
 
 export interface InvocationRequest {
@@ -493,6 +498,7 @@ export class AgentInvoker extends EventEmitter {
       isOwner: request.isOwner,
       projectPath: request.projectContext,
       requestType: classifyRequestType(typeof sanitized.content === "string" ? sanitized.content : "", request.projectContext),
+      costMode: this.deps.getCostMode?.(),
     };
 
     const { prompt: baseSystemPrompt, breakdown: promptBreakdown } = assembleSystemPromptWithBreakdown(promptCtx);

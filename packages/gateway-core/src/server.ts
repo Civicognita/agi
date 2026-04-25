@@ -833,6 +833,12 @@ export async function startGatewayServer(
       const gw = (snap as { gateway?: { maxToolLoops?: number } }).gateway;
       return gw?.maxToolLoops ?? 0;
     },
+    getCostMode: () => {
+      const snap = systemConfigService?.read() ?? config;
+      const router = (snap as { agent?: { router?: { costMode?: string } } })
+        .agent?.router;
+      return router?.costMode ?? "balanced";
+    },
   });
 
   // -------------------------------------------------------------------------
