@@ -359,6 +359,27 @@ function PagesStep({ state, update }: { state: EditorState; update: <K extends k
   const moveField = (idx: number, dir: -1 | 1) => {
     const newIdx = idx + dir;
     if (newIdx < 0 || newIdx >= page!.fields.length) return;
+
+    // Reordering re-assigns A-cell refs in place (`A${i + 1}`), which means
+    // any formula that referenced the OLD `Aidx` or `AnewIdx` will now
+    // silently point at swapped content (story #101 task #315). Detect
+    // affected formulas and confirm with the author before committing the
+    // reorder. The proper auto-rewrite path needs a formula parser; this
+    // confirm-or-cancel guard is the alpha-stable-1 fix.
+    const oldA = `A${idx + 1}`;
+    const newA = `A${newIdx + 1}`;
+    const refRe = new RegExp(`\\b(?:${oldA}|${newA})\\b`);
+    const affected = (page!.formulas ?? []).filter((f) => refRe.test(f.expression));
+    if (affected.length > 0) {
+      const refList = affected.map((f) => `  ${f.cell}: ${f.expression}`).join("\n");
+      const ok = window.confirm(
+        `Reordering will swap which cells "${oldA}" and "${newA}" point at.\n\n` +
+          `These formulas reference them and will silently retarget:\n${refList}\n\n` +
+          `Proceed anyway? (Cancel keeps the current order.)`,
+      );
+      if (!ok) return;
+    }
+
     const pages = [...state.pages];
     const fields = [...page!.fields];
     [fields[idx], fields[newIdx]] = [fields[newIdx]!, fields[idx]!];
