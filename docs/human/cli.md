@@ -190,6 +190,35 @@ agi channels test <id>  # test a channel (future)
 
 ---
 
+### agi scan
+
+Run a security scan against a project path (or any directory) through the gateway's `/api/security` HTTP API. Polls the scan to completion, renders findings grouped by severity, and exits with a CI-friendly code based on what was found.
+
+```bash
+agi scan /opt/agi                                 # default scanners, severity=high gate
+agi scan /home/me/myproj --types=sast,secrets     # narrow scanner set
+agi scan ~/.agi/plugins/cache/foo --severity=medium  # promote medium to gate
+agi scan list                                     # recent scan runs
+agi scan view <scanId>                            # full scan + findings detail
+agi scan cancel <scanId>                          # abort an in-flight scan
+```
+
+**Scanners.** Default set is `sast,sca,secrets,config`. Implementations live under `packages/security/scanners/` — SAST checks for XSS, SQL injection, command injection, path traversal, SSRF, dynamic-code execution patterns, and prototype pollution; SCA matches dependency lockfiles against CVE advisories; Secrets detects API keys, tokens, and private keys; Config checks `.env` exposure, debug-mode leaks, Dockerfile root user, and missing lockfiles.
+
+**Exit codes** (CI-friendly):
+
+| Exit | Meaning |
+|------|---------|
+| 0 | Scan completed clean (no findings ≥ `--severity` threshold) |
+| 1 | Medium/low findings only |
+| 2 | High/critical findings (gate fail) |
+| 3 | Scan failed or was cancelled |
+| 4 | Invocation error — gateway unreachable, missing path, bad args |
+
+**Severity threshold.** `--severity=high` (default) treats medium/low as warnings (exit 1) and high/critical as fail (exit 2). Set `--severity=medium` to gate on medium too. Available levels: `critical`, `high`, `medium`, `low`, `info`.
+
+**Where the scan runs.** The gateway `ScanRunner` (`packages/security/scan-runner.ts`) executes locally inside the gateway process, persists results to the `agi_data` Postgres `scan_runs` + `security_findings` tables, and exposes them via the dashboard's Security pages and the `/api/security` REST surface. The CLI is a thin client over that API.
+
 ### agi bash
 
 Run an arbitrary shell command through Aion's secure entryway. Every invocation logs a structured record to `~/.agi/logs/agi-bash-YYYY-MM-DD.jsonl` and is filtered by a configurable policy.

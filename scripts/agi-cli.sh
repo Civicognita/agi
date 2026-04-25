@@ -342,6 +342,187 @@ cmd_incidents() {
   esac
 }
 
+# ---------------------------------------------------------------------------
+# agi scan — security scanning surface (s109 prep, t365)
+#
+# Triggers a scan via the gateway's /api/security HTTP API, polls until
+# completion, and renders findings to the terminal grouped by severity.
+# Exit codes (CI-friendly):
+#   0 — scan completed clean (no findings >= severityThreshold)
+#   1 — scan completed with medium/low findings
+#   2 — scan completed with high/critical findings
+#   3 — scan failed or was cancelled
+#   4 — invocation error (unreachable gateway, bad args)
+# ---------------------------------------------------------------------------
+cmd_scan() {
+  local action="${1:-}"
+  local gw_url="http://127.0.0.1:3100"
+
+  # Subcommand dispatch — match before path-parsing so `agi scan list` etc.
+  # don't treat their action verb as a target path.
+  case "$action" in
+    list)
+      echo -e "${BOLD}Recent security scans${RESET}"
+      curl -s "$gw_url/api/security/scans" | (command -v jq >/dev/null && jq . || cat)
+      return 0
+      ;;
+    view)
+      local id="${2:-}"
+      if [ -z "$id" ]; then
+        err "usage: agi scan view <scanId>"
+        return 4
+      fi
+      echo -e "${BOLD}Scan ${id}${RESET}"
+      curl -s "$gw_url/api/security/scans/$id" | (command -v jq >/dev/null && jq . || cat)
+      echo ""
+      echo -e "${BOLD}Findings${RESET}"
+      curl -s "$gw_url/api/security/scans/$id/findings" | (command -v jq >/dev/null && jq . || cat)
+      return 0
+      ;;
+    cancel)
+      local id="${2:-}"
+      if [ -z "$id" ]; then
+        err "usage: agi scan cancel <scanId>"
+        return 4
+      fi
+      curl -s -X POST "$gw_url/api/security/scans/$id/cancel" \
+        | (command -v jq >/dev/null && jq . || cat)
+      return 0
+      ;;
+    ""|"-h"|"--help"|"help")
+      cat <<USAGE
+Usage: agi scan <command|path> [options]
+
+Commands:
+  agi scan <path>              Run a scan on <path>, poll until done,
+                               render findings grouped by severity.
+  agi scan list                List recent scan runs.
+  agi scan view <scanId>       Show details + findings for a scan.
+  agi scan cancel <scanId>     Cancel an in-flight scan.
+
+Options for run mode:
+  --types=t1,t2     Comma-separated scanners (default: sast,sca,secrets,config)
+  --severity=lvl    Min severity to surface in exit code (default: high)
+                    One of: critical, high, medium, low, info
+
+Examples:
+  agi scan /opt/agi
+  agi scan /home/wishborn/temp_core/agi --types=sast,secrets
+  agi scan ~/.agi/plugins/cache/foo --severity=medium
+USAGE
+      return 0
+      ;;
+  esac
+
+  # Run mode: $1 is the target path, optionally followed by --flags.
+  local target="$1"
+  shift || true
+  local types="sast,sca,secrets,config"
+  local severity="high"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --types=*)    types="${1#--types=}" ;;
+      --severity=*) severity="${1#--severity=}" ;;
+      *)            err "unknown option: $1"; return 4 ;;
+    esac
+    shift
+  done
+
+  if [ ! -e "$target" ]; then
+    err "target path does not exist: $target"
+    return 4
+  fi
+  target="$(cd -P "$target" 2>/dev/null && pwd)" || target="$1"
+
+  # Health-check the gateway before posting the scan request — cheap probe
+  # avoids a hang when the gateway is offline.
+  if ! curl -s --max-time 3 "$gw_url/api/system/stats" >/dev/null 2>&1; then
+    err "gateway unreachable at $gw_url — is agi running? (try: agi status)"
+    return 4
+  fi
+
+  # Build the scan-types JSON array
+  local types_json
+  types_json=$(printf '%s' "$types" | awk -F, '{
+    out="["
+    for (i=1; i<=NF; i++) { if (i>1) out=out","; out=out"\""$i"\"" }
+    print out"]"
+  }')
+
+  echo -e "${BOLD}Starting scan${RESET}: $target (types: $types)"
+  local resp
+  resp=$(curl -s -X POST "$gw_url/api/security/scans" \
+    -H "Content-Type: application/json" \
+    -d "{\"targetPath\":\"$target\",\"scanTypes\":$types_json,\"severityThreshold\":\"$severity\"}")
+  local scan_id
+  scan_id=$(printf '%s' "$resp" | (command -v jq >/dev/null && jq -r '.scanId // ""' || sed -E 's/.*"scanId"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'))
+  if [ -z "$scan_id" ] || [ "$scan_id" = "unknown" ] || [ "$scan_id" = "null" ]; then
+    err "could not create scan run; response: $resp"
+    return 4
+  fi
+  ok "scan id: $scan_id"
+
+  # Poll until status leaves running/pending. Cap at 5 minutes; longer
+  # scans should be tracked via `agi scan view` rather than blocking the
+  # terminal indefinitely.
+  echo -n "  status:"
+  local elapsed=0
+  local status="running"
+  local detail_json=""
+  while [ "$elapsed" -lt 300 ]; do
+    detail_json=$(curl -s "$gw_url/api/security/scans/$scan_id")
+    status=$(printf '%s' "$detail_json" | (command -v jq >/dev/null && jq -r '.status // "unknown"' || sed -E 's/.*"status"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/'))
+    case "$status" in
+      completed|failed|cancelled) break ;;
+    esac
+    printf ' %s' "$status"
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
+  echo ""
+
+  case "$status" in
+    cancelled) err "scan cancelled"; return 3 ;;
+    failed)    err "scan failed"; printf '%s\n' "$detail_json" | (command -v jq >/dev/null && jq . || cat); return 3 ;;
+    completed) ok "scan completed in ${elapsed}s" ;;
+    *)         err "scan still ${status} after ${elapsed}s — use 'agi scan view $scan_id' to follow"; return 3 ;;
+  esac
+
+  # Render findings grouped by severity
+  echo ""
+  echo -e "${BOLD}Findings${RESET}"
+  local findings_json
+  findings_json=$(curl -s "$gw_url/api/security/scans/$scan_id/findings")
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$findings_json" | jq -r '
+      group_by(.severity)
+      | map({sev: .[0].severity, count: length, items: .})
+      | sort_by(["critical","high","medium","low","info"] | index(.sev) // 999)
+      | .[] |
+        "\n[\(.sev | ascii_upcase)] \(.count) finding(s)\n" +
+        (.items | map("  - \(.checkId // "no-id") · \(.title)\n      \(.description // "" | tostring | .[0:120])") | join("\n"))
+    '
+  else
+    printf '%s\n' "$findings_json"
+  fi
+
+  # Exit code by severity threshold
+  local high_count med_count
+  high_count=$(printf '%s' "$findings_json" | (command -v jq >/dev/null && jq -r 'map(select(.severity=="critical" or .severity=="high")) | length' || echo 0))
+  med_count=$(printf '%s' "$findings_json" | (command -v jq >/dev/null && jq -r 'map(select(.severity=="medium" or .severity=="low")) | length' || echo 0))
+  echo ""
+  if [ "$high_count" -gt 0 ]; then
+    err "$high_count high/critical finding(s) — exit 2"
+    return 2
+  fi
+  if [ "$med_count" -gt 0 ]; then
+    warn "$med_count medium/low finding(s) — exit 1"
+    return 1
+  fi
+  ok "scan clean — exit 0"
+  return 0
+}
+
 cmd_doctor() {
   echo -e "${BOLD}Aionima Doctor${RESET}"
   echo ""
@@ -1727,6 +1908,9 @@ cmd_help() {
   echo "  bash CMD...     Run a shell command through Aion's secure entryway"
   echo "                  (logged to ~/.agi/logs/agi-bash-*.jsonl with caller"
   echo "                  attribution; policy gated by ~/.agi/gateway.json bash.policy)"
+  echo "  scan PATH       Run a security scan on PATH (sast|sca|secrets|config),"
+  echo "                  poll until done, render findings; CI-friendly exit codes."
+  echo "                  Subcmds: list, view <id>, cancel <id>"
   echo "  setup           Interactive configuration wizard"
   echo "  setup-prompts   Configure persona and heartbeat prompts"
   echo "  setup-claude-hooks"
@@ -1756,6 +1940,7 @@ case "${1:-help}" in
   doctor)   cmd_doctor ;;
   safemode) shift; cmd_safemode "$@" ;;
   incidents) shift; cmd_incidents "$@" ;;
+  scan) shift; cmd_scan "$@" ;;
   config)   cmd_config "${2:-}" ;;
   projects) shift; cmd_projects "$@" ;;
   models)    shift; cmd_models "$@" ;;
