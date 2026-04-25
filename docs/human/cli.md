@@ -334,34 +334,6 @@ Setting `AGI_ROUTER_BYPASS=1` skips routing for that one Bash call. The bypass i
 
 A pattern of bypasses without documentation is the signal that the router needs a new carve-out — not that bypass is fine.
 
-### Loop-cycle chime (opt-in)
-
-A companion `Stop` hook (`scripts/claude-code-templates/hooks/loop-cycle-finished.sh`) plays a sound when a `/loop` iteration finishes — only when the latest user message contains a fingerprint listed in `~/.claude/hooks/loop-cycle-fingerprints.txt`. Normal conversation turns stay silent.
-
-Install:
-
-```bash
-cp scripts/claude-code-templates/hooks/loop-cycle-finished.sh \
-   ~/.claude/hooks/loop-cycle-finished.sh
-chmod +x ~/.claude/hooks/loop-cycle-finished.sh
-
-cp scripts/claude-code-templates/hooks/loop-cycle-fingerprints.txt.template \
-   ~/.claude/hooks/loop-cycle-fingerprints.txt
-# Edit fingerprints to match your /loop prompts (one fixed substring per line)
-
-# Patch settings.json with the Stop hook entry
-jq '
-  .hooks //= {}
-  | .hooks.Stop //= []
-  | .hooks.Stop |= map(select(((.hooks // [])[0].command // "") | test("loop-cycle-finished") | not))
-  | .hooks.Stop += [{matcher: "", hooks: [{type: "command", command: "bash \(env.HOME)/.claude/hooks/loop-cycle-finished.sh"}]}]
-' ~/.claude/settings.json > /tmp/s.json && mv /tmp/s.json ~/.claude/settings.json
-```
-
-The hook tries `pw-play` (PipeWire) → `aplay` (ALSA `.wav`) → `ffplay` → `notify-send` and swallows all failures so a missing player never blocks the Stop event. Default sound is `/usr/share/sounds/freedesktop/stereo/complete.oga`; override via `LOOP_CYCLE_SOUND=/path/to/file` in the Bash environment. Audit log at `~/.agi/logs/loop-cycle-chime.log` records each Stop event and whether the fingerprint matched.
-
-Not auto-installed by `agi setup-claude-hooks` — kept opt-in because not every user wants audible cycle markers. The fingerprints file empty or missing → never plays.
-
 ---
 
 ## Environment Variables
