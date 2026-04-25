@@ -1759,6 +1759,18 @@ export class HostingManager {
         case "static": {
           const docRoot = hosted.meta.docRoot ?? "dist";
           const hostPath = join(hosted.path, docRoot);
+          // Pre-flight: nginx mounts hostPath read-only; if the directory
+          // doesn't exist on the host, podman aborts with `statfs ENOENT`
+          // and the project lands in an "exited" state with a cryptic
+          // error. Catch it here with an actionable message instead
+          // (story #110 task #358).
+          if (!existsSync(hostPath)) {
+            hosted.status = "error";
+            hosted.error = `Static-site document root missing: ${hostPath}. ` +
+              `Build the project (e.g., \`npm run build\`) so that ${docRoot}/ exists, ` +
+              `or set docRoot in the project config to point at the actual built output.`;
+            return;
+          }
           args.push("-v", `${hostPath}:/usr/share/nginx/html:ro,Z`);
           // Inject AI model env vars and dataset volume mounts
           args.push(...aiBindingArgs.volumeArgs);
