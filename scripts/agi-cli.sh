@@ -842,6 +842,81 @@ _resolve_project_container() {
   return 1
 }
 
+# Resolve a project slug/name to its filesystem path. Echoes the path on
+# stdout; returns 1 if no match. The slug folder under ~/.agi/ encodes
+# the path with `/` mangled to `-` (and leading `/` dropped); this helper
+# walks the project.json files and returns the original path the API
+# expects.
+_resolve_project_path() {
+  local query="$1"
+  for config_dir in "$AGI_DIR"/*/; do
+    local cfg_file="${config_dir}project.json"
+    [ -f "$cfg_file" ] || continue
+    local match
+    match="$(node -e "
+      try {
+        const data = JSON.parse(require('fs').readFileSync('${cfg_file}','utf-8'));
+        const h = data.hosting || {};
+        const slug = require('path').basename(require('path').dirname('${cfg_file}'));
+        const name = data.name || slug;
+        const q = '${query}';
+        if (slug === q || name === q || (h.hostname && h.hostname === q)) {
+          // Slug encodes the original path with / → - and leading / dropped.
+          // Reverse the mangling to feed the API.
+          console.log('/' + slug.replace(/-/g, '/'));
+          process.exit(0);
+        }
+        process.exit(1);
+      } catch { process.exit(1); }
+    " 2>/dev/null)"
+    if [ -n "$match" ]; then
+      echo "$match"
+      return 0
+    fi
+  done
+  return 1
+}
+
+cmd_projects_restart() {
+  local query="${1:-}"
+  if [ -z "$query" ]; then
+    err "agi projects restart: missing project slug"
+    echo "Usage: agi projects restart <slug>" >&2
+    return 2
+  fi
+
+  local proj_path
+  proj_path="$(_resolve_project_path "$query")" || {
+    err "no project matching '${query}' (try 'agi projects' for the list)"
+    return 1
+  }
+
+  info "restarting project at ${proj_path}"
+  local gw_url="http://127.0.0.1:3100"
+  local response
+  response="$(curl -s -X POST "$gw_url/api/hosting/restart" \
+    -H "Content-Type: application/json" \
+    --data "$(printf '{"path":"%s"}' "$proj_path")" 2>&1)"
+
+  # Pretty-print if jq is available; otherwise pass through.
+  if command -v jq >/dev/null 2>&1; then
+    echo "$response" | jq .
+  else
+    echo "$response"
+  fi
+
+  # Detect failure shape — gateway returns {ok:false, error: ...} on 500.
+  if echo "$response" | grep -q '"ok":false\|"error"'; then
+    if echo "$response" | grep -q '"ok":true'; then
+      ok "restart issued"
+      return 0
+    fi
+    err "restart failed (see response above)"
+    return 1
+  fi
+  ok "restart issued"
+}
+
 cmd_projects_logs() {
   local query="${1:-}"
   if [ -z "$query" ]; then
@@ -881,10 +956,11 @@ cmd_projects() {
   # Accept subcommands. Default (no arg) lists all projects.
   case "${1:-list}" in
     logs) shift; cmd_projects_logs "$@" ;;
+    restart) shift; cmd_projects_restart "$@" ;;
     list|"") cmd_projects_list ;;
     *)
       err "Unknown projects subcommand: $1"
-      echo "  Subcommands: list (default), logs <slug>" >&2
+      echo "  Subcommands: list (default), logs <slug>, restart <slug>" >&2
       return 1 ;;
   esac
 }
@@ -1610,6 +1686,7 @@ cmd_help() {
   echo "  config [key]    Read config (full or dot-path key)"
   echo "  projects [CMD]  List hosted projects (default) or:"
   echo "                    logs <slug> [--tail N] [-f]   Tail container logs"
+  echo "                    restart <slug>                Restart project container"
   echo "  models CMD      Manage HF models (list|running|status|install|start|"
   echo "                  stop|remove|search|hardware)"
   echo "  providers CMD   Manage LLM providers (list|status|set-default)"
