@@ -10,7 +10,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { writeFile, mkdir, rm, readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";

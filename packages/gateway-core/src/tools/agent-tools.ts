@@ -14,7 +14,7 @@
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { execSync, spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import * as os from "node:os";
 import type { ToolHandler } from "../tool-registry.js";
@@ -569,7 +569,27 @@ export function createManageSystemHandler(config: AgentToolsConfig): ToolHandler
       let diskFree = 0;
       let diskPercent = 0;
       try {
-        const dfOut = execSync("df -B1 /", { timeout: 5000 }).toString();
+        // Route through `agi bash` (story #105) so this disk-stats probe
+        // lands in the JSONL log surface with caller=chat-agent. Falls
+        // back to a direct argv-form spawnSync of `df` when the deployed
+        // agi-cli.sh predates v0.4.149's `bash` subcommand — detected
+        // via "Unknown command" stderr or spawn error.
+        let dfOut = "";
+        const sr = spawnSync("agi", ["bash", "-c", "df -B1 /"], {
+          encoding: "utf-8",
+          timeout: 5000,
+          env: { ...process.env, AGI_CALLER: "chat-agent" },
+        });
+        const agiUnsupported = sr.error !== undefined ||
+          (sr.stderr ?? "").includes("Unknown command");
+        if (!agiUnsupported && sr.status === 0 && sr.stdout) {
+          dfOut = sr.stdout;
+        } else if (agiUnsupported) {
+          const fb = spawnSync("df", ["-B1", "/"], { encoding: "utf-8", timeout: 5000 });
+          dfOut = fb.stdout ?? "";
+        } else {
+          dfOut = sr.stdout ?? "";
+        }
         const lines = dfOut.trim().split("\n");
         if (lines.length >= 2) {
           const parts = lines[1]!.split(/\s+/);
@@ -607,7 +627,14 @@ export function createManageSystemHandler(config: AgentToolsConfig): ToolHandler
       }
       const scriptPath = join(config.selfRepoPath, "scripts/upgrade.sh");
       try {
-        // Fire-and-forget: spawn upgrade.sh in the background
+        // Fire-and-forget: spawn upgrade.sh in the background.
+        //
+        // NOT routed through `agi bash` (story #105) because that path
+        // buffers stdout/stderr to capture byte counts — incompatible
+        // with detached fire-and-forget. `agi bash --detached` (a streaming
+        // variant) is a future task; until then this is a documented
+        // exception. The upgrade trigger is a privileged one-off, not a
+        // general agent shell exec, so the carve-out is bounded.
         const child = spawn("bash", [scriptPath], {
           cwd: config.selfRepoPath,
           stdio: "ignore",
