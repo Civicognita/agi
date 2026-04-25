@@ -45,14 +45,17 @@ Whenever a commit changes a CLI surface — adds a subcommand, changes a flag, a
 **Quick sanity check before committing a CLI change:**
 
 ```bash
-# Run the dev-source help and grep for the surface you touched
-bash scripts/agi-cli.sh help | grep -A2 '<subcommand>'
-
-# Diff against the canonical doc
-grep -A2 '### <subcommand>' docs/human/cli.md
+pnpm docs-check          # warn-only, exit 0 with findings (default)
+pnpm docs-check:strict   # exit 2 on any drift (use in CI gates)
 ```
 
-A future structural fix tracked under s101 will add a docs-vs-help diff lint to CI so this becomes mechanical instead of disciplinary.
+The lint (`scripts/check-docs-vs-help.sh`) parses `agi help` and `docs/human/cli.md` and reports three classes of drift:
+
+1. Subcommands present in `agi help` but missing from `cli.md` (and not in the small allow-list of subcommands documented in sibling pages — `test-vm` → `testing.md`, `models` → `huggingface.md`, etc.).
+2. `### agi <name>` sections in `cli.md` that don't correspond to any live subcommand.
+3. `WIP|MVP|TODO|FIXME` markers leaking into the help text — exactly the drift class that survived from v0.4.149's `bash CMD` shipping until v0.4.177's catch-up.
+
+Default is **warn-only** so legitimate sibling-doc placements don't block work; use `:strict` in CI gates that should hard-fail on drift. As legitimate omissions get codified into the lint's allow-list (in `check-docs-vs-help.sh`), the strict gate becomes safe to promote to PR-required.
 
 ### 4. Curl-test backend API endpoints
 

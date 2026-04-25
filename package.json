@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.178",
+  "version": "0.4.179",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -43,7 +43,9 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "check": "tsc --noEmit && pnpm lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "docs-check": "bash scripts/check-docs-vs-help.sh",
+    "docs-check:strict": "bash scripts/check-docs-vs-help.sh --strict"
   },
   "dependencies": {
     "@agi/db-schema": "workspace:*",
