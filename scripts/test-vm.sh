@@ -667,6 +667,46 @@ cmd_services_status() {
   '
 }
 
+cmd_services_restart() {
+  ensure_vm_running
+  echo "==> Stopping VM services..."
+  cmd_services_stop
+  echo "==> Starting VM services..."
+  cmd_services_start
+}
+
+cmd_services_version() {
+  ensure_vm_running
+
+  local host_version vm_version
+  host_version=$(grep -m1 '"version"' "$REPO_DIR/package.json" 2>/dev/null | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+  [ -z "$host_version" ] && host_version="unknown"
+
+  vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk https://ai.on/health 2>/dev/null" 2>/dev/null \
+    | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
+    | tr -d '\r\n ')
+  [ -z "$vm_version" ] && vm_version="unreachable"
+
+  echo "Host source: ${host_version}"
+  echo "VM running:  ${vm_version}"
+
+  if [ "$vm_version" = "unreachable" ]; then
+    echo ""
+    echo "VM service is not reachable. Run '$0 services-start'."
+    return 1
+  fi
+
+  if [ "$host_version" = "$vm_version" ]; then
+    echo ""
+    echo "VM is in sync with host source."
+    return 0
+  fi
+
+  echo ""
+  echo "VM is running stale code. Run '$0 services-restart' to pick up the latest."
+  return 2
+}
+
 cmd_test_ui() {
   ensure_vm_running
 
@@ -751,12 +791,14 @@ case "${1:-help}" in
   services-setup)   cmd_services_setup ;;
   services-start)   cmd_services_start ;;
   services-stop)    cmd_services_stop ;;
+  services-restart) cmd_services_restart ;;
   services-status)  cmd_services_status ;;
+  services-version) cmd_services_version ;;
   provision)        cmd_provision ;;
   test-services)    cmd_test_services ;;
   test-ui)          cmd_test_ui "${@:2}" ;;
   help|--help|-h)
-    echo "Usage: $0 {create|destroy|status|ssh|ip|setup|provision|test|remount|exec|services-setup|services-start|services-stop|services-status|test-services|test-ui}"
+    echo "Usage: $0 {create|destroy|status|ssh|ip|setup|provision|test|remount|exec|services-setup|services-start|services-stop|services-restart|services-status|services-version|test-services|test-ui}"
     echo ""
     echo "Commands:"
     echo "  create           Launch a fresh Ubuntu ${VM_IMAGE} VM with all repo mounts"
@@ -773,7 +815,9 @@ case "${1:-help}" in
     echo "  services-setup   Install PostgreSQL + Caddy, build and configure ID service + AGI"
     echo "  services-start   Start all services (PostgreSQL, Caddy, ID service, AGI)"
     echo "  services-stop    Stop ID service and AGI background processes"
+    echo "  services-restart Stop and start all services (fastest way to pick up host source changes)"
     echo "  services-status  Show status and health of all services"
+    echo "  services-version Compare VM-running AGI version vs host source package.json (warns when stale)"
     echo "  test-services    Run service integration tests against the running stack"
     echo "  test-ui          Run Playwright UI tests against https://test.ai.on"
     ;;

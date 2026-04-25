@@ -77,7 +77,11 @@ Tests that touch the database connect to the **test VM's real Postgres** (`agi_d
 ```bash
 agi test-vm services-status     # Confirm Postgres: active
 agi test-vm services-start      # If anything is stopped
+agi test-vm services-version    # Compare VM-running AGI vs host source — warns when stale
+agi test-vm services-restart    # Pick up host source changes without recreating the VM
 ```
+
+The VM mounts the host repo as live source (`/mnt/agi`), so a full `create` is rarely needed. Run `services-restart` whenever you want a Playwright run to validate code shipped after the AGI service was last started — `services-version` exits with code `2` and a stale-warning so CI can fail-fast if the VM has drifted.
 
 Per-test overhead is ~50–200ms (schema create + DDL); a full dashboard run finishes in under 10s.
 
