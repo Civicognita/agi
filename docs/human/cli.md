@@ -200,7 +200,56 @@ The policy is read from disk at every invocation — config changes take effect 
 **Current limitations:**
 
 - Output is buffered to capture byte counts. Long-running / interactive commands like `tail -f` will appear to hang until they exit. A `--stream` mode that skips byte counts is a follow-up.
-- Caller migration (chat-agent runtime, Taskmaster shell-exec plugin, cron-prompt runner) lands in story **#105**. Until that ships, agents may still shell out directly.
+- ~~Caller migration (chat-agent runtime, Taskmaster shell-exec plugin, cron-prompt runner) lands in story **#105**.~~ **Shipped v0.4.150** — chat-agent shell tools (shell-exec.ts, agent-tools.ts disk probe) route through `agi bash` with `AGI_CALLER=chat-agent`. Taskmaster + cron-prompt run shell ops via the same `shell_exec` tool registry, so they inherit the routing.
+
+---
+
+## Routing protocol (harness side — story #108)
+
+The `agi bash` subcommand is the **server-side** half of the routing rule: `agi bash <cmd>` produces a JSONL record with caller attribution and policy enforcement. The **client-side** half — making sure every shell exec the assistant issues uses that surface — is enforced by a Claude Code PreToolUse hook.
+
+### How it works
+
+1. **PreToolUse hook** at `~/.claude/hooks/agi-bash-router.sh` is wired in `~/.claude/settings.json` with `matcher: "Bash"`. It fires before every Bash tool call.
+
+2. **Decision logic**:
+   - Already-wrapped (`agi bash …`, `bash …agi-cli.sh bash`, `agi <subcmd>`): exit 0, allow unchanged.
+   - Empty command, or `AGI_ROUTER_BYPASS=1` env var set: exit 0, allow (bypass logged for audit).
+   - Otherwise: exit 2 with structured stderr listing the rewrite. The assistant reads the nudge and re-issues the call wrapped.
+
+3. **Suggested wrap form** is picked by probing the live binary — `agi bash '<cmd>'` when `/usr/local/bin/agi help` shows the `bash CMD` line, otherwise the dev-source `bash <path>/agi-cli.sh bash '<cmd>'`.
+
+4. **Caller** is auto-set to `claude-code:<session-id>` when the assistant's call is auto-routed; explicit invocations via the `agibash` skill set it differently (e.g., `taskmaster:<job>`, `batch:<id>`).
+
+### Structured stderr format
+
+```
+AGI-BASH-ROUTER: blocked unwrapped Bash command (story #108)
+AGI-BASH-ROUTER:reason: every shell exec must flow through agi bash
+AGI-BASH-ROUTER:cmd_hash: <12-hex-char hash>
+AGI-BASH-ROUTER:suggested_form: <agi bash '<cmd>' or dev-script form>
+AGI-BASH-ROUTER:rewrite: <full ready-to-paste rewrite>
+AGI-BASH-ROUTER:bypass: set AGI_ROUTER_BYPASS=1 in the Bash env to skip routing (recorded in audit log)
+```
+
+Each line has the `AGI-BASH-ROUTER:` prefix so the assistant or external automation can parse deterministically.
+
+### Audit log
+
+Every routing decision (allow / block / bypass) is appended to `~/.agi/logs/agi-bash-router.log` with a UTC ISO timestamp and a hashed command identifier. The log file is the substrate for understanding when wraps were skipped and whether the discipline holds.
+
+### `agibash` skill
+
+`~/.claude/skills/agibash/SKILL.md` is the explicit-control invocation form for cases where the hook's auto-wrap isn't appropriate — Taskmaster jobs that need their own caller, batch sequences, or pre-critical exec verification. Use the skill when caller attribution matters; use the auto-router for routine ad-hoc Bash.
+
+### Bypass discipline
+
+Setting `AGI_ROUTER_BYPASS=1` skips routing for that one Bash call. The bypass is **logged** in `~/.agi/logs/agi-bash-router.log` with the cmd_hash. Use it only when:
+
+- The exec is structurally outside the entryway (the agi binary itself, the dev-source wrap, debugging the router).
+- You've documented why in tynn (open a wish on s108 follow-ups).
+
+A pattern of bypasses without documentation is the signal that the router needs a new carve-out — not that bypass is fine.
 
 ---
 
