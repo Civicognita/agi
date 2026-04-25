@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.157",
+  "version": "0.4.158",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -72,6 +72,20 @@
       "electron",
       "esbuild",
       "node-pty"
-    ]
+    ],
+    "overrides": {
+      "tar": ">=7.5.11",
+      "minimatch": ">=9.0.7",
+      "node-forge": ">=1.4.0",
+      "@xmldom/xmldom": ">=0.8.13",
+      "undici": ">=6.24.0",
+      "picomatch": ">=4.0.4",
+      "serialize-javascript": ">=7.0.5",
+      "brace-expansion": ">=1.1.13",
+      "defu": ">=6.1.5",
+      "rollup": ">=4.59.0",
+      "uuid": ">=11.0.0",
+      "lodash": ">=4.17.21"
+    }
   }
 }
