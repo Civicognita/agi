@@ -147,6 +147,63 @@ agi channels test <id>  # test a channel (future)
 
 ---
 
+### agi bash
+
+Run an arbitrary shell command through Aion's secure entryway. Every invocation logs a structured record to `~/.agi/logs/agi-bash-YYYY-MM-DD.jsonl` and is filtered by a configurable policy.
+
+```bash
+agi bash echo hello                  # tokenized form
+agi bash 'ls -la /tmp'               # quoted form
+agi bash -c 'ls -la | grep tmp'      # explicit -c (the -c is dropped before forwarding)
+```
+
+**Why this exists.** Aion is the single secure entryway to your system. Every shell exec — whether you're the human at the terminal, the chat agent acting on your behalf, Taskmaster running a queued job, or a cron-fired prompt — should flow through one logged surface. That produces (1) a complete audit trail, (2) one policy enforcement point, and (3) the substrate for future pattern mining (Aion observing how the system is used → crystallizing common patterns into Plugins and MApps).
+
+**Caller attribution.** Set `AGI_CALLER` to identify the origin (defaults to `human`):
+
+```bash
+AGI_CALLER='chat-agent:abc123' agi bash 'echo from agent'
+```
+
+**Log record shape** (one JSON line per invocation):
+
+| Field | Description |
+|-------|-------------|
+| `ts` | ISO 8601 UTC timestamp, millisecond precision |
+| `caller` | `human` (default) or set via `AGI_CALLER` |
+| `cwd` | Working directory at invocation time |
+| `cmd_hash` | sha256(cmd) truncated to 12 hex chars — stable across repeats for clustering |
+| `exit_code` | Inner command's exit code (or `126` when blocked by policy) |
+| `duration_ms` | Wall-clock duration |
+| `stdout_bytes` / `stderr_bytes` | Byte counts only — output content is never logged |
+| `blocked` | `true` when policy rejected the command |
+| `denial_reason` | Populated when `blocked: true` (matched pattern or path) |
+| `audit_note` | Populated when an `allow_overrides` rule was used |
+
+**Policy.** Configured at `~/.agi/gateway.json` under `bash.policy`. The default deny set is always active and protects production paths (`/opt/aionima`, `/opt/aionima-prime`, `/opt/aionima-id`) plus obvious destructive idioms (`rm -rf /`, `systemctl stop agi`, etc.). User config extends defaults:
+
+```json
+{
+  "bash": {
+    "policy": {
+      "deny_patterns": ["my-additional-regex"],
+      "allow_overrides": ["explicitly-permitted-pattern"]
+    }
+  }
+}
+```
+
+`allow_overrides` are checked first — a matched override beats every deny pattern. The override path produces an `audit_note` in the log so reviewers can see when defaults were bypassed.
+
+The policy is read from disk at every invocation — config changes take effect immediately, no restart needed.
+
+**Current limitations:**
+
+- Output is buffered to capture byte counts. Long-running / interactive commands like `tail -f` will appear to hang until they exit. A `--stream` mode that skips byte counts is a follow-up.
+- Caller migration (chat-agent runtime, Taskmaster shell-exec plugin, cron-prompt runner) lands in story **#105**. Until that ships, agents may still shell out directly.
+
+---
+
 ## Environment Variables
 
 The gateway reads these from `~/.agi/.env` (loaded automatically at startup):

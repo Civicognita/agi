@@ -15,6 +15,22 @@ The second batch is registered after services are available.
 
 ---
 
+## Shell Exec Policy — agi bash passthrough
+
+Every shell exec from any agent context (chat tool runtime, Taskmaster shell-exec plugin, cron-fired prompt runner, plugin SDK) must route through the `agi bash` passthrough rather than spawning a child process directly. This is the single secure entryway rule — the canonical reason it exists is documented in `~/temp_core/CLAUDE.md` § 3 and § 4.
+
+The passthrough surface (story **#104**, v0.4.0) provides:
+
+- Structured per-invocation logging at `~/.agi/logs/agi-bash-YYYY-MM-DD.jsonl` with caller attribution (set `AGI_CALLER` to a stable identifier — `chat-agent:<session>`, `taskmaster:<task-id>`, `cron-prompt:<cron-id>`)
+- Default deny patterns protecting production paths and destructive idioms
+- User-configurable extensions via `bash.policy` in `~/.agi/gateway.json`
+
+The caller migrations themselves (replacing direct `child_process.spawn("bash", …)` with calls through `agi bash`) are tracked under story **#105** (lockdown phase 2). Until that ships, individual `shell_exec`-style tools below are honest about whether they currently route through `agi bash` or fall back to direct execution.
+
+For full subcommand reference see `agi/docs/human/cli.md` § `agi bash`.
+
+---
+
 ## Dev Tools
 
 ### `shell_exec`

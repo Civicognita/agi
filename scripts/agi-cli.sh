@@ -27,7 +27,10 @@ while [ -L "$_AGI_SCRIPT" ]; do _AGI_SCRIPT="$(readlink -f "$_AGI_SCRIPT")"; don
 DEPLOY_DIR="${AIONIMA_DIR:-$(cd -P "$(dirname "$_AGI_SCRIPT")/.." && pwd)}"
 AGI_DIR="${HOME}/.agi"
 CONFIG_FILE="${AGI_DIR}/gateway.json"
-LOG_DIR="${AGI_DIR}/logs"
+# AGI_LOG_DIR override is supported so unit tests can redirect log output
+# to a tempdir without touching the user's real ~/.agi/logs/ tree. Default
+# behavior is unchanged when the env var is unset.
+LOG_DIR="${AGI_LOG_DIR:-${AGI_DIR}/logs}"
 SERVICE="agi"
 
 # Colors (respect NO_COLOR)
@@ -45,7 +48,7 @@ fi
 info()  { echo -e "${BLUE}[info]${RESET} $*"; }
 ok()    { echo -e "${GREEN}[ok]${RESET} $*"; }
 warn()  { echo -e "${YELLOW}[warn]${RESET} $*"; }
-err()   { echo -e "${RED}[error]${RESET} $*"; }
+err()   { echo -e "${RED}[error]${RESET} $*" >&2; }
 label() { printf "${BOLD}%-18s${RESET}" "$1"; }
 
 is_running() {
@@ -1134,6 +1137,221 @@ for r, info in sorted(recipes.items()):
   esac
 }
 
+# ---------------------------------------------------------------------------
+# agi bash — unrestricted shell passthrough (story #104, task #329 — MVP)
+#
+# Runs an arbitrary command through Aion's secure entryway so that every
+# terminal exec accumulates in one observable surface. This task is the
+# foundation; logging meta-context (#330), policy gating (#331), and
+# caller migrations (#332–334) layer on top in subsequent commits.
+#
+# Usage:
+#   agi bash <command...>     run the command, return its exit code
+#   agi bash -c '<command>'   explicit -c form (the leading -c is dropped
+#                             before forwarding; the command string is
+#                             passed to bash -c verbatim)
+#
+# Examples:
+#   agi bash echo hello
+#   agi bash 'ls -la /tmp'
+#   agi bash -c 'ls -la | grep tmp'
+#
+# Why this passthrough exists rather than letting agents shell out
+# directly: see ~/temp_core/CLAUDE.md § 3 (Blocker Protocol) and § 4
+# (Pattern Substrate).
+# ---------------------------------------------------------------------------
+# Internal: log a single agi-bash invocation as one JSONL record.
+#
+# Daily file at ${LOG_DIR}/agi-bash-YYYY-MM-DD.jsonl mirrors the existing
+# resource-stats-*.jsonl pattern in ~/.agi/logs/ so the substrate is
+# uniformly shaped for the future ETL pipeline (see ~/temp_core/CLAUDE.md
+# § 4 Pattern Substrate).
+#
+# Failure to write the log MUST NOT propagate to the caller's exit code —
+# a broken log surface should never break a working command. Errors are
+# silent here; future work can surface them via a dedicated dashboard.
+_agi_bash_log() {
+  local cmd="$1" exit_code="$2" stdout_bytes="$3" stderr_bytes="$4" \
+        duration_ms="$5" started_iso="$6" caller="$7" cwd="$8" \
+        blocked="${9:-false}" denial_reason="${10:-}" audit_note="${11:-}"
+
+  local cmd_hash
+  cmd_hash=$(printf '%s' "$cmd" | sha256sum | cut -c1-12)
+
+  # Escape JSON-special chars in fields that flow from external input.
+  # cmd is hashed and never logged raw, but cwd / denial_reason / audit_note
+  # all need light escaping for JSON safety.
+  local cwd_esc denial_esc audit_esc
+  cwd_esc=$(printf '%s' "$cwd" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  denial_esc=$(printf '%s' "$denial_reason" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  audit_esc=$(printf '%s' "$audit_note" | sed 's/\\/\\\\/g; s/"/\\"/g')
+
+  local log_dir="$LOG_DIR"
+  mkdir -p "$log_dir" 2>/dev/null || return 0
+
+  local log_file="$log_dir/agi-bash-$(date +%Y-%m-%d).jsonl"
+
+  printf '{"ts":"%s","caller":"%s","cwd":"%s","cmd_hash":"%s","exit_code":%s,"duration_ms":%s,"stdout_bytes":%s,"stderr_bytes":%s,"blocked":%s,"denial_reason":"%s","audit_note":"%s"}\n' \
+    "$started_iso" "$caller" "$cwd_esc" "$cmd_hash" "$exit_code" "$duration_ms" \
+    "$stdout_bytes" "$stderr_bytes" "$blocked" "$denial_esc" "$audit_esc" \
+    >>"$log_file" 2>/dev/null || return 0
+}
+
+# Internal: policy check for bash invocations (story #104, task #331).
+#
+# Reads ~/.agi/gateway.json bash.policy at every invocation (no caching —
+# config is hot-swappable per CLAUDE.md). Honors AGI_CONFIG_PATH env
+# override for testing. Default deny patterns are baked in and always
+# active; user config in `bash.policy.deny_patterns` extends (does not
+# replace) them, while `bash.policy.allow_overrides` is checked first so
+# the user can explicitly permit a normally-blocked operation with an
+# audit trail.
+#
+# Returns one line on stdout, parsed by the caller:
+#   ALLOW                              — proceed normally
+#   ALLOW_OVERRIDE:<matched-pattern>   — proceed, with audit note
+#   DENY:<human-readable-reason>       — block with logged denial
+_agi_bash_policy_check() {
+  local cmd="$1"
+  python3 - "$cmd" 2>/dev/null <<'PYEOF'
+import sys, json, re, os
+
+cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+
+DEFAULT_DENY = [
+    r"(?:^|[\s;|&'\"])/opt/aionima(?:[/\s;|&'\"]|$)",
+    r"(?:^|[\s;|&'\"])/opt/aionima-prime(?:[/\s;|&'\"]|$)",
+    r"(?:^|[\s;|&'\"])/opt/aionima-id(?:[/\s;|&'\"]|$)",
+    r"\brm\s+-rf\s+/\s*$",
+    r"\brm\s+-rf\s+/\s",
+    r"\bsystemctl\s+(?:stop|disable|mask)\s+(?:agi|aionima)\b",
+]
+
+config_path = os.environ.get("AGI_CONFIG_PATH") or os.path.expanduser("~/.agi/gateway.json")
+try:
+    with open(config_path) as f:
+        cfg = json.load(f)
+    user = (cfg.get("bash") or {}).get("policy") or {}
+except Exception:
+    user = {}
+
+deny_patterns = DEFAULT_DENY + (user.get("deny_patterns") or [])
+allow_overrides = user.get("allow_overrides") or []
+
+# Allow overrides win — user is explicitly permitting a normally-blocked op.
+for ov in allow_overrides:
+    try:
+        if re.search(ov, cmd):
+            print(f"ALLOW_OVERRIDE:{ov}")
+            sys.exit(0)
+    except re.error:
+        continue
+
+for pat in deny_patterns:
+    try:
+        if re.search(pat, cmd):
+            print(f"DENY:matches {pat}")
+            sys.exit(0)
+    except re.error:
+        continue
+
+print("ALLOW")
+PYEOF
+}
+
+cmd_bash() {
+  if [ "$#" -eq 0 ]; then
+    err "agi bash: missing command"
+    echo "Usage: agi bash <command...>" >&2
+    echo "       agi bash -c '<command>'" >&2
+    return 2
+  fi
+
+  # Drop a leading -c so `agi bash -c '<cmd>'` and `agi bash <cmd...>` both
+  # forward identically to `bash -c "$*"`. The internal invocation always
+  # uses bash -c; this lets callers paste either shape interchangeably.
+  if [ "$1" = "-c" ]; then
+    shift
+    if [ "$#" -eq 0 ]; then
+      err "agi bash -c: missing command string"
+      return 2
+    fi
+  fi
+
+  # Resolve caller. Default `human`; agents/Taskmaster/cron-prompt set
+  # AGI_CALLER (e.g. AGI_CALLER=chat-agent:<session_id>) so the log
+  # surface attributes the invocation correctly. Validate against a
+  # conservative charset so a malformed caller can't inject JSON.
+  local caller="${AGI_CALLER:-human}"
+  if ! [[ "$caller" =~ ^[a-zA-Z0-9_:.-]+$ ]]; then
+    caller="invalid"
+  fi
+
+  local cmd="$*"
+  local cwd
+  cwd=$(pwd)
+
+  local started_iso
+  started_iso=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
+
+  # Policy check FIRST — denied commands are logged-and-rejected before
+  # they can run. Hot-reload is automatic (config is read at every
+  # invocation; no caching).
+  local policy_result audit_note=""
+  policy_result=$(_agi_bash_policy_check "$cmd")
+  case "$policy_result" in
+    DENY:*)
+      local denial_reason="${policy_result#DENY:}"
+      err "agi bash: blocked by policy — $denial_reason"
+      _agi_bash_log "$cmd" "126" "0" "0" "0" "$started_iso" "$caller" "$cwd" "true" "$denial_reason" ""
+      return 126
+      ;;
+    ALLOW_OVERRIDE:*)
+      audit_note="override: ${policy_result#ALLOW_OVERRIDE:}"
+      ;;
+    ALLOW|"")
+      :  # proceed normally
+      ;;
+    *)
+      warn "agi bash: policy returned unexpected result: $policy_result — proceeding"
+      ;;
+  esac
+
+  # Capture byte counts via tempfile buffer. Trade-off: this breaks
+  # interactive / long-running commands like `tail -f` because output
+  # is buffered until the inner command exits. The 99% case (short
+  # commands) gets accurate byte counts; streaming mode is a future
+  # follow-up (see story #104 follow-ups in tynn).
+  local stdout_tmp stderr_tmp exit_code
+  stdout_tmp=$(mktemp 2>/dev/null) || { bash -c "$cmd"; return $?; }
+  stderr_tmp=$(mktemp 2>/dev/null) || { rm -f "$stdout_tmp"; bash -c "$cmd"; return $?; }
+
+  local started_ns
+  started_ns=$(date +%s%N)
+
+  bash -c "$cmd" >"$stdout_tmp" 2>"$stderr_tmp"
+  exit_code=$?
+
+  local ended_ns duration_ms
+  ended_ns=$(date +%s%N)
+  duration_ms=$(( (ended_ns - started_ns) / 1000000 ))
+
+  # Replay buffered output to the caller.
+  cat "$stdout_tmp"
+  cat "$stderr_tmp" >&2
+
+  local stdout_bytes stderr_bytes
+  stdout_bytes=$(wc -c <"$stdout_tmp" | tr -d ' ')
+  stderr_bytes=$(wc -c <"$stderr_tmp" | tr -d ' ')
+
+  rm -f "$stdout_tmp" "$stderr_tmp"
+
+  _agi_bash_log "$cmd" "$exit_code" "$stdout_bytes" "$stderr_bytes" \
+                "$duration_ms" "$started_iso" "$caller" "$cwd" "false" "" "$audit_note"
+
+  return "$exit_code"
+}
+
 cmd_help() {
   echo -e "${BOLD}agi${RESET} — Aionima Gateway CLI"
   echo ""
@@ -1167,6 +1385,8 @@ cmd_help() {
   echo "                  agi test dashboard            — unit (default)"
   echo "                  agi test --e2e mapps-walk     — Playwright against VM"
   echo "                  agi test --spot hardware      — spot feature test"
+  echo "  bash CMD...     Run a shell command through Aion's secure entryway"
+  echo "                  (story #104 — MVP surface; logging + policy WIP)"
   echo "  setup           Interactive configuration wizard"
   echo "  setup-prompts   Configure persona and heartbeat prompts"
   echo "  channels        Manage channel adapters"
@@ -1202,6 +1422,7 @@ case "${1:-help}" in
   ollama)   shift; cmd_ollama "$@" ;;
   test-vm)  shift; cmd_test_vm "$@" ;;
   test)     shift; bash "$DEPLOY_DIR/scripts/agi-test.sh" "$@" ;;
+  bash)     shift; cmd_bash "$@" ;;
   setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;
   setup-prompts) node "$DEPLOY_DIR/cli/dist/index.js" setup-prompts ;;
   channels) shift; node "$DEPLOY_DIR/cli/dist/index.js" channels "$@" ;;
