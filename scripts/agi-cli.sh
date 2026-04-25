@@ -707,6 +707,50 @@ print(','.join(installed) if installed else '(none)')
     ok "${disk_pct}% used"
   fi
 
+  # Hosted projects (story #110 — make `agi doctor` cover hosted-project state
+  # alongside infra checks; same data source as `agi projects`'s RUN column).
+  label "Hosted projects:"
+  local total_enabled=0
+  local down_names=""
+  local running_containers
+  running_containers="$(podman ps --format '{{.Names}}' 2>/dev/null || true)"
+  for config_dir in "$AGI_DIR"/*/; do
+    local cfg_file="${config_dir}project.json"
+    [ -f "$cfg_file" ] || continue
+    local probe
+    probe="$(node -e "
+      try {
+        const data = JSON.parse(require('fs').readFileSync('${cfg_file}','utf-8'));
+        const h = data.hosting || {};
+        if (h.enabled && h.hostname) {
+          const slug = require('path').basename(require('path').dirname('${cfg_file}'));
+          const name = data.name || slug;
+          console.log('enabled|' + name + '|agi-' + h.hostname);
+        } else {
+          console.log('|||');
+        }
+      } catch { console.log('|||'); }
+    " 2>/dev/null)"
+    [ "${probe%%|*}" = "enabled" ] || continue
+    total_enabled=$((total_enabled + 1))
+    local proj_name="${probe#enabled|}"
+    proj_name="${proj_name%%|*}"
+    local container="${probe##*|}"
+    if ! printf '%s\n' "$running_containers" | grep -qx "$container"; then
+      down_names="${down_names}${down_names:+, }${proj_name}"
+    fi
+  done
+  if [ "$total_enabled" -eq 0 ]; then
+    ok "no enabled projects"
+  elif [ -z "$down_names" ]; then
+    ok "${total_enabled}/${total_enabled} up"
+  else
+    local down_count
+    down_count="$(printf '%s\n' "$down_names" | tr ',' '\n' | wc -l | tr -d ' ')"
+    warn "${down_count}/${total_enabled} down: ${down_names} — see 'agi projects' for detail"
+    issues=$((issues + 1))
+  fi
+
   echo ""
   if [ "$issues" -eq 0 ]; then
     ok "All checks passed"
