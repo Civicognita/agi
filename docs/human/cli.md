@@ -88,7 +88,9 @@ Run infrastructure health checks.
 agi doctor
 ```
 
-Checks: Node.js version, pnpm, deploy directory, config file, Caddy, Podman (rootless), dnsmasq, gateway HTTP response, disk usage.
+Checks: Node.js version, pnpm, deploy directory, config file, Caddy, Podman (rootless), Ollama, dnsmasq, gateway HTTP response, NPU readiness (when available), Lemonade backend, disk usage, **hosted-project state** (`N/M up` summary with names of any down projects — see `agi projects` for the full list).
+
+Exits with the issue count as a one-line summary at the bottom.
 
 ---
 
@@ -106,11 +108,52 @@ agi config gateway.port       # nested keys work
 
 ### agi projects
 
-List all hosted projects with their type, status, hostname, and port.
+List all hosted projects with their type, status, container running-state, hostname, and port. Supports two subcommands for per-project operations.
 
 ```bash
-agi projects
+agi projects                       # list (default)
+agi projects logs <slug> [opts]    # tail container logs
+agi projects restart <slug>        # restart container via gateway API
 ```
+
+#### `agi projects` (list)
+
+Shows one row per project with these columns:
+
+| Column | Meaning |
+|---|---|
+| Name | Display name from `project.json` (falls back to slug) |
+| Type | `web-app` / `static-site` / `writing` / `api-service` / etc. |
+| Status | `enabled` (hosting on) / `disabled` |
+| Run | `up` (container running) / `down` (enabled but no container) / `-` (disabled or no hostname) |
+| Hostname | `<hostname>.ai.on` (Caddy reverse-proxy target) |
+| Port | Internal container port |
+
+The Run column probes a single `podman ps` snapshot — at-a-glance check for which hosted projects are actually serving without dropping into raw podman.
+
+#### `agi projects logs <slug>`
+
+Tails the project'\\''s container logs via `podman logs`. The `<slug>` argument matches against the slug folder, the project'\\''s display name, or its hostname.
+
+Options:
+
+- `--tail N` — number of lines (default 50)
+- `-f` / `--follow` — stream new lines (Ctrl+C to stop)
+
+```bash
+agi projects logs kronos-trader --tail 100
+agi projects logs civicognita_web -f
+```
+
+#### `agi projects restart <slug>`
+
+POSTs to the gateway'\\''s `/api/hosting/restart` endpoint to restart the project'\\''s container in place. Useful when a hosted project hangs or you'\\''ve deployed new code to it. Same matcher as `logs`. The gateway reports back with `ok: true` on success or a structured error if the restart fails.
+
+```bash
+agi projects restart kronos-trader
+```
+
+Symmetric with the dashboard'\\''s "Restart" action — same gateway endpoint, same effect; this is the CLI surface for the same operation.
 
 ---
 
