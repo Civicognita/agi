@@ -2,39 +2,33 @@
 # ---------------------------------------------------------------------------
 # agi-bash-router — Claude Code PreToolUse hook for the Bash tool
 # ---------------------------------------------------------------------------
-# Story #108, task #344 (v0.4.0 sweep). Enforces the routing rule from
-# ~/temp_core/CLAUDE.md § 3:
+# Story #108. Enforces the rule from ~/temp_core/CLAUDE.md § 3:
 #
 #   Every shell exec by the assistant must flow through `agi bash` so the
 #   invocation lands in the JSONL log surface (~/.agi/logs/agi-bash-*.jsonl)
 #   with caller attribution. Substrate completeness, not by-discipline.
 #
-# Behavior (block-and-nudge):
-#   * If the candidate command is already wrapped (matches `agi bash` or
-#     `bash …agi-cli.sh bash`) → exit 0 (allow).
-#   * If the binary at /usr/local/bin/agi exposes the `bash` subcommand,
-#     suggest the short form (`agi bash '<cmd>'`). Otherwise suggest the
-#     dev-source wrap (`bash <path>/agi-cli.sh bash '<cmd>'`).
-#   * Block with exit 2 + a structured stderr message the assistant reads
-#     and converts into a re-issue with the wrapped form.
+# Behavior (transparent rewrite — agibash IS the bash replacement):
+#   * Unwrapped command → emit hookSpecificOutput.updatedInput.command
+#     that wraps it as `agi bash '<cmd>'`. Claude Code runs the rewritten
+#     form with no friction. The assistant's plain `Bash("ls /tmp")` call
+#     becomes `agi bash 'ls /tmp'` automatically.
+#   * Already-wrapped (`agi bash …`, `bash …agi-cli.sh bash`, `agi <subcmd>`)
+#     → exit 0 with empty stdout (allow as-is).
+#   * AGI_ROUTER_BYPASS=1 → exit 0 (allow), audit-logged.
 #
-# Carve-outs (allow without wrap):
-#   * Empty / whitespace-only command → exit 0 (the Bash tool will reject).
-#   * Commands that ARE the agi-cli.sh dispatch (e.g. `agi help`, `agi test
-#     dashboard`) — these already-route-through-agi don't need wrapping.
-#   * Commands the user explicitly opts out of via the env var
-#     AGI_ROUTER_BYPASS=1 (escape hatch — recorded in router log).
+# Output protocol (PreToolUse, current):
+#   {
+#     "hookSpecificOutput": {
+#       "hookEventName": "PreToolUse",
+#       "permissionDecision": "allow",
+#       "updatedInput": { "command": "<rewritten>" }
+#     }
+#   }
 #
-# Collision protocol (story #108, task #347 will extend this):
-#   When the inner agi bash itself returns 126 (policy block) or "Unknown
-#   command" stderr, this hook is NOT the right place to intercept (that's
-#   PostToolUse). The block path here only fires for unwrapped commands.
-#
-# Robustness:
-#   * The hook NEVER blocks because of its own malfunction. If jq is
-#     missing or stdin is malformed, exit 0 (allow) and log to the router
-#     error log so the assistant isn't left stranded.
-#   * Output is always written to ROUTER_LOG for post-hoc audit.
+# Robustness: the hook NEVER blocks on its own malfunction. If jq is
+# missing or stdin is malformed, exit 0 (allow) and log to ROUTER_LOG.
+# Output is always written to ROUTER_LOG for post-hoc audit.
 # ---------------------------------------------------------------------------
 set -uo pipefail
 
@@ -54,8 +48,6 @@ if [ -z "$EVENT_JSON" ]; then
   exit 0
 fi
 
-# Use jq if available; fall back to a coarse grep extraction otherwise so
-# missing jq doesn't strand the assistant.
 extract_command() {
   if command -v jq >/dev/null 2>&1; then
     printf '%s' "$EVENT_JSON" | jq -r '.tool_input.command // empty' 2>/dev/null
@@ -79,18 +71,9 @@ if [ "${AGI_ROUTER_BYPASS:-0}" = "1" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Already-wrapped detection
-# ---------------------------------------------------------------------------
-#
-# A command is considered routed if:
-#   * It starts with `agi bash` (the live binary form, post-deploy).
-#   * It matches `bash …agi-cli.sh bash` (the dev-source form).
-#   * It is invoking the agi binary itself with a non-bash subcommand
-#     (`agi status`, `agi test`, `agi marketplace …`) — those already use
-#     the agi entryway.
-#
+# Already-wrapped detection — passes through unchanged.
 # Detection is intentionally permissive (anchored substring); a
-# false-positive bypass is preferable to false-positive blocking.
+# false-positive bypass is preferable to false-positive rewrite.
 # ---------------------------------------------------------------------------
 case "$CMD" in
   *"agi-cli.sh bash"*) log "allow — dev-script wrap"; exit 0 ;;
@@ -105,38 +88,60 @@ case "$CMD" in
 esac
 
 # ---------------------------------------------------------------------------
-# Decide which wrap form to suggest.
+# Rewrite: wrap the command via `agi bash '<cmd>'` (live) or the
+# dev-source path (when /usr/local/bin/agi predates v0.4.149). Quote
+# inner single-quotes by closing-out, escaping, and reopening.
 # ---------------------------------------------------------------------------
-SUGGESTED_FORM=""
+QUOTED_CMD="${CMD//\'/\'\\\'\'}"
+
 if /usr/local/bin/agi help 2>/dev/null | grep -q "bash CMD" 2>/dev/null; then
-  SUGGESTED_FORM="agi bash '<cmd>'"
-  WRAP_PATH="agi bash"
+  REWRITTEN="agi bash '${QUOTED_CMD}'"
+  WRAP_FORM="live"
 else
-  SUGGESTED_FORM="bash /home/wishborn/temp_core/agi/scripts/agi-cli.sh bash '<cmd>'"
-  WRAP_PATH="bash /home/wishborn/temp_core/agi/scripts/agi-cli.sh bash"
+  REWRITTEN="bash /home/wishborn/temp_core/agi/scripts/agi-cli.sh bash '${QUOTED_CMD}'"
+  WRAP_FORM="dev-source"
 fi
 
-# Build a quoted version of CMD for the suggestion.
-# Escape single quotes by closing-out, escaping, and reopening: ' \' '
-QUOTED_CMD="${CMD//\'/\'\\\'\'}"
-SUGGESTED_REWRITE="${WRAP_PATH} '${QUOTED_CMD}'"
-
 CMD_HASH="$(printf '%s' "$CMD" | sha256sum | cut -c1-12)"
-log "BLOCK unwrapped Bash (hash=${CMD_HASH}) — suggesting ${WRAP_PATH}"
+log "REWRITE (${WRAP_FORM}) hash=${CMD_HASH} cmd_len=${#CMD}"
 
 # ---------------------------------------------------------------------------
-# Block with structured stderr the assistant can parse.
-# Format: a header line for human readability + a prefixed line per
-# directive so future automation can tail it deterministically.
+# Emit the PreToolUse rewrite payload. We need to JSON-encode REWRITTEN as
+# a string; prefer jq, fall back to a python3 one-liner, then a manual
+# escape if both are unavailable.
 # ---------------------------------------------------------------------------
-{
-  echo "AGI-BASH-ROUTER: blocked unwrapped Bash command (story #108)"
-  echo "AGI-BASH-ROUTER:reason: every shell exec must flow through agi bash"
-  echo "AGI-BASH-ROUTER:cmd_hash: ${CMD_HASH}"
-  echo "AGI-BASH-ROUTER:suggested_form: ${SUGGESTED_FORM}"
-  echo "AGI-BASH-ROUTER:rewrite: ${SUGGESTED_REWRITE}"
-  echo "AGI-BASH-ROUTER:bypass: set AGI_ROUTER_BYPASS=1 in the Bash env to skip routing (recorded in audit log)"
-  echo ""
-  echo "Re-issue the Bash call using the rewrite above, OR use AGI_ROUTER_BYPASS=1 if this exec is intentionally outside the entryway (and document why in tynn)."
-} >&2
-exit 2
+emit_rewrite_json() {
+  local cmd="$1"
+  if command -v jq >/dev/null 2>&1; then
+    jq -nc --arg cmd "$cmd" '{
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: $cmd }
+      }
+    }'
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    REWRITTEN_CMD="$cmd" python3 -c '
+import json, os
+print(json.dumps({
+    "hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "updatedInput": {"command": os.environ["REWRITTEN_CMD"]},
+    }
+}))'
+    return 0
+  fi
+  # Manual fallback: only escape backslashes, double-quotes, and control chars.
+  # This branch is best-effort; jq/python3 are the supported paths.
+  local esc="${cmd//\\/\\\\}"
+  esc="${esc//\"/\\\"}"
+  esc="${esc//$'\n'/\\n}"
+  esc="${esc//$'\t'/\\t}"
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":"%s"}}}\n' "$esc"
+}
+
+emit_rewrite_json "$REWRITTEN"
+exit 0

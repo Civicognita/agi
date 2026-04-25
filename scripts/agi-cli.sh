@@ -1682,9 +1682,11 @@ cmd_setup_claude_hooks() {
 
   echo ""
   info "Routing activates on the next Claude Code session start."
-  info "Test by running a plain 'ls' from the assistant — you should see"
-  info "  the AGI-BASH-ROUTER: blocked stderr nudge."
+  info "Test by running a plain 'ls' from the assistant — the hook"
+  info "  transparently rewrites it to 'agi bash ls' (no friction)."
   info "Audit log: ~/.agi/logs/agi-bash-router.log"
+  info "  Look for REWRITE entries; the JSONL log at"
+  info "  ~/.agi/logs/agi-bash-YYYY-MM-DD.jsonl captures each routed exec."
 }
 
 cmd_help() {

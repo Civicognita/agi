@@ -266,26 +266,27 @@ The installer is **idempotent** — safe to re-run; it copies the hook + skill i
 1. **PreToolUse hook** at `~/.claude/hooks/agi-bash-router.sh` is wired in `~/.claude/settings.json` with `matcher: "Bash"`. It fires before every Bash tool call.
 
 2. **Decision logic**:
-   - Already-wrapped (`agi bash …`, `bash …agi-cli.sh bash`, `agi <subcmd>`): exit 0, allow unchanged.
+   - Already-wrapped (`agi bash …`, `bash …agi-cli.sh bash`, `agi <subcmd>`): exit 0 with empty stdout, allow unchanged.
    - Empty command, or `AGI_ROUTER_BYPASS=1` env var set: exit 0, allow (bypass logged for audit).
-   - Otherwise: exit 2 with structured stderr listing the rewrite. The assistant reads the nudge and re-issues the call wrapped.
+   - Otherwise: emit a `hookSpecificOutput.updatedInput.command` payload that wraps the command as `agi bash '<cmd>'` and let Claude Code execute the rewritten form. The assistant's plain `Bash(...)` call runs as `agi bash '...'` with no friction — no re-issue, no block.
 
-3. **Suggested wrap form** is picked by probing the live binary — `agi bash '<cmd>'` when `/usr/local/bin/agi help` shows the `bash CMD` line, otherwise the dev-source `bash <path>/agi-cli.sh bash '<cmd>'`.
+3. **Wrap form** is picked by probing the live binary — `agi bash '<cmd>'` when `/usr/local/bin/agi help` shows the `bash CMD` line, otherwise the dev-source `bash <path>/agi-cli.sh bash '<cmd>'`.
 
 4. **Caller** is auto-set to `claude-code:<session-id>` when the assistant's call is auto-routed; explicit invocations via the `agibash` skill set it differently (e.g., `taskmaster:<job>`, `batch:<id>`).
 
-### Structured stderr format
+### Rewrite payload format
 
-```
-AGI-BASH-ROUTER: blocked unwrapped Bash command (story #108)
-AGI-BASH-ROUTER:reason: every shell exec must flow through agi bash
-AGI-BASH-ROUTER:cmd_hash: <12-hex-char hash>
-AGI-BASH-ROUTER:suggested_form: <agi bash '<cmd>' or dev-script form>
-AGI-BASH-ROUTER:rewrite: <full ready-to-paste rewrite>
-AGI-BASH-ROUTER:bypass: set AGI_ROUTER_BYPASS=1 in the Bash env to skip routing (recorded in audit log)
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "updatedInput": { "command": "agi bash '<original-cmd>'" }
+  }
+}
 ```
 
-Each line has the `AGI-BASH-ROUTER:` prefix so the assistant or external automation can parse deterministically.
+The hook emits this on stdout for unwrapped commands, then exits 0. Claude Code substitutes `tool_input.command` and runs the rewritten form. The assistant sees only the result; no stderr nudge appears unless something else fails.
 
 ### Audit log
 
@@ -293,7 +294,7 @@ Every routing decision (allow / block / bypass) is appended to `~/.agi/logs/agi-
 
 ### `agibash` skill
 
-`~/.claude/skills/agibash/SKILL.md` is the explicit-control invocation form for cases where the hook's auto-wrap isn't appropriate — Taskmaster jobs that need their own caller, batch sequences, or pre-critical exec verification. Use the skill when caller attribution matters; use the auto-router for routine ad-hoc Bash.
+`~/.claude/skills/agibash/SKILL.md` is for **explicit control** when the auto-rewrite default isn't enough — Taskmaster jobs that need their own caller, batch sequences grouped under one logical audit unit, or pre-critical exec verification where the routing intent should appear on the page. The skill is **not** required for routine commands; the hook's transparent rewrite covers those.
 
 ### Bypass discipline
 
