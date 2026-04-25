@@ -1282,7 +1282,21 @@ cmd_bash() {
   # AGI_CALLER (e.g. AGI_CALLER=chat-agent:<session_id>) so the log
   # surface attributes the invocation correctly. Validate against a
   # conservative charset so a malformed caller can't inject JSON.
-  local caller="${AGI_CALLER:-human}"
+  #
+  # Auto-attribution (story #108 t351): when AGI_CALLER is unset and
+  # CLAUDECODE=1 (Claude Code's runtime sets this in every Bash tool
+  # child env), default the caller to `claude-code` so harness-driven
+  # shell ops are distinguishable from human-at-terminal in the
+  # JSONL substrate. Future enhancement: include a session/turn id if
+  # Claude Code ever exposes one in the env.
+  local caller="${AGI_CALLER:-}"
+  if [ -z "$caller" ]; then
+    if [ "${CLAUDECODE:-0}" = "1" ]; then
+      caller="claude-code"
+    else
+      caller="human"
+    fi
+  fi
   if ! [[ "$caller" =~ ^[a-zA-Z0-9_:.-]+$ ]]; then
     caller="invalid"
   fi
