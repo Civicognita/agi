@@ -811,7 +811,85 @@ cmd_test_vm() {
   bash "$script" "$subcmd" "$@"
 }
 
+# Resolve a project slug or name to its container name (agi-<hostname>).
+# Echoes the container name on stdout; returns 1 if no match.
+_resolve_project_container() {
+  local query="$1"
+  for config_dir in "$AGI_DIR"/*/; do
+    local cfg_file="${config_dir}project.json"
+    [ -f "$cfg_file" ] || continue
+    local match
+    match="$(node -e "
+      try {
+        const data = JSON.parse(require('fs').readFileSync('${cfg_file}','utf-8'));
+        const h = data.hosting || {};
+        if (!h.enabled || !h.hostname) { process.exit(1); }
+        const slug = require('path').basename(require('path').dirname('${cfg_file}'));
+        const name = data.name || slug;
+        const q = '${query}';
+        if (slug === q || name === q || h.hostname === q) {
+          console.log('agi-' + h.hostname);
+          process.exit(0);
+        }
+        process.exit(1);
+      } catch { process.exit(1); }
+    " 2>/dev/null)"
+    if [ -n "$match" ]; then
+      echo "$match"
+      return 0
+    fi
+  done
+  return 1
+}
+
+cmd_projects_logs() {
+  local query="${1:-}"
+  if [ -z "$query" ]; then
+    err "agi projects logs: missing project slug"
+    echo "Usage: agi projects logs <slug> [--tail N] [-f]" >&2
+    return 2
+  fi
+
+  local container
+  container="$(_resolve_project_container "$query")" || {
+    err "no enabled project matching '${query}' (try 'agi projects' for the list)"
+    return 1
+  }
+
+  shift || true
+  local tail="50"
+  local follow=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --tail) tail="${2:-50}"; shift 2 ;;
+      -f|--follow) follow="-f"; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  if ! podman container exists "$container" 2>/dev/null; then
+    err "container ${container} does not exist (is the project hosted? 'agi projects' shows status)"
+    return 1
+  fi
+
+  info "container: ${container} (tail=${tail}${follow:+, follow})"
+  echo ""
+  podman logs --tail "$tail" $follow "$container" 2>&1
+}
+
 cmd_projects() {
+  # Accept subcommands. Default (no arg) lists all projects.
+  case "${1:-list}" in
+    logs) shift; cmd_projects_logs "$@" ;;
+    list|"") cmd_projects_list ;;
+    *)
+      err "Unknown projects subcommand: $1"
+      echo "  Subcommands: list (default), logs <slug>" >&2
+      return 1 ;;
+  esac
+}
+
+cmd_projects_list() {
   echo -e "${BOLD}Hosted Projects${RESET}"
   echo ""
 
@@ -1530,7 +1608,8 @@ cmd_help() {
   echo "  safemode        Show safemode status (or: safemode exit)"
   echo "  incidents       List incident reports (or: incidents view <id>)"
   echo "  config [key]    Read config (full or dot-path key)"
-  echo "  projects        List hosted projects"
+  echo "  projects [CMD]  List hosted projects (default) or:"
+  echo "                    logs <slug> [--tail N] [-f]   Tail container logs"
   echo "  models CMD      Manage HF models (list|running|status|install|start|"
   echo "                  stop|remove|search|hardware)"
   echo "  providers CMD   Manage LLM providers (list|status|set-default)"
@@ -1578,7 +1657,7 @@ case "${1:-help}" in
   safemode) shift; cmd_safemode "$@" ;;
   incidents) shift; cmd_incidents "$@" ;;
   config)   cmd_config "${2:-}" ;;
-  projects) cmd_projects ;;
+  projects) shift; cmd_projects "$@" ;;
   models)    shift; cmd_models "$@" ;;
   providers) shift; cmd_providers "$@" ;;
   marketplace) shift; cmd_marketplace "$@" ;;
