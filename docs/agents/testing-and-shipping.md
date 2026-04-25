@@ -32,7 +32,29 @@ Runs `tsc --noEmit` across the full monorepo. This validates TypeScript types wi
 
 Both checks must pass before a commit. Never skip either step.
 
-### 3. Curl-test backend API endpoints
+### 3. Same-commit help-text + docs sweep
+
+Whenever a commit changes a CLI surface — adds a subcommand, changes a flag, alters the deployed behavior of an existing one — the matching surfaces must be updated in the **same commit**:
+
+- **`scripts/agi-cli.sh` help block** — the `agi help` output the owner reads in the terminal. New subcommands need entries in the help dispatcher; revised behavior needs the description line refreshed (no leftover "WIP", "MVP", or "TODO" markers from earlier shipping cycles).
+- **`docs/human/cli.md`** — the canonical CLI reference. Every subcommand shown by `agi help` should appear here with the same name, same flags, and a one-line description that matches the help output.
+- **Adjacent docs in `docs/human/` and `docs/agents/`** — if a subcommand is documented inline elsewhere (e.g. `testing.md` for `test-vm`, `huggingface.md` for `models`), refresh those references too.
+
+**Why this matters:** help text is not audited by anything. Type-checks pass, tests pass, the CLI works — and the help text can stay wrong indefinitely. Drift surfaced during the v0.4.0 sweep included `agi bash` describing itself as "(MVP surface; logging + policy WIP)" eight versions after both shipped (v0.4.149 → v0.4.177). The fix is *prevention in the same commit*, not *detection later*.
+
+**Quick sanity check before committing a CLI change:**
+
+```bash
+# Run the dev-source help and grep for the surface you touched
+bash scripts/agi-cli.sh help | grep -A2 '<subcommand>'
+
+# Diff against the canonical doc
+grep -A2 '### <subcommand>' docs/human/cli.md
+```
+
+A future structural fix tracked under s101 will add a docs-vs-help diff lint to CI so this becomes mechanical instead of disciplinary.
+
+### 4. Curl-test backend API endpoints
 
 Test every endpoint you added or modified. Examples:
 
