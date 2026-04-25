@@ -1,0 +1,9 @@
+# Substrings that mark a /loop fire. The Stop hook plays a chime when the
+# last user message in the transcript contains any of these. One per line.
+# Lines starting with `#` and blank lines are ignored.
+#
+# Fixed-substring match (no regex). Keep entries narrow enough that they
+# don't false-match in normal conversation.
+
+Operating workflow: tynn story
+Continue the v0.4.0 sweep
