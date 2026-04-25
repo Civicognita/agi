@@ -1,86 +1,93 @@
 /**
- * Test DB fixture — pglite-backed drizzle client with the dashboard
- * subset of the @agi/db-schema tables.
+ * Test DB fixture — schema-per-test against real Postgres (story #106 t339).
  *
- * Why this exists: `DashboardQueries` and friends were migrated to
- * drizzle/Postgres (v0.4.39 → v0.4.96 cutover), but the test files under
- * packages/gateway-core/src/*.test.ts still seed via better-sqlite3 from
- * @agi/entity-model. The mismatch was frozen with `@ts-nocheck +
- * describe.skip` blocks pending a real Postgres harness
- * (see _plans/phase2-tests-pg.md).
+ * Each call to `createTestDb()` allocates a fresh `test_<random>` schema
+ * inside the test VM's `agi_data` Postgres, runs the dashboard-subset DDL
+ * into it, and returns a drizzle `NodePgDatabase` with `search_path` pinned
+ * to that schema so every query resolves unqualified table names there.
+ * `close()` drops the schema; `reset()` truncates fixture tables between
+ * tests within the same schema.
  *
- * `@electric-sql/pglite` gives us in-process Postgres-in-WASM — no
- * external container, no VM. Since `pnpm.overrides.drizzle-orm: 0.38.4`
- * was added in v0.4.103, pglite's peer-dep closure shares drizzle-orm
- * with the rest of the workspace (verified: `pnpm ls drizzle-orm -r`
- * shows a single 0.38.4).
+ * Why we replaced pglite: the previous fixture used `@electric-sql/pglite`
+ * (in-process Postgres-in-WASM) for fast boot but introduced a second
+ * Postgres-compatible engine, a hand-written DDL mirror, and a load-bearing
+ * `pnpm.overrides.drizzle-orm` pin — all of which violated the project's
+ * single-source-of-truth principle (memory `feedback_single_source_of_truth_db`).
+ * Owner direction 2026-04-25: tests use the test VM's real Postgres
+ * (16.13, system-managed), connected via @agi/db-schema's createDbClient.
+ * Per-test isolation comes from schema-per-test rather than per-test
+ * database creation (cheaper) or transaction-rollback (drizzle pool
+ * makes connection pinning awkward).
  *
- * This fixture covers the tables the DASHBOARD tests need. Other
- * deferred test files (gdpr, impact-scorer, governance, multi-tenancy,
- * queue, store, usage-store, verification, federation, gateway, seal,
- * store-diff — per _plans/phase2-tests-pg.md) can extend
- * SCHEMA_DDL with their own tables as they migrate.
+ * Per-test cost: ~50–200ms for schema creation + DDL. For ~85 tests a
+ * full run adds a few seconds; acceptable trade-off for one DB engine.
  *
- * Usage:
- *   import { createTestDb, resetTestDb } from "./test-utils/db-fixture.js";
+ * Connection: defaults to the test VM's Postgres at
+ * `postgres://agi:aionima@localhost:5432/agi_data`. Override via
+ * `AGI_TEST_DATABASE_URL` (preferred) or `DATABASE_URL`. The VM must be
+ * running; see `db-connection.ts` for the connectivity probe.
+ *
+ * This fixture covers the dashboard tests' table subset. As more test
+ * files migrate (per `_plans/phase2-tests-pg.md`), they should swap their
+ * hand-written DDL for the production migration path from `@agi/db-schema`
+ * (a follow-up beyond t339's MVP scope).
+ *
+ * Usage (drop-in replacement for the previous pglite fixture):
+ *   import { createTestDb, type TestDbContext } from "./test-utils/db-fixture.js";
  *
  *   let ctx: TestDbContext;
  *   beforeEach(async () => { ctx = await createTestDb(); });
  *   afterEach(async () => { await ctx.close(); });
  *
- *   // Pass ctx.db wherever a drizzle PgDatabase is expected.
  *   const queries = new DashboardQueries(ctx.db);
  *
- * Type note: DashboardQueries' constructor today accepts the concrete
- * `Db = NodePgDatabase<schema>`. PgliteDatabase<schema> shares the
- * PgDatabase base class but has a different QueryResultHKT. Callers
- * that need to bridge can widen DashboardQueries' signature to accept
- * `PgDatabase<any, typeof schema>` (drizzle's own generic base type) or
- * cast the fixture's `db` at the call site. Both escape hatches are
- * ergonomic; production code keeps the tighter NodePgDatabase.
+ * `ctx.db` is now a `NodePgDatabase<typeof schema>` — production-equivalent.
+ * The `AnyDb` widening that DashboardQueries / EntityStore / ImpactRecorder
+ * adopted for pglite still works (they accept any `PgDatabase` driver), but
+ * the concrete `NodePgDatabase` could be tightened back where convenient.
  */
 
-import { PGlite } from "@electric-sql/pglite";
-import { drizzle, type PgliteDatabase } from "drizzle-orm/pglite";
+import { randomBytes } from "node:crypto";
+import { Pool } from "pg";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import * as schema from "@agi/db-schema";
 
 export interface TestDbContext {
-  readonly pg: PGlite;
-  readonly db: PgliteDatabase<typeof schema>;
-  /** Close the pglite instance and release resources. */
+  /** Postgres pool with `search_path` set to this test's schema. */
+  readonly pool: Pool;
+  /** drizzle client — production-equivalent NodePgDatabase. */
+  readonly db: NodePgDatabase<typeof schema>;
+  /** The per-test schema name (`test_<16-hex-char>`). */
+  readonly schemaName: string;
+  /** Drop the test schema and close the pool. */
   close(): Promise<void>;
-  /** Truncate all fixture tables, keeping the schema — faster than reopening. */
+  /** Truncate fixture tables within the test schema. Faster than reopening. */
   reset(): Promise<void>;
 }
 
 /**
- * Schema DDL covering the dashboard-test subset of the unified schema.
+ * DDL covering the dashboard-test subset.
  *
- * Hand-written CREATE TABLE IF NOT EXISTS statements matching the
- * drizzle table objects in @agi/db-schema. Intentional mirror — update
- * whenever db-schema changes. We can't rely on drizzle-kit push here
- * because the monorepo's NodeNext .js imports confuse drizzle-kit's
- * CJS resolver (same reason agi/scripts/migrate-db.sh exists).
+ * Hand-written for the dashboard tests' table needs; runs inside the
+ * per-test schema thanks to `search_path`. CREATE TYPE statements are
+ * unconditional because the schema is freshly created — types from
+ * `public` (production) are not visible to these queries inside the
+ * test schema unless qualified, and we never qualify here.
  *
- * Includes: entity enums, entities, coa_chains, impact_interactions.
- * Extend when migrating additional tests.
+ * Intentional mirror of the drizzle table objects in @agi/db-schema —
+ * update both whenever db-schema changes. drizzle-kit can't bridge
+ * the gap because the monorepo's NodeNext .js imports break drizzle-kit's
+ * CJS resolver (same reason `agi/scripts/migrate-db.sh` exists). A follow-up
+ * task can replace this DDL with the actual production migration path.
  */
 const SCHEMA_DDL = `
 -- Enums
-DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'entity_scope') THEN
-    CREATE TYPE entity_scope AS ENUM ('local', 'registered', 'federated');
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'verification_tier') THEN
-    CREATE TYPE verification_tier AS ENUM ('unverified', 'pending', 'verified', 'trusted', 'sealed', 'disabled');
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'federation_consent') THEN
-    CREATE TYPE federation_consent AS ENUM ('none', 'discoverable', 'full');
-  END IF;
-END $$;
+CREATE TYPE entity_scope AS ENUM ('local', 'registered', 'federated');
+CREATE TYPE verification_tier AS ENUM ('unverified', 'pending', 'verified', 'trusted', 'sealed', 'disabled');
+CREATE TYPE federation_consent AS ENUM ('none', 'discoverable', 'full');
 
--- entities (from packages/db-schema/src/entities.ts)
-CREATE TABLE IF NOT EXISTS entities (
+-- entities (mirrors packages/db-schema/src/entities.ts)
+CREATE TABLE entities (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL,
   display_name TEXT NOT NULL,
@@ -98,13 +105,12 @@ CREATE TABLE IF NOT EXISTS entities (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS entities_coa_alias_idx ON entities (coa_alias);
-CREATE INDEX IF NOT EXISTS entities_parent_idx ON entities (parent_entity_id);
-CREATE INDEX IF NOT EXISTS entities_user_idx ON entities (user_id);
+CREATE UNIQUE INDEX entities_coa_alias_idx ON entities (coa_alias);
+CREATE INDEX entities_parent_idx ON entities (parent_entity_id);
+CREATE INDEX entities_user_idx ON entities (user_id);
 
--- geid_local (from packages/db-schema/src/entities.ts) — required by
--- EntityStore.createEntity which auto-generates a GEID keypair per entity.
-CREATE TABLE IF NOT EXISTS geid_local (
+-- geid_local — required by EntityStore.createEntity (auto-generates GEID keypair).
+CREATE TABLE geid_local (
   entity_id TEXT PRIMARY KEY REFERENCES entities (id) ON DELETE CASCADE,
   geid TEXT NOT NULL,
   public_key_pem TEXT NOT NULL,
@@ -112,10 +118,10 @@ CREATE TABLE IF NOT EXISTS geid_local (
   discoverable BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS geid_local_geid_idx ON geid_local (geid);
+CREATE UNIQUE INDEX geid_local_geid_idx ON geid_local (geid);
 
--- coa_chains (from packages/db-schema/src/audit.ts)
-CREATE TABLE IF NOT EXISTS coa_chains (
+-- coa_chains (mirrors packages/db-schema/src/audit.ts)
+CREATE TABLE coa_chains (
   fingerprint TEXT PRIMARY KEY,
   resource_id TEXT NOT NULL,
   entity_id TEXT NOT NULL REFERENCES entities (id),
@@ -130,11 +136,11 @@ CREATE TABLE IF NOT EXISTS coa_chains (
   integrity_hash TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS coa_chains_entity_idx ON coa_chains (entity_id);
-CREATE INDEX IF NOT EXISTS coa_chains_created_idx ON coa_chains (created_at);
+CREATE INDEX coa_chains_entity_idx ON coa_chains (entity_id);
+CREATE INDEX coa_chains_created_idx ON coa_chains (created_at);
 
--- impact_interactions (from packages/db-schema/src/audit.ts)
-CREATE TABLE IF NOT EXISTS impact_interactions (
+-- impact_interactions (mirrors packages/db-schema/src/audit.ts)
+CREATE TABLE impact_interactions (
   id TEXT PRIMARY KEY,
   entity_id TEXT NOT NULL REFERENCES entities (id),
   coa_fingerprint TEXT NOT NULL REFERENCES coa_chains (fingerprint),
@@ -148,38 +154,83 @@ CREATE TABLE IF NOT EXISTS impact_interactions (
   relay_signature TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS impact_interactions_entity_idx ON impact_interactions (entity_id);
-CREATE INDEX IF NOT EXISTS impact_interactions_coa_idx ON impact_interactions (coa_fingerprint);
+CREATE INDEX impact_interactions_entity_idx ON impact_interactions (entity_id);
+CREATE INDEX impact_interactions_coa_idx ON impact_interactions (coa_fingerprint);
 `;
 
-/** Tables this fixture creates. Used by reset() to TRUNCATE. */
 const FIXTURE_TABLES = ["impact_interactions", "coa_chains", "geid_local", "entities"] as const;
 
+function resolveBaseUrl(): string {
+  return process.env.AGI_TEST_DATABASE_URL
+    ?? process.env.DATABASE_URL
+    ?? "postgres://agi:aionima@localhost:5432/agi_data";
+}
+
 export async function createTestDb(): Promise<TestDbContext> {
-  const pg = new PGlite();
-  const db = drizzle(pg, { schema });
+  const baseUrl = resolveBaseUrl();
+  // 16 hex chars (8 bytes) gives a wide enough namespace that collisions
+  // between concurrent test runs are negligible.
+  const schemaName = `test_${randomBytes(8).toString("hex")}`;
 
-  // Pin session to UTC so date_trunc / interval math match production
-  // (which runs agi_data behind a PG 17 container with TIME ZONE 'UTC'
-  // set via POSTGRES_TZ env). Without this, pglite falls back to the
-  // host timezone, which produces confusing test results like
-  // date_trunc('day', '2026-04-23T18:00Z') → '2026-04-23T06:00Z' on
-  // a CDT host.
-  await pg.exec(`SET TIME ZONE 'UTC';`);
+  // Setup: open a one-shot client to create the schema + run DDL inside it.
+  // Pinning the schema via `SET search_path` for the lifetime of this
+  // session is enough because the DDL runs in this same session before
+  // the client is released.
+  const setupPool = new Pool({ connectionString: baseUrl, max: 1 });
+  try {
+    const c = await setupPool.connect();
+    try {
+      await c.query(`CREATE SCHEMA "${schemaName}"`);
+      await c.query(`SET search_path TO "${schemaName}"`);
+      // Pin session to UTC so date_trunc / interval math match production
+      // (which runs agi_data with TIME ZONE 'UTC' set globally).
+      await c.query(`SET TIME ZONE 'UTC'`);
+      await c.query(SCHEMA_DDL);
+    } finally {
+      c.release();
+    }
+  } finally {
+    await setupPool.end();
+  }
 
-  // Run the DDL. pglite supports DO $$ blocks and full CREATE TABLE syntax.
-  await pg.exec(SCHEMA_DDL);
+  // Test pool: every connection inherits search_path = <schema>,public
+  // via the Postgres `options` connection string parameter. This is the
+  // canonical way to scope a pool to a schema without pinning a specific
+  // connection. `public` stays in the path so queries that reference
+  // shared objects (extensions, e.g.) still resolve.
+  const pool = new Pool({
+    connectionString: baseUrl,
+    options: `-c search_path=${schemaName},public -c timezone=UTC`,
+    max: 4,
+  });
+  const db = drizzle(pool, { schema });
 
   const ctx: TestDbContext = {
-    pg,
+    pool,
     db,
+    schemaName,
     async close() {
-      await pg.close();
+      // Order: end the test pool first so no connections are pinning the
+      // schema, then drop via a fresh admin pool.
+      await pool.end();
+      const adminPool = new Pool({ connectionString: baseUrl, max: 1 });
+      try {
+        await adminPool.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+      } finally {
+        await adminPool.end();
+      }
     },
     async reset() {
-      // TRUNCATE in FK-safe order (children first, then parents).
-      // CASCADE covers any index/trigger state; RESTART IDENTITY resets sequences.
-      await pg.exec(`TRUNCATE ${FIXTURE_TABLES.join(", ")} RESTART IDENTITY CASCADE`);
+      // TRUNCATE in FK-safe order (children first, then parents); CASCADE
+      // covers any index/trigger state; RESTART IDENTITY resets sequences.
+      // search_path is already set on every pool connection, so the
+      // unqualified table names resolve to the test schema.
+      const c = await pool.connect();
+      try {
+        await c.query(`TRUNCATE ${FIXTURE_TABLES.join(", ")} RESTART IDENTITY CASCADE`);
+      } finally {
+        c.release();
+      }
     },
   };
 

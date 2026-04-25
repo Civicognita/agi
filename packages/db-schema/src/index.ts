@@ -33,3 +33,6 @@ export * from "./hf.js";
 
 // Security scan runs and findings
 export * from "./security.js";
+
+// Shared drizzle + pg client factory (used by services + test fixtures)
+export * from "./client.js";

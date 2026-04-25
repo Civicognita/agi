@@ -56,10 +56,32 @@ If mounts become stale (e.g., after a host reboot), the VM scripts detect and re
 Unit tests verify individual functions, stores, and business logic in isolation.
 
 ```bash
-pnpm test              # Run all unit tests (routed through VM)
+agi test <pattern>     # Run unit tests matching <pattern> (routed through VM)
+agi test               # Run the full unit suite
 ```
 
-Under the hood, this executes `scripts/test-vm-run.sh unit`, which runs vitest inside the VM with `AIONIMA_TEST_VM=1` set.
+Under the hood, this executes `scripts/agi-test.sh` which runs vitest inside the VM with `AIONIMA_TEST_VM=1` set. (The legacy `pnpm test` shorthand still works and routes to the same script.)
+
+#### Database fixture (story #106 — schema-per-test against real Postgres)
+
+Tests that touch the database connect to the **test VM's real Postgres** (`agi_data`, owned by `agi` role). Each call to `createTestDb()` from `packages/gateway-core/src/test-utils/db-fixture.ts` allocates a fresh `test_<random>` schema, runs the dashboard-subset DDL into it, and returns a drizzle `NodePgDatabase` with `search_path` pinned to that schema. `close()` drops the schema; `reset()` truncates fixture tables between tests.
+
+**Connection URL** resolves in order:
+
+1. `AGI_TEST_DATABASE_URL` env (test override)
+2. `DATABASE_URL` env (matches the production resolution path)
+3. Default: `postgres://agi:aionima@localhost:5432/agi_data` — the test VM's Postgres
+
+**Important: the test VM must be running for DB-touching tests.** `RUN_LOCAL=1` no longer applies to fixtures that talk to Postgres. If the VM is down, `createTestDbConnection()` raises a clear error directing you to run `agi test-vm services-status`. Pre-flight:
+
+```bash
+agi test-vm services-status     # Confirm Postgres: active
+agi test-vm services-start      # If anything is stopped
+```
+
+Per-test overhead is ~50–200ms (schema create + DDL); a full dashboard run finishes in under 10s.
+
+This replaces an earlier in-process `@electric-sql/pglite` fixture that introduced a second Postgres-compatible engine — the project's single-source-of-truth principle (memory `feedback_single_source_of_truth_db`) now holds end-to-end. The hand-written `SCHEMA_DDL` constant in `db-fixture.ts` is a deliberate mirror of the drizzle table objects in `@agi/db-schema`; replacing it with the real production migration path is a follow-up.
 
 ### 2. System End-to-End Tests
 

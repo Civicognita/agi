@@ -4,9 +4,6 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  drizzle-orm: 0.38.4
-
 importers:
 
   .:
@@ -27,7 +24,7 @@ importers:
         specifier: ^0.30.4
         version: 0.30.6
       drizzle-orm:
-        specifier: 0.38.4
+        specifier: ^0.38.3
         version: 0.38.4(@electric-sql/pglite@0.4.4)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(@types/react@19.2.14)(better-sqlite3@11.10.0)(pg@8.20.0)(react@19.2.4)
       node-pty:
         specifier: ^1.1.0
@@ -284,13 +281,13 @@ importers:
         specifier: workspace:*
         version: link:../db-schema
       drizzle-orm:
-        specifier: 0.38.4
+        specifier: ^0.38.3
         version: 0.38.4(@electric-sql/pglite@0.4.4)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(@types/react@19.2.14)(better-sqlite3@11.10.0)(pg@8.20.0)(react@19.2.4)
 
   packages/db-schema:
     dependencies:
       drizzle-orm:
-        specifier: 0.38.4
+        specifier: ^0.38.3
         version: 0.38.4(@electric-sql/pglite@0.4.4)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(@types/react@19.2.14)(better-sqlite3@11.10.0)(pg@8.20.0)(react@19.2.4)
       pg:
         specifier: ^8.20.0
@@ -312,7 +309,7 @@ importers:
         specifier: workspace:*
         version: link:../db-schema
       drizzle-orm:
-        specifier: 0.38.4
+        specifier: ^0.38.3
         version: 0.38.4(@electric-sql/pglite@0.4.4)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(@types/react@19.2.14)(better-sqlite3@11.10.0)(pg@8.20.0)(react@19.2.4)
       ulid:
         specifier: ^2.3.0
@@ -369,7 +366,7 @@ importers:
         specifier: ^11.0.0
         version: 11.10.0(typescript@5.9.3)
       drizzle-orm:
-        specifier: 0.38.4
+        specifier: ^0.38.3
         version: 0.38.4(@electric-sql/pglite@0.4.4)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(@types/react@19.2.14)(better-sqlite3@11.10.0)(pg@8.20.0)(react@19.2.4)
       fastify:
         specifier: ^5.7.4
@@ -390,9 +387,6 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
-      '@electric-sql/pglite':
-        specifier: ^0.4.4
-        version: 0.4.4
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.11
@@ -406,7 +400,7 @@ importers:
         specifier: workspace:*
         version: link:../db-schema
       drizzle-orm:
-        specifier: 0.38.4
+        specifier: ^0.38.3
         version: 0.38.4(@electric-sql/pglite@0.4.4)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(@types/react@19.2.14)(better-sqlite3@11.10.0)(pg@8.20.0)(react@19.2.4)
 
   packages/memory:
@@ -421,7 +415,7 @@ importers:
         specifier: workspace:*
         version: link:../db-schema
       drizzle-orm:
-        specifier: 0.38.4
+        specifier: ^0.38.3
         version: 0.38.4(@electric-sql/pglite@0.4.4)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(@types/react@19.2.14)(better-sqlite3@11.10.0)(pg@8.20.0)(react@19.2.4)
 
   packages/plugins:
@@ -446,7 +440,7 @@ importers:
         specifier: workspace:*
         version: link:../db-schema
       drizzle-orm:
-        specifier: 0.38.4
+        specifier: ^0.38.3
         version: 0.38.4(@electric-sql/pglite@0.4.4)(@types/better-sqlite3@7.6.13)(@types/pg@8.20.0)(@types/react@19.2.14)(better-sqlite3@11.10.0)(pg@8.20.0)(react@19.2.4)
       minimatch:
         specifier: ^10.2.5
@@ -2076,7 +2070,7 @@ packages:
 
   '@expo/bunyan@4.0.1':
     resolution: {integrity: sha512-+Lla7nYSiHZirgK+U/uYzsLv/X+HaJienbD5AKX1UQZHYfWaP+9uuQluRB4GrEVWF0GZ7vEVp/jzaOT9k/SQlg==}
-    engines: {node: '>=0.10.0'}
+    engines: {'0': node >=0.10.0}
 
   '@expo/cli@0.22.28':
     resolution: {integrity: sha512-lvt72KNitGuixYD2l3SZmRKVu2G4zJpmg5V7WfUBNpmUU5oODBw/6qmiJ6kSLAlfDozscUk+BBGknBBzxUrwrA==}
@@ -8872,7 +8866,8 @@ snapshots:
 
   '@drizzle-team/brocli@0.10.2': {}
 
-  '@electric-sql/pglite@0.4.4': {}
+  '@electric-sql/pglite@0.4.4':
+    optional: true
 
   '@electron/get@2.0.3':
     dependencies:
