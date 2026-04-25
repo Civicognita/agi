@@ -31,6 +31,11 @@ export function createInstanceManager(
   onChange: (instances: MagicAppInstance[]) => void,
 ): MagicAppInstanceManager {
   let instances: MagicAppInstance[] = [];
+  // Track whether this is the first refresh call, so we only auto-collapse
+  // floating/maximized modals on initial page load (story #101 task #357).
+  // Subsequent manual refreshes mid-session should respect whatever the
+  // user'\\''s explicit setMode actions established.
+  let isInitialLoad = true;
   const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   const notify = () => onChange([...instances]);
@@ -96,7 +101,23 @@ export function createInstanceManager(
 
     async refresh() {
       try {
-        instances = await fetchMagicAppInstances();
+        const fetched = await fetchMagicAppInstances();
+        if (isInitialLoad) {
+          // Auto-collapse floating/maximized instances on FIRST load only —
+          // page loads shouldn't surprise the user with a stale modal from a
+          // previous session (story #101 task #357). The server-side persisted
+          // mode is preserved so explicit reopen actions can restore it; the
+          // dashboard just doesn't auto-render the modal at session start.
+          instances = fetched.map((i) =>
+            i.mode === "minimized" ? i : { ...i, mode: "minimized" as const },
+          );
+          isInitialLoad = false;
+        } else {
+          // Subsequent refreshes (manual button, after openApp etc.) reflect
+          // server state honestly so user actions in this session are
+          // preserved.
+          instances = fetched;
+        }
         notify();
       } catch {
         // Keep existing state on error
