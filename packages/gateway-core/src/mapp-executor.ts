@@ -84,10 +84,24 @@ function evaluateFormulas(
         expr = expr.replace(new RegExp(`\\b${ref}\\b`, "g"), String(cells[ref] ?? 0));
       }
       const result = new Function(`"use strict"; return (${expr})`)() as number;
-      cells[formula.cell] = isNaN(result) ? 0 : result;
-      results[formula.cell] = isNaN(result) ? 0 : result;
-    } catch {
-      results[formula.cell] = 0;
+      if (isNaN(result)) {
+        // Cell value stays 0 so downstream formulas don't chain undefined.
+        // Results map gets a #ERROR string so the Editor's Simulator tab
+        // surfaces the bad formula to the author rather than hiding it
+        // behind a silent 0 fallback (story #101 task #314).
+        cells[formula.cell] = 0;
+        results[formula.cell] = `#ERROR: formula "${formula.expression}" produced NaN`;
+      } else {
+        cells[formula.cell] = result;
+        results[formula.cell] = result;
+      }
+    } catch (err) {
+      // Same surfacing strategy as the NaN branch — keep cells numeric
+      // for downstream stability, return a #ERROR string in the Simulator
+      // map so authors can see the parse / runtime error inline.
+      cells[formula.cell] = 0;
+      const msg = err instanceof Error ? err.message : String(err);
+      results[formula.cell] = `#ERROR: ${msg.slice(0, 200)} — expr: "${formula.expression}"`;
     }
   }
 
