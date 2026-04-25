@@ -173,8 +173,8 @@ importers:
   apps/screensaver:
     devDependencies:
       electron:
-        specifier: ^35.0.0
-        version: 35.7.5
+        specifier: ^39.8.5
+        version: 39.8.9
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -4216,8 +4216,8 @@ packages:
   electron-to-chromium@1.5.302:
     resolution: {integrity: sha512-sM6HAN2LyK82IyPBpznDRqlTQAtuSaO+ShzFiWTvoMJLHyZ+Y39r8VMfHzwbU8MVBzQ4Wdn85+wlZl2TLGIlwg==}
 
-  electron@35.7.5:
-    resolution: {integrity: sha512-dnL+JvLraKZl7iusXTVTGYs10TKfzUi30uEDTqsmTm0guN9V2tbOjTzyIZbh9n3ygUjgEYyo+igAwMRXIi3IPw==}
+  electron@39.8.9:
+    resolution: {integrity: sha512-0zgNu0MmWR/kzFm+B+LlvpLOX8l3wt1z+BJIYv2Uxc2bEqWBT3jNsX1IhPVP5OJijjZO5ewCOIy0n/bsfJfjdw==}
     engines: {node: '>= 12.20.55'}
     hasBin: true
 
@@ -11638,7 +11638,7 @@ snapshots:
 
   electron-to-chromium@1.5.302: {}
 
-  electron@35.7.5:
+  electron@39.8.9:
     dependencies:
       '@electron/get': 2.0.3
       '@types/node': 22.19.11
