@@ -142,6 +142,14 @@ export interface SystemPromptContext {
   /** Active project path — when set, injects plan workflow instructions. */
   projectPath?: string;
   /**
+   * Whether tools will be offered on the upcoming LLM call. When `false`, the
+   * assembler renders a compact one-line "tools may activate" hint instead of
+   * the full tool list — saves ~1.5–2.5k tokens when no tools can be called
+   * anyway, and prevents the model from hallucinating tool calls it can't
+   * make. Defaults to `true` (preserves prior behavior).
+   */
+  toolsAvailable?: boolean;
+  /**
    * Router cost mode for this turn — when `"local"`, the assembler trims
    * Taskmaster, plan-workflow, knowledge-index, and the verbose chat-markup
    * paragraph from the response-format section so smaller local models
@@ -265,6 +273,10 @@ function buildToolsSection(tools: ToolManifestEntry[]): string {
   });
 
   return `Available tools:\n${toolLines.join("\n")}`;
+}
+
+function buildToolsHintSection(): string {
+  return "Tools are not active on this turn. The system enables tools automatically when the user's message asks for actions like reading or writing files, searching, running commands, managing projects, or browsing the web. Respond conversationally; do not invent tool calls.";
 }
 
 function formatBytes(bytes: number): string {
@@ -692,8 +704,10 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
     sections.push(buildRuntimeMetadataSection(ctx.runtimeMeta, ctx.state));
   }
 
-  // Available tools (always — defines what the agent can do)
-  sections.push(buildToolsSection(ctx.tools));
+  // Available tools — full list when offered, compact hint otherwise. The
+  // hint replaces ~1.5–2.5k tokens of unused tool definitions when the API
+  // call won't pass `tools:` anyway (chat with no action verbs).
+  sections.push(ctx.toolsAvailable === false ? buildToolsHintSection() : buildToolsSection(ctx.tools));
 
   // State + owner (compact, one line each)
   sections.push(`Operational state: ${ctx.state}`);
@@ -853,7 +867,7 @@ export function assembleSystemPromptWithBreakdown(
     identitySections.push(buildRuntimeMetadataSection(ctx.runtimeMeta, ctx.state));
   }
 
-  identitySections.push(buildToolsSection(ctx.tools));
+  identitySections.push(ctx.toolsAvailable === false ? buildToolsHintSection() : buildToolsSection(ctx.tools));
   identitySections.push(`Operational state: ${ctx.state}`);
 
   if (ctx.ownerName !== undefined) {

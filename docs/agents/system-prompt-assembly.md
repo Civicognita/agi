@@ -273,6 +273,18 @@ Total savings on a project-context turn are roughly 2,400 tokens (TaskMaster ≈
 
 To exercise the trimming in tests, set `costMode: "local"` directly on `SystemPromptContext` — see `packages/gateway-core/src/system-prompt-cost-mode.test.ts`.
 
+### Tool-list short-circuit (`toolsAvailable`)
+
+Independent of `costMode`, the assembler also accepts a `toolsAvailable: boolean` field. `agent-invoker.ts` computes this once via `shouldOfferTools(content, requestType) && availableTools.length > 0` (the same boolean that decides whether `tools:` is passed to the API) and threads it into `SystemPromptContext`.
+
+When the upcoming LLM call won't offer tools (chat without action verbs, no available tools for the current state/tier), the assembler replaces the full `Available tools:` section — which can run 1.5–2.5k tokens for a 20+ tool manifest — with a compact one-line hint via `buildToolsHintSection()`. This:
+
+- Eliminates dead-weight tokens the model can't use anyway.
+- Prevents the model from hallucinating tool calls it has no permission to make.
+- Stacks with `costMode: "local"` for chat turns: a no-action-verb chat under local mode now sends a sub-1k-token system prompt instead of ~5KB.
+
+`toolsAvailable: undefined` preserves the prior full-list behavior, so existing callers see no change.
+
 ## Prompt Section Ordering
 
 The assembled system prompt should follow this order, from most static to most dynamic:

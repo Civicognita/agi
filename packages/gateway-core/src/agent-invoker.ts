@@ -481,6 +481,15 @@ export class AgentInvoker extends EventEmitter {
       };
     }
 
+    const sanitizedText = typeof sanitized.content === "string" ? sanitized.content : "";
+    const requestType = classifyRequestType(sanitizedText, request.projectContext);
+    // Decide whether tools will be offered on the upcoming LLM call. The same
+    // decision is reused at the API call site (line ~647) and threaded into
+    // the system prompt so the assembler can drop the full tool list when
+    // it would be unused — the model otherwise sees ~1.5–2.5k tokens of
+    // tools it cannot actually call.
+    const willOfferTools = shouldOfferTools(sanitizedText, requestType) && availableTools.length > 0;
+
     const promptCtx: SystemPromptContext = {
       entity: entityCtx,
       coaFingerprint,
@@ -497,8 +506,9 @@ export class AgentInvoker extends EventEmitter {
       ownerName: this.deps.ownerConfig?.displayName,
       isOwner: request.isOwner,
       projectPath: request.projectContext,
-      requestType: classifyRequestType(typeof sanitized.content === "string" ? sanitized.content : "", request.projectContext),
+      requestType,
       costMode: this.deps.getCostMode?.(),
+      toolsAvailable: willOfferTools,
     };
 
     const { prompt: baseSystemPrompt, breakdown: promptBreakdown } = assembleSystemPromptWithBreakdown(promptCtx);
@@ -643,11 +653,12 @@ export class AgentInvoker extends EventEmitter {
         return { role: msg.role, content: msg.content };
       });
 
-      const requestType = promptCtx.requestType ?? "chat";
-      const useTools = shouldOfferTools(
-        typeof sanitized.content === "string" ? sanitized.content : "",
-        requestType,
-      ) && providerTools.length > 0;
+      // Reuse the willOfferTools decision computed before prompt assembly so
+      // the prompt and the API call agree on whether tools are active. We
+      // re-AND with `providerTools.length > 0` as a defensive guard — these
+      // are derived from the same state/tier as `availableTools` so the
+      // result should already match.
+      const useTools = willOfferTools && providerTools.length > 0;
 
       // Accumulate token usage across all API calls in this invocation
       let totalInputTokens = 0;

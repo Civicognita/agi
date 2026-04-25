@@ -23,10 +23,12 @@ const baseCtx: SystemPromptContext = {
     memory: true,
     deletions: true,
   },
-  tools: [
-    { name: "tool_a", description: "A", requiresState: ["ONLINE"], requiresTier: ["sealed"] },
-    { name: "tool_b", description: "B", requiresState: ["ONLINE"], requiresTier: ["sealed"] },
-  ],
+  tools: Array.from({ length: 25 }, (_, i) => ({
+    name: `tool_${String(i)}`,
+    description: `A reasonably descriptive tool description for tool number ${String(i)}, with enough text to mirror real manifest entries.`,
+    requiresState: ["ONLINE"] as const,
+    requiresTier: ["sealed"] as const,
+  })).map((t) => ({ ...t, requiresState: [...t.requiresState], requiresTier: [...t.requiresTier] })),
   ownerName: "Glenn",
   isOwner: true,
   projectPath: "/tmp/proj",
@@ -52,7 +54,7 @@ describe("assembleSystemPrompt — costMode local trimming", () => {
     expect(local).not.toContain("Capability discipline");
     expect(local).toContain("Response rules:");
 
-    expect(local).toContain("tool_a");
+    expect(local).toContain("tool_0");
     expect(local).toContain("Operational state: ONLINE");
     expect(local).toContain("Owner");
 
@@ -75,5 +77,35 @@ describe("assembleSystemPrompt — costMode local trimming", () => {
 
     expect(noMode).toEqual(balanced);
     expect(max).toEqual(balanced);
+  });
+});
+
+describe("assembleSystemPrompt — toolsAvailable=false rendering (#326 option D)", () => {
+  it("replaces the full tool list with a compact hint when no tools will be offered", () => {
+    const withTools = assembleSystemPrompt({ ...baseCtx, toolsAvailable: true });
+    const withoutTools = assembleSystemPrompt({ ...baseCtx, toolsAvailable: false });
+
+    expect(withTools).toContain("Available tools:");
+    expect(withTools).toContain("tool_0");
+    expect(withTools).toContain("tool_5");
+
+    expect(withoutTools).not.toContain("Available tools:");
+    expect(withoutTools).not.toContain("- tool_0:");
+    expect(withoutTools).toContain("Tools are not active on this turn");
+    expect(withoutTools).toContain("do not invent tool calls");
+
+    expect(estimateTokens(withoutTools)).toBeLessThan(estimateTokens(withTools));
+  });
+
+  it("undefined toolsAvailable preserves the prior full-list behavior", () => {
+    const undef = assembleSystemPrompt({ ...baseCtx });
+    const explicitTrue = assembleSystemPrompt({ ...baseCtx, toolsAvailable: true });
+    expect(undef).toEqual(explicitTrue);
+  });
+
+  it("breakdown shrinks the identity slice when tools are hinted, not listed", () => {
+    const withTools = assembleSystemPromptWithBreakdown({ ...baseCtx, toolsAvailable: true });
+    const withoutTools = assembleSystemPromptWithBreakdown({ ...baseCtx, toolsAvailable: false });
+    expect(withoutTools.breakdown.identity).toBeLessThan(withTools.breakdown.identity);
   });
 });
