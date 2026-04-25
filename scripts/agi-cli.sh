@@ -771,7 +771,26 @@ cmd_projects() {
   echo -e "${BOLD}Hosted Projects${RESET}"
   echo ""
 
-  local found=0
+  # Pre-count projects so the "No projects configured" line only shows when
+  # the directory genuinely has none. The previous loop set `found=1` inside
+  # a subshell (the `node -e | while read ...` pipeline) which never
+  # propagated to the outer scope — so the empty-state message printed even
+  # when projects existed (story #110 follow-up).
+  local count=0
+  for config_dir in "$AGI_DIR"/*/; do
+    [ -f "${config_dir}project.json" ] && count=$((count + 1))
+  done
+
+  if [ "$count" -eq 0 ]; then
+    echo "  No projects configured"
+    return
+  fi
+
+  # Snapshot running containers ONCE rather than calling podman per project.
+  # For N projects this is N→1 podman invocations.
+  local running_containers
+  running_containers="$(podman ps --format '{{.Names}}' 2>/dev/null || true)"
+
   for config_dir in "$AGI_DIR"/*/; do
     local config_file="${config_dir}project.json"
     [ -f "$config_file" ] || continue
@@ -787,22 +806,29 @@ cmd_projects() {
       const status = h.enabled ? 'enabled' : 'disabled';
       const host = h.hostname ? h.hostname + '.ai.on' : '-';
       const port = h.port || '-';
-      console.log(name + '|' + type + '|' + status + '|' + host + '|' + port);
-    " 2>/dev/null | while IFS='|' read -r name type status host port; do
+      const container = h.hostname ? 'agi-' + h.hostname : '';
+      console.log(name + '|' + type + '|' + status + '|' + host + '|' + port + '|' + container);
+    " 2>/dev/null | while IFS='|' read -r name type status host port container; do
       printf "  ${BOLD}%-25s${RESET} %-15s " "$name" "$type"
       if [ "$status" = "enabled" ]; then
         printf "${GREEN}%-10s${RESET}" "$status"
       else
         printf "${MUTED}%-10s${RESET}" "$status"
       fi
+      # Running-state column: probe the snapshot for the project's container.
+      # Disabled projects show a dash (no container expected).
+      if [ "$status" = "enabled" ] && [ -n "$container" ]; then
+        if printf '%s\n' "$running_containers" | grep -qx "$container"; then
+          printf "${GREEN}%-6s${RESET}" "up"
+        else
+          printf "${RED}%-6s${RESET}" "down"
+        fi
+      else
+        printf "${MUTED}%-6s${RESET}" "-"
+      fi
       printf "%-25s %s\n" "$host" "$port"
-      found=1
     done
   done
-
-  if [ "$found" -eq 0 ]; then
-    echo "  No projects configured"
-  fi
 }
 
 # ---------------------------------------------------------------------------
