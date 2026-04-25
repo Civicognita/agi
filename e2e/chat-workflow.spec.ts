@@ -12,9 +12,36 @@ import { test, expect } from "@playwright/test";
  * e2e and covered by manual smoke + component/unit tests.
  */
 
+/**
+ * Dismiss any persisted MagicApp modals that would intercept pointer
+ * events on the page. The test VM has a habit of carrying a non-minimized
+ * magic-app-instance across runs (story #101 task #327 followup —
+ * separate from the dashboard'\\''s real "auto-show modal on /projects"
+ * bug). Until that root cause is fixed, dismiss the overlay so subsequent
+ * clicks land on the intended targets.
+ */
+async function dismissStuckMagicAppModals(page: import("@playwright/test").Page): Promise<void> {
+  // Use page.evaluate to click close buttons directly via the DOM. This
+  // bypasses Playwright'\\''s actionability checks — the close-btn can be
+  // technically "visible" while obscured by an inner subtree that
+  // intercepts pointer events (the data-react-fancy-content-renderer
+  // child of the modal). DOM-level click() fires the React onClick
+  // synthetic handler regardless.
+  for (let i = 0; i < 5; i++) {
+    const dismissed = await page.evaluate(() => {
+      const buttons = document.querySelectorAll<HTMLElement>("[data-testid=\"mapp-close-btn\"]");
+      buttons.forEach((b) => b.click());
+      return buttons.length;
+    }).catch(() => 0);
+    if (dismissed === 0) break;
+    await page.waitForTimeout(150);
+  }
+}
+
 test.describe("Chat workflow", () => {
   test("chat flyout opens via sidebar button and exposes chat-flyout testid", async ({ page }) => {
     await page.goto("/");
+    await dismissStuckMagicAppModals(page);
     const chatButton = page.getByTestId("header-chat-button");
     await chatButton.click();
     await expect(page.getByTestId("chat-flyout")).toBeVisible();
@@ -23,6 +50,7 @@ test.describe("Chat workflow", () => {
   test("chat flyout opens via project 'Talk about this project' button", async ({ page }) => {
     await page.goto("/projects");
     await page.waitForTimeout(1000);
+    await dismissStuckMagicAppModals(page);
     const cards = page.getByTestId("project-card");
     const cardCount = await cards.count();
     test.skip(cardCount === 0, "no projects available in this environment");
@@ -39,6 +67,7 @@ test.describe("Chat workflow", () => {
   test("project chat re-opens after close (Phase 4b: prevContextRef reset)", async ({ page }) => {
     await page.goto("/projects");
     await page.waitForTimeout(1000);
+    await dismissStuckMagicAppModals(page);
     const cards = page.getByTestId("project-card");
     const cardCount = await cards.count();
     test.skip(cardCount === 0, "no projects available in this environment");
