@@ -541,9 +541,15 @@ cfg["owner"]["channels"] = {"telegram": "owner-0"}
 # Test VM is NOT hosting user projects — disable so hosting-manager does
 # not regenerate the Caddyfile and wipe the static ai.on/test.ai.on blocks.
 cfg.setdefault("hosting", {})["enabled"] = False
+# Default boot state is OFFLINE per server.ts. The test VM needs ONLINE to
+# actually invoke the LLM; without it, chat:send short-circuits with
+# "Aionima is currently offline." (the empirical t326 probe surfaced this:
+# all chat replies returned the placeholder until gateway.state=ONLINE was
+# set in config).
+cfg.setdefault("gateway", {})["state"] = "ONLINE"
 json.dump(cfg, open(p, "w"), indent=2)
+print("    owner + hosting + state seeded: state=" + cfg["gateway"]["state"] + " hosting.enabled=" + str(cfg["hosting"]["enabled"]))
 PYEOF
-    echo "    owner + hosting block: $(python3 -c \"import json;d=json.load(open('$HOME/.agi/gateway.json'));print('owner=',d['owner'],'hosting=',d['hosting'])\")"
   '
 
   # Wire the gateway to Ollama with costMode=local for Phase 10 acceptance

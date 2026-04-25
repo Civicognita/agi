@@ -285,6 +285,19 @@ When the upcoming LLM call won't offer tools (chat without action verbs, no avai
 
 `toolsAvailable: undefined` preserves the prior full-list behavior, so existing callers see no change.
 
+### Empirical baseline (t326, recorded 2026-04-25)
+
+Round-trip latency was measured against the test VM (multipass, 4 vCPU, no GPU, ollama qwen2.5:3b) using `scripts/probe-local-chat-latency.mjs` over the `chat:send` WebSocket path:
+
+| Prompt | costMode | Tools available | First response | Tool loops |
+|--------|----------|-----------------|----------------|-----------|
+| `"hi"` (chat) | `local` | false (option D hint) | **60.9 s** | 0 |
+| `"list the files in /tmp"` (chat) | `local` | false (chat type drops tools) | **57.9 s** | 0 |
+
+Baseline (pre-options-A/D, recorded in t326 task description): **>5 min, often timing out**. Both probes now finish in ~60 s — the user-facing 5-minute timeout symptom is closed for the chat-flow path.
+
+`scripts/probe-local-chat-latency.mjs` ships in the repo as a permanent regression artifact. Run it inside the test VM (`PROMPT="..." node /mnt/agi/scripts/probe-local-chat-latency.mjs`) any time the system prompt changes — a regression that re-inflates the prompt by 2k tokens is otherwise invisible until somebody complains about latency.
+
 ## Prompt Section Ordering
 
 The assembled system prompt should follow this order, from most static to most dynamic:
