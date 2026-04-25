@@ -30,7 +30,7 @@ export interface DashboardApiDeps {
 }
 
 interface RouteMatch {
-  handler: (req: IncomingMessage, res: ServerResponse, params: URLSearchParams, pathParams: Record<string, string>) => void;
+  handler: (req: IncomingMessage, res: ServerResponse, params: URLSearchParams, pathParams: Record<string, string>) => Promise<void>;
   pathParams: Record<string, string>;
 }
 
@@ -92,7 +92,7 @@ export class DashboardApi {
    * Handle an HTTP request.
    * Returns true if the request was handled, false if the path didn't match.
    */
-  handle(req: IncomingMessage, res: ServerResponse): boolean {
+  async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const pathname = url.pathname;
     const params = url.searchParams;
@@ -109,7 +109,7 @@ export class DashboardApi {
     if (match === null) return false;
 
     try {
-      match.handler(req, res, params, match.pathParams);
+      await match.handler(req, res, params, match.pathParams);
     } catch (err) {
       if (err instanceof Error) console.error("[dashboard-api]", err.message);
       error(res, "Internal server error", 500);
@@ -152,15 +152,26 @@ export class DashboardApi {
   // Handlers
   // ---------------------------------------------------------------------------
 
-  private handleOverview = (_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): void => {
+  private handleOverview = async (
+    _req: IncomingMessage,
+    res: ServerResponse,
+    params: URLSearchParams,
+  ): Promise<void> => {
     const windowDays = intParam(params, "windowDays", 90);
     const recentLimit = intParam(params, "recentLimit", 20);
-    void this.queries.getOverview(windowDays, recentLimit)
-      .then((overview) => { json(res, overview); })
-      .catch(() => error(res, "Failed to fetch overview"));
+    try {
+      const overview = await this.queries.getOverview(windowDays, recentLimit);
+      json(res, overview);
+    } catch {
+      error(res, "Failed to fetch overview", 500);
+    }
   };
 
-  private handleTimeline = (_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): void => {
+  private handleTimeline = async (
+    _req: IncomingMessage,
+    res: ServerResponse,
+    params: URLSearchParams,
+  ): Promise<void> => {
     const bucket = params.get("bucket") ?? "day";
     if (!VALID_BUCKETS.has(bucket as TimeBucket)) {
       error(res, `Invalid bucket: ${bucket}. Valid: hour, day, week, month`);
@@ -171,22 +182,24 @@ export class DashboardApi {
     const since = params.get("since") ?? undefined;
     const until = params.get("until") ?? undefined;
 
-    void this.queries.getTimeline(
-      bucket as TimeBucket,
-      entityId,
-      since,
-      until,
-    ).then((buckets) => {
+    try {
+      const buckets = await this.queries.getTimeline(bucket as TimeBucket, entityId, since, until);
       json(res, {
         buckets,
         bucket,
         since: since ?? "all-time",
         until: until ?? "now",
       });
-    }).catch(() => error(res, "Failed to fetch timeline"));
+    } catch {
+      error(res, "Failed to fetch timeline", 500);
+    }
   };
 
-  private handleBreakdown = (_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): void => {
+  private handleBreakdown = async (
+    _req: IncomingMessage,
+    res: ServerResponse,
+    params: URLSearchParams,
+  ): Promise<void> => {
     const dimension = params.get("by") ?? "domain";
     if (!VALID_DIMENSIONS.has(dimension as BreakdownDimension)) {
       error(res, `Invalid dimension: ${dimension}. Valid: domain, channel, workType`);
@@ -197,37 +210,47 @@ export class DashboardApi {
     const since = params.get("since") ?? undefined;
     const until = params.get("until") ?? undefined;
 
-    void this.queries.getBreakdown(
-      dimension as BreakdownDimension,
-      entityId,
-      since,
-      until,
-    ).then(({ slices, total }) => {
+    try {
+      const { slices, total } = await this.queries.getBreakdown(
+        dimension as BreakdownDimension,
+        entityId,
+        since,
+        until,
+      );
       json(res, { dimension, slices, total });
-    }).catch(() => error(res, "Failed to fetch breakdown"));
+    } catch {
+      error(res, "Failed to fetch breakdown", 500);
+    }
   };
 
-  private handleLeaderboard = (_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): void => {
+  private handleLeaderboard = async (
+    _req: IncomingMessage,
+    res: ServerResponse,
+    params: URLSearchParams,
+  ): Promise<void> => {
     const windowDays = intParam(params, "windowDays", 90);
     const limit = intParam(params, "limit", 25);
     const offset = intParam(params, "offset", 0);
 
-    void this.queries.getLeaderboard(windowDays, limit, offset).then(({ entries, total }) => {
+    try {
+      const { entries, total } = await this.queries.getLeaderboard(windowDays, limit, offset);
       json(res, {
         entries,
         windowDays,
         total,
         computedAt: new Date().toISOString(),
       });
-    }).catch(() => error(res, "Failed to fetch leaderboard"));
+    } catch {
+      error(res, "Failed to fetch leaderboard", 500);
+    }
   };
 
-  private handleEntityProfile = (
+  private handleEntityProfile = async (
     _req: IncomingMessage,
     res: ServerResponse,
     params: URLSearchParams,
     pathParams: Record<string, string>,
-  ): void => {
+  ): Promise<void> => {
     const entityId = pathParams["id"];
     if (entityId === undefined) {
       error(res, "Entity ID required", 400);
@@ -235,28 +258,36 @@ export class DashboardApi {
     }
 
     const windowDays = intParam(params, "windowDays", 90);
-    void this.queries.getEntityProfile(entityId, windowDays)
-      .then((profile) => {
-        if (profile === null) {
-          error(res, "Entity not found", 404);
-          return;
-        }
-        json(res, profile);
-      })
-      .catch(() => error(res, "Failed to fetch entity profile"));
+    try {
+      const profile = await this.queries.getEntityProfile(entityId, windowDays);
+      if (profile === null) {
+        error(res, "Entity not found", 404);
+        return;
+      }
+      json(res, profile);
+    } catch {
+      error(res, "Failed to fetch entity profile", 500);
+    }
   };
 
-  private handleCOA = (_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): void => {
-    void this.queries.getCOAEntries({
-      entityId: params.get("entityId") ?? undefined,
-      fingerprint: params.get("fingerprint") ?? undefined,
-      workType: params.get("workType") ?? undefined,
-      since: params.get("since") ?? undefined,
-      until: params.get("until") ?? undefined,
-      limit: intParam(params, "limit", 50),
-      offset: intParam(params, "offset", 0),
-    })
-      .then((result) => { json(res, result); })
-      .catch(() => error(res, "Failed to fetch COA entries"));
+  private handleCOA = async (
+    _req: IncomingMessage,
+    res: ServerResponse,
+    params: URLSearchParams,
+  ): Promise<void> => {
+    try {
+      const result = await this.queries.getCOAEntries({
+        entityId: params.get("entityId") ?? undefined,
+        fingerprint: params.get("fingerprint") ?? undefined,
+        workType: params.get("workType") ?? undefined,
+        since: params.get("since") ?? undefined,
+        until: params.get("until") ?? undefined,
+        limit: intParam(params, "limit", 50),
+        offset: intParam(params, "offset", 0),
+      });
+      json(res, result);
+    } catch {
+      error(res, "Failed to fetch COA entries", 500);
+    }
   };
 }

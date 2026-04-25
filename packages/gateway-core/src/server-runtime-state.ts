@@ -861,7 +861,7 @@ export async function createGatewayRuntimeState(
   // -----------------------------------------------------------------------
 
   fastify.get("/api/dashboard/*", async (request, reply) => {
-    const handled = dashboardApi.handle(request.raw, reply.raw);
+    const handled = await dashboardApi.handle(request.raw, reply.raw);
     if (!handled) {
       await reply.code(404).send({ error: "Not Found" });
     }
@@ -872,7 +872,7 @@ export async function createGatewayRuntimeState(
     method: ["POST", "PUT", "DELETE", "PATCH"],
     url: "/api/dashboard/*",
     handler: async (request, reply) => {
-      dashboardApi.handle(request.raw, reply.raw);
+      await dashboardApi.handle(request.raw, reply.raw);
     },
   });
 

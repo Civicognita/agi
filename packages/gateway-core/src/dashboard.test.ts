@@ -975,6 +975,14 @@ describe("DashboardQueries.getCOAEntries", () => {
 
 /**
  * Minimal mock HTTP response that captures JSON output and status codes.
+ *
+ * The returned `done` promise resolves on `res.end(...)` — DashboardApi's
+ * route handlers run as fire-and-forget promise chains
+ * (`void this.queries.X().then(o => json(res, o))`), so `api.handle()`
+ * returns synchronously while the response body is written async. Tests
+ * that read `captured.body` / status MUST `await done` first or they
+ * race the cleanup pool-end in afterEach (manifests as
+ * "Cannot use a pool after calling end on the pool").
  */
 function makeMockRes() {
   const captured: {
@@ -982,6 +990,11 @@ function makeMockRes() {
     body: string;
     headers: Record<string, string | number>;
   } = { status: 200, body: "", headers: {} };
+
+  let resolveDone!: () => void;
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
 
   const res = {
     writeHead: (status: number, headers?: Record<string, string | number>) => {
@@ -992,6 +1005,7 @@ function makeMockRes() {
     },
     end: (body: string) => {
       captured.body = body;
+      resolveDone();
     },
     get parsed() {
       return JSON.parse(captured.body || "{}") as unknown;
@@ -1001,7 +1015,7 @@ function makeMockRes() {
     },
   };
 
-  return { res: res as unknown as ServerResponse, captured };
+  return { res: res as unknown as ServerResponse, captured, done };
 }
 
 /**
@@ -1015,123 +1029,123 @@ function makeMockReq(method: string, url: string): IncomingMessage {
   } as unknown as IncomingMessage;
 }
 
-describe.skip("DashboardApi.handle — route matching", () => {
+describe("DashboardApi.handle — route matching", async () => {
   let api: DashboardApi;
 
   beforeEach(() => {
     api = new DashboardApi({ queries });
   });
 
-  it("returns false for non-dashboard paths", () => {
+  it("returns false for non-dashboard paths", async () => {
     const req = makeMockReq("GET", "/api/other/resource");
     const { res } = makeMockRes();
-    const handled = api.handle(req, res);
+    const handled = await api.handle(req, res);
     expect(handled).toBe(false);
   });
 
-  it("returns false for root path", () => {
+  it("returns false for root path", async () => {
     const req = makeMockReq("GET", "/");
     const { res } = makeMockRes();
-    expect(api.handle(req, res)).toBe(false);
+    expect(await api.handle(req, res)).toBe(false);
   });
 
-  it("returns true and 405 for POST on dashboard paths", () => {
+  it("returns true and 405 for POST on dashboard paths", async () => {
     const req = makeMockReq("POST", "/api/dashboard/overview");
     const { res, captured } = makeMockRes();
-    const handled = api.handle(req, res);
+    const handled = await api.handle(req, res);
     expect(handled).toBe(true);
     expect(captured.status).toBe(405);
   });
 
-  it("returns true and 405 for PUT on dashboard paths", () => {
+  it("returns true and 405 for PUT on dashboard paths", async () => {
     const req = makeMockReq("PUT", "/api/dashboard/timeline");
     const { res, captured } = makeMockRes();
-    const handled = api.handle(req, res);
+    const handled = await api.handle(req, res);
     expect(handled).toBe(true);
     expect(captured.status).toBe(405);
   });
 
-  it("returns false for non-GET on non-dashboard paths", () => {
+  it("returns false for non-GET on non-dashboard paths", async () => {
     const req = makeMockReq("POST", "/api/other");
     const { res } = makeMockRes();
-    expect(api.handle(req, res)).toBe(false);
+    expect(await api.handle(req, res)).toBe(false);
   });
 
-  it("handles /api/dashboard/overview", () => {
+  it("handles /api/dashboard/overview", async () => {
     const req = makeMockReq("GET", "/api/dashboard/overview");
     const { res, captured } = makeMockRes();
-    const handled = api.handle(req, res);
+    const handled = await api.handle(req, res);
     expect(handled).toBe(true);
     expect(captured.status).toBe(200);
   });
 
-  it("handles /api/dashboard/timeline", () => {
+  it("handles /api/dashboard/timeline", async () => {
     const req = makeMockReq("GET", "/api/dashboard/timeline?bucket=day");
     const { res, captured } = makeMockRes();
-    const handled = api.handle(req, res);
+    const handled = await api.handle(req, res);
     expect(handled).toBe(true);
     expect(captured.status).toBe(200);
   });
 
-  it("handles /api/dashboard/breakdown", () => {
+  it("handles /api/dashboard/breakdown", async () => {
     const req = makeMockReq("GET", "/api/dashboard/breakdown?by=domain");
     const { res, captured } = makeMockRes();
-    const handled = api.handle(req, res);
+    const handled = await api.handle(req, res);
     expect(handled).toBe(true);
     expect(captured.status).toBe(200);
   });
 
-  it("handles /api/dashboard/leaderboard", () => {
+  it("handles /api/dashboard/leaderboard", async () => {
     const req = makeMockReq("GET", "/api/dashboard/leaderboard");
     const { res, captured } = makeMockRes();
-    const handled = api.handle(req, res);
+    const handled = await api.handle(req, res);
     expect(handled).toBe(true);
     expect(captured.status).toBe(200);
   });
 
-  it("handles /api/dashboard/coa", () => {
+  it("handles /api/dashboard/coa", async () => {
     const req = makeMockReq("GET", "/api/dashboard/coa");
     const { res, captured } = makeMockRes();
-    const handled = api.handle(req, res);
+    const handled = await api.handle(req, res);
     expect(handled).toBe(true);
     expect(captured.status).toBe(200);
   });
 
-  it("handles /api/dashboard/entity/:id for known entity", () => {
-    const e = store.createEntity({ type: "E", displayName: "RouteUser" });
+  it("handles /api/dashboard/entity/:id for known entity", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "RouteUser" });
     const req = makeMockReq("GET", `/api/dashboard/entity/${e.id}`);
     const { res, captured } = makeMockRes();
-    const handled = api.handle(req, res);
+    const handled = await api.handle(req, res);
     expect(handled).toBe(true);
     expect(captured.status).toBe(200);
   });
 
-  it("returns 404 for entity/:id when entity does not exist", () => {
+  it("returns 404 for entity/:id when entity does not exist", async () => {
     const req = makeMockReq("GET", "/api/dashboard/entity/NOTFOUND123456789012345");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     expect(captured.status).toBe(404);
   });
 
-  it("returns false for unknown sub-path like /api/dashboard/unknown", () => {
+  it("returns false for unknown sub-path like /api/dashboard/unknown", async () => {
     const req = makeMockReq("GET", "/api/dashboard/unknown");
     const { res } = makeMockRes();
-    const handled = api.handle(req, res);
+    const handled = await api.handle(req, res);
     expect(handled).toBe(false);
   });
 });
 
-describe.skip("DashboardApi — /api/dashboard/overview", () => {
+describe("DashboardApi — /api/dashboard/overview", async () => {
   let api: DashboardApi;
 
   beforeEach(() => {
     api = new DashboardApi({ queries });
   });
 
-  it("returns JSON with required overview fields", () => {
+  it("returns JSON with required overview fields", async () => {
     const req = makeMockReq("GET", "/api/dashboard/overview");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
 
     const body = JSON.parse(captured.body) as Record<string, unknown>;
     expect(typeof body["totalImp"]).toBe("number");
@@ -1142,41 +1156,41 @@ describe.skip("DashboardApi — /api/dashboard/overview", () => {
     expect(Array.isArray(body["recentActivity"])).toBe(true);
   });
 
-  it("Content-Type header is application/json", () => {
+  it("Content-Type header is application/json", async () => {
     const req = makeMockReq("GET", "/api/dashboard/overview");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     expect(captured.headers["Content-Type"]).toBe("application/json");
   });
 
-  it("respects windowDays query param", () => {
+  it("respects windowDays query param", async () => {
     const req = makeMockReq("GET", "/api/dashboard/overview?windowDays=30");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     expect(captured.status).toBe(200);
   });
 
-  it("respects recentLimit query param", () => {
+  it("respects recentLimit query param", async () => {
     seedTestData();
     const req = makeMockReq("GET", "/api/dashboard/overview?recentLimit=2");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     const body = JSON.parse(captured.body) as { recentActivity: unknown[] };
     expect(body.recentActivity.length).toBeLessThanOrEqual(2);
   });
 });
 
-describe.skip("DashboardApi — /api/dashboard/timeline", () => {
+describe("DashboardApi — /api/dashboard/timeline", async () => {
   let api: DashboardApi;
 
   beforeEach(() => {
     api = new DashboardApi({ queries });
   });
 
-  it("returns JSON with buckets, bucket, since, until fields", () => {
+  it("returns JSON with buckets, bucket, since, until fields", async () => {
     const req = makeMockReq("GET", "/api/dashboard/timeline?bucket=day");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
 
     const body = JSON.parse(captured.body) as Record<string, unknown>;
     expect(Array.isArray(body["buckets"])).toBe(true);
@@ -1185,73 +1199,73 @@ describe.skip("DashboardApi — /api/dashboard/timeline", () => {
     expect(typeof body["until"]).toBe("string");
   });
 
-  it("defaults to day bucket when bucket param is omitted", () => {
+  it("defaults to day bucket when bucket param is omitted", async () => {
     const req = makeMockReq("GET", "/api/dashboard/timeline");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     const body = JSON.parse(captured.body) as { bucket: string };
     expect(body.bucket).toBe("day");
   });
 
-  it("returns 400 for invalid bucket parameter", () => {
+  it("returns 400 for invalid bucket parameter", async () => {
     const req = makeMockReq("GET", "/api/dashboard/timeline?bucket=invalid");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     expect(captured.status).toBe(400);
     const body = JSON.parse(captured.body) as { error: string };
     expect(typeof body.error).toBe("string");
     expect(body.error).toContain("invalid");
   });
 
-  it("accepts valid buckets: hour, day, week, month", () => {
+  it("accepts valid buckets: hour, day, week, month", async () => {
     const api2 = new DashboardApi({ queries });
     for (const bucket of ["hour", "day", "week", "month"]) {
       const req = makeMockReq("GET", `/api/dashboard/timeline?bucket=${bucket}`);
       const { res, captured } = makeMockRes();
-      api2.handle(req, res);
+      await api2.handle(req, res);
       expect(captured.status).toBe(200);
     }
   });
 
-  it("passes entityId, since, until to queries", () => {
+  it("passes entityId, since, until to queries", async () => {
     const e = store.createEntity({ type: "E", displayName: "User" });
     const req = makeMockReq("GET", `/api/dashboard/timeline?bucket=day&entityId=${e.id}&since=2024-01-01T00:00:00Z&until=2025-01-01T00:00:00Z`);
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     expect(captured.status).toBe(200);
     const body = JSON.parse(captured.body) as { since: string; until: string };
     expect(body.since).toBe("2024-01-01T00:00:00Z");
     expect(body.until).toBe("2025-01-01T00:00:00Z");
   });
 
-  it("since defaults to 'all-time' when not provided", () => {
+  it("since defaults to 'all-time' when not provided", async () => {
     const req = makeMockReq("GET", "/api/dashboard/timeline?bucket=day");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     const body = JSON.parse(captured.body) as { since: string };
     expect(body.since).toBe("all-time");
   });
 
-  it("until defaults to 'now' when not provided", () => {
+  it("until defaults to 'now' when not provided", async () => {
     const req = makeMockReq("GET", "/api/dashboard/timeline?bucket=day");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     const body = JSON.parse(captured.body) as { until: string };
     expect(body.until).toBe("now");
   });
 });
 
-describe.skip("DashboardApi — /api/dashboard/breakdown", () => {
+describe("DashboardApi — /api/dashboard/breakdown", async () => {
   let api: DashboardApi;
 
   beforeEach(() => {
     api = new DashboardApi({ queries });
   });
 
-  it("returns dimension, slices, total in response", () => {
+  it("returns dimension, slices, total in response", async () => {
     const req = makeMockReq("GET", "/api/dashboard/breakdown?by=domain");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
 
     const body = JSON.parse(captured.body) as Record<string, unknown>;
     expect(body["dimension"]).toBe("domain");
@@ -1259,53 +1273,53 @@ describe.skip("DashboardApi — /api/dashboard/breakdown", () => {
     expect(typeof body["total"]).toBe("number");
   });
 
-  it("defaults to domain when by param is omitted", () => {
+  it("defaults to domain when by param is omitted", async () => {
     const req = makeMockReq("GET", "/api/dashboard/breakdown");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     const body = JSON.parse(captured.body) as { dimension: string };
     expect(body.dimension).toBe("domain");
   });
 
-  it("returns 400 for invalid dimension parameter", () => {
+  it("returns 400 for invalid dimension parameter", async () => {
     const req = makeMockReq("GET", "/api/dashboard/breakdown?by=invalid");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     expect(captured.status).toBe(400);
     const body = JSON.parse(captured.body) as { error: string };
     expect(body.error).toContain("invalid");
   });
 
-  it("accepts valid dimensions: domain, channel, workType", () => {
+  it("accepts valid dimensions: domain, channel, workType", async () => {
     const api2 = new DashboardApi({ queries });
     for (const dimension of ["domain", "channel", "workType"]) {
       const req = makeMockReq("GET", `/api/dashboard/breakdown?by=${dimension}`);
       const { res, captured } = makeMockRes();
-      api2.handle(req, res);
+      await api2.handle(req, res);
       expect(captured.status).toBe(200);
     }
   });
 
-  it("passes entityId filter to queries", () => {
+  it("passes entityId filter to queries", async () => {
     const e = store.createEntity({ type: "E", displayName: "User" });
     const req = makeMockReq("GET", `/api/dashboard/breakdown?by=channel&entityId=${e.id}`);
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     expect(captured.status).toBe(200);
   });
 });
 
-describe.skip("DashboardApi — /api/dashboard/leaderboard", () => {
+describe("DashboardApi — /api/dashboard/leaderboard", async () => {
   let api: DashboardApi;
 
   beforeEach(() => {
     api = new DashboardApi({ queries });
   });
 
-  it("returns entries, windowDays, total, computedAt", () => {
+  it("returns entries, windowDays, total, computedAt", async () => {
     const req = makeMockReq("GET", "/api/dashboard/leaderboard");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
 
     const body = JSON.parse(captured.body) as Record<string, unknown>;
     expect(Array.isArray(body["entries"])).toBe(true);
@@ -1314,62 +1328,62 @@ describe.skip("DashboardApi — /api/dashboard/leaderboard", () => {
     expect(typeof body["computedAt"]).toBe("string");
   });
 
-  it("respects windowDays, limit, offset query params", () => {
+  it("respects windowDays, limit, offset query params", async () => {
     const req = makeMockReq("GET", "/api/dashboard/leaderboard?windowDays=30&limit=10&offset=5");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     const body = JSON.parse(captured.body) as { windowDays: number };
     expect(body.windowDays).toBe(30);
   });
 });
 
-describe.skip("DashboardApi — /api/dashboard/entity/:id", () => {
+describe("DashboardApi — /api/dashboard/entity/:id", async () => {
   let api: DashboardApi;
 
   beforeEach(() => {
     api = new DashboardApi({ queries });
   });
 
-  it("returns full profile JSON for existing entity", () => {
-    const e = store.createEntity({ type: "E", displayName: "ProfileUser" });
+  it("returns full profile JSON for existing entity", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "ProfileUser" });
     const req = makeMockReq("GET", `/api/dashboard/entity/${e.id}`);
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
 
     const body = JSON.parse(captured.body) as Record<string, unknown>;
     expect(body["entityId"]).toBe(e.id);
     expect(body["entityName"]).toBe("ProfileUser");
   });
 
-  it("returns 404 with error JSON for unknown entity", () => {
+  it("returns 404 with error JSON for unknown entity", async () => {
     const req = makeMockReq("GET", "/api/dashboard/entity/UNKNOWNENTITY12345678901");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     expect(captured.status).toBe(404);
     const body = JSON.parse(captured.body) as { error: string };
     expect(typeof body.error).toBe("string");
   });
 
-  it("respects windowDays query param", () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
+  it("respects windowDays query param", async () => {
+    const e = await store.createEntity({ type: "E", displayName: "User" });
     const req = makeMockReq("GET", `/api/dashboard/entity/${e.id}?windowDays=30`);
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     expect(captured.status).toBe(200);
   });
 });
 
-describe.skip("DashboardApi — /api/dashboard/coa", () => {
+describe("DashboardApi — /api/dashboard/coa", async () => {
   let api: DashboardApi;
 
   beforeEach(() => {
     api = new DashboardApi({ queries });
   });
 
-  it("returns entries, total, hasMore fields", () => {
+  it("returns entries, total, hasMore fields", async () => {
     const req = makeMockReq("GET", "/api/dashboard/coa");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
 
     const body = JSON.parse(captured.body) as Record<string, unknown>;
     expect(Array.isArray(body["entries"])).toBe(true);
@@ -1377,20 +1391,20 @@ describe.skip("DashboardApi — /api/dashboard/coa", () => {
     expect(typeof body["hasMore"]).toBe("boolean");
   });
 
-  it("passes entityId, fingerprint, workType, since, until, limit, offset params", () => {
+  it("passes entityId, fingerprint, workType, since, until, limit, offset params", async () => {
     const e = store.createEntity({ type: "E", displayName: "User" });
     const req = makeMockReq(
       "GET",
       `/api/dashboard/coa?entityId=${e.id}&fingerprint=$A0&workType=message_in&limit=10&offset=0`
     );
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
     expect(captured.status).toBe(200);
   });
 });
 
-describe.skip("DashboardApi — error handling", () => {
-  it("returns 500 with generic error message when query throws", () => {
+describe("DashboardApi — error handling", async () => {
+  it("returns 500 with generic error message when query throws", async () => {
     // Create a queries object where getOverview throws
     const badQueries = {
       getOverview: () => { throw new Error("DB exploded"); },
@@ -1399,12 +1413,15 @@ describe.skip("DashboardApi — error handling", () => {
 
     const req = makeMockReq("GET", "/api/dashboard/overview");
     const { res, captured } = makeMockRes();
-    api.handle(req, res);
+    await api.handle(req, res);
 
     expect(captured.status).toBe(500);
     const body = JSON.parse(captured.body) as { error: string };
-    // Error messages are sanitized to prevent information leakage (CWE-200)
-    expect(body.error).toBe("Internal server error");
+    // Error messages are sanitized to prevent information leakage (CWE-200).
+    // After the v0.4.x async handler refactor, each route's catch block
+    // produces a route-specific generic message ("Failed to fetch overview")
+    // rather than the outer "Internal server error". Both are CWE-200-safe.
+    expect(body.error).toBe("Failed to fetch overview");
   });
 });
 
@@ -1485,7 +1502,7 @@ function makeCOAEntry(): COAExplorerEntry {
   };
 }
 
-describe.skip("DashboardEventBroadcaster.getSubscriberCount", () => {
+describe("DashboardEventBroadcaster.getSubscriberCount", () => {
   it("starts at 0 with no subscribers", () => {
     const { broadcaster } = createMockBroadcaster();
     const deb = new DashboardEventBroadcaster({ wss: broadcaster });
@@ -1533,7 +1550,7 @@ describe.skip("DashboardEventBroadcaster.getSubscriberCount", () => {
   });
 });
 
-describe.skip("DashboardEventBroadcaster.emitImpactRecorded", () => {
+describe("DashboardEventBroadcaster.emitImpactRecorded", () => {
   it("does not broadcast when no subscribers", () => {
     const { broadcaster, broadcastCalls } = createMockBroadcaster();
     const deb = new DashboardEventBroadcaster({ wss: broadcaster });
@@ -1614,7 +1631,7 @@ describe.skip("DashboardEventBroadcaster.emitImpactRecorded", () => {
   });
 });
 
-describe.skip("DashboardEventBroadcaster.emitEntityVerified", () => {
+describe("DashboardEventBroadcaster.emitEntityVerified", () => {
   it("broadcasts entity:verified event to subscribers", () => {
     const { broadcaster, broadcastCalls, emit } = createMockBroadcaster();
     const deb = new DashboardEventBroadcaster({ wss: broadcaster });
@@ -1639,7 +1656,7 @@ describe.skip("DashboardEventBroadcaster.emitEntityVerified", () => {
   });
 });
 
-describe.skip("DashboardEventBroadcaster.emitCOACreated", () => {
+describe("DashboardEventBroadcaster.emitCOACreated", () => {
   it("broadcasts coa:created event to subscribers", () => {
     const { broadcaster, broadcastCalls, emit } = createMockBroadcaster();
     const deb = new DashboardEventBroadcaster({ wss: broadcaster });
@@ -1662,7 +1679,7 @@ describe.skip("DashboardEventBroadcaster.emitCOACreated", () => {
   });
 });
 
-describe.skip("DashboardEventBroadcaster.emitOverviewUpdated — debounce", () => {
+describe("DashboardEventBroadcaster.emitOverviewUpdated — debounce", () => {
   it("does not immediately broadcast the overview", () => {
     const { broadcaster, broadcastCalls, emit } = createMockBroadcaster();
     const deb = new DashboardEventBroadcaster({ wss: broadcaster }, 50);
@@ -1740,7 +1757,7 @@ describe.skip("DashboardEventBroadcaster.emitOverviewUpdated — debounce", () =
   });
 });
 
-describe.skip("DashboardEventBroadcaster.destroy", () => {
+describe("DashboardEventBroadcaster.destroy", () => {
   it("clears all subscribers on destroy", () => {
     const { broadcaster, emit } = createMockBroadcaster();
     const deb = new DashboardEventBroadcaster({ wss: broadcaster });
@@ -1778,7 +1795,7 @@ describe.skip("DashboardEventBroadcaster.destroy", () => {
   });
 });
 
-describe.skip("DashboardEventBroadcaster — subscription filtering edge cases", () => {
+describe("DashboardEventBroadcaster — subscription filtering edge cases", () => {
   it("empty channels array acts as no filter (receives all)", () => {
     const { broadcaster, broadcastCalls, emit } = createMockBroadcaster();
     const deb = new DashboardEventBroadcaster({ wss: broadcaster });
