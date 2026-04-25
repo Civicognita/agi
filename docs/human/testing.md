@@ -72,16 +72,20 @@ Tests that touch the database connect to the **test VM's real Postgres** (`agi_d
 2. `DATABASE_URL` env (matches the production resolution path)
 3. Default: `postgres://agi:aionima@localhost:5432/agi_data` — the test VM's Postgres
 
-**Important: the test VM must be running for DB-touching tests.** `RUN_LOCAL=1` no longer applies to fixtures that talk to Postgres. If the VM is down, `createTestDbConnection()` raises a clear error directing you to run `agi test-vm services-status`. Pre-flight:
+**Important: the test VM must be running for DB-touching tests.** `RUN_LOCAL=1` no longer applies to fixtures that talk to Postgres. If the VM is down, `createTestDbConnection()` raises a clear error directing you to run `agi test-vm services-status`.
+
+**The test runner auto-restarts services on version drift.** `agi test`'s preflight (in `scripts/test-run.sh`) compares the VM-running AGI version (from `https://ai.on/health`) against host `package.json` and, if they differ, runs `agi test-vm services-restart` and waits up to 30s for `/health` to come back ONLINE before running the test. The VM mounts the host repo as live source (`/mnt/agi`), so a service restart is enough to pick up everything on dev — you never need to manually rebuild or recreate the VM to test the active codebase.
+
+Manual escape hatches if you need them outside a test run:
 
 ```bash
 agi test-vm services-status     # Confirm Postgres: active
 agi test-vm services-start      # If anything is stopped
-agi test-vm services-version    # Compare VM-running AGI vs host source — warns when stale
+agi test-vm services-version    # Compare VM-running AGI vs host source — exit 2 when stale
 agi test-vm services-restart    # Pick up host source changes without recreating the VM
 ```
 
-The VM mounts the host repo as live source (`/mnt/agi`), so a full `create` is rarely needed. Run `services-restart` whenever you want a Playwright run to validate code shipped after the AGI service was last started — `services-version` exits with code `2` and a stale-warning so CI can fail-fast if the VM has drifted.
+`services-version` exits with code `2` and a stale-warning so external CI can fail-fast if it ever runs Playwright outside the auto-restart preflight path.
 
 Per-test overhead is ~50–200ms (schema create + DDL); a full dashboard run finishes in under 10s.
 

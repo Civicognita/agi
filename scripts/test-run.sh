@@ -87,6 +87,38 @@ preflight() {
     echo "Run: pnpm test:vm:setup" >&2
     exit 1
   fi
+
+  # Version drift check — the VM mounts host source live, but the long-running
+  # AGI tsx process keeps the package.json `version` it had at start. Without
+  # this check, a Playwright run against a VM whose AGI service was started
+  # days ago silently validates STALE code, not the active codebase. The
+  # whole point of the test VM is to validate the current dev branch — so
+  # the test runner auto-restarts services when drift is detected. This is
+  # a test-time decision, never gated on a flag.
+  local host_version vm_version
+  host_version=$(grep -m1 '"version"' "$REPO_DIR/package.json" 2>/dev/null \
+    | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+  vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk https://ai.on/health 2>/dev/null" 2>/dev/null \
+    | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
+    | tr -d '\r\n ')
+
+  if [ -n "$host_version" ] && [ -n "$vm_version" ] && [ "$host_version" != "$vm_version" ]; then
+    echo "VM AGI is on v${vm_version}, host source is v${host_version} — restarting services to pick up the active codebase..." >&2
+    bash "$VM_SCRIPT" services-restart
+    # Wait up to 30s for /health to come back ONLINE so tests don't race the boot
+    local waited=0
+    while [ $waited -lt 30 ]; do
+      if multipass exec "$VM_NAME" -- bash -c "curl -sk https://ai.on/health 2>/dev/null | grep -q '\"state\":\"ONLINE\"'" 2>/dev/null; then
+        echo "VM services back online (took ${waited}s)." >&2
+        break
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+    if [ $waited -ge 30 ]; then
+      echo "Warning: services-restart did not yield ONLINE within 30s — proceeding anyway." >&2
+    fi
+  fi
 }
 
 # ---------------------------------------------------------------------------
