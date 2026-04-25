@@ -208,6 +208,16 @@ The policy is read from disk at every invocation — config changes take effect 
 
 The `agi bash` subcommand is the **server-side** half of the routing rule: `agi bash <cmd>` produces a JSONL record with caller attribution and policy enforcement. The **client-side** half — making sure every shell exec the assistant issues uses that surface — is enforced by a Claude Code PreToolUse hook.
 
+### Install
+
+The hook + skill ship as templates inside this repo (`agi/scripts/claude-code-templates/`). Install them via:
+
+```bash
+agi setup-claude-hooks
+```
+
+The installer is **idempotent** — safe to re-run; it copies the hook + skill into `~/.claude/` and patches `~/.claude/settings.json` with a deduplicated PreToolUse Bash hook entry. Routing activates on the next Claude Code session start.
+
 ### How it works
 
 1. **PreToolUse hook** at `~/.claude/hooks/agi-bash-router.sh` is wired in `~/.claude/settings.json` with `matcher: "Bash"`. It fires before every Bash tool call.

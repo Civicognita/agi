@@ -267,6 +267,20 @@ This prints validation errors with field paths. Fix them in `gateway.json` and r
 
 ---
 
+## Step 9 — (Optional) Install Claude Code AgiBash routing hook
+
+If you use **Claude Code** alongside Aionima, install the AgiBash routing hook so every shell command Claude issues is automatically routed through `agi bash` and lands in the JSONL log surface (`~/.agi/logs/agi-bash-YYYY-MM-DD.jsonl`).
+
+```bash
+agi setup-claude-hooks
+```
+
+This is **idempotent** — safe to re-run; it copies the hook script + agibash skill into `~/.claude/` and patches `~/.claude/settings.json` to wire a PreToolUse hook on the Bash tool. Routing activates on the next Claude Code session start.
+
+After install, a plain `ls` from the assistant gets blocked with a structured nudge (`AGI-BASH-ROUTER:` prefixed stderr) suggesting the wrapped form. The assistant re-issues through `agi bash` automatically. Bypass via `AGI_ROUTER_BYPASS=1` (logged for audit). Full reference: `agi/docs/human/cli.md` § Routing protocol.
+
+---
+
 ## Development Workflow
 
 | Command | What It Does |

@@ -1352,6 +1352,83 @@ cmd_bash() {
   return "$exit_code"
 }
 
+# ---------------------------------------------------------------------------
+# agi setup-claude-hooks (story #108, task #350)
+#
+# Installs the AgiBash routing hook + agibash skill into ~/.claude/ and
+# patches ~/.claude/settings.json with a PreToolUse Bash hook entry
+# pointing at the installed hook script. Idempotent: running twice leaves
+# the same end state.
+#
+# Templates ship in this repo under scripts/claude-code-templates/ so a
+# fresh `agi install` followed by `agi setup-claude-hooks` produces a
+# routed-by-default Claude Code experience without per-machine bespoke
+# copying.
+# ---------------------------------------------------------------------------
+cmd_setup_claude_hooks() {
+  local templates_dir="$DEPLOY_DIR/scripts/claude-code-templates"
+  if [ ! -d "$templates_dir" ]; then
+    err "Templates not found at $templates_dir"
+    return 1
+  fi
+
+  if ! command -v jq >/dev/null 2>&1; then
+    err "jq is required to patch ~/.claude/settings.json idempotently"
+    info "Install with: sudo apt install jq"
+    return 1
+  fi
+
+  info "Installing AgiBash routing hook + skill into ~/.claude/"
+
+  # 1. Hook script
+  mkdir -p "$HOME/.claude/hooks"
+  cp "$templates_dir/hooks/agi-bash-router.sh" "$HOME/.claude/hooks/agi-bash-router.sh"
+  chmod +x "$HOME/.claude/hooks/agi-bash-router.sh"
+  ok "Installed hook: ~/.claude/hooks/agi-bash-router.sh"
+
+  # 2. Skill
+  mkdir -p "$HOME/.claude/skills/agibash"
+  cp "$templates_dir/skills/agibash/SKILL.md" "$HOME/.claude/skills/agibash/SKILL.md"
+  ok "Installed skill: ~/.claude/skills/agibash/SKILL.md"
+
+  # 3. Patch settings.json. The jq pipeline is idempotent:
+  #    - Removes any existing PreToolUse entry pointing at agi-bash-router
+  #      (so re-runs replace, not duplicate).
+  #    - Appends the canonical entry pointing at the installed hook.
+  #    - Preserves all other settings + other hook entries unchanged.
+  local settings="$HOME/.claude/settings.json"
+  if [ ! -f "$settings" ]; then
+    echo "{}" > "$settings"
+  fi
+
+  local tmp
+  tmp=$(mktemp)
+  if jq --arg cmd "bash $HOME/.claude/hooks/agi-bash-router.sh" '
+    .hooks //= {}
+    | .hooks.PreToolUse //= []
+    | .hooks.PreToolUse |= map(select(
+        ((.hooks // [])[0].command // "") | test("agi-bash-router") | not
+      ))
+    | .hooks.PreToolUse += [{
+        matcher: "Bash",
+        hooks: [{type: "command", command: $cmd}]
+      }]
+  ' "$settings" > "$tmp"; then
+    mv "$tmp" "$settings"
+    ok "Patched ~/.claude/settings.json (PreToolUse Bash hook)"
+  else
+    rm -f "$tmp"
+    err "Failed to patch settings.json"
+    return 1
+  fi
+
+  echo ""
+  info "Routing activates on the next Claude Code session start."
+  info "Test by running a plain 'ls' from the assistant — you should see"
+  info "  the AGI-BASH-ROUTER: blocked stderr nudge."
+  info "Audit log: ~/.agi/logs/agi-bash-router.log"
+}
+
 cmd_help() {
   echo -e "${BOLD}agi${RESET} — Aionima Gateway CLI"
   echo ""
@@ -1389,6 +1466,9 @@ cmd_help() {
   echo "                  (story #104 — MVP surface; logging + policy WIP)"
   echo "  setup           Interactive configuration wizard"
   echo "  setup-prompts   Configure persona and heartbeat prompts"
+  echo "  setup-claude-hooks"
+  echo "                  Install AgiBash routing hook + skill into ~/.claude/"
+  echo "                  (idempotent — safe to re-run; activates next session)"
   echo "  channels        Manage channel adapters"
   echo "  help            Show this help"
 }
@@ -1425,6 +1505,7 @@ case "${1:-help}" in
   bash)     shift; cmd_bash "$@" ;;
   setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;
   setup-prompts) node "$DEPLOY_DIR/cli/dist/index.js" setup-prompts ;;
+  setup-claude-hooks) cmd_setup_claude_hooks ;;
   channels) shift; node "$DEPLOY_DIR/cli/dist/index.js" channels "$@" ;;
   help|--help|-h) cmd_help ;;
   *)
