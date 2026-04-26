@@ -98,4 +98,22 @@ describe("factory — createSingleProvider threads timeoutMs (s111 t413)", () =>
     });
     expect(provider).toBeInstanceOf(AnthropicProvider);
   });
+
+  it("constructs aion-micro as an OpenAIProvider against Lemonade with the floor-tier deadline (s111 t379)", () => {
+    // aion-micro is the off-grid floor — served by Lemonade at :13305 with
+    // model `wishborn/aion-micro-v1` by default. The factory case wires it
+    // as an addressable Provider so the agent-router can pick it by name
+    // (independent of AionMicroManager's diagnostic-surface wrapper, which
+    // continues to serve `agi doctor` + merge-conflict resolution).
+    const provider = createSingleProvider("aion-micro", {
+      defaultModel: "wishborn/aion-micro-v1",
+      maxTokens: 1024,
+      maxRetries: 2,
+    });
+    expect(provider).toBeInstanceOf(OpenAIProvider);
+    // Floor tier resolves to BASE_TIMEOUT_MS * 6.0 = 360s — matches the
+    // empirical CPU-bound first-token budget for the small fine-tuned
+    // model on a slow box. Verified via timeoutMsForProviderType helper.
+    expect(timeoutMsForProviderType("aion-micro")).toBe(BASE_TIMEOUT_MS * 6);
+  });
 });

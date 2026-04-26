@@ -121,6 +121,37 @@ export function createSingleProvider(
         timeoutMs,
       });
 
+    case "aion-micro":
+      // s111 t379 (F1) — aion-micro as a chat-routable core Provider.
+      //
+      // aion-micro is the off-grid floor (alpha-stable-1 acceptance bar). The
+      // model itself runs on Lemonade — Phase K.4 moved serving from a custom
+      // FastAPI container to the Lemonade backplane (see AionMicroManager
+      // docstring). What this factory case adds is an addressable Provider
+      // identity so the agent-router can pick aion-micro by name without
+      // routing through AionMicroManager's diagnostic-surface wrapper.
+      //
+      // Model defaults to `wishborn/aion-micro-v1` to match
+      // AionMicroManager.DEFAULT_MODEL — when that model isn't pulled,
+      // OpenAIProvider's HTTP error surfaces; the prepare-runtime UX in
+      // the dashboard (Lemonade banner) handles install/pull with consent.
+      // The fallback-to-SmolLM2 logic in AionMicroManager is intentionally
+      // NOT replicated here — that two-tier behavior is specific to the
+      // diagnostic surface (doctor + merge-conflict). Chat routing wants
+      // a deterministic model identity per Provider invocation.
+      //
+      // Tier: "floor" (per providers-api catalog). timeoutMs computed via
+      // timeoutMsForProviderType resolves to BASE_TIMEOUT_MS * 6.0 = 360s
+      // — sufficient headroom for CPU-bound first-token on slow boxes.
+      return new OpenAIProvider({
+        apiKey: "not-needed",
+        defaultModel: config.defaultModel ?? "wishborn/aion-micro-v1",
+        maxTokens: config.maxTokens ?? 1024,
+        maxRetries: config.maxRetries ?? 2,
+        baseUrl: config.baseUrl ?? "http://127.0.0.1:13305",
+        timeoutMs,
+      });
+
     case "hf-local": {
       // Resolve the actual port from ModelAgentBridge if available.
       // The bridge registers running text-generation models with their
