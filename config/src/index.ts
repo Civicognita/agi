@@ -36,12 +36,14 @@ export {
   ProjectCategorySchema,
   ProjectAiModelBindingSchema,
   ProjectAiDatasetBindingSchema,
+  ProjectIterativeWorkSchema,
   type ProjectConfig,
   type ProjectHosting,
   type ProjectStackInstance,
   type ProjectCategory,
   type ProjectAiModelBinding,
   type ProjectAiDatasetBinding,
+  type ProjectIterativeWork,
 } from "./project-schema.js";
 
 export {

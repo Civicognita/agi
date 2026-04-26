@@ -850,6 +850,7 @@ export async function startGatewayServer(
     skillRegistry,
     userContextStore,
     primeLoader,
+    projectConfigManager,
     workspaceRoot,
     projectPaths,
     ownerConfig: ownerConfig !== undefined ? {

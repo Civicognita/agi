@@ -107,6 +107,21 @@ export const ProjectAiDatasetBindingSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Iterative-work mode — opt-in per-project. When enabled, the prompt assembler
+// injects agi/prompts/iterative-work.md into Aion's system prompt so the agent
+// participates in the tynn workflow (race-to-DONE, look-for-MORE, slice
+// discipline). The cron field is consumed by the scheduler (t436); leaving it
+// undefined while enabled means manual-fire only (e.g. via /next).
+// ---------------------------------------------------------------------------
+
+export const ProjectIterativeWorkSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    cron: z.string().optional(),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
 // Root project config — the full ~/.agi/{slug}/project.json shape
 // ---------------------------------------------------------------------------
 
@@ -132,6 +147,8 @@ export const ProjectConfigSchema = z
     aiModels: z.array(ProjectAiModelBindingSchema).optional(),
     /** AI dataset dependencies. Datasets are mounted as read-only volumes. */
     aiDatasets: z.array(ProjectAiDatasetBindingSchema).optional(),
+    /** Iterative-work mode — toggles tynn-workflow prompt injection + cron-nudged scheduling. */
+    iterativeWork: ProjectIterativeWorkSchema.optional(),
   })
   .passthrough(); // Plugins can store custom keys at the root level
 
@@ -145,3 +162,4 @@ export type ProjectStackInstance = z.infer<typeof ProjectStackInstanceSchema>;
 export type ProjectCategory = z.infer<typeof ProjectCategorySchema>;
 export type ProjectAiModelBinding = z.infer<typeof ProjectAiModelBindingSchema>;
 export type ProjectAiDatasetBinding = z.infer<typeof ProjectAiDatasetBindingSchema>;
+export type ProjectIterativeWork = z.infer<typeof ProjectIterativeWorkSchema>;

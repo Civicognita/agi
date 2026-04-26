@@ -21,8 +21,19 @@ Every managed project has a config file at `~/.agi/{slug}/project.json` where `{
 | `category` | `enum` | No | — | One of: `literature`, `app`, `web`, `media`, `administration`, `ops`, `monorepo` |
 | `description` | `string` | No | — | Human-readable description |
 | `hosting` | `object` | No | — | Hosting config (present when project has been configured for hosting) |
+| `magicApps` | `string[]` | No | — | Attached MagicApp IDs |
+| `aiModels` | `array` | No | — | AI model dependencies (HuggingFace bindings) |
+| `aiDatasets` | `array` | No | — | AI dataset dependencies |
+| `iterativeWork` | `object` | No | — | Iterative-work mode toggle — when `enabled: true`, the prompt assembler injects `agi/prompts/iterative-work.md` so Aion participates in the tynn workflow on this project's behalf |
 
 The root uses `.passthrough()` — plugins can store custom keys at the root level and they will survive read/write cycles.
+
+### Iterative Work Object (`.strict()`)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `boolean` | `undefined` (treated as off) | When `true`, the system prompt assembler injects `agi/prompts/iterative-work.md` for project-typed requests on this project. Hot-reloads — no restart needed. |
+| `cron` | `string` | — | Cron expression consumed by the cron-nudge scheduler (story s118 / t436). When omitted while `enabled: true`, manual fire only (e.g. via `/next`). |
 
 ### Hosting Object (`.strict()`)
 

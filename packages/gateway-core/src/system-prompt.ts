@@ -142,6 +142,14 @@ export interface SystemPromptContext {
   /** Active project path — when set, injects plan workflow instructions. */
   projectPath?: string;
   /**
+   * Iterative-work prompt content — when present (project has
+   * `iterativeWork.enabled: true`), the assembler injects this verbatim into
+   * Layer 2 for project-typed requests so Aion participates in the tynn
+   * workflow (race-to-DONE, look-for-MORE, slice discipline). Hot-loaded by
+   * the invoker per `feedback_hot_config` — pass the file content, not a path.
+   */
+  iterativeWorkPrompt?: string;
+  /**
    * Whether tools will be offered on the upcoming LLM call. When `false`, the
    * assembler renders a compact one-line "tools may activate" hint instead of
    * the full tool list — saves ~1.5–2.5k tokens when no tools can be called
@@ -349,6 +357,15 @@ When you receive a \`[taskmaster]\` completion note:
 Status transitions (via \`update_plan\`): \`draft\` > \`reviewing\` > \`approved\` > \`executing\` > \`testing\` > \`complete\`.
 
 Step transitions happen automatically via \`planRef\`. You manage the plan's top-level status transitions and mark steps you handle yourself as \`complete\`.`;
+}
+
+
+function buildIterativeWorkSection(content: string): string {
+  return `## ITERATIVE-WORK MODE — Tynn Workflow Engagement
+
+Iterative-work mode is enabled for this project. The following discipline (sourced from agi/prompts/iterative-work.md) governs how you participate in the tynn workflow on this project's behalf:
+
+${content}`;
 }
 
 
@@ -780,6 +797,13 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
     }
   }
 
+  // Iterative-work mode — project opt-in (iterativeWork.enabled). When the
+  // invoker hot-loads agi/prompts/iterative-work.md the content is injected
+  // here so Aion participates in the tynn workflow on project requests.
+  if (rt === "project" && ctx.iterativeWorkPrompt !== undefined && ctx.iterativeWorkPrompt.length > 0) {
+    sections.push(buildIterativeWorkSection(ctx.iterativeWorkPrompt));
+  }
+
   // Workspace context — for dev mode project work
   if (ctx.devMode === true && (rt === "project" || rt === "system")) {
     if (ctx.workspaceRoot !== undefined) {
@@ -929,6 +953,10 @@ export function assembleSystemPromptWithBreakdown(
     if (!isLocal) {
       contextSections.push(buildPlanWorkflowSection());
     }
+  }
+
+  if (rt === "project" && ctx.iterativeWorkPrompt !== undefined && ctx.iterativeWorkPrompt.length > 0) {
+    contextSections.push(buildIterativeWorkSection(ctx.iterativeWorkPrompt));
   }
 
   if (ctx.devMode === true && (rt === "project" || rt === "system")) {

@@ -41,6 +41,7 @@ import { sanitize } from "./sanitizer.js";
 import type { LLMProvider, LLMToolCall, LLMToolResult, LLMMessage, LLMContentBlock } from "./llm/index.js";
 import type { UserContextStore } from "./user-context-store.js";
 import type { PrimeLoader } from "./prime-loader.js";
+import type { ProjectConfigManager } from "./project-config-manager.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -191,6 +192,10 @@ export interface AgentInvokerDeps {
   userContextStore?: UserContextStore;
   /** Optional PRIME knowledge loader — loads corpus for system prompt injection. */
   primeLoader?: PrimeLoader;
+  /** Optional project config manager — read at invocation time so iterative-work
+   *  mode + other per-project flags can shape prompt assembly. Null when
+   *  invoker is run without project context (e.g. entity-only requests). */
+  projectConfigManager?: ProjectConfigManager;
   /** Workspace root path — injected as context when devMode is true. */
   workspaceRoot?: string;
   /** Directories where projects are stored and worked on. */
@@ -507,6 +512,30 @@ export class AgentInvoker extends EventEmitter {
     // tools it cannot actually call.
     const willOfferTools = shouldOfferTools(sanitizedText, requestType) && availableTools.length > 0;
 
+    // Iterative-work mode — when the project opts in via
+    // `iterativeWork.enabled: true`, hot-load agi/prompts/iterative-work.md so
+    // Aion participates in the tynn workflow on this turn. Read at use time
+    // (per `feedback_hot_config`); errors are swallowed so a missing prompt
+    // file never breaks invocation.
+    let iterativeWorkPrompt: string | undefined;
+    if (
+      requestType === "project" &&
+      request.projectContext !== undefined &&
+      this.deps.projectConfigManager !== undefined
+    ) {
+      const projectConfig = this.deps.projectConfigManager.read(request.projectContext);
+      if (projectConfig?.iterativeWork?.enabled === true) {
+        try {
+          const { readFileSync } = await import("node:fs");
+          const { resolve: resolvePath } = await import("node:path");
+          iterativeWorkPrompt = readFileSync(
+            resolvePath(process.cwd(), "prompts/iterative-work.md"),
+            "utf-8",
+          );
+        } catch { /* iterative-work.md missing — proceed without injection */ }
+      }
+    }
+
     const promptCtx: SystemPromptContext = {
       entity: entityCtx,
       coaFingerprint,
@@ -526,6 +555,7 @@ export class AgentInvoker extends EventEmitter {
       requestType,
       costMode: this.deps.getCostMode?.(),
       toolsAvailable: willOfferTools,
+      iterativeWorkPrompt,
     };
 
     const { prompt: baseSystemPrompt, breakdown: promptBreakdown } = assembleSystemPromptWithBreakdown(promptCtx);
