@@ -275,6 +275,87 @@ describe("AgentRouter", () => {
     });
   });
 
+  describe("cost ledger writer (s111 t424)", () => {
+    // CostLedgerWriter is an optional public field — tests use a minimal
+    // stub matching the CostLedgerRecorder structural type. The stub
+    // captures every call so assertions can inspect dollar cost, tokens,
+    // and the routing fields the writer received.
+
+    function makeStubWriter() {
+      const calls: Array<Parameters<NonNullable<AgentRouter["costLedgerWriter"]>["record"]>[0]> = [];
+      return { record: (entry: typeof calls[0]) => calls.push(entry), calls };
+    }
+
+    it("does NOT record when costLedgerWriter is unset (default)", async () => {
+      const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
+      // No assignment to router.costLedgerWriter — should be a silent no-op.
+      await router.invoke(makeParams());
+      // Nothing to assert against; presence of no error proves no record path
+      // executed. The lastDecision still tracks; the ring buffer still pushes.
+      expect(router.getRecentDecisions().length).toBe(1);
+    });
+
+    it("records exactly one row per invoke when writer is wired", async () => {
+      const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
+      const writer = makeStubWriter();
+      router.costLedgerWriter = writer;
+      await router.invoke(makeParams());
+      expect(writer.calls.length).toBe(1);
+      expect(writer.calls[0]!.provider).toBe("anthropic");
+      expect(writer.calls[0]!.escalated).toBe(false);
+    });
+
+    it("computes dollarCost via cost-pricing for cloud Providers", async () => {
+      const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
+      const writer = makeStubWriter();
+      router.costLedgerWriter = writer;
+      await router.invoke(makeParams());
+      // claude-haiku-4-5 (balanced/simple) → $1/1M in + $5/1M out. Mock
+      // provider returns 100 input + 50 output (see createMockProvider).
+      // Expected: 100 * 1/1_000_000 + 50 * 5/1_000_000 = 0.0001 + 0.00025 = 0.00035
+      expect(writer.calls[0]!.dollarCost).toBe(0.00035);
+    });
+
+    it("populates provider/model/costMode/complexity/escalated from the routing decision", async () => {
+      const router = new AgentRouter(
+        () => makeRouterConfig({ router: { costMode: "balanced", escalation: false, maxEscalationsPerTurn: 1, simpleThresholdTokens: 500, complexThresholdTokens: 2000 } }),
+        mockFactory,
+      );
+      const writer = makeStubWriter();
+      router.costLedgerWriter = writer;
+      await router.invoke(makeParams());
+      const entry = writer.calls[0]!;
+      expect(entry.costMode).toBe("balanced");
+      expect(entry.complexity).toBe("simple");
+      expect(entry.model).toBe("claude-haiku-4-5");
+      expect(entry.routingReason).toBe("balanced/simple");
+    });
+
+    it("includes turnDurationMs (a non-negative number)", async () => {
+      const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
+      const writer = makeStubWriter();
+      router.costLedgerWriter = writer;
+      await router.invoke(makeParams());
+      const entry = writer.calls[0]!;
+      expect(typeof entry.turnDurationMs).toBe("number");
+      expect(entry.turnDurationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it("leaves cpuWattsObserved + gpuWattsObserved null in this slice", async () => {
+      // Power sampler integration is the next sub-slice (cycle 27). This
+      // test pins the current contract: writer receives null for both
+      // power fields; the schema's NULL semantics propagate through to
+      // aggregations without inflating local-Provider rollups.
+      const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
+      const writer = makeStubWriter();
+      router.costLedgerWriter = writer;
+      await router.invoke(makeParams());
+      const entry = writer.calls[0]!;
+      expect(entry.cpuWattsObserved).toBeNull();
+      expect(entry.gpuWattsObserved).toBeNull();
+    });
+  });
+
   describe("recent decisions ring buffer (s111 t419)", () => {
     it("records each invoke() as one entry with a timestamp", async () => {
       const router = new AgentRouter(() => makeRouterConfig(), mockFactory);

@@ -18,6 +18,29 @@ import { classifyRequest } from "./request-classifier.js";
 import type { RequestComplexity } from "./request-classifier.js";
 import { createComponentLogger } from "../logger.js";
 import type { Logger, ComponentLogger } from "../logger.js";
+import { computeDollarCost } from "../cost-pricing.js";
+
+/** Minimal CostLedgerWriter contract that AgentRouter calls. Lives here as
+ *  a structural type (not an import) so test fixtures can pass a stub
+ *  without pulling in @agi/db-schema. The real CostLedgerWriter from
+ *  cost-ledger-writer.ts implements this shape. */
+export interface CostLedgerRecorder {
+  record(entry: {
+    entityId: string | null;
+    provider: string;
+    model: string;
+    costMode: string;
+    complexity: string;
+    inputTokens: number;
+    outputTokens: number;
+    cpuWattsObserved: number | null;
+    gpuWattsObserved: number | null;
+    dollarCost: number | null;
+    escalated: boolean;
+    turnDurationMs: number;
+    routingReason: string;
+  }): void;
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -215,6 +238,48 @@ export class AgentRouter implements LLMProvider {
     }
   }
 
+  /**
+   * s111 t424 — push a cost-ledger row after a successful invoke()/summarize().
+   * Skipped silently when costLedgerWriter isn't set (test fixtures, early-
+   * boot stub Provider, plugin Provider that lives outside the router) or
+   * when lastDecision is null (defensive — shouldn't happen in practice).
+   *
+   * dollarCost is computed via cost-pricing.computeDollarCost: 0 for local
+   * Providers, real $$$ for cloud, null for unknown Provider/model. Power
+   * fields (cpuWattsObserved, gpuWattsObserved) are null in this slice —
+   * sampler integration ships in a follow-up cycle.
+   */
+  private recordCostLedger(
+    response: LLMResponse,
+    entityId: string,
+    turnStartMs: number,
+  ): void {
+    if (this.costLedgerWriter === undefined || this.lastDecision === null) return;
+    const inputTokens = response.usage?.inputTokens ?? 0;
+    const outputTokens = response.usage?.outputTokens ?? 0;
+    const dollarCost = computeDollarCost(
+      this.lastDecision.provider,
+      this.lastDecision.model,
+      inputTokens,
+      outputTokens,
+    );
+    this.costLedgerWriter.record({
+      entityId: entityId.length > 0 ? entityId : null,
+      provider: this.lastDecision.provider,
+      model: this.lastDecision.model,
+      costMode: this.lastDecision.costMode,
+      complexity: this.lastDecision.complexity,
+      inputTokens,
+      outputTokens,
+      cpuWattsObserved: null,
+      gpuWattsObserved: null,
+      dollarCost,
+      escalated: this.lastDecision.escalated,
+      turnDurationMs: Date.now() - turnStartMs,
+      routingReason: this.lastDecision.reason,
+    });
+  }
+
   /** Tracks the last config reference for cache invalidation on hot-reload. */
   private lastConfigRef: AgentRouterConfig | null = null;
 
@@ -228,6 +293,17 @@ export class AgentRouter implements LLMProvider {
     type: "billing" | "auth" | "error";
     message: string;
   }) => void;
+
+  /**
+   * s111 t422/t424 — optional cost ledger writer. When set, every invoke()
+   * and summarize() pushes a row with the final routing decision, token
+   * counts from LLMResponse.usage, and computed dollar cost. Power readings
+   * (cpuWattsObserved, gpuWattsObserved) stay null in this slice — the
+   * sampler integration ships in a follow-up cycle. Server.ts assigns
+   * after construction (mirrors onProviderError pattern), so test fixtures
+   * that don't care about ledger writes keep working without modification.
+   */
+  costLedgerWriter?: CostLedgerRecorder;
 
   /**
    * Providers that have been auto-paused due to zero/negative balance or a
@@ -261,6 +337,11 @@ export class AgentRouter implements LLMProvider {
   // -------------------------------------------------------------------------
 
   async invoke(params: LLMInvokeParams): Promise<LLMResponse> {
+    // s111 t424 — capture turn start for cost-ledger turnDurationMs. Outside
+    // the try block so we know the wall-clock duration even on error paths
+    // (though we only record on success — failures don't pollute the ledger).
+    const turnStartMs = Date.now();
+
     const config = this.getConfig();
     this.invalidateCacheIfConfigChanged(config);
 
@@ -416,6 +497,10 @@ export class AgentRouter implements LLMProvider {
     // s111 t419 — push to ring buffer AFTER fallbacks + escalations so each
     // turn produces exactly one entry reflecting the final decision.
     this.recordDecision();
+
+    // s111 t424 — also push to cost ledger (when wired). Same single-record-
+    // per-turn semantic as the ring buffer; same final-decision-state input.
+    this.recordCostLedger(response, params.entityId, turnStartMs);
 
     return response;
   }
