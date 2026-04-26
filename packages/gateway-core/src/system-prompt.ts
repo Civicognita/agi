@@ -275,8 +275,25 @@ function buildToolsSection(tools: ToolManifestEntry[]): string {
   return `Available tools:\n${toolLines.join("\n")}`;
 }
 
-function buildToolsHintSection(): string {
-  return "Tools are not active on this turn. The system enables tools automatically when the user's message asks for actions like reading or writing files, searching, running commands, managing projects, or browsing the web. Respond conversationally; do not invent tool calls.";
+function buildToolsHintSection(tools: ToolManifestEntry[]): string {
+  // Include the actual tool NAMES (not full descriptions) so the agent can
+  // answer "what can you do" truthfully even in compact mode. Without the
+  // names, the model fabricates a capability list from training/general
+  // platform knowledge — observed via owner-reported bug 2026-04-26 where
+  // Aion listed plugin-surface categories but ZERO ADF-core tools (s101
+  // t410). Names cost ~150 tokens vs the ~1500-2500 tokens of full tool
+  // descriptions — preserves the cost win from option D (s111 t372).
+  if (tools.length === 0) {
+    return "Tools are not active on this turn (no tools available in the current state and verification tier). Respond conversationally; do not invent tool calls.";
+  }
+  const names = tools.map((t) => t.name).sort().join(", ");
+  return [
+    "Tools are not active on this turn.",
+    "",
+    `When activated, your tools include: ${names}.`,
+    "",
+    "The system enables tools automatically when the user's message asks for actions like reading or writing files, searching, running commands, managing projects, or browsing the web. Respond conversationally; do not invent tool calls. If asked about your capabilities, refer to the tool list above — do not fabricate categories.",
+  ].join("\n");
 }
 
 function formatBytes(bytes: number): string {
@@ -707,7 +724,7 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
   // Available tools — full list when offered, compact hint otherwise. The
   // hint replaces ~1.5–2.5k tokens of unused tool definitions when the API
   // call won't pass `tools:` anyway (chat with no action verbs).
-  sections.push(ctx.toolsAvailable === false ? buildToolsHintSection() : buildToolsSection(ctx.tools));
+  sections.push(ctx.toolsAvailable === false ? buildToolsHintSection(ctx.tools) : buildToolsSection(ctx.tools));
 
   // State + owner (compact, one line each)
   sections.push(`Operational state: ${ctx.state}`);
@@ -867,7 +884,7 @@ export function assembleSystemPromptWithBreakdown(
     identitySections.push(buildRuntimeMetadataSection(ctx.runtimeMeta, ctx.state));
   }
 
-  identitySections.push(ctx.toolsAvailable === false ? buildToolsHintSection() : buildToolsSection(ctx.tools));
+  identitySections.push(ctx.toolsAvailable === false ? buildToolsHintSection(ctx.tools) : buildToolsSection(ctx.tools));
   identitySections.push(`Operational state: ${ctx.state}`);
 
   if (ctx.ownerName !== undefined) {

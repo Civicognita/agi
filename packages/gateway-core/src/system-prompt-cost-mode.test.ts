@@ -108,4 +108,23 @@ describe("assembleSystemPrompt — toolsAvailable=false rendering (#326 option D
     const withoutTools = assembleSystemPromptWithBreakdown({ ...baseCtx, toolsAvailable: false });
     expect(withoutTools.breakdown.identity).toBeLessThan(withTools.breakdown.identity);
   });
+
+  it("toolsAvailable=false hint NAMES the actual tools so chat can answer 'what can you do' truthfully (#410)", () => {
+    const withoutTools = assembleSystemPrompt({ ...baseCtx, toolsAvailable: false });
+    // Tool names appear in the hint so the model can read them when asked
+    // about capabilities. Names cost ~150 tokens vs the ~1500-2500 tokens of
+    // full descriptions — the cost win from option D (s111 t372) is preserved.
+    expect(withoutTools).toContain("tool_0");
+    expect(withoutTools).toContain("tool_5");
+    expect(withoutTools).toContain("When activated, your tools include:");
+    // Discipline reminder remains present
+    expect(withoutTools).toContain("do not invent tool calls");
+    expect(withoutTools).toContain("do not fabricate categories");
+  });
+
+  it("toolsAvailable=false with empty tools shows no-tools message instead of hint with names", () => {
+    const withoutTools = assembleSystemPrompt({ ...baseCtx, toolsAvailable: false, tools: [] });
+    expect(withoutTools).toContain("no tools available");
+    expect(withoutTools).not.toContain("When activated, your tools include:");
+  });
 });
