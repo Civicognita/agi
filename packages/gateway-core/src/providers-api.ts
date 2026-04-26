@@ -49,6 +49,20 @@ export interface ProviderCatalogEntry {
   modelCount?: number;
   /** baseUrl for local Providers; absent for cloud Providers. */
   baseUrl?: string;
+  /** Default model the Provider serves when no model is specified by the
+   *  caller. Drives the catalog UI's "Default model" line per Provider card.
+   *  Mirrors the `config.defaultModel ?? <hardcoded>` used in factory.ts:
+   *  aion-micro = wishborn/aion-micro-v1, ollama = llama3.1, etc.
+   *  Absent for cloud Providers where the agent.model config drives selection
+   *  on a per-call basis. */
+  defaultModel?: string;
+  /** Other Provider ids this Provider depends on at runtime. aion-micro
+   *  depends on lemonade because the model is served by the Lemonade backplane
+   *  (Phase K.4 — see AionMicroManager docstring). The catalog UI uses this
+   *  to show "Requires: Lemonade" on the aion-micro card and to grey out the
+   *  Provider when its dependency is unhealthy. Absent or empty when the
+   *  Provider has no inter-Provider dependencies. */
+  dependsOn?: string[];
   /** Deadline multiplier applied wherever a per-Provider timeout is computed.
    *  Cloud Providers respond in 2–5s end-to-end; CPU-bound local Providers can
    *  take 30–60s+ for first token alone (empirical: t326 close measured 60.9s
@@ -143,6 +157,14 @@ function buildBaseCatalog(config: AionimaConfig): ProviderCatalogEntry[] {
       tier: "floor",
       offGridCapable: true,
       health: "healthy",
+      // Matches factory.ts createSingleProvider("aion-micro", ...) default
+      // and AionMicroManager.DEFAULT_MODEL. The fine-tuned LoRA-merged GGUF
+      // lives on HuggingFace Hub and is pulled via Lemonade on first request.
+      defaultModel: "wishborn/aion-micro-v1",
+      // Phase K.4 moved aion-micro serving to the Lemonade backplane — the
+      // model can't answer chat completions if Lemonade isn't healthy. The
+      // catalog UI uses this to show "Requires: Lemonade" on the card.
+      dependsOn: ["lemonade"],
     },
     {
       id: "huggingface",
@@ -158,6 +180,7 @@ function buildBaseCatalog(config: AionimaConfig): ProviderCatalogEntry[] {
       offGridCapable: true,
       health: "healthy",
       baseUrl: "http://127.0.0.1:11434",
+      defaultModel: "llama3.1",
     },
     {
       id: "lemonade",
@@ -166,6 +189,9 @@ function buildBaseCatalog(config: AionimaConfig): ProviderCatalogEntry[] {
       offGridCapable: true,
       health: "healthy",
       baseUrl: "http://127.0.0.1:13305",
+      // Lemonade auto-routes between NPU/GPU/CPU and selects the loaded
+      // model — "default" is its convention for "whatever's loaded."
+      defaultModel: "default",
     },
     {
       id: "anthropic",

@@ -84,6 +84,41 @@ describe("providers-api — GET /api/providers (s111 t372)", () => {
     expect(timeoutMultiplierForTier("local")).toBe(6.0);
   });
 
+  it("populates defaultModel per Provider where applicable (s111 t416)", async () => {
+    const app = makeApp({});
+    const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
+    const body = res.json() as { providers: ProviderCatalogEntry[] };
+    // aion-micro mirrors factory.ts + AionMicroManager.DEFAULT_MODEL.
+    expect(body.providers.find((p) => p.id === "aion-micro")?.defaultModel).toBe("wishborn/aion-micro-v1");
+    // Local Provider defaults match factory.ts createSingleProvider switch.
+    expect(body.providers.find((p) => p.id === "ollama")?.defaultModel).toBe("llama3.1");
+    expect(body.providers.find((p) => p.id === "lemonade")?.defaultModel).toBe("default");
+    // Cloud Providers omit defaultModel — agent.model config drives selection
+    // on a per-call basis, so no useful default fits in the catalog.
+    expect(body.providers.find((p) => p.id === "anthropic")?.defaultModel).toBeUndefined();
+    expect(body.providers.find((p) => p.id === "openai")?.defaultModel).toBeUndefined();
+    await app.close();
+  });
+
+  it("declares aion-micro depends on lemonade for runtime serving (s111 t416)", async () => {
+    const app = makeApp({});
+    const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
+    const body = res.json() as { providers: ProviderCatalogEntry[] };
+    // aion-micro is served by the Lemonade backplane (Phase K.4) — the
+    // catalog UI uses this to render "Requires: Lemonade" on the card and
+    // to grey out aion-micro when its dependency is unhealthy.
+    expect(body.providers.find((p) => p.id === "aion-micro")?.dependsOn).toEqual(["lemonade"]);
+    // Other Providers have no inter-Provider dependencies — dependsOn is
+    // omitted (undefined) rather than an empty array, matching the
+    // optional-field convention in the rest of the catalog.
+    expect(body.providers.find((p) => p.id === "ollama")?.dependsOn).toBeUndefined();
+    expect(body.providers.find((p) => p.id === "lemonade")?.dependsOn).toBeUndefined();
+    expect(body.providers.find((p) => p.id === "huggingface")?.dependsOn).toBeUndefined();
+    expect(body.providers.find((p) => p.id === "anthropic")?.dependsOn).toBeUndefined();
+    expect(body.providers.find((p) => p.id === "openai")?.dependsOn).toBeUndefined();
+    await app.close();
+  });
+
   it("marks cloud Providers without an API key as no-key", async () => {
     const app = makeApp({});
     const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
