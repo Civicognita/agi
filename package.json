@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.194",
+  "version": "0.4.195",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -47,7 +47,9 @@
     "docs-check": "bash scripts/check-docs-vs-help.sh",
     "docs-check:strict": "bash scripts/check-docs-vs-help.sh --strict",
     "route-check": "bash scripts/check-route-collisions.sh",
-    "route-check:strict": "bash scripts/check-route-collisions.sh --strict"
+    "route-check:strict": "bash scripts/check-route-collisions.sh --strict",
+    "staged-check": "bash scripts/check-staged-tree.sh",
+    "staged-check:strict": "bash scripts/check-staged-tree.sh --strict"
   },
   "dependencies": {
     "@agi/db-schema": "workspace:*",

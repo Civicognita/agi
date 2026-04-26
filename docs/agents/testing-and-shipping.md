@@ -56,6 +56,15 @@ pnpm route-check          # warn-only — flags duplicate (METHOD,PATH) registra
 pnpm route-check:strict   # exit 2 on collision (use in CI gates)
 ```
 
+**Quick sanity check that the STAGED commit (not your working dir) typechecks:**
+
+```bash
+pnpm staged-check         # warn-only — typechecks the staged tree, not the working tree
+pnpm staged-check:strict  # exit 2 on staged-tree typecheck failure (use in CI gates)
+```
+
+The staged-tree guard exists because of two hotfix cycles in the same loop session: v0.4.187 → v0.4.188 (route collision passed local tsc because the file existed on disk) and v0.4.193 → v0.4.194 (NoopAnchor file gitignored — local tsc passed because tsc reads disk, but the published commit had a broken import). The guard stashes unstaged changes + untracked files, runs `pnpm typecheck` against the now-clean working tree (which equals the staged content), then restores the stash via a trap so the working tree ends up exactly as it started. Strict mode exits 2 on failure — wire it into pre-commit hooks or CI gates that should hard-fail on a broken staged tree.
+
 The route-collision lint exists because of the v0.4.187 → v0.4.188 hotfix: a new endpoint registered `GET /api/providers`, but `server-runtime-state.ts` already had it. Fastify rejects duplicate routes at startup, the gateway crashed, Caddy returned 502 to every dashboard request — and the unit tests passed because each fixture spun up a fresh Fastify instance. The lint scans `packages/*/src/` for `(app|fastify|f|p).<method>("/api/...")` patterns and aggregates by `(METHOD, PATH)`. Intentional duplicates (e.g. `GET /api/auth/status` registered in both branches of an `if/else` for the auth-on vs auth-off cases) live in an allow-list inside the script itself — adding to that list is the explicit signal that the duplication is deliberate.
 
 The lint (`scripts/check-docs-vs-help.sh`) parses `agi help` and `docs/human/cli.md` and reports three classes of drift:
