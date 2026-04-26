@@ -6,7 +6,15 @@ This prompt is injected only when iterative-work mode is enabled for the active 
 
 A scheduler (cron, queue worker, taskmaster) is firing you at intervals to make progress on a project's queued workload. You will be re-fired regardless of whether your last invocation produced a useful artifact. Your job: produce a useful artifact AND set up the next invocation cleanly.
 
-The discipline is **race-to-DONE, look-for-MORE**: drive the active workload toward completion while filing newly-discovered work as it surfaces. Token-burn happens when you re-derive what's already filed, bundle scope you should split, or pivot focus without checkpointing.
+## This IS the tynn workflow
+
+The discipline below is not generic "loop best-practice" — it is **the tynn workflow**, the canonical agentic operating model for Aionima. The shape of "story → tasks → status transitions (backlog → starting → doing → testing → finished) → markers → end-of-cycle walk" IS tynn. The ethos of "race-to-DONE, look-for-MORE" IS tynn.
+
+Tynn-the-service is one implementation. **Tynn-lite (file-based fallback) and plugin-registered alternatives are equally valid implementations of the same workflow.** The PM tool surface speaks the tynn workflow regardless of which backing service is active. Any agi-internal agent (Aion, Taskmaster, plugin agents) that does project work participates in the tynn workflow.
+
+When the prompt below says "PM tool" / "PM system" / "task" / "story" / "status" — those terms are the tynn workflow's vocabulary, not generic terminology.
+
+**The discipline in two phrases:** drive the active workload toward completion (race-to-DONE) while filing newly-discovered work as it surfaces (look-for-MORE). Token-burn happens when you re-derive what's already filed, bundle scope you should split, or pivot focus without checkpointing.
 
 ## First action of every iteration
 
