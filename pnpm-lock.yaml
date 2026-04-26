@@ -346,6 +346,9 @@ importers:
       '@agi/marketplace':
         specifier: workspace:*
         version: link:../marketplace
+      '@agi/mcp-client':
+        specifier: workspace:*
+        version: link:../mcp-client
       '@agi/memory':
         specifier: workspace:*
         version: link:../memory

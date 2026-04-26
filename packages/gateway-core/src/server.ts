@@ -60,6 +60,7 @@ import type { Logger, LogEntry } from "./logger.js";
 import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";
 import { CostLedgerWriter } from "./cost-ledger-writer.js";
 import { CostLedgerReader } from "./cost-ledger-reader.js";
+import { McpClient } from "@agi/mcp-client";
 
 import type { AionimaConfig, ConfigReloadEvent } from "@agi/config";
 import { ConfigWatcher } from "@agi/config";
@@ -1900,6 +1901,72 @@ export async function startGatewayServer(
     mappRegistry,
   });
   log.info(`registered ${String(agentToolCount)} agent tools`);
+
+  // s118 t441 cycle 33 — MCP client + `mcp` agent tool. Instantiated empty;
+  // server config wiring (per-project mcp.servers block) ships in s118 t435.
+  // Until then, mcp.list-servers returns [] and call/list-tools/etc. error
+  // with "server X not registered" — Aion has the surface, not yet the data.
+  const mcpClient = new McpClient();
+
+  toolRegistry.register(
+    {
+      name: "mcp",
+      description:
+        "Call any registered MCP (Model Context Protocol) server. Use action='list-servers' to see what's connected, " +
+        "action='list-tools' with serverId to enumerate a server's tools, action='call' with serverId+toolName+arguments " +
+        "to invoke a tool, action='list-resources'/'read-resource' to access server resources, action='list-prompts' " +
+        "to see prompt templates. MCP is how Aion reaches tynn (PM workflow) and any other MCP-compatible service.",
+      requiresState: [],
+      requiresTier: [],
+    },
+    async (input: Record<string, unknown>) => {
+      const action = String(input.action ?? "list-servers");
+      try {
+        switch (action) {
+          case "list-servers":
+            return JSON.stringify(mcpClient.listServers());
+          case "list-tools": {
+            const serverId = String(input.serverId ?? "");
+            return JSON.stringify(await mcpClient.listTools(serverId));
+          }
+          case "list-resources": {
+            const serverId = String(input.serverId ?? "");
+            return JSON.stringify(await mcpClient.listResources(serverId));
+          }
+          case "list-prompts": {
+            const serverId = String(input.serverId ?? "");
+            return JSON.stringify(await mcpClient.listPrompts(serverId));
+          }
+          case "call": {
+            const serverId = String(input.serverId ?? "");
+            const toolName = String(input.toolName ?? "");
+            const args = (input.arguments as Record<string, unknown>) ?? {};
+            return JSON.stringify(await mcpClient.callTool(serverId, toolName, args));
+          }
+          case "read-resource": {
+            const serverId = String(input.serverId ?? "");
+            const uri = String(input.uri ?? "");
+            return JSON.stringify(await mcpClient.readResource(serverId, uri));
+          }
+          default:
+            return JSON.stringify({ error: `unknown action: ${action}. Valid: list-servers, list-tools, list-resources, list-prompts, call, read-resource` });
+        }
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+    {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list-servers", "list-tools", "list-resources", "list-prompts", "call", "read-resource"], description: "Operation to perform" },
+        serverId: { type: "string", description: "MCP server id (required for all actions except list-servers)" },
+        toolName: { type: "string", description: "Tool name to invoke (required for action=call)" },
+        arguments: { type: "object", description: "Arguments to pass to the tool (required for action=call)" },
+        uri: { type: "string", description: "Resource URI (required for action=read-resource)" },
+      },
+      required: ["action"],
+    },
+  );
 
   // Register HF model management tool for the agent
   toolRegistry.register(

@@ -12,6 +12,7 @@
     "@agi/db-schema": "workspace:*",
     "@agi/entity-model": "workspace:*",
     "@agi/marketplace": "workspace:*",
+    "@agi/mcp-client": "workspace:*",
     "@agi/memory": "workspace:*",
     "@agi/model-runtime": "workspace:*",
     "@agi/plugins": "workspace:*",
