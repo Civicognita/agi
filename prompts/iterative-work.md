@@ -112,8 +112,102 @@ At the end of every iteration:
 2. **Pre-commit next pick** — name the smallest viable next task. Cron-fire opens onto it.
 3. **Update memory / state** — focus position, any durable rule discovered this iteration.
 4. **Brief summary** — what shipped (artifact + version/commit), what's next, what's blocked.
+5. **Indicator counts** — show pending question counts at end of every cycle:
+   - 🛑 **Show-Stoppers**: N — questions tied to blocked stories/tasks
+   - ⚠️ **Drift**: N — system/tynn documentation diverging from codebase
+   - ❓ **Clarity**: N — terms/concepts/workflows not understood in Aionima context
 
 The walk is short — one or two minutes — but load-bearing. Skipping it means the next iteration opens onto triage, burning 30% of its window before any code lands.
+
+## Asking the owner during iterative work
+
+**Never ask questions inline.** During a loop, the owner is away. During an interactive session, questions buried in prose get missed.
+
+**Always use the `AskUserQuestion` tool** for questions to the owner — it renders as an interactive prompt that doesn't get scrolled past. Single AskUserQuestion call can bundle multiple questions (up to 5).
+
+**During the loop (owner away):**
+- Log every blocked-on-decision question to `_plans/_next/pending-questions.mdc` (project-relative; `.mdc` extension because the frontmatter is read by the Claude terminal statusline + similar surfaces to render an indicator badge)
+- Each entry: cycle number + task ID + tag (`show-stopper` / `drift` / `clarity`) + context + options + default-if-no-answer
+- After adding an entry, **update the frontmatter `indicators` block** with the new counts so the badge surface stays accurate
+- Ship the iteration with the lowest-risk default; document the chosen path in the commit message
+
+**When owner returns or stops the loop:**
+1. Update `_plans/_next/checkpoint.mdc` so the next loop session resumes cleanly (last-shipped version, in-flight task, focus position)
+2. Present a brief context summary so owner has immediate reference
+3. Use `AskUserQuestion` to surface accumulated pending questions (bundle multiple in one call when possible)
+4. When owner answers, move resolved entries to `_plans/_next/answered-questions-log.mdc` (append-only audit trail) — don't delete; update both files' frontmatter counts
+
+## Frontmatter schema for `pending-questions.mdc`
+
+```yaml
+---
+indicators:
+  showStoppers: N    # count of tag:show-stopper entries
+  drift: N           # count of tag:drift entries
+  clarity: N         # count of tag:clarity entries
+lastUpdated: "ISO timestamp"
+totalPending: N      # = sum of indicator counts (sanity check)
+totalAnswered: N     # cumulative count moved to answered-log
+schemaVersion: 1
+---
+```
+
+The Claude terminal statusline reads this block to display badges like `🛑 0 ⚠️ 0 ❓ 2` — analogous to how PR-counts surface in IDE chrome. Keeping the frontmatter accurate is part of every cycle that adds or resolves a question.
+
+## Pending-question entry format
+
+```markdown
+## Q-{cycle}-{n}: {one-line question summary}
+
+**Asked at:** cycle X, while working on tT (task title)
+**Blocked work:** {what shipped vs what waited on this answer}
+**Tag:** show-stopper | drift | clarity
+
+### Context
+{why the question matters, what was tried, what alternatives exist}
+
+### Options
+- A: {option with tradeoffs}
+- B: {option with tradeoffs}
+- C: {option with tradeoffs}
+
+### Default if no answer received
+{the path taken if owner doesn't return — usually the lowest-risk option}
+```
+
+## Checkpoint format
+
+`_plans/_next/checkpoint.mdc` is updated when:
+- The loop is stopped by the owner
+- A long thread reaches structural completeness (pivot point)
+- An iteration shipped a major milestone worth flagging for the next session
+
+Format:
+
+```markdown
+---
+lastShipped:
+  version: "vX.Y.Z"
+  commit: "short-hash"
+inFlightTask: "tT"
+activeFocus: "sN"
+pendingQuestions: N
+schemaVersion: 1
+---
+
+# Checkpoint: {date} — {focus surface}
+
+**Last shipped:** vX.Y.Z (commit-short-hash) — {what landed}
+**In-flight task:** tT (title) — {status: doing | testing | blocked-on-Q-XX}
+**Active focus:** {story id} — {what's next}
+
+## Pick pool for next session
+
+{ranked list of next tasks}
+
+## Indicators
+🛑 N | ⚠️ N | ❓ N
+```
 
 ## Code-work guardrails (when iterative work touches code)
 
