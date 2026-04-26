@@ -6,6 +6,12 @@
 export { NoopAnchor } from "./anchors/noop.js";
 export type { NoopAnchorOptions } from "./anchors/noop.js";
 
+// Layer A + B memory schema — schema-first slice (s112 t381). Storage layer
+// migration (replacing flat MemoryEntry with EpisodicRecord on the write path)
+// lands as a follow-up slice; consumers can adopt the type now.
+export type { EpisodicRecord, WorkingMemory } from "./episodic.js";
+export { canonicalEpisodicHash, episodicToAnchor } from "./episodic.js";
+
 export type {
   MemoryEntry,
   MemoryCategory,
