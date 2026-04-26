@@ -126,5 +126,22 @@ export type { ContentRendererConfig, MAppWidgetType } from "./ui-components.js";
 // Testing utilities (separate entry point: @agi/sdk/testing)
 // import { testActivate, createMockAPI } from "@agi/sdk/testing";
 
+// PmProvider interface — canonical PM workflow surface (s118 t432).
+// AGI's agentic operating model IS the tynn workflow; this interface is
+// what every backing service implements. Storage is pluggable; workflow
+// is canonical. See agi/docs/agents/tynn-and-related-concepts.md.
+export type {
+  PmStatus,
+  PmStoryStatus,
+  PmProject,
+  PmVersion,
+  PmStory,
+  PmTask,
+  PmComment,
+  PmCreateTaskInput,
+  PmIWishInput,
+  PmProvider,
+} from "./pm.js";
+
 // Types — full plugin schema surface
 export type * from "./types.js";
