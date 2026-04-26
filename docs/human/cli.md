@@ -40,6 +40,16 @@ Containers:       4 running
 
 The update check compares against `origin/{channel}` where channel is read from `gateway.updateChannel` in `gateway.json` (default: `main`).
 
+The `Service:` line combines two checks:
+
+| Output | Meaning |
+|---|---|
+| `running` | systemd unit is active **and** Fastify is bound to the gateway port. The service is genuinely up. |
+| `running but unresponsive` | systemd unit is active but Fastify did not bind. The process is alive but won't serve requests — usually means a fatal boot error (route collision, plugin init failure, schema rejection). Run `agi logs` for the actual error; if route-related, `pnpm route-check` will catch duplicate registrations. |
+| `inactive` / `failed` | systemd unit is down. |
+
+The unresponsive state was added (v0.4.190) because `agi status` previously reported `running` when systemd was up but Fastify had crashed at boot — leading to confusing 502s from the dashboard with no obvious cause from the status output.
+
 ---
 
 ### agi logs

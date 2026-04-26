@@ -78,10 +78,23 @@ cmd_status() {
   echo -e "${BOLD}Aionima Gateway Status${RESET}"
   echo ""
 
-  # Service
+  # Service — combine systemd state with a port-bind probe so the surface
+  # distinguishes "process up + Fastify bound" (truly running) from
+  # "process up + Fastify never bound" (boot error after the systemd unit
+  # came up — looks running but won't serve requests). Born from the
+  # v0.4.187 → v0.4.188 hotfix where a route-collision crashed Fastify
+  # at boot but systemd still reported "active"; agi status said "running"
+  # while Caddy returned 502 to every dashboard request. (s101 t408)
   label "Service:"
+  local _port
+  _port="$(node -e "try{const c=JSON.parse(require('fs').readFileSync('${CONFIG_FILE}','utf-8'));console.log(c.gateway?.port??3100)}catch{console.log(3100)}" 2>/dev/null)"
+  _port="${_port:-3100}"
   if is_running; then
-    echo -e "${GREEN}running${RESET}"
+    if curl -sf --max-time 2 "http://127.0.0.1:${_port}/api/system/stats" >/dev/null 2>&1; then
+      echo -e "${GREEN}running${RESET}"
+    else
+      echo -e "${YELLOW}running but unresponsive${RESET} ${MUTED}— Fastify did not bind to port ${_port}. Run 'agi logs' to see the boot error; consider 'pnpm route-check' if the cause may be a duplicate route.${RESET}"
+    fi
   else
     local state
     state="$(systemctl is-active "$SERVICE" 2>/dev/null || echo "unknown")"
