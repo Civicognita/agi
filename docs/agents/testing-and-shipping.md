@@ -49,6 +49,15 @@ pnpm docs-check          # warn-only, exit 0 with findings (default)
 pnpm docs-check:strict   # exit 2 on any drift (use in CI gates)
 ```
 
+**Quick sanity check before committing a new HTTP route:**
+
+```bash
+pnpm route-check          # warn-only — flags duplicate (METHOD,PATH) registrations
+pnpm route-check:strict   # exit 2 on collision (use in CI gates)
+```
+
+The route-collision lint exists because of the v0.4.187 → v0.4.188 hotfix: a new endpoint registered `GET /api/providers`, but `server-runtime-state.ts` already had it. Fastify rejects duplicate routes at startup, the gateway crashed, Caddy returned 502 to every dashboard request — and the unit tests passed because each fixture spun up a fresh Fastify instance. The lint scans `packages/*/src/` for `(app|fastify|f|p).<method>("/api/...")` patterns and aggregates by `(METHOD, PATH)`. Intentional duplicates (e.g. `GET /api/auth/status` registered in both branches of an `if/else` for the auth-on vs auth-off cases) live in an allow-list inside the script itself — adding to that list is the explicit signal that the duplication is deliberate.
+
 The lint (`scripts/check-docs-vs-help.sh`) parses `agi help` and `docs/human/cli.md` and reports three classes of drift:
 
 1. Subcommands present in `agi help` but missing from `cli.md` (and not in the small allow-list of subcommands documented in sibling pages — `test-vm` → `testing.md`, `models` → `huggingface.md`, etc.).

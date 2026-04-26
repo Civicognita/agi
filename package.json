@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.188",
+  "version": "0.4.189",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -45,7 +45,9 @@
     "check": "tsc --noEmit && pnpm lint",
     "typecheck": "tsc --noEmit",
     "docs-check": "bash scripts/check-docs-vs-help.sh",
-    "docs-check:strict": "bash scripts/check-docs-vs-help.sh --strict"
+    "docs-check:strict": "bash scripts/check-docs-vs-help.sh --strict",
+    "route-check": "bash scripts/check-route-collisions.sh",
+    "route-check:strict": "bash scripts/check-route-collisions.sh --strict"
   },
   "dependencies": {
     "@agi/db-schema": "workspace:*",
