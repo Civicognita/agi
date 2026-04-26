@@ -26,6 +26,7 @@ import { Card } from "@/components/ui/card";
 import {
   fetchProvidersCatalog,
   fetchActiveProvider,
+  updateActiveProvider,
   updateRouterConfig,
   type ProviderCatalogEntry,
   type ActiveProviderState,
@@ -100,9 +101,13 @@ function OffGridToggle({
 function ProviderCard({
   provider,
   isActive,
+  pending,
+  onActivate,
 }: {
   provider: ProviderCatalogEntry;
   isActive: boolean;
+  pending: boolean;
+  onActivate: () => void;
 }) {
   const offGridLabel = provider.offGridCapable ? "✓ yes" : "✗ no";
   const offGridColor = provider.offGridCapable ? "text-emerald-400" : "text-red-400";
@@ -165,6 +170,27 @@ function ProviderCard({
       <div className="mt-3 px-3 py-2 bg-background rounded-md text-[11px] text-muted-foreground">
         ▾ {dependsOnText}
       </div>
+      {/* Set-active action — t418. Clicking on the active Provider is a noop;
+          the button label changes to "Currently active" to make state obvious.
+          Cloud-when-off-grid is intercepted at the page level by a confirmation
+          guard before the PUT fires. */}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={onActivate}
+          disabled={isActive || pending}
+          className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
+            isActive
+              ? "bg-primary text-primary-foreground cursor-default"
+              : pending
+                ? "bg-secondary text-muted-foreground cursor-wait"
+                : "bg-secondary text-foreground hover:bg-primary hover:text-primary-foreground"
+          }`}
+          aria-label={isActive ? "Currently active" : `Set ${provider.name} active`}
+        >
+          {isActive ? "Currently active" : pending ? "Activating…" : "Set active"}
+        </button>
+      </div>
     </Card>
   );
 }
@@ -179,6 +205,7 @@ export default function SettingsProvidersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [togglePending, setTogglePending] = useState(false);
+  const [activatingId, setActivatingId] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -212,6 +239,45 @@ export default function SettingsProvidersPage() {
       setTogglePending(false);
     }
   }, [active, togglePending]);
+
+  const onActivateProvider = useCallback(
+    async (provider: ProviderCatalogEntry) => {
+      if (!active || activatingId !== null) return;
+      if (provider.id === active.activeProviderId) return;
+
+      // Confirmation guard: activating a cloud Provider while off-grid mode
+      // is on would set a Provider that the router will then refuse to use
+      // (per t415 — cloud Providers filtered when offGrid=true). Better to
+      // catch this at click-time than let the user set active and then watch
+      // chat fail silently. The browser confirm() is a deliberately small
+      // UX choice for this slice; a custom modal can land in slice 4 (t420)
+      // alongside the cost-mode dial which has similar guard semantics.
+      if (active.offGridMode && !provider.offGridCapable) {
+        const ok = window.confirm(
+          `Off-grid mode is on. ${provider.name} is a cloud Provider and won't be reachable while off-grid is enabled.\n\nActivate anyway? (Disable off-grid mode first if you want this Provider to actually serve chat.)`,
+        );
+        if (!ok) return;
+      }
+
+      setActivatingId(provider.id);
+      try {
+        // Send defaultModel when the catalog declares one (t416 field) so the
+        // backend persists agent.model alongside agent.provider. Without this,
+        // switching to a different Provider with a different default model
+        // would leave the previous Provider's model name in config.
+        const next = await updateActiveProvider({
+          providerId: provider.id,
+          ...(provider.defaultModel !== undefined ? { model: provider.defaultModel } : {}),
+        });
+        setActive(next);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setActivatingId(null);
+      }
+    },
+    [active, activatingId],
+  );
 
   if (loading) {
     return <div className="text-center py-12 text-muted-foreground">Loading Providers...</div>;
@@ -266,7 +332,7 @@ export default function SettingsProvidersPage() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-[18px] font-semibold">Available Providers</h2>
           <span className="text-muted-foreground text-[12px]">
-            Click a card to inspect or set active (coming in next slice)
+            Click "Set active" on a card to switch the Agent Router's default Provider
           </span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -275,6 +341,8 @@ export default function SettingsProvidersPage() {
               key={p.id}
               provider={p}
               isActive={active?.activeProviderId === p.id}
+              pending={activatingId === p.id}
+              onActivate={() => void onActivateProvider(p)}
             />
           ))}
         </div>

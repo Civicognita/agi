@@ -399,6 +399,26 @@ export async function fetchActiveProvider(): Promise<ActiveProviderState> {
   return res.json() as Promise<ActiveProviderState>;
 }
 
+/** PUT /api/providers/active — switch the active Provider (and optionally
+ *  the model). Hot-reloaded — agent-router picks up the new Provider on the
+ *  next invocation without a gateway restart. Used by the click-to-activate
+ *  interaction on Provider cards. */
+export async function updateActiveProvider(patch: {
+  providerId: string;
+  model?: string;
+}): Promise<ActiveProviderState> {
+  const res = await fetch("/api/providers/active", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ActiveProviderState>;
+}
+
 /** PUT /api/providers/router — partial update; only provided fields are
  *  patched. Used by the off-grid toggle in the Providers page header. */
 export async function updateRouterConfig(patch: {
