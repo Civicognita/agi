@@ -275,6 +275,52 @@ describe("AgentRouter", () => {
     });
   });
 
+  describe("recent decisions ring buffer (s111 t419)", () => {
+    it("records each invoke() as one entry with a timestamp", async () => {
+      const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
+      await router.invoke(makeParams());
+      const recent = router.getRecentDecisions();
+      expect(recent.length).toBe(1);
+      expect(recent[0]!.provider).toBe("anthropic");
+      expect(typeof recent[0]!.ts).toBe("string");
+      expect(recent[0]!.ts).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it("records summarize() as a separate decision entry", async () => {
+      const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
+      await router.invoke(makeParams());
+      await router.summarize("the quick brown fox", "make it shorter");
+      const recent = router.getRecentDecisions();
+      expect(recent.length).toBe(2);
+      // Summarize always uses economy mode; the second entry reflects that.
+      expect(recent[1]!.costMode).toBe("economy");
+      expect(recent[1]!.reason).toBe("summarization (always economy)");
+    });
+
+    it("respects the limit argument and returns newest-last entries", async () => {
+      const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
+      for (let i = 0; i < 5; i++) await router.invoke(makeParams());
+      const last3 = router.getRecentDecisions(3);
+      expect(last3.length).toBe(3);
+      // All 5 invocations recorded the same Provider, but order matters
+      // for the buffer — getRecentDecisions returns the LAST `limit` entries.
+      // Test each has a stamped timestamp + same Provider.
+      for (const d of last3) {
+        expect(d.provider).toBe("anthropic");
+        expect(typeof d.ts).toBe("string");
+      }
+    });
+
+    it("caps at RECENT_DECISIONS_MAX (50) — older entries fall off", async () => {
+      const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
+      // 60 invocations exceeds the 50-entry cap; expect newest 50.
+      for (let i = 0; i < 60; i++) await router.invoke(makeParams());
+      // Ask for more than the cap — getRecentDecisions clamps to MAX.
+      const all = router.getRecentDecisions(1000);
+      expect(all.length).toBe(50);
+    });
+  });
+
   describe("off-grid mode (s111 t415)", () => {
     // Off-grid mode is the alpha-stable-1 floor contract: when toggled on,
     // the router MUST NOT attempt cloud Providers, even when costMode="max"

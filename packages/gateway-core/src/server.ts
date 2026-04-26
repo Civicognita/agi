@@ -2164,6 +2164,28 @@ export async function startGatewayServer(
           patchConfig: systemConfigService != null
             ? (path, value) => systemConfigService.patch(path, value)
             : undefined,
+          // s111 t419 — duck-typed access to the AgentRouter's ring buffer.
+          // llmProvider is typed as the abstract LLMProvider interface (since
+          // plugin Providers can fill that role too), but the AgentRouter
+          // class exposes getRecentDecisions(). When the active provider
+          // isn't an AgentRouter (early-boot stub, plugin-provided Provider),
+          // the endpoint returns an empty list rather than throwing.
+          getRecentDecisions: (limit) => {
+            const provider = getLLMProvider() as {
+              getRecentDecisions?: (n: number) => Array<{
+                provider: string;
+                model: string;
+                reason: string;
+                complexity: string;
+                costMode: string;
+                escalated: boolean;
+                ts?: string;
+              }>;
+            };
+            return typeof provider.getRecentDecisions === "function"
+              ? provider.getRecentDecisions(limit)
+              : [];
+          },
         }),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),

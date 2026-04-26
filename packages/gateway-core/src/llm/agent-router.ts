@@ -64,6 +64,11 @@ export interface RoutingDecision {
   complexity: RequestComplexity;
   costMode: CostMode;
   escalated: boolean;
+  /** s111 t419 — ISO timestamp of when this decision was finalized (after
+   *  fallbacks + escalations). Older callers that constructed RoutingDecision
+   *  literals without ts continue to typecheck; recordDecision stamps the ts
+   *  before pushing into the recent-decisions ring buffer. */
+  ts?: string;
 }
 
 interface ProviderCredentials {
@@ -179,6 +184,36 @@ export class AgentRouter implements LLMProvider {
   private readonly entityProviderMap = new Map<string, string>();
 
   private lastDecision: RoutingDecision | null = null;
+
+  /**
+   * s111 t419 — ring buffer of recent finalized routing decisions for the
+   * Mission Control hero (UI cycle 21) and any future agent-debug surface.
+   * Capped at RECENT_DECISIONS_MAX entries; oldest entries fall off when
+   * capacity is reached. Each invoke() and summarize() pushes ONE entry
+   * (the post-fallback / post-escalation final decision), not one per
+   * intermediate state.
+   */
+  private static readonly RECENT_DECISIONS_MAX = 50;
+  private readonly recentDecisions: RoutingDecision[] = [];
+
+  /**
+   * Push the current lastDecision into the ring buffer with a timestamp.
+   * Called at the END of invoke() and summarize() so each turn produces
+   * exactly one entry — fallbacks/escalations within an invoke do NOT
+   * double-record. Returns silently when lastDecision is null (defensive —
+   * shouldn't happen in practice but a no-op is safer than throwing).
+   */
+  private recordDecision(): void {
+    if (this.lastDecision === null) return;
+    const stamped: RoutingDecision = {
+      ...this.lastDecision,
+      ts: new Date().toISOString(),
+    };
+    this.recentDecisions.push(stamped);
+    if (this.recentDecisions.length > AgentRouter.RECENT_DECISIONS_MAX) {
+      this.recentDecisions.splice(0, this.recentDecisions.length - AgentRouter.RECENT_DECISIONS_MAX);
+    }
+  }
 
   /** Tracks the last config reference for cache invalidation on hot-reload. */
   private lastConfigRef: AgentRouterConfig | null = null;
@@ -378,6 +413,10 @@ export class AgentRouter implements LLMProvider {
       reason: this.lastDecision.reason,
     };
 
+    // s111 t419 — push to ring buffer AFTER fallbacks + escalations so each
+    // turn produces exactly one entry reflecting the final decision.
+    this.recordDecision();
+
     return response;
   }
 
@@ -430,6 +469,7 @@ export class AgentRouter implements LLMProvider {
       costMode: "economy",
       escalated: false,
     };
+    this.recordDecision();
 
     return provider.summarize(text, prompt);
   }
@@ -440,6 +480,18 @@ export class AgentRouter implements LLMProvider {
 
   getLastDecision(): RoutingDecision | null {
     return this.lastDecision;
+  }
+
+  /**
+   * s111 t419 — recent routing decisions, newest last. Returns at most
+   * `limit` entries (default 20, hard-capped to RECENT_DECISIONS_MAX = 50).
+   * Each entry includes `ts` (ISO timestamp). Callers: providers-api
+   * GET /api/providers/recent-decisions endpoint, future Mission Control
+   * hero, Taskmaster history view, agent debug inspector.
+   */
+  getRecentDecisions(limit = 20): RoutingDecision[] {
+    const cap = Math.min(Math.max(0, limit), AgentRouter.RECENT_DECISIONS_MAX);
+    return this.recentDecisions.slice(-cap);
   }
 
   getProviderHealth(): Array<{ provider: string; healthy: boolean }> {

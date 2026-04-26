@@ -103,6 +103,19 @@ export interface ActiveProviderState {
   offGridMode: boolean;
 }
 
+/** Mirrors RoutingDecision in agent-router.ts. Wire-only shape so the
+ *  dashboard can render the Mission Control hero (s111 t419) without
+ *  importing the full LLM stack. */
+export interface RoutingDecisionRecord {
+  provider: string;
+  model: string;
+  reason: string;
+  complexity: string;
+  costMode: string;
+  escalated: boolean;
+  ts?: string;
+}
+
 export interface ProvidersApiDeps {
   /** Read live config — same pattern as getMaxToolLoops in agent-invoker. Hot-reload
    *  means each request sees the latest gateway.json. */
@@ -116,6 +129,11 @@ export interface ProvidersApiDeps {
    *  the dashboard can refresh without restarting the gateway. Falls back to a
    *  config-only inference when the thunk is omitted. */
   inspectProviders?: () => Promise<Array<Pick<ProviderCatalogEntry, "id" | "health" | "modelCount">>>;
+  /** s111 t419 — recent routing decisions for the Mission Control hero.
+   *  Returns newest-last array of decisions (provider, model, reason, ts).
+   *  Optional so test fixtures can omit; the endpoint returns an empty list
+   *  when not provided. Server.ts wires this to AgentRouter.getRecentDecisions(). */
+  getRecentDecisions?: (limit: number) => RoutingDecisionRecord[];
 }
 
 /** Set of valid Provider ids — kept in sync with buildBaseCatalog. PUT
@@ -267,6 +285,30 @@ export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApi
 
     return { providers: catalog, generatedAt: new Date().toISOString() };
   });
+
+  /**
+   * GET /api/providers/recent-decisions — recent routing decisions for the
+   * Mission Control hero (s111 t419 UI slice). Returns newest-last array;
+   * `limit` query param caps the slice (default 20, hard-capped server-side
+   * to AgentRouter's RECENT_DECISIONS_MAX = 50).
+   *
+   * Returns { decisions: [], generatedAt } with an empty array when the
+   * decisions thunk isn't wired (test fixtures, early-boot before the
+   * router is ready) — the UI hides the hero gracefully in that case
+   * rather than throwing.
+   */
+  app.get<{ Querystring: { limit?: string } }>(
+    "/api/providers/recent-decisions",
+    async (req) => {
+      const rawLimit = req.query.limit;
+      const parsed = rawLimit !== undefined ? Number.parseInt(rawLimit, 10) : 20;
+      const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : 20;
+      const decisions = deps.getRecentDecisions !== undefined
+        ? deps.getRecentDecisions(limit)
+        : [];
+      return { decisions, generatedAt: new Date().toISOString() };
+    },
+  );
 
   /**
    * GET /api/providers/active — the active Provider + Agent Router config.

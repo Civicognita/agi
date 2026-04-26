@@ -100,6 +100,37 @@ describe("providers-api — GET /api/providers (s111 t372)", () => {
     await app.close();
   });
 
+  it("GET /api/providers/recent-decisions returns the ring buffer (s111 t419)", async () => {
+    const stamp = "2026-04-26T01:23:45.000Z";
+    const fakeDecisions = [
+      { provider: "anthropic", model: "claude-haiku-4-5", reason: "balanced/simple", complexity: "simple", costMode: "balanced", escalated: false, ts: stamp },
+      { provider: "lemonade", model: "default", reason: "local/moderate", complexity: "moderate", costMode: "local", escalated: false, ts: stamp },
+    ];
+    const app = Fastify({ logger: false });
+    registerProvidersRoutes(app, {
+      readConfig: () => ({} as AionimaConfig),
+      getRecentDecisions: (limit) => fakeDecisions.slice(-limit),
+    });
+    const res = await app.inject({ method: "GET", url: "/api/providers/recent-decisions?limit=10" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { decisions: typeof fakeDecisions; generatedAt: string };
+    expect(body.decisions.length).toBe(2);
+    expect(body.decisions[1]!.provider).toBe("lemonade");
+    expect(body.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    await app.close();
+  });
+
+  it("GET /api/providers/recent-decisions returns empty list when thunk omitted (s111 t419)", async () => {
+    // Thunk-less fixture (test harness, early-boot stub provider). The
+    // endpoint must not throw — UI hides the hero when decisions is empty.
+    const app = makeApp({});
+    const res = await app.inject({ method: "GET", url: "/api/providers/recent-decisions" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { decisions: unknown[] };
+    expect(body.decisions).toEqual([]);
+    await app.close();
+  });
+
   it("declares aion-micro depends on lemonade for runtime serving (s111 t416)", async () => {
     const app = makeApp({});
     const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
