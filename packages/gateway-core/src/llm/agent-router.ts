@@ -38,6 +38,23 @@ export interface RouterConfig {
    *  to preserve pre-K behavior where API providers handle non-local
    *  cost-modes even if Lemonade is available. */
   localFirst?: boolean;
+  /** s111 t415 (F1 slice 2) — off-grid mode. When true, the router
+   *  filters cloud Providers (anthropic, openai) entirely from the
+   *  routing decision and routes through local Providers only. The
+   *  preference chain in off-grid mode is: lemonade → ollama →
+   *  hf-local → aion-micro (the floor). aion-micro is the last-resort
+   *  fallback because it's intentionally a small fine-tuned model;
+   *  bigger local models win when present.
+   *
+   *  This is the routing-side enforcement of the "off-grid acceptance"
+   *  contract from s111 t380: a fresh box with no internet must answer
+   *  chat through aion-micro within 5 minutes. Without this, even with
+   *  off-grid mode toggled on in Settings → Providers, the router would
+   *  still try Anthropic first and surface a network error.
+   *
+   *  Mirrors `agent.router.offGrid` in gateway.json (set by providers-api
+   *  PUT /api/providers/router with body field `offGridMode`). */
+  offGrid?: boolean;
 }
 
 export interface RoutingDecision {
@@ -458,6 +475,33 @@ export class AgentRouter implements LLMProvider {
     costMode: CostMode,
     complexity: RequestComplexity,
   ): RouteTarget {
+    // s111 t415 — off-grid gate. Fires BEFORE the localFirst gate so cloud
+    // Providers are filtered entirely. Off-grid is the alpha-stable-1 floor
+    // contract: when the owner has toggled off-grid mode in Settings, the
+    // router MUST NOT attempt cloud Providers, even when costMode="max"
+    // (which normally forces cloud escalation). The preference chain is
+    // lemonade → ollama → hf-local → aion-micro. aion-micro is the
+    // last-resort floor: a small fine-tuned model that ships baked into
+    // the install (s111 t380), guaranteed available even on a fresh box
+    // with nothing else local installed. Bigger local Providers win when
+    // present because aion-micro is intentionally compact.
+    if (config.router.offGrid === true) {
+      if (config.providers["lemonade"]) {
+        return { provider: "lemonade", model: "default" };
+      }
+      if (config.providers["ollama"]) {
+        return { provider: "ollama", model: "default" };
+      }
+      if (config.providers["hf-local"]) {
+        return { provider: "hf-local", model: config.defaultModel };
+      }
+      // aion-micro is the floor — always reachable as long as Lemonade is
+      // running (which the catalog dependsOn correctly declares per t416).
+      // Returns the addressable Provider id; factory.ts createSingleProvider
+      // resolves it to OpenAIProvider against Lemonade port :13305.
+      return { provider: "aion-micro", model: "wishborn/aion-micro-v1" };
+    }
+
     // Phase K.1 — local-first gate. Fires when the owner has a
     // Lemonade runtime installed + enabled and hasn't explicitly
     // escalated this turn via costMode="max". Effect: simple/moderate/

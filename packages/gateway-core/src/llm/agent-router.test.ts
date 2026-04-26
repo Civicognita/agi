@@ -274,4 +274,89 @@ describe("AgentRouter", () => {
       expect(health[0]).toHaveProperty("healthy");
     });
   });
+
+  describe("off-grid mode (s111 t415)", () => {
+    // Off-grid mode is the alpha-stable-1 floor contract: when toggled on,
+    // the router MUST NOT attempt cloud Providers, even when costMode="max"
+    // (which normally forces cloud escalation). The preference chain is
+    // lemonade → ollama → hf-local → aion-micro. aion-micro is the
+    // last-resort floor — always reachable through Lemonade per the
+    // catalog's dependsOn declaration (t416).
+
+    it("routes to lemonade when off-grid AND lemonade is configured", async () => {
+      const router = new AgentRouter(
+        () => makeRouterConfig({
+          router: { costMode: "balanced", escalation: false, maxEscalationsPerTurn: 1, simpleThresholdTokens: 500, complexThresholdTokens: 2000, offGrid: true },
+          providers: { anthropic: { apiKey: "test-key" }, lemonade: { baseUrl: "http://127.0.0.1:13305" } },
+        }),
+        mockFactory,
+      );
+      await router.invoke(makeParams());
+      const decision = router.getLastDecision();
+      expect(decision!.provider).toBe("lemonade");
+    });
+
+    it("falls through to ollama when off-grid AND lemonade is absent", async () => {
+      const router = new AgentRouter(
+        () => makeRouterConfig({
+          router: { costMode: "balanced", escalation: false, maxEscalationsPerTurn: 1, simpleThresholdTokens: 500, complexThresholdTokens: 2000, offGrid: true },
+          providers: { anthropic: { apiKey: "test-key" }, ollama: {} },
+        }),
+        mockFactory,
+      );
+      await router.invoke(makeParams());
+      const decision = router.getLastDecision();
+      expect(decision!.provider).toBe("ollama");
+    });
+
+    it("routes to aion-micro as the floor when no other local Provider is configured", async () => {
+      // The crux of the alpha-stable-1 acceptance contract: a fresh box with
+      // no internet AND nothing else local installed STILL gets a coherent
+      // response from aion-micro (which is baked into the install, served
+      // through Lemonade). Even if only cloud Providers are in the config,
+      // off-grid mode skips them and falls through to the floor.
+      const router = new AgentRouter(
+        () => makeRouterConfig({
+          router: { costMode: "balanced", escalation: false, maxEscalationsPerTurn: 1, simpleThresholdTokens: 500, complexThresholdTokens: 2000, offGrid: true },
+          providers: { anthropic: { apiKey: "test-key" }, openai: { apiKey: "test-key" } },
+        }),
+        mockFactory,
+      );
+      await router.invoke(makeParams());
+      const decision = router.getLastDecision();
+      expect(decision!.provider).toBe("aion-micro");
+      expect(decision!.model).toBe("wishborn/aion-micro-v1");
+    });
+
+    it("never routes to cloud Providers when off-grid is on, even at costMode=max", async () => {
+      // costMode="max" normally forces cloud (Anthropic Opus). Off-grid
+      // overrides — the floor contract supersedes cost-mode escalation.
+      const router = new AgentRouter(
+        () => makeRouterConfig({
+          router: { costMode: "max", escalation: false, maxEscalationsPerTurn: 1, simpleThresholdTokens: 500, complexThresholdTokens: 2000, offGrid: true },
+          providers: { anthropic: { apiKey: "test-key" }, lemonade: { baseUrl: "http://127.0.0.1:13305" } },
+        }),
+        mockFactory,
+      );
+      await router.invoke(makeParams());
+      const decision = router.getLastDecision();
+      expect(decision!.provider).not.toBe("anthropic");
+      expect(decision!.provider).not.toBe("openai");
+      expect(decision!.provider).toBe("lemonade");
+    });
+
+    it("preserves cloud routing when off-grid is OFF (no regression)", async () => {
+      const router = new AgentRouter(
+        () => makeRouterConfig({
+          router: { costMode: "balanced", escalation: false, maxEscalationsPerTurn: 1, simpleThresholdTokens: 500, complexThresholdTokens: 2000, offGrid: false },
+          providers: { anthropic: { apiKey: "test-key" } },
+        }),
+        mockFactory,
+      );
+      await router.invoke(makeParams());
+      const decision = router.getLastDecision();
+      // Without off-grid, balanced/simple → anthropic per ROUTING_TABLE.
+      expect(decision!.provider).toBe("anthropic");
+    });
+  });
 });

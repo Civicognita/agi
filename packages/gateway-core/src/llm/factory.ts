@@ -294,6 +294,7 @@ export function createAgentRouter(config: AionimaConfig, logger?: Logger): LLMPr
       simpleThresholdTokens?: number;
       complexThresholdTokens?: number;
       localFirst?: boolean;
+      offGrid?: boolean;
     };
   } | undefined ?? {};
 
@@ -312,6 +313,12 @@ export function createAgentRouter(config: AionimaConfig, logger?: Logger): LLMPr
       // through it. Owners revert to pre-K behavior by setting
       // `agent.router.localFirst: false` in gateway.json.
       localFirst: agent.router?.localFirst ?? true,
+      // s111 t415 — off-grid mode. When true, the router filters cloud
+      // Providers entirely and routes through the local chain
+      // (lemonade → ollama → hf-local → aion-micro). Mirrors the
+      // owner-facing toggle in Settings → Providers (providers-api
+      // PUT /api/providers/router body field `offGridMode`).
+      offGrid: agent.router?.offGrid ?? false,
     },
     defaultProvider: agent.provider ?? "anthropic",
     defaultModel: agent.model ?? "claude-sonnet-4-6",
