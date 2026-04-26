@@ -341,17 +341,53 @@ describe("AgentRouter", () => {
       expect(entry.turnDurationMs).toBeGreaterThanOrEqual(0);
     });
 
-    it("leaves cpuWattsObserved + gpuWattsObserved null in this slice", async () => {
-      // Power sampler integration is the next sub-slice (cycle 27). This
-      // test pins the current contract: writer receives null for both
-      // power fields; the schema's NULL semantics propagate through to
-      // aggregations without inflating local-Provider rollups.
+    it("leaves cpuWattsObserved + gpuWattsObserved null when sampler thunks unset", async () => {
+      // Default state: thunks aren't wired; writer receives null for both
+      // power fields. Same null contract as the schema. Existing test
+      // fixtures inherit this baseline without modification.
       const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
       const writer = makeStubWriter();
       router.costLedgerWriter = writer;
       await router.invoke(makeParams());
       const entry = writer.calls[0]!;
       expect(entry.cpuWattsObserved).toBeNull();
+      expect(entry.gpuWattsObserved).toBeNull();
+    });
+
+    it("calls sampleCpuWatts + sampleGpuWatts thunks when wired (s111 t424 final sub-slice)", async () => {
+      // Server.ts wires thunks that capture the CpuPowerSampler +
+      // GpuPowerSampler instances in closures. AgentRouter calls them at
+      // turn end and passes the values through to the writer. This test
+      // mirrors the wiring with stub thunks so the contract is testable
+      // without the actual sampler classes.
+      const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
+      const writer = makeStubWriter();
+      router.costLedgerWriter = writer;
+      let cpuCalls = 0;
+      let gpuCalls = 0;
+      router.sampleCpuWatts = () => { cpuCalls++; return 18.3; };
+      router.sampleGpuWatts = () => { gpuCalls++; return 145.2; };
+      await router.invoke(makeParams());
+      expect(cpuCalls).toBe(1);
+      expect(gpuCalls).toBe(1);
+      const entry = writer.calls[0]!;
+      expect(entry.cpuWattsObserved).toBe(18.3);
+      expect(entry.gpuWattsObserved).toBe(145.2);
+    });
+
+    it("propagates null sampler returns to the writer (host-without-sensor case)", async () => {
+      // RAPL unavailable on this host → CpuPowerSampler.sample() returns
+      // null → thunk returns null → writer's cpuWattsObserved is null.
+      // Same nullable propagation as the schema's NULL semantics. Tests
+      // the Intel-iGPU + non-NVIDIA case where one sampler is null.
+      const router = new AgentRouter(() => makeRouterConfig(), mockFactory);
+      const writer = makeStubWriter();
+      router.costLedgerWriter = writer;
+      router.sampleCpuWatts = () => 22.1;
+      router.sampleGpuWatts = () => null; // no NVIDIA on this host
+      await router.invoke(makeParams());
+      const entry = writer.calls[0]!;
+      expect(entry.cpuWattsObserved).toBe(22.1);
       expect(entry.gpuWattsObserved).toBeNull();
     });
   });

@@ -263,6 +263,11 @@ export class AgentRouter implements LLMProvider {
       inputTokens,
       outputTokens,
     );
+    // s111 t424 final sub-slice — sample power at turn end (when thunks
+    // are wired). Each thunk returns null on hosts where its sampler is
+    // unavailable, matching the schema's nullable contract.
+    const cpuWattsObserved = this.sampleCpuWatts?.() ?? null;
+    const gpuWattsObserved = this.sampleGpuWatts?.() ?? null;
     this.costLedgerWriter.record({
       entityId: entityId.length > 0 ? entityId : null,
       provider: this.lastDecision.provider,
@@ -271,8 +276,8 @@ export class AgentRouter implements LLMProvider {
       complexity: this.lastDecision.complexity,
       inputTokens,
       outputTokens,
-      cpuWattsObserved: null,
-      gpuWattsObserved: null,
+      cpuWattsObserved,
+      gpuWattsObserved,
       dollarCost,
       escalated: this.lastDecision.escalated,
       turnDurationMs: Date.now() - turnStartMs,
@@ -296,14 +301,26 @@ export class AgentRouter implements LLMProvider {
 
   /**
    * s111 t422/t424 — optional cost ledger writer. When set, every invoke()
-   * and summarize() pushes a row with the final routing decision, token
-   * counts from LLMResponse.usage, and computed dollar cost. Power readings
-   * (cpuWattsObserved, gpuWattsObserved) stay null in this slice — the
-   * sampler integration ships in a follow-up cycle. Server.ts assigns
-   * after construction (mirrors onProviderError pattern), so test fixtures
-   * that don't care about ledger writes keep working without modification.
+   * pushes a row with the final routing decision, token counts from
+   * LLMResponse.usage, computed dollar cost, and (when sampler thunks below
+   * are also wired) power consumption. Server.ts assigns after construction
+   * (mirrors onProviderError pattern), so test fixtures that don't care
+   * about ledger writes keep working without modification.
    */
   costLedgerWriter?: CostLedgerRecorder;
+
+  /**
+   * s111 t424 final sub-slice — optional power-sampler thunks. Server.ts
+   * owns the CpuPowerSampler + GpuPowerSampler instances (in server-runtime-
+   * state.ts). To avoid coupling AgentRouter to the sampler classes (and
+   * breaking the lightweight test stub story), server.ts assigns thunks
+   * that capture the samplers in closures: `router.sampleCpuWatts = () =>
+   * cpuPowerSampler.sample()`. recordCostLedger calls them at turn end.
+   * Each thunk returns null on hosts where its sampler is unavailable
+   * (non-Linux RAPL → cpuWatts null; non-NVIDIA → gpuWatts null).
+   */
+  sampleCpuWatts?: () => number | null;
+  sampleGpuWatts?: () => number | null;
 
   /**
    * Providers that have been auto-paused due to zero/negative balance or a

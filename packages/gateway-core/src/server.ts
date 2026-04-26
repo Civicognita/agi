@@ -57,6 +57,8 @@ import { PairingStore } from "./pairing-store.js";
 import type { AionimaMessage } from "@agi/channel-sdk";
 import { createLogger, createComponentLogger } from "./logger.js";
 import type { Logger, LogEntry } from "./logger.js";
+import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";
+import { CostLedgerWriter } from "./cost-ledger-writer.js";
 
 import type { AionimaConfig, ConfigReloadEvent } from "@agi/config";
 import { ConfigWatcher } from "@agi/config";
@@ -622,6 +624,29 @@ export async function startGatewayServer(
   }
 
   wireProviderErrorCallback(llmProvider);
+
+  // s111 t424 — Cost ledger writer + power sampler thunks. Server.ts owns
+  // the writer (single drizzle client) + dedicated sampler instances (the
+  // server-runtime-state.ts samplers serve /api/system/stats and have their
+  // own delta state; per-instance state means independent readings for each
+  // consumer, both correct within their own time windows). The wiring
+  // assigns public optional fields after construction — same pattern as
+  // wireProviderErrorCallback above. When the AgentRouter is replaced by
+  // post-plugin re-creation (line 1399 / 4005), wireCostLedger() must be
+  // called again to re-attach.
+  const costLedgerWriter = new CostLedgerWriter(db, createComponentLogger(logger, "cost-ledger"));
+  const costCpuSampler = new CpuPowerSampler();
+  costCpuSampler.sample(); // seed; first reading needs a baseline for delta
+  const costGpuSampler = new GpuPowerSampler();
+
+  function wireCostLedger(provider: ReturnType<typeof createAgentRouter>): void {
+    if (provider instanceof AgentRouter) {
+      provider.costLedgerWriter = costLedgerWriter;
+      provider.sampleCpuWatts = () => costCpuSampler.sample();
+      provider.sampleGpuWatts = () => costGpuSampler.sample();
+    }
+  }
+  wireCostLedger(llmProvider);
 
   const agentSessionManager = new AgentSessionManager({
     contextWindowTokens: config.sessions?.contextWindowTokens ?? 200000,
@@ -1397,6 +1422,7 @@ export async function startGatewayServer(
           try {
             llmProvider = createAgentRouter(config, logger);
             wireProviderErrorCallback(llmProvider);
+            wireCostLedger(llmProvider);
             log.info(`LLM provider switched to plugin-contributed "${agentProvider}"`);
           } catch {
             // Provider not registered by any loaded plugin. Check if the
@@ -4003,6 +4029,7 @@ export async function startGatewayServer(
         try {
           llmProvider = createAgentRouter(event.config, logger);
           wireProviderErrorCallback(llmProvider);
+          wireCostLedger(llmProvider);
           log.info("LLM provider hot-swapped");
         } catch (err) {
           log.error(`failed to hot-swap LLM provider: ${err instanceof Error ? err.message : String(err)}`);
