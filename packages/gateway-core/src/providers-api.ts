@@ -71,11 +71,31 @@ export interface ProvidersApiDeps {
   /** Read live config — same pattern as getMaxToolLoops in agent-invoker. Hot-reload
    *  means each request sees the latest gateway.json. */
   readConfig: () => AionimaConfig;
+  /** Patch a single config key by dot-notation path. PUT endpoints route changes
+   *  through here so they hot-reload + persist via systemConfigService. Optional
+   *  so test fixtures can pass a no-op or omit it; PUT endpoints return 503
+   *  ("read-only mode") when not provided. */
+  patchConfig?: (dotPath: string, value: unknown) => void;
   /** Optional: returns per-Provider health + model count. Implemented as a thunk so
    *  the dashboard can refresh without restarting the gateway. Falls back to a
    *  config-only inference when the thunk is omitted. */
   inspectProviders?: () => Promise<Array<Pick<ProviderCatalogEntry, "id" | "health" | "modelCount">>>;
 }
+
+/** Set of valid Provider ids — kept in sync with buildBaseCatalog. PUT
+ *  /api/providers/active validates against this list to prevent typos and
+ *  unknown providers from being persisted. */
+const KNOWN_PROVIDER_IDS = new Set([
+  "aion-micro",
+  "huggingface",
+  "ollama",
+  "lemonade",
+  "anthropic",
+  "openai",
+]);
+
+/** Allowed costMode values per agent-router.ts CostMode union. */
+const KNOWN_COST_MODES = new Set(["local", "economy", "balanced", "max"]);
 
 /**
  * The canonical catalog of Providers known to the system. We hard-code the core
@@ -221,5 +241,113 @@ export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApi
       return reply.code(404).send({ error: `unknown provider: ${req.params.id}` });
     }
     return entry;
+  });
+
+  /**
+   * PUT /api/providers/active — switch the active Provider (and optionally the
+   * model). Owner-driven, hot-reloaded — the agent-router picks up the new
+   * Provider on the next invocation without a gateway restart.
+   *
+   * Body shape: { providerId: string, model?: string }
+   *
+   * Validates providerId against the canonical catalog (rejects unknown ids).
+   * Persists agent.provider (and agent.model when supplied) via
+   * systemConfigService.patch — same write-path the existing agent-config
+   * Settings flow uses, so callers see the change immediately on the next
+   * GET /api/providers/active.
+   */
+  app.put<{ Body: { providerId?: string; model?: string } }>(
+    "/api/providers/active",
+    async (req, reply) => {
+      if (deps.patchConfig === undefined) {
+        return reply.code(503).send({ error: "providers-api is read-only on this install" });
+      }
+      const body = req.body ?? {};
+      const providerId = body.providerId;
+      if (typeof providerId !== "string" || providerId.length === 0) {
+        return reply.code(400).send({ error: "providerId required (string)" });
+      }
+      if (!KNOWN_PROVIDER_IDS.has(providerId)) {
+        return reply.code(400).send({
+          error: `unknown providerId: ${providerId}`,
+          validIds: Array.from(KNOWN_PROVIDER_IDS),
+        });
+      }
+      try {
+        deps.patchConfig("agent.provider", providerId);
+        if (typeof body.model === "string" && body.model.length > 0) {
+          deps.patchConfig("agent.model", body.model);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return reply.code(400).send({ error: `config patch rejected: ${message}` });
+      }
+      return getActiveState(deps.readConfig());
+    },
+  );
+
+  /**
+   * PUT /api/providers/router — update Agent Router config (costMode,
+   * escalation, thresholds, offGridMode). All fields optional; only provided
+   * fields are patched. Each field validates independently:
+   *   - costMode: must be one of local|economy|balanced|max
+   *   - escalation: boolean
+   *   - simpleThresholdTokens / complexThresholdTokens: positive integer
+   *   - maxEscalationsPerTurn: non-negative integer
+   *   - offGridMode: boolean — when true, the router filters cloud Providers
+   *     from the option set (per memory feedback_off_grid_means_any_local_model)
+   *
+   * Returns the post-patch ActiveProviderState so the dashboard can
+   * verify the write took effect.
+   */
+  app.put<{ Body: {
+    costMode?: string;
+    escalation?: boolean;
+    simpleThresholdTokens?: number;
+    complexThresholdTokens?: number;
+    maxEscalationsPerTurn?: number;
+    offGridMode?: boolean;
+  } }>("/api/providers/router", async (req, reply) => {
+    if (deps.patchConfig === undefined) {
+      return reply.code(503).send({ error: "providers-api is read-only on this install" });
+    }
+    const body = req.body ?? {};
+    const validationErrors: string[] = [];
+
+    if (body.costMode !== undefined && !KNOWN_COST_MODES.has(body.costMode)) {
+      validationErrors.push(`costMode must be one of ${Array.from(KNOWN_COST_MODES).join("|")}`);
+    }
+    if (body.escalation !== undefined && typeof body.escalation !== "boolean") {
+      validationErrors.push("escalation must be boolean");
+    }
+    if (body.simpleThresholdTokens !== undefined && (!Number.isInteger(body.simpleThresholdTokens) || body.simpleThresholdTokens <= 0)) {
+      validationErrors.push("simpleThresholdTokens must be a positive integer");
+    }
+    if (body.complexThresholdTokens !== undefined && (!Number.isInteger(body.complexThresholdTokens) || body.complexThresholdTokens <= 0)) {
+      validationErrors.push("complexThresholdTokens must be a positive integer");
+    }
+    if (body.maxEscalationsPerTurn !== undefined && (!Number.isInteger(body.maxEscalationsPerTurn) || body.maxEscalationsPerTurn < 0)) {
+      validationErrors.push("maxEscalationsPerTurn must be a non-negative integer");
+    }
+    if (body.offGridMode !== undefined && typeof body.offGridMode !== "boolean") {
+      validationErrors.push("offGridMode must be boolean");
+    }
+
+    if (validationErrors.length > 0) {
+      return reply.code(400).send({ error: "validation failed", details: validationErrors });
+    }
+
+    try {
+      if (body.costMode !== undefined)               deps.patchConfig("agent.router.costMode", body.costMode);
+      if (body.escalation !== undefined)             deps.patchConfig("agent.router.escalation", body.escalation);
+      if (body.simpleThresholdTokens !== undefined)  deps.patchConfig("agent.router.simpleThresholdTokens", body.simpleThresholdTokens);
+      if (body.complexThresholdTokens !== undefined) deps.patchConfig("agent.router.complexThresholdTokens", body.complexThresholdTokens);
+      if (body.maxEscalationsPerTurn !== undefined)  deps.patchConfig("agent.router.maxEscalationsPerTurn", body.maxEscalationsPerTurn);
+      if (body.offGridMode !== undefined)            deps.patchConfig("agent.router.offGrid", body.offGridMode);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ error: `config patch rejected: ${message}` });
+    }
+    return getActiveState(deps.readConfig());
   });
 }

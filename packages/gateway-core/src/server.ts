@@ -2158,6 +2158,12 @@ export async function startGatewayServer(
           // Read live config so the catalog + router state reflect any
           // hot-reloaded changes since boot (per s111 t372 contract).
           readConfig: () => systemConfigService?.read() ?? config,
+          // Patch config via the same systemConfigService write path the
+          // Settings flow uses. Omitted when no config service is wired,
+          // which puts the PUT endpoints in read-only-mode (503 response).
+          patchConfig: systemConfigService != null
+            ? (path, value) => systemConfigService.patch(path, value)
+            : undefined,
         }),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
