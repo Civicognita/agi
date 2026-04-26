@@ -9,7 +9,12 @@ IDENTITY.md
 SOUL.md
 TOOLS.md
 USER.md
-memory/
+# Anchor `/memory/` to repo root so it ignores the legacy top-level
+# `memory/` runtime dir without shadowing `packages/memory/` (the
+# @agi/memory workspace package). Caught during s112 t383 hotfix when
+# `packages/memory/src/anchors/noop.ts` failed to commit because the
+# un-anchored rule matched the package's nested `memory` segment.
+/memory/
 .bots/
 .bots/state/
 coverage/
