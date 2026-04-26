@@ -33,6 +33,7 @@ import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model
 import { fetchOwnerToken, injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
+import { CpuPowerSampler } from "./system-power.js";
 import { appRouter, type AppContext } from "@agi/trpc-api";
 import type { HostingManager } from "./hosting-manager.js";
 import { registerHostingRoutes } from "./hosting-api.js";
@@ -2773,7 +2774,7 @@ export async function createGatewayRuntimeState(
   const STATS_HISTORY_MAX = 2880;
   const STATS_RECORD_INTERVAL_MS = 30_000;
   const STATS_FLUSH_INTERVAL_MS = 5 * 60 * 1000; // Write to disk every 5 minutes
-  type StatsPoint = { ts: string; cpu: number; mem: number; disk: number; diskRead: number; diskWrite: number; load1: number; load5: number; load15: number };
+  type StatsPoint = { ts: string; cpu: number; mem: number; disk: number; diskRead: number; diskWrite: number; load1: number; load5: number; load15: number; cpuWatts?: number };
   const statsHistory: StatsPoint[] = [];
 
   // Stats log file — JSONL format, rotated daily
@@ -2885,6 +2886,15 @@ export async function createGatewayRuntimeState(
   // Seed the initial disk sector reading so the first real sample has a baseline
   getDiskIO();
 
+  // s111 t377 — RAPL CPU power sampler. Returns watts on Linux/Intel hosts
+  // where /sys/class/powercap/intel-rapl:0/* is readable; null elsewhere
+  // (non-Linux, missing kernel module, permission denied). The sampler
+  // needs two consecutive readings to compute a delta, so the first call
+  // returns null. Seed it now so the first real /api/system/stats response
+  // can produce a watt reading.
+  const cpuPowerSampler = new CpuPowerSampler();
+  cpuPowerSampler.sample(); // seed; result discarded
+
   fastify.get("/api/system/stats", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) {
@@ -2925,11 +2935,17 @@ export async function createGatewayRuntimeState(
 
     const diskIO = getDiskIO();
 
+    // s111 t377 — power consumption (RAPL CPU watts; null on non-Linux or
+    // when intel-rapl isn't exposed). Future fields: gpuWatts (NVML),
+    // npuWatts (vendor-specific), packageTotalWatts (multi-socket aggregate).
+    const cpuWatts = cpuPowerSampler.sample();
+
     return reply.send({
       cpu: { loadAvg, cores, usage: cpuUsage },
       memory: { total: totalMem, free: freeMem, used: usedMem, percent: memPercent },
       disk: { total: diskTotal, used: diskUsed, free: diskFree, percent: diskPercent },
       diskIO,
+      power: { cpuWatts },
       uptime: os.uptime(),
       hostname: os.hostname(),
     });
@@ -2957,6 +2973,11 @@ export async function createGatewayRuntimeState(
 
       const diskIO = getDiskIO();
 
+      // s111 t377 — RAPL CPU power. Null on non-Linux / missing intel-rapl;
+      // the JSONL parser already tolerates missing fields so older history
+      // points without `cpuWatts` continue to load fine.
+      const cpuWatts = cpuPowerSampler.sample();
+
       statsHistory.push({
         ts: new Date().toISOString(),
         cpu: cpuUsage,
@@ -2964,6 +2985,7 @@ export async function createGatewayRuntimeState(
         disk: diskPercent,
         diskRead: diskIO.readBytesPerSec,
         diskWrite: diskIO.writeBytesPerSec,
+        cpuWatts: cpuWatts ?? undefined,
         load1: Math.round(loadAvg[0]! * 100) / 100,
         load5: Math.round(loadAvg[1]! * 100) / 100,
         load15: Math.round(loadAvg[2]! * 100) / 100,
