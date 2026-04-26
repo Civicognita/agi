@@ -15,6 +15,7 @@ import { FailoverProvider } from "./failover-provider.js";
 import { AgentRouter } from "./agent-router.js";
 import type { AgentRouterConfig, CostMode } from "./agent-router.js";
 import type { Logger } from "../logger.js";
+import { timeoutMultiplierForTier, type ProviderCatalogEntry } from "../providers-api.js";
 
 // ---------------------------------------------------------------------------
 // ENV key map
@@ -28,6 +29,38 @@ const ENV_KEYS: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// Per-Provider deadline (s111 t413 — relaxed local timeouts)
+//
+// BASE_TIMEOUT_MS is the cloud-tuned baseline. Cloud Providers respond in
+// 2-5s end-to-end; 60s gives plenty of headroom for slow API edges. CPU-bound
+// local Providers can take 30-60s+ for first token alone (empirical: t326
+// close measured 60.9s on qwen2.5:3b CPU-only). Multiplying by the tier
+// multiplier from providers-api gives 360s for non-cloud Providers.
+//
+// The mapping below classifies Provider TYPE strings (used in factory.ts
+// switch cases) into the catalog tiers from providers-api.ts. Plugin-
+// registered Providers fall through to the default (cloud baseline) — they
+// can opt into a longer timeout by passing `timeoutMs` directly in their
+// factory config.
+// ---------------------------------------------------------------------------
+
+export const BASE_TIMEOUT_MS = 60_000;
+
+const TYPE_TIER: Record<string, ProviderCatalogEntry["tier"]> = {
+  anthropic: "cloud",
+  openai: "cloud",
+  ollama: "local",
+  lemonade: "local",
+  "hf-local": "core",
+  "aion-micro": "floor",
+};
+
+export function timeoutMsForProviderType(type: string): number {
+  const tier = TYPE_TIER[type] ?? "cloud";
+  return BASE_TIMEOUT_MS * timeoutMultiplierForTier(tier);
+}
+
+// ---------------------------------------------------------------------------
 // Single-provider factory
 // ---------------------------------------------------------------------------
 
@@ -35,6 +68,10 @@ export function createSingleProvider(
   type: string,
   config: Partial<LLMProviderConfig>,
 ): LLMProvider {
+  // Per-Provider deadline — relaxed for non-cloud tiers per t411/t413.
+  // Caller can override by passing `timeoutMs` explicitly in config.
+  const timeoutMs = config.timeoutMs ?? timeoutMsForProviderType(type);
+
   switch (type) {
     case "anthropic":
       return new AnthropicProvider({
@@ -43,6 +80,7 @@ export function createSingleProvider(
         maxTokens: config.maxTokens ?? 8192,
         maxRetries: config.maxRetries ?? 3,
         baseUrl: config.baseUrl,
+        timeoutMs,
       });
 
     case "openai":
@@ -52,9 +90,14 @@ export function createSingleProvider(
         maxTokens: config.maxTokens ?? 8192,
         maxRetries: config.maxRetries ?? 3,
         baseUrl: config.baseUrl,
+        timeoutMs,
       });
 
     case "ollama":
+      // OllamaProvider uses native fetch with no client-side timeout — leaving
+      // it untouched preserves the no-timeout behavior. Adding a deadline here
+      // would tighten Ollama (opposite of the directive); revisit only if
+      // evidence emerges of phantom Ollama failures from upstream callers.
       return new OllamaProvider({
         defaultModel: config.defaultModel ?? "llama3.1",
         maxTokens: config.maxTokens ?? 8192,
@@ -75,6 +118,7 @@ export function createSingleProvider(
         maxTokens: config.maxTokens ?? 8192,
         maxRetries: config.maxRetries ?? 2,
         baseUrl: config.baseUrl ?? "http://127.0.0.1:13305",
+        timeoutMs,
       });
 
     case "hf-local": {
@@ -96,6 +140,7 @@ export function createSingleProvider(
         maxTokens: config.maxTokens ?? 4096,
         maxRetries: config.maxRetries ?? 2,
         baseUrl: baseUrl ?? "http://127.0.0.1:6000",
+        timeoutMs,
       });
     }
 

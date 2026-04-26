@@ -83,6 +83,7 @@ const DEFAULT_CONFIG: Required<LLMProviderConfig> = {
   maxRetries: 3,
   retryBaseMs: 1000,
   baseUrl: "https://api.openai.com/v1",
+  timeoutMs: 0,
 };
 
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503]);
@@ -304,6 +305,16 @@ export class OpenAIProvider implements LLMProvider {
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
+      // Per-request deadline. timeoutMs > 0 wraps the fetch in an
+      // AbortController so the promise rejects predictably when the deadline
+      // hits (vs hanging on a slow CPU-bound local Provider). 0 = no timeout
+      // (cloud SDK default; preserves pre-t413 behavior). Cleared on every
+      // path so the timer doesn't leak across retries.
+      const controller = this.config.timeoutMs > 0 ? new AbortController() : undefined;
+      const timer =
+        controller !== undefined
+          ? setTimeout(() => controller.abort(), this.config.timeoutMs)
+          : undefined;
       try {
         const resp = await fetch(`${baseUrl}/chat/completions`, {
           method: "POST",
@@ -312,6 +323,7 @@ export class OpenAIProvider implements LLMProvider {
             "Authorization": `Bearer ${apiKey}`,
           },
           body: JSON.stringify(body),
+          ...(controller !== undefined ? { signal: controller.signal } : {}),
         });
 
         if (!resp.ok) {
@@ -332,6 +344,12 @@ export class OpenAIProvider implements LLMProvider {
       } catch (err) {
         lastError = err;
 
+        // AbortError from the deadline timer surfaces as a clear timeout error
+        // instead of bubbling the cryptic native AbortError up the stack.
+        if (err instanceof Error && (err.name === "AbortError" || err.message.includes("aborted"))) {
+          throw new Error(`OpenAI request timed out after ${String(this.config.timeoutMs)}ms`);
+        }
+
         // Network errors (fetch failed)
         if (
           err instanceof Error &&
@@ -348,6 +366,8 @@ export class OpenAIProvider implements LLMProvider {
         if (attempt === this.config.maxRetries) {
           throw err;
         }
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
       }
     }
 

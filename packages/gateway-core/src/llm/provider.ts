@@ -50,4 +50,10 @@ export interface LLMProviderConfig {
   retryBaseMs?: number;
   /** Base URL (for self-hosted or proxy deployments). */
   baseUrl?: string;
+  /** Per-request deadline in ms. 0 (or unset) means no timeout — preserves
+   *  pre-t413 behavior. Set by factory.ts as
+   *  `BASE_TIMEOUT_MS * timeoutMultiplierForTier(tier)` so cloud Providers
+   *  get 60s and every non-cloud tier gets 360s (s111 t411/t413 — relaxed
+   *  local timeouts per owner directive 2026-04-26). */
+  timeoutMs?: number;
 }
