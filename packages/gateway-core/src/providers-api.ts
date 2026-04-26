@@ -183,7 +183,7 @@ function getActiveState(config: AionimaConfig): ActiveProviderState {
 
 export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApiDeps): void {
   /**
-   * GET /api/providers — full catalog with health + model counts.
+   * GET /api/providers/catalog — full catalog with health + model counts.
    *
    * Response shape:
    *   { providers: ProviderCatalogEntry[], generatedAt: string }
@@ -191,8 +191,13 @@ export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApi
    * The dashboard's Provider catalog shelf consumes this directly. Each
    * provider's tier + offGridCapable drive the badge + sort order; health
    * drives the status dot.
+   *
+   * Note: the bare `/api/providers` path is owned by the legacy plugin-
+   * registered provider list (server-runtime-state.ts) which the existing
+   * settings UI + `agi providers` CLI consume. The new catalog ships under
+   * /catalog so both can coexist.
    */
-  app.get("/api/providers", async () => {
+  app.get("/api/providers/catalog", async () => {
     const config = deps.readConfig();
     const catalog = buildBaseCatalog(config);
 
@@ -227,13 +232,13 @@ export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApi
   });
 
   /**
-   * GET /api/providers/:id — single Provider detail (catalog entry + any
-   * Provider-specific metadata). Used by the Provider card "View models" flow
-   * in the dashboard mockup.
+   * GET /api/providers/catalog/:id — single Provider detail (catalog entry +
+   * any Provider-specific metadata). Used by the Provider card "View models"
+   * flow in the dashboard mockup.
    *
    * Returns 404 when the id isn't in the canonical catalog.
    */
-  app.get<{ Params: { id: string } }>("/api/providers/:id", async (req, reply) => {
+  app.get<{ Params: { id: string } }>("/api/providers/catalog/:id", async (req, reply) => {
     const config = deps.readConfig();
     const catalog = buildBaseCatalog(config);
     const entry = catalog.find((c) => c.id === req.params.id);

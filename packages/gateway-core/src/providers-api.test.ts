@@ -35,7 +35,7 @@ function makeApp(
 describe("providers-api — GET /api/providers (s111 t372)", () => {
   it("returns the canonical 6-Provider catalog with stable tiers", async () => {
     const app = makeApp({});
-    const res = await app.inject({ method: "GET", url: "/api/providers" });
+    const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
     expect(res.statusCode).toBe(200);
 
     const body = res.json() as { providers: ProviderCatalogEntry[]; generatedAt: string };
@@ -63,7 +63,7 @@ describe("providers-api — GET /api/providers (s111 t372)", () => {
 
   it("marks cloud Providers without an API key as no-key", async () => {
     const app = makeApp({});
-    const res = await app.inject({ method: "GET", url: "/api/providers" });
+    const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
     const body = res.json() as { providers: ProviderCatalogEntry[] };
     const anthropic = body.providers.find((p) => p.id === "anthropic")!;
     const openai = body.providers.find((p) => p.id === "openai")!;
@@ -76,7 +76,7 @@ describe("providers-api — GET /api/providers (s111 t372)", () => {
     const app = makeApp({
       providers: { anthropic: { apiKey: "sk-test" }, openai: { apiKey: "sk-test" } },
     } as Partial<AionimaConfig>);
-    const res = await app.inject({ method: "GET", url: "/api/providers" });
+    const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
     const body = res.json() as { providers: ProviderCatalogEntry[] };
     expect(body.providers.find((p) => p.id === "anthropic")?.health).toBe("healthy");
     expect(body.providers.find((p) => p.id === "openai")?.health).toBe("healthy");
@@ -85,7 +85,7 @@ describe("providers-api — GET /api/providers (s111 t372)", () => {
 
   it("local Providers + aion-micro + HF are all marked offGridCapable", async () => {
     const app = makeApp({});
-    const res = await app.inject({ method: "GET", url: "/api/providers" });
+    const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
     const body = res.json() as { providers: ProviderCatalogEntry[] };
     expect(body.providers.find((p) => p.id === "aion-micro")?.offGridCapable).toBe(true);
     expect(body.providers.find((p) => p.id === "huggingface")?.offGridCapable).toBe(true);
@@ -103,7 +103,7 @@ describe("providers-api — GET /api/providers (s111 t372)", () => {
         { id: "lemonade", health: "degraded", modelCount: 1 },
       ],
     });
-    const res = await app.inject({ method: "GET", url: "/api/providers" });
+    const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
     const body = res.json() as { providers: ProviderCatalogEntry[] };
     expect(body.providers.find((p) => p.id === "ollama")?.modelCount).toBe(5);
     expect(body.providers.find((p) => p.id === "lemonade")?.health).toBe("degraded");
@@ -113,7 +113,7 @@ describe("providers-api — GET /api/providers (s111 t372)", () => {
 
   it("inspectProviders failures degrade silently to config-only catalog", async () => {
     const app = makeApp({}, { inspect: async () => { throw new Error("inspection failed"); } });
-    const res = await app.inject({ method: "GET", url: "/api/providers" });
+    const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { providers: ProviderCatalogEntry[] };
     expect(body.providers).toHaveLength(6);
@@ -159,7 +159,7 @@ describe("providers-api — GET /api/providers/active (s111 t372)", () => {
 describe("providers-api — GET /api/providers/:id (s111 t372)", () => {
   it("returns the catalog entry for a known provider", async () => {
     const app = makeApp({});
-    const res = await app.inject({ method: "GET", url: "/api/providers/aion-micro" });
+    const res = await app.inject({ method: "GET", url: "/api/providers/catalog/aion-micro" });
     expect(res.statusCode).toBe(200);
     const body = res.json() as ProviderCatalogEntry;
     expect(body.id).toBe("aion-micro");
@@ -170,7 +170,7 @@ describe("providers-api — GET /api/providers/:id (s111 t372)", () => {
 
   it("returns 404 for unknown provider id", async () => {
     const app = makeApp({});
-    const res = await app.inject({ method: "GET", url: "/api/providers/nope" });
+    const res = await app.inject({ method: "GET", url: "/api/providers/catalog/nope" });
     expect(res.statusCode).toBe(404);
     expect(res.json()).toEqual({ error: "unknown provider: nope" });
     await app.close();
