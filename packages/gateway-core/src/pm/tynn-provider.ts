@@ -23,6 +23,7 @@ import type {
   PmProject,
   PmVersion,
   PmStory,
+  PmStoryStatus,
   PmTask,
   PmComment,
   PmStatus,
@@ -30,6 +31,87 @@ import type {
   PmIWishInput,
 } from "@agi/sdk";
 import type { McpClient } from "@agi/mcp-client";
+
+// ---------------------------------------------------------------------------
+// Tynn wire-shape translators — tynn's vocabulary decoupled from PmProvider's
+// ---------------------------------------------------------------------------
+
+/** Tynn task status strings ↔ PmStatus.
+ *  Tynn uses `qa` + `done`; PmProvider uses `testing` + `finished`. The
+ *  vocabulary-decoupled design from cycle 34 means this helper absorbs the
+ *  translation; callers stay clean. */
+function tynnTaskStatusToPm(status: string): PmStatus {
+  switch (status) {
+    case "backlog": return "backlog";
+    case "starting": return "starting";
+    case "doing": return "doing";
+    case "qa": return "testing";
+    case "done": return "finished";
+    case "blocked": return "blocked";
+    case "archived": return "archived";
+    default: return "backlog"; // defensive: unknown tynn statuses fall back to backlog
+  }
+}
+
+/** Tynn story status ↔ PmStoryStatus. Stories share most statuses but use
+ *  `in_progress` for the multi-task active state. */
+function tynnStoryStatusToPm(status: string): PmStoryStatus {
+  switch (status) {
+    case "backlog": return "backlog";
+    case "in_progress": return "in_progress";
+    case "qa": return "qa";
+    case "done": return "done";
+    case "blocked": return "blocked";
+    case "archived": return "archived";
+    default: return "backlog";
+  }
+}
+
+/** Translate a tynn task entity from MCP wire shape to PmTask. */
+function toPmTask(raw: Record<string, unknown>): PmTask {
+  return {
+    id: String(raw["id"] ?? ""),
+    number: Number(raw["task_number"] ?? raw["number"] ?? 0),
+    storyId: String(raw["story_id"] ?? ""),
+    title: String(raw["title"] ?? ""),
+    status: tynnTaskStatusToPm(String(raw["status"] ?? "backlog")),
+    description: typeof raw["description"] === "string" ? raw["description"] : undefined,
+    priority: raw["priority"] === "active" || raw["priority"] === "qa" || raw["priority"] === "blocked"
+      ? raw["priority"]
+      : undefined,
+    verificationSteps: Array.isArray(raw["verification_steps"]) ? raw["verification_steps"] as string[] : undefined,
+    codeArea: typeof raw["code_area"] === "string" ? raw["code_area"] : undefined,
+  };
+}
+
+/** Translate a tynn story entity from MCP wire shape to PmStory. */
+function toPmStory(raw: Record<string, unknown>): PmStory {
+  return {
+    id: String(raw["id"] ?? ""),
+    number: Number(raw["story_number"] ?? raw["number"] ?? 0),
+    versionId: String(raw["version_id"] ?? ""),
+    title: String(raw["title"] ?? ""),
+    status: tynnStoryStatusToPm(String(raw["status"] ?? "backlog")),
+    description: typeof raw["description"] === "string" ? raw["description"] : undefined,
+    taskStatusSnapshot: typeof raw["task_status_snapshot"] === "object" && raw["task_status_snapshot"] !== null
+      ? raw["task_status_snapshot"] as PmStory["taskStatusSnapshot"]
+      : undefined,
+  };
+}
+
+/** Translate a tynn version entity to PmVersion. */
+function toPmVersion(raw: Record<string, unknown>): PmVersion {
+  const status = String(raw["status"] ?? "scheduled");
+  return {
+    id: String(raw["id"] ?? ""),
+    number: String(raw["number"] ?? ""),
+    title: String(raw["title"] ?? ""),
+    status: status === "active" || status === "completed" || status === "released"
+      ? status as PmVersion["status"]
+      : "scheduled",
+    description: typeof raw["why"] === "string" ? raw["why"] : undefined,
+  };
+}
 
 /** Identifier used by McpClient to route calls to the registered tynn server.
  *  By convention every project that uses tynn registers its server with
@@ -57,13 +139,47 @@ export class TynnPmProvider implements PmProvider {
   }
 
   // -------------------------------------------------------------------------
-  // Read operations — cycle 35
+  // Private call dispatcher
+  // -------------------------------------------------------------------------
+
+  /** Call a tynn MCP tool, parse the JSON content, throw on errors.
+   *  Tynn returns JSON-stringified results in `content[0].text`. */
+  private async tynnCall(op: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const result = await this.mcp.callTool(this.tynnServerId, op, args);
+    const firstContent = result.content[0];
+    const text = firstContent !== undefined && typeof firstContent["text"] === "string"
+      ? firstContent["text"]
+      : "";
+    if (result.isError) {
+      throw new Error(`tynn.${op} failed: ${text || "unknown error"}`);
+    }
+    if (text.length === 0) {
+      throw new Error(`tynn.${op} returned no text content`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (err) {
+      throw new Error(`tynn.${op} returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return (parsed ?? {}) as Record<string, unknown>;
+  }
+
+  // -------------------------------------------------------------------------
+  // Read operations (cycle 35a)
   // -------------------------------------------------------------------------
 
   async getProject(): Promise<PmProject> {
-    // Cycle 35 wires this via:
-    //   await this.mcp.callTool(this.tynnServerId, "project", {});
-    throw new Error(`TynnPmProvider.getProject: not yet implemented (cycle 35) — would call mcp.${this.tynnServerId}.project`);
+    const raw = await this.tynnCall("project");
+    return {
+      id: String(raw["id"] ?? ""),
+      name: String(raw["name"] ?? ""),
+      description: typeof raw["description"] === "string"
+        ? raw["description"]
+        : typeof raw["ai_guidance"] === "string"
+          ? raw["ai_guidance"]
+          : undefined,
+    };
   }
 
   async getNext(): Promise<{
@@ -71,26 +187,98 @@ export class TynnPmProvider implements PmProvider {
     topStory: PmStory | null;
     tasks: PmTask[];
   }> {
-    // Cycle 35 wires this via:
-    //   const result = await this.mcp.callTool(this.tynnServerId, "next", {});
-    void this.mcp; // silence unused-private warning until cycle 35
-    throw new Error("TynnPmProvider.getNext: not yet implemented (cycle 35)");
+    const raw = await this.tynnCall("next");
+    const versionRaw = raw["active_version"];
+    const storyRaw = raw["top_story"];
+    const tasksRaw = raw["tasks"];
+    return {
+      version: versionRaw !== null && typeof versionRaw === "object"
+        ? toPmVersion(versionRaw as Record<string, unknown>)
+        : null,
+      topStory: storyRaw !== null && typeof storyRaw === "object"
+        ? toPmStory(storyRaw as Record<string, unknown>)
+        : null,
+      tasks: Array.isArray(tasksRaw)
+        ? tasksRaw.map((t) => toPmTask(t as Record<string, unknown>))
+        : [],
+    };
   }
 
-  async getTask(_idOrNumber: string | number): Promise<PmTask | null> {
-    throw new Error("TynnPmProvider.getTask: not yet implemented (cycle 35)");
+  async getTask(idOrNumber: string | number): Promise<PmTask | null> {
+    const args: Record<string, unknown> = { a: "task" };
+    if (typeof idOrNumber === "number") {
+      args["number"] = idOrNumber;
+    } else {
+      args["id"] = idOrNumber;
+    }
+    try {
+      const raw = await this.tynnCall("show", args);
+      return toPmTask(raw);
+    } catch (err) {
+      // Tynn returns an error tool-call when the entity isn't found.
+      // Translate "not found" to null; rethrow other errors.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.toLowerCase().includes("not found")) return null;
+      throw err;
+    }
   }
 
-  async getStory(_idOrNumber: string | number): Promise<PmStory | null> {
-    throw new Error("TynnPmProvider.getStory: not yet implemented (cycle 35)");
+  async getStory(idOrNumber: string | number): Promise<PmStory | null> {
+    const args: Record<string, unknown> = { a: "story" };
+    if (typeof idOrNumber === "number") {
+      args["number"] = idOrNumber;
+    } else {
+      args["id"] = idOrNumber;
+    }
+    try {
+      const raw = await this.tynnCall("show", args);
+      return toPmStory(raw);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.toLowerCase().includes("not found")) return null;
+      throw err;
+    }
   }
 
-  async findTasks(_filter?: { storyId?: string; status?: PmStatus | PmStatus[]; limit?: number }): Promise<PmTask[]> {
-    throw new Error("TynnPmProvider.findTasks: not yet implemented (cycle 35)");
+  async findTasks(filter?: { storyId?: string; status?: PmStatus | PmStatus[]; limit?: number }): Promise<PmTask[]> {
+    const where: Record<string, unknown> = {};
+    if (filter?.storyId !== undefined) where["story_id"] = filter.storyId;
+    // Status filter — translate PmStatus → tynn status. Tynn's `status` field
+    // accepts a single string or an array; we normalize to array.
+    if (filter?.status !== undefined) {
+      const statuses = Array.isArray(filter.status) ? filter.status : [filter.status];
+      where["status"] = statuses.map((s) => {
+        // Reverse the tynnTaskStatusToPm translation
+        if (s === "testing") return "qa";
+        if (s === "finished") return "done";
+        return s;
+      });
+    }
+    const args: Record<string, unknown> = { a: "task" };
+    if (Object.keys(where).length > 0) args["where"] = where;
+    if (filter?.limit !== undefined) args["limit"] = filter.limit;
+
+    const raw = await this.tynnCall("find", args);
+    const data = raw["data"];
+    return Array.isArray(data) ? data.map((t) => toPmTask(t as Record<string, unknown>)) : [];
   }
 
-  async getComments(_entityType: "task" | "story" | "version", _entityId: string): Promise<PmComment[]> {
-    throw new Error("TynnPmProvider.getComments: not yet implemented (cycle 35)");
+  async getComments(entityType: "task" | "story" | "version", entityId: string): Promise<PmComment[]> {
+    const raw = await this.tynnCall("find", {
+      a: "comment",
+      on: { type: entityType, id: entityId },
+    });
+    const data = raw["data"];
+    if (!Array.isArray(data)) return [];
+    return data.map((c) => {
+      const r = c as Record<string, unknown>;
+      return {
+        id: String(r["id"] ?? ""),
+        body: String(r["body"] ?? ""),
+        author: typeof r["author"] === "string" ? r["author"] : undefined,
+        createdAt: String(r["created_at"] ?? new Date().toISOString()),
+      };
+    });
   }
 
   // -------------------------------------------------------------------------
