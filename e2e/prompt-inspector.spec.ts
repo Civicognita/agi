@@ -49,6 +49,8 @@ test.describe("Prompt Inspector", () => {
   });
 
   test("admin sidebar has a Prompt Inspector entry", async ({ page }) => {
-    await expect(page.getByRole("link", { name: /Prompt Inspector/ })).toBeVisible();
+    const sidebar = page.getByTestId("app-sidebar");
+    await expect(sidebar).toBeVisible();
+    await expect(sidebar.getByRole("link", { name: /Prompt Inspector/ })).toBeVisible();
   });
 });
