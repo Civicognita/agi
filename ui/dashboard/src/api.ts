@@ -399,6 +399,30 @@ export async function fetchActiveProvider(): Promise<ActiveProviderState> {
   return res.json() as Promise<ActiveProviderState>;
 }
 
+/** s111 t419 wire shape — recent routing decisions from AgentRouter ring
+ *  buffer. ts is optional because the field was added in t419 backend slice;
+ *  pre-stamp records (if any survive in memory across deploy) lack it. */
+export interface RoutingDecisionRecord {
+  provider: string;
+  model: string;
+  reason: string;
+  complexity: string;
+  costMode: string;
+  escalated: boolean;
+  ts?: string;
+}
+
+/** GET /api/providers/recent-decisions — newest-last array of recent
+ *  routing decisions for the Mission Control hero. Returns empty when the
+ *  AgentRouter isn't yet ready (early-boot stub Provider, plugin Provider
+ *  that doesn't expose the ring buffer). UI hides the hero in that case. */
+export async function fetchRecentDecisions(limit = 20): Promise<RoutingDecisionRecord[]> {
+  const res = await fetch(`/api/providers/recent-decisions?limit=${String(limit)}`);
+  if (!res.ok) return [];
+  const data = (await res.json()) as { decisions: RoutingDecisionRecord[] };
+  return data.decisions;
+}
+
 /** PUT /api/providers/active — switch the active Provider (and optionally
  *  the model). Hot-reloaded — agent-router picks up the new Provider on the
  *  next invocation without a gateway restart. Used by the click-to-activate

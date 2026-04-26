@@ -6,8 +6,10 @@
  * specific values shown there (TrueCost numbers, decision-preview JSON,
  * latency estimates) are illustrative.
  *
- * Shipped (cumulative through v0.4.210):
+ * Shipped (cumulative through v0.4.211):
  *   - Disclaimer banner (visual-only mockup discipline)
+ *   - Mission Control hero with most recent routing decision flow +
+ *     synthesized narrative (t419 / v0.4.211)
  *   - Page head with off-grid toggle wired to PUT /api/providers/router
  *     (t373 first slice / v0.4.208)
  *   - Provider shelf rendering /api/providers/catalog with tier badges,
@@ -19,12 +21,14 @@
  *     placeholder cost ticker per mockup discipline (t420 / v0.4.210)
  *
  * What follow-up cycles add (separate slices):
- *   - Mission Control hero (t419 — decision-feed backend endpoint first)
- *   - Cost ledger backend → real ticker data (separate task)
+ *   - Cost ledger backend → real ticker data + watt readout in narrative
+ *     (t421)
  *   - Runtimes strip (t376 Runtime catalog work)
  *   - Decision feed + what-if simulator (request-classifier integration)
  *   - Per-Provider drill-down ("View models" action target)
  *   - Custom modal for confirmation guards (replaces window.confirm)
+ *   - "Last turn" prompt-text node in the hero (needs request payload
+ *     storage which RoutingDecision intentionally doesn't carry)
  */
 
 import { useEffect, useState, useCallback } from "react";
@@ -32,10 +36,12 @@ import { Card } from "@/components/ui/card";
 import {
   fetchProvidersCatalog,
   fetchActiveProvider,
+  fetchRecentDecisions,
   updateActiveProvider,
   updateRouterConfig,
   type ProviderCatalogEntry,
   type ActiveProviderState,
+  type RoutingDecisionRecord,
 } from "@/api.js";
 
 // ---------------------------------------------------------------------------
@@ -97,6 +103,104 @@ function OffGridToggle({
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mission Control hero (s111 t419 UI slice)
+//
+// Shows the most recent routing decision as a flow: Provider → Runtime, with
+// a narrative paragraph synthesized from the decision metadata. The full
+// mockup shows 3 nodes (Last turn → Provider → Runtime) with the user
+// prompt in the first node — we omit that node because the user-prompt
+// text isn't in RoutingDecision (and synthesizing one would violate the
+// "values illustrative" / no-fabrication discipline). When no decisions
+// yet exist (fresh boot, no chat turns), the hero hides entirely; the
+// cost dial + Provider shelf still render.
+// ---------------------------------------------------------------------------
+
+function formatTimeAgo(ts: string): string {
+  const elapsed = Date.now() - new Date(ts).getTime();
+  if (elapsed < 60_000) return `${String(Math.max(1, Math.round(elapsed / 1000)))}s ago`;
+  if (elapsed < 3_600_000) return `${String(Math.round(elapsed / 60_000))}m ago`;
+  if (elapsed < 86_400_000) return `${String(Math.round(elapsed / 3_600_000))}h ago`;
+  return new Date(ts).toLocaleString();
+}
+
+function synthesizeNarrative(
+  decision: RoutingDecisionRecord,
+  catalog: ProviderCatalogEntry[],
+): string {
+  const provider = catalog.find((p) => p.id === decision.provider);
+  const tier = provider?.tier ?? "unknown";
+  const tierClause =
+    tier === "cloud"
+      ? "a cloud Provider"
+      : tier === "floor"
+        ? "the off-grid floor"
+        : tier === "local"
+          ? "a local Provider"
+          : "the configured Provider";
+  const escalationClause = decision.escalated ? " (escalated mid-turn for higher quality)" : "";
+  return (
+    `Picked ${decision.model} via ${decision.provider} (${tierClause}) ` +
+    `for a ${decision.complexity} request in ${decision.costMode} cost mode${escalationClause}. ` +
+    `Reason: ${decision.reason}.`
+  );
+}
+
+function MissionControlHero({
+  decision,
+  catalog,
+}: {
+  decision: RoutingDecisionRecord;
+  catalog: ProviderCatalogEntry[];
+}) {
+  const provider = catalog.find((p) => p.id === decision.provider);
+  const runtimeLabel =
+    provider?.dependsOn && provider.dependsOn.length > 0
+      ? provider.dependsOn.join(", ")
+      : provider?.baseUrl ?? "Cloud API";
+  const runtimeSub = provider?.baseUrl ?? (provider?.tier === "cloud" ? "remote" : "—");
+  const narrative = synthesizeNarrative(decision, catalog);
+  const tag = decision.ts !== undefined ? `Right now · ${formatTimeAgo(decision.ts)}` : "Right now";
+  return (
+    <Card
+      className="p-7 relative overflow-hidden bg-gradient-to-br from-primary/10 to-purple-400/[0.04] border-primary/25"
+    >
+      <div className="text-[10px] text-primary uppercase tracking-[0.12em] font-bold">{tag}</div>
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 mt-3">
+        {/* Provider node — primary highlight, matches mockup's "active" node */}
+        <Card className="p-3.5 border-primary/50 bg-primary/[0.06]">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
+            Provider
+          </div>
+          <div className="text-base font-semibold mt-0.5 flex items-center gap-1.5">
+            {provider?.name ?? decision.provider}
+          </div>
+          <div className="text-[11px] text-muted-foreground mt-0.5 font-mono truncate">
+            {decision.model}
+          </div>
+        </Card>
+        <div className="text-primary text-2xl animate-pulse">→</div>
+        {/* Runtime node — dashed border matches mockup, lower visual prominence */}
+        <Card className="p-3.5 border-dashed border-border">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">
+            Runtime
+          </div>
+          <div className="text-base font-semibold mt-0.5">{runtimeLabel}</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5 font-mono truncate">
+            {runtimeSub}
+          </div>
+        </Card>
+      </div>
+      <div className="mt-5 px-4 py-3 bg-primary/[0.06] border-l-[3px] border-primary rounded-md text-[13.5px] leading-relaxed">
+        <div className="text-[11px] text-primary font-semibold uppercase tracking-wider mb-1">
+          Aion · routing decision
+        </div>
+        {narrative}
+      </div>
+    </Card>
   );
 }
 
@@ -350,15 +454,21 @@ export default function SettingsProvidersPage() {
   const [togglePending, setTogglePending] = useState(false);
   const [activatingId, setActivatingId] = useState<string | null>(null);
   const [costModePending, setCostModePending] = useState(false);
+  const [recentDecisions, setRecentDecisions] = useState<RoutingDecisionRecord[]>([]);
 
   const reload = useCallback(async () => {
     try {
-      const [catalogRes, activeRes] = await Promise.all([
+      // Recent-decisions fetched in parallel with catalog + active state.
+      // It's never a blocker for the page (empty array is a valid state —
+      // hero hides) so the result is consumed even if its fetch fails.
+      const [catalogRes, activeRes, decisionsRes] = await Promise.all([
         fetchProvidersCatalog(),
         fetchActiveProvider(),
+        fetchRecentDecisions(20).catch(() => []),
       ]);
       setCatalog(catalogRes.providers);
       setActive(activeRes);
+      setRecentDecisions(decisionsRes);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -487,6 +597,15 @@ export default function SettingsProvidersPage() {
           />
         )}
       </div>
+
+      {/* Mission Control hero — most recent routing decision (s111 t419).
+          Hides when no decisions exist yet (fresh boot, no turns). */}
+      {recentDecisions.length > 0 && (
+        <MissionControlHero
+          decision={recentDecisions[recentDecisions.length - 1]!}
+          catalog={catalog}
+        />
+      )}
 
       {/* Cost-mode dial + placeholder ticker (s111 t420) */}
       {active && (
