@@ -28,6 +28,14 @@ vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
   StdioClientTransport: vi.fn((params) => ({ __transport: "stdio", params })),
 }));
 
+vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
+  StreamableHTTPClientTransport: vi.fn((url) => ({ __transport: "http", url: String(url) })),
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/websocket.js", () => ({
+  WebSocketClientTransport: vi.fn((url) => ({ __transport: "websocket", url: String(url) })),
+}));
+
 import { McpClient, type McpServerConfig } from "./index.js";
 
 describe("McpClient — server registration + lifecycle (s118 t441)", () => {
@@ -76,14 +84,57 @@ describe("McpClient — server registration + lifecycle (s118 t441)", () => {
     expect(client.listServers()[0]!.state).toBe("error");
   });
 
-  it("rejects unsupported transport (cycle 31 = stdio only)", async () => {
+  it("connects via http (Streamable HTTP) transport when url is configured", async () => {
+    mockClientInstance.connect.mockResolvedValueOnce(undefined);
+    const client = new McpClient();
+    await client.registerServer({
+      id: "remote-mcp",
+      transport: "http",
+      url: "https://mcp.example.com/v1",
+      autoConnect: true,
+    });
+    expect(mockClientInstance.connect).toHaveBeenCalledTimes(1);
+    expect(client.listServers()[0]!.state).toBe("connected");
+  });
+
+  it("connects via websocket transport when url is configured", async () => {
+    mockClientInstance.connect.mockResolvedValueOnce(undefined);
+    const client = new McpClient();
+    await client.registerServer({
+      id: "ws-mcp",
+      transport: "websocket",
+      url: "wss://mcp.example.com/v1",
+      autoConnect: true,
+    });
+    expect(mockClientInstance.connect).toHaveBeenCalledTimes(1);
+    expect(client.listServers()[0]!.state).toBe("connected");
+  });
+
+  it("rejects http transport when url is missing", async () => {
     const client = new McpClient();
     await expect(client.registerServer({
-      id: "remote-mcp",
-      transport: "websocket",
-      url: "wss://example.com/mcp",
+      id: "broken-http",
+      transport: "http",
       autoConnect: true,
-    })).rejects.toThrow(/not yet implemented/);
+    })).rejects.toThrow(/requires url/);
+  });
+
+  it("rejects websocket transport when url is missing", async () => {
+    const client = new McpClient();
+    await expect(client.registerServer({
+      id: "broken-ws",
+      transport: "websocket",
+      autoConnect: true,
+    })).rejects.toThrow(/requires url/);
+  });
+
+  it("rejects stdio transport when command is missing", async () => {
+    const client = new McpClient();
+    await expect(client.registerServer({
+      id: "broken-stdio",
+      transport: "stdio",
+      autoConnect: true,
+    })).rejects.toThrow(/requires command/);
   });
 
   it("disconnect closes the client + transitions state", async () => {

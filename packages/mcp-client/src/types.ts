@@ -8,9 +8,15 @@
  * SDK churn (the SDK is at v1.29.0 with active transport experimentation).
  */
 
-/** Transport kind. Stdio is most common; SSE/HTTP for hosted MCP servers;
- *  WebSocket is the newer streaming variant. */
-export type McpTransport = "stdio" | "sse" | "websocket";
+/** Transport kind matching the MCP spec's official transports.
+ *  - `stdio`: spawn a subprocess + talk over stdin/stdout (most common)
+ *  - `http`: Streamable HTTP transport (POST for sending, SSE for receiving)
+ *  - `websocket`: WebSocket protocol for bidirectional streaming
+ *
+ *  Note: the SDK ships a deprecated SSE-only client (`client/sse.js`) that
+ *  predates Streamable HTTP. We expose only `http` here — it's the modern
+ *  successor that supersedes the old SSE-only transport. */
+export type McpTransport = "stdio" | "http" | "websocket";
 
 /** Per-server config from project gateway.json `mcp.servers` block. */
 export interface McpServerConfig {

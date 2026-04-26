@@ -17,13 +17,15 @@ Underlying SDK: `@modelcontextprotocol/sdk` (npm), pinned to `^1.29.0` as of cyc
 
 ## Transports
 
-Three transports the client will support:
+Three MCP-spec transports supported:
 
-| Transport | Use case | Status (cycle 30) |
+| Transport | Use case | Status |
 |-----------|----------|-------|
-| `stdio` | Most common — spawns server binary, talks over stdin/stdout. Tynn uses this. | Skeleton only; impl in cycle 31 |
-| `sse` | Hosted MCP servers reachable via HTTP/SSE | Cycle 32 |
-| `websocket` | Newer streaming variant from MCP spec evolution | Cycle 32 |
+| `stdio` | Most common — spawns server binary, talks over stdin/stdout. Tynn uses this. | ✅ Cycle 31 (v0.4.222) |
+| `http` | Streamable HTTP transport — POST for sending, SSE for receiving. Hosted MCP servers. | ✅ Cycle 32 (v0.4.223) |
+| `websocket` | WebSocket protocol for bidirectional streaming. | ✅ Cycle 32 (v0.4.223) |
+
+The MCP spec deprecated the older SSE-only transport in favor of Streamable HTTP. We expose only `http` (which IS Streamable HTTP under the hood) — the legacy `client/sse.js` from the SDK is intentionally NOT surfaced.
 
 ## Configuration
 
@@ -78,10 +80,11 @@ When `@modelcontextprotocol/sdk` ships a new version:
 
 ## Cycle plan
 
-- ✅ Cycle 30 (this slice): package skeleton + types + design doc (this file)
-- Cycle 31: stdio transport + connection lifecycle + tool/resource/prompt list + call dispatch
-- Cycle 32: SSE/HTTP + WebSocket transports + agent tool registration
-- After cycle 32: t432 (PM tool surface) unblocks — TynnPmProvider consumes this client
+- ✅ Cycle 30 (v0.4.221): package skeleton + types + design doc (this file)
+- ✅ Cycle 31 (v0.4.222): stdio transport + connection lifecycle + tool/resource/prompt list + call dispatch
+- ✅ Cycle 32 (v0.4.223): http (Streamable HTTP) + websocket transports + transport rename (`sse` → `http`)
+- Cycle 33: Aion-side `mcp` agent tool registration in tool-registry — Aion gains the ability to call any registered MCP server
+- After cycle 33: t432 (PM tool surface) unblocks — TynnPmProvider consumes this client
 
 ## Reference
 

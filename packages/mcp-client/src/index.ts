@@ -19,6 +19,8 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { WebSocketClientTransport } from "@modelcontextprotocol/sdk/client/websocket.js";
 
 export type {
   McpTransport,
@@ -199,9 +201,10 @@ export class McpClient {
   }
 
   /**
-   * Build the SDK transport for a server config. Cycle 31 supports stdio
-   * only; cycle 32+ adds streamableHttp + websocket. Throws a clear error
-   * for unsupported transports.
+   * Build the SDK transport for a server config. Cycle 32 supports all
+   * three MCP-spec transports: stdio, Streamable HTTP, and WebSocket.
+   * Each branch validates its required config (command for stdio, url for
+   * the network transports) before constructing the SDK transport.
    */
   private makeTransport(config: McpServerConfig) {
     if (config.transport === "stdio") {
@@ -215,9 +218,22 @@ export class McpClient {
         ...(config.env !== undefined ? { env: config.env } : {}),
       });
     }
-    throw new Error(
-      `McpClient: transport ${config.transport} not yet implemented (cycle 32+); stdio only in cycle 31`,
-    );
+    if (config.transport === "http") {
+      if (config.url === undefined || config.url.length === 0) {
+        throw new Error(`McpClient: http transport requires url for server ${config.id}`);
+      }
+      return new StreamableHTTPClientTransport(new URL(config.url));
+    }
+    if (config.transport === "websocket") {
+      if (config.url === undefined || config.url.length === 0) {
+        throw new Error(`McpClient: websocket transport requires url for server ${config.id}`);
+      }
+      return new WebSocketClientTransport(new URL(config.url));
+    }
+    // Defensive — `config.transport` is a closed union, but a future SDK
+    // upgrade or plugin-supplied config could surface an unknown value.
+    const unknown: never = config.transport;
+    throw new Error(`McpClient: unknown transport ${String(unknown)} for server ${config.id}`);
   }
 
   /** Return the connected client or throw a clear error. */
