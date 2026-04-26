@@ -1,5 +1,11 @@
 // Memory package — NC 2.7 Cognee Memory Integration
 
+// Layer D blockchain anchor — v0.4.0 ships only NoopAnchor (no chain calls);
+// v0.6.0 adds the live Ethereum/L2 implementation through the same interface
+// (defined in @agi/sdk/anchor). Per s112 t383.
+export { NoopAnchor } from "./anchors/noop.js";
+export type { NoopAnchorOptions } from "./anchors/noop.js";
+
 export type {
   MemoryEntry,
   MemoryCategory,

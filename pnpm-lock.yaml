@@ -422,6 +422,9 @@ importers:
       '@agi/gateway-core':
         specifier: workspace:*
         version: link:../gateway-core
+      '@agi/sdk':
+        specifier: workspace:*
+        version: link:../aion-sdk
 
   packages/model-runtime:
     dependencies:
