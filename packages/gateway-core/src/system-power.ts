@@ -1,29 +1,37 @@
 /**
- * system-power — RAPL CPU power tracking for $WATCHER.RESOURCE (s111 t377).
+ * system-power — power tracking for $WATCHER.RESOURCE (s111 E-section).
  *
- * The Intel RAPL (Running Average Power Limit) sysfs interface exposes a
- * monotonically-increasing energy counter at
- *   /sys/class/powercap/intel-rapl:0/energy_uj
- * counting cumulative microjoules consumed by the CPU package since boot.
- * Watts = ΔμJ / Δμs, computed from two readings.
+ * Two samplers as of v0.4.213:
+ *   - CpuPowerSampler: Intel RAPL sysfs (s111 t377)
+ *   - GpuPowerSampler: NVIDIA via nvidia-smi --query-gpu=power.draw (s111 t417)
  *
- * The counter wraps at /sys/class/powercap/intel-rapl:0/max_energy_range_uj
- * (typically ~262_143_328_850 μJ ≈ 73 hours @ 1W). When `current < prev`,
- * the math adds (maxRange - prev) + current to recover the real delta.
+ * RAPL (Running Average Power Limit) exposes a monotonically-increasing
+ * energy counter at /sys/class/powercap/intel-rapl:0/energy_uj counting
+ * cumulative microjoules. Watts = ΔμJ / Δμs from two readings. Counter
+ * wraps at max_energy_range_uj (~262 GJ ≈ 73 hours @ 1W); the math handles
+ * wraparound by computing (max - prev) + current when current < prev.
  *
- * Future scope (NOT in this slice):
- *   - GPU power via NVML (nvidia-smi --query-gpu=power.draw or libnvml)
- *   - NPU power (vendor-specific; Intel via /sys/class/intel_npu/power; AMD
- *     via amdgpu_pm_info; Qualcomm via QPC counters)
- *   - Per-package multi-socket aggregation
- *   - AMD energy via /sys/class/powercap/intel-rapl:0 alias OR libcpupower
+ * NVIDIA exposes instantaneous power via nvidia-smi (no delta math needed —
+ * the driver computes a moving average internally). We shell out rather
+ * than depending on a libnvml binding because (a) nvidia-smi is the canonical
+ * stable interface across driver versions, (b) AGI doesn't ship native
+ * bindings, (c) parse-cost is negligible (single CSV row).
  *
- * The Linux RAPL driver covers Intel CPUs (since Sandy Bridge) and AMD
- * Zen/Zen2/Zen3+ when the amd_energy module is loaded. ARM/macOS return
- * null gracefully — the catalog UI hides the power gauge for those.
+ * Future scope (NOT in this file):
+ *   - NPU power (vendor-specific; Intel /sys/class/intel_npu/power; AMD
+ *     amdgpu_pm_info; Qualcomm QPC counters)
+ *   - Per-package multi-socket CPU aggregation
+ *   - Multi-GPU aggregation (this slice takes first GPU only)
+ *   - AMD GPU power via amdgpu_pm_info or radeontop
+ *
+ * Graceful degradation: every sampler returns null on missing hardware,
+ * missing tools, or permission denied. The catalog UI hides power chips
+ * + chart series when sample()=null. ARM/macOS, Intel-iGPU-only hosts,
+ * and hardened distros all hit the null path; that's the design, not a bug.
  */
 
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 
 const RAPL_ENERGY_PATH = "/sys/class/powercap/intel-rapl:0/energy_uj";
 const RAPL_MAX_RANGE_PATH = "/sys/class/powercap/intel-rapl:0/max_energy_range_uj";
@@ -106,5 +114,82 @@ export class CpuPowerSampler {
     if (prev === null) return null;
 
     return computePowerWatts(prev.uj, currentUj, now - prev.ts, this.maxRangeUj!);
+  }
+}
+
+/**
+ * Parse the first GPU's instantaneous watts from
+ * `nvidia-smi --query-gpu=power.draw --format=csv,noheader,nounits` output.
+ *
+ * Pure function — testable without nvidia-smi installed. The expected
+ * format is one numeric watts value per GPU on its own line. Multi-GPU
+ * systems return one row per GPU; this slice takes only the first row
+ * (multi-GPU aggregation is its own task).
+ *
+ * Returns null when:
+ *   - The output is empty or whitespace-only (driver not loaded)
+ *   - The first row isn't a finite number ("N/A" appears for old cards
+ *     that don't report power.draw)
+ *   - The reading is negative or zero (sentinel values from broken paths)
+ *
+ * Returns watts rounded to 1 decimal — same precision pattern as the RAPL
+ * helper, keeping the dashboard chart from rendering jitter from nvidia-smi's
+ * sub-watt resolution.
+ */
+export function parseNvidiaSmiOutput(stdout: string): number | null {
+  const firstLine = stdout.split("\n").map((s) => s.trim()).find((s) => s.length > 0);
+  if (firstLine === undefined) return null;
+  const parsed = Number.parseFloat(firstLine);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.round(parsed * 10) / 10;
+}
+
+/**
+ * GpuPowerSampler — wraps nvidia-smi shell-out with availability detection.
+ *
+ * Returns null when nvidia-smi isn't installed (most non-NVIDIA hosts),
+ * when the driver isn't loaded, when no GPUs report power.draw, or when
+ * the spawn times out. The class caches the availability decision after
+ * the first probe so non-NVIDIA hosts pay the spawn cost once, not on
+ * every sample.
+ *
+ * Unlike CpuPowerSampler, the first sample() returns a real watt value —
+ * NVIDIA's driver computes a moving average internally, so we don't need
+ * a delta. Sample cadence above 1s is safe; nvidia-smi spawn is ~50ms.
+ */
+export class GpuPowerSampler {
+  private static readonly SPAWN_TIMEOUT_MS = 5_000;
+  /** null = unprobed; false = probed and unavailable; true = probed and OK. */
+  private availability: boolean | null = null;
+
+  isAvailable(): boolean {
+    if (this.availability !== null) return this.availability;
+    // Probe by trying to run nvidia-smi with the same query the sampler uses.
+    // A successful first probe primes the cache for this lifetime; failures
+    // also cache so we don't re-spawn on every sample on non-NVIDIA hosts.
+    const result = spawnSync(
+      "nvidia-smi",
+      ["--query-gpu=power.draw", "--format=csv,noheader,nounits"],
+      { timeout: GpuPowerSampler.SPAWN_TIMEOUT_MS, encoding: "utf-8" },
+    );
+    if (result.status === 0 && result.stdout) {
+      const parsed = parseNvidiaSmiOutput(result.stdout);
+      this.availability = parsed !== null;
+    } else {
+      this.availability = false;
+    }
+    return this.availability;
+  }
+
+  /** Returns current GPU watts, or null when unavailable. */
+  sample(): number | null {
+    if (!this.isAvailable()) return null;
+    const result = spawnSync(
+      "nvidia-smi",
+      ["--query-gpu=power.draw", "--format=csv,noheader,nounits"],
+      { timeout: GpuPowerSampler.SPAWN_TIMEOUT_MS, encoding: "utf-8" },
+    );
+    if (result.status !== 0 || !result.stdout) return null;
+    return parseNvidiaSmiOutput(result.stdout);
   }
 }

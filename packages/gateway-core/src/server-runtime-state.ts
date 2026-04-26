@@ -33,7 +33,7 @@ import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model
 import { fetchOwnerToken, injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
-import { CpuPowerSampler } from "./system-power.js";
+import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";
 import { appRouter, type AppContext } from "@agi/trpc-api";
 import type { HostingManager } from "./hosting-manager.js";
 import { registerHostingRoutes } from "./hosting-api.js";
@@ -2774,7 +2774,7 @@ export async function createGatewayRuntimeState(
   const STATS_HISTORY_MAX = 2880;
   const STATS_RECORD_INTERVAL_MS = 30_000;
   const STATS_FLUSH_INTERVAL_MS = 5 * 60 * 1000; // Write to disk every 5 minutes
-  type StatsPoint = { ts: string; cpu: number; mem: number; disk: number; diskRead: number; diskWrite: number; load1: number; load5: number; load15: number; cpuWatts?: number };
+  type StatsPoint = { ts: string; cpu: number; mem: number; disk: number; diskRead: number; diskWrite: number; load1: number; load5: number; load15: number; cpuWatts?: number; gpuWatts?: number };
   const statsHistory: StatsPoint[] = [];
 
   // Stats log file — JSONL format, rotated daily
@@ -2895,6 +2895,14 @@ export async function createGatewayRuntimeState(
   const cpuPowerSampler = new CpuPowerSampler();
   cpuPowerSampler.sample(); // seed; result discarded
 
+  // s111 t417 — NVIDIA GPU power sampler. Returns watts on hosts with an
+  // NVIDIA driver + nvidia-smi installed; null elsewhere (Intel iGPU, AMD,
+  // ARM, macOS, hardened distros without nvidia-smi). Unlike CpuPowerSampler,
+  // the first sample returns a real value — NVIDIA reports instantaneous
+  // power, no delta needed. Availability is cached after first probe so
+  // non-NVIDIA hosts pay the spawn cost once, not per sample.
+  const gpuPowerSampler = new GpuPowerSampler();
+
   fastify.get("/api/system/stats", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) {
@@ -2935,17 +2943,19 @@ export async function createGatewayRuntimeState(
 
     const diskIO = getDiskIO();
 
-    // s111 t377 — power consumption (RAPL CPU watts; null on non-Linux or
-    // when intel-rapl isn't exposed). Future fields: gpuWatts (NVML),
-    // npuWatts (vendor-specific), packageTotalWatts (multi-socket aggregate).
+    // s111 t377/t417 — power consumption. cpuWatts is null on non-Linux or
+    // when intel-rapl isn't exposed; gpuWatts is null on non-NVIDIA hosts.
+    // Future fields: npuWatts (vendor-specific), packageTotalWatts (multi-
+    // socket CPU aggregate), multi-GPU aggregation.
     const cpuWatts = cpuPowerSampler.sample();
+    const gpuWatts = gpuPowerSampler.sample();
 
     return reply.send({
       cpu: { loadAvg, cores, usage: cpuUsage },
       memory: { total: totalMem, free: freeMem, used: usedMem, percent: memPercent },
       disk: { total: diskTotal, used: diskUsed, free: diskFree, percent: diskPercent },
       diskIO,
-      power: { cpuWatts },
+      power: { cpuWatts, gpuWatts },
       uptime: os.uptime(),
       hostname: os.hostname(),
     });
@@ -2973,10 +2983,11 @@ export async function createGatewayRuntimeState(
 
       const diskIO = getDiskIO();
 
-      // s111 t377 — RAPL CPU power. Null on non-Linux / missing intel-rapl;
+      // s111 t377/t417 — power samples. Null on hosts without RAPL/NVIDIA;
       // the JSONL parser already tolerates missing fields so older history
-      // points without `cpuWatts` continue to load fine.
+      // points without these fields continue to load fine.
       const cpuWatts = cpuPowerSampler.sample();
+      const gpuWatts = gpuPowerSampler.sample();
 
       statsHistory.push({
         ts: new Date().toISOString(),
@@ -2986,6 +2997,7 @@ export async function createGatewayRuntimeState(
         diskRead: diskIO.readBytesPerSec,
         diskWrite: diskIO.writeBytesPerSec,
         cpuWatts: cpuWatts ?? undefined,
+        gpuWatts: gpuWatts ?? undefined,
         load1: Math.round(loadAvg[0]! * 100) / 100,
         load5: Math.round(loadAvg[1]! * 100) / 100,
         load15: Math.round(loadAvg[2]! * 100) / 100,

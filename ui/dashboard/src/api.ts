@@ -312,10 +312,12 @@ export interface SystemStats {
   memory: { total: number; free: number; used: number; percent: number };
   disk: { total: number; used: number; free: number; percent: number };
   diskIO: { readBytesPerSec: number; writeBytesPerSec: number };
-  /** s111 t377/t378 — power consumption. cpuWatts is null when RAPL isn't
-   *  available on the host (non-Linux, missing intel-rapl module, or
-   *  permission denied). The gauge/chart hides gracefully in that case. */
-  power?: { cpuWatts: number | null };
+  /** s111 t377/t378/t417 — power consumption. cpuWatts is null when RAPL
+   *  isn't available (non-Linux, missing intel-rapl, permission denied);
+   *  gpuWatts is null on non-NVIDIA hosts (Intel iGPU, AMD, ARM, macOS,
+   *  hardened distros without nvidia-smi). Either-or-both can be present;
+   *  the chart hides each series independently when its data is null. */
+  power?: { cpuWatts: number | null; gpuWatts?: number | null };
   uptime: number;
   hostname: string;
 }
@@ -342,6 +344,9 @@ export interface StatsHistoryPoint {
   /** s111 t378 — RAPL CPU watts at sample time. Optional because older
    *  history points (pre-v0.4.206) and non-Linux hosts don't have it. */
   cpuWatts?: number;
+  /** s111 t417 — NVIDIA GPU watts at sample time. Optional because older
+   *  history points (pre-v0.4.213) and non-NVIDIA hosts don't have it. */
+  gpuWatts?: number;
 }
 
 export async function fetchStatsHistory(hours = 1): Promise<StatsHistoryPoint[]> {
