@@ -351,6 +351,76 @@ export async function fetchStatsHistory(hours = 1): Promise<StatsHistoryPoint[]>
   return data.history;
 }
 
+// ---------------------------------------------------------------------------
+// Providers API — /api/providers (s111 t372/t373)
+// ---------------------------------------------------------------------------
+
+/** Mirrors ProviderCatalogEntry in packages/gateway-core/src/providers-api.ts.
+ *  Wire-compatible with backend; new optional fields land here as the catalog
+ *  shape grows (e.g., t411 timeoutMultiplier, t416 defaultModel + dependsOn). */
+export interface ProviderCatalogEntry {
+  id: string;
+  name: string;
+  tier: "core" | "local" | "cloud" | "floor";
+  offGridCapable: boolean;
+  health: "healthy" | "degraded" | "unreachable" | "no-key";
+  modelCount?: number;
+  baseUrl?: string;
+  defaultModel?: string;
+  dependsOn?: string[];
+  timeoutMultiplier: number;
+}
+
+export interface ActiveProviderState {
+  activeProviderId: string;
+  activeModel: string;
+  router: {
+    costMode: string;
+    escalation: boolean;
+    simpleThresholdTokens?: number;
+    complexThresholdTokens?: number;
+    maxEscalationsPerTurn?: number;
+  };
+  offGridMode: boolean;
+}
+
+export async function fetchProvidersCatalog(): Promise<{
+  providers: ProviderCatalogEntry[];
+  generatedAt: string;
+}> {
+  const res = await fetch("/api/providers/catalog");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{ providers: ProviderCatalogEntry[]; generatedAt: string }>;
+}
+
+export async function fetchActiveProvider(): Promise<ActiveProviderState> {
+  const res = await fetch("/api/providers/active");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<ActiveProviderState>;
+}
+
+/** PUT /api/providers/router — partial update; only provided fields are
+ *  patched. Used by the off-grid toggle in the Providers page header. */
+export async function updateRouterConfig(patch: {
+  costMode?: string;
+  escalation?: boolean;
+  simpleThresholdTokens?: number;
+  complexThresholdTokens?: number;
+  maxEscalationsPerTurn?: number;
+  offGridMode?: boolean;
+}): Promise<ActiveProviderState> {
+  const res = await fetch("/api/providers/router", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ActiveProviderState>;
+}
+
 export async function checkForUpdates(): Promise<UpdateCheck> {
   const res = await fetch("/api/system/update-check");
   if (!res.ok) {

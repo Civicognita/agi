@@ -30,6 +30,7 @@ import { PluginPageResolver } from "./components/PluginPageResolver.js";
 import MarketplacePage from "./routes/marketplace.js";
 import HFMarketplacePage from "./routes/hf-marketplace.js";
 import SettingsHFPage from "./routes/settings-hf.js";
+import SettingsProvidersPage from "./routes/settings-providers.js";
 import { OnboardingPage } from "./routes/onboarding.js";
 import { GatewayOnboardingPage } from "./routes/gateway-onboarding.js";
 import ReportsPage from "./routes/reports.js";
@@ -92,6 +93,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="/settings/gateway" replace /> },
           { path: "gateway", element: <SettingsGatewayPage /> },
+          { path: "providers", element: <SettingsProvidersPage /> },
           { path: "security", element: <SecuritySettingsPage /> },
           { path: "hf", element: <SettingsHFPage /> },
           { path: "plugins", element: <Navigate to="/settings/gateway" replace /> },

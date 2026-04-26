@@ -42,6 +42,7 @@ export default function SettingsLayout() {
 
   const allItems: SettingsNavItem[] = useMemo(() => [
     { to: "/settings/gateway", label: "Gateway", isBuiltin: true },
+    { to: "/settings/providers", label: "Providers", isBuiltin: true },
     { to: "/settings/security", label: "Security", isBuiltin: true },
     { to: "/settings/hf", label: "HF Marketplace", isBuiltin: true },
     ...pluginPages.map((p) => ({
