@@ -134,6 +134,12 @@ export interface ProvidersApiDeps {
    *  Optional so test fixtures can omit; the endpoint returns an empty list
    *  when not provided. Server.ts wires this to AgentRouter.getRecentDecisions(). */
   getRecentDecisions?: (limit: number) => RoutingDecisionRecord[];
+  /** s111 t423 — cost ledger reader thunks for the Providers ticker.
+   *  Optional so test fixtures can omit; the endpoints return empty rollups
+   *  when not provided. Server.ts wires these to CostLedgerReader methods. */
+  getCostToday?: () => Promise<unknown>;
+  getCostWeek?: () => Promise<unknown>;
+  getCostRecent?: (limit: number) => Promise<unknown[]>;
 }
 
 /** Set of valid Provider ids — kept in sync with buildBaseCatalog. PUT
@@ -285,6 +291,50 @@ export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApi
 
     return { providers: catalog, generatedAt: new Date().toISOString() };
   });
+
+  /**
+   * GET /api/providers/cost/today — aggregate USD/turns/tokens/Wh since
+   * 00:00 local + per-Provider breakdown. Drives the Providers UX cost
+   * ticker's Today tile (s111 t423). Returns an empty rollup
+   * { turns: 0, dollarCost: 0, totalTokens: 0, watts: 0, byProvider: [] }
+   * when no records exist (fresh install) OR when the cost-ledger reader
+   * thunk isn't wired (test fixture / early-boot). UI hides the ticker
+   * gracefully — empty rollup is a valid state, not an error.
+   */
+  app.get("/api/providers/cost/today", async () => {
+    const rollup = deps.getCostToday !== undefined
+      ? await deps.getCostToday()
+      : { turns: 0, dollarCost: 0, totalTokens: 0, watts: 0, byProvider: [] };
+    return rollup;
+  });
+
+  /** GET /api/providers/cost/week — same shape as today, 7-day window. */
+  app.get("/api/providers/cost/week", async () => {
+    const rollup = deps.getCostWeek !== undefined
+      ? await deps.getCostWeek()
+      : { turns: 0, dollarCost: 0, totalTokens: 0, watts: 0, byProvider: [] };
+    return rollup;
+  });
+
+  /**
+   * GET /api/providers/cost/recent?limit=N — newest-last array of cost
+   * records for the Mission Control hero narrative enrichment ("consumed
+   * X.XW for Y.Ys ($Z.ZZ via Anthropic)"). Default limit 20, capped server-
+   * side via the reader's clamping logic. Empty array when no records or
+   * when the thunk isn't wired.
+   */
+  app.get<{ Querystring: { limit?: string } }>(
+    "/api/providers/cost/recent",
+    async (req) => {
+      const rawLimit = req.query.limit;
+      const parsed = rawLimit !== undefined ? Number.parseInt(rawLimit, 10) : 20;
+      const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : 20;
+      const records = deps.getCostRecent !== undefined
+        ? await deps.getCostRecent(limit)
+        : [];
+      return { records, generatedAt: new Date().toISOString() };
+    },
+  );
 
   /**
    * GET /api/providers/recent-decisions — recent routing decisions for the

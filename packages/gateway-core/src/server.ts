@@ -59,6 +59,7 @@ import { createLogger, createComponentLogger } from "./logger.js";
 import type { Logger, LogEntry } from "./logger.js";
 import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";
 import { CostLedgerWriter } from "./cost-ledger-writer.js";
+import { CostLedgerReader } from "./cost-ledger-reader.js";
 
 import type { AionimaConfig, ConfigReloadEvent } from "@agi/config";
 import { ConfigWatcher } from "@agi/config";
@@ -635,6 +636,7 @@ export async function startGatewayServer(
   // post-plugin re-creation (line 1399 / 4005), wireCostLedger() must be
   // called again to re-attach.
   const costLedgerWriter = new CostLedgerWriter(db, createComponentLogger(logger, "cost-ledger"));
+  const costLedgerReader = new CostLedgerReader(db);
   const costCpuSampler = new CpuPowerSampler();
   costCpuSampler.sample(); // seed; first reading needs a baseline for delta
   const costGpuSampler = new GpuPowerSampler();
@@ -2190,6 +2192,12 @@ export async function startGatewayServer(
           patchConfig: systemConfigService != null
             ? (path, value) => systemConfigService.patch(path, value)
             : undefined,
+          // s111 t423 — cost ledger reader thunks for the Providers UX
+          // ticker. The reader is constructed once with the same drizzle
+          // client as the writer (cycle 26) and reused per request.
+          getCostToday: () => costLedgerReader.today(),
+          getCostWeek: () => costLedgerReader.week(),
+          getCostRecent: (limit) => costLedgerReader.recent(limit),
           // s111 t419 — duck-typed access to the AgentRouter's ring buffer.
           // llmProvider is typed as the abstract LLMProvider interface (since
           // plugin Providers can fill that role too), but the AgentRouter
