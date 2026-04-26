@@ -40,19 +40,20 @@ The 4-layer memory model from `_discovery/aion-blockchain-memory-draft-a.md`:
 
 Plus the LoRA training pipeline + candidate-dataset accumulator + 4 eval gates. Tracked in tynn s112 (scaffolding ships in alpha-stable-1; live training + auto-promotion in v0.6.0).
 
-### 4. Provider/Runtime layer
-Three distinct concepts that earlier ADF iterations conflated:
-- **Providers** are core-agi catalogs of models — HF, Anthropic, OpenAI, **aion-micro** (the off-grid floor).
-- **Runtimes** are 0RUN plugins — Ollama, Lemonade, llama.cpp.
-- **Agent Router** picks Provider + model per turn based on cost mode + complexity.
+### 4. Provider layer
+A **Provider** is any system that provides an AI model to other interfaces — HF, Anthropic, OpenAI, **Ollama**, **Lemonade**, and **aion-micro** (the off-grid floor) all qualify. Each Provider exposes its catalog of available models + a uniform invocation interface.
 
-Tracked in tynn s111. The owner-facing UX for this lives in the Settings → Providers page; canonical visual design at `~/_dropbox/providers-mockup.html` (DESIGN APPROVED 2026-04-25).
+**Runtime is a Provider attribute, not a sibling category.** The execution backend a Provider uses (llamacpp:rocm, llamacpp:cpu, CUDA, the Lemonade daemon, the Ollama daemon, cloud-API HTTPS) is exposed as configurable Provider state, not a separate plugin kind. The dashboard's "Local inference services" strip is the operational view of the local daemons that back local Providers — service-management surface, not a competing taxonomy.
+
+The **Agent Router** picks Provider + model per turn based on cost mode + complexity. Off-grid mode disables cloud Providers; all local Providers (and aion-micro as guaranteed floor) remain active.
+
+Tracked in tynn s111. The owner-facing UX for this lives in the Settings → Providers page; canonical visual design at `~/_dropbox/providers-mockup.html` (visual design approved 2026-04-25; not functional spec).
 
 ### 5. UI components
 The dashboard surfaces an owner uses to inspect and control the agent: live decision feed, what-if router simulator, cost-aware dial, off-grid mode toggle, provider shelf, runtimes strip, decision-explanation panels. Today most of these don't exist — they ship as part of s111 (Providers page) and forward as ADF UI primitives. Built on `@particle-academy/react-fancy` + `@/components/ui/card`.
 
 ### 6. SDK contracts
-The `define*()` builders plugins use to extend the agent: `defineTool`, `defineProvider`, `defineRuntime`, `defineSkill`, `defineMagicApp`, `defineEmbedder` (s116), `defineAnchor` (s113), `defineScanProvider` (security). Each builder is a contract between SDK and ADF.
+The `define*()` builders plugins use to extend the agent: `defineTool`, `defineProvider` (covers any system that provides AI models — Ollama, Lemonade, HF, Anthropic, OpenAI, aion-micro), `defineSkill`, `defineMagicApp`, `defineEmbedder` (s116), `defineAnchor` (s113), `defineScanProvider` (security). Each builder is a contract between SDK and ADF. There is no separate `defineRuntime` builder — runtime selection is a Provider attribute, not a top-level plugin kind.
 
 ### 7. Intelligence Protocols
 A class within ADF that governs how an agent senses, decides, learns, coordinates, and shares trust with other agents. **MPx (Mycelium Protocol)** is the first — used by aion/prime; enables HIVE alignment + COA<>COI indexing + FRAME-SHIFT impact QUANT. See [Intelligence Protocols](#intelligence-protocols) section below.
@@ -111,7 +112,7 @@ File map for category 1 (Backend pipeline):
 
 The end-to-end path through these files is documented in [agent-pipeline.md](./agent-pipeline.md). This doc describes the *framework*; that doc describes the *flow*.
 
-Categories 2–8 (safety, memory, Provider/Runtime, UI, SDK contracts, Intelligence Protocols, self-extension primitives) are partially implemented and partially scaffolded — see the relevant tynn stories under v0.4.0 and v0.6.0 for current status.
+Categories 2–8 (safety, memory, Provider layer, UI, SDK contracts, Intelligence Protocols, self-extension primitives) are partially implemented and partially scaffolded — see the relevant tynn stories under v0.4.0 and v0.6.0 for current status.
 
 ---
 
@@ -227,6 +228,6 @@ Each step is an ADF surface. The whole stack is the framework. ADF's job is to m
 - [system-prompt-assembly.md](../agents/system-prompt-assembly.md) — the system-prompt construction process; consumes Provider config + PRIME via Layer C.
 - `aionima-prime/core/0MYCELIUM.md` — MPx (the first Intelligence Protocol) canonical spec.
 - `_discovery/aion-blockchain-memory-draft-a.md` — the source pattern for ADF's safety + memory + learning categories (the architecture this doc implements).
-- tynn s111 — Provider/Runtime architecture overhaul (categories 4 + 5).
+- tynn s111 — Provider architecture overhaul (categories 4 + 5).
 - tynn s112 — Memory & Learning Framework scaffolding (categories 2 + 3).
 - tynn s117 — TRUECOST measurements (cross-cutting category 2 enabler).
