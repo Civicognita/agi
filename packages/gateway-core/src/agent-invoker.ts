@@ -107,11 +107,28 @@ function deriveContextLayers(requestType: string): string[] {
   return layers;
 }
 
-function shouldOfferTools(content: string, requestType: RequestType): boolean {
-  if (requestType === "chat") return false;
+/**
+ * Decide whether the upcoming LLM call should be given the tool list.
+ * Exported for unit testing — see agent-invoker-tools.test.ts.
+ *
+ * Returns true when:
+ *   - requestType is "system" or "project" (always tool-eligible by category), OR
+ *   - the user message contains an action verb from TOOL_KEYWORDS, regardless
+ *     of requestType (so action-verb chats reach tools — fixes s101 t361).
+ *
+ * Returns false otherwise (chitchat without action verbs stays cheap).
+ */
+export function shouldOfferTools(content: string, requestType: RequestType): boolean {
+  // System + project requests always get tools — they exist to act on infrastructure.
   if (requestType === "system") return true;
   if (requestType === "project") return true;
+  // Action-verb prompts get tools regardless of requestType — including "chat"
+  // requests like "list files in /tmp", "search the docs for X", "delete this".
+  // Pre-2026-04-25 the chat short-circuit ran before this check, so action-verb
+  // chats silently dropped tools (s101 t361). Reordered: TOOL_KEYWORDS first.
   if (TOOL_KEYWORDS.test(content)) return true;
+  // Default: chat without action verbs gets no tools — keeps chitchat cheap +
+  // prevents the model from inventing unsolicited tool calls.
   return false;
 }
 
