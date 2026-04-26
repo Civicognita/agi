@@ -312,6 +312,10 @@ export interface SystemStats {
   memory: { total: number; free: number; used: number; percent: number };
   disk: { total: number; used: number; free: number; percent: number };
   diskIO: { readBytesPerSec: number; writeBytesPerSec: number };
+  /** s111 t377/t378 — power consumption. cpuWatts is null when RAPL isn't
+   *  available on the host (non-Linux, missing intel-rapl module, or
+   *  permission denied). The gauge/chart hides gracefully in that case. */
+  power?: { cpuWatts: number | null };
   uptime: number;
   hostname: string;
 }
@@ -335,6 +339,9 @@ export interface StatsHistoryPoint {
   load1: number;
   load5: number;
   load15: number;
+  /** s111 t378 — RAPL CPU watts at sample time. Optional because older
+   *  history points (pre-v0.4.206) and non-Linux hosts don't have it. */
+  cpuWatts?: number;
 }
 
 export async function fetchStatsHistory(hours = 1): Promise<StatsHistoryPoint[]> {

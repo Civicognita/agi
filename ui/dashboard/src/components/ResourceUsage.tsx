@@ -20,6 +20,9 @@ interface DataPoint {
   load1: number;
   load5: number;
   load15: number;
+  /** s111 t378 — RAPL CPU watts. 0 when unavailable (non-Linux, no intel-rapl,
+   *  or first-sample-of-session). The chart hides when no point reports >0W. */
+  cpuWatts: number;
 }
 
 function formatBytes(bytes: number): string {
@@ -169,6 +172,7 @@ export function ResourceUsage() {
       load1: Math.round(data.cpu.loadAvg[0] * 100) / 100,
       load5: Math.round(data.cpu.loadAvg[1] * 100) / 100,
       load15: Math.round(data.cpu.loadAvg[2] * 100) / 100,
+      cpuWatts: data.power?.cpuWatts ?? 0,
     };
     setHistory((prev) => {
       const last = prev[prev.length - 1];
@@ -194,6 +198,14 @@ export function ResourceUsage() {
             Host: <span className="font-mono text-foreground">{data.hostname}</span>
             {" | "}
             Uptime: <span className="text-foreground">{formatUptime(data.uptime)}</span>
+            {/* s111 t378 — current CPU watts inline; hides cleanly when RAPL
+                isn't available so non-Linux hosts don't see a blank readout. */}
+            {data.power?.cpuWatts !== null && data.power?.cpuWatts !== undefined && (
+              <>
+                {" | "}
+                Power: <span className="text-foreground">{data.power.cpuWatts.toFixed(1)} W</span>
+              </>
+            )}
           </div>
         )}
         <div className="flex items-center gap-1.5">
@@ -308,7 +320,7 @@ export function ResourceUsage() {
       </Card>
 
       {/* Disk I/O History */}
-      <Card className="p-4">
+      <Card className="p-4 mb-4">
         <h3 className="text-[13px] font-semibold text-foreground mb-2">Disk I/O</h3>
         <EChart
           option={makeAreaOption(
@@ -323,6 +335,26 @@ export function ResourceUsage() {
           style={{ height: 160 }}
         />
       </Card>
+
+      {/* CPU Power History (s111 t378 — True Cost graph: System line item).
+          Renders only when at least one history point reports >0W so non-
+          Linux hosts (where RAPL isn't available) don't see an empty chart.
+          Future: stack GpuWatts (t417) and NpuWatts in the same chart for
+          a single "System" power line item. */}
+      {history.some((p) => p.cpuWatts > 0) && (
+        <Card className="p-4">
+          <h3 className="text-[13px] font-semibold text-foreground mb-2">CPU Power (System)</h3>
+          <EChart
+            option={makeAreaOption(
+              history,
+              [{ key: "cpuWatts", name: "CPU W", color: COLORS.mauve }],
+              undefined,
+              (v) => `${v.toFixed(1)} W`,
+            )}
+            style={{ height: 200 }}
+          />
+        </Card>
+      )}
     </div>
   );
 }
