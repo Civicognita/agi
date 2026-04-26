@@ -114,7 +114,29 @@ Worker identifiers use the pattern `$W.<domain>.<role>`, for example `$W.code.en
 
 ### 1. Dispatch
 
-The agent calls `taskmaster_dispatch` with a `projectPath` (required), `description`, `domain`, `worker`, and optional `priority`. The tool writes a flat JSON file to `~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json` and calls the `onJobCreated` callback (passing `projectPath`) to notify `WorkerRuntime`.
+The agent has two ways to dispatch work: an explicit tool call (`taskmaster_dispatch`) and an inline emission (`q:>` prefix on a single line in its response).
+
+**Explicit tool call.** The agent calls `taskmaster_dispatch` with a `projectPath` (required), `description`, `domain`, `worker`, and optional `priority`. The tool writes a flat JSON file to `~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json` and calls the `onJobCreated` callback (passing `projectPath`) to notify `WorkerRuntime`.
+
+**Inline `q:>` emission.** The agent may also emit a single line beginning with `q:>` in its response text — the runtime parses it as a dispatch and queues the work, same as if `taskmaster_dispatch` had been called. Maximum one `q:>` per turn; for parallel fan-out, use repeated `taskmaster_dispatch` tool calls instead.
+
+#### Tier-dependent emission visibility
+
+When the response text contains `q:>` lines, the runtime decides whether to **strip them from the user-visible reply** based on the entity's verification tier:
+
+| Tier | Behavior |
+|---|---|
+| `unverified` | `q:>` lines stripped from the response — user never sees them. |
+| `verified` | `q:>` lines stripped from the response — user never sees them. |
+| `sealed` | `q:>` lines **preserved** in the response — visible to the user. |
+
+The strip / preserve decision lives in `ToolRegistry.stripTaskmasterEmissions(text, tier)` (`packages/gateway-core/src/tool-registry.ts`); behavior pinned by the unit tests at `packages/gateway-core/src/agent.test.ts:1620+` (the canonical reference). Stripping also collapses any blank-line gaps the removed lines leave behind and trims the final text.
+
+**Why sealed preserves.** Sealed-tier entities (the owner) get to see the dispatch decisions Aion makes — preserving `q:>` keeps the audit transparent in conversation. Verified + unverified entities (paired or general users) see only the response prose; the dispatch happens in the background and surfaces via the Work Queue UI.
+
+**Common gotcha.** A sealed-tier entity reading a response with `q:>` lines may mistake them for manual instructions ("you should do this thing"). They're already-dispatched tasks — the runtime queued them when the response was emitted. Check the Work Queue, not the response text, for execution status.
+
+**Mixing forms in one turn.** If the agent both calls `taskmaster_dispatch` AND emits a `q:>` line in the same turn, the runtime processes both as separate dispatches — there is no automatic deduplication today. The agent's prompt asks for "maximum one `q:>` per turn"; if you need parallel fan-out use repeated `taskmaster_dispatch` calls instead of mixing forms.
 
 ```json
 {
