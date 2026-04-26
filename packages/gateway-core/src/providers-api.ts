@@ -49,6 +49,28 @@ export interface ProviderCatalogEntry {
   modelCount?: number;
   /** baseUrl for local Providers; absent for cloud Providers. */
   baseUrl?: string;
+  /** Deadline multiplier applied wherever a per-Provider timeout is computed.
+   *  Cloud Providers respond in 2–5s end-to-end; CPU-bound local Providers can
+   *  take 30–60s+ for first token alone (empirical: t326 close measured 60.9s
+   *  on qwen2.5:3b CPU-only). Cloud-tuned timeouts kill local inference and
+   *  surface as "Aion didn't respond" UX bugs.
+   *
+   *  Owner directive 2026-04-26: "When using local models, we need to be more
+   *  relaxed with our timeout guards." Default is 1.0 for cloud, 6.0 for every
+   *  non-cloud tier. Behavioral wiring at SDK construction lives in t413
+   *  (factory.ts) — this field is the declarative source of truth that the
+   *  dashboard, factory, and any future deadline-computing code read from. */
+  timeoutMultiplier: number;
+}
+
+/** Compute the timeout multiplier for a Provider tier. Cloud Providers stay
+ *  at 1.0 (cloud-tuned baseline); every non-cloud tier — including aion-micro
+ *  ("floor"), HF ("core"), Ollama/Lemonade ("local") — uses 6.0. The factor is
+ *  intentionally generous: the cost of an over-long deadline on a fast box is
+ *  negligible (the response arrives early), but the cost of a too-short
+ *  deadline on a slow box is a phantom failure mid-inference. */
+export function timeoutMultiplierForTier(tier: ProviderCatalogEntry["tier"]): number {
+  return tier === "cloud" ? 1.0 : 6.0;
 }
 
 /** Active Provider + Agent Router config — drives the Mission Control hero. */
@@ -114,7 +136,7 @@ function buildBaseCatalog(config: AionimaConfig): ProviderCatalogEntry[] {
   const anthropic = providers["anthropic"] as { apiKey?: string } | undefined;
   const openai = providers["openai"] as { apiKey?: string } | undefined;
 
-  return [
+  const entries: Array<Omit<ProviderCatalogEntry, "timeoutMultiplier">> = [
     {
       id: "aion-micro",
       name: "aion-micro",
@@ -160,6 +182,7 @@ function buildBaseCatalog(config: AionimaConfig): ProviderCatalogEntry[] {
       health: openai?.apiKey ? "healthy" : "no-key",
     },
   ];
+  return entries.map((e) => ({ ...e, timeoutMultiplier: timeoutMultiplierForTier(e.tier) }));
 }
 
 function getActiveState(config: AionimaConfig): ActiveProviderState {

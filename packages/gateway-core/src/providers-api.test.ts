@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import Fastify from "fastify";
 import type { AionimaConfig } from "@agi/config";
-import { registerProvidersRoutes, type ProviderCatalogEntry, type ActiveProviderState } from "./providers-api.js";
+import { registerProvidersRoutes, timeoutMultiplierForTier, type ProviderCatalogEntry, type ActiveProviderState } from "./providers-api.js";
 
 function makeApp(
   config: Partial<AionimaConfig>,
@@ -59,6 +59,29 @@ describe("providers-api — GET /api/providers (s111 t372)", () => {
     expect(body.providers.find((p) => p.id === "openai")?.tier).toBe("cloud");
 
     await app.close();
+  });
+
+  it("populates timeoutMultiplier per tier (s111 t411 — relaxed local timeouts)", async () => {
+    const app = makeApp({});
+    const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
+    const body = res.json() as { providers: ProviderCatalogEntry[] };
+    // Cloud Providers stay at the cloud-tuned 1.0 baseline.
+    expect(body.providers.find((p) => p.id === "anthropic")?.timeoutMultiplier).toBe(1.0);
+    expect(body.providers.find((p) => p.id === "openai")?.timeoutMultiplier).toBe(1.0);
+    // Every non-cloud tier (floor/core/local) gets the relaxed 6.0 multiplier
+    // because CPU-bound local inference can take 30-60s+ for first token alone.
+    expect(body.providers.find((p) => p.id === "aion-micro")?.timeoutMultiplier).toBe(6.0);
+    expect(body.providers.find((p) => p.id === "huggingface")?.timeoutMultiplier).toBe(6.0);
+    expect(body.providers.find((p) => p.id === "ollama")?.timeoutMultiplier).toBe(6.0);
+    expect(body.providers.find((p) => p.id === "lemonade")?.timeoutMultiplier).toBe(6.0);
+    await app.close();
+  });
+
+  it("timeoutMultiplierForTier helper returns the right value for each tier", () => {
+    expect(timeoutMultiplierForTier("cloud")).toBe(1.0);
+    expect(timeoutMultiplierForTier("floor")).toBe(6.0);
+    expect(timeoutMultiplierForTier("core")).toBe(6.0);
+    expect(timeoutMultiplierForTier("local")).toBe(6.0);
   });
 
   it("marks cloud Providers without an API key as no-key", async () => {
