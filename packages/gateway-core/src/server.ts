@@ -61,6 +61,8 @@ import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";
 import { CostLedgerWriter } from "./cost-ledger-writer.js";
 import { CostLedgerReader } from "./cost-ledger-reader.js";
 import { McpClient } from "@agi/mcp-client";
+import { TynnPmProvider } from "./pm/tynn-provider.js";
+import type { PmProvider, PmStatus } from "@agi/sdk";
 
 import type { AionimaConfig, ConfigReloadEvent } from "@agi/config";
 import { ConfigWatcher } from "@agi/config";
@@ -1908,6 +1910,15 @@ export async function startGatewayServer(
   // with "server X not registered" — Aion has the surface, not yet the data.
   const mcpClient = new McpClient();
 
+  // s118 t432 cycle 36 — PM provider resolution + `pm` agent tool.
+  // Default provider is TynnPmProvider (consumes mcpClient to reach tynn).
+  // tynn-lite (file-based fallback, t433) and plugin-registered alternatives
+  // (t434) ship in follow-up cycles; resolution then reads project config
+  // `agent.pm.provider`. For now the default is hardcoded to tynn.
+  // The provider is fully constructed but tynn server registration via
+  // mcp.servers config (t435) is what makes calls actually succeed.
+  const pmProvider: PmProvider = new TynnPmProvider({ mcpClient });
+
   toolRegistry.register(
     {
       name: "mcp",
@@ -1963,6 +1974,122 @@ export async function startGatewayServer(
         toolName: { type: "string", description: "Tool name to invoke (required for action=call)" },
         arguments: { type: "object", description: "Arguments to pass to the tool (required for action=call)" },
         uri: { type: "string", description: "Resource URI (required for action=read-resource)" },
+      },
+      required: ["action"],
+    },
+  );
+
+  // s118 t432 cycle 36 — `pm` agent tool. Aion's canonical project-
+  // management surface. Routes to whatever PmProvider is active (currently
+  // tynn; tynn-lite + plugins land in t433/t434). Same action-dispatching
+  // pattern as the `mcp` tool from cycle 33.
+  toolRegistry.register(
+    {
+      name: "pm",
+      description:
+        "Project-management workflow operations (the tynn workflow — race-to-DONE, look-for-MORE). " +
+        "Action options: 'next' (active version + top story + tasks), 'task'/'story' (lookup by id or number), " +
+        "'find-tasks' (filtered list), 'comments' (entity audit trail), " +
+        "'start-task'/'testing'/'finished'/'block' (status transitions), " +
+        "'update-task' (modify fields), 'create-task'/'comment'/'iwish' (create entities), " +
+        "'progress' (race-to-DONE counts for active focus). " +
+        "Use this tool whenever you need to query or update the project's tracked work — never invent your own task tracking.",
+      requiresState: [],
+      requiresTier: [],
+    },
+    async (input: Record<string, unknown>) => {
+      const action = String(input.action ?? "next");
+      try {
+        switch (action) {
+          case "next":
+            return JSON.stringify(await pmProvider.getNext());
+          case "task": {
+            const idOrNumber = input.id !== undefined ? String(input.id) : Number(input.number);
+            return JSON.stringify(await pmProvider.getTask(idOrNumber));
+          }
+          case "story": {
+            const idOrNumber = input.id !== undefined ? String(input.id) : Number(input.number);
+            return JSON.stringify(await pmProvider.getStory(idOrNumber));
+          }
+          case "find-tasks": {
+            const filter: { storyId?: string; status?: PmStatus | PmStatus[]; limit?: number } = {};
+            if (typeof input.storyId === "string") filter.storyId = input.storyId;
+            if (Array.isArray(input.status)) filter.status = input.status as PmStatus[];
+            else if (typeof input.status === "string") filter.status = input.status as PmStatus;
+            if (typeof input.limit === "number") filter.limit = input.limit;
+            return JSON.stringify(await pmProvider.findTasks(filter));
+          }
+          case "comments": {
+            const entityType = String(input.entityType ?? "task") as "task" | "story" | "version";
+            const entityId = String(input.entityId ?? "");
+            return JSON.stringify(await pmProvider.getComments(entityType, entityId));
+          }
+          case "start-task":
+            return JSON.stringify(await pmProvider.setTaskStatus(String(input.taskId), "doing", typeof input.note === "string" ? input.note : undefined));
+          case "testing":
+            return JSON.stringify(await pmProvider.setTaskStatus(String(input.taskId), "testing", typeof input.note === "string" ? input.note : undefined));
+          case "finished":
+            return JSON.stringify(await pmProvider.setTaskStatus(String(input.taskId), "finished", typeof input.note === "string" ? input.note : undefined));
+          case "block":
+            return JSON.stringify(await pmProvider.setTaskStatus(String(input.taskId), "blocked", typeof input.note === "string" ? input.note : undefined));
+          case "update-task":
+            return JSON.stringify(await pmProvider.updateTask(String(input.taskId), (input.fields as Record<string, never>) ?? {}));
+          case "create-task": {
+            const taskInput = input.task as { storyId?: string; title?: string; description?: string; verificationSteps?: string[]; codeArea?: string } | undefined;
+            return JSON.stringify(await pmProvider.createTask({
+              storyId: String(taskInput?.storyId ?? ""),
+              title: String(taskInput?.title ?? ""),
+              description: String(taskInput?.description ?? ""),
+              ...(taskInput?.verificationSteps !== undefined ? { verificationSteps: taskInput.verificationSteps } : {}),
+              ...(taskInput?.codeArea !== undefined ? { codeArea: taskInput.codeArea } : {}),
+            }));
+          }
+          case "comment": {
+            const entityType = String(input.entityType ?? "task") as "task" | "story" | "version";
+            const entityId = String(input.entityId ?? "");
+            const body = String(input.body ?? "");
+            return JSON.stringify(await pmProvider.addComment(entityType, entityId, body));
+          }
+          case "iwish": {
+            const wish = input.wish as Record<string, string> | undefined;
+            return JSON.stringify(await pmProvider.iWish({
+              title: String(wish?.title ?? input.title ?? ""),
+              didnt: wish?.didnt,
+              when: wish?.when,
+              had: wish?.had,
+              needs: wish?.needs,
+              explain: wish?.explain,
+              priority: wish?.priority as "critical" | "high" | "normal" | "low" | undefined,
+            }));
+          }
+          case "progress":
+            return pmProvider.getActiveFocusProgress !== undefined
+              ? JSON.stringify(await pmProvider.getActiveFocusProgress())
+              : JSON.stringify({ error: `pm provider ${pmProvider.providerId} doesn't expose progress` });
+          default:
+            return JSON.stringify({ error: `unknown action: ${action}. Valid: next, task, story, find-tasks, comments, start-task, testing, finished, block, update-task, create-task, comment, iwish, progress` });
+        }
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+    {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["next", "task", "story", "find-tasks", "comments", "start-task", "testing", "finished", "block", "update-task", "create-task", "comment", "iwish", "progress"], description: "PM operation to perform" },
+        id: { type: "string", description: "Entity id (for task/story actions when known)" },
+        number: { type: "number", description: "Entity number (alternative to id for task/story)" },
+        taskId: { type: "string", description: "Task id (for status transitions / update-task)" },
+        storyId: { type: "string", description: "Story id (for find-tasks filter / create-task)" },
+        status: { type: ["string", "array"], description: "Status filter for find-tasks (PmStatus or array)" },
+        limit: { type: "number", description: "Max results for find-tasks" },
+        entityType: { type: "string", enum: ["task", "story", "version"], description: "Entity kind for comments/comment actions" },
+        entityId: { type: "string", description: "Entity id for comments/comment actions" },
+        body: { type: "string", description: "Comment body for comment action" },
+        note: { type: "string", description: "Optional note appended on status transitions" },
+        fields: { type: "object", description: "Field updates for update-task" },
+        task: { type: "object", description: "New task input for create-task: {storyId, title, description, verificationSteps?, codeArea?}" },
+        wish: { type: "object", description: "Wish input for iwish: {title, didnt?, when?, had?, needs?, explain?, priority?}" },
       },
       required: ["action"],
     },
