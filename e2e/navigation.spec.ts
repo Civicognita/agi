@@ -97,13 +97,12 @@ test.describe("Settings Navigation", () => {
     await expect(page).toHaveURL("/settings/gateway");
   });
 
-  test("settings gateway page has tabbed layout", async ({ page }) => {
-    await page.goto("/settings/gateway");
-    // Should show tab buttons
-    await expect(page.getByRole("button", { name: "Owner" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Dev" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "0ME" })).toBeVisible();
-  });
+  // Tab-bar assertion lives in e2e/settings-gateway.spec.ts:27 ("tab bar
+  // renders all five tab buttons") — that's the canonical home for the
+  // 5-tab shape (General/Identity/Providers/Contributing/Network). The
+  // duplicate test that lived here had stale tab names ("Owner"/"Dev"/
+  // "0ME") from before the v0.4.131+ refactor. Retired 2026-04-26 (s101
+  // t367) to remove the redundant assertion + stop the drift cycle.
 });
 
 test.describe("Gateway Section", () => {
