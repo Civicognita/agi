@@ -282,35 +282,112 @@ export class TynnPmProvider implements PmProvider {
   }
 
   // -------------------------------------------------------------------------
-  // Write operations — cycle 35
+  // Write operations (cycle 35b)
   // -------------------------------------------------------------------------
 
-  async setTaskStatus(_taskId: string, _status: PmStatus, _note?: string): Promise<PmTask> {
-    throw new Error("TynnPmProvider.setTaskStatus: not yet implemented (cycle 35)");
+  /** Map a target PmStatus to the tynn op that triggers that transition.
+   *  Tynn enforces its own allowed-transitions matrix; if the transition
+   *  is illegal for the current state, the call fails (caller sees the
+   *  tynn error message via tynnCall's isError handling). */
+  private tynnOpForStatus(status: PmStatus): string {
+    switch (status) {
+      case "starting": return "starting";
+      case "doing": return "start";       // tynn `start` claims + activates
+      case "testing": return "testing";   // tynn moves task to qa
+      case "finished": return "finished"; // tynn moves task to done
+      case "blocked": return "block";
+      case "backlog":
+      case "archived":
+        // No direct tynn op — fall through to update with status field.
+        return "update";
+      default:
+        return "update";
+    }
   }
 
-  async addComment(_entityType: "task" | "story" | "version", _entityId: string, _body: string): Promise<PmComment> {
-    throw new Error("TynnPmProvider.addComment: not yet implemented (cycle 35)");
+  async setTaskStatus(taskId: string, status: PmStatus, note?: string): Promise<PmTask> {
+    const op = this.tynnOpForStatus(status);
+    const args: Record<string, unknown> = { a: "task", id: taskId };
+    if (note !== undefined && note.length > 0) args["note"] = note;
+
+    if (op === "update") {
+      // backlog / archived path — use update with status field directly.
+      args["with"] = { status: status === "backlog" ? "backlog" : "archived" };
+    }
+
+    const raw = await this.tynnCall(op, args);
+    return toPmTask(raw);
+  }
+
+  async addComment(entityType: "task" | "story" | "version", entityId: string, body: string): Promise<PmComment> {
+    const raw = await this.tynnCall("create", {
+      a: "comment",
+      on: { type: entityType, id: entityId },
+      because: body,
+    });
+    return {
+      id: String(raw["id"] ?? ""),
+      body: String(raw["body"] ?? body),
+      author: typeof raw["author"] === "string" ? raw["author"] : undefined,
+      createdAt: String(raw["created_at"] ?? new Date().toISOString()),
+    };
   }
 
   async updateTask(
-    _taskId: string,
-    _fields: Partial<Pick<PmTask, "title" | "description" | "verificationSteps" | "codeArea">>,
+    taskId: string,
+    fields: Partial<Pick<PmTask, "title" | "description" | "verificationSteps" | "codeArea">>,
   ): Promise<PmTask> {
-    throw new Error("TynnPmProvider.updateTask: not yet implemented (cycle 35)");
+    const withFields: Record<string, unknown> = {};
+    if (fields.title !== undefined) withFields["title"] = fields.title;
+    if (fields.description !== undefined) withFields["description"] = fields.description;
+    if (fields.verificationSteps !== undefined) withFields["verification_steps"] = fields.verificationSteps;
+    if (fields.codeArea !== undefined) withFields["code_area"] = fields.codeArea;
+
+    const raw = await this.tynnCall("update", {
+      a: "task",
+      id: taskId,
+      with: withFields,
+    });
+    return toPmTask(raw);
   }
 
-  async createTask(_input: PmCreateTaskInput): Promise<PmTask> {
-    throw new Error("TynnPmProvider.createTask: not yet implemented (cycle 35)");
+  async createTask(input: PmCreateTaskInput): Promise<PmTask> {
+    const withFields: Record<string, unknown> = {};
+    if (input.verificationSteps !== undefined) withFields["verification_steps"] = input.verificationSteps;
+    if (input.codeArea !== undefined) withFields["code_area"] = input.codeArea;
+
+    const args: Record<string, unknown> = {
+      a: "task",
+      on: { story_id: input.storyId },
+      title: input.title,
+      because: input.description,
+    };
+    if (Object.keys(withFields).length > 0) args["with"] = withFields;
+
+    const raw = await this.tynnCall("create", args);
+    return toPmTask(raw);
   }
 
-  async iWish(_input: PmIWishInput): Promise<{ id: string; title: string }> {
-    throw new Error("TynnPmProvider.iWish: not yet implemented (cycle 35)");
+  async iWish(input: PmIWishInput): Promise<{ id: string; title: string }> {
+    // Tynn's iwish accepts each wish kind in its own slot; pass through
+    // whichever fields the caller supplied.
+    const args: Record<string, unknown> = { this: input.title };
+    if (input.didnt !== undefined) args["didnt"] = input.didnt;
+    if (input.when !== undefined) args["when"] = input.when;
+    if (input.had !== undefined) args["had"] = input.had;
+    if (input.needs !== undefined) args["needs"] = input.needs;
+    if (input.explain !== undefined) args["explain"] = input.explain;
+    if (input.priority !== undefined) args["priority"] = input.priority;
+
+    const raw = await this.tynnCall("iwish", args);
+    return {
+      id: String(raw["id"] ?? ""),
+      title: String(raw["title"] ?? input.title),
+    };
   }
 
   // -------------------------------------------------------------------------
-  // Optional progress surface — cycle 35 (implementing this is what unblocks
-  // the s118 t439 Race-to-DONE indicator UX)
+  // Progress surface (s118 t439 Race-to-DONE indicator data source)
   // -------------------------------------------------------------------------
 
   async getActiveFocusProgress(): Promise<{
@@ -320,6 +397,23 @@ export class TynnPmProvider implements PmProvider {
     blockedTasks: number;
     percentComplete: number;
   }> {
-    throw new Error("TynnPmProvider.getActiveFocusProgress: not yet implemented (cycle 35)");
+    // Derive progress from getNext()'s top_story.task_status_snapshot.
+    // Tynn returns counts per status; we sum them + compute percentage.
+    const next = await this.getNext();
+    const snapshot = next.topStory?.taskStatusSnapshot;
+    if (snapshot === undefined) {
+      return { totalTasks: 0, doneTasks: 0, inProgressTasks: 0, blockedTasks: 0, percentComplete: 0 };
+    }
+    const total = snapshot.backlog + snapshot.doing + snapshot.qa + snapshot.blocked + snapshot.done;
+    const done = snapshot.done;
+    const inProgress = snapshot.doing + snapshot.qa;
+    const blocked = snapshot.blocked;
+    return {
+      totalTasks: total,
+      doneTasks: done,
+      inProgressTasks: inProgress,
+      blockedTasks: blocked,
+      percentComplete: total > 0 ? Math.round((done / total) * 100) : 0,
+    };
   }
 }
