@@ -49,6 +49,7 @@ import { createDbClient } from "@agi/db-schema/client";
 import { BackupManager } from "./backup-manager.js";
 import { registerComplianceRoutes } from "./compliance-api.js";
 import { registerSecurityRoutes } from "./security-api.js";
+import { registerProvidersRoutes } from "./providers-api.js";
 import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
 import { COAChainLogger } from "@agi/coa-chain";
@@ -2152,6 +2153,11 @@ export async function startGatewayServer(
                 : [{ provider: "anthropic", healthy: true }],
             };
           },
+        }),
+        (f) => registerProvidersRoutes(f, {
+          // Read live config so the catalog + router state reflect any
+          // hot-reloaded changes since boot (per s111 t372 contract).
+          readConfig: () => systemConfigService?.read() ?? config,
         }),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
