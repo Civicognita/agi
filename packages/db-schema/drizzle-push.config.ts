@@ -19,6 +19,7 @@ export default defineConfig({
     "./dist/marketplaces.js",
     "./dist/hf.js",
     "./dist/security.js",
+    "./dist/cost-ledger.js",
   ],
   out: "./drizzle-push-tmp",
   dialect: "postgresql",

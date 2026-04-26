@@ -44,6 +44,10 @@
     "./security": {
       "types": "./dist/security.d.ts",
       "default": "./dist/security.js"
+    },
+    "./cost-ledger": {
+      "types": "./dist/cost-ledger.d.ts",
+      "default": "./dist/cost-ledger.js"
     }
   },
   "scripts": {
