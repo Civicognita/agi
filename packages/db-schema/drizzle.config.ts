@@ -24,6 +24,7 @@ export default defineConfig({
     "./src/marketplaces.ts",
     "./src/hf.ts",
     "./src/security.ts",
+    "./src/cost-ledger.ts",
   ],
   out: "./drizzle",
   dialect: "postgresql",
