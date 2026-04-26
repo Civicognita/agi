@@ -2198,27 +2198,13 @@ export async function startGatewayServer(
           getCostToday: () => costLedgerReader.today(),
           getCostWeek: () => costLedgerReader.week(),
           getCostRecent: (limit) => costLedgerReader.recent(limit),
-          // s111 t419 — duck-typed access to the AgentRouter's ring buffer.
-          // llmProvider is typed as the abstract LLMProvider interface (since
-          // plugin Providers can fill that role too), but the AgentRouter
-          // class exposes getRecentDecisions(). When the active provider
-          // isn't an AgentRouter (early-boot stub, plugin-provided Provider),
-          // the endpoint returns an empty list rather than throwing.
+          // s111 t419 — Mission Control hero ring buffer. Empty list when
+          // llmProvider isn't an AgentRouter (early-boot stub, plugin-
+          // provided Provider) — UI hides the hero rather than throwing.
+          // Uses the same instanceof pattern as wireProviderErrorCallback.
           getRecentDecisions: (limit) => {
-            const provider = getLLMProvider() as {
-              getRecentDecisions?: (n: number) => Array<{
-                provider: string;
-                model: string;
-                reason: string;
-                complexity: string;
-                costMode: string;
-                escalated: boolean;
-                ts?: string;
-              }>;
-            };
-            return typeof provider.getRecentDecisions === "function"
-              ? provider.getRecentDecisions(limit)
-              : [];
+            const provider = getLLMProvider();
+            return provider instanceof AgentRouter ? provider.getRecentDecisions(limit) : [];
           },
         }),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
