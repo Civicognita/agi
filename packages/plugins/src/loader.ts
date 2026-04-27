@@ -20,7 +20,7 @@ import type {
   ThemeDefinition, AgentToolDefinition, SidebarSectionDefinition,
   ScheduledTaskDefinition, WorkflowDefinition,
   SettingsPageDefinition, DashboardInterfacePageDefinition, DashboardInterfaceDomainDefinition,
-  SubdomainRouteDefinition, LLMProviderDefinition, WorkerDefinition,
+  SubdomainRouteDefinition, LLMProviderDefinition, PmProviderDefinition, WorkerDefinition,
 } from "./types.js";
 import type { StackDefinition } from "@agi/gateway-core";
 import type { ScanProviderDefinition } from "@agi/security";
@@ -222,6 +222,10 @@ function createPluginAPI(
 
     registerProvider(def: LLMProviderDefinition): void {
       deps.pluginRegistry.addProvider(pluginId, def);
+    },
+
+    registerPmProvider(def: PmProviderDefinition): void {
+      deps.pluginRegistry.addPmProvider(pluginId, def);
     },
 
     registerAction(def: ActionDefinition): void {

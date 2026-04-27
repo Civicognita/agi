@@ -29,6 +29,7 @@ const DEFAULT_AGENT = {
     simpleThresholdTokens: 500,
     complexThresholdTokens: 2000,
   },
+  pm: { provider: "tynn" },
 };
 
 // Minimal config factory

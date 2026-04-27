@@ -95,6 +95,8 @@ export { defineWorkflow } from "./define-workflow.js";
 export { defineSidebar } from "./define-sidebar.js";
 export { defineChannel } from "./define-channel.js";
 export { defineProvider } from "./define-provider.js";
+export { definePmProvider } from "./define-pm-provider.js";
+export type { PmProviderDefinition, PmProviderFactory } from "./define-pm-provider.js";
 export type { ProviderField } from "./define-provider.js";
 export { defineSettingsPage } from "./define-settings-page.js";
 export { defineDashboardPage } from "./define-dashboard-page.js";

@@ -10,7 +10,7 @@ import type {
   ThemeDefinition, AgentToolDefinition, SidebarSectionDefinition,
   ScheduledTaskDefinition, WorkflowDefinition,
   SettingsPageDefinition, DashboardInterfacePageDefinition, DashboardInterfaceDomainDefinition,
-  SubdomainRouteDefinition, LLMProviderDefinition, ProvidesLabel, WorkerDefinition,
+  SubdomainRouteDefinition, LLMProviderDefinition, PmProviderDefinition, ProvidesLabel, WorkerDefinition,
 } from "./types.js";
 import type { StackDefinition } from "@agi/gateway-core";
 import type { ScanProviderDefinition } from "@agi/security";
@@ -124,6 +124,11 @@ export interface RegisteredProvider {
   provider: LLMProviderDefinition;
 }
 
+export interface RegisteredPmProvider {
+  pluginId: string;
+  provider: PmProviderDefinition;
+}
+
 export interface RegisteredScanProvider {
   pluginId: string;
   scanProvider: ScanProviderDefinition;
@@ -188,6 +193,7 @@ export class PluginRegistry {
   private readonly stacks: RegisteredStack[] = [];
   private readonly channels: RegisteredChannel[] = [];
   private readonly providers: RegisteredProvider[] = [];
+  private readonly pmProviders: RegisteredPmProvider[] = [];
   private readonly scanProviders: RegisteredScanProvider[] = [];
   private readonly workers: RegisteredWorker[] = [];
   private readonly projectTypesByPlugin = new Map<string, string[]>();
@@ -556,6 +562,30 @@ export class PluginRegistry {
 
   getProvider(id: string): LLMProviderDefinition | undefined {
     return this.providers.find(p => p.provider.id === id)?.provider;
+  }
+
+  // -------------------------------------------------------------------------
+  // PM Providers (s118 t434)
+  // -------------------------------------------------------------------------
+
+  addPmProvider(pluginId: string, provider: PmProviderDefinition): void {
+    // Reject collisions with built-in ids ("tynn", "tynn-lite") — those
+    // resolve to the bundled implementations and can't be overridden by
+    // a plugin without breaking the resolution path's invariants.
+    const reserved = new Set(["tynn", "tynn-lite"]);
+    if (reserved.has(provider.id)) {
+      throw new Error(`pm-provider id "${provider.id}" is reserved for the built-in implementation; choose a different id`);
+    }
+    if (this.pmProviders.some(p => p.provider.id === provider.id)) return;
+    this.pmProviders.push({ pluginId, provider });
+  }
+
+  getPmProviders(): RegisteredPmProvider[] {
+    return [...this.pmProviders];
+  }
+
+  getPmProvider(id: string): PmProviderDefinition | undefined {
+    return this.pmProviders.find(p => p.provider.id === id)?.provider;
   }
 
   // -------------------------------------------------------------------------

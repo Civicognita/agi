@@ -49,6 +49,8 @@ export type {
   DashboardDomainPageDefinition,
   LLMProviderDefinition,
   LLMProviderFactory,
+  PmProviderDefinition,
+  PmProviderFactory,
   ProviderField,
   CleanupResource,
   CleanupManifest,

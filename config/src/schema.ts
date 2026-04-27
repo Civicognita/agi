@@ -81,6 +81,20 @@ const ProviderConfigSchema = z
   })
   .strict();
 
+const AgentPmConfigSchema = z
+  .object({
+    /** PM provider selector. Built-in: "tynn" (default — uses MCP to reach
+     *  tynn-the-service), "tynn-lite" (file-based fallback at
+     *  <project>/.tynn-lite/). Plugins can contribute additional ids via
+     *  api.registerPmProvider() (s118 t434). */
+    provider: z.string().default("tynn"),
+    /** Provider-specific config passed to the factory at instantiation.
+     *  E.g. tynn-lite: { projectRoot, projectName }; plugin-registered:
+     *  whatever the plugin's factory expects. */
+    config: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
 const AgentConfigSchema = z
   .object({
     /** COA resource identifier (e.g. "$A0"). */
@@ -109,6 +123,9 @@ const AgentConfigSchema = z
     devMode: z.boolean().optional().default(false),
     /** Intelligent routing configuration — always active. */
     router: RouterConfigSchema.default({}),
+    /** PM provider selection — backs the canonical tynn workflow with
+     *  pluggable storage (built-in tynn or tynn-lite, or plugin-registered). */
+    pm: AgentPmConfigSchema.default({}),
   })
   .strict();
 

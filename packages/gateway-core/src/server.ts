@@ -62,6 +62,7 @@ import { CostLedgerWriter } from "./cost-ledger-writer.js";
 import { CostLedgerReader } from "./cost-ledger-reader.js";
 import { McpClient } from "@agi/mcp-client";
 import { TynnPmProvider } from "./pm/tynn-provider.js";
+import { TynnLitePmProvider } from "./pm/tynn-lite-provider.js";
 import type { PmProvider, PmStatus } from "@agi/sdk";
 
 import type { AionimaConfig, ConfigReloadEvent } from "@agi/config";
@@ -1977,13 +1978,34 @@ export async function startGatewayServer(
   const mcpClient = new McpClient();
 
   // s118 t432 cycle 36 — PM provider resolution + `pm` agent tool.
-  // Default provider is TynnPmProvider (consumes mcpClient to reach tynn).
-  // tynn-lite (file-based fallback, t433) and plugin-registered alternatives
-  // (t434) ship in follow-up cycles; resolution then reads project config
-  // `agent.pm.provider`. For now the default is hardcoded to tynn.
-  // The provider is fully constructed but tynn server registration via
-  // mcp.servers config (t435) is what makes calls actually succeed.
-  const pmProvider: PmProvider = new TynnPmProvider({ mcpClient });
+  // PM provider resolution (s118 t434): config.agent.pm.provider selects
+  // which implementation backs the canonical tynn workflow. Built-in ids
+  // resolve to bundled classes; any other id is looked up against plugins
+  // that called api.registerPmProvider() with that id.
+  const pmConfig = (config as { agent?: { pm?: { provider?: string; config?: Record<string, unknown> } } })
+    .agent?.pm ?? {};
+  const pmProviderId = pmConfig.provider ?? "tynn";
+  const pmProviderConfig = pmConfig.config ?? {};
+  let pmProvider: PmProvider;
+  if (pmProviderId === "tynn") {
+    pmProvider = new TynnPmProvider({ mcpClient });
+  } else if (pmProviderId === "tynn-lite") {
+    const projectRoot = (pmProviderConfig.projectRoot as string | undefined) ?? workspaceRoot;
+    if (projectRoot === undefined || projectRoot.length === 0) {
+      throw new Error("agent.pm.provider 'tynn-lite' requires either pm.config.projectRoot or workspace.root to be set");
+    }
+    pmProvider = new TynnLitePmProvider({
+      projectRoot,
+      projectName: pmProviderConfig.projectName as string | undefined,
+    });
+  } else {
+    const def = pluginRegistry.getPmProvider(pmProviderId);
+    if (def === undefined) {
+      throw new Error(`agent.pm.provider '${pmProviderId}' is not registered (built-in: tynn, tynn-lite; plugin-registered: ${pluginRegistry.getPmProviders().map(p => p.provider.id).join(", ") || "none"})`);
+    }
+    pmProvider = def.factory(pmProviderConfig) as PmProvider;
+  }
+  log.info(`pm provider resolved: id=${pmProviderId}, providerId=${pmProvider.providerId}`);
 
   toolRegistry.register(
     {

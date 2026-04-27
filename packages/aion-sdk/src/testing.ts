@@ -51,6 +51,7 @@ export interface MockRegistrations {
   stacks: StackDefinition[];
   channels: string[];
   providers: LLMProviderDefinition[];
+  pmProviders: { id: string; name: string }[];
   scanProviders: ScanProviderDefinition[];
   workers: WorkerDefinition[];
   hooks: { hook: string; handler: unknown }[];
@@ -84,6 +85,7 @@ export function createMockAPI(options: MockAPIOptions = {}): { api: AionimaPlugi
     stacks: [],
     channels: [],
     providers: [],
+    pmProviders: [],
     scanProviders: [],
     workers: [],
     hooks: [],
@@ -106,6 +108,7 @@ export function createMockAPI(options: MockAPIOptions = {}): { api: AionimaPlugi
     registerRuntimeInstaller(): void { /* mock */ },
     registerChannel(_plugin: AionimaChannelPlugin): void { registrations.channels.push(_plugin.id as string); },
     registerProvider(def: LLMProviderDefinition): void { registrations.providers.push(def); },
+    registerPmProvider(def: { id: string; name: string }): void { registrations.pmProviders.push({ id: def.id, name: def.name }); },
     registerAction(def: ActionDefinition): void { registrations.actions.push(def); },
     registerProjectPanel(def: ProjectPanelDefinition): void { registrations.panels.push(def); },
     registerSettingsSection(def: SettingsSectionDefinition): void { registrations.settingsSections.push(def); },

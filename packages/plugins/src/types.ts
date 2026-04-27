@@ -553,6 +553,33 @@ export interface LLMProviderDefinition {
 }
 
 // ---------------------------------------------------------------------------
+// PM provider plugin contracts (s118 t434)
+//
+// Plugins can register additional PM providers (Linear, Jira, GitHub Projects,
+// etc.) alongside the built-in tynn / tynn-lite. The factory receives the
+// provider's saved config and returns an instance whose shape implements
+// `PmProvider` from `@agi/sdk`. The factory return type is `unknown` here to
+// avoid a circular dep on @agi/sdk — the SDK's `definePmProvider()` builder
+// wraps this in a type-safe API.
+// ---------------------------------------------------------------------------
+
+export type PmProviderFactory = (config: Record<string, unknown>) => unknown;
+
+export interface PmProviderDefinition {
+  /** Unique provider id used by `config.agent.pm.provider` to select this
+   *  implementation (e.g. "linear", "jira", "github-projects"). Must not
+   *  collide with built-in ids ("tynn", "tynn-lite"). */
+  id: string;
+  /** Human-readable name shown in any future "PM provider" settings UI. */
+  name: string;
+  description?: string;
+  /** Declarative fields shown in the (future) PM-provider settings UI —
+   *  same shape as ProviderField for visual + storage consistency. */
+  fields?: ProviderField[];
+  factory: PmProviderFactory;
+}
+
+// ---------------------------------------------------------------------------
 // Settings page definitions (plugin-provided settings sub-pages)
 // ---------------------------------------------------------------------------
 
@@ -677,6 +704,7 @@ export interface AionimaPluginAPI {
   registerDashboardDomain(def: DashboardInterfaceDomainDefinition): void;
   registerSubdomainRoute(def: SubdomainRouteDefinition): void;
   registerProvider(def: LLMProviderDefinition): void;
+  registerPmProvider(def: PmProviderDefinition): void;
   registerScanProvider(def: ScanProviderDefinition): void;
   registerWorker(def: WorkerDefinition): void;
   getChannelConfig(channelId: string): { enabled: boolean; config: Record<string, unknown> } | undefined;
