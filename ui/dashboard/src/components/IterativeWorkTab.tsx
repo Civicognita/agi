@@ -55,7 +55,9 @@ interface LogEntry {
 }
 
 export function IterativeWorkTab({ project }: IterativeWorkTabProps): JSX.Element {
-  const category = project.projectType?.category ?? project.category;
+  // Effective category — project.json `category` override wins over the
+  // projectType-default. Mirrors the gateway API's eligibility logic.
+  const category = project.category ?? project.projectType?.category;
   const cadenceOptions = cadenceOptionsForCategory(category);
 
   const [status, setStatus] = useState<StatusResponse | null>(null);
