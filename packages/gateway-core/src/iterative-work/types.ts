@@ -24,8 +24,12 @@ export interface IterativeWorkFire {
 export interface IterativeWorkProjectStatus {
   /** Whether the project's iterativeWork.enabled is true. */
   enabled: boolean;
-  /** Configured cron expression (null when not set or unset). */
+  /** Configured cron expression (null when not set or unset). When `cadence`
+   *  is set, this is the auto-staggered cron computed at save time (D3). */
   cron: string | null;
+  /** User-picked cadence key (s118 t442 D1). Null for legacy `cron`-only
+   *  configs. When set, the `cron` field is auto-derived. */
+  cadence: string | null;
   /** Whether an iteration is currently running for this project. */
   inFlight: boolean;
   /** ISO timestamp of the most recent fire (null when never fired). */

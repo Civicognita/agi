@@ -201,11 +201,13 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
     const iw = config.iterativeWork;
     const enabled = iw?.enabled === true;
     const cron = iw?.cron !== undefined && iw.cron.trim().length > 0 ? iw.cron : null;
+    const cadence = (iw as { cadence?: string } | undefined)?.cadence ?? null;
     const lastFire = this.lastFiredAt.get(projectPath);
     const nextFire = cron !== null ? nextFireAfter(cron, lastFire ?? now) : null;
     return {
       enabled,
       cron,
+      cadence,
       inFlight: this.inFlight.has(projectPath),
       lastFiredAt: lastFire?.toISOString() ?? null,
       nextFireAt: nextFire?.toISOString() ?? null,
