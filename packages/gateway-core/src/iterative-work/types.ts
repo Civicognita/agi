@@ -17,6 +17,24 @@ export interface IterativeWorkFire {
 }
 
 /**
+ * Per-project introspection snapshot. Returned by IterativeWorkScheduler.getStatus
+ * and surfaced by GET /api/projects/iterative-work/status. ISO-string timestamps
+ * (not Date) so the shape JSON-serializes cleanly across the API boundary.
+ */
+export interface IterativeWorkProjectStatus {
+  /** Whether the project's iterativeWork.enabled is true. */
+  enabled: boolean;
+  /** Configured cron expression (null when not set or unset). */
+  cron: string | null;
+  /** Whether an iteration is currently running for this project. */
+  inFlight: boolean;
+  /** ISO timestamp of the most recent fire (null when never fired). */
+  lastFiredAt: string | null;
+  /** ISO timestamp of the next computed fire (null when cron unparseable or not set). */
+  nextFireAt: string | null;
+}
+
+/**
  * The shape of every event the scheduler emits. Strongly typed so consumers
  * can `on("fire", ...)` without losing payload typing.
  */

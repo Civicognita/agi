@@ -184,6 +184,83 @@ describe("IterativeWorkScheduler.tick", () => {
   });
 });
 
+describe("IterativeWorkScheduler.getStatus", () => {
+  it("returns null when project has no config", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({ "/p/missing": null }),
+    });
+    expect(scheduler.getStatus("/p/missing")).toBeNull();
+  });
+
+  it("returns enabled=false when iterativeWork is absent", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({ "/p/a": {} }),
+    });
+    expect(scheduler.getStatus("/p/a")).toEqual({
+      enabled: false,
+      cron: null,
+      inFlight: false,
+      lastFiredAt: null,
+      nextFireAt: null,
+    });
+  });
+
+  it("returns enabled=true, cron, and computed nextFireAt off `now` when never fired", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "8,38 * * * *" } },
+      }),
+    });
+    const status = scheduler.getStatus("/p/a", new Date("2026-04-27T05:10:00.000Z"));
+    expect(status).toEqual({
+      enabled: true,
+      cron: "8,38 * * * *",
+      inFlight: false,
+      lastFiredAt: null,
+      nextFireAt: "2026-04-27T05:38:00.000Z",
+    });
+  });
+
+  it("computes nextFireAt off lastFiredAt when present", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "*/15 * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+
+    scheduler.tick(new Date("2026-04-27T05:00:30.000Z"));
+    const status = scheduler.getStatus("/p/a", new Date("2026-04-27T05:30:00.000Z"));
+
+    expect(status?.lastFiredAt).toBe("2026-04-27T05:00:30.000Z");
+    expect(status?.nextFireAt).toBe("2026-04-27T05:15:00.000Z");
+    expect(status?.inFlight).toBe(true);
+  });
+
+  it("returns nextFireAt: null when cron is unparseable but enabled is true", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "0 9-17 * * 1-5" } },
+      }),
+    });
+    const status = scheduler.getStatus("/p/a");
+    expect(status?.enabled).toBe(true);
+    expect(status?.cron).toBe("0 9-17 * * 1-5");
+    expect(status?.nextFireAt).toBeNull();
+  });
+
+  it("returns cron: null when cron is empty/whitespace (not just missing)", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "   " } },
+      }),
+    });
+    const status = scheduler.getStatus("/p/a");
+    expect(status?.cron).toBeNull();
+    expect(status?.nextFireAt).toBeNull();
+  });
+});
+
 describe("IterativeWorkScheduler.start/stop", () => {
   it("start is idempotent — calling twice does not double-tick", () => {
     vi.useFakeTimers();

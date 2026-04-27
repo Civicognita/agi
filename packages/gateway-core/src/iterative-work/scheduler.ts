@@ -26,7 +26,7 @@ import type { ProjectConfigManager } from "../project-config-manager.js";
 import { createComponentLogger } from "../logger.js";
 import type { Logger, ComponentLogger } from "../logger.js";
 import { nextFireAfter } from "./cron.js";
-import type { IterativeWorkFire, IterativeWorkSchedulerEvents } from "./types.js";
+import type { IterativeWorkFire, IterativeWorkProjectStatus, IterativeWorkSchedulerEvents } from "./types.js";
 
 export interface IterativeWorkSchedulerDeps {
   projectConfigManager: ProjectConfigManager;
@@ -124,5 +124,30 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
   /** Diagnostic: snapshot of current in-flight project paths. */
   getInFlight(): string[] {
     return [...this.inFlight];
+  }
+
+  /**
+   * Read-only per-project introspection — the data behind the status API +
+   * the eventual Settings UX. Returns null when the project has no config
+   * file at all (callers can distinguish "unknown project" from "configured
+   * but disabled" that way). nextFireAt is computed off lastFiredAt when
+   * present, falling back to `now` so a never-fired project still surfaces a
+   * meaningful next-due timestamp.
+   */
+  getStatus(projectPath: string, now: Date = new Date()): IterativeWorkProjectStatus | null {
+    const config = this.deps.projectConfigManager.read(projectPath);
+    if (config === null) return null;
+    const iw = config.iterativeWork;
+    const enabled = iw?.enabled === true;
+    const cron = iw?.cron !== undefined && iw.cron.trim().length > 0 ? iw.cron : null;
+    const lastFire = this.lastFiredAt.get(projectPath);
+    const nextFire = cron !== null ? nextFireAfter(cron, lastFire ?? now) : null;
+    return {
+      enabled,
+      cron,
+      inFlight: this.inFlight.has(projectPath),
+      lastFiredAt: lastFire?.toISOString() ?? null,
+      nextFireAt: nextFire?.toISOString() ?? null,
+    };
   }
 }

@@ -62,6 +62,8 @@ import type { DashboardSession } from "./dashboard-user-store.js";
 import type { FederationRouter as FedRouter } from "./federation-router.js";
 import { appendUpgradeLog, clearUpgradeLog, getUpgradeLog } from "./upgrade-log.js";
 import { projectConfigPath } from "./project-config-path.js";
+import type { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
+import type { ProjectConfigManager } from "./project-config-manager.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -154,6 +156,14 @@ export interface RuntimeStateDeps {
   dashboardQueries?: DashboardQueries;
   /** HostingManager — manages Caddy + Node.js process lifecycle for hosted projects. */
   hostingManager?: HostingManager;
+  /** IterativeWorkScheduler — exposes status + receives config changes for the
+   *  iterative-work API surface. Optional: when omitted, the iterative-work
+   *  routes return 503. */
+  iterativeWorkScheduler?: IterativeWorkScheduler;
+  /** ProjectConfigManager — used by the iterative-work PUT route to validate +
+   *  persist iterativeWork config changes through the same atomic-write path
+   *  as other project metadata mutations. */
+  projectConfigManager?: ProjectConfigManager;
   /** Path to the MApp marketplace directory (for catalog browsing). */
   mappMarketplaceDir?: string;
   /** CommsLog — persistent message log for comms page. */
@@ -1379,6 +1389,75 @@ export async function createGatewayRuntimeState(
       return reply.send({ path: targetPath, branch, remote, status, commits });
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/projects/iterative-work/status — per-project IW snapshot
+  // (private network only)
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/projects/iterative-work/status", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    if (!deps.iterativeWorkScheduler) {
+      return reply.code(503).send({ error: "Iterative-work scheduler not available" });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    if (!pathParam) {
+      return reply.code(400).send({ error: "path query parameter is required" });
+    }
+    const targetPath = resolvePath(pathParam);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const status = deps.iterativeWorkScheduler.getStatus(targetPath);
+    if (status === null) {
+      return reply.code(404).send({ error: "Project has no project.json — create one first" });
+    }
+    return reply.send(status);
+  });
+
+  // -----------------------------------------------------------------------
+  // PUT /api/projects/iterative-work/config — set per-project IW toggle/cron
+  // (private network only). Body: { path: string, iterativeWork: { enabled?, cron? } }.
+  // Hot-reloads — the scheduler picks up the new config on its next tick.
+  // -----------------------------------------------------------------------
+
+  fastify.put("/api/projects/iterative-work/config", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    if (!deps.projectConfigManager) {
+      return reply.code(503).send({ error: "Project config manager not available" });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const body = request.body as { path?: string; iterativeWork?: { enabled?: boolean; cron?: string } } | undefined;
+    if (!body?.path) {
+      return reply.code(400).send({ error: "body.path is required" });
+    }
+    if (body.iterativeWork === undefined) {
+      return reply.code(400).send({ error: "body.iterativeWork is required" });
+    }
+    const targetPath = resolvePath(body.path);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    if (!existsSync(projectConfigPath(targetPath))) {
+      return reply.code(404).send({ error: "Project has no project.json — create one first" });
+    }
+    try {
+      const updated = await deps.projectConfigManager.update(targetPath, { iterativeWork: body.iterativeWork });
+      return reply.send({ ok: true, iterativeWork: updated.iterativeWork ?? null });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
