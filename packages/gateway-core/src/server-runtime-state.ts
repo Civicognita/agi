@@ -66,6 +66,7 @@ import type { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import { cadenceToStaggeredCron } from "./iterative-work/cron.js";
 import {
   ITERATIVE_WORK_ELIGIBLE_CATEGORIES,
+  TESTING_UX_ELIGIBLE_CATEGORIES,
   cadenceOptionsFor,
   type IterativeWorkCadence,
   type ProjectCategory,
@@ -1040,7 +1041,7 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Projects API only allowed from private network" });
     }
     const projectDirs = deps.workspaceProjects ?? [];
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string }[] = [];
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string }[] = [];
 
     // Expand top-level entries into (fullPath, coreCollection, coreForkSlug) triples.
     // A directory that contains a `collection.json` with
@@ -1114,7 +1115,7 @@ export async function createGatewayRuntimeState(
         const projectTypeId = metaType ?? detectedHosting?.projectType ?? "static";
         const registry = deps.hostingManager?.getProjectTypeRegistry();
         const typeDef = registry?.get(projectTypeId);
-        const projectType = typeDef ? { id: typeDef.id, label: typeDef.label, category: typeDef.category, hostable: typeDef.hostable, hasCode: typeDef.hasCode, iterativeWorkEligible: typeDef.iterativeWorkEligible ?? false, tools: typeDef.tools } : undefined;
+        const projectType = typeDef ? { id: typeDef.id, label: typeDef.label, category: typeDef.category, hostable: typeDef.hostable, hasCode: typeDef.hasCode, iterativeWorkEligible: typeDef.iterativeWorkEligible ?? false, testingUxEligible: typeDef.testingUxEligible ?? false, tools: typeDef.tools } : undefined;
         const category = metaCategory ?? projectType?.category ?? null;
         // Effective iterativeWorkEligible — true when the EFFECTIVE category
         // (project.json override or projectType default) is in the eligible
@@ -1123,6 +1124,10 @@ export async function createGatewayRuntimeState(
         const iterativeWorkEligible = category !== null
           ? ITERATIVE_WORK_ELIGIBLE_CATEGORIES.has(category as ProjectCategory)
           : (projectType?.iterativeWorkEligible ?? false);
+        // Effective testingUxEligible (s121) — only app/web categories.
+        const testingUxEligible = category !== null
+          ? TESTING_UX_ELIGIBLE_CATEGORIES.has(category as ProjectCategory)
+          : (projectType?.testingUxEligible ?? false);
         projects.push({
           name: entryName,
           path: fullPath,
@@ -1133,6 +1138,7 @@ export async function createGatewayRuntimeState(
           projectType,
           category: category ?? undefined,
           iterativeWorkEligible,
+          testingUxEligible,
           description: metaDescription,
           magicApps: metaMagicApps,
           coreCollection,

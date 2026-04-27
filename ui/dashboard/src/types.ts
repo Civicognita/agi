@@ -362,6 +362,9 @@ export interface ProjectTypeInfo {
   hasCode: boolean;
   /** Whether this project type can have an iterative-work loop (s118 t445). */
   iterativeWorkEligible?: boolean;
+  /** Whether this project type exposes the testing suite UX (s121).
+   *  Only app + web categories. */
+  testingUxEligible?: boolean;
   tools: ProjectTypeTool[];
   logSources?: LogSourceDefinition[];
 }
@@ -400,6 +403,8 @@ export interface ProjectInfo {
   /** Effective iterative-work eligibility (s118 t442 D1 slice 4) — based on
    *  the project's actual category (overrides projectType-level default). */
   iterativeWorkEligible?: boolean;
+  /** Effective testing-UX eligibility (s121) — based on EFFECTIVE category. */
+  testingUxEligible?: boolean;
   description?: string;
   magicApps?: string[];
   /** When set, this project is a child of a named collection (e.g. "aionima"

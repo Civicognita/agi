@@ -64,6 +64,12 @@ export interface ProjectTypeDefinition {
    * category via ITERATIVE_WORK_ELIGIBLE_CATEGORIES.
    */
   iterativeWorkEligible?: boolean;
+  /**
+   * Whether this project type exposes the testing suite UX (s121).
+   * Only `app` + `web` are eligible. When undefined, inferred from
+   * category via TESTING_UX_ELIGIBLE_CATEGORIES.
+   */
+  testingUxEligible?: boolean;
   containerConfig?: ContainerConfig;
   defaultMeta: Partial<ProjectHostingMeta>;
   tools: ProjectTypeTool[];
@@ -72,6 +78,18 @@ export interface ProjectTypeDefinition {
 
 /** Categories that default to hasCode: true when not explicitly set. */
 const CODE_CATEGORIES: ReadonlySet<ProjectCategory> = new Set(["web", "app", "monorepo", "ops"]);
+
+/**
+ * Categories eligible for the testing suite UX (s121 — Tests / Spot / E2E
+ * surfaces). Only app + web project types host code in the testable sense;
+ * other categories (literature, media, ops, administration, monorepo)
+ * don't expose testing tabs/buttons. Mirrors the iterative-work eligibility
+ * pattern but with a narrower set.
+ */
+export const TESTING_UX_ELIGIBLE_CATEGORIES: ReadonlySet<ProjectCategory> = new Set([
+  "app",
+  "web",
+]);
 
 /**
  * Categories eligible for iterative-work loops (s118 redesign 2026-04-27).
@@ -130,6 +148,10 @@ export class ProjectTypeRegistry {
     if (resolved.iterativeWorkEligible === undefined) {
       resolved = { ...resolved, iterativeWorkEligible: ITERATIVE_WORK_ELIGIBLE_CATEGORIES.has(resolved.category) };
     }
+    // Infer testingUxEligible from category if not explicitly provided (s121)
+    if (resolved.testingUxEligible === undefined) {
+      resolved = { ...resolved, testingUxEligible: TESTING_UX_ELIGIBLE_CATEGORIES.has(resolved.category) };
+    }
     this.types.set(resolved.id, resolved);
   }
 
@@ -170,6 +192,7 @@ export class ProjectTypeRegistry {
       hostable: def.hostable,
       hasCode: def.hasCode,
       iterativeWorkEligible: def.iterativeWorkEligible ?? false,
+      testingUxEligible: def.testingUxEligible ?? false,
       tools: def.tools,
       logSources: def.logSources,
       defaultMeta: def.defaultMeta,
