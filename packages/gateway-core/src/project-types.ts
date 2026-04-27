@@ -57,6 +57,13 @@ export interface ProjectTypeDefinition {
   hostable: boolean;
   /** Whether this project type contains code (vs. content like literature/media). */
   hasCode: boolean;
+  /**
+   * Whether this project type can have an iterative-work loop (s118).
+   * Only `app`/`web` (dev) and `ops`/`administration` (ops) categories are
+   * eligible per owner spec 2026-04-27. When undefined, inferred from
+   * category via ITERATIVE_WORK_ELIGIBLE_CATEGORIES.
+   */
+  iterativeWorkEligible?: boolean;
   containerConfig?: ContainerConfig;
   defaultMeta: Partial<ProjectHostingMeta>;
   tools: ProjectTypeTool[];
@@ -65,6 +72,47 @@ export interface ProjectTypeDefinition {
 
 /** Categories that default to hasCode: true when not explicitly set. */
 const CODE_CATEGORIES: ReadonlySet<ProjectCategory> = new Set(["web", "app", "monorepo", "ops"]);
+
+/**
+ * Categories eligible for iterative-work loops (s118 redesign 2026-04-27).
+ *
+ * - **dev/app** (web + app categories): cadence options 30m, 1h
+ * - **ops/admin** (ops + administration categories): cadence options 30m,
+ *   1h, 5h, 12h, 1d, 5d, 1w
+ *
+ * Other categories (literature/media/monorepo) cannot host iterative-work
+ * loops — UI hides the tab; API returns 403.
+ */
+export const ITERATIVE_WORK_ELIGIBLE_CATEGORIES: ReadonlySet<ProjectCategory> = new Set([
+  "web",
+  "app",
+  "ops",
+  "administration",
+]);
+
+/**
+ * Cadence option identifier — keys for the type-aware dropdown the user picks
+ * from. The actual cron expression is computed at save time by the auto-stagger
+ * logic (D3 / iterative-work/cron.ts). Storing the cadence key separately
+ * lets us re-stagger across restarts deterministically.
+ */
+export type IterativeWorkCadence = "30m" | "1h" | "5h" | "12h" | "1d" | "5d" | "1w";
+
+/** Cadence options offered for "dev" categories (web + app). */
+export const DEV_CADENCE_OPTIONS: readonly IterativeWorkCadence[] = ["30m", "1h"];
+
+/** Cadence options offered for "ops" categories (ops + administration). */
+export const OPS_CADENCE_OPTIONS: readonly IterativeWorkCadence[] = ["30m", "1h", "5h", "12h", "1d", "5d", "1w"];
+
+/**
+ * Cadence options visible in the per-project iterative-work tab dropdown,
+ * narrowed by category. Returns empty array when the category is not eligible.
+ */
+export function cadenceOptionsFor(category: ProjectCategory): readonly IterativeWorkCadence[] {
+  if (!ITERATIVE_WORK_ELIGIBLE_CATEGORIES.has(category)) return [];
+  if (category === "ops" || category === "administration") return OPS_CADENCE_OPTIONS;
+  return DEV_CADENCE_OPTIONS;
+}
 
 // ---------------------------------------------------------------------------
 // Registry
@@ -75,10 +123,19 @@ export class ProjectTypeRegistry {
 
   register(def: ProjectTypeDefinition): void {
     // Infer hasCode from category if not explicitly provided
-    const resolved = def.hasCode !== undefined
+    let resolved = def.hasCode !== undefined
       ? def
       : { ...def, hasCode: CODE_CATEGORIES.has(def.category) };
+    // Infer iterativeWorkEligible from category if not explicitly provided
+    if (resolved.iterativeWorkEligible === undefined) {
+      resolved = { ...resolved, iterativeWorkEligible: ITERATIVE_WORK_ELIGIBLE_CATEGORIES.has(resolved.category) };
+    }
     this.types.set(resolved.id, resolved);
+  }
+
+  /** All registered project types eligible for iterative-work loops. */
+  getIterativeWorkEligible(): ProjectTypeDefinition[] {
+    return this.getAll().filter((t) => t.iterativeWorkEligible);
   }
 
   get(id: string): ProjectTypeDefinition | undefined {
@@ -112,6 +169,7 @@ export class ProjectTypeRegistry {
       category: def.category,
       hostable: def.hostable,
       hasCode: def.hasCode,
+      iterativeWorkEligible: def.iterativeWorkEligible ?? false,
       tools: def.tools,
       logSources: def.logSources,
       defaultMeta: def.defaultMeta,
