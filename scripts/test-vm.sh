@@ -482,9 +482,28 @@ cmd_services_start() {
   multipass exec "$VM_NAME" -- sudo systemctl start caddy
 
   echo "==> Starting ID service..."
+  # Auto-generate .env at ~/.agi/agi-local-id/.env — per CLAUDE.md § 9,
+  # runtime config lives under ~/.agi/, NEVER in the source-mount root
+  # (/mnt/agi-local-id is mapped from the source repo and shouldn't carry
+  # deployment secrets). DATABASE_URL points at the agi-owned agi_data DB
+  # on the VM's local Postgres (per .env.example). ENCRYPTION_KEY is
+  # generated fresh on first run — test VM sessions reset on restart so
+  # rotating per fresh boot is fine.
   multipass exec "$VM_NAME" -- bash -c '
+    ENV_DIR="$HOME/.agi/agi-local-id"
+    ENV_FILE="$ENV_DIR/.env"
+    mkdir -p "$ENV_DIR"
+    if [ ! -f "$ENV_FILE" ]; then
+      echo "  .env absent at $ENV_FILE — generating test-VM defaults"
+      ENC_KEY=$(node -e "console.log(require(\"crypto\").randomBytes(32).toString(\"hex\"))")
+      cat > "$ENV_FILE" <<EOF
+DATABASE_URL=postgres://agi:aionima@localhost:5432/agi_data
+ENCRYPTION_KEY=${ENC_KEY}
+ID_SERVICE_MODE=local
+EOF
+    fi
     cd /mnt/agi-local-id
-    set -a && source .env && set +a
+    set -a && source "$ENV_FILE" && set +a
     nohup node dist/index.js > /tmp/agi-local-id.log 2>&1 &
     echo $! > /tmp/agi-local-id.pid
     sleep 2
