@@ -64,6 +64,7 @@ import { appendUpgradeLog, clearUpgradeLog, getUpgradeLog } from "./upgrade-log.
 import { projectConfigPath } from "./project-config-path.js";
 import type { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import type { ProjectConfigManager } from "./project-config-manager.js";
+import type { PmProvider } from "@agi/sdk";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -164,6 +165,10 @@ export interface RuntimeStateDeps {
    *  persist iterativeWork config changes through the same atomic-write path
    *  as other project metadata mutations. */
   projectConfigManager?: ProjectConfigManager;
+  /** PmProvider — used by the iterative-work progress route (t439) to
+   *  surface Race-to-DONE counts. Optional: when missing or when the
+   *  provider doesn't expose getActiveFocusProgress, the route returns 503. */
+  pmProvider?: PmProvider;
   /** Path to the MApp marketplace directory (for catalog browsing). */
   mappMarketplaceDir?: string;
   /** CommsLog — persistent message log for comms page. */
@@ -1498,6 +1503,46 @@ export async function createGatewayRuntimeState(
     }
     const entries = deps.iterativeWorkScheduler.getLog(targetPath, limit);
     return reply.send({ entries });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/projects/iterative-work/progress — Race-to-DONE task counts
+  // (private network only). Path arg currently unused — PmProvider's notion
+  // of "active focus" is project-agnostic (the provider's bound project).
+  // The arg stays in the signature so future per-project PmProviders can
+  // route on it without an API contract change. Returns the same shape
+  // as PmProvider.getActiveFocusProgress for direct consumption by the
+  // dashboard's two-tone bar.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/projects/iterative-work/progress", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    if (!deps.pmProvider) {
+      return reply.code(503).send({ error: "PM provider not available" });
+    }
+    if (deps.pmProvider.getActiveFocusProgress === undefined) {
+      return reply.code(503).send({ error: `PM provider "${deps.pmProvider.providerId}" doesn't expose progress` });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    if (!pathParam) {
+      return reply.code(400).send({ error: "path query parameter is required" });
+    }
+    const targetPath = resolvePath(pathParam);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    try {
+      const progress = await deps.pmProvider.getActiveFocusProgress();
+      return reply.send(progress);
+    } catch (err) {
+      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // -----------------------------------------------------------------------

@@ -204,12 +204,23 @@ export interface PmProvider {
 
   /** Race-to-DONE progress for the active focus, when the implementation
    *  can compute it. UX consumes this for the indicator badge in s118 t439.
-   *  Optional because tynn-lite or a minimal plugin may not implement it. */
+   *  Optional because tynn-lite or a minimal plugin may not implement it.
+   *
+   *  The shape distinguishes per-status counts (qa/doing/backlog) so the
+   *  dashboard can render the same two-tone bar shape as the terminal
+   *  statusline (finished solid + qa striped + rest empty). The legacy
+   *  `inProgressTasks` field is retained as `qa + doing` for back-compat
+   *  with the `pm` agent tool's "progress" action surface. */
   getActiveFocusProgress?(): Promise<{
     totalTasks: number;
     doneTasks: number;
-    inProgressTasks: number;
+    qaTasks: number;
+    doingTasks: number;
+    backlogTasks: number;
     blockedTasks: number;
+    /** Legacy: qa + doing. Kept for the LLM-facing pm tool. */
+    inProgressTasks: number;
+    /** done / total — strict completion (excludes qa). */
     percentComplete: number;
   }>;
 }

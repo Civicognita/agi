@@ -220,6 +220,26 @@ export interface IterativeWorkLogEntry {
   cron: string;
 }
 
+export interface IterativeWorkProgress {
+  totalTasks: number;
+  doneTasks: number;
+  qaTasks: number;
+  doingTasks: number;
+  backlogTasks: number;
+  blockedTasks: number;
+  inProgressTasks: number;
+  percentComplete: number;
+}
+
+export async function fetchIterativeWorkProgress(projectPath: string): Promise<IterativeWorkProgress> {
+  const res = await fetch(`/api/projects/iterative-work/progress?path=${encodeURIComponent(projectPath)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<IterativeWorkProgress>;
+}
+
 export async function fetchIterativeWorkLog(projectPath: string, limit?: number): Promise<IterativeWorkLogEntry[]> {
   const qs = new URLSearchParams({ path: projectPath });
   if (limit !== undefined) qs.set("limit", String(limit));

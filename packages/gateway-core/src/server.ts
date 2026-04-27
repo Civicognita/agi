@@ -2266,6 +2266,7 @@ export async function startGatewayServer(
       hostingManager,
       iterativeWorkScheduler,
       projectConfigManager,
+      pmProvider,
       commsLog,
       notificationStore,
       chatPersistence,

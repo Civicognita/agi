@@ -393,27 +393,41 @@ export class TynnPmProvider implements PmProvider {
   async getActiveFocusProgress(): Promise<{
     totalTasks: number;
     doneTasks: number;
-    inProgressTasks: number;
+    qaTasks: number;
+    doingTasks: number;
+    backlogTasks: number;
     blockedTasks: number;
+    inProgressTasks: number;
     percentComplete: number;
   }> {
     // Derive progress from getNext()'s top_story.task_status_snapshot.
-    // Tynn returns counts per status; we sum them + compute percentage.
+    // Tynn returns counts per status; we expose each as its own field so
+    // the dashboard can render a two-tone bar (finished + qa striped) and
+    // legacy callers still get inProgressTasks = qa + doing.
     const next = await this.getNext();
     const snapshot = next.topStory?.taskStatusSnapshot;
     if (snapshot === undefined) {
-      return { totalTasks: 0, doneTasks: 0, inProgressTasks: 0, blockedTasks: 0, percentComplete: 0 };
+      return {
+        totalTasks: 0,
+        doneTasks: 0,
+        qaTasks: 0,
+        doingTasks: 0,
+        backlogTasks: 0,
+        blockedTasks: 0,
+        inProgressTasks: 0,
+        percentComplete: 0,
+      };
     }
     const total = snapshot.backlog + snapshot.doing + snapshot.qa + snapshot.blocked + snapshot.done;
-    const done = snapshot.done;
-    const inProgress = snapshot.doing + snapshot.qa;
-    const blocked = snapshot.blocked;
     return {
       totalTasks: total,
-      doneTasks: done,
-      inProgressTasks: inProgress,
-      blockedTasks: blocked,
-      percentComplete: total > 0 ? Math.round((done / total) * 100) : 0,
+      doneTasks: snapshot.done,
+      qaTasks: snapshot.qa,
+      doingTasks: snapshot.doing,
+      backlogTasks: snapshot.backlog,
+      blockedTasks: snapshot.blocked,
+      inProgressTasks: snapshot.doing + snapshot.qa,
+      percentComplete: total > 0 ? Math.round((snapshot.done / total) * 100) : 0,
     };
   }
 }

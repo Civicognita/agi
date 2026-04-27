@@ -26,15 +26,18 @@ import {
   fetchProjects,
   fetchIterativeWorkStatus,
   fetchIterativeWorkLog,
+  fetchIterativeWorkProgress,
   updateIterativeWorkConfig,
   type ProjectInfo,
   type IterativeWorkProjectStatus,
   type IterativeWorkLogEntry,
+  type IterativeWorkProgress,
 } from "@/api.js";
 
 interface RowState {
   status: IterativeWorkProjectStatus | null;
   log: IterativeWorkLogEntry[];
+  progress: IterativeWorkProgress | null;
   filter: "all" | "errors";
   loading: boolean;
   error: string | null;
@@ -46,12 +49,56 @@ function emptyRowState(): RowState {
   return {
     status: null,
     log: [],
+    progress: null,
     filter: "all",
     loading: true,
     error: null,
     pending: false,
     cronDraft: "",
   };
+}
+
+/**
+ * Two-tone Race-to-DONE bar — mirrors the terminal statusline shape:
+ * solid bright-green for finished, striped dim-green for QA awaiting
+ * sign-off, dim-white for remaining (backlog/doing/blocked). The gap
+ * between solid and stripe is the visible "owner-review backlog" signal.
+ *
+ * Cell math matches statusline-command.sh exactly: floor each share, clamp
+ * so done+qa <= width, remainder is empty.
+ */
+function ProgressBar({ progress }: { progress: IterativeWorkProgress }) {
+  const W = 24;
+  if (progress.totalTasks === 0) {
+    return (
+      <div className="text-[11px] text-muted-foreground italic">
+        No tasks scoped to active focus.
+      </div>
+    );
+  }
+  const cDone = Math.floor((progress.doneTasks * W) / progress.totalTasks);
+  const cQa = Math.min(W - cDone, Math.floor((progress.qaTasks * W) / progress.totalTasks));
+  const cEmpty = W - cDone - cQa;
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <div className="font-mono text-[12px] tracking-tighter leading-none">
+          <span className="text-emerald-400">{"█".repeat(cDone)}</span>
+          <span className="text-emerald-700">{"▓".repeat(cQa)}</span>
+          <span className="text-muted-foreground/40">{"░".repeat(cEmpty)}</span>
+        </div>
+        <span className="text-[11px] tabular-nums text-muted-foreground">
+          {progress.percentComplete}%
+        </span>
+      </div>
+      <div className="text-[10px] text-muted-foreground tabular-nums">
+        {progress.doneTasks} done · {progress.qaTasks} qa · {progress.doingTasks} doing · {progress.backlogTasks} backlog
+        {progress.blockedTasks > 0 && (
+          <> · <span className="text-rose-400">{progress.blockedTasks} blocked</span></>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function formatDuration(ms: number | null): string {
@@ -109,14 +156,16 @@ function ProjectRow({ project }: { project: ProjectInfo }) {
   const refresh = useCallback(async () => {
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
-      const [status, log] = await Promise.all([
+      const [status, log, progress] = await Promise.all([
         fetchIterativeWorkStatus(project.path),
         fetchIterativeWorkLog(project.path, 20).catch(() => [] as IterativeWorkLogEntry[]),
+        fetchIterativeWorkProgress(project.path).catch(() => null),
       ]);
       setState((s) => ({
         ...s,
         status,
         log,
+        progress,
         loading: false,
         error: null,
         pending: false,
@@ -127,6 +176,7 @@ function ProjectRow({ project }: { project: ProjectInfo }) {
         ...s,
         status: null,
         log: [],
+        progress: null,
         loading: false,
         error: err instanceof Error ? err.message : String(err),
         pending: false,
@@ -173,6 +223,13 @@ function ProjectRow({ project }: { project: ProjectInfo }) {
 
       {state.status && !state.loading && (
         <>
+          {state.progress && (
+            <div className="pt-1 pb-2 border-b border-border/40">
+              <div className="text-[10px] uppercase tracking-wider text-foreground/60 mb-1">Race to DONE — active focus</div>
+              <ProgressBar progress={state.progress} />
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 text-[12px]">
               <input
