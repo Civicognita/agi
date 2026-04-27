@@ -53,6 +53,7 @@
   "scripts": {
     "build": "tsc",
     "generate": "drizzle-kit generate",
+    "generate:dist": "drizzle-kit generate --config=drizzle-generate.config.ts",
     "migrate": "drizzle-kit migrate",
     "push": "drizzle-kit push",
     "studio": "drizzle-kit studio",
