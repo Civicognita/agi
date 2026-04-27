@@ -2157,6 +2157,18 @@ export class HostingManager {
   // -------------------------------------------------------------------------
 
   regenerateCaddyfile(): void {
+    // Defense-in-depth: when hosting is disabled the static script-managed
+    // Caddyfile is the source of truth (see scripts/test-vm.sh). Any caller
+    // that reaches this function with hosting.enabled=false would otherwise
+    // overwrite the static ai.on/test.ai.on stanzas with auto-generated
+    // content keyed on baseDomain — manifests as test.ai.on routing failure
+    // owner reported 2026-04-27. The early-return mirrors the
+    // regenerateSystemDomains() guard at the same level.
+    if (!this.config.enabled) {
+      this.log.debug("regenerateCaddyfile: hosting disabled — skipping (static Caddyfile is source of truth)");
+      return;
+    }
+
     let existing = "";
     try {
       existing = readFileSync("/etc/caddy/Caddyfile", "utf8");
