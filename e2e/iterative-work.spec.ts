@@ -102,6 +102,29 @@ test.describe("Iterative Work tab", () => {
     expect(/Every hour/i.test(optionsTxt)).toBe(true);
   });
 
+  test("Race-to-DONE bar renders when PmProvider exposes progress (t439)", async ({ page, request }) => {
+    const eligible = await findEligibleProject(request);
+    test.skip(!eligible, "no eligible projects in this environment");
+
+    await page.goto(`/projects/${eligible!.name}`);
+    await page.waitForLoadState("domcontentloaded");
+    await page.getByRole("tab", { name: /Iterative Work/i }).click();
+    await expect(page.getByTestId("iterative-work-tab")).toBeVisible({ timeout: 10_000 });
+    await page.waitForLoadState("networkidle").catch(() => undefined);
+
+    // Pre-check: does the gateway expose progress for this project? When the
+    // PmProvider isn't wired (or doesn't implement getActiveFocusProgress)
+    // the endpoint returns 503 and the bar deliberately hides — this is
+    // valid (graceful degradation), not a test failure.
+    const probe = await request.get(`/api/projects/iterative-work/progress?path=${encodeURIComponent(eligible!.path)}`);
+    test.skip(!probe.ok(), `progress endpoint returned ${probe.status()} — PmProvider not configured`);
+
+    // Bar + counts should be present.
+    await expect(page.getByTestId("race-to-done")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("race-to-done-bar")).toBeVisible();
+    await expect(page.getByTestId("race-to-done-percent")).toBeVisible();
+  });
+
   test("toggle + cadence save round-trip persists via API", async ({ page, request }) => {
     const eligible = await findEligibleProject(request);
     test.skip(!eligible, "no eligible projects in this environment");

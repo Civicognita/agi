@@ -54,6 +54,17 @@ interface LogEntry {
   message?: string;
 }
 
+interface ProgressResponse {
+  totalTasks: number;
+  doneTasks: number;
+  qaTasks: number;
+  doingTasks: number;
+  backlogTasks: number;
+  blockedTasks: number;
+  inProgressTasks: number;
+  percentComplete: number;
+}
+
 export function IterativeWorkTab({ project }: IterativeWorkTabProps): JSX.Element {
   // Effective category — project.json `category` override wins over the
   // projectType-default. Mirrors the gateway API's eligibility logic.
@@ -62,6 +73,7 @@ export function IterativeWorkTab({ project }: IterativeWorkTabProps): JSX.Elemen
 
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
+  const [progress, setProgress] = useState<ProgressResponse | null>(null);
   const [enabled, setEnabled] = useState<boolean>(false);
   const [cadence, setCadence] = useState<IterativeWorkCadence | "">("");
   const [saving, setSaving] = useState(false);
@@ -85,6 +97,18 @@ export function IterativeWorkTab({ project }: IterativeWorkTabProps): JSX.Elemen
         `/api/projects/iterative-work/log?path=${encodeURIComponent(project.path)}&limit=20`,
       );
       setLog(l.entries ?? []);
+
+      // Race-to-DONE progress (s118 t439). The endpoint returns 503 when no
+      // PmProvider is wired or the provider doesn't expose getActiveFocusProgress
+      // — render the bar without a value rather than blowing up the whole tab.
+      try {
+        const p = await fetchJson<ProgressResponse>(
+          `/api/projects/iterative-work/progress?path=${encodeURIComponent(project.path)}`,
+        );
+        setProgress(p);
+      } catch {
+        setProgress(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -189,6 +213,19 @@ export function IterativeWorkTab({ project }: IterativeWorkTabProps): JSX.Elemen
         </div>
       )}
 
+      {progress && (
+        <div className="pt-2 border-t border-border" data-testid="race-to-done">
+          <h4 className="text-[12px] font-semibold mb-2">Race to DONE</h4>
+          <RaceToDoneBar progress={progress} />
+          <div className="text-[11px] text-muted-foreground mt-1">
+            {progress.doneTasks} done · {progress.qaTasks} qa · {progress.doingTasks} doing · {progress.backlogTasks} backlog
+            {progress.blockedTasks > 0 && <> · <span className="text-yellow">{progress.blockedTasks} blocked</span></>}
+            {" · "}
+            <span data-testid="race-to-done-percent">{progress.percentComplete}%</span> complete
+          </div>
+        </div>
+      )}
+
       <div className="pt-2 border-t border-border">
         <h4 className="text-[12px] font-semibold mb-2">Recent fires</h4>
         {log.length === 0 ? (
@@ -207,6 +244,34 @@ export function IterativeWorkTab({ project }: IterativeWorkTabProps): JSX.Elemen
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Two-tone Race-to-DONE bar (s118 t439). Mirrors the terminal statusline shape:
+ * finished portion solid (green), qa portion striped (yellow), rest empty.
+ */
+function RaceToDoneBar({ progress }: { progress: ProgressResponse }): JSX.Element {
+  const total = Math.max(progress.totalTasks, 1);
+  const donePct = (progress.doneTasks / total) * 100;
+  const qaPct = (progress.qaTasks / total) * 100;
+  return (
+    <div className="w-full h-2 bg-muted rounded overflow-hidden flex" data-testid="race-to-done-bar" role="progressbar" aria-valuenow={progress.percentComplete} aria-valuemin={0} aria-valuemax={100}>
+      <div
+        className="bg-green h-full"
+        style={{ width: `${donePct}%` }}
+        data-testid="race-to-done-bar-done"
+      />
+      <div
+        className="h-full"
+        style={{
+          width: `${qaPct}%`,
+          backgroundImage: "repeating-linear-gradient(45deg, var(--yellow, #d4b95a) 0 4px, transparent 4px 8px)",
+          backgroundColor: "rgba(212, 185, 90, 0.15)",
+        }}
+        data-testid="race-to-done-bar-qa"
+      />
     </div>
   );
 }
