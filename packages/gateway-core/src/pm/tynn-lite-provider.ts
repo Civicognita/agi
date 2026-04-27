@@ -9,14 +9,26 @@
  *   <project-root>/.tynn-lite/state.json     — atomic: write to .tmp + rename.
  *     Holds {activeFocus, nextPick, lastIterationCommit}.
  *
- * **Critical-path subset shipped in cycle 45:** getProject, getNext, getTask,
- * findTasks, createTask, setTaskStatus. These are what a cron-fired Aion
- * needs to participate in the workflow on the project's behalf.
+ * **Implemented through cycle 46:** getProject, getNext, getTask, findTasks,
+ * createTask, setTaskStatus, addComment, getComments, updateTask, iWish.
  *
- * **Stubbed in this slice (throw NotImplementedError):** getStory,
- * getComments, addComment, updateTask, iWish, getActiveFocusProgress.
- * Filling these in is cycle 46+ work, gated on the storage shape for each
- * (comments.jsonl? embedded in tasks.jsonl? separate state field?).
+ * **Still stubbed (cycle 47+):** getStory (no story concept in tynn-lite
+ * yet), getActiveFocusProgress (needs an "active focus" scope that today
+ * is just state.activeFocus pointer).
+ *
+ * **Sibling files added in cycle 46:**
+ *   <project-root>/.tynn-lite/comments.jsonl  — append-only, one JSON
+ *     record per comment, queryable by entityId.
+ *   <project-root>/.tynn-lite/wishes.jsonl    — append-only, one JSON
+ *     record per wish, captured natural-language scope before conversion.
+ *
+ * **Why sibling files over embedding:** comments and wishes are related-but-
+ * separable persistence concerns. Embedding comments in task records would
+ * mean every status transition copies the full comments array; embedding
+ * wishes would conflate two distinct concepts (wishes are pre-task, with
+ * their own structured shape). Sibling files keep each concern's access
+ * pattern clean (same principle as cycle 45's "two files for orthogonal
+ * access patterns").
  *
  * State.json access is exposed via TynnLite-specific getState/setState methods
  * (not on PmProvider — they're for the scheduler/agent to track focus, not
@@ -60,6 +72,31 @@ interface TynnLiteTaskRecord {
   verificationSteps?: string[];
 }
 
+/** One line in comments.jsonl — append-only, never mutated. */
+interface TynnLiteCommentRecord {
+  id: string;
+  entityType: "task" | "story" | "version";
+  entityId: string;
+  body: string;
+  createdAt: string;
+  /** Optional author tag — free-form (e.g. "$A0", "$ITERATIVE-WORK"). */
+  author?: string;
+}
+
+/** One line in wishes.jsonl — append-only natural-language scope capture
+ *  before conversion to a task. Mirrors PmIWishInput plus persistence fields. */
+interface TynnLiteWishRecord {
+  id: string;
+  title: string;
+  didnt?: string;
+  when?: string;
+  had?: string;
+  needs?: string;
+  explain?: string;
+  priority?: "critical" | "high" | "normal" | "low";
+  createdAt: string;
+}
+
 export interface TynnLiteState {
   /** Story/version/whatever the active focus identifier is. Free-form so
    *  scheduler + agent can interpret it however the project wants. */
@@ -93,6 +130,8 @@ export class TynnLitePmProvider implements PmProvider {
   readonly providerId = "tynn-lite";
   private readonly dir: string;
   private readonly tasksPath: string;
+  private readonly commentsPath: string;
+  private readonly wishesPath: string;
   private readonly statePath: string;
   private readonly statePathTmp: string;
   private readonly projectName: string;
@@ -100,6 +139,8 @@ export class TynnLitePmProvider implements PmProvider {
   constructor(opts: TynnLitePmProviderOpts) {
     this.dir = join(opts.projectRoot, ".tynn-lite");
     this.tasksPath = join(this.dir, "tasks.jsonl");
+    this.commentsPath = join(this.dir, "comments.jsonl");
+    this.wishesPath = join(this.dir, "wishes.jsonl");
     this.statePath = join(this.dir, "state.json");
     this.statePathTmp = `${this.statePath}.tmp`;
     this.projectName = opts.projectName ?? opts.projectRoot.split("/").filter((s) => s.length > 0).pop() ?? "tynn-lite-project";
@@ -115,20 +156,29 @@ export class TynnLitePmProvider implements PmProvider {
     }
   }
 
-  private readAllRecords(): TynnLiteTaskRecord[] {
-    if (!existsSync(this.tasksPath)) return [];
-    const raw = readFileSync(this.tasksPath, "utf-8");
-    const out: TynnLiteTaskRecord[] = [];
+  private readJsonlLines<T>(path: string): T[] {
+    if (!existsSync(path)) return [];
+    const raw = readFileSync(path, "utf-8");
+    const out: T[] = [];
     for (const line of raw.split("\n")) {
       const trimmed = line.trim();
       if (trimmed.length === 0) continue;
       try {
-        out.push(JSON.parse(trimmed) as TynnLiteTaskRecord);
+        out.push(JSON.parse(trimmed) as T);
       } catch {
         // Skip malformed lines — append-only logs sometimes have torn writes.
       }
     }
     return out;
+  }
+
+  private appendJsonl<T>(path: string, record: T): void {
+    this.ensureDir();
+    appendFileSync(path, `${JSON.stringify(record)}\n`, "utf-8");
+  }
+
+  private readAllRecords(): TynnLiteTaskRecord[] {
+    return this.readJsonlLines<TynnLiteTaskRecord>(this.tasksPath);
   }
 
   /** Fold the jsonl by id, last-write-wins. Returns the current task map. */
@@ -139,8 +189,7 @@ export class TynnLitePmProvider implements PmProvider {
   }
 
   private appendRecord(r: TynnLiteTaskRecord): void {
-    this.ensureDir();
-    appendFileSync(this.tasksPath, `${JSON.stringify(r)}\n`, "utf-8");
+    this.appendJsonl(this.tasksPath, r);
   }
 
   private toPmTask(r: TynnLiteTaskRecord, taskNumber: number): PmTask {
@@ -271,30 +320,74 @@ export class TynnLitePmProvider implements PmProvider {
   }
 
   // -------------------------------------------------------------------------
-  // PmProvider — methods stubbed pending follow-up cycles
+  // PmProvider — comments + updateTask + iWish (cycle 46)
+  // -------------------------------------------------------------------------
+
+  async addComment(entityType: "task" | "story" | "version", entityId: string, body: string): Promise<PmComment> {
+    const record: TynnLiteCommentRecord = {
+      id: ulid(),
+      entityType,
+      entityId,
+      body,
+      createdAt: new Date().toISOString(),
+    };
+    this.appendJsonl(this.commentsPath, record);
+    return { id: record.id, body: record.body, createdAt: record.createdAt, author: record.author };
+  }
+
+  async getComments(entityType: "task" | "story" | "version", entityId: string): Promise<PmComment[]> {
+    const records = this.readJsonlLines<TynnLiteCommentRecord>(this.commentsPath);
+    return records
+      .filter((r) => r.entityType === entityType && r.entityId === entityId)
+      .map((r) => ({ id: r.id, body: r.body, createdAt: r.createdAt, author: r.author }));
+  }
+
+  async updateTask(taskId: string, fields: Partial<Pick<PmTask, "title" | "description" | "verificationSteps" | "codeArea">>): Promise<PmTask> {
+    const folded = this.foldRecords();
+    const current = folded.get(taskId);
+    if (current === undefined) throw new Error(`tynn-lite: unknown task ${taskId}`);
+    const updated: TynnLiteTaskRecord = {
+      ...current,
+      title: fields.title ?? current.title,
+      description: fields.description ?? current.description,
+      verificationSteps: fields.verificationSteps ?? current.verificationSteps,
+      codeArea: fields.codeArea ?? current.codeArea,
+    };
+    this.appendRecord(updated);
+    const refolded = [...this.foldRecords().values()];
+    return this.toPmTask(updated, refolded.findIndex((r) => r.id === updated.id) + 1);
+  }
+
+  async iWish(input: PmIWishInput): Promise<{ id: string; title: string }> {
+    const record: TynnLiteWishRecord = {
+      id: ulid(),
+      title: input.title,
+      didnt: input.didnt,
+      when: input.when,
+      had: input.had,
+      needs: input.needs,
+      explain: input.explain,
+      priority: input.priority,
+      createdAt: new Date().toISOString(),
+    };
+    this.appendJsonl(this.wishesPath, record);
+    return { id: record.id, title: record.title };
+  }
+
+  /** Read all captured wishes (TynnLite-specific surface — wishes don't yet
+   *  appear on PmProvider since their conversion-to-task semantics aren't
+   *  generalized). Returned most-recent-first for the eventual UX surface. */
+  listWishes(): TynnLiteWishRecord[] {
+    return this.readJsonlLines<TynnLiteWishRecord>(this.wishesPath).reverse();
+  }
+
+  // -------------------------------------------------------------------------
+  // PmProvider — methods still stubbed (cycle 47+)
   // -------------------------------------------------------------------------
 
   async getStory(_idOrNumber: string | number): Promise<PmStory | null> {
     // Tynn-lite has no story concept yet — tasks group via parentId only.
     // Story support lands when the schema gains a separate stories.jsonl.
     return null;
-  }
-
-  async getComments(_entityType: "task" | "story" | "version", _entityId: string): Promise<PmComment[]> {
-    // Comments persistence (separate jsonl? embedded?) is its own design
-    // choice — deferred to a follow-up cycle.
-    return [];
-  }
-
-  async addComment(_entityType: "task" | "story" | "version", _entityId: string, _body: string): Promise<PmComment> {
-    throw new Error("tynn-lite: addComment not implemented in cycle 45 slice");
-  }
-
-  async updateTask(_taskId: string, _fields: Partial<Pick<PmTask, "title" | "description" | "verificationSteps" | "codeArea">>): Promise<PmTask> {
-    throw new Error("tynn-lite: updateTask not implemented in cycle 45 slice");
-  }
-
-  async iWish(_input: PmIWishInput): Promise<{ id: string; title: string }> {
-    throw new Error("tynn-lite: iWish not implemented in cycle 45 slice");
   }
 }

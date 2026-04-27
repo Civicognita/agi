@@ -238,24 +238,149 @@ describe("TynnLitePmProvider — providerId + getProject", () => {
   });
 });
 
-describe("TynnLitePmProvider — stubbed methods (cycle 46+ scope)", () => {
-  it("getStory always returns null", async () => {
-    expect(await provider.getStory("any-id")).toBeNull();
-  });
-
-  it("getComments always returns empty array", async () => {
+describe("TynnLitePmProvider — comments (cycle 46)", () => {
+  it("getComments returns empty array when no comments persisted", async () => {
     expect(await provider.getComments("task", "any-id")).toEqual([]);
   });
 
-  it("addComment throws (deferred to cycle 46+)", async () => {
-    await expect(provider.addComment("task", "id", "body")).rejects.toThrow(/not implemented/);
+  it("addComment writes to comments.jsonl and getComments reads back", async () => {
+    const task = await provider.createTask({ storyId: "", title: "T", description: "" });
+    const c1 = await provider.addComment("task", task.id, "first comment");
+    const c2 = await provider.addComment("task", task.id, "second comment");
+
+    const list = await provider.getComments("task", task.id);
+    expect(list).toHaveLength(2);
+    expect(list[0]?.id).toBe(c1.id);
+    expect(list[0]?.body).toBe("first comment");
+    expect(list[1]?.id).toBe(c2.id);
+    expect(list[1]?.body).toBe("second comment");
   });
 
-  it("updateTask throws (deferred to cycle 46+)", async () => {
-    await expect(provider.updateTask("id", { title: "x" })).rejects.toThrow(/not implemented/);
+  it("getComments filters by entityType + entityId (no cross-bleed)", async () => {
+    const t1 = await provider.createTask({ storyId: "", title: "T1", description: "" });
+    const t2 = await provider.createTask({ storyId: "", title: "T2", description: "" });
+    await provider.addComment("task", t1.id, "for t1");
+    await provider.addComment("task", t2.id, "for t2");
+
+    const t1Comments = await provider.getComments("task", t1.id);
+    expect(t1Comments).toHaveLength(1);
+    expect(t1Comments[0]?.body).toBe("for t1");
   });
 
-  it("iWish throws (deferred to cycle 46+)", async () => {
-    await expect(provider.iWish({ title: "wish" })).rejects.toThrow(/not implemented/);
+  it("comments survive provider restart (round-trip via fresh instance)", async () => {
+    const task = await provider.createTask({ storyId: "", title: "T", description: "" });
+    await provider.addComment("task", task.id, "persistent");
+
+    const fresh = new TynnLitePmProvider({ projectRoot, projectName: "test-project" });
+    const list = await fresh.getComments("task", task.id);
+    expect(list).toHaveLength(1);
+    expect(list[0]?.body).toBe("persistent");
+  });
+
+  it("comments.jsonl is genuinely append-only (each addComment is one new line)", async () => {
+    const task = await provider.createTask({ storyId: "", title: "T", description: "" });
+    await provider.addComment("task", task.id, "a");
+    await provider.addComment("task", task.id, "b");
+    await provider.addComment("task", task.id, "c");
+
+    const lines = readFileSync(join(projectRoot, ".tynn-lite", "comments.jsonl"), "utf-8")
+      .trim()
+      .split("\n");
+    expect(lines).toHaveLength(3);
+  });
+});
+
+describe("TynnLitePmProvider — updateTask (cycle 46)", () => {
+  it("updateTask appends a new snapshot with the patched fields", async () => {
+    const task = await provider.createTask({ storyId: "", title: "Original", description: "Old" });
+    const updated = await provider.updateTask(task.id, { title: "Renamed", description: "New" });
+
+    expect(updated.id).toBe(task.id);
+    expect(updated.title).toBe("Renamed");
+    expect(updated.description).toBe("New");
+  });
+
+  it("updateTask preserves unspecified fields", async () => {
+    const task = await provider.createTask({
+      storyId: "",
+      title: "T",
+      description: "Desc",
+      codeArea: "src/foo.ts",
+    });
+    const updated = await provider.updateTask(task.id, { title: "Renamed" });
+
+    expect(updated.title).toBe("Renamed");
+    expect(updated.description).toBe("Desc");
+    expect(updated.codeArea).toBe("src/foo.ts");
+  });
+
+  it("updateTask preserves status (does not reset to backlog)", async () => {
+    const task = await provider.createTask({ storyId: "", title: "T", description: "" });
+    await provider.setTaskStatus(task.id, "doing");
+    const updated = await provider.updateTask(task.id, { title: "Renamed" });
+
+    expect(updated.status).toBe("doing");
+  });
+
+  it("updateTask throws when the task id is unknown", async () => {
+    await expect(provider.updateTask("nonexistent", { title: "x" })).rejects.toThrow(/unknown task/);
+  });
+
+  it("updateTask appends to the same tasks.jsonl (one extra line per update)", async () => {
+    const task = await provider.createTask({ storyId: "", title: "T", description: "" });
+    await provider.updateTask(task.id, { title: "T2" });
+    await provider.updateTask(task.id, { title: "T3" });
+
+    const lines = readFileSync(join(projectRoot, ".tynn-lite", "tasks.jsonl"), "utf-8")
+      .trim()
+      .split("\n");
+    expect(lines).toHaveLength(3); // create + 2 updates
+  });
+});
+
+describe("TynnLitePmProvider — iWish (cycle 46)", () => {
+  it("iWish writes to wishes.jsonl and returns {id, title}", async () => {
+    const wish = await provider.iWish({
+      title: "Add dark mode",
+      had: "system theme detection",
+      priority: "normal",
+    });
+
+    expect(wish.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(wish.title).toBe("Add dark mode");
+    expect(existsSync(join(projectRoot, ".tynn-lite", "wishes.jsonl"))).toBe(true);
+  });
+
+  it("listWishes returns most-recent-first across restart", async () => {
+    await provider.iWish({ title: "First wish" });
+    await provider.iWish({ title: "Second wish" });
+
+    const fresh = new TynnLitePmProvider({ projectRoot, projectName: "test-project" });
+    const list = fresh.listWishes();
+    expect(list).toHaveLength(2);
+    expect(list[0]?.title).toBe("Second wish");
+    expect(list[1]?.title).toBe("First wish");
+  });
+
+  it("iWish persists all PmIWishInput fields", async () => {
+    await provider.iWish({
+      title: "Bug",
+      didnt: "rendered correctly",
+      when: "on Safari iOS",
+      priority: "high",
+    });
+    const list = provider.listWishes();
+    expect(list[0]).toMatchObject({
+      title: "Bug",
+      didnt: "rendered correctly",
+      when: "on Safari iOS",
+      priority: "high",
+    });
+  });
+});
+
+describe("TynnLitePmProvider — methods still stubbed (cycle 47+ scope)", () => {
+  it("getStory still returns null (no story concept in tynn-lite yet)", async () => {
+    expect(await provider.getStory("any-id")).toBeNull();
   });
 });
