@@ -726,6 +726,43 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // GET /api/system/runtime-mode — dashboard consults this to gate features
+  // that don't make sense in test-VM (nested test-vm spawn, contributing
+  // toggle, upgrade buttons, aionima-collection tiles). s118 redesign t122.
+  //
+  // Mode resolution order:
+  //   1. AIONIMA_RUNTIME_MODE env var — explicit override
+  //   2. AIONIMA_TEST_VM=1 env var → "test-vm"
+  //   3. hostname matches /^agi-test\b/ → "test-vm"
+  //   4. NODE_ENV === "development" → "dev"
+  //   5. otherwise → "production"
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/system/runtime-mode", async (request, reply) => {
+    if (!isPrivateNetwork(getClientIp(request.raw))) {
+      return reply.code(403).send({ error: "System API only allowed from private network" });
+    }
+    const explicit = process.env["AIONIMA_RUNTIME_MODE"];
+    let mode: "production" | "test-vm" | "dev";
+    if (explicit === "production" || explicit === "test-vm" || explicit === "dev") {
+      mode = explicit;
+    } else if (process.env["AIONIMA_TEST_VM"] === "1") {
+      mode = "test-vm";
+    } else {
+      let hostname = "";
+      try { hostname = execFileSync("hostname", [], { encoding: "utf-8", stdio: "pipe" }).trim(); } catch { /* ignore */ }
+      if (/^agi-test\b/i.test(hostname)) {
+        mode = "test-vm";
+      } else if (process.env["NODE_ENV"] === "development") {
+        mode = "dev";
+      } else {
+        mode = "production";
+      }
+    }
+    return reply.send({ mode });
+  });
+
+  // -----------------------------------------------------------------------
   // GET /api/system/connections — AGI / PRIME / workspace status (private)
   // -----------------------------------------------------------------------
 

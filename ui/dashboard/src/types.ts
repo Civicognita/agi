@@ -347,6 +347,11 @@ export interface LogSourceDefinition {
   containerPath?: string;
 }
 
+/** Runtime mode (s118 t122 / s122). Dashboard consults /api/system/runtime-mode
+ *  to hide features that don't make sense in test-VM (nested test-VM spawn,
+ *  contributing toggle, upgrade buttons, aionima-collection tiles). */
+export type RuntimeMode = "production" | "test-vm" | "dev";
+
 /** Project type definition from registry. */
 export interface ProjectTypeInfo {
   id: string;

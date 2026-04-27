@@ -7,13 +7,18 @@ import { useNavigate } from "react-router";
 import { ProjectDetail } from "@/components/ProjectDetail.js";
 import { PageScroll } from "@/components/PageScroll.js";
 import { useRootContext } from "./root.js";
+import { useIsTestVm } from "@/hooks/useRuntimeMode.js";
 import { formatSecurityFixPrompt } from "@/lib/security-fix-prompt.js";
 import type { SecurityFinding } from "@/types";
 
 export default function ProjectDetailPage() {
   const { theme, projectsHook, hostingHook, onOpenChat, onOpenChatWithMessage, onOpenEditor, projectActivity, onToolExecute, onOpenTerminal, configHook, onOpenMagicApp } = useRootContext();
   const navigate = useNavigate();
-  const contributingEnabled = Boolean(configHook.data?.dev?.enabled);
+  const isTestVm = useIsTestVm();
+  // Contributing-mode is force-disabled in test-VM (s122 t463): the test VM
+  // mounts the production source it would write into, so contributing
+  // there is recursive/destructive. Production + dev modes honor the flag.
+  const contributingEnabled = !isTestVm && Boolean(configHook.data?.dev?.enabled);
 
   const handleDelete = useCallback(async (params: { path: string; confirm: boolean }) => {
     await projectsHook.remove(params);
