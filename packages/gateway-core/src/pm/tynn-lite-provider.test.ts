@@ -1,0 +1,261 @@
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { TynnLitePmProvider } from "./tynn-lite-provider.js";
+
+let projectRoot: string;
+let provider: TynnLitePmProvider;
+
+beforeEach(() => {
+  projectRoot = join(tmpdir(), `tynn-lite-${String(Date.now())}-${String(Math.random()).slice(2)}`);
+  mkdirSync(projectRoot, { recursive: true });
+  provider = new TynnLitePmProvider({ projectRoot, projectName: "test-project" });
+});
+
+afterEach(() => {
+  rmSync(projectRoot, { recursive: true, force: true });
+});
+
+describe("TynnLitePmProvider — file layout + auto-create", () => {
+  it("does not create .tynn-lite/ at construction time (lazy)", () => {
+    expect(existsSync(join(projectRoot, ".tynn-lite"))).toBe(false);
+  });
+
+  it("auto-creates .tynn-lite/ on first write (createTask)", async () => {
+    await provider.createTask({ storyId: "", title: "First task", description: "" });
+    expect(existsSync(join(projectRoot, ".tynn-lite"))).toBe(true);
+    expect(existsSync(join(projectRoot, ".tynn-lite", "tasks.jsonl"))).toBe(true);
+  });
+
+  it("auto-creates .tynn-lite/ on first state write", () => {
+    provider.setState({ activeFocus: "story-1" });
+    expect(existsSync(join(projectRoot, ".tynn-lite", "state.json"))).toBe(true);
+  });
+});
+
+describe("TynnLitePmProvider — createTask + getTask round-trip", () => {
+  it("creates a task with backlog status and a ULID-shaped id", async () => {
+    const task = await provider.createTask({ storyId: "", title: "Probe", description: "Test" });
+    expect(task.title).toBe("Probe");
+    expect(task.description).toBe("Test");
+    expect(task.status).toBe("backlog");
+    expect(task.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+  });
+
+  it("getTask retrieves a created task by id", async () => {
+    const created = await provider.createTask({ storyId: "", title: "Probe", description: "" });
+    const retrieved = await provider.getTask(created.id);
+    expect(retrieved?.id).toBe(created.id);
+    expect(retrieved?.title).toBe("Probe");
+  });
+
+  it("getTask retrieves by number (1-indexed)", async () => {
+    await provider.createTask({ storyId: "", title: "First", description: "" });
+    const second = await provider.createTask({ storyId: "", title: "Second", description: "" });
+    const retrieved = await provider.getTask(2);
+    expect(retrieved?.id).toBe(second.id);
+    expect(retrieved?.title).toBe("Second");
+  });
+
+  it("getTask returns null for unknown id", async () => {
+    expect(await provider.getTask("01XXXXXXXXXXXXXXXXXXXXXXX9")).toBeNull();
+  });
+
+  it("createTask survives provider restart (round-trip via fresh instance)", async () => {
+    const task = await provider.createTask({ storyId: "", title: "Persists", description: "" });
+    const fresh = new TynnLitePmProvider({ projectRoot, projectName: "test-project" });
+    const retrieved = await fresh.getTask(task.id);
+    expect(retrieved?.id).toBe(task.id);
+    expect(retrieved?.title).toBe("Persists");
+  });
+});
+
+describe("TynnLitePmProvider — setTaskStatus + jsonl append-only semantics", () => {
+  it("setTaskStatus folds last-write-wins through the jsonl", async () => {
+    const task = await provider.createTask({ storyId: "", title: "Stateful", description: "" });
+    await provider.setTaskStatus(task.id, "doing");
+    await provider.setTaskStatus(task.id, "testing");
+    const retrieved = await provider.getTask(task.id);
+    expect(retrieved?.status).toBe("testing");
+  });
+
+  it("setTaskStatus stamps startedAt on first transition to doing", async () => {
+    const task = await provider.createTask({ storyId: "", title: "T", description: "" });
+    await provider.setTaskStatus(task.id, "doing");
+    const folded = readFileSync(join(projectRoot, ".tynn-lite", "tasks.jsonl"), "utf-8");
+    const lastLine = folded.trim().split("\n").pop()!;
+    const parsed = JSON.parse(lastLine) as { status: string; startedAt: string | null };
+    expect(parsed.status).toBe("doing");
+    expect(parsed.startedAt).not.toBeNull();
+  });
+
+  it("setTaskStatus stamps finishedAt on transition to finished", async () => {
+    const task = await provider.createTask({ storyId: "", title: "T", description: "" });
+    await provider.setTaskStatus(task.id, "doing");
+    await provider.setTaskStatus(task.id, "testing");
+    await provider.setTaskStatus(task.id, "finished");
+    const folded = readFileSync(join(projectRoot, ".tynn-lite", "tasks.jsonl"), "utf-8");
+    const lastLine = folded.trim().split("\n").pop()!;
+    const parsed = JSON.parse(lastLine) as { status: string; finishedAt: string | null };
+    expect(parsed.status).toBe("finished");
+    expect(parsed.finishedAt).not.toBeNull();
+  });
+
+  it("jsonl is genuinely append-only (each transition produces a new line)", async () => {
+    const task = await provider.createTask({ storyId: "", title: "T", description: "" });
+    await provider.setTaskStatus(task.id, "doing");
+    await provider.setTaskStatus(task.id, "testing");
+    const lines = readFileSync(join(projectRoot, ".tynn-lite", "tasks.jsonl"), "utf-8")
+      .trim()
+      .split("\n");
+    expect(lines.length).toBe(3);
+  });
+
+  it("setTaskStatus throws when the task id is unknown", async () => {
+    await expect(provider.setTaskStatus("nonexistent", "doing")).rejects.toThrow(/unknown task/);
+  });
+
+  it("startedAt is preserved across subsequent transitions (only stamped once)", async () => {
+    const task = await provider.createTask({ storyId: "", title: "T", description: "" });
+    await provider.setTaskStatus(task.id, "doing");
+    const firstStartedAt = JSON.parse(readFileSync(join(projectRoot, ".tynn-lite", "tasks.jsonl"), "utf-8").trim().split("\n").pop()!).startedAt as string;
+    await new Promise((r) => setTimeout(r, 5));
+    await provider.setTaskStatus(task.id, "testing");
+    const laterStartedAt = JSON.parse(readFileSync(join(projectRoot, ".tynn-lite", "tasks.jsonl"), "utf-8").trim().split("\n").pop()!).startedAt as string;
+    expect(laterStartedAt).toBe(firstStartedAt);
+  });
+});
+
+describe("TynnLitePmProvider — getNext + findTasks + filtering", () => {
+  it("getNext returns all non-archived tasks", async () => {
+    await provider.createTask({ storyId: "", title: "A", description: "" });
+    await provider.createTask({ storyId: "", title: "B", description: "" });
+    const next = await provider.getNext();
+    expect(next.tasks).toHaveLength(2);
+    expect(next.version).toBeNull();
+    expect(next.topStory).toBeNull();
+  });
+
+  it("getNext omits archived tasks", async () => {
+    const t1 = await provider.createTask({ storyId: "", title: "A", description: "" });
+    await provider.createTask({ storyId: "", title: "B", description: "" });
+    await provider.setTaskStatus(t1.id, "archived");
+    const next = await provider.getNext();
+    expect(next.tasks).toHaveLength(1);
+    expect(next.tasks[0]?.title).toBe("B");
+  });
+
+  it("findTasks filters by status", async () => {
+    const t1 = await provider.createTask({ storyId: "", title: "A", description: "" });
+    await provider.createTask({ storyId: "", title: "B", description: "" });
+    await provider.setTaskStatus(t1.id, "doing");
+    const doingOnly = await provider.findTasks({ status: "doing" });
+    expect(doingOnly).toHaveLength(1);
+    expect(doingOnly[0]?.title).toBe("A");
+  });
+
+  it("findTasks filters by storyId (parentId)", async () => {
+    await provider.createTask({ storyId: "story-1", title: "A", description: "" });
+    await provider.createTask({ storyId: "story-2", title: "B", description: "" });
+    const story1Tasks = await provider.findTasks({ storyId: "story-1" });
+    expect(story1Tasks).toHaveLength(1);
+    expect(story1Tasks[0]?.title).toBe("A");
+  });
+
+  it("findTasks respects limit", async () => {
+    for (let i = 0; i < 5; i += 1) {
+      await provider.createTask({ storyId: "", title: `T${String(i)}`, description: "" });
+    }
+    const limited = await provider.findTasks({ limit: 2 });
+    expect(limited).toHaveLength(2);
+  });
+});
+
+describe("TynnLitePmProvider — state.json round-trip + restart survival", () => {
+  it("getState returns EMPTY_STATE when state.json is missing", () => {
+    const state = provider.getState();
+    expect(state).toEqual({ activeFocus: null, nextPick: null, lastIterationCommit: null });
+  });
+
+  it("setState writes atomically and getState reads back", () => {
+    provider.setState({ activeFocus: "story-7", nextPick: "task-42" });
+    expect(provider.getState()).toEqual({
+      activeFocus: "story-7",
+      nextPick: "task-42",
+      lastIterationCommit: null,
+    });
+  });
+
+  it("setState preserves unspecified fields", () => {
+    provider.setState({ activeFocus: "story-7" });
+    provider.setState({ nextPick: "task-42" });
+    expect(provider.getState()).toEqual({
+      activeFocus: "story-7",
+      nextPick: "task-42",
+      lastIterationCommit: null,
+    });
+  });
+
+  it("state.json survives provider restart", () => {
+    provider.setState({ activeFocus: "story-7", lastIterationCommit: "abc1234" });
+    const fresh = new TynnLitePmProvider({ projectRoot, projectName: "test-project" });
+    expect(fresh.getState()).toEqual({
+      activeFocus: "story-7",
+      nextPick: null,
+      lastIterationCommit: "abc1234",
+    });
+  });
+
+  it("setState writes via .tmp + rename (atomic — never leaves a partial state.json)", () => {
+    provider.setState({ activeFocus: "story-7" });
+    expect(existsSync(join(projectRoot, ".tynn-lite", "state.json.tmp"))).toBe(false);
+    expect(existsSync(join(projectRoot, ".tynn-lite", "state.json"))).toBe(true);
+  });
+
+  it("getState returns EMPTY_STATE on malformed state.json (no throw)", () => {
+    mkdirSync(join(projectRoot, ".tynn-lite"), { recursive: true });
+    const malformedPath = join(projectRoot, ".tynn-lite", "state.json");
+    writeFileSync(malformedPath, "{ this is not valid JSON", "utf-8");
+    expect(provider.getState()).toEqual({ activeFocus: null, nextPick: null, lastIterationCommit: null });
+  });
+});
+
+describe("TynnLitePmProvider — providerId + getProject", () => {
+  it("providerId is 'tynn-lite' (matches PmProvider contract)", () => {
+    expect(provider.providerId).toBe("tynn-lite");
+  });
+
+  it("getProject returns the configured projectName", async () => {
+    const project = await provider.getProject();
+    expect(project.name).toBe("test-project");
+  });
+
+  it("getProject defaults projectName to the project root basename when omitted", async () => {
+    const fresh = new TynnLitePmProvider({ projectRoot });
+    const project = await fresh.getProject();
+    expect(project.name).toBe(projectRoot.split("/").pop());
+  });
+});
+
+describe("TynnLitePmProvider — stubbed methods (cycle 46+ scope)", () => {
+  it("getStory always returns null", async () => {
+    expect(await provider.getStory("any-id")).toBeNull();
+  });
+
+  it("getComments always returns empty array", async () => {
+    expect(await provider.getComments("task", "any-id")).toEqual([]);
+  });
+
+  it("addComment throws (deferred to cycle 46+)", async () => {
+    await expect(provider.addComment("task", "id", "body")).rejects.toThrow(/not implemented/);
+  });
+
+  it("updateTask throws (deferred to cycle 46+)", async () => {
+    await expect(provider.updateTask("id", { title: "x" })).rejects.toThrow(/not implemented/);
+  });
+
+  it("iWish throws (deferred to cycle 46+)", async () => {
+    await expect(provider.iWish({ title: "wish" })).rejects.toThrow(/not implemented/);
+  });
+});
