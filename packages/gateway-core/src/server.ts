@@ -128,6 +128,8 @@ import { projectConfigPath } from "./project-config-path.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
+import { listProjectsWithConfig } from "./iterative-work/list-projects.js";
+import { projectSlug } from "./project-config-path.js";
 import { SystemConfigService } from "./system-config-service.js";
 import { createProjectTypeRegistry } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
@@ -726,11 +728,15 @@ export async function startGatewayServer(
     ? new SystemConfigService({ configPath: opts.configPath, logger })
     : null;
 
-  // Iterative-work scheduler — instantiated inert in this slice (no
-  // enumeration, no auto-start). The fire→AgentInvoker wiring + project
-  // enumeration land in the follow-up cycle (s118 t436 cycle 39+).
+  // Iterative-work scheduler — walks workspace projects each tick, decides
+  // who's due based on their iterativeWork.cron config, emits fire events.
+  // The fire→AgentInvoker handler is installed below (after agentInvoker
+  // exists). Auto-start happens at the same site so the scheduler is live
+  // for any project that already has iterativeWork.enabled in its
+  // project.json — adding/removing the flag hot-reloads on the next tick.
   const iterativeWorkScheduler = new IterativeWorkScheduler({
     projectConfigManager,
+    listProjectPaths: () => listProjectsWithConfig(projectPaths),
     logger,
   });
 
@@ -881,6 +887,54 @@ export async function startGatewayServer(
       return router?.costMode ?? "balanced";
     },
   });
+
+  // -------------------------------------------------------------------------
+  // Step 5a2: Iterative-work fire handler — closes the autonomy loop
+  // -------------------------------------------------------------------------
+  // When the scheduler decides a project is due, this handler resolves the
+  // $ITERATIVE-WORK system entity, builds a synthetic tick prompt, and routes
+  // it through agentInvoker.process() with projectContext set. The system
+  // prompt assembler (cycle 37 wiring) sees iterativeWork.enabled === true
+  // for this project and injects agi/prompts/iterative-work.md into Aion's
+  // context — Aion then participates in the tynn workflow on the project's
+  // behalf. markComplete is called in finally so a failed invocation still
+  // releases the in-flight slot for the next due tick.
+  //
+  // Pattern mirrors heartbeat.ts (channel: "system", synthetic coa, unique
+  // queueMessageId) — same "system-invoked agent call" shape.
+  const ITERATIVE_WORK_TICK_PROMPT = "[iterative-work tick] Continue your work on this project per the iterative-work discipline. First action: consume prior markers (don't re-derive). Then pick the highest-priority READY task and ship a slice. End-of-cycle: report Show-Stoppers / Drift / Clarity counts.";
+
+  iterativeWorkScheduler.on("fire", (fire) => {
+    void (async () => {
+      try {
+        const slug = projectSlug(fire.projectPath);
+        const systemEntity = await entityStore.resolveOrCreate(
+          "system",
+          "$ITERATIVE-WORK",
+          "Iterative Work System",
+        );
+        const coaFingerprint = `${resourceId}.${systemEntity.coaAlias}.${nodeId}.iterative-work(${slug})`;
+        log.info(`iterative-work fire: ${fire.projectPath} (cron=${fire.cron})`);
+        await agentInvoker.process({
+          entity: systemEntity,
+          channel: "system",
+          content: ITERATIVE_WORK_TICK_PROMPT,
+          coaFingerprint,
+          queueMessageId: `iter-work-${slug}-${String(fire.firedAt.getTime())}`,
+          projectContext: fire.projectPath,
+          isOwner: true,
+        });
+      } catch (err) {
+        log.error(
+          `iterative-work fire failed for ${fire.projectPath}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      } finally {
+        iterativeWorkScheduler.markComplete(fire.projectPath);
+      }
+    })();
+  });
+
+  iterativeWorkScheduler.start();
 
   // -------------------------------------------------------------------------
   // Step 5b-workers: Worker Runtime + Reports Store
