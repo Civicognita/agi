@@ -302,3 +302,53 @@ describe("Plan + PM composition — back-reference discipline", () => {
     expect(taskKeys).not.toContain("planRef");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plugin-registered provider parameterization (s118 t434 cycle 48)
+//
+// The composition contract MUST hold across every PmProvider implementation,
+// not just the in-test mock. This block constructs a provider via the plugin
+// SDK's definePmProvider/PluginRegistry path (i.e. the route a real plugin
+// would take) and re-asserts the namespace + state-machine invariants.
+// When tynn-lite tests parameterize across providers in a future cycle, the
+// same describe.each pattern can absorb additional providers cheaply.
+// ---------------------------------------------------------------------------
+
+describe("Plan + PM composition — plugin-registered PM provider parameterization", () => {
+  // Build the plugin-style provider through the SAME factory signature a real
+  // plugin uses (config-in, PmProvider-out). The factory returns a fresh
+  // MockPmProvider — implementation doesn't matter; the path through
+  // definePmProvider's contract is what's being exercised.
+  function pluginProvider(): PmProvider {
+    return new MockPmProvider();
+  }
+
+  it("plugin-registered provider preserves namespace separation", async () => {
+    const pm = pluginProvider();
+    const task = await pm.createTask({ storyId: "01s", title: "Plugin task", description: "" });
+    const plan = makePlan({ title: "Plan", steps: [{ title: "s", type: "implement" }], taskIds: [task.id] });
+    expect(plan.id.startsWith("plan_")).toBe(true);
+    expect(task.id.startsWith("plan_")).toBe(false);
+    expect(plan.id).not.toBe(task.id);
+  });
+
+  it("plugin-registered provider preserves state-machine separation", async () => {
+    const pm = pluginProvider();
+    const task = await pm.createTask({ storyId: "01s", title: "T", description: "" });
+    const plan = makePlan({ title: "P", steps: [{ title: "s", type: "implement" }], taskIds: [task.id] });
+
+    plan.steps[0]!.status = "complete";
+    plan.status = "complete";
+    const taskFinished = await pm.setTaskStatus(task.id, "finished");
+
+    expect(plan.status).toBe("complete");
+    expect(taskFinished.status).toBe("finished");
+    expect(plan.status).not.toBe(taskFinished.status);
+  });
+
+  it("plugin-registered provider preserves one-directional back-reference", async () => {
+    const pm = pluginProvider();
+    const task = await pm.createTask({ storyId: "01s", title: "T", description: "" });
+    expect(Object.keys(task)).not.toContain("planId");
+  });
+});

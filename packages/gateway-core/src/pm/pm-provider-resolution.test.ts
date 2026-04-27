@@ -88,4 +88,10 @@ describe("PluginRegistry — PM provider storage (s118 t434)", () => {
     looked!.factory({ apiKey: "k", teamId: "t" });
     expect(received).toEqual({ apiKey: "k", teamId: "t" });
   });
+
+  it("getPluginProvides labels a plugin that registered a PM provider as 'pm-providers'", () => {
+    registry.addPmProvider("plugin-a", makeMockDef("linear", "Linear"));
+    const labels = registry.getPluginProvides("plugin-a");
+    expect(labels).toContain("pm-providers");
+  });
 });

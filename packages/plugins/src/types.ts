@@ -35,7 +35,7 @@ export type ProvidesLabel =
   | "project-types" | "stacks" | "services" | "runtimes"
   | "system-services" | "ux" | "agent-tools" | "skills"
   | "knowledge" | "themes" | "workflows" | "channels"
-  | "providers" | "security" | "workers";
+  | "providers" | "pm-providers" | "security" | "workers";
 
 /**
  * Map a legacy category string to provides labels for backward compatibility.

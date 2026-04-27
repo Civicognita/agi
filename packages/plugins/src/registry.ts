@@ -652,6 +652,7 @@ export class PluginRegistry {
     for (const s of this.stacks) { if (s.pluginId === pluginId) labels.add("stacks"); }
     for (const c of this.channels) { if (c.pluginId === pluginId) labels.add("channels"); }
     for (const p of this.providers) { if (p.pluginId === pluginId) labels.add("providers"); }
+    for (const p of this.pmProviders) { if (p.pluginId === pluginId) labels.add("pm-providers"); }
     for (const sp of this.scanProviders) { if (sp.pluginId === pluginId) labels.add("security"); }
     for (const w of this.workers) { if (w.pluginId === pluginId) labels.add("workers"); }
 

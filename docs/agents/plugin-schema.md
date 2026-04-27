@@ -61,6 +61,7 @@ The `AionimaPluginAPI` interface (`packages/plugins/src/types.ts:517`) exposes t
 | `registerHttpRoute()` | `RouteHandler` | — |
 | `registerChannel()` | `AionimaChannelPlugin` | `defineChannel()` |
 | `registerProvider()` | `LLMProviderDefinition` | `defineProvider()` |
+| `registerPmProvider()` | `PmProviderDefinition` | `definePmProvider()` |
 | `registerDashboardPage()` | `DashboardInterfacePageDefinition` | — |
 | `registerDashboardDomain()` | `DashboardInterfaceDomainDefinition` | — |
 | `registerSubdomainRoute()` | `SubdomainRouteDefinition` | — |
