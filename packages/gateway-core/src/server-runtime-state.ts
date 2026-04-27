@@ -1627,6 +1627,35 @@ export async function createGatewayRuntimeState(
   // dashboard's two-tone bar.
   // -----------------------------------------------------------------------
 
+  // -----------------------------------------------------------------------
+  // GET /api/loop/progress — system-wide progress bar feed (s120 t453).
+  //
+  // Single source of truth for both terminal statusline (via file mirror)
+  // and chat UI (via API). Returns { finished, qa, total, scopeLabel }
+  // for the iterative-work loop's TARGET version. When PmProvider doesn't
+  // expose getActiveFocusProgress, returns 503 — consumers gracefully hide.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/loop/progress", async (request, reply) => {
+    if (!isPrivateNetwork(getClientIp(request.raw))) {
+      return reply.code(403).send({ error: "Loop API only allowed from private network" });
+    }
+    if (!deps.pmProvider || deps.pmProvider.getActiveFocusProgress === undefined) {
+      return reply.code(503).send({ error: "PM provider doesn't expose progress" });
+    }
+    try {
+      const progress = await deps.pmProvider.getActiveFocusProgress();
+      return reply.send({
+        finished: progress.doneTasks,
+        qa: progress.qaTasks,
+        total: progress.totalTasks,
+        scopeLabel: "v0.4.0",
+      });
+    } catch (err) {
+      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   fastify.get("/api/projects/iterative-work/progress", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) {
