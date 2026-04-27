@@ -111,16 +111,21 @@ test.describe("Iterative Work tab", () => {
     await page.getByRole("tab", { name: /Iterative Work/i }).click();
     await expect(page.getByTestId("iterative-work-tab")).toBeVisible({ timeout: 10_000 });
 
+    // Wait for the initial /status refresh to settle — otherwise it may
+    // overwrite the toggle state set by check() below.
+    await page.waitForResponse((r) => r.url().includes("/api/projects/iterative-work/status"), { timeout: 10_000 }).catch(() => undefined);
+    await page.waitForLoadState("networkidle").catch(() => undefined);
+
     // Enable + pick cadence + save.
     const toggle = page.getByTestId("iterative-work-toggle");
-    if (!(await toggle.isChecked())) {
-      await toggle.check();
-    }
+    await toggle.check();
+    await expect(toggle).toBeChecked();
     await page.getByTestId("iterative-work-cadence").selectOption("30m");
     await page.getByTestId("iterative-work-save").click();
 
-    // Wait for the save to round-trip — saving disables the button, then re-enables.
-    await expect(page.getByTestId("iterative-work-save")).toBeEnabled({ timeout: 15_000 });
+    // Wait for the PUT to land on the wire and refresh to complete.
+    await page.waitForResponse((r) => r.url().includes("/api/projects/iterative-work/config") && r.request().method() === "PUT", { timeout: 15_000 });
+    await page.waitForLoadState("networkidle").catch(() => undefined);
 
     // Verify backend state via API.
     const res = await request.get(`/api/projects/iterative-work/status?path=${encodeURIComponent(eligible!.path)}`);
