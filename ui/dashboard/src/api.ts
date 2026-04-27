@@ -201,6 +201,39 @@ export async function deleteProject(params: { path: string; confirm: boolean }):
   return res.json() as Promise<{ ok: boolean }>;
 }
 
+export interface IterativeWorkProjectStatus {
+  enabled: boolean;
+  cron: string | null;
+  inFlight: boolean;
+  lastFiredAt: string | null;
+  nextFireAt: string | null;
+}
+
+export async function fetchIterativeWorkStatus(projectPath: string): Promise<IterativeWorkProjectStatus> {
+  const res = await fetch(`/api/projects/iterative-work/status?path=${encodeURIComponent(projectPath)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<IterativeWorkProjectStatus>;
+}
+
+export async function updateIterativeWorkConfig(params: {
+  path: string;
+  iterativeWork: { enabled?: boolean; cron?: string };
+}): Promise<{ ok: boolean; iterativeWork: { enabled?: boolean; cron?: string } | null }> {
+  const res = await fetch("/api/projects/iterative-work/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean; iterativeWork: { enabled?: boolean; cron?: string } | null }>;
+}
+
 export async function execGitAction<T extends GitActionResult = GitActionResult>(
   path: string,
   action: GitAction,
