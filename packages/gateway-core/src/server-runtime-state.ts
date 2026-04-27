@@ -63,6 +63,13 @@ import type { FederationRouter as FedRouter } from "./federation-router.js";
 import { appendUpgradeLog, clearUpgradeLog, getUpgradeLog } from "./upgrade-log.js";
 import { projectConfigPath } from "./project-config-path.js";
 import type { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
+import { cadenceToStaggeredCron } from "./iterative-work/cron.js";
+import {
+  ITERATIVE_WORK_ELIGIBLE_CATEGORIES,
+  cadenceOptionsFor,
+  type IterativeWorkCadence,
+  type ProjectCategory,
+} from "./project-types.js";
 import type { ProjectConfigManager } from "./project-config-manager.js";
 import type { PmProvider } from "@agi/sdk";
 
@@ -1429,8 +1436,19 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
-  // PUT /api/projects/iterative-work/config — set per-project IW toggle/cron
-  // (private network only). Body: { path: string, iterativeWork: { enabled?, cron? } }.
+  // PUT /api/projects/iterative-work/config — set per-project IW config
+  // (private network only). Body: { path: string, iterativeWork: { enabled?,
+  //   cadence?, cron? } }.
+  //
+  // s118 redesign 2026-04-27 (t442 D1): when `cadence` is provided, the cron
+  // expression is auto-computed via cadenceToStaggeredCron(cadence, path) so
+  // project loops with the same cadence don't all fire at the same minute.
+  // Legacy callers still passing `cron` directly continue working.
+  //
+  // Eligibility: if project.category is set + not in
+  // ITERATIVE_WORK_ELIGIBLE_CATEGORIES, return 403. If cadence is set and
+  // not in cadenceOptionsFor(category), return 400.
+  //
   // Hot-reloads — the scheduler picks up the new config on its next tick.
   // -----------------------------------------------------------------------
 
@@ -1443,7 +1461,10 @@ export async function createGatewayRuntimeState(
       return reply.code(503).send({ error: "Project config manager not available" });
     }
     const projectDirs = deps.workspaceProjects ?? [];
-    const body = request.body as { path?: string; iterativeWork?: { enabled?: boolean; cron?: string } } | undefined;
+    const body = request.body as {
+      path?: string;
+      iterativeWork?: { enabled?: boolean; cadence?: string; cron?: string };
+    } | undefined;
     if (!body?.path) {
       return reply.code(400).send({ error: "body.path is required" });
     }
@@ -1458,8 +1479,48 @@ export async function createGatewayRuntimeState(
     if (!existsSync(projectConfigPath(targetPath))) {
       return reply.code(404).send({ error: "Project has no project.json — create one first" });
     }
+
+    // Read current config to access category for eligibility + cadence validation.
+    let projectCategory: ProjectCategory | undefined;
     try {
-      const updated = await deps.projectConfigManager.update(targetPath, { iterativeWork: body.iterativeWork });
+      const cur = await deps.projectConfigManager.read(targetPath);
+      projectCategory = cur?.category;
+    } catch {
+      /* fall through — read errors get caught by update() below */
+    }
+
+    // Eligibility gate (D4): non-eligible categories return 403.
+    if (projectCategory !== undefined && !ITERATIVE_WORK_ELIGIBLE_CATEGORIES.has(projectCategory)) {
+      return reply.code(403).send({
+        error: `Project category "${projectCategory}" is not eligible for iterative-work. Eligible: web/app/ops/administration.`,
+      });
+    }
+
+    // Build the persisted iterativeWork object.
+    const iw: { enabled?: boolean; cadence?: IterativeWorkCadence; cron?: string } = {};
+    if (body.iterativeWork.enabled !== undefined) iw.enabled = body.iterativeWork.enabled;
+
+    if (body.iterativeWork.cadence !== undefined) {
+      const cadence = body.iterativeWork.cadence as IterativeWorkCadence;
+      // Validate cadence is in the type-aware option set for this category.
+      if (projectCategory !== undefined) {
+        const opts = cadenceOptionsFor(projectCategory);
+        if (!opts.includes(cadence)) {
+          return reply.code(400).send({
+            error: `Cadence "${cadence}" is not available for category "${projectCategory}". Allowed: ${opts.join(", ")}.`,
+          });
+        }
+      }
+      iw.cadence = cadence;
+      // Auto-compute the staggered cron (D3).
+      iw.cron = cadenceToStaggeredCron(cadence, targetPath);
+    } else if (body.iterativeWork.cron !== undefined) {
+      // Legacy passthrough — caller manually set a cron expression. Preserve.
+      iw.cron = body.iterativeWork.cron;
+    }
+
+    try {
+      const updated = await deps.projectConfigManager.update(targetPath, { iterativeWork: iw });
       return reply.send({ ok: true, iterativeWork: updated.iterativeWork ?? null });
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
