@@ -26,7 +26,7 @@ import type { ProjectConfigManager } from "../project-config-manager.js";
 import { createComponentLogger } from "../logger.js";
 import type { Logger, ComponentLogger } from "../logger.js";
 import { nextFireAfter } from "./cron.js";
-import type { IterativeWorkFire, IterativeWorkProjectStatus, IterativeWorkSchedulerEvents } from "./types.js";
+import type { IterativeWorkFire, IterativeWorkLogEntry, IterativeWorkProjectStatus, IterativeWorkSchedulerEvents } from "./types.js";
 
 export interface IterativeWorkSchedulerDeps {
   projectConfigManager: ProjectConfigManager;
@@ -39,11 +39,14 @@ export interface IterativeWorkSchedulerDeps {
   listProjectPaths?: () => string[];
   /** Custom tick interval; default 30000ms (30s). Lower bound 1000ms. */
   tickIntervalMs?: number;
+  /** Max entries kept per project in the in-memory iteration log; default 50. */
+  logBufferSize?: number;
   logger?: Logger;
 }
 
 const DEFAULT_TICK_MS = 30_000;
 const MIN_TICK_MS = 1_000;
+const DEFAULT_LOG_BUFFER = 50;
 
 export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerEvents> {
   private timer?: ReturnType<typeof setInterval>;
@@ -51,12 +54,18 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
   private readonly lastFiredAt = new Map<string, Date>();
   private readonly log: ComponentLogger;
   private readonly tickIntervalMs: number;
+  private readonly logBufferSize: number;
+  /** Per-project ring buffer of iteration log entries (most recent first). */
+  private readonly iterationLog = new Map<string, IterativeWorkLogEntry[]>();
+  /** Per-project timestamp of the in-flight fire, used to compute durationMs at completion. */
+  private readonly inFlightStartedAt = new Map<string, Date>();
 
   constructor(private readonly deps: IterativeWorkSchedulerDeps) {
     super();
     this.log = createComponentLogger(deps.logger, "iterative-work-scheduler");
     const requested = deps.tickIntervalMs ?? DEFAULT_TICK_MS;
     this.tickIntervalMs = Math.max(MIN_TICK_MS, requested);
+    this.logBufferSize = Math.max(1, deps.logBufferSize ?? DEFAULT_LOG_BUFFER);
   }
 
   /** Begin periodic ticking. Calling start twice is a no-op. */
@@ -74,6 +83,7 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
     clearInterval(this.timer);
     this.timer = undefined;
     this.inFlight.clear();
+    this.inFlightStartedAt.clear();
     this.log.info("scheduler stopped");
   }
 
@@ -84,6 +94,42 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
    */
   markComplete(projectPath: string): void {
     this.inFlight.delete(projectPath);
+    this.inFlightStartedAt.delete(projectPath);
+  }
+
+  /**
+   * Record the terminal status of an in-flight iteration into the per-project
+   * ring buffer. Called by the fire-event consumer alongside markComplete.
+   * The `error` field is captured for status === "error" only. The buffer
+   * mutates the most-recent (head) entry — the running entry pushed by tick()
+   * — so callers don't need to thread an entry-id through their try/catch.
+   * If no running entry exists for the project (e.g. recordCompletion called
+   * twice or out-of-order), the call is a no-op.
+   */
+  recordCompletion(projectPath: string, outcome: { status: "done" | "error"; error?: string; now?: Date }): void {
+    const buffer = this.iterationLog.get(projectPath);
+    if (buffer === undefined || buffer.length === 0) return;
+    const head = buffer[0];
+    if (head === undefined || head.status !== "running") return;
+    const now = outcome.now ?? new Date();
+    const startedAt = this.inFlightStartedAt.get(projectPath);
+    head.completedAt = now.toISOString();
+    head.durationMs = startedAt !== undefined ? now.getTime() - startedAt.getTime() : null;
+    head.status = outcome.status;
+    if (outcome.status === "error" && outcome.error !== undefined) {
+      head.error = outcome.error;
+    }
+  }
+
+  /**
+   * Read-only snapshot of the per-project iteration log, most-recent-first.
+   * `limit` defaults to the full buffer; values larger than the buffer are
+   * silently capped. Empty array when the project has never fired.
+   */
+  getLog(projectPath: string, limit?: number): IterativeWorkLogEntry[] {
+    const buffer = this.iterationLog.get(projectPath) ?? [];
+    if (limit === undefined) return [...buffer];
+    return buffer.slice(0, Math.max(0, limit));
   }
 
   /**
@@ -115,7 +161,22 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
         cron: iw.cron,
       };
       this.inFlight.add(projectPath);
+      this.inFlightStartedAt.set(projectPath, now);
       this.lastFiredAt.set(projectPath, now);
+      // Push a "running" entry to the per-project ring buffer. recordCompletion
+      // mutates this head entry when the consumer reports status; until then
+      // the log surface shows the in-flight iteration as running.
+      const buffer = this.iterationLog.get(projectPath) ?? [];
+      const entry: IterativeWorkLogEntry = {
+        firedAt: now.toISOString(),
+        completedAt: null,
+        durationMs: null,
+        status: "running",
+        cron: iw.cron,
+      };
+      buffer.unshift(entry);
+      while (buffer.length > this.logBufferSize) buffer.pop();
+      this.iterationLog.set(projectPath, buffer);
       this.log.info(`fire: ${projectPath} (cron=${iw.cron})`);
       this.emit("fire", fire);
     }

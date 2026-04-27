@@ -1462,6 +1462,45 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // GET /api/projects/iterative-work/log — per-project iteration log
+  // (private network only). Query: ?path=<projectPath>&limit=<N>.
+  // Returns the in-memory ring buffer (most-recent-first). Buffer is reset
+  // on gateway restart — persistence lands when storage choice is owner-blessed.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/projects/iterative-work/log", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    if (!deps.iterativeWorkScheduler) {
+      return reply.code(503).send({ error: "Iterative-work scheduler not available" });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    if (!pathParam) {
+      return reply.code(400).send({ error: "path query parameter is required" });
+    }
+    const targetPath = resolvePath(pathParam);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const rawLimit = query["limit"];
+    let limit: number | undefined;
+    if (rawLimit !== undefined) {
+      const parsed = Number.parseInt(rawLimit, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return reply.code(400).send({ error: "limit must be a positive integer" });
+      }
+      limit = parsed;
+    }
+    const entries = deps.iterativeWorkScheduler.getLog(targetPath, limit);
+    return reply.send({ entries });
+  });
+
+  // -----------------------------------------------------------------------
   // POST /api/projects/git — git actions for a workspace project (private network only)
   // -----------------------------------------------------------------------
 

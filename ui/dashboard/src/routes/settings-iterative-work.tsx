@@ -25,13 +25,17 @@ import { Card } from "@/components/ui/card";
 import {
   fetchProjects,
   fetchIterativeWorkStatus,
+  fetchIterativeWorkLog,
   updateIterativeWorkConfig,
   type ProjectInfo,
   type IterativeWorkProjectStatus,
+  type IterativeWorkLogEntry,
 } from "@/api.js";
 
 interface RowState {
   status: IterativeWorkProjectStatus | null;
+  log: IterativeWorkLogEntry[];
+  filter: "all" | "errors";
   loading: boolean;
   error: string | null;
   pending: boolean;
@@ -41,11 +45,33 @@ interface RowState {
 function emptyRowState(): RowState {
   return {
     status: null,
+    log: [],
+    filter: "all",
     loading: true,
     error: null,
     pending: false,
     cronDraft: "",
   };
+}
+
+function formatDuration(ms: number | null): string {
+  if (ms === null) return "—";
+  if (ms < 1000) return `${String(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${(ms / 60_000).toFixed(1)}m`;
+}
+
+function LogStatusBadge({ status }: { status: IterativeWorkLogEntry["status"] }) {
+  const colorClass = {
+    running: "bg-amber-500/15 text-amber-400",
+    done: "bg-emerald-500/15 text-emerald-400",
+    error: "bg-rose-500/15 text-rose-400",
+  }[status];
+  return (
+    <span className={`text-[9.5px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${colorClass}`}>
+      {status}
+    </span>
+  );
 }
 
 function formatRelative(iso: string | null): string {
@@ -83,22 +109,29 @@ function ProjectRow({ project }: { project: ProjectInfo }) {
   const refresh = useCallback(async () => {
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
-      const status = await fetchIterativeWorkStatus(project.path);
-      setState({
+      const [status, log] = await Promise.all([
+        fetchIterativeWorkStatus(project.path),
+        fetchIterativeWorkLog(project.path, 20).catch(() => [] as IterativeWorkLogEntry[]),
+      ]);
+      setState((s) => ({
+        ...s,
         status,
+        log,
         loading: false,
         error: null,
         pending: false,
         cronDraft: status.cron ?? "",
-      });
+      }));
     } catch (err) {
-      setState({
+      setState((s) => ({
+        ...s,
         status: null,
+        log: [],
         loading: false,
         error: err instanceof Error ? err.message : String(err),
         pending: false,
         cronDraft: "",
-      });
+      }));
     }
   }, [project.path]);
 
@@ -178,6 +211,66 @@ function ProjectRow({ project }: { project: ProjectInfo }) {
             <div>
               <span className="text-foreground/70">Next fire:</span> {formatRelative(state.status.nextFireAt)}
             </div>
+          </div>
+
+          <div className="pt-2 border-t border-border/50">
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="text-[11px] font-semibold text-foreground/70 uppercase tracking-wider">Recent fires</div>
+              <div className="flex gap-1 text-[10px]">
+                <button
+                  type="button"
+                  className={`px-1.5 py-0.5 rounded ${state.filter === "all" ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => setState((s) => ({ ...s, filter: "all" }))}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  className={`px-1.5 py-0.5 rounded ${state.filter === "errors" ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                  onClick={() => setState((s) => ({ ...s, filter: "errors" }))}
+                >
+                  Errors only
+                </button>
+                <button
+                  type="button"
+                  className="px-1.5 py-0.5 rounded text-muted-foreground hover:text-foreground"
+                  onClick={() => void refresh()}
+                  disabled={state.pending || state.loading}
+                >
+                  ↻
+                </button>
+              </div>
+            </div>
+            {state.log.length === 0 ? (
+              <div className="text-[11px] text-muted-foreground italic">
+                No fires recorded yet. {state.status.enabled && state.status.cron !== null
+                  ? `Next fire ${formatRelative(state.status.nextFireAt).toLowerCase()}.`
+                  : "Enable iterative-work + set a cron above to start."}
+              </div>
+            ) : (
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {state.log
+                  .filter((e) => state.filter !== "errors" || e.status === "error")
+                  .map((entry) => (
+                    <div
+                      key={entry.firedAt}
+                      className="flex items-center gap-2 text-[11px] py-1 px-2 rounded bg-card/50"
+                      title={entry.error}
+                    >
+                      <LogStatusBadge status={entry.status} />
+                      <span className="font-mono text-muted-foreground tabular-nums">{formatRelative(entry.firedAt)}</span>
+                      <span className="text-muted-foreground">·</span>
+                      <span className="text-muted-foreground">{formatDuration(entry.durationMs)}</span>
+                      {entry.error !== undefined && (
+                        <span className="text-rose-400 truncate flex-1">{entry.error}</span>
+                      )}
+                    </div>
+                  ))}
+                {state.filter === "errors" && state.log.every((e) => e.status !== "error") && (
+                  <div className="text-[11px] text-muted-foreground italic">No errors in the recent buffer.</div>
+                )}
+              </div>
+            )}
           </div>
         </>
       )}

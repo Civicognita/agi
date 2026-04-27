@@ -261,6 +261,119 @@ describe("IterativeWorkScheduler.getStatus", () => {
   });
 });
 
+describe("IterativeWorkScheduler iteration log", () => {
+  it("pushes a running entry when tick fires", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
+
+    const log = scheduler.getLog("/p/a");
+    expect(log).toHaveLength(1);
+    expect(log[0]).toMatchObject({
+      firedAt: "2026-04-27T05:30:30.000Z",
+      completedAt: null,
+      durationMs: null,
+      status: "running",
+      cron: "* * * * *",
+    });
+  });
+
+  it("recordCompletion mutates the head entry to done with durationMs", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
+    scheduler.recordCompletion("/p/a", { status: "done", now: new Date("2026-04-27T05:30:35.500Z") });
+
+    const log = scheduler.getLog("/p/a");
+    expect(log[0]).toMatchObject({
+      status: "done",
+      completedAt: "2026-04-27T05:30:35.500Z",
+      durationMs: 5500,
+    });
+    expect(log[0]?.error).toBeUndefined();
+  });
+
+  it("recordCompletion captures error message when status is error", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
+    scheduler.recordCompletion("/p/a", { status: "error", error: "LLM timeout", now: new Date("2026-04-27T05:31:00.000Z") });
+
+    const log = scheduler.getLog("/p/a");
+    expect(log[0]).toMatchObject({
+      status: "error",
+      error: "LLM timeout",
+      durationMs: 30_000,
+    });
+  });
+
+  it("recordCompletion is a no-op when no running entry exists (out-of-order calls)", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({}),
+    });
+    scheduler.recordCompletion("/p/a", { status: "done" });
+    expect(scheduler.getLog("/p/a")).toEqual([]);
+  });
+
+  it("ring buffer caps at logBufferSize, dropping oldest entries", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+      logBufferSize: 3,
+    });
+    for (let i = 0; i < 5; i += 1) {
+      const stamp = new Date(`2026-04-27T05:${String(30 + i).padStart(2, "0")}:30.000Z`);
+      scheduler.tick(stamp);
+      scheduler.markComplete("/p/a");
+      scheduler.recordCompletion("/p/a", { status: "done", now: stamp });
+    }
+    const log = scheduler.getLog("/p/a");
+    expect(log).toHaveLength(3);
+    expect(log[0]?.firedAt).toBe("2026-04-27T05:34:30.000Z");
+    expect(log[2]?.firedAt).toBe("2026-04-27T05:32:30.000Z");
+  });
+
+  it("getLog respects the limit parameter and returns most-recent-first", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    for (let i = 0; i < 4; i += 1) {
+      const stamp = new Date(`2026-04-27T05:${String(30 + i).padStart(2, "0")}:30.000Z`);
+      scheduler.tick(stamp);
+      scheduler.markComplete("/p/a");
+      scheduler.recordCompletion("/p/a", { status: "done", now: stamp });
+    }
+    const log = scheduler.getLog("/p/a", 2);
+    expect(log).toHaveLength(2);
+    expect(log[0]?.firedAt).toBe("2026-04-27T05:33:30.000Z");
+    expect(log[1]?.firedAt).toBe("2026-04-27T05:32:30.000Z");
+  });
+
+  it("returns an empty log for projects that have never fired", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({}),
+    });
+    expect(scheduler.getLog("/p/never")).toEqual([]);
+  });
+});
+
 describe("IterativeWorkScheduler.start/stop", () => {
   it("start is idempotent — calling twice does not double-tick", () => {
     vi.useFakeTimers();

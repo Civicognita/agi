@@ -35,6 +35,31 @@ export interface IterativeWorkProjectStatus {
 }
 
 /**
+ * One entry in the per-project iteration log — captures what the scheduler can
+ * directly observe for a single fire: when it fired, when it completed, how
+ * long it ran, terminal status, and an optional error message. Richer fields
+ * the spec eventually wants (task picked, ship version, commit hash) require
+ * agent-observability hooks that don't exist yet — they'll be added when
+ * those hooks land. ISO-string timestamps for clean JSON serialization.
+ */
+export type IterativeWorkLogStatus = "running" | "done" | "error";
+
+export interface IterativeWorkLogEntry {
+  /** ISO timestamp when the scheduler emitted the fire event. */
+  firedAt: string;
+  /** ISO timestamp when the iteration completed (success or failure). Null while still running. */
+  completedAt: string | null;
+  /** Wall-clock duration in milliseconds from fire to completion. Null while running. */
+  durationMs: number | null;
+  /** Terminal state of the iteration. "running" until completion is recorded. */
+  status: IterativeWorkLogStatus;
+  /** Error message when status === "error". Otherwise undefined. */
+  error?: string;
+  /** Cron expression that produced the fire (for retroactive debugging if config changed). */
+  cron: string;
+}
+
+/**
  * The shape of every event the scheduler emits. Strongly typed so consumers
  * can `on("fire", ...)` without losing payload typing.
  */

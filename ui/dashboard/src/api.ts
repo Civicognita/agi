@@ -209,6 +209,29 @@ export interface IterativeWorkProjectStatus {
   nextFireAt: string | null;
 }
 
+export type IterativeWorkLogStatus = "running" | "done" | "error";
+
+export interface IterativeWorkLogEntry {
+  firedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  status: IterativeWorkLogStatus;
+  error?: string;
+  cron: string;
+}
+
+export async function fetchIterativeWorkLog(projectPath: string, limit?: number): Promise<IterativeWorkLogEntry[]> {
+  const qs = new URLSearchParams({ path: projectPath });
+  if (limit !== undefined) qs.set("limit", String(limit));
+  const res = await fetch(`/api/projects/iterative-work/log?${qs.toString()}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const json = await res.json() as { entries: IterativeWorkLogEntry[] };
+  return json.entries;
+}
+
 export async function fetchIterativeWorkStatus(projectPath: string): Promise<IterativeWorkProjectStatus> {
   const res = await fetch(`/api/projects/iterative-work/status?path=${encodeURIComponent(projectPath)}`);
   if (!res.ok) {

@@ -906,6 +906,7 @@ export async function startGatewayServer(
 
   iterativeWorkScheduler.on("fire", (fire) => {
     void (async () => {
+      let outcome: { status: "done" | "error"; error?: string } = { status: "done" };
       try {
         const slug = projectSlug(fire.projectPath);
         const systemEntity = await entityStore.resolveOrCreate(
@@ -925,10 +926,11 @@ export async function startGatewayServer(
           isOwner: true,
         });
       } catch (err) {
-        log.error(
-          `iterative-work fire failed for ${fire.projectPath}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        const message = err instanceof Error ? err.message : String(err);
+        log.error(`iterative-work fire failed for ${fire.projectPath}: ${message}`);
+        outcome = { status: "error", error: message };
       } finally {
+        iterativeWorkScheduler.recordCompletion(fire.projectPath, outcome);
         iterativeWorkScheduler.markComplete(fire.projectPath);
       }
     })();
