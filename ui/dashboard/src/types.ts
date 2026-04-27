@@ -355,8 +355,26 @@ export interface ProjectTypeInfo {
   hostable: boolean;
   /** Whether this project type contains code (vs. content like literature/media). */
   hasCode: boolean;
+  /** Whether this project type can have an iterative-work loop (s118 t445). */
+  iterativeWorkEligible?: boolean;
   tools: ProjectTypeTool[];
   logSources?: LogSourceDefinition[];
+}
+
+/** Cadence keys offered by the iterative-work tab dropdown (s118 t442 D1). */
+export type IterativeWorkCadence = "30m" | "1h" | "5h" | "12h" | "1d" | "5d" | "1w";
+
+/** Cadence options visible per category (mirrors gateway-core cadenceOptionsFor). */
+export const ITERATIVE_WORK_CADENCE_OPTIONS: Record<string, IterativeWorkCadence[]> = {
+  web: ["30m", "1h"],
+  app: ["30m", "1h"],
+  ops: ["30m", "1h", "5h", "12h", "1d", "5d", "1w"],
+  administration: ["30m", "1h", "5h", "12h", "1d", "5d", "1w"],
+};
+
+export function cadenceOptionsForCategory(category: string | undefined): IterativeWorkCadence[] {
+  if (!category) return [];
+  return ITERATIVE_WORK_CADENCE_OPTIONS[category] ?? [];
 }
 
 /** A workspace project entry returned by GET /api/projects. */

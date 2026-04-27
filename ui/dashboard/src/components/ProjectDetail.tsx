@@ -18,6 +18,7 @@ import { CoreForkRepoPanel } from "./CoreForkRepoPanel.js";
 import { HostingPanel } from "./HostingPanel.js";
 import { EnvManager } from "./EnvManager.js";
 import { TaskmasterTab } from "./TaskmasterTab.js";
+import { IterativeWorkTab } from "./IterativeWorkTab.js";
 import { ProjectManagement } from "./ProjectManagement.js";
 import type { HostingStatus } from "../api.js";
 import { TreeNav, ContextMenu, useToast } from "@particle-academy/react-fancy";
@@ -315,6 +316,9 @@ export function ProjectDetail({
           )}
           {!isCoreFork && <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>}
           {!isCoreFork && <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>}
+          {!isCoreFork && project.projectType?.iterativeWorkEligible && (
+            <TabsTrigger value="iterative-work">Iterative Work</TabsTrigger>
+          )}
           {!isCoreFork && pluginPanels.map((p) => (
             <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
           ))}
@@ -779,6 +783,12 @@ export function ProjectDetail({
             <TaskmasterTab projectPath={project.path} />
           </div>
         </TabsContent>
+
+        {project.projectType?.iterativeWorkEligible && (
+          <TabsContent value="iterative-work" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+            <IterativeWorkTab project={project} />
+          </TabsContent>
+        )}
 
         <TabsContent value="magic-apps" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <div className="rounded-xl bg-card border border-border p-4">
