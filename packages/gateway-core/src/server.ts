@@ -127,6 +127,7 @@ import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
 import { projectConfigPath } from "./project-config-path.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
+import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import { SystemConfigService } from "./system-config-service.js";
 import { createProjectTypeRegistry } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
@@ -724,6 +725,14 @@ export async function startGatewayServer(
   const systemConfigService = opts?.configPath
     ? new SystemConfigService({ configPath: opts.configPath, logger })
     : null;
+
+  // Iterative-work scheduler — instantiated inert in this slice (no
+  // enumeration, no auto-start). The fire→AgentInvoker wiring + project
+  // enumeration land in the follow-up cycle (s118 t436 cycle 39+).
+  const iterativeWorkScheduler = new IterativeWorkScheduler({
+    projectConfigManager,
+    logger,
+  });
 
   const toolCount = registerAllTools(toolRegistry, {
     workspaceRoot,
@@ -4338,6 +4347,9 @@ export async function startGatewayServer(
     if (heartbeatScheduler !== null) {
       heartbeatScheduler.stop();
     }
+
+    // Stop iterative-work scheduler (no-op if never started — start is opt-in).
+    iterativeWorkScheduler.stop();
 
     // Stop HF health monitor
     clearInterval(hfHealthMonitorInterval);
