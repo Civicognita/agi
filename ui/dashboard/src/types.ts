@@ -392,6 +392,9 @@ export interface ProjectInfo {
   };
   projectType?: ProjectTypeInfo;
   category?: string;
+  /** Effective iterative-work eligibility (s118 t442 D1 slice 4) — based on
+   *  the project's actual category (overrides projectType-level default). */
+  iterativeWorkEligible?: boolean;
   description?: string;
   magicApps?: string[];
   /** When set, this project is a child of a named collection (e.g. "aionima"

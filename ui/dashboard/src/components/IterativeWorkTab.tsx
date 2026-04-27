@@ -121,7 +121,7 @@ export function IterativeWorkTab({ project }: IterativeWorkTabProps): JSX.Elemen
     }
   };
 
-  if (!project.projectType?.iterativeWorkEligible) {
+  if (!(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible)) {
     return (
       <div className="rounded-xl bg-card border border-border p-4 text-[13px] text-muted-foreground">
         Iterative work is not available for the <span className="font-mono">{project.projectType?.id ?? project.category ?? "(unknown)"}</span> project type.

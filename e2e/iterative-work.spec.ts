@@ -13,141 +13,122 @@ import { test, expect } from "@playwright/test";
  *   literature / media / monorepo    → not eligible (no tab visible)
  */
 
+/**
+ * Fetch the projects list via Playwright's request fixture (inherits the
+ * ignoreHTTPSErrors setting from playwright.config.ts) and pick the first
+ * one whose projectType reports iterativeWorkEligible. Returns undefined
+ * when no eligible project exists in the environment.
+ */
+async function findEligibleProject(request: import("@playwright/test").APIRequestContext): Promise<{ name: string; path: string; category: string } | undefined> {
+  const res = await request.get(`/api/projects`).catch(() => null);
+  if (!res || !res.ok()) return undefined;
+  const projects = (await res.json()) as Array<{
+    name: string;
+    path: string;
+    category?: string;
+    projectType?: { iterativeWorkEligible?: boolean; category?: string };
+  }>;
+  const ELIGIBLE = new Set(["web", "app", "ops", "administration"]);
+  // Effective category is the project.json `category` override OR the type's
+  // category — match the gateway's PUT endpoint eligibility logic.
+  const eligible = projects.filter((p) => {
+    const effective = p.category ?? p.projectType?.category;
+    return effective !== undefined && ELIGIBLE.has(effective);
+  });
+  for (const cand of eligible) {
+    const statusRes = await request.get(`/api/projects/iterative-work/status?path=${encodeURIComponent(cand.path)}`).catch(() => null);
+    if (statusRes && statusRes.ok()) {
+      return { name: cand.name, path: cand.path, category: cand.category ?? cand.projectType?.category ?? "" };
+    }
+  }
+  return undefined;
+}
+
 test.describe("Iterative Work tab", () => {
-  test("obsolete /settings/iterative-work route returns 404 / redirects", async ({ page }) => {
-    // The page was removed in v0.4.250; either the SPA shows a not-found
-    // state or the router redirects to a fallback. Verify it doesn't
-    // render the OLD per-project list UI.
-    const res = await page.goto("/settings/iterative-work", { waitUntil: "domcontentloaded" });
-    // Either a 404 / fallback state — both are acceptable. The crucial
-    // check is that the OLD page-content marker isn't present.
+  test("obsolete /settings/iterative-work route does not render the old per-project list page", async ({ page }) => {
+    await page.goto("/settings/iterative-work", { waitUntil: "domcontentloaded" });
     const body = await page.locator("body").innerText().catch(() => "");
     // The deleted page used to render "Iterative Work" as a heading + a
-    // table of all projects. The new tab is per-project ONLY; if either
-    // a heading "Iterative Work" + a project list appears here, the
-    // route wasn't fully retired.
+    // table of all projects. Verify those markers are NOT both present.
     const hasHeading = /^Iterative Work$/m.test(body);
-    const hasProjectList = /Cron|Recent fires/i.test(body);
+    const hasProjectList = /Cron|Recent fires per project/i.test(body);
     expect(hasHeading && hasProjectList).toBe(false);
-    void res;
   });
 
-  test("projects index renders project cards", async ({ page }) => {
+  test("projects index renders", async ({ page }) => {
     await page.goto("/projects");
     await page.waitForLoadState("domcontentloaded");
-    // Just verify the page loads — projects-page itself is covered elsewhere.
     await expect(page.getByRole("heading", { name: /Projects/i }).first()).toBeVisible({ timeout: 10_000 });
   });
 
-  test("Iterative Work tab appears on first eligible project (when any exist)", async ({ page }) => {
-    await page.goto("/projects");
+  test("Iterative Work tab appears on eligible project detail page", async ({ page, request }) => {
+    const eligible = await findEligibleProject(request);
+    test.skip(!eligible, "no eligible projects (web/app/ops/administration) in this environment");
+
+    await page.goto(`/projects/${eligible!.name}`);
     await page.waitForLoadState("domcontentloaded");
-    await page.waitForTimeout(1000);
-
-    const cards = page.getByTestId("project-card");
-    const count = await cards.count();
-    test.skip(count === 0, "no projects available in this environment");
-
-    // Walk cards looking for one whose project type is eligible. Cards
-    // expose the project slug; the project-detail page will reveal the
-    // tab if eligible, hide it otherwise.
-    let foundEligible = false;
-    const maxToCheck = Math.min(count, 5);
-    for (let i = 0; i < maxToCheck; i += 1) {
-      await cards.nth(i).click();
-      await page.waitForURL(/\/projects\/[a-z0-9-]+/, { timeout: 5000 }).catch(() => undefined);
-      const tab = page.getByRole("tab", { name: /Iterative Work/i });
-      if ((await tab.count()) > 0 && (await tab.first().isVisible().catch(() => false))) {
-        foundEligible = true;
-        break;
-      }
-      await page.goto("/projects");
-      await page.waitForTimeout(500);
-    }
-
-    if (!foundEligible) {
-      test.skip(true, "no eligible projects (web/app/ops/administration) in this environment");
-    }
+    const tab = page.getByRole("tab", { name: /Iterative Work/i });
+    await expect(tab).toBeVisible({ timeout: 10_000 });
   });
 
-  test("clicking the Iterative Work tab reveals the tab panel", async ({ page }) => {
-    await page.goto("/projects");
+  test("clicking the Iterative Work tab reveals the tab panel", async ({ page, request }) => {
+    const eligible = await findEligibleProject(request);
+    test.skip(!eligible, "no eligible projects in this environment");
+
+    await page.goto(`/projects/${eligible!.name}`);
     await page.waitForLoadState("domcontentloaded");
-    await page.waitForTimeout(1000);
-
-    const cards = page.getByTestId("project-card");
-    const count = await cards.count();
-    test.skip(count === 0, "no projects available in this environment");
-
-    let panelVisible = false;
-    const maxToCheck = Math.min(count, 5);
-    for (let i = 0; i < maxToCheck; i += 1) {
-      await cards.nth(i).click();
-      await page.waitForURL(/\/projects\/[a-z0-9-]+/, { timeout: 5000 }).catch(() => undefined);
-      const tab = page.getByRole("tab", { name: /Iterative Work/i });
-      if ((await tab.count()) === 0) {
-        await page.goto("/projects");
-        await page.waitForTimeout(500);
-        continue;
-      }
-      await tab.first().click();
-      const panel = page.getByTestId("iterative-work-tab");
-      if ((await panel.count()) > 0 && (await panel.isVisible().catch(() => false))) {
-        panelVisible = true;
-        break;
-      }
-      await page.goto("/projects");
-      await page.waitForTimeout(500);
-    }
-
-    if (!panelVisible) {
-      test.skip(true, "no eligible project surfaces the tab panel in this environment");
-    }
+    const tab = page.getByRole("tab", { name: /Iterative Work/i });
+    await tab.click();
+    await expect(page.getByTestId("iterative-work-tab")).toBeVisible({ timeout: 10_000 });
   });
 
-  test("Iterative Work tab exposes cadence dropdown + save button (when present)", async ({ page }) => {
-    await page.goto("/projects");
+  test("Iterative Work tab exposes cadence dropdown + save button + dev-tier options", async ({ page, request }) => {
+    const eligible = await findEligibleProject(request);
+    test.skip(!eligible, "no eligible projects in this environment");
+
+    await page.goto(`/projects/${eligible!.name}`);
     await page.waitForLoadState("domcontentloaded");
-    await page.waitForTimeout(1000);
+    await page.getByRole("tab", { name: /Iterative Work/i }).click();
+    await expect(page.getByTestId("iterative-work-tab")).toBeVisible({ timeout: 10_000 });
 
-    const cards = page.getByTestId("project-card");
-    const count = await cards.count();
-    test.skip(count === 0, "no projects available in this environment");
-
-    // Find and open the tab on the first eligible project.
-    let foundEligible = false;
-    const maxToCheck = Math.min(count, 5);
-    for (let i = 0; i < maxToCheck; i += 1) {
-      await cards.nth(i).click();
-      await page.waitForURL(/\/projects\/[a-z0-9-]+/, { timeout: 5000 }).catch(() => undefined);
-      const tab = page.getByRole("tab", { name: /Iterative Work/i });
-      if ((await tab.count()) === 0) {
-        await page.goto("/projects");
-        await page.waitForTimeout(500);
-        continue;
-      }
-      await tab.first().click();
-      const panel = page.getByTestId("iterative-work-tab");
-      if ((await panel.count()) > 0 && (await panel.isVisible().catch(() => false))) {
-        foundEligible = true;
-        break;
-      }
-      await page.goto("/projects");
-      await page.waitForTimeout(500);
-    }
-
-    test.skip(!foundEligible, "no eligible project found");
-
-    // Verify the canonical interactive elements are present.
     await expect(page.getByTestId("iterative-work-toggle")).toBeAttached();
     await expect(page.getByTestId("iterative-work-cadence")).toBeAttached();
     await expect(page.getByTestId("iterative-work-save")).toBeAttached();
 
-    // The cadence dropdown must contain at least the dev-tier options.
+    // Dev-tier (web/app) cadences must be present in the dropdown.
     const select = page.getByTestId("iterative-work-cadence");
-    const options = select.locator("option").allTextContents();
-    const txt = (await options).join(" ");
-    expect(/30 minutes/i.test(txt)).toBe(true);
-    expect(/Every hour/i.test(txt)).toBe(true);
+    const optionsTxt = (await select.locator("option").allTextContents()).join(" ");
+    expect(/30 minutes/i.test(optionsTxt)).toBe(true);
+    expect(/Every hour/i.test(optionsTxt)).toBe(true);
+  });
+
+  test("toggle + cadence save round-trip persists via API", async ({ page, request }) => {
+    const eligible = await findEligibleProject(request);
+    test.skip(!eligible, "no eligible projects in this environment");
+
+    await page.goto(`/projects/${eligible!.name}`);
+    await page.waitForLoadState("domcontentloaded");
+    await page.getByRole("tab", { name: /Iterative Work/i }).click();
+    await expect(page.getByTestId("iterative-work-tab")).toBeVisible({ timeout: 10_000 });
+
+    // Enable + pick cadence + save.
+    const toggle = page.getByTestId("iterative-work-toggle");
+    if (!(await toggle.isChecked())) {
+      await toggle.check();
+    }
+    await page.getByTestId("iterative-work-cadence").selectOption("30m");
+    await page.getByTestId("iterative-work-save").click();
+
+    // Wait for the save to round-trip — saving disables the button, then re-enables.
+    await expect(page.getByTestId("iterative-work-save")).toBeEnabled({ timeout: 15_000 });
+
+    // Verify backend state via API.
+    const res = await request.get(`/api/projects/iterative-work/status?path=${encodeURIComponent(eligible!.path)}`);
+    expect(res.ok()).toBe(true);
+    const status = await res.json() as { enabled: boolean; cron: string | null; cadence?: string | null };
+    expect(status.enabled).toBe(true);
+    expect(status.cadence).toBe("30m");
+    // Cron should be auto-staggered (matches `M,M+30 * * * *` shape from D3).
+    expect(status.cron).toMatch(/^\d+,\d+ \* \* \* \*$/);
   });
 });

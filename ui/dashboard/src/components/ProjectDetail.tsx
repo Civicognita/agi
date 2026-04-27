@@ -316,7 +316,7 @@ export function ProjectDetail({
           )}
           {!isCoreFork && <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>}
           {!isCoreFork && <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>}
-          {!isCoreFork && project.projectType?.iterativeWorkEligible && (
+          {!isCoreFork && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
             <TabsTrigger value="iterative-work">Iterative Work</TabsTrigger>
           )}
           {!isCoreFork && pluginPanels.map((p) => (
@@ -784,7 +784,7 @@ export function ProjectDetail({
           </div>
         </TabsContent>
 
-        {project.projectType?.iterativeWorkEligible && (
+        {(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
           <TabsContent value="iterative-work" className="mt-4 flex-1 min-h-0 overflow-y-auto">
             <IterativeWorkTab project={project} />
           </TabsContent>
