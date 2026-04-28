@@ -52,6 +52,7 @@ export type {
   LLMProviderFactory,
   PmProviderDefinition,
   PmProviderFactory,
+  McpServerTemplate,
   ProviderField,
   CleanupResource,
   CleanupManifest,

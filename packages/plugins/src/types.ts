@@ -604,6 +604,42 @@ export interface PmProviderDefinition {
 }
 
 // ---------------------------------------------------------------------------
+// MCP server templates (s127 t489)
+//
+// Plugins register a per-server template that surfaces in the per-project
+// MCP-tab dropdown. The template carries a default command/URL + env shape
+// so the owner doesn't have to type the full server config from scratch.
+//
+// Server-side (gateway-core) merges plugin-registered templates with
+// the legacy built-in set; the dashboard's MCP-config form consumes the
+// combined list. As more MCP server providers move to plugins, the
+// built-in list shrinks; the plugin-registered list grows.
+// ---------------------------------------------------------------------------
+
+export interface McpServerTemplate {
+  /** Stable id used by project config (`mcp.servers.<id>`) and by the
+   *  dashboard's "select server" dropdown. Must not collide with
+   *  another plugin-registered template's id. */
+  id: string;
+  /** Human-readable name shown in the dropdown (e.g. "Tynn", "Linear"). */
+  name: string;
+  /** Markdown-friendly one-liner describing the server. */
+  description: string;
+  /** Wire transport — `stdio` for spawn-based local servers, `http`/
+   *  `websocket` for remote MCP endpoints. */
+  transport: "stdio" | "http" | "websocket";
+  /** Default command + args for stdio transport. Ignored for http/ws. */
+  defaultCommand?: string[];
+  /** Default env vars to seed when the owner installs the template. */
+  defaultEnv?: Record<string, string>;
+  /** Default endpoint URL for http/ws transports. Ignored for stdio. */
+  defaultUrl?: string;
+  /** Name of the env var that should hold the bearer/auth token (when
+   *  the server requires one). Drives the dashboard's secret-input UX. */
+  authTokenKey?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Settings page definitions (plugin-provided settings sub-pages)
 // ---------------------------------------------------------------------------
 
@@ -729,6 +765,11 @@ export interface AionimaPluginAPI {
   registerSubdomainRoute(def: SubdomainRouteDefinition): void;
   registerProvider(def: LLMProviderDefinition): void;
   registerPmProvider(def: PmProviderDefinition): void;
+  /** Register a per-project MCP server template. Surfaces in the per-project
+   *  MCP-tab dropdown alongside built-in templates. Plugin-registered
+   *  templates are appended after built-ins; later plugins do not override
+   *  earlier registrations of the same id. (s127 t489) */
+  registerMcpServerTemplate(def: McpServerTemplate): void;
   registerScanProvider(def: ScanProviderDefinition): void;
   registerWorker(def: WorkerDefinition): void;
   getChannelConfig(channelId: string): { enabled: boolean; config: Record<string, unknown> } | undefined;

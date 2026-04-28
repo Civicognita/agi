@@ -2024,7 +2024,10 @@ export async function createGatewayRuntimeState(
         authTokenKey: "TYNN_API_KEY",
       },
     ];
-    // Plugin-registered templates — when registered via api.registerMcpServerTemplate (future Wish #8).
+    // Plugin-registered templates (s127 t489) — registered via
+    // api.registerMcpServerTemplate from a marketplace plugin's activate
+    // body. Appended after built-ins so the dashboard's dropdown shows
+    // built-ins first, then plugin-provided templates in registration order.
     const pluginTemplates = (deps.pluginRegistry as { getMcpServerTemplates?: () => typeof builtIn } | undefined)?.getMcpServerTemplates?.() ?? [];
     return reply.send({ templates: [...builtIn, ...pluginTemplates] });
   });
