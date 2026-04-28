@@ -23,60 +23,50 @@ import { test, expect } from "@playwright/test";
  */
 
 test.describe("Vault — settings page", () => {
-  test("page loads + shows empty state when no entries", async ({ page, request }) => {
-    // Wipe any pre-existing entries so the empty-state test is deterministic
-    const list = await request.get("/api/vault");
-    if (list.ok()) {
-      const body = (await list.json()) as { entries: Array<{ id: string }> };
-      for (const e of body.entries) {
-        await request.delete(`/api/vault/${e.id}`).catch(() => null);
-      }
-    }
-
+  test("page loads — heading visible + list-or-empty state rendered", async ({ page }) => {
+    // Don't wipe entries — that race-conditioned with parallel tests
+    // creating entries in other workers. Just verify the page renders.
     await page.goto("/settings/vault");
     await expect(page.getByRole("heading", { name: "Vault" })).toBeVisible({ timeout: 10_000 });
-
-    // Empty-state OR populated — accept either; the heading is the key signal
     const empty = page.getByTestId("vault-empty");
-    const list_ = page.getByTestId("vault-list");
-    await expect(empty.or(list_)).toBeVisible({ timeout: 5_000 });
+    const list = page.getByTestId("vault-list");
+    await expect(empty.or(list)).toBeVisible({ timeout: 5_000 });
   });
 
   test("create + delete roundtrip via REST + verify in UI", async ({ page, request }) => {
-    // Wipe entries
-    const before = await request.get("/api/vault");
-    if (before.ok()) {
-      const body = (await before.json()) as { entries: Array<{ id: string }> };
-      for (const e of body.entries) await request.delete(`/api/vault/${e.id}`).catch(() => null);
-    }
+    // Unique name to avoid cross-worker collision (Playwright runs e2e
+    // tests in parallel; workers share the backend).
+    const uniqueName = `E2E Vault Test ${String(Date.now())}-${String(Math.random()).slice(2, 8)}`;
 
-    // POST a new entry
     const created = await request.post("/api/vault", {
-      data: { name: "E2E Vault Test", type: "key", value: "sk-e2e-test-value" },
+      data: { name: uniqueName, type: "key", value: "sk-e2e-test-value" },
     });
     expect(created.status()).toBe(201);
     const createdBody = (await created.json()) as { entry: { id: string; name: string } };
-    expect(createdBody.entry.name).toBe("E2E Vault Test");
+    expect(createdBody.entry.name).toBe(uniqueName);
     const id = createdBody.entry.id;
 
-    // GET /api/vault — entry appears
-    const listAfter = await request.get("/api/vault");
-    const listBody = (await listAfter.json()) as { entries: Array<{ id: string; name: string }> };
-    expect(listBody.entries.find(e => e.id === id)?.name).toBe("E2E Vault Test");
+    try {
+      // GET /api/vault — entry appears
+      const listAfter = await request.get("/api/vault");
+      const listBody = (await listAfter.json()) as { entries: Array<{ id: string; name: string }> };
+      expect(listBody.entries.find(e => e.id === id)?.name).toBe(uniqueName);
 
-    // GET /api/vault/:id — value is returned for gateway-scoped entry
-    const single = await request.get(`/api/vault/${id}`);
-    expect(single.status()).toBe(200);
-    const singleBody = (await single.json()) as { entry: { id: string }; value: string };
-    expect(singleBody.value).toBe("sk-e2e-test-value");
+      // GET /api/vault/:id — value is returned for gateway-scoped entry
+      const single = await request.get(`/api/vault/${id}`);
+      expect(single.status()).toBe(200);
+      const singleBody = (await single.json()) as { entry: { id: string }; value: string };
+      expect(singleBody.value).toBe("sk-e2e-test-value");
 
-    // Verify in UI
-    await page.goto("/settings/vault");
-    await expect(page.getByText("E2E Vault Test")).toBeVisible({ timeout: 10_000 });
+      // Verify in UI — wait for the page's API fetch to settle
+      await page.goto("/settings/vault");
+      await page.waitForLoadState("networkidle");
+      await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 10_000 });
+    } finally {
+      // Always clean up so a failure mid-test doesn't leave entries behind
+      await request.delete(`/api/vault/${id}`).catch(() => null);
+    }
 
-    // DELETE
-    const del = await request.delete(`/api/vault/${id}`);
-    expect(del.ok()).toBe(true);
     const after = await request.get(`/api/vault/${id}`);
     expect(after.status()).toBe(404);
   });
