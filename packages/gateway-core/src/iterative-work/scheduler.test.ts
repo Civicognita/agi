@@ -199,6 +199,7 @@ describe("IterativeWorkScheduler.getStatus", () => {
     expect(scheduler.getStatus("/p/a")).toEqual({
       enabled: false,
       cron: null,
+      cadence: null,
       inFlight: false,
       lastFiredAt: null,
       nextFireAt: null,
@@ -215,6 +216,7 @@ describe("IterativeWorkScheduler.getStatus", () => {
     expect(status).toEqual({
       enabled: true,
       cron: "8,38 * * * *",
+      cadence: null,
       inFlight: false,
       lastFiredAt: null,
       nextFireAt: "2026-04-27T05:38:00.000Z",
@@ -325,6 +327,63 @@ describe("IterativeWorkScheduler iteration log", () => {
     });
     scheduler.recordCompletion("/p/a", { status: "done" });
     expect(scheduler.getLog("/p/a")).toEqual([]);
+  });
+
+  it("recordCompletion emits a `complete` event carrying the iteration shape (s124 t468)", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    const completions: Array<unknown> = [];
+    scheduler.on("complete", (c) => { completions.push(c); });
+    scheduler.tick(new Date("2026-04-28T05:30:00.000Z"));
+    scheduler.recordCompletion("/p/a", {
+      status: "done",
+      now: new Date("2026-04-28T05:30:12.000Z"),
+      artifact: { summary: "Test ship", commitHash: "abc1234" },
+    });
+    expect(completions).toHaveLength(1);
+    expect(completions[0]).toMatchObject({
+      projectPath: "/p/a",
+      cron: "* * * * *",
+      firedAt: "2026-04-28T05:30:00.000Z",
+      completedAt: "2026-04-28T05:30:12.000Z",
+      durationMs: 12_000,
+      status: "done",
+      artifact: { summary: "Test ship", commitHash: "abc1234" },
+    });
+  });
+
+  it("recordCompletion `complete` event includes error field on error status", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    const completions: Array<{ status: string; error?: string }> = [];
+    scheduler.on("complete", (c) => { completions.push(c as { status: string; error?: string }); });
+    scheduler.tick(new Date("2026-04-28T05:30:00.000Z"));
+    scheduler.recordCompletion("/p/a", {
+      status: "error",
+      error: "test failure",
+      now: new Date("2026-04-28T05:30:30.000Z"),
+    });
+    expect(completions).toHaveLength(1);
+    expect(completions[0]?.status).toBe("error");
+    expect(completions[0]?.error).toBe("test failure");
+  });
+
+  it("recordCompletion does NOT emit `complete` when no running entry exists (no-op)", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({}),
+    });
+    const completions: Array<unknown> = [];
+    scheduler.on("complete", (c) => { completions.push(c); });
+    scheduler.recordCompletion("/p/a", { status: "done" });
+    expect(completions).toHaveLength(0);
   });
 
   it("ring buffer caps at logBufferSize, dropping oldest entries", () => {

@@ -26,7 +26,7 @@ import type { ProjectConfigManager } from "../project-config-manager.js";
 import { createComponentLogger } from "../logger.js";
 import type { Logger, ComponentLogger } from "../logger.js";
 import { nextFireAfter } from "./cron.js";
-import type { IterativeWorkFire, IterativeWorkLogEntry, IterativeWorkProjectStatus, IterativeWorkSchedulerEvents } from "./types.js";
+import type { IterativeWorkArtifact, IterativeWorkCompletion, IterativeWorkFire, IterativeWorkLogEntry, IterativeWorkProjectStatus, IterativeWorkSchedulerEvents } from "./types.js";
 
 export interface IterativeWorkSchedulerDeps {
   projectConfigManager: ProjectConfigManager;
@@ -105,20 +105,47 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
    * — so callers don't need to thread an entry-id through their try/catch.
    * If no running entry exists for the project (e.g. recordCompletion called
    * twice or out-of-order), the call is a no-op.
+   *
+   * **Emits a `complete` event** (s124 t468) carrying the iteration's terminal
+   * shape + optional artifact metadata. Notifications (s124 t470) and Toast
+   * UI (s124 t471) consume this event to surface iteration completions to
+   * the owner. Artifact metadata is populated by the agent-observability
+   * hook (s124 t469) — when not provided, the event still fires but
+   * `artifact` is undefined so downstream consumers can treat it as "no
+   * preview available".
    */
-  recordCompletion(projectPath: string, outcome: { status: "done" | "error"; error?: string; now?: Date }): void {
+  recordCompletion(
+    projectPath: string,
+    outcome: { status: "done" | "error"; error?: string; now?: Date; artifact?: IterativeWorkArtifact },
+  ): void {
     const buffer = this.iterationLog.get(projectPath);
     if (buffer === undefined || buffer.length === 0) return;
     const head = buffer[0];
     if (head === undefined || head.status !== "running") return;
     const now = outcome.now ?? new Date();
     const startedAt = this.inFlightStartedAt.get(projectPath);
-    head.completedAt = now.toISOString();
-    head.durationMs = startedAt !== undefined ? now.getTime() - startedAt.getTime() : null;
+    const completedAt = now.toISOString();
+    const durationMs = startedAt !== undefined ? now.getTime() - startedAt.getTime() : null;
+    head.completedAt = completedAt;
+    head.durationMs = durationMs;
     head.status = outcome.status;
     if (outcome.status === "error" && outcome.error !== undefined) {
       head.error = outcome.error;
     }
+
+    // Emit completion event so NotificationStore (s124 t470) can route +
+    // Toast UI (s124 t471) can render the preview.
+    const completion: IterativeWorkCompletion = {
+      projectPath,
+      cron: head.cron,
+      firedAt: head.firedAt,
+      completedAt,
+      durationMs: durationMs ?? 0,
+      status: outcome.status,
+      ...(outcome.error !== undefined && outcome.status === "error" ? { error: outcome.error } : {}),
+      ...(outcome.artifact !== undefined ? { artifact: outcome.artifact } : {}),
+    };
+    this.emit("complete", completion);
   }
 
   /**
