@@ -4,9 +4,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { Callout } from "@particle-academy/react-fancy";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -480,12 +482,12 @@ export function MachineAdmin() {
     <div className="flex flex-col gap-4">
       {/* Error banner */}
       {actionError && (
-        <div className="rounded-lg bg-red/10 border border-red/30 px-4 py-2 text-[12px] text-red flex items-center justify-between">
+        <Callout color="red" className="text-[12px] text-red flex items-center justify-between">
           <span>{actionError}</span>
           <button onClick={() => setActionError(null)} className="text-red hover:text-foreground cursor-pointer bg-transparent border-none text-[11px]">
             Dismiss
           </button>
-        </div>
+        </Callout>
       )}
 
       {/* ================================================================= */}
@@ -951,15 +953,16 @@ export function MachineAdmin() {
             </div>
             <div>
               <label className="text-[11px] text-muted-foreground mb-1 block">Role</label>
-              <select
+              <Select
+                className="text-[13px]"
+                list={[
+                  { value: "admin", label: "Admin" },
+                  { value: "operator", label: "Operator" },
+                  { value: "viewer", label: "Viewer" },
+                ]}
                 value={newDashUser.role}
-                onChange={(e) => setNewDashUser((p) => ({ ...p, role: e.target.value as DashboardRole }))}
-                className="h-8 w-full rounded-md border border-border bg-background px-3 text-[13px] text-foreground"
-              >
-                <option value="admin">Admin</option>
-                <option value="operator">Operator</option>
-                <option value="viewer">Viewer</option>
-              </select>
+                onValueChange={(v) => setNewDashUser((p) => ({ ...p, role: v as DashboardRole }))}
+              />
             </div>
           </div>
           <DialogFooter>
