@@ -1,6 +1,6 @@
 /**
  * IterativeWorkToastStack — bottom-right stacked container for active
- * iterative-work toasts (s124 t471).
+ * iterative-work toasts (s124 t471 + t472).
  *
  * Sits in the dashboard layout root (RootLayout) so it follows the user
  * across routes. Subscribes to the same notification:new WS stream as the
@@ -11,8 +11,9 @@
  *     toasts fall off when capacity is exceeded.
  *   - Each toast auto-dismisses after AUTO_DISMISS_MS unless dismissed
  *     manually.
- *   - Click-through navigates to /projects/<slug> for now (t472 will route
- *     to chat).
+ *   - Click-through delegates to `onActivate(notification)` — RootLayout's
+ *     handler routes to the project's chat (find-or-create per
+ *     ChatFlyout's session-by-context dedupe at ChatFlyout.tsx:1117-1131).
  *   - Position pinned bottom-right; matches the existing Toast.Provider
  *     position so the two surfaces don't overlap (the regular Toast.Provider
  *     uses bottom-right too, but its toasts are short-lived and stack ABOVE
@@ -23,7 +24,6 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router";
 import { IterativeWorkToast } from "./IterativeWorkToast.js";
 import type { Notification } from "@/types.js";
 
@@ -35,24 +35,15 @@ interface IterativeWorkToastStackProps {
    *  this whenever a new notification:new event arrives with type==="iterative-work".
    *  null when no fresh notification has arrived yet. */
   latest: Notification | null;
+  /** Click-through dispatcher. Owner (RootLayout) decides what "activate"
+   *  means — currently opens the project's chat, reusing existing session
+   *  by context or creating fresh. */
+  onActivate: (notification: Notification) => void;
 }
 
-/** Derive the project slug from an absolute project path so we can
- *  navigate via React Router (`/projects/<slug>`). Mirrors what the
- *  ProjectsHook expects when the user clicks a tile. Falls back to the
- *  last path segment when the metadata isn't shaped as expected. */
-function deriveProjectSlug(notification: Notification): string | null {
-  const meta = notification.metadata as { projectPath?: string } | null;
-  const projectPath = meta?.projectPath;
-  if (projectPath === undefined || projectPath.length === 0) return null;
-  const segments = projectPath.split("/").filter((s) => s.length > 0);
-  return segments[segments.length - 1] ?? null;
-}
-
-export function IterativeWorkToastStack({ latest }: IterativeWorkToastStackProps) {
+export function IterativeWorkToastStack({ latest, onActivate }: IterativeWorkToastStackProps) {
   const [active, setActive] = useState<Notification[]>([]);
   const seenIds = useRef<Set<string>>(new Set());
-  const navigate = useNavigate();
 
   // Push the latest notification into the stack (deduplicated by id).
   useEffect(() => {
@@ -79,13 +70,7 @@ export function IterativeWorkToastStack({ latest }: IterativeWorkToastStackProps
   };
 
   const handleClick = (notification: Notification): void => {
-    const slug = deriveProjectSlug(notification);
-    if (slug !== null) {
-      // Navigate first so the user lands on the project; t472 will replace
-      // this with chat-routing (open existing chat for project or create
-      // new with seed message).
-      navigate(`/projects/${slug}`);
-    }
+    onActivate(notification);
     dismiss(notification.id);
   };
 
