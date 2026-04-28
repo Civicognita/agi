@@ -11,6 +11,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Accordion, Chart } from "@particle-academy/react-fancy";
 import { Card } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { SectionHeading, FieldGroup } from "./SettingsShared.js";
 import { fetchHfProviders, fetchRegisteredProviders, fetchProviderBalances, fetchBalanceHistory } from "../../api.js";
 import { ModelCapabilityBadges } from "@/components/ModelCapabilityBadges.js";
@@ -317,26 +320,20 @@ export function ProvidersSettings({ config, update }: Props) {
         </p>
         <div className="grid grid-cols-2 gap-4 max-w-lg">
           <FieldGroup label="Active Provider">
-            <select
-              className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+            <Select
+              className="font-mono"
+              list={allProviders.map((p) => ({ value: p.id, label: p.name }))}
               value={agentProvider}
-              onChange={(e) => setAionProvider(e.target.value)}
-            >
-              {allProviders.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
+              onValueChange={setAionProvider}
+            />
           </FieldGroup>
           <FieldGroup label="Model">
-            <select
-              className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+            <Select
+              className="font-mono"
+              list={currentModels.map((m) => ({ value: m.id, label: m.name }))}
               value={agentModel}
-              onChange={(e) => setAionModel(e.target.value)}
-            >
-              {currentModels.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
+              onValueChange={setAionModel}
+            />
           </FieldGroup>
         </div>
         <div className="mt-2 flex items-center gap-2">
@@ -466,10 +463,11 @@ export function ProvidersSettings({ config, update }: Props) {
 
                           if (field.type === "password") {
                             return (
-                              <input key={field.id}
+                              <Input
+                                key={field.id}
                                 type="password"
                                 placeholder={isRedacted ? "Key is set — enter new to replace" : (field.placeholder ?? field.label)}
-                                className="flex-1 min-w-[200px] h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono"
+                                className="flex-1 min-w-[200px] text-[12px] font-mono"
                                 value=""
                                 onChange={(e) => { if (e.target.value) updateProviderField(provider.id, field.id, e.target.value); }}
                               />
@@ -477,14 +475,15 @@ export function ProvidersSettings({ config, update }: Props) {
                           }
                           if (field.type === "number") {
                             return (
-                              <input key={field.id}
+                              <Input
+                                key={field.id}
                                 type="number"
                                 placeholder={field.placeholder ?? field.label}
                                 min={field.min}
                                 max={field.max}
                                 step={field.step}
                                 title={field.description ?? field.label}
-                                className="w-28 h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono"
+                                className="w-28 text-[12px] font-mono"
                                 value={(currentVal as number | undefined) ?? ""}
                                 onChange={(e) => updateProviderField(provider.id, field.id, e.target.value ? Number(e.target.value) : undefined)}
                               />
@@ -492,10 +491,11 @@ export function ProvidersSettings({ config, update }: Props) {
                           }
                           if (field.type === "text") {
                             return (
-                              <input key={field.id}
+                              <Input
+                                key={field.id}
                                 type="text"
                                 placeholder={field.placeholder ?? field.label}
-                                className="flex-1 min-w-[200px] h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono"
+                                className="flex-1 min-w-[200px] text-[12px] font-mono"
                                 value={(currentVal as string | undefined) ?? ""}
                                 onChange={(e) => updateProviderField(provider.id, field.id, e.target.value || undefined)}
                               />
@@ -586,26 +586,22 @@ export function ProvidersSettings({ config, update }: Props) {
                         <div className="text-[12px] text-foreground">{w.title}</div>
                         <div className="text-[10px] text-muted-foreground font-mono">{key}</div>
                       </div>
-                      <select
-                        className="h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono cursor-pointer min-w-[150px]"
+                      <Select
+                        className="text-[12px] font-mono min-w-[150px]"
+                        list={[
+                          { value: "inherited", label: `Inherited (${agentProvider})` },
+                          ...allProviders.map((p) => ({ value: p.id, label: p.name })),
+                        ]}
                         value={currentProvider}
-                        onChange={(e) => setWorkerOverride(key, "provider", e.target.value)}
-                      >
-                        <option value="inherited">Inherited ({agentProvider})</option>
-                        {allProviders.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
+                        onValueChange={(v) => setWorkerOverride(key, "provider", v)}
+                      />
                       {currentProvider !== "inherited" && workerProviderModels.length > 0 && (
-                        <select
-                          className="h-8 rounded-md border border-input bg-transparent px-2 py-0.5 text-[12px] font-mono cursor-pointer min-w-[150px]"
+                        <Select
+                          className="text-[12px] font-mono min-w-[150px]"
+                          list={workerProviderModels.map((m) => ({ value: m.id, label: m.name }))}
                           value={currentModel}
-                          onChange={(e) => setWorkerOverride(key, "model", e.target.value)}
-                        >
-                          {workerProviderModels.map((m) => (
-                            <option key={m.id} value={m.id}>{m.name}</option>
-                          ))}
-                        </select>
+                          onValueChange={(v) => setWorkerOverride(key, "model", v)}
+                        />
                       )}
                     </div>
                   );
