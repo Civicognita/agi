@@ -222,7 +222,16 @@ export class McpClient {
       if (config.url === undefined || config.url.length === 0) {
         throw new Error(`McpClient: http transport requires url for server ${config.id}`);
       }
-      return new StreamableHTTPClientTransport(new URL(config.url));
+      // Bearer-auth threading: the SDK accepts requestInit which is merged
+      // into every fetch the transport makes (POST + GET-SSE). When the
+      // server config carries an authToken (already $VAR-resolved upstream
+      // at boot wiring), we surface it as `Authorization: Bearer <token>`.
+      // Without this the transport sends only the URL, which fails for any
+      // MCP service that gates access behind a key (tynn.ai, etc).
+      const httpOpts = config.authToken !== undefined && config.authToken.length > 0
+        ? { requestInit: { headers: { Authorization: `Bearer ${config.authToken}` } } }
+        : undefined;
+      return new StreamableHTTPClientTransport(new URL(config.url), httpOpts);
     }
     if (config.transport === "websocket") {
       if (config.url === undefined || config.url.length === 0) {

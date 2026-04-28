@@ -1898,10 +1898,9 @@ export async function createGatewayRuntimeState(
       {
         id: "tynn",
         name: "Tynn",
-        description: "Tynn-the-service via MCP. Provides PM tools (list-tasks, set-status, add-comment, getActiveFocusProgress, etc) for the agent.",
-        transport: "stdio",
-        defaultCommand: ["npx", "-y", "@tynn/mcp-server"],
-        defaultEnv: { TYNN_API_KEY: "$TYNN_API_KEY" },
+        description: "Tynn-the-service via MCP. Provides PM tools (list-tasks, set-status, add-comment, getActiveFocusProgress, etc) for the agent. Uses HTTP transport with Bearer auth against tynn.ai.",
+        transport: "http",
+        defaultUrl: "https://tynn.ai/mcp/tynn",
         authTokenKey: "TYNN_API_KEY",
       },
     ];
