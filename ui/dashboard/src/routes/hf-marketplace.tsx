@@ -10,6 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { ModelCapabilityBadges } from "@/components/ModelCapabilityBadges.js";
+import { LemonadeBanner } from "@/components/LemonadeBanner.js";
+import { LemonadeTab } from "@/components/hf/LemonadeTab.js";
 import {
   Dialog,
   DialogContent,
@@ -62,7 +65,7 @@ import type {
 // Tab setup
 // ---------------------------------------------------------------------------
 
-type Tab = "models" | "installed" | "running" | "datasets" | "finetune";
+type Tab = "models" | "installed" | "running" | "datasets" | "finetune" | "lemonade";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "models", label: "Models" },
@@ -70,6 +73,7 @@ const tabs: { id: Tab; label: string }[] = [
   { id: "running", label: "Running" },
   { id: "datasets", label: "Datasets" },
   { id: "finetune", label: "Fine-Tune" },
+  { id: "lemonade", label: "Lemonade" },
 ];
 
 export default function HFMarketplacePage() {
@@ -78,6 +82,7 @@ export default function HFMarketplacePage() {
   return (
     <PageScroll>
       <div>
+        <LemonadeBanner context="marketplace" />
         {/* Tab bar */}
         <div className="flex gap-1 mb-6 border-b border-border">
           {tabs.map((tab) => (
@@ -101,6 +106,7 @@ export default function HFMarketplacePage() {
         {activeTab === "running" && <RunningTab />}
         {activeTab === "datasets" && <DatasetsTab />}
         {activeTab === "finetune" && <FineTuneTab />}
+        {activeTab === "lemonade" && <LemonadeTab />}
       </div>
     </PageScroll>
   );
@@ -354,6 +360,7 @@ function ModelCard({ model, onSelect }: { model: HFModelSearchResult; onSelect: 
         <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded", getCompatibilityColor(model.compatibility))}>
           {getCompatibilityLabel(model.compatibility)}
         </span>
+        <ModelCapabilityBadges capability={model.capability} compact />
       </div>
 
       <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
@@ -1141,7 +1148,7 @@ function InstalledTab() {
           model.status === "starting" ||
           model.status === "stopping" ||
           model.status === "removing";
-        const canToggle = model.status === "ready" || model.status === "running";
+        const canToggle = model.status === "ready" || model.status === "running" || model.status === "error" || model.status === "failed";
 
         return (
           <Card key={model.id} className="p-4 space-y-3">
@@ -1149,7 +1156,7 @@ function InstalledTab() {
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-[13px] font-semibold truncate">{model.displayName}</p>
-                  <Badge variant="outline" className="text-[10px]">{model.runtimeType}</Badge>
+                  <Badge variant="outline" className={cn("text-[10px]", model.runtimeType === "ollama" && "border-green-500 text-green-500")}>{model.runtimeType === "ollama" ? "Ollama" : model.runtimeType}</Badge>
                   {model.quantization && (
                     <Badge variant="outline" className="text-[10px]">{model.quantization}</Badge>
                   )}
@@ -1184,6 +1191,9 @@ function InstalledTab() {
             )}
 
             <div className="flex items-center gap-2">
+              {model.runtimeType === "ollama" ? (
+                <span className="text-[11px] text-green-500 font-medium px-2">Available via Ollama</span>
+              ) : (
               <Button
                 size="sm"
                 variant={isRunning ? "outline" : "default"}
@@ -1193,6 +1203,7 @@ function InstalledTab() {
               >
                 {isBusy && actionBusy === model.id ? "..." : isRunning ? "Stop" : "Start"}
               </Button>
+              )}
               <Button
                 size="sm"
                 variant="ghost"

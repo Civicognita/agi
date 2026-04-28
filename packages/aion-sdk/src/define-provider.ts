@@ -15,6 +15,9 @@
  *   .model("claude-opus-4-6")
  *   .model("claude-sonnet-4-6")
  *   .model("claude-haiku-4-5-20251001")
+ *   .fields([
+ *     { id: "apiKey", label: "API Key", type: "password", placeholder: "sk-ant-..." },
+ *   ])
  *   .factory((config) => createAnthropicProvider(config))
  *   .build();
  *
@@ -23,10 +26,13 @@
  * ```
  */
 
-import type { LLMProviderDefinition, LLMProviderFactory } from "@aionima/plugins";
+import type { LLMProviderDefinition, LLMProviderFactory, ProviderField } from "@agi/plugins";
+export type { ProviderField };
 
 class ProviderBuilder {
   private def: Partial<LLMProviderDefinition> & { id: string; name: string };
+  private _fields: ProviderField[] = [];
+  private _checkBalance?: (config: Record<string, unknown>) => Promise<number | null>;
 
   constructor(id: string, name: string) {
     this.def = { id, name, requiresApiKey: true, models: [] };
@@ -63,8 +69,23 @@ class ProviderBuilder {
     return this;
   }
 
+  fields(fields: ProviderField[]): this {
+    this._fields = fields;
+    return this;
+  }
+
   factory(fn: LLMProviderFactory): this {
     this.def.factory = fn;
+    return this;
+  }
+
+  /**
+   * Register a function that checks the provider's remaining credit balance.
+   * The function receives the provider's saved config (apiKey, adminApiKey, etc.)
+   * and returns the USD balance remaining, or null if unavailable/unsupported.
+   */
+  checkBalance(fn: (config: Record<string, unknown>) => Promise<number | null>): this {
+    this._checkBalance = fn;
     return this;
   }
 
@@ -75,6 +96,8 @@ class ProviderBuilder {
       throw new Error("LLMProviderDefinition requires an envKey when requiresApiKey is true");
     }
     if (!this.def.envKey) this.def.envKey = "";
+    if (this._fields.length > 0) this.def.fields = this._fields;
+    if (this._checkBalance) this.def.checkBalance = this._checkBalance;
     return this.def as LLMProviderDefinition;
   }
 }

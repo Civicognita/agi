@@ -2,7 +2,7 @@
  * definePanel — chainable builder for ProjectPanelDefinition.
  */
 
-import type { ProjectPanelDefinition, PanelWidget } from "@aionima/plugins";
+import type { ProjectPanelDefinition, PanelWidget } from "@agi/plugins";
 
 class PanelBuilder {
   private def: Partial<ProjectPanelDefinition> & { widgets: PanelWidget[] };

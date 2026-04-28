@@ -1,35 +1,69 @@
 /**
- * worker_dispatch tool — write a worker job file to the .dispatch/jobs/ directory.
+ * taskmaster_dispatch tool — delegate work to TaskMaster.
  *
- * Requires state ONLINE, tier verified/sealed.
+ * Aion describes WHAT needs to be done. TaskMaster decomposes the work
+ * into a sequence of workers and executes them. No domain/worker selection
+ * by Aion — TaskMaster handles orchestration.
+ *
+ * Dispatch files land under `~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json`.
  */
 import { writeFileSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
+import { dispatchJobsDir } from "../dispatch-paths.js";
+import { join } from "node:path";
 
 export interface WorkerDispatchConfig {
-  workspaceRoot: string;
-  botsDir?: string;
-  /** Callback fired after a job file is written. Used by WorkerRuntime to pick up jobs. */
-  onJobCreated?: (jobId: string, coaReqId: string) => void;
-  /** COA request ID from the invocation context. */
+  /** Test-only override for the dispatch base dir. Production leaves this unset and uses dispatchJobsDir(projectPath). */
+  dispatchDirOverride?: string;
+  onJobCreated?: (args: {
+    jobId: string;
+    coaReqId: string;
+    projectPath: string;
+    sessionKey?: string;
+    chatSessionId?: string;
+    planRef?: { planId: string; stepId: string };
+  }) => void;
   coaReqId?: string;
+}
+
+interface PlanRef {
+  planId: string;
+  stepId: string;
 }
 
 export function createWorkerDispatchHandler(
   config: WorkerDispatchConfig,
 ): ToolHandler {
-  return async (input: Record<string, unknown>): Promise<string> => {
+  return async (input: Record<string, unknown>, ctx): Promise<string> => {
+    const projectPath = String(input.projectPath ?? "").trim();
+    if (projectPath.length === 0) {
+      return JSON.stringify({
+        error: "projectPath is required — pass the absolute path of the project the task belongs to (visible in your Project Context section).",
+        exitCode: -1,
+      });
+    }
+
     const description = String(input.description ?? "").trim();
     if (description.length === 0) {
       return JSON.stringify({ error: "description is required", exitCode: -1 });
     }
 
-    const domain = String(input.domain ?? "code");
-    const worker = String(input.worker ?? "engineer");
     const priority = String(input.priority ?? "normal");
 
-    // Validate priority
+    let planRef: PlanRef | undefined;
+    if (input.planRef !== undefined && input.planRef !== null) {
+      const pr = input.planRef as Record<string, unknown>;
+      const planId = String(pr.planId ?? "").trim();
+      const stepId = String(pr.stepId ?? "").trim();
+      if (planId.length === 0 || stepId.length === 0) {
+        return JSON.stringify({
+          error: "planRef requires both planId and stepId when provided.",
+          exitCode: -1,
+        });
+      }
+      planRef = { planId, stepId };
+    }
+
     const validPriorities = ["low", "normal", "high", "critical"];
     if (!validPriorities.includes(priority)) {
       return JSON.stringify({
@@ -38,7 +72,9 @@ export function createWorkerDispatchHandler(
       });
     }
 
-    const jobsDir = resolve(config.botsDir ?? join(config.workspaceRoot, ".dispatch"), "jobs");
+    const jobsDir = config.dispatchDirOverride !== undefined
+      ? join(config.dispatchDirOverride, "jobs")
+      : dispatchJobsDir(projectPath);
 
     try {
       mkdirSync(jobsDir, { recursive: true });
@@ -52,16 +88,20 @@ export function createWorkerDispatchHandler(
     const jobId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const jobFile = join(jobsDir, `${jobId}.json`);
 
-    const coaReqId = config.coaReqId ?? `unknown-${Date.now()}`;
+    const coaReqId = ctx?.coaChainBase ?? config.coaReqId ?? `unknown-${Date.now()}`;
+    const sessionKey = ctx?.sessionKey;
+    const chatSessionId = ctx?.chatSessionId;
 
     const job = {
       id: jobId,
       description,
-      domain,
-      worker,
       priority,
       status: "pending",
       coaReqId,
+      projectPath,
+      sessionKey,
+      chatSessionId,
+      planRef,
       createdAt: new Date().toISOString(),
     };
 
@@ -74,10 +114,9 @@ export function createWorkerDispatchHandler(
       });
     }
 
-    // Notify the runtime that a job was created
     if (config.onJobCreated) {
       try {
-        config.onJobCreated(jobId, coaReqId);
+        config.onJobCreated({ jobId, coaReqId, projectPath, sessionKey, chatSessionId, planRef });
       } catch {
         // Don't fail the tool if the callback throws
       }
@@ -93,43 +132,50 @@ export function createWorkerDispatchHandler(
 }
 
 export const WORKER_DISPATCH_MANIFEST = {
-  name: "worker_dispatch",
+  name: "taskmaster_dispatch",
   description:
-    "Queue a task with TaskMaster, the background worker orchestrator. " +
-    "TaskMaster decomposes the description into phased worker assignments " +
-    "(e.g. code.hacker\u2192code.tester, comm.writer.tech\u2192comm.editor) and runs " +
-    "them in isolated worktrees. Use when: (a) the task spans >2 files or " +
-    "multiple concerns, (b) it benefits from specialist review (code review, " +
-    "policy editing, compliance audit), (c) the user asks for research, " +
-    "documentation, or design work, (d) subtasks can run in parallel, or " +
-    "(e) the user explicitly says 'dispatch', 'queue', 'delegate', 'worker', " +
-    "or 'task'. Jobs appear live in the owner's WorkQueue dashboard tab. " +
-    "Inputs: description (required), domain, worker, priority. Returns jobId. " +
-    "Call this tool multiple times in one turn to fan out parallel work.",
-  requiresState: ["ONLINE" as const],
+    "Delegate work to TaskMaster, the background orchestrator. Describe WHAT " +
+    "needs to be done — TaskMaster selects the right workers and execution " +
+    "sequence automatically. Use when: (a) the task spans multiple files or " +
+    "concerns, (b) it benefits from specialist work (code review, testing, " +
+    "documentation), (c) the user asks for research, design, or implementation " +
+    "work, (d) subtasks can be decomposed into phases, or (e) the user says " +
+    "'dispatch', 'queue', 'delegate', or 'task'. Jobs appear live in the Work " +
+    "Queue. After TaskMaster reports completion, verify the result before " +
+    "responding to the user.",
+  requiresState: [],
   requiresTier: ["verified" as const, "sealed" as const],
 };
 
 export const WORKER_DISPATCH_INPUT_SCHEMA = {
   type: "object",
   properties: {
+    projectPath: {
+      type: "string",
+      description:
+        "Absolute path of the project the task belongs to. Read it from your Project Context section of the system prompt. Required.",
+    },
     description: {
       type: "string",
-      description: "Human-readable description of the task to dispatch",
-    },
-    domain: {
-      type: "string",
-      description: 'Worker domain (e.g. "code", "k", "ux", "strat", "comm", "ops", "gov", "data")',
-    },
-    worker: {
-      type: "string",
-      description: 'Specific worker within the domain (e.g. "engineer", "hacker", "reviewer")',
+      description: "Human-readable description of the work to be done. Describe WHAT, not which worker to use.",
     },
     priority: {
       type: "string",
       enum: ["low", "normal", "high", "critical"],
       description: 'Task priority level. Defaults to "normal".',
     },
+    planRef: {
+      type: "object",
+      description:
+        "Optional. Link this job to a specific step of an approved plan so " +
+        "the server auto-marks the step running on dispatch, complete on " +
+        "success, or failed on failure.",
+      properties: {
+        planId: { type: "string", description: "The plan id from create_plan." },
+        stepId: { type: "string", description: "The step id inside that plan." },
+      },
+      required: ["planId", "stepId"],
+    },
   },
-  required: ["description"],
+  required: ["projectPath", "description"],
 };

@@ -5,10 +5,14 @@
 import { Projects } from "@/components/Projects.js";
 import { PageScroll } from "@/components/PageScroll.js";
 import { useRootContext } from "./root.js";
+import { useIsTestVm } from "@/hooks/useRuntimeMode.js";
 
 export default function ProjectsPage() {
   const { projectsHook, projectActivity, onOpenChat, hostingHook, configHook } = useRootContext();
-  const contributingEnabled = Boolean(configHook.data?.dev?.enabled);
+  const isTestVm = useIsTestVm();
+  // Force-disable contributing-mode in test-VM (s122 t463) so the
+  // aionima-collection tiles + sacred-project drilldowns don't appear.
+  const contributingEnabled = !isTestVm && Boolean(configHook.data?.dev?.enabled);
 
   return (
     <PageScroll>

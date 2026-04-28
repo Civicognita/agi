@@ -11,14 +11,14 @@ The ADF provides global framework helpers for AGI core code — logging, config 
 ADF is initialized once at gateway boot before any plugins activate:
 
 ```typescript
-import { initADF } from "@aionima/sdk";
+import { initADF } from "@agi/sdk";
 
 initADF({
   logger,
   config: rawConfig,
   workspaceRoot: "/home/wishborn/temp_core",
   projectDirs: [...],
-  security: securityModule,      // optional — requires @aionima/security
+  security: securityModule,      // optional — requires @agi/security
   projectConfig: projectConfigMgr, // optional
   systemConfig: systemConfigSvc,   // optional
 });
@@ -27,7 +27,7 @@ initADF({
 To get the raw context object after initialization:
 
 ```typescript
-import { getADFContext } from "@aionima/sdk";
+import { getADFContext } from "@agi/sdk";
 
 const ctx = getADFContext(); // throws if initADF() was not called
 ```
@@ -52,10 +52,10 @@ interface ADFContext {
 
 ## The Six Facades
 
-Import any facade from `@aionima/sdk`:
+Import any facade from `@agi/sdk`:
 
 ```typescript
-import { Log, Config, Workspace, Security, ProjectConfig, SystemConfig } from "@aionima/sdk";
+import { Log, Config, Workspace, Security, ProjectConfig, SystemConfig } from "@agi/sdk";
 ```
 
 ### `Log()`
@@ -89,7 +89,7 @@ const { root, projects } = Workspace();
 
 ### `Security()`
 
-Security scanning facade. Throws if `@aionima/security` is not loaded.
+Security scanning facade. Throws if `@agi/security` is not loaded.
 
 ```typescript
 const scan = await Security().runScan({

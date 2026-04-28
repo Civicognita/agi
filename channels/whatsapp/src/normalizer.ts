@@ -9,7 +9,7 @@
  */
 
 import { createHash } from "node:crypto";
-import type { ChannelId, AionimaMessage, MessageContent } from "@aionima/channel-sdk";
+import type { ChannelId, AionimaMessage, MessageContent } from "@agi/channel-sdk";
 import type {
   WhatsAppWebhookPayload,
   WhatsAppMessage,

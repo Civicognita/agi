@@ -1,5 +1,5 @@
 /**
- * Protocol compatibility checker — validates that AGI, PRIME, BOTS, and ID repos
+ * Protocol compatibility checker — validates that AGI, PRIME, and ID repos
  * are running compatible protocol versions at boot time.
  */
 
@@ -19,7 +19,6 @@ export interface ProtocolCheckResult {
   manifests: {
     agi: ProtocolManifest | null;
     prime: ProtocolManifest | null;
-    bots: ProtocolManifest | null;
     id: ProtocolManifest | null;
   };
 }
@@ -71,20 +70,17 @@ function satisfiesRange(version: string, range: string): boolean {
  *
  * @param agiDir - Path to AGI repo root
  * @param primeDir - Path to PRIME corpus directory
- * @param botsDir - Path to BOTS system directory
  * @param idDir - Path to ID service directory
  */
 export function checkProtocolCompatibility(
   agiDir: string,
   primeDir: string,
-  botsDir: string | null,
   idDir: string,
 ): ProtocolCheckResult {
   const errors: string[] = [];
 
   const agi = readManifest(agiDir);
   const prime = readManifest(primeDir);
-  const bots = botsDir !== null ? readManifest(botsDir) : null;
   const id = readManifest(idDir);
 
   if (!agi) {
@@ -93,9 +89,6 @@ export function checkProtocolCompatibility(
   if (!prime && existsSync(primeDir)) {
     errors.push(`PRIME protocol.json not found at ${primeDir}`);
   }
-  if (botsDir !== null && !bots && existsSync(botsDir)) {
-    errors.push(`BOTS protocol.json not found at ${botsDir}`);
-  }
   if (!id && existsSync(idDir)) {
     errors.push(`ID protocol.json not found at ${idDir}`);
   }
@@ -103,9 +96,8 @@ export function checkProtocolCompatibility(
   // Check AGI's requirements against all core repos
   if (agi?.requires) {
     const nameToManifest: Record<string, ProtocolManifest | null> = {
-      "aionima-prime": prime,
-      "aionima-bots": bots,
-      "aionima-local-id": id,
+      "agi-prime": prime,
+      "agi-local-id": id,
     };
 
     for (const [depName, requiredRange] of Object.entries(agi.requires)) {
@@ -122,6 +114,6 @@ export function checkProtocolCompatibility(
   return {
     compatible: errors.length === 0,
     errors,
-    manifests: { agi, prime, bots, id },
+    manifests: { agi, prime, id },
   };
 }

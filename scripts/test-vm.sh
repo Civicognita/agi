@@ -19,15 +19,42 @@
 #   ./scripts/test-vm.sh test-services    # Run service integration tests
 set -euo pipefail
 
-VM_NAME="aionima-test"
+VM_NAME="agi-test"
 VM_IMAGE="24.04"
-VM_CPUS=2
-VM_MEM="4G"
-VM_DISK="20G"
+VM_CPUS=4
+# Memory bumped 8G → 12G (tynn #258). Full test suite + AGI gateway +
+# Postgres + Caddy inside the VM routinely pushed past 8G during
+# vitest runs, triggering OOM kills that showed up as "AGI service
+# crashed mid-run" in the dashboard. 12G leaves headroom for the test
+# worker + TS compile + pg checkpoints. Override via env if the host
+# can't spare it: `VM_MEM=10G ./scripts/test-vm.sh create`.
+VM_MEM="${VM_MEM:-12G}"
+VM_CPUS="${VM_CPUS:-4}"
+VM_DISK="${VM_DISK:-20G}"
 
-# Detect paths: AGI repo dir and workspace root (parent of agi/)
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-WORKSPACE_DIR="$(cd "$REPO_DIR/.." && pwd)"
+# Structured JSON emitter for gateway streaming
+emit_json() { echo "{\"phase\":\"$1\",\"status\":\"$2\",\"details\":\"${3:-}\"}"; }
+
+# Detect paths: AGI repo dir and workspace root (parent of agi/).
+# Use `-P` so symlinks get resolved — if this script is invoked via a
+# symlinked path (e.g. a user-workspace convenience link like
+# ~/temp_core/agi → ~/_projects/_aionima/agi), we still want the VM
+# mounts anchored at the *physical* Dev-Mode workspace, NOT the user's
+# scratchpad. temp_core is the user's workspace, not AGI's.
+REPO_DIR="$(cd -P "$(dirname "$0")/.." && pwd)"
+WORKSPACE_DIR="$(cd -P "$REPO_DIR/.." && pwd)"
+
+# Sibling layout detection: Dev-Mode provisioned workspace uses slugs
+# (prime, id, marketplace, mapp-marketplace) under `_aionima/`. Ops /
+# vanilla installs use the legacy dashed names (agi-prime, agi-local-id)
+# under /opt. Pick the right set for mount sources.
+if [ "$(basename "$WORKSPACE_DIR")" = "_aionima" ]; then
+  PRIME_PATH="$WORKSPACE_DIR/prime"
+  ID_PATH="$WORKSPACE_DIR/id"
+else
+  PRIME_PATH="$WORKSPACE_DIR/agi-prime"
+  ID_PATH="$WORKSPACE_DIR/agi-local-id"
+fi
 
 # Cloud-init: install Node 22, pnpm, and build deps so the VM is ready faster
 CLOUD_INIT=$(cat <<'YAML'
@@ -103,21 +130,22 @@ cmd_create() {
   ensure_multipass
 
   if vm_exists; then
+    emit_json "create" "skip" "VM already exists"
     echo "VM '$VM_NAME' already exists."
     if ! vm_running; then
       echo "Starting stopped VM..."
       multipass start "$VM_NAME"
     fi
-    echo "Use '$0 destroy' first for a fresh VM."
     cmd_status
     return 0
   fi
 
+  emit_json "create" "start" "Creating VM (${VM_IMAGE}, ${VM_CPUS} CPU, ${VM_MEM} RAM)"
   echo "==> Creating VM '$VM_NAME' (${VM_IMAGE}, ${VM_CPUS} CPU, ${VM_MEM} RAM, ${VM_DISK} disk)..."
 
   # Write cloud-init to a snap-accessible location with readable permissions
   local cloud_init_file
-  cloud_init_file="$HOME/aionima-cloud-init.yaml"
+  cloud_init_file="$HOME/agi-cloud-init.yaml"
   echo "$CLOUD_INIT" > "$cloud_init_file"
   chmod 644 "$cloud_init_file"
 
@@ -132,12 +160,13 @@ cmd_create() {
 
   echo "==> Mounting workspace repos..."
   mount_repo "$REPO_DIR"                          "/mnt/agi"                 "AGI"
-  mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/aionima-prime"       "PRIME"
-  mount_repo "$WORKSPACE_DIR/aionima-local-id"     "/mnt/aionima-local-id"    "ID"
+  mount_repo "$PRIME_PATH"                        "/mnt/agi-prime"           "PRIME"
+  mount_repo "$ID_PATH"                           "/mnt/agi-local-id"        "ID"
 
   echo "==> Waiting for cloud-init to finish..."
   multipass exec "$VM_NAME" -- cloud-init status --wait 2>/dev/null || true
 
+  emit_json "create" "done" "VM ready"
   echo ""
   echo "VM ready. Run '$0 setup' to install dependencies."
   cmd_status
@@ -184,6 +213,7 @@ cmd_exec() {
 
 cmd_setup() {
   ensure_vm_running
+  emit_json "setup" "start" "Installing dependencies"
 
   echo "==> Checking Node.js installation..."
   if ! multipass exec "$VM_NAME" -- node --version &>/dev/null; then
@@ -214,6 +244,7 @@ cmd_setup() {
   echo "==> Running pnpm install in /mnt/agi..."
   multipass exec "$VM_NAME" -- bash -c 'cd /mnt/agi && pnpm install --frozen-lockfile'
 
+  emit_json "setup" "done" "Dependencies installed"
   echo ""
   echo "Setup complete. Run '$0 test' or 'pnpm test' to run tests."
 }
@@ -225,12 +256,12 @@ cmd_remount() {
 
   # Unmount any stale mounts first (ignore errors if not mounted)
   multipass umount "$VM_NAME":/mnt/agi 2>/dev/null || true
-  multipass umount "$VM_NAME":/mnt/aionima-prime 2>/dev/null || true
-  multipass umount "$VM_NAME":/mnt/aionima-local-id 2>/dev/null || true
+  multipass umount "$VM_NAME":/mnt/agi-prime 2>/dev/null || true
+  multipass umount "$VM_NAME":/mnt/agi-local-id 2>/dev/null || true
 
   mount_repo "$REPO_DIR"                          "/mnt/agi"                 "AGI"
-  mount_repo "$WORKSPACE_DIR/aionima-prime"        "/mnt/aionima-prime"       "PRIME"
-  mount_repo "$WORKSPACE_DIR/aionima-local-id"     "/mnt/aionima-local-id"    "ID"
+  mount_repo "$PRIME_PATH"                        "/mnt/agi-prime"           "PRIME"
+  mount_repo "$ID_PATH"                           "/mnt/agi-local-id"        "ID"
 
   echo "Done."
 }
@@ -252,26 +283,51 @@ cmd_test() {
 
 cmd_services_setup() {
   ensure_vm_running
+  emit_json "services" "start" "Setting up services"
+
+  echo "==> Installing agi CLI symlink in VM..."
+  # Install /usr/local/bin/agi → /mnt/agi/scripts/agi-cli.sh so the test
+  # VM has the same CLI surface as a real host. `agi` inside the VM auto-
+  # detects test-mode via is_test_vm() and branches behavior (upgrade
+  # rebuilds from mount, no git pull). `agi test <pat>` becomes the
+  # canonical test invocation both inside VM and from host.
+  multipass exec "$VM_NAME" -- sudo ln -sf /mnt/agi/scripts/agi-cli.sh /usr/local/bin/agi
+  multipass exec "$VM_NAME" -- sudo chmod +x /mnt/agi/scripts/agi-cli.sh /mnt/agi/scripts/agi-test.sh
 
   echo "==> Installing PostgreSQL..."
   multipass exec "$VM_NAME" -- sudo apt-get install -y postgresql postgresql-client
 
   echo "==> Configuring PostgreSQL for password auth..."
-  multipass exec "$VM_NAME" -- sudo bash -c '
-    # Enable md5 auth for local TCP connections (default is peer which blocks password login)
+  multipass exec "$VM_NAME" -- bash -c 'sudo bash -c '"'"'
     PG_HBA=$(find /etc/postgresql -name pg_hba.conf 2>/dev/null | head -1)
     if [ -n "$PG_HBA" ]; then
       sed -i "s/^host.*all.*all.*127.0.0.1\/32.*scram-sha-256/host all all 127.0.0.1\/32 md5/" "$PG_HBA"
       sed -i "s/^host.*all.*all.*127.0.0.1\/32.*peer/host all all 127.0.0.1\/32 md5/" "$PG_HBA"
-      # Also ensure there IS a host line for 127.0.0.1
       grep -q "^host.*all.*all.*127.0.0.1" "$PG_HBA" || echo "host all all 127.0.0.1/32 md5" >> "$PG_HBA"
       systemctl restart postgresql
     fi
-  '
+  '"'"''
 
-  echo "==> Creating ID service database..."
-  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE USER aionima_id WITH PASSWORD 'testpass';\"" 2>/dev/null || true
-  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE DATABASE aionima_id OWNER aionima_id;\"" 2>/dev/null || true
+  echo "==> Creating gateway database (agi_data)..."
+  # Credentials must match @agi/db-schema default connection string
+  # (postgres://agi:aionima@localhost:5432/agi_data) — see
+  # packages/db-schema/src/client.ts. Previously used testpass + db `agi`,
+  # which left the gateway unable to connect in test VMs.
+  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE USER agi WITH PASSWORD 'aionima';\"" 2>/dev/null || \
+    multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"ALTER USER agi WITH PASSWORD 'aionima';\""
+  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE DATABASE agi_data OWNER agi;\"" 2>/dev/null || true
+
+  echo "==> Pushing drizzle schema to agi_data..."
+  # drizzle-kit push from ./drizzle-push.config.ts which points at the built
+  # dist/*.js (the TS sources use NodeNext .js imports that drizzle-kit's CJS
+  # loader can't resolve). Requires @agi/db-schema to have been built first.
+  multipass exec "$VM_NAME" -- bash -lc '
+    cd /mnt/agi
+    pnpm --filter @agi/db-schema build >/dev/null 2>&1 || true
+    cd packages/db-schema
+    DATABASE_URL="postgres://agi:aionima@localhost:5432/agi_data" \
+      pnpm exec drizzle-kit push --config=drizzle-push.config.ts --force 2>&1 | tail -5
+  '
 
   echo "==> Installing Caddy..."
   multipass exec "$VM_NAME" -- bash -c '
@@ -281,32 +337,71 @@ cmd_services_setup() {
     sudo apt-get update && sudo apt-get install -y caddy
   '
 
-  echo "==> Configuring Caddy..."
+  echo "==> Configuring VM Caddy (static — hosting disabled in test VM)..."
+  # Test VM is its own "production" instance. Hosting is disabled so
+  # hosting-manager doesn't regenerate the Caddyfile; the static file
+  # below is the source of truth. The `ai.on, test.ai.on` combined block
+  # lets the same gateway handle both internal (ai.on from inside the VM)
+  # and external (test.ai.on from the host) requests via a single cert +
+  # reverse-proxy. Host DNS handles routing test.ai.on → VM_IP.
   multipass exec "$VM_NAME" -- sudo bash -c 'cat > /etc/caddy/Caddyfile << '"'"'EOF'"'"'
 {
-  local_certs
+    local_certs
+    servers {
+        protocols h1
+    }
 }
 
-ai.on {
-  tls internal
-  reverse_proxy localhost:3100
+ai.on, test.ai.on {
+    tls internal
+    reverse_proxy localhost:3100
 }
 
 id.ai.on {
-  tls internal
-  reverse_proxy localhost:4100
+    tls internal
+    reverse_proxy localhost:4100
 }
 EOF
 systemctl restart caddy'
 
   echo "==> Adding /etc/hosts entries..."
-  multipass exec "$VM_NAME" -- sudo bash -c '
-    grep -q "ai.on id.ai.on" /etc/hosts || echo "127.0.0.1 ai.on id.ai.on db.ai.on" >> /etc/hosts
-  '
+  multipass exec "$VM_NAME" -- bash -c 'grep -q "ai.on" /etc/hosts || echo "127.0.0.1 ai.on id.ai.on db.ai.on test.ai.on" | sudo tee -a /etc/hosts > /dev/null'
+
+  echo "==> Updating host DNS for test.ai.on → VM direct..."
+  VM_IP=$(multipass info "$VM_NAME" --format csv | tail -1 | cut -d',' -f3)
+
+  # test.ai.on is the VM's own production hostname served by the VM's
+  # own Caddy. Host DNS points directly at the VM IP — no host-side
+  # Caddy proxying needed. This is architecturally correct: the VM is
+  # a self-contained "production" instance, not a sub-route of the host
+  # gateway. LAN clients that need to reach test.ai.on must either
+  # query this host's dnsmasq or add a /etc/hosts entry themselves.
+  sudo sed -i '/test\.ai\.on/d' /etc/dnsmasq.d/ai-on.conf
+  echo "address=/test.ai.on/$VM_IP" | sudo tee -a /etc/dnsmasq.d/ai-on.conf
+  sudo systemctl restart dnsmasq
+  echo "    test.ai.on → $VM_IP (direct to VM Caddy)"
+
+  # No host-Caddy test.ai.on stanza — DNS points straight at the VM and
+  # the VM's own Caddy serves test.ai.on. Clean up any legacy stanza from
+  # pre-2026-04-24 test-vm setups (which used the host as a reverse proxy
+  # to the VM — architecturally wrong; VM is self-contained).
+  sudo sed -i '/^test\.ai\.on {/,/^}/d' /etc/caddy/Caddyfile 2>/dev/null || true
+
+  # Reload Caddy if it's running to pick up the stanza removal.
+  if podman container exists agi-caddy >/dev/null 2>&1; then
+    podman exec agi-caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
+      && echo "    host agi-caddy reloaded (legacy stanza removed)" \
+      || echo "    WARN: agi-caddy reload failed; run 'agi doctor' to diagnose"
+  elif sudo systemctl is-active --quiet caddy 2>/dev/null; then
+    sudo systemctl reload caddy
+    echo "    host systemd caddy reloaded (legacy stanza removed)"
+  else
+    echo "    host Caddy not present — not required now that DNS points direct at VM"
+  fi
 
   echo "==> Building ID service..."
   multipass exec "$VM_NAME" -- bash -c '
-    cd /mnt/aionima-local-id
+    cd /mnt/agi-local-id
     npm install
     npm run build
 
@@ -317,7 +412,7 @@ systemctl restart caddy'
 ID_SERVICE_MODE=local
 AIONIMA_ID_BASE_URL=https://id.ai.on
 PORT=4100
-DATABASE_URL=postgres://aionima_id:testpass@localhost/aionima_id
+DATABASE_URL=postgres://agi:testpass@localhost/agi
 ENCRYPTION_KEY=$ENC_KEY
 OWNER_NODE_URL=http://localhost:3100
 ENVEOF
@@ -333,19 +428,46 @@ ENVEOF
     pnpm install
     pnpm build
 
-    # Create minimal config
+    # Create minimal config with absolute paths
     mkdir -p ~/.agi
     cat > ~/.agi/gateway.json << CFGEOF
 {
   "gateway": { "host": "0.0.0.0", "port": 3100, "state": "ONLINE" },
   "channels": [],
-  "entities": { "path": "~/.agi/entities.db" },
-  "identity": { "provider": "local-id", "baseUrl": "https://id.ai.on" },
+  "entities": { "path": "$HOME/.agi/entities.db" },
+  "idService": {
+    "dir": "/mnt/agi-local-id",
+    "local": {
+      "enabled": true,
+      "port": 4100,
+      "subdomain": "id",
+      "databaseUrl": "postgres://agi:testpass@localhost/agi",
+      "postgresContainer": false
+    }
+  },
   "workers": {}
 }
 CFGEOF
   '
 
+  echo "==> Writing onboarding state (skip onboarding for test VM)..."
+  multipass exec "$VM_NAME" -- bash -c 'cat > ~/.agi/onboarding-state.json << OBEOF
+{
+  "firstbootCompleted": true,
+  "steps": {
+    "aiKeys": "completed",
+    "aionimaId": "completed",
+    "ownerProfile": "completed",
+    "channels": "completed",
+    "zeroMeMind": "completed",
+    "zeroMeSoul": "completed",
+    "zeroMeSkill": "completed"
+  },
+  "completedAt": "2026-03-07T00:00:00.000Z"
+}
+OBEOF'
+
+  emit_json "services" "done" "Services setup complete"
   echo "==> Services setup complete."
   echo "    Run '$0 services-start' to start all services."
 }
@@ -360,22 +482,113 @@ cmd_services_start() {
   multipass exec "$VM_NAME" -- sudo systemctl start caddy
 
   echo "==> Starting ID service..."
+  # Auto-generate .env at ~/.agi/agi-local-id/.env — per CLAUDE.md § 9,
+  # runtime config lives under ~/.agi/, NEVER in the source-mount root
+  # (/mnt/agi-local-id is mapped from the source repo and shouldn't carry
+  # deployment secrets). DATABASE_URL points at the agi-owned agi_data DB
+  # on the VM's local Postgres (per .env.example). ENCRYPTION_KEY is
+  # generated fresh on first run — test VM sessions reset on restart so
+  # rotating per fresh boot is fine.
   multipass exec "$VM_NAME" -- bash -c '
-    cd /mnt/aionima-local-id
-    set -a && source .env && set +a
-    nohup node dist/index.js > /tmp/aionima-local-id.log 2>&1 &
-    echo $! > /tmp/aionima-local-id.pid
+    ENV_DIR="$HOME/.agi/agi-local-id"
+    ENV_FILE="$ENV_DIR/.env"
+    mkdir -p "$ENV_DIR"
+    if [ ! -f "$ENV_FILE" ]; then
+      echo "  .env absent at $ENV_FILE — generating test-VM defaults"
+      ENC_KEY=$(node -e "console.log(require(\"crypto\").randomBytes(32).toString(\"hex\"))")
+      cat > "$ENV_FILE" <<EOF
+DATABASE_URL=postgres://agi:aionima@localhost:5432/agi_data
+ENCRYPTION_KEY=${ENC_KEY}
+ID_SERVICE_MODE=local
+EOF
+    fi
+    cd /mnt/agi-local-id
+    set -a && source "$ENV_FILE" && set +a
+    nohup node dist/index.js > /tmp/agi-local-id.log 2>&1 &
+    echo $! > /tmp/agi-local-id.pid
     sleep 2
-    echo "  ID service PID: $(cat /tmp/aionima-local-id.pid)"
+    echo "  ID service PID: $(cat /tmp/agi-local-id.pid)"
   '
 
   echo "==> Starting AGI gateway..."
   multipass exec "$VM_NAME" -- bash -c '
     cd /mnt/agi
-    nohup node cli/dist/index.js run > /tmp/aionima.log 2>&1 &
-    echo $! > /tmp/aionima.pid
+    nohup node cli/dist/index.js run > /tmp/agi.log 2>&1 &
+    echo $! > /tmp/agi.pid
     sleep 3
-    echo "  AGI PID: $(cat /tmp/aionima.pid)"
+    echo "  AGI PID: $(cat /tmp/agi.pid)"
+  '
+
+  # Ensure Ollama + the acceptance-test local model are installed and running.
+  # Phase 10 (#322) of the alpha-stable-1 sweep — Aion must be able to reach
+  # a local model when costMode=local. Idempotent: the install script + the
+  # pull are both skip-if-present. The initial pull is ~1.9 GB for qwen2.5:3b.
+  echo "==> Ensuring Ollama + qwen2.5:3b..."
+  multipass exec "$VM_NAME" -- bash -lc '
+    if ! which ollama >/dev/null 2>&1; then
+      curl -fsSL https://ollama.com/install.sh | sh >/dev/null 2>&1
+    fi
+    sudo systemctl enable --now ollama >/dev/null 2>&1 || true
+    for i in 1 2 3 4 5; do
+      curl -s -o /dev/null http://127.0.0.1:11434/api/tags && break
+      sleep 2
+    done
+    if ! ollama list 2>/dev/null | grep -q "qwen2.5:3b"; then
+      ollama pull qwen2.5:3b >/dev/null 2>&1
+    fi
+    echo "    ollama: $(systemctl is-active ollama) · models: $(ollama list 2>/dev/null | tail -n +2 | awk "{print \$1}" | paste -sd, -)"
+  '
+
+  # Seed the owner entity so chat:send doesn't error "Owner not configured".
+  # Uses the onboarding-api endpoint which creates ~/.agi/gateway.json's
+  # owner block + registers with ID service (non-fatal if ID is down).
+  # We also need owner.channels.telegram so server.ts loads ownerEntityId
+  # from the entity store (otherwise ownerEntityId is undefined and
+  # chat:send short-circuits with "Owner not configured" per server.ts:2486).
+  echo "==> Seeding owner entity for chat tests + disabling hosting..."
+  multipass exec "$VM_NAME" -- bash -lc '
+    GW=http://127.0.0.1:3100
+    curl -s -X POST $GW/api/onboarding/owner-profile \
+      -H "Content-Type: application/json" \
+      -d "{\"displayName\":\"Wishborn\",\"dmPolicy\":\"open\"}" >/dev/null 2>&1
+    python3 - << "PYEOF"
+import json, os
+p = os.path.expanduser("~/.agi/gateway.json")
+cfg = json.load(open(p))
+cfg.setdefault("owner", {})
+cfg["owner"]["channels"] = {"telegram": "owner-0"}
+# Test VM is NOT hosting user projects — disable so hosting-manager does
+# not regenerate the Caddyfile and wipe the static ai.on/test.ai.on blocks.
+cfg.setdefault("hosting", {})["enabled"] = False
+# Default boot state is OFFLINE per server.ts. The test VM needs ONLINE to
+# actually invoke the LLM; without it, chat:send short-circuits with
+# "Aionima is currently offline." (the empirical t326 probe surfaced this:
+# all chat replies returned the placeholder until gateway.state=ONLINE was
+# set in config).
+cfg.setdefault("gateway", {})["state"] = "ONLINE"
+json.dump(cfg, open(p, "w"), indent=2)
+print("    owner + hosting + state seeded: state=" + cfg["gateway"]["state"] + " hosting.enabled=" + str(cfg["hosting"]["enabled"]))
+PYEOF
+  '
+
+  # Wire the gateway to Ollama with costMode=local for Phase 10 acceptance
+  # (#323). Hot-config-reloaded — no restart required to pick up. Idempotent.
+  echo "==> Wiring gateway for Ollama + local-only routing..."
+  multipass exec "$VM_NAME" -- bash -lc '
+    python3 - << "PYEOF"
+import json, os
+p = os.path.expanduser("~/.agi/gateway.json")
+cfg = json.load(open(p)) if os.path.exists(p) else {}
+cfg.setdefault("agent", {})
+cfg["agent"]["provider"] = "ollama"
+cfg["agent"]["model"] = "qwen2.5:3b"
+cfg["agent"].setdefault("router", {})
+cfg["agent"]["router"]["costMode"] = "local"
+cfg["agent"]["router"]["escalation"] = False
+cfg["ollama"] = {"baseUrl": "http://127.0.0.1:11434"}
+json.dump(cfg, open(p, "w"), indent=2)
+PYEOF
+    echo "    agent.provider=ollama · agent.model=qwen2.5:3b · router.costMode=local"
   '
 
   echo "==> Checking health..."
@@ -384,13 +597,84 @@ cmd_services_start() {
     echo "  AGI:  $(curl -sk https://ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
     echo "  ID:   $(curl -sk https://id.ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
   '
+
+  # Categorize the sample project fixtures so every official MApp has at
+  # least one compatible project in the picker. Writes ~/.agi/{slug}/project.json
+  # for the three fixtures whose category can't be inferred from content:
+  # sample-ops (ops), sample-admin (administration), sample-monorepo (monorepo).
+  # See tynn #312. Idempotent — overwrites existing configs with the same shape.
+  echo "==> Categorizing sample project fixtures..."
+  multipass exec "$VM_NAME" -- bash -lc '
+    declare -A CATS
+    CATS[sample-ops]="ops"
+    CATS[sample-admin]="administration"
+    CATS[sample-monorepo]="monorepo"
+    for name in sample-ops sample-admin sample-monorepo; do
+      slug="mnt-agi-test-fixtures-projects-$name"
+      mkdir -p ~/.agi/$slug
+      cat > ~/.agi/$slug/project.json << EOF
+{
+  "name": "$name",
+  "createdAt": "2026-04-24T00:00:00.000Z",
+  "category": "${CATS[$name]}"
+}
+EOF
+    done
+    echo "    seeded 3 category configs (ops, administration, monorepo)"
+  '
+
+  # Seed the 11 official MApps in the test VM so MApp-walk/render tests
+  # have fixtures. Pull the marketplace catalog first, then POST install
+  # for each app. Idempotent — subsequent boots re-POST and the server
+  # short-circuits on already-installed entries. Implements alpha-stable-1
+  # exit criterion #4 (tynn task #304).
+  echo "==> Seeding official MApps from marketplace..."
+  multipass exec "$VM_NAME" -- bash -lc '
+    GW=http://127.0.0.1:3100
+    for i in 1 2 3 4 5; do
+      curl -s -o /dev/null -w "%{http_code}" $GW/api/system/stats | grep -q "200" && break
+      sleep 2
+    done
+    curl -s -X POST $GW/api/mapp-marketplace/pull >/dev/null 2>&1 || true
+    APPS=(admin-editor code-browser dashboard-viewer dev-workbench gallery media-studio mind-mapper ops-monitor project-analyzer reader runbook-editor)
+    OK=0
+    for app in "${APPS[@]}"; do
+      if curl -s -X POST -H "Content-Type: application/json" \
+          -d "{\"appId\":\"$app\",\"sourceId\":1}" \
+          $GW/api/mapp-marketplace/install 2>/dev/null | grep -q "\"ok\":true"; then
+        OK=$((OK + 1))
+      fi
+    done
+    INSTALLED=$(curl -s $GW/api/dashboard/magic-apps | grep -o "\"id\":" | wc -l)
+    echo "    installed: $INSTALLED / 11"
+  '
+
+  # Auto-exit safemode if boot landed in it. The test VM gets killed by
+  # multipass abruptly more often than a dev host does, so every second
+  # boot tends to start in safemode — which blocks mutation endpoints AND
+  # redirects all routes to the Admin Dashboard, breaking e2e specs that
+  # navigate to /projects, /magic-apps, etc. See tynn task #310.
+  echo "==> Clearing safemode if active..."
+  multipass exec "$VM_NAME" -- bash -c '
+    for i in 1 2 3 4 5; do
+      if curl -s -X POST http://127.0.0.1:3100/api/admin/safemode/exit 2>/dev/null | grep -q "\"ok\":true"; then
+        echo "    safemode cleared"
+        exit 0
+      fi
+      sleep 2
+    done
+    echo "    safemode endpoint did not respond — likely not in safemode"
+  '
 }
 
 cmd_services_stop() {
   ensure_vm_running
   multipass exec "$VM_NAME" -- bash -c '
-    [ -f /tmp/aionima.pid ] && kill $(cat /tmp/aionima.pid) 2>/dev/null && rm /tmp/aionima.pid && echo "AGI stopped"
-    [ -f /tmp/aionima-local-id.pid ] && kill $(cat /tmp/aionima-local-id.pid) 2>/dev/null && rm /tmp/aionima-local-id.pid && echo "ID stopped"
+    # Write graceful shutdown marker so AGI does not enter safemode on next start
+    mkdir -p ~/.agi
+    echo "{\"version\":1,\"shutdownAt\":\"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)\",\"reason\":\"sigterm\",\"pid\":$(cat /tmp/agi.pid 2>/dev/null || echo 0),\"projects\":[],\"models\":[]}" > ~/.agi/shutdown-state.json
+    [ -f /tmp/agi.pid ] && kill $(cat /tmp/agi.pid) 2>/dev/null && rm /tmp/agi.pid && echo "AGI stopped"
+    [ -f /tmp/agi-local-id.pid ] && kill $(cat /tmp/agi-local-id.pid) 2>/dev/null && rm /tmp/agi-local-id.pid && echo "ID stopped"
   '
 }
 
@@ -399,13 +683,68 @@ cmd_services_status() {
   multipass exec "$VM_NAME" -- bash -c '
     echo "PostgreSQL: $(systemctl is-active postgresql)"
     echo "Caddy:      $(systemctl is-active caddy)"
-    echo "AGI:        $([ -f /tmp/aionima.pid ] && kill -0 $(cat /tmp/aionima.pid) 2>/dev/null && echo "running (PID $(cat /tmp/aionima.pid))" || echo "stopped")"
-    echo "ID:         $([ -f /tmp/aionima-local-id.pid ] && kill -0 $(cat /tmp/aionima-local-id.pid) 2>/dev/null && echo "running (PID $(cat /tmp/aionima-local-id.pid))" || echo "stopped")"
+    echo "AGI:        $([ -f /tmp/agi.pid ] && kill -0 $(cat /tmp/agi.pid) 2>/dev/null && echo "running (PID $(cat /tmp/agi.pid))" || echo "stopped")"
+    echo "ID:         $([ -f /tmp/agi-local-id.pid ] && kill -0 $(cat /tmp/agi-local-id.pid) 2>/dev/null && echo "running (PID $(cat /tmp/agi-local-id.pid))" || echo "stopped")"
     echo ""
     echo "Health checks:"
     echo "  AGI:  $(curl -sk https://ai.on/health 2>/dev/null || echo "unreachable")"
     echo "  ID:   $(curl -sk https://id.ai.on/health 2>/dev/null || echo "unreachable")"
   '
+}
+
+cmd_services_restart() {
+  ensure_vm_running
+  echo "==> Stopping VM services..."
+  cmd_services_stop
+  echo "==> Starting VM services..."
+  cmd_services_start
+}
+
+cmd_services_version() {
+  ensure_vm_running
+
+  local host_version vm_version
+  host_version=$(grep -m1 '"version"' "$REPO_DIR/package.json" 2>/dev/null | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+  [ -z "$host_version" ] && host_version="unknown"
+
+  vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk https://ai.on/health 2>/dev/null" 2>/dev/null \
+    | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
+    | tr -d '\r\n ')
+  [ -z "$vm_version" ] && vm_version="unreachable"
+
+  echo "Host source: ${host_version}"
+  echo "VM running:  ${vm_version}"
+
+  if [ "$vm_version" = "unreachable" ]; then
+    echo ""
+    echo "VM service is not reachable. Run '$0 services-start'."
+    return 1
+  fi
+
+  if [ "$host_version" = "$vm_version" ]; then
+    echo ""
+    echo "VM is in sync with host source."
+    return 0
+  fi
+
+  echo ""
+  echo "VM is running stale code. Run '$0 services-restart' to pick up the latest."
+  return 2
+}
+
+cmd_test_ui() {
+  ensure_vm_running
+
+  echo "==> Verifying test.ai.on is reachable..."
+  if ! curl -sk --max-time 5 "https://test.ai.on/api/system/stats" >/dev/null 2>&1; then
+    echo "Error: Gateway not reachable at https://test.ai.on" >&2
+    echo "Run: $0 services-start" >&2
+    exit 1
+  fi
+
+  echo "==> Running Playwright against test.ai.on..."
+  cd "$REPO_DIR"
+  BASE_URL="https://test.ai.on" npx playwright test "${@}"
 }
 
 cmd_test_services() {
@@ -452,6 +791,15 @@ cmd_test_services() {
   '
 }
 
+cmd_provision() {
+  emit_json "provision" "start" "Full provisioning: create → setup → services-setup → services-start"
+  cmd_create
+  cmd_setup
+  cmd_services_setup
+  cmd_services_start
+  emit_json "provision" "done" "Test VM fully provisioned — test.ai.on is ready"
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -468,10 +816,14 @@ case "${1:-help}" in
   services-setup)   cmd_services_setup ;;
   services-start)   cmd_services_start ;;
   services-stop)    cmd_services_stop ;;
+  services-restart) cmd_services_restart ;;
   services-status)  cmd_services_status ;;
+  services-version) cmd_services_version ;;
+  provision)        cmd_provision ;;
   test-services)    cmd_test_services ;;
+  test-ui)          cmd_test_ui "${@:2}" ;;
   help|--help|-h)
-    echo "Usage: $0 {create|destroy|status|ssh|ip|setup|test|remount|exec|services-setup|services-start|services-stop|services-status|test-services}"
+    echo "Usage: $0 {create|destroy|status|ssh|ip|setup|provision|test|remount|exec|services-setup|services-start|services-stop|services-restart|services-status|services-version|test-services|test-ui}"
     echo ""
     echo "Commands:"
     echo "  create           Launch a fresh Ubuntu ${VM_IMAGE} VM with all repo mounts"
@@ -488,8 +840,11 @@ case "${1:-help}" in
     echo "  services-setup   Install PostgreSQL + Caddy, build and configure ID service + AGI"
     echo "  services-start   Start all services (PostgreSQL, Caddy, ID service, AGI)"
     echo "  services-stop    Stop ID service and AGI background processes"
+    echo "  services-restart Stop and start all services (fastest way to pick up host source changes)"
     echo "  services-status  Show status and health of all services"
+    echo "  services-version Compare VM-running AGI version vs host source package.json (warns when stale)"
     echo "  test-services    Run service integration tests against the running stack"
+    echo "  test-ui          Run Playwright UI tests against https://test.ai.on"
     ;;
   *)
     echo "Unknown command: $1" >&2

@@ -1,6 +1,6 @@
 {
-  "name": "aionima",
-  "version": "0.3.0",
+  "name": "agi",
+  "version": "0.4.265",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -8,17 +8,20 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @aionima/dashboard build && tsdown",
+    "build": "pnpm --filter @agi/db-schema build && pnpm --filter @agi/dashboard build && tsdown",
+    "build:db-schema": "pnpm --filter @agi/db-schema build",
     "build:marketplace": "tsx scripts/build-marketplace.ts",
-    "build:dashboard": "pnpm --filter @aionima/dashboard build",
+    "migrate:agi_data": "tsx scripts/migrate-to-agi_data.ts",
+    "migrate:agi_data:dry": "tsx scripts/migrate-to-agi_data.ts --dry-run",
+    "build:dashboard": "pnpm --filter @agi/dashboard build",
     "start": "tsx cli/src/index.ts run",
     "cli": "tsx cli/src/index.ts",
     "dev": "tsx watch cli/src/index.ts run",
-    "dev:dashboard": "pnpm --filter @aionima/dashboard dev",
-    "test": "bash scripts/test-vm-run.sh unit",
-    "test:e2e": "bash scripts/test-vm-run.sh e2e",
-    "test:e2e:ui": "bash scripts/test-vm-run.sh e2e:ui",
-    "test:all": "bash scripts/test-vm-run.sh all",
+    "dev:dashboard": "pnpm --filter @agi/dashboard dev",
+    "test": "bash scripts/test-run.sh unit",
+    "test:e2e": "bash scripts/test-run.sh e2e",
+    "test:e2e:ui": "bash scripts/test-run.sh e2e:ui",
+    "test:all": "bash scripts/test-run.sh all",
     "test:vm:create": "bash scripts/test-vm.sh create",
     "test:vm:destroy": "bash scripts/test-vm.sh destroy",
     "test:vm:ssh": "bash scripts/test-vm.sh ssh",
@@ -28,22 +31,36 @@
     "test:vm:services-stop": "bash scripts/test-vm.sh services-stop",
     "test:vm:services-status": "bash scripts/test-vm.sh services-status",
     "test:services": "bash scripts/test-vm.sh test-services",
+    "test:ui": "bash scripts/test-run.sh e2e:ui",
+    "test:vm:test-ui": "bash scripts/test-vm.sh test-ui",
+    "test:spot": "bash scripts/test-run.sh spot",
+    "test:spot:hardware": "bash scripts/test-run.sh spot hardware",
+    "test:spot:marketplace": "bash scripts/test-run.sh spot marketplace",
+    "test:spot:lemonade": "bash scripts/test-run.sh spot lemonade",
+    "test:spot:project-types": "bash scripts/test-run.sh spot project-types",
+    "test:spot:all": "bash scripts/test-run.sh spot all",
     "lint": "oxlint --tsconfig tsconfig.json",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "check": "tsc --noEmit && pnpm lint",
     "typecheck": "tsc --noEmit",
-    "tm": "npx tsx .bots/lib/cli.ts",
-    "tm:status": "npx tsx .bots/lib/cli.ts status",
-    "tm:jobs": "npx tsx .bots/lib/cli.ts jobs"
+    "docs-check": "bash scripts/check-docs-vs-help.sh",
+    "docs-check:strict": "bash scripts/check-docs-vs-help.sh --strict",
+    "route-check": "bash scripts/check-route-collisions.sh",
+    "route-check:strict": "bash scripts/check-route-collisions.sh --strict",
+    "staged-check": "bash scripts/check-staged-tree.sh",
+    "staged-check:strict": "bash scripts/check-staged-tree.sh --strict"
   },
   "dependencies": {
+    "@agi/db-schema": "workspace:*",
     "@types/pg": "^8.20.0",
     "ansi-to-html": "^0.7.2",
     "better-sqlite3": "^11.0.0",
+    "drizzle-kit": "^0.30.4",
+    "drizzle-orm": "^0.38.3",
     "node-pty": "^1.1.0",
     "pg": "^8.20.0",
-    "playwright": "^1.59.1"
+    "playwright": "^1.58.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
@@ -61,6 +78,20 @@
       "electron",
       "esbuild",
       "node-pty"
-    ]
+    ],
+    "overrides": {
+      "tar": ">=7.5.11",
+      "minimatch": ">=9.0.7",
+      "node-forge": ">=1.4.0",
+      "@xmldom/xmldom": ">=0.8.13",
+      "undici": ">=6.24.0",
+      "picomatch": ">=4.0.4",
+      "serialize-javascript": ">=7.0.5",
+      "brace-expansion": ">=1.1.13",
+      "defu": ">=6.1.5",
+      "rollup": ">=4.59.0",
+      "uuid": ">=11.0.0",
+      "lodash": ">=4.17.21"
+    }
   }
 }

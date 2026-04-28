@@ -10,7 +10,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as http from "node:http";
 import { WebSocket } from "ws";
 
-import { AionimaConfigSchema } from "@aionima/config";
+import { AionimaConfigSchema } from "@agi/config";
 import { startGatewayServer } from "./server.js";
 import type { GatewayServer } from "./server.js";
 

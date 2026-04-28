@@ -32,7 +32,50 @@ Runs `tsc --noEmit` across the full monorepo. This validates TypeScript types wi
 
 Both checks must pass before a commit. Never skip either step.
 
-### 3. Curl-test backend API endpoints
+### 3. Same-commit help-text + docs sweep
+
+Whenever a commit changes a CLI surface — adds a subcommand, changes a flag, alters the deployed behavior of an existing one — the matching surfaces must be updated in the **same commit**:
+
+- **`scripts/agi-cli.sh` help block** — the `agi help` output the owner reads in the terminal. New subcommands need entries in the help dispatcher; revised behavior needs the description line refreshed (no leftover "WIP", "MVP", or "TODO" markers from earlier shipping cycles).
+- **`docs/human/cli.md`** — the canonical CLI reference. Every subcommand shown by `agi help` should appear here with the same name, same flags, and a one-line description that matches the help output.
+- **Adjacent docs in `docs/human/` and `docs/agents/`** — if a subcommand is documented inline elsewhere (e.g. `testing.md` for `test-vm`, `huggingface.md` for `models`), refresh those references too.
+
+**Why this matters:** help text is not audited by anything. Type-checks pass, tests pass, the CLI works — and the help text can stay wrong indefinitely. Drift surfaced during the v0.4.0 sweep included `agi bash` describing itself as "(MVP surface; logging + policy WIP)" eight versions after both shipped (v0.4.149 → v0.4.177). The fix is *prevention in the same commit*, not *detection later*.
+
+**Quick sanity check before committing a CLI change:**
+
+```bash
+pnpm docs-check          # warn-only, exit 0 with findings (default)
+pnpm docs-check:strict   # exit 2 on any drift (use in CI gates)
+```
+
+**Quick sanity check before committing a new HTTP route:**
+
+```bash
+pnpm route-check          # warn-only — flags duplicate (METHOD,PATH) registrations
+pnpm route-check:strict   # exit 2 on collision (use in CI gates)
+```
+
+**Quick sanity check that the STAGED commit (not your working dir) typechecks:**
+
+```bash
+pnpm staged-check         # warn-only — typechecks the staged tree, not the working tree
+pnpm staged-check:strict  # exit 2 on staged-tree typecheck failure (use in CI gates)
+```
+
+The staged-tree guard exists because of two hotfix cycles in the same loop session: v0.4.187 → v0.4.188 (route collision passed local tsc because the file existed on disk) and v0.4.193 → v0.4.194 (NoopAnchor file gitignored — local tsc passed because tsc reads disk, but the published commit had a broken import). The guard stashes unstaged changes + untracked files, runs `pnpm typecheck` against the now-clean working tree (which equals the staged content), then restores the stash via a trap so the working tree ends up exactly as it started. Strict mode exits 2 on failure — wire it into pre-commit hooks or CI gates that should hard-fail on a broken staged tree.
+
+The route-collision lint exists because of the v0.4.187 → v0.4.188 hotfix: a new endpoint registered `GET /api/providers`, but `server-runtime-state.ts` already had it. Fastify rejects duplicate routes at startup, the gateway crashed, Caddy returned 502 to every dashboard request — and the unit tests passed because each fixture spun up a fresh Fastify instance. The lint scans `packages/*/src/` for `(app|fastify|f|p).<method>("/api/...")` patterns and aggregates by `(METHOD, PATH)`. Intentional duplicates (e.g. `GET /api/auth/status` registered in both branches of an `if/else` for the auth-on vs auth-off cases) live in an allow-list inside the script itself — adding to that list is the explicit signal that the duplication is deliberate.
+
+The lint (`scripts/check-docs-vs-help.sh`) parses `agi help` and `docs/human/cli.md` and reports three classes of drift:
+
+1. Subcommands present in `agi help` but missing from `cli.md` (and not in the small allow-list of subcommands documented in sibling pages — `test-vm` → `testing.md`, `models` → `huggingface.md`, etc.).
+2. `### agi <name>` sections in `cli.md` that don't correspond to any live subcommand.
+3. `WIP|MVP|TODO|FIXME` markers leaking into the help text — exactly the drift class that survived from v0.4.149's `bash CMD` shipping until v0.4.177's catch-up.
+
+Default is **warn-only** so legitimate sibling-doc placements don't block work; use `:strict` in CI gates that should hard-fail on drift. As legitimate omissions get codified into the lint's allow-list (in `check-docs-vs-help.sh`), the strict gate becomes safe to promote to PR-required.
+
+### 4. Curl-test backend API endpoints
 
 Test every endpoint you added or modified. Examples:
 
@@ -213,7 +256,7 @@ pnpm test:vm:destroy   # Tear down the VM
 pnpm test:vm:ssh       # SSH into the VM
 ```
 
-The VM mounts all workspace repos: AGI → `/mnt/agi`, PRIME → `/mnt/aionima-prime`, ID → `/mnt/aionima-local-id`. A test config fixture at `test/fixtures/gateway-test.json` points to these mount paths.
+The VM mounts all workspace repos: AGI → `/mnt/agi`, PRIME → `/mnt/aionima-prime`, ID → `/mnt/agi-local-id`. A test config fixture at `test/fixtures/gateway-test.json` points to these mount paths.
 
 ### Running All VM Tests
 
@@ -243,7 +286,7 @@ Runs `install.sh` with `AIONIMA_REPO=/mnt/agi` (clones from local mount) and `AI
 - `aionima` user exists
 - Node 22+ installed
 - pnpm installed
-- `/opt/aionima/` has package.json and built dist directories
+- `/opt/agi/` has package.json and built dist directories
 - systemd unit installed and enabled
 - `.env` exists with 0600 permissions
 - Service starts and `/health` responds with `ok: true`
@@ -277,7 +320,7 @@ Exercises the full onboarding state machine:
 
 Validates the plugin install framework on a clean VM:
 
-- Checks plugin directories exist in `/opt/aionima/packages/plugin-*`
+- Checks plugin directories exist in `/opt/agi/packages/plugin-*`
 - Runs `installedCheck` commands (redis-cli, mysql, psql, etc.) — expects failure on fresh VM
 - Installs redis-server via apt — verifies `installedCheck` passes, service runs, `redis-cli ping` returns PONG
 
@@ -324,7 +367,7 @@ SCRIPT
 
 Without this, the CLI crashes with "Failed to load native module: pty.node."
 
-**3. upgrade.sh assumes git repo** — `install.sh` calls `upgrade.sh` at the end, which does `git pull` inside `/opt/aionima`. Since the VM's `/opt/aionima` is not a git clone (it's an empty dir), this step fails. For dev testing, skip deploy and run directly from the cloned repo:
+**3. upgrade.sh assumes git repo** — `install.sh` calls `upgrade.sh` at the end, which does `git pull` inside `/opt/agi`. Since the VM's `/opt/agi` is not a git clone (it's an empty dir), this step fails. For dev testing, skip deploy and run directly from the cloned repo:
 
 ```bash
 multipass exec aionima-test -- sudo -u aionima env HOME=/home/aionima bash << 'SCRIPT'
@@ -469,7 +512,7 @@ If `pnpm lint` reports errors, fix them before committing. Do not use `eslint-di
 
 ## Testing Plugin Changes (Marketplace Repo)
 
-Plugin tests use `testActivate()` from `@aionima/sdk/testing`. Each plugin that registers stacks, runtimes, or services should have a test file at `plugins/plugin-<name>/src/index.test.ts` that verifies:
+Plugin tests use `testActivate()` from `@agi/sdk/testing`. Each plugin that registers stacks, runtimes, or services should have a test file at `plugins/plugin-<name>/src/index.test.ts` that verifies:
 
 - **Correct registration counts** — right number of stacks, services, runtimes
 - **GHCR image references** — all container images use `ghcr.io/civicognita/*`, never vanilla upstream
@@ -481,7 +524,7 @@ Example:
 
 ```typescript
 import { describe, it, expect } from "vitest";
-import { testActivate } from "@aionima/sdk/testing";
+import { testActivate } from "@agi/sdk/testing";
 import plugin from "./index.js";
 
 describe("PostgreSQL plugin", () => {

@@ -10,7 +10,7 @@
  * Reader and Gallery are the first two MagicApps.
  */
 
-import type { PanelWidget } from "@aionima/plugins";
+import type { PanelWidget } from "@agi/plugins";
 import type { ProjectCategory, ProjectTypeTool } from "./project-types.js";
 
 // ---------------------------------------------------------------------------

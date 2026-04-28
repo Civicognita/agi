@@ -62,9 +62,17 @@ export const DEFAULT_MARKER_PATH = join(homedir(), ".agi", "shutdown-state.json"
 // External-dep defaults
 // ---------------------------------------------------------------------------
 
-export const ID_POSTGRES_CONTAINER = "aionima-id-postgres";
-export const ID_SERVICE_UNIT = "aionima-id.service";
-export const ID_POSTGRES_PORT = 5433;
+// PostgreSQL and Local-ID both run as rootless Podman containers on the
+// shared `aionima` network. We don't rely on a hardcoded service unit any
+// more — we check the published loopback port and, if not responding, try
+// to start the known container by name. Constants are kept as fallback
+// names for shutdown markers written before the containerization.
+export const ID_POSTGRES_CONTAINER = "agi-postgres-17";
+export const ID_SERVICE_CONTAINER = "agi-local-id";
+/** Legacy host-process unit name — retired to `.retired-to-container`. */
+export const ID_SERVICE_UNIT = "agi-id.service";
+export const ID_POSTGRES_PORT = 5432;
+export const ID_SERVICE_PORT = 3200;
 
 // ---------------------------------------------------------------------------
 // Read / write / delete marker
@@ -272,40 +280,96 @@ export async function reconcileExternals(
 }
 
 async function reconcileExternalsByName(
-  pgName: string,
+  _pgName: string,
   serviceName: string,
   log: Log,
 ): Promise<ReconcileReport["externals"]> {
 
-  // ---- Postgres container ----
+  // ---- Postgres — check by port, not by container name ----
+  // PostgreSQL is now managed by the agi-postgres plugin (shared container
+  // system). We don't assume a specific container name; instead we probe
+  // port 5432. If it's not up, we look for any stopped postgres container
+  // (by image ancestor) and try to start it.
   let pgAction: "none" | "started" | "failed" = "none";
-  const pgState = podmanContainerState(pgName);
-  if (pgState === "running") {
+  let pgState = "unknown";
+
+  const pgAlreadyUp = await probeTcp("127.0.0.1", ID_POSTGRES_PORT, 2_000);
+  if (pgAlreadyUp) {
+    pgState = "running";
     pgAction = "none";
-  } else if (pgState === "exited" || pgState === "created") {
-    log.info(`[boot-recovery] ${pgName} is ${pgState} — starting`);
-    pgAction = podmanStart(pgName, log) ? "started" : "failed";
   } else {
-    log.warn(`[boot-recovery] ${pgName} container missing — skipping`);
-    pgAction = "failed";
+    // Discover any postgres container that is not running and try to start it
+    try {
+      const stoppedNames = execFileSync(
+        "podman",
+        ["ps", "-a", "--filter", "ancestor=ghcr.io/civicognita/postgres:17",
+          "--filter", "status=exited", "--filter", "status=created",
+          "--format", "{{.Names}}"],
+        { stdio: "pipe", timeout: 8_000 },
+      ).toString().trim();
+
+      if (stoppedNames.length > 0) {
+        const firstName = stoppedNames.split("\n")[0]!.trim();
+        pgState = "exited";
+        log.info(`[boot-recovery] postgres container ${firstName} is stopped — starting`);
+        pgAction = podmanStart(firstName, log) ? "started" : "failed";
+      } else {
+        pgState = "missing";
+        log.warn("[boot-recovery] no postgres container found and port 5432 not open — skipping");
+        pgAction = "failed";
+      }
+    } catch {
+      pgState = "missing";
+      log.warn("[boot-recovery] failed to discover postgres containers — skipping");
+      pgAction = "failed";
+    }
   }
 
-  // ---- ID systemd unit ----
+  // ---- Local-ID container ----
+  // The identity service used to run as a host-level systemd unit
+  // (`agi-id.service`). It's now a rootless Podman container on the
+  // `aionima` network, published loopback-only. Probe the port first —
+  // if it's responding, nothing to do. Otherwise start the known
+  // container by name. The legacy `systemctl` path is a last-resort
+  // fallback for hosts still mid-migration.
   let idAction: "none" | "started" | "failed" = "none";
-  const idActive = systemctlIsActive(serviceName);
-  if (idActive) {
+  let idState = "unknown";
+
+  const idPortUp = await probeTcp("127.0.0.1", ID_SERVICE_PORT, 2_000);
+  if (idPortUp) {
     idAction = "none";
+    idState = "active";
   } else {
-    log.info(`[boot-recovery] ${serviceName} not active — starting`);
-    idAction = systemctlStart(serviceName, log) ? "started" : "failed";
+    const containerState = podmanContainerState(ID_SERVICE_CONTAINER);
+    if (containerState === "running") {
+      idState = "running-but-port-closed";
+      idAction = "failed";
+      log.warn(`[boot-recovery] ${ID_SERVICE_CONTAINER} is running but port ${String(ID_SERVICE_PORT)} isn't responding`);
+    } else if (containerState === "exited" || containerState === "created") {
+      log.info(`[boot-recovery] ${ID_SERVICE_CONTAINER} container ${containerState} — starting`);
+      idAction = podmanStart(ID_SERVICE_CONTAINER, log) ? "started" : "failed";
+      idState = containerState;
+    } else {
+      // No container yet — last-resort fallback to legacy systemd unit
+      // for hosts that haven't gone through the containerization upgrade.
+      const legacyActive = systemctlIsActive(serviceName);
+      if (legacyActive) {
+        idAction = "none";
+        idState = "active-legacy";
+      } else {
+        log.info(`[boot-recovery] no container or active unit for Local-ID — trying legacy unit ${serviceName}`);
+        idAction = systemctlStart(serviceName, log) ? "started" : "failed";
+        idState = "legacy";
+      }
+    }
   }
 
   // ---- Wait for Postgres to accept connections ----
-  const pgReady = await waitForPort("127.0.0.1", ID_POSTGRES_PORT, 15_000, log);
+  const pgReady = pgAlreadyUp || await waitForPort("127.0.0.1", ID_POSTGRES_PORT, 15_000, log);
 
   return {
     postgres: { action: pgAction, state: pgState },
-    idService: { action: idAction, state: idActive ? "active" : "inactive" },
+    idService: { action: idAction, state: idState },
     postgresReady: pgReady,
   };
 }
@@ -395,7 +459,7 @@ function discoverManagedProjectContainers(log: Log): string[] {
       "podman",
       [
         "ps", "-a",
-        "--filter", "label=aionima.managed=true",
+        "--filter", "label=agi.managed=true",
         "--format", "{{.Names}}",
       ],
       { stdio: "pipe", timeout: 10_000 },

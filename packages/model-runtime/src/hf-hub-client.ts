@@ -38,7 +38,7 @@ export interface DownloadFileOptions {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_BASE_URL = "https://huggingface.co";
-const USER_AGENT = "aionima/0.1.0";
+const USER_AGENT = "agi/0.4.8";
 const PROGRESS_THROTTLE_MS = 500;
 
 // ---------------------------------------------------------------------------

@@ -41,7 +41,7 @@ InboundRouter → MessageQueue → QueueConsumer → AgentBridge.notify()
 Before any user-supplied content enters the system prompt, it passes through `packages/agent-bridge/src/sanitize.ts`:
 
 ```ts
-import { sanitizeForPromptLiteral, sanitizeRecord } from "@aionima/agent-bridge";
+import { sanitizeForPromptLiteral, sanitizeRecord } from "@agi/agent-bridge";
 
 // Sanitize a string before injecting into system prompt
 const safeText = sanitizeForPromptLiteral(userInput);
@@ -62,7 +62,7 @@ Always sanitize before injecting user-controlled content.
 `ContextGuard` in `packages/agent-bridge/src/context-guard.ts` tracks token usage and enforces the session context window budget:
 
 ```ts
-import { ContextGuard } from "@aionima/agent-bridge";
+import { ContextGuard } from "@agi/agent-bridge";
 
 const guard = new ContextGuard({
   contextWindowTokens: 200000,  // from sessions.contextWindowTokens in config
@@ -177,7 +177,7 @@ Skills live in `skills/` and are loaded via `packages/skills/`. The `SkillLoader
 
 ```ts
 // In agent-session.ts
-import { SkillLoader } from "@aionima/skills";
+import { SkillLoader } from "@agi/skills";
 
 const loader = new SkillLoader({ skillsDir: join(workspaceRoot, "skills") });
 const skills = await loader.loadAll();
@@ -198,7 +198,7 @@ function buildSkillsContext(skills: Skill[]): string {
 `packages/memory/` provides a composite memory adapter. It aggregates multiple memory backends (local file, Cognee, etc.):
 
 ```ts
-import type { MemoryAdapter } from "@aionima/memory";
+import type { MemoryAdapter } from "@agi/memory";
 
 async function buildMemoryContext(memory: MemoryAdapter, entityId: string, query: string): Promise<string> {
   const memories = await memory.recall({ entityId, query, limit: 10 });
@@ -243,6 +243,60 @@ The dashboard chat renders agent responses through react-fancy's `ContentRendere
 | `<highlight>...</highlight>` | Inline highlight (cyan) for drawing attention to a phrase. |
 
 `buildResponseFormatSection()` in `packages/gateway-core/src/system-prompt.ts` tells the agent when to emit each tag, what nesting limits apply, and that tags must not be wrapped in code fences. Update BOTH sides together — if you add a new tag to `content-renderer-setup.tsx`, extend the response-format instructions so the agent knows it exists.
+
+## Cost-Mode Trimming for Local Models
+
+Small local models (3B–7B) cannot usefully consume the full prompt — TaskMaster orchestration, plan-workflow guidance, knowledge-index references, and the verbose chat-markup paragraph in the response-format section are wasted tokens that displace history and tool definitions inside a 4K–8K context window.
+
+When `config.agent.router.costMode === "local"`, `assembleSystemPrompt()` and `assembleSystemPromptWithBreakdown()` in `packages/gateway-core/src/system-prompt.ts` switch to a trimmed shape:
+
+| Section | Cloud / Balanced / Max | Local |
+|---------|------------------------|-------|
+| Identity (PRIME or hardcoded) | full | full |
+| Runtime metadata | full | full |
+| Tools list | full | full |
+| Operational state | full | full |
+| Owner context | full | full |
+| Response format | `buildResponseFormatSection()` (~800 tokens, full chat-markup contract) | `buildLocalResponseFormatSection()` (~80 tokens, capability discipline + plain-text rules) |
+| Entity / user context | per `requestType` | per `requestType` |
+| COA + PRIME directive | per `requestType` | per `requestType` |
+| State constraints | per `requestType` | per `requestType` |
+| Knowledge index | per `requestType` | **omitted** |
+| Project context | per `requestType` | per `requestType` |
+| Plan workflow | per `requestType` | **omitted** |
+| Workspace + Tynn | dev mode only | dev mode only |
+| TASKMASTER section | per `requestType` | **omitted** |
+| Skills | matched only | matched only |
+| Memory | recalled only | recalled only |
+
+Total savings on a project-context turn are roughly 2,400 tokens (TaskMaster ≈ 822, plan-workflow ≈ 857, response-format delta ≈ 720). The cost mode is read live per turn via `AgentInvokerDeps.getCostMode` (wired in `packages/gateway-core/src/server.ts`), so a Settings toggle from Cloud → Local takes effect on the next message — no restart required.
+
+To exercise the trimming in tests, set `costMode: "local"` directly on `SystemPromptContext` — see `packages/gateway-core/src/system-prompt-cost-mode.test.ts`.
+
+### Tool-list short-circuit (`toolsAvailable`)
+
+Independent of `costMode`, the assembler also accepts a `toolsAvailable: boolean` field. `agent-invoker.ts` computes this once via `shouldOfferTools(content, requestType) && availableTools.length > 0` (the same boolean that decides whether `tools:` is passed to the API) and threads it into `SystemPromptContext`.
+
+When the upcoming LLM call won't offer tools (chat without action verbs, no available tools for the current state/tier), the assembler replaces the full `Available tools:` section — which can run 1.5–2.5k tokens for a 20+ tool manifest — with a compact one-line hint via `buildToolsHintSection()`. This:
+
+- Eliminates dead-weight tokens the model can't use anyway.
+- Prevents the model from hallucinating tool calls it has no permission to make.
+- Stacks with `costMode: "local"` for chat turns: a no-action-verb chat under local mode now sends a sub-1k-token system prompt instead of ~5KB.
+
+`toolsAvailable: undefined` preserves the prior full-list behavior, so existing callers see no change.
+
+### Empirical baseline (t326, recorded 2026-04-25)
+
+Round-trip latency was measured against the test VM (multipass, 4 vCPU, no GPU, ollama qwen2.5:3b) using `scripts/probe-local-chat-latency.mjs` over the `chat:send` WebSocket path:
+
+| Prompt | costMode | Tools available | First response | Tool loops |
+|--------|----------|-----------------|----------------|-----------|
+| `"hi"` (chat) | `local` | false (option D hint) | **60.9 s** | 0 |
+| `"list the files in /tmp"` (chat) | `local` | false (chat type drops tools) | **57.9 s** | 0 |
+
+Baseline (pre-options-A/D, recorded in t326 task description): **>5 min, often timing out**. Both probes now finish in ~60 s — the user-facing 5-minute timeout symptom is closed for the chat-flow path.
+
+`scripts/probe-local-chat-latency.mjs` ships in the repo as a permanent regression artifact. Run it inside the test VM (`PROMPT="..." node /mnt/agi/scripts/probe-local-chat-latency.mjs`) any time the system prompt changes — a regression that re-inflates the prompt by 2k tokens is otherwise invisible until somebody complains about latency.
 
 ## Prompt Section Ordering
 

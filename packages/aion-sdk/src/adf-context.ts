@@ -13,7 +13,7 @@ export interface ADFContext {
   config: Record<string, unknown>;
   workspaceRoot: string;
   projectDirs: string[];
-  /** Security scanning context — available when @aionima/security is loaded. */
+  /** Security scanning context — available when @agi/security is loaded. */
   security?: ADFSecurityContext;
   /** Project config manager — available when ProjectConfigManager is initialized. */
   projectConfig?: ADFProjectConfigContext;
@@ -38,8 +38,8 @@ export interface ADFSystemConfigContext {
 /** ADF security facade context — provides scan execution and finding queries. */
 export interface ADFSecurityContext {
   runScan(config: { scanTypes: string[]; targetPath: string; projectId?: string; excludePaths?: string[]; severityThreshold?: string; maxFindings?: number }): Promise<unknown>;
-  getFindings(scanId: string): unknown[];
-  getScanHistory(projectPath?: string, limit?: number): unknown[];
+  getFindings(scanId: string): Promise<unknown[]>;
+  getScanHistory(projectPath?: string, limit?: number): Promise<unknown[]>;
   getProviders(): Array<{ id: string; name: string; scanType: string; description?: string }>;
 }
 

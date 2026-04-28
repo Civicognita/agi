@@ -7,7 +7,7 @@
 
 import type { ToolHandler } from "../tool-registry.js";
 import type { SystemConfigService } from "../system-config-service.js";
-import type { PluginRegistry } from "@aionima/plugins";
+import type { PluginRegistry } from "@agi/plugins";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -148,9 +148,11 @@ export const MANAGE_SETTINGS_MANIFEST = {
   description:
     "Manage system settings and plugins. Actions: config_read (full config or specific key), " +
     "config_patch (update a single key via dot-notation), plugin_list (all plugins with status), " +
-    "plugin_enable (activate a plugin), plugin_disable (deactivate a plugin).",
+    "plugin_enable (activate a plugin), plugin_disable (deactivate a plugin). " +
+    "Aion-only: workers cannot mutate system settings and must request changes via taskmaster_handoff.",
   requiresState: ["ONLINE" as const],
   requiresTier: ["verified" as const, "sealed" as const],
+  agentOnly: true as const,
 };
 
 export const MANAGE_SETTINGS_INPUT_SCHEMA = {

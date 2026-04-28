@@ -7,8 +7,8 @@
  * @see docs/governance/agent-invocation-spec.md §6
  */
 
-import type { VerificationTier } from "@aionima/entity-model";
-import type { COAChainLogger } from "@aionima/coa-chain";
+import type { VerificationTier } from "@agi/entity-model";
+import type { COAChainLogger } from "@agi/coa-chain";
 
 import type { GatewayState } from "./types.js";
 import type { ToolManifestEntry, TierCapabilities } from "./system-prompt.js";
@@ -50,6 +50,14 @@ export interface ToolExecutionContext {
   coaChainBase: string; // base fingerprint for this invocation
   resourceId: string;
   nodeId: string;
+  /** AgentSessionManager key — lets background work (e.g. taskmaster_dispatch)
+   *  mint injections back into the session that dispatched it. Optional:
+   *  headless/background tool calls (like the worker runtime itself) may
+   *  leave this unset. */
+  sessionKey?: string;
+  /** Chat session id that spawned this tool call (if any). Used alongside
+   *  sessionKey for UI-side event routing. */
+  chatSessionId?: string;
 }
 
 /** Worker emission extracted from response text. */

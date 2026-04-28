@@ -1,6 +1,6 @@
 # Adding a New Plugin
 
-This guide covers creating a plugin for the Aionima marketplace. All plugins live in the marketplace repo (`Civicognita/aionima-marketplace`), not in the AGI repo. Use any existing plugin in `plugins/plugin-*/` in the marketplace repo as reference.
+This guide covers creating a plugin for the Aionima marketplace. All plugins live in the marketplace repo (`Civicognita/agi-marketplace`), not in the AGI repo. Use any existing plugin in `plugins/plugin-*/` in the marketplace repo as reference.
 
 ## What Plugins Can Do
 
@@ -16,6 +16,7 @@ Plugins receive an `AionimaPluginAPI` instance during `activate()` and can:
 - Register hosting field extensions (`api.registerHostingExtension`)
 - Register channel plugins (`api.registerChannel`)
 - Register LLM providers (`api.registerProvider`)
+- Register PM providers (`api.registerPmProvider`) — back the canonical tynn workflow with alternative storage (Linear, Jira, GitHub Projects, etc.)
 
 **Universal extensibility:**
 - Register actions with scopes and handlers (`api.registerAction`) — buttons that run shell/api/hook commands
@@ -38,7 +39,7 @@ Plugins receive an `AionimaPluginAPI` instance during `activate()` and can:
 ## Step 1: Create the Plugin in the Marketplace Repo
 
 ```bash
-cd /path/to/aionima-marketplace
+cd /path/to/agi-marketplace
 mkdir -p plugins/plugin-<name>/src
 ```
 
@@ -50,7 +51,7 @@ The plugin manifest lives in the `"aionima"` field of `package.json`.
 
 ```json
 {
-  "name": "@aionima/plugin-<name>",
+  "name": "@agi/plugin-<name>",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -69,7 +70,7 @@ The plugin manifest lives in the `"aionima"` field of `package.json`.
     "entry": "./src/index.ts"
   },
   "dependencies": {
-    "@aionima/sdk": "workspace:*"
+    "@agi/sdk": "workspace:*"
   }
 }
 ```
@@ -108,6 +109,7 @@ The plugin manifest lives in the `"aionima"` field of `package.json`.
 | `workflows` | Defines multi-step automations |
 | `channels` | Registers messaging channel adapters |
 | `providers` | Registers LLM provider integrations |
+| `pm-providers` | Registers PM provider integrations (Linear, Jira, etc. — back the canonical tynn workflow) |
 
 Plugins without `provides` fall back to deriving capabilities from the legacy `category` field. Active plugins also get their provides enriched from registry introspection (what they actually registered).
 
@@ -129,7 +131,7 @@ Declare only the permissions your plugin actually uses. The manifest validator (
 
 ```ts
 // plugins/plugin-<name>/src/index.ts
-import { createPlugin } from "@aionima/sdk";
+import { createPlugin } from "@agi/sdk";
 
 export default createPlugin({
   async activate(api) {
@@ -154,7 +156,7 @@ export default createPlugin({
 
 `deactivate()` is optional. Implement it if your plugin opens connections or starts timers.
 
-> **Note:** Always import from `@aionima/sdk`, not `@aionima/plugins`. The SDK wraps the low-level plugin types with `createPlugin()` factory and `define*()` builders for type-safe registration. See `docs/agents/plugin-schema.md` for the full registration surface.
+> **Note:** Always import from `@agi/sdk`, not `@agi/plugins`. The SDK wraps the low-level plugin types with `createPlugin()` factory and `define*()` builders for type-safe registration. See `docs/agents/plugin-schema.md` for the full registration surface.
 
 ## Step 4: Add to marketplace.json
 
@@ -190,7 +192,7 @@ The discovery chain at startup is: `discoverPlugins()` (user-installed) → `dis
 
 ## Step 6: Deploy
 
-The marketplace repo is deployed to `/opt/aionima-marketplace/`. When `upgrade.sh` runs, it pulls the marketplace repo alongside AGI and PRIME. New plugins added to the marketplace repo are automatically available after the next deploy.
+The marketplace repo is deployed to `/opt/agi-marketplace/`. When `upgrade.sh` runs, it pulls the marketplace repo alongside AGI and PRIME. New plugins added to the marketplace repo are automatically available after the next deploy.
 
 ## Files to Modify
 
@@ -200,6 +202,56 @@ The marketplace repo is deployed to `/opt/aionima-marketplace/`. When `upgrade.s
 | `plugins/plugin-<name>/src/index.ts` | Create — plugin entry implementing `AionimaPlugin` |
 | `marketplace.json` | Add catalog entry |
 | `gateway.json` | Add plugin-specific config section if needed |
+
+## How to Add a PM Provider
+
+PM providers back the canonical tynn workflow with alternative storage — Linear, Jira, GitHub Projects, etc. Built-in providers are `tynn` (MCP to tynn-the-service) and `tynn-lite` (file-based at `<project>/.tynn-lite/`). Plugin-registered providers fill any other storage.
+
+**Manifest:** include `"pm-providers"` in your `provides` array. Optionally add the `category` field as `"integration"` (legacy classification — derives the same label).
+
+**Entry file:**
+
+```ts
+import { createPlugin, definePmProvider, type PmProvider } from "@agi/sdk";
+
+export default createPlugin({
+  activate(api) {
+    const linear = definePmProvider("linear", "Linear")
+      .description("Linear issue tracker as PM provider")
+      .fields([
+        { id: "apiKey", label: "Linear API key", type: "password" },
+        { id: "teamId", label: "Team id", type: "text" },
+      ])
+      .factory((config): PmProvider => {
+        // config receives { apiKey, teamId, ... } from gateway.json
+        // agent.pm.config when this provider is selected.
+        return new LinearPmProvider(config);  // your implementation
+      })
+      .build();
+
+    api.registerPmProvider(linear);
+  },
+});
+```
+
+**Configuration:** owners select your provider per project via `gateway.json`:
+
+```json
+{
+  "agent": {
+    "pm": {
+      "provider": "linear",
+      "config": { "apiKey": "...", "teamId": "..." }
+    }
+  }
+}
+```
+
+**Reserved ids:** `tynn` and `tynn-lite` are reserved for the built-in implementations. Registering with those ids throws at registration time.
+
+**Implementing PmProvider:** the canonical interface is in `@agi/sdk` (`PmProvider` type). Twelve methods cover read (getProject / getNext / getTask / getStory / findTasks / getComments) + write (setTaskStatus / addComment / updateTask / createTask / iWish) + optional (getActiveFocusProgress). See `packages/gateway-core/src/pm/tynn-provider.ts` and `packages/gateway-core/src/pm/tynn-lite-provider.ts` for two reference implementations.
+
+**Composition with the plan tool:** see `agi/docs/agents/plan-vs-pm.md` — plan IDs use `plan_<ulid>` prefix, PM IDs don't; storage paths must not overlap; state machines stay independent.
 
 ## Verification Checklist
 

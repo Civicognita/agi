@@ -2,7 +2,7 @@
  * defineDashboardPage — chainable builder for DashboardInterfacePageDefinition.
  */
 
-import type { DashboardInterfacePageDefinition, PanelWidget } from "@aionima/plugins";
+import type { DashboardInterfacePageDefinition, PanelWidget } from "@agi/plugins";
 
 class DashboardPageBuilder {
   private def: Partial<DashboardInterfacePageDefinition> & { widgets: PanelWidget[] };

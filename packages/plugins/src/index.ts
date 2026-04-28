@@ -1,5 +1,5 @@
 /**
- * @aionima/plugins — Plugin system for Aionima.
+ * @agi/plugins — Plugin system for Aionima.
  */
 
 // Types
@@ -49,6 +49,9 @@ export type {
   DashboardDomainPageDefinition,
   LLMProviderDefinition,
   LLMProviderFactory,
+  PmProviderDefinition,
+  PmProviderFactory,
+  ProviderField,
   CleanupResource,
   CleanupManifest,
   WorkerDomain,

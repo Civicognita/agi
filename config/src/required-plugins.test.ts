@@ -17,17 +17,17 @@ describe("required-plugins.json", () => {
   });
 
   it("includes runtime plugins", () => {
-    expect(ids).toContain("aionima-php-runtime");
-    expect(ids).toContain("aionima-node-runtime");
-    expect(ids).toContain("aionima-python-runtime");
-    expect(ids).toContain("aionima-go-runtime");
-    expect(ids).toContain("aionima-rust-runtime");
+    expect(ids).toContain("agi-php-runtime");
+    expect(ids).toContain("agi-node-runtime");
+    expect(ids).toContain("agi-python-runtime");
+    expect(ids).toContain("agi-go-runtime");
+    expect(ids).toContain("agi-rust-runtime");
   });
 
   it("includes service plugins", () => {
-    expect(ids).toContain("aionima-postgres");
-    expect(ids).toContain("aionima-mysql");
-    expect(ids).toContain("aionima-redis");
+    expect(ids).toContain("agi-postgres");
+    expect(ids).toContain("agi-mysql");
+    expect(ids).toContain("agi-redis");
   });
 
   it("includes framework stack plugins", () => {

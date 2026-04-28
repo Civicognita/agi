@@ -1,4 +1,4 @@
-import type { ChannelSecurityAdapter } from "@aionima/channel-sdk";
+import type { ChannelSecurityAdapter } from "@agi/channel-sdk";
 
 // ---------------------------------------------------------------------------
 // Security adapter: email allowlist + rate limiting

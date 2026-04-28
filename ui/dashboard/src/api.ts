@@ -201,6 +201,82 @@ export async function deleteProject(params: { path: string; confirm: boolean }):
   return res.json() as Promise<{ ok: boolean }>;
 }
 
+export interface IterativeWorkProjectStatus {
+  enabled: boolean;
+  cron: string | null;
+  inFlight: boolean;
+  lastFiredAt: string | null;
+  nextFireAt: string | null;
+}
+
+export type IterativeWorkLogStatus = "running" | "done" | "error";
+
+export interface IterativeWorkLogEntry {
+  firedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  status: IterativeWorkLogStatus;
+  error?: string;
+  cron: string;
+}
+
+export interface IterativeWorkProgress {
+  totalTasks: number;
+  doneTasks: number;
+  qaTasks: number;
+  doingTasks: number;
+  backlogTasks: number;
+  blockedTasks: number;
+  inProgressTasks: number;
+  percentComplete: number;
+}
+
+export async function fetchIterativeWorkProgress(projectPath: string): Promise<IterativeWorkProgress> {
+  const res = await fetch(`/api/projects/iterative-work/progress?path=${encodeURIComponent(projectPath)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<IterativeWorkProgress>;
+}
+
+export async function fetchIterativeWorkLog(projectPath: string, limit?: number): Promise<IterativeWorkLogEntry[]> {
+  const qs = new URLSearchParams({ path: projectPath });
+  if (limit !== undefined) qs.set("limit", String(limit));
+  const res = await fetch(`/api/projects/iterative-work/log?${qs.toString()}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const json = await res.json() as { entries: IterativeWorkLogEntry[] };
+  return json.entries;
+}
+
+export async function fetchIterativeWorkStatus(projectPath: string): Promise<IterativeWorkProjectStatus> {
+  const res = await fetch(`/api/projects/iterative-work/status?path=${encodeURIComponent(projectPath)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<IterativeWorkProjectStatus>;
+}
+
+export async function updateIterativeWorkConfig(params: {
+  path: string;
+  iterativeWork: { enabled?: boolean; cron?: string };
+}): Promise<{ ok: boolean; iterativeWork: { enabled?: boolean; cron?: string } | null }> {
+  const res = await fetch("/api/projects/iterative-work/config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean; iterativeWork: { enabled?: boolean; cron?: string } | null }>;
+}
+
 export async function execGitAction<T extends GitActionResult = GitActionResult>(
   path: string,
   action: GitAction,
@@ -312,6 +388,12 @@ export interface SystemStats {
   memory: { total: number; free: number; used: number; percent: number };
   disk: { total: number; used: number; free: number; percent: number };
   diskIO: { readBytesPerSec: number; writeBytesPerSec: number };
+  /** s111 t377/t378/t417 — power consumption. cpuWatts is null when RAPL
+   *  isn't available (non-Linux, missing intel-rapl, permission denied);
+   *  gpuWatts is null on non-NVIDIA hosts (Intel iGPU, AMD, ARM, macOS,
+   *  hardened distros without nvidia-smi). Either-or-both can be present;
+   *  the chart hides each series independently when its data is null. */
+  power?: { cpuWatts: number | null; gpuWatts?: number | null };
   uptime: number;
   hostname: string;
 }
@@ -335,6 +417,12 @@ export interface StatsHistoryPoint {
   load1: number;
   load5: number;
   load15: number;
+  /** s111 t378 — RAPL CPU watts at sample time. Optional because older
+   *  history points (pre-v0.4.206) and non-Linux hosts don't have it. */
+  cpuWatts?: number;
+  /** s111 t417 — NVIDIA GPU watts at sample time. Optional because older
+   *  history points (pre-v0.4.213) and non-NVIDIA hosts don't have it. */
+  gpuWatts?: number;
 }
 
 export async function fetchStatsHistory(hours = 1): Promise<StatsHistoryPoint[]> {
@@ -342,6 +430,120 @@ export async function fetchStatsHistory(hours = 1): Promise<StatsHistoryPoint[]>
   if (!res.ok) return [];
   const data = await res.json() as { history: StatsHistoryPoint[] };
   return data.history;
+}
+
+// ---------------------------------------------------------------------------
+// Providers API — /api/providers (s111 t372/t373)
+// ---------------------------------------------------------------------------
+
+/** Mirrors ProviderCatalogEntry in packages/gateway-core/src/providers-api.ts.
+ *  Wire-compatible with backend; new optional fields land here as the catalog
+ *  shape grows (e.g., t411 timeoutMultiplier, t416 defaultModel + dependsOn). */
+export interface ProviderCatalogEntry {
+  id: string;
+  name: string;
+  tier: "core" | "local" | "cloud" | "floor";
+  offGridCapable: boolean;
+  health: "healthy" | "degraded" | "unreachable" | "no-key";
+  modelCount?: number;
+  baseUrl?: string;
+  defaultModel?: string;
+  dependsOn?: string[];
+  timeoutMultiplier: number;
+}
+
+export interface ActiveProviderState {
+  activeProviderId: string;
+  activeModel: string;
+  router: {
+    costMode: string;
+    escalation: boolean;
+    simpleThresholdTokens?: number;
+    complexThresholdTokens?: number;
+    maxEscalationsPerTurn?: number;
+  };
+  offGridMode: boolean;
+}
+
+export async function fetchProvidersCatalog(): Promise<{
+  providers: ProviderCatalogEntry[];
+  generatedAt: string;
+}> {
+  const res = await fetch("/api/providers/catalog");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{ providers: ProviderCatalogEntry[]; generatedAt: string }>;
+}
+
+export async function fetchActiveProvider(): Promise<ActiveProviderState> {
+  const res = await fetch("/api/providers/active");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<ActiveProviderState>;
+}
+
+/** s111 t419 wire shape — recent routing decisions from AgentRouter ring
+ *  buffer. ts is optional because the field was added in t419 backend slice;
+ *  pre-stamp records (if any survive in memory across deploy) lack it. */
+export interface RoutingDecisionRecord {
+  provider: string;
+  model: string;
+  reason: string;
+  complexity: string;
+  costMode: string;
+  escalated: boolean;
+  ts?: string;
+}
+
+/** GET /api/providers/recent-decisions — newest-last array of recent
+ *  routing decisions for the Mission Control hero. Returns empty when the
+ *  AgentRouter isn't yet ready (early-boot stub Provider, plugin Provider
+ *  that doesn't expose the ring buffer). UI hides the hero in that case. */
+export async function fetchRecentDecisions(limit = 20): Promise<RoutingDecisionRecord[]> {
+  const res = await fetch(`/api/providers/recent-decisions?limit=${String(limit)}`);
+  if (!res.ok) return [];
+  const data = (await res.json()) as { decisions: RoutingDecisionRecord[] };
+  return data.decisions;
+}
+
+/** PUT /api/providers/active — switch the active Provider (and optionally
+ *  the model). Hot-reloaded — agent-router picks up the new Provider on the
+ *  next invocation without a gateway restart. Used by the click-to-activate
+ *  interaction on Provider cards. */
+export async function updateActiveProvider(patch: {
+  providerId: string;
+  model?: string;
+}): Promise<ActiveProviderState> {
+  const res = await fetch("/api/providers/active", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ActiveProviderState>;
+}
+
+/** PUT /api/providers/router — partial update; only provided fields are
+ *  patched. Used by the off-grid toggle in the Providers page header. */
+export async function updateRouterConfig(patch: {
+  costMode?: string;
+  escalation?: boolean;
+  simpleThresholdTokens?: number;
+  complexThresholdTokens?: number;
+  maxEscalationsPerTurn?: number;
+  offGridMode?: boolean;
+}): Promise<ActiveProviderState> {
+  const res = await fetch("/api/providers/router", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ActiveProviderState>;
 }
 
 export async function checkForUpdates(): Promise<UpdateCheck> {
@@ -427,7 +629,7 @@ export async function switchPrimeSource(source: string, branch?: string): Promis
 
 function getDashboardToken(): string | null {
   if (typeof localStorage === "undefined") return null;
-  return localStorage.getItem("aionima-dashboard-token");
+  return localStorage.getItem("agi-dashboard-token");
 }
 
 export async function fetchDevStatus(): Promise<import("./types.js").DevStatus> {
@@ -442,7 +644,16 @@ export async function fetchDevStatus(): Promise<import("./types.js").DevStatus> 
   return res.json() as Promise<import("./types.js").DevStatus>;
 }
 
-export async function switchDevMode(enabled: boolean): Promise<{ ok: boolean; agi: string; prime: string; bots: string }> {
+/** POST /api/dev/switch response — includes per-repo provisioning outcome. */
+export interface DevSwitchResponse {
+  ok: boolean;
+  enabled: boolean;
+  provisionedProjects?: string[];
+  provisionFailures?: Array<{ slug: string; reason: string }>;
+  note?: string;
+}
+
+export async function switchDevMode(enabled: boolean): Promise<DevSwitchResponse> {
   const token = getDashboardToken();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -455,7 +666,51 @@ export async function switchDevMode(enabled: boolean): Promise<{ ok: boolean; ag
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
-  return res.json() as Promise<{ ok: boolean; agi: string; prime: string; bots: string }>;
+  return res.json() as Promise<DevSwitchResponse>;
+}
+
+// ---------------------------------------------------------------------------
+// Test VM API
+// ---------------------------------------------------------------------------
+
+export interface TestVmStatus {
+  exists: boolean;
+  running: boolean;
+  ip: string | null;
+  services: {
+    postgres: string;
+    caddy: string;
+    agi: string;
+  };
+}
+
+export async function fetchTestVmStatus(): Promise<TestVmStatus> {
+  const res = await fetch("/api/test-vm/status");
+  if (!res.ok) return { exists: false, running: false, ip: null, services: { postgres: "unknown", caddy: "unknown", agi: "unknown" } };
+  return res.json() as Promise<TestVmStatus>;
+}
+
+export async function runTestVmCommand(command: string): Promise<{ ok: boolean }> {
+  const res = await fetch("/api/test-vm/command", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command }),
+  });
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
+export interface TestResults {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  tests: Array<{ name: string; file: string; status: string; duration: number }>;
+}
+
+export async function fetchTestResults(): Promise<TestResults> {
+  const res = await fetch("/api/test-vm/test-results");
+  if (!res.ok) return { total: 0, passed: 0, failed: 0, skipped: 0, tests: [] };
+  return res.json() as Promise<TestResults>;
 }
 
 // ---------------------------------------------------------------------------
@@ -509,8 +764,11 @@ export async function fetchModels(provider: string): Promise<ModelEntry[]> {
 // Work Queue API — /api/taskmaster
 // ---------------------------------------------------------------------------
 
-export async function fetchTaskmasterJobs(): Promise<WorkerJobSummary[]> {
-  const res = await fetch("/api/taskmaster/jobs");
+export async function fetchTaskmasterJobs(projectPath?: string | null): Promise<WorkerJobSummary[]> {
+  const url = projectPath != null && projectPath !== "" && projectPath !== "general"
+    ? `/api/taskmaster/jobs?projectPath=${encodeURIComponent(projectPath)}`
+    : "/api/taskmaster/jobs";
+  const res = await fetch(url);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -1437,6 +1695,54 @@ export async function removeStack(path: string, stackId: string): Promise<void> 
   }
 }
 
+// ---------------------------------------------------------------------------
+// Database engines
+// ---------------------------------------------------------------------------
+
+export interface DatabaseEngine {
+  stackId: string;
+  engine: string;
+  label: string;
+  description: string;
+  imageAvailable: boolean;
+  containerRunning: boolean;
+  port: number;
+}
+
+export async function fetchDatabaseEngines(): Promise<DatabaseEngine[]> {
+  const res = await fetch("/api/hosting/database-engines");
+  if (!res.ok) return [];
+  return res.json() as Promise<DatabaseEngine[]>;
+}
+
+export async function detectDatabaseEngine(path: string): Promise<{ detectedEngine: string | null; reason: string }> {
+  const res = await fetch(`/api/hosting/database-detect?path=${encodeURIComponent(path)}`);
+  if (!res.ok) return { detectedEngine: null, reason: "detection failed" };
+  return res.json() as Promise<{ detectedEngine: string | null; reason: string }>;
+}
+
+export async function runDatabaseMigrations(path: string): Promise<{ ok: boolean; tool?: string; output?: string; error?: string }> {
+  const res = await fetch("/api/hosting/database-migrate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  return res.json() as Promise<{ ok: boolean; tool?: string; output?: string; error?: string }>;
+}
+
+export async function fetchDatabaseStorage(path?: string): Promise<{ projectBytes: number | null; totalBytes: number | null; volumeName: string | null }> {
+  const url = path ? `/api/hosting/database-storage?path=${encodeURIComponent(path)}` : "/api/hosting/database-storage";
+  const res = await fetch(url);
+  if (!res.ok) return { projectBytes: null, totalBytes: null, volumeName: null };
+  return res.json() as Promise<{ projectBytes: number | null; totalBytes: number | null; volumeName: string | null }>;
+}
+
+export async function testDatabaseConnection(path: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/hosting/database-test?path=${encodeURIComponent(path)}`);
+  if (!res.ok) return { ok: false, error: "Test failed" };
+  return res.json() as Promise<{ ok: boolean; error?: string }>;
+}
+
 export async function fetchSharedContainers(): Promise<import("./types.js").SharedContainerInfo[]> {
   const res = await fetch("/api/shared-containers");
   if (!res.ok) {
@@ -1540,7 +1846,7 @@ export async function fetchCurrentUser(token: string): Promise<{
 }
 
 export async function logoutDashboard(): Promise<void> {
-  const token = localStorage.getItem("aionima-dashboard-token");
+  const token = localStorage.getItem("agi-dashboard-token");
   if (token) {
     // Best-effort server call — logout works even if this fails
     await fetch("/api/auth/logout", {
@@ -1548,7 +1854,7 @@ export async function logoutDashboard(): Promise<void> {
       headers: { Authorization: `Bearer ${token}` },
     }).catch(() => {});
   }
-  localStorage.removeItem("aionima-dashboard-token");
+  localStorage.removeItem("agi-dashboard-token");
 }
 
 export async function fetchDashboardUsers(token: string): Promise<import("./types.js").DashboardUserInfo[]> {
@@ -1668,6 +1974,15 @@ export async function fetchMachineInfo(): Promise<import("./types.js").MachineIn
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<import("./types.js").MachineInfo>;
+}
+
+export async function fetchMachineHardware(): Promise<import("./types.js").MachineHardware> {
+  const res = await fetch("/api/machine/hardware");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<import("./types.js").MachineHardware>;
 }
 
 export async function setMachineHostname(hostname: string): Promise<{ ok: boolean; hostname: string }> {
@@ -2004,10 +2319,59 @@ export async function fetchPluginMarketplaceInstalled(): Promise<import("./types
   return res.json() as Promise<import("./types.js").PluginMarketplaceInstalledItem[]>;
 }
 
-export async function fetchPluginMarketplaceUpdates(): Promise<import("./types.js").PluginMarketplaceUpdate[]> {
+export interface HfProviderOption {
+  id: string;
+  name: string;
+  baseUrl: string;
+  port: number;
+}
+
+export async function fetchHfProviders(): Promise<HfProviderOption[]> {
+  const res = await fetch("/api/hf/providers");
+  if (!res.ok) return [];
+  return res.json() as Promise<HfProviderOption[]>;
+}
+
+export interface ProviderField {
+  id: string;
+  label: string;
+  type: "password" | "text" | "number" | "select";
+  placeholder?: string;
+  description?: string;
+  options?: Array<{ value: string; label: string }>;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
+export interface RegisteredProvider {
+  id: string;
+  name: string;
+  description?: string;
+  requiresApiKey: boolean;
+  fields: ProviderField[];
+  currentValues: Record<string, unknown>;
+}
+
+export async function fetchRegisteredProviders(): Promise<RegisteredProvider[]> {
+  const res = await fetch("/api/providers");
+  if (!res.ok) return [];
+  return res.json() as Promise<RegisteredProvider[]>;
+}
+
+export interface MarketplaceUpdatesResponse {
+  updates: import("./types.js").PluginMarketplaceUpdate[];
+  newInMarketplace: { pluginName: string; version: string; description: string }[];
+}
+
+export async function fetchPluginMarketplaceUpdates(): Promise<MarketplaceUpdatesResponse> {
   const res = await fetch("/api/marketplace/updates");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<import("./types.js").PluginMarketplaceUpdate[]>;
+  const data = await res.json() as MarketplaceUpdatesResponse | import("./types.js").PluginMarketplaceUpdate[];
+  if (Array.isArray(data)) {
+    return { updates: data, newInMarketplace: [] };
+  }
+  return data as MarketplaceUpdatesResponse;
 }
 
 export async function updateFromPluginMarketplace(
@@ -2029,6 +2393,16 @@ export async function pullPluginMarketplace(): Promise<{ ok: boolean; catalogSyn
   const data = await res.json() as { ok: boolean; catalogSynced: number; updated: string[]; reloaded: string[]; errors: string[]; error?: string };
   if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
   return data;
+}
+
+export async function rebuildPlugin(name: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/marketplace/rebuild/${encodeURIComponent(name)}`, { method: "POST" });
+  return res.json() as Promise<{ ok: boolean; error?: string }>;
+}
+
+export async function rebuildAllPlugins(): Promise<{ rebuilt: string[]; failed: string[] }> {
+  const res = await fetch("/api/marketplace/rebuild-all", { method: "POST" });
+  return res.json() as Promise<{ rebuilt: string[]; failed: string[] }>;
 }
 
 export async function fetchPluginDetails(id: string): Promise<import("./types.js").PluginDetails> {
@@ -2181,6 +2555,69 @@ export async function saveZeroMe(
   return res.json() as Promise<{ ok: boolean }>;
 }
 
+let _idServiceUrl: string | null = null;
+async function getIdServiceUrl(): Promise<string> {
+  if (_idServiceUrl) return _idServiceUrl;
+  const res = await fetch("/api/onboarding/id-service-url");
+  if (!res.ok) throw new Error("Cannot resolve ID service URL");
+  const data = await res.json() as { url: string };
+  _idServiceUrl = data.url;
+  return _idServiceUrl;
+}
+
+export async function startDeviceFlow(
+  provider: string,
+  role = "owner",
+): Promise<{
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  expiresIn: number;
+  /** Seconds the client should wait between polls (GitHub's minimum cadence). */
+  interval?: number;
+}> {
+  const idUrl = await getIdServiceUrl();
+  const res = await fetch(`${idUrl}/api/auth/device-flow/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, role }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Failed" })) as { error?: string };
+    throw new Error(err.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{
+    deviceCode: string;
+    userCode: string;
+    verificationUri: string;
+    expiresIn: number;
+    interval?: number;
+  }>;
+}
+
+export async function pollDeviceFlow(deviceCode: string): Promise<{
+  status: string;
+  provider?: string;
+  accountLabel?: string;
+  /** Seconds to wait before the next poll — honor this to avoid GitHub slow_down. */
+  interval?: number;
+  error?: string;
+}> {
+  const idUrl = await getIdServiceUrl();
+  const res = await fetch(`${idUrl}/api/auth/device-flow/poll?deviceCode=${encodeURIComponent(deviceCode)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{ status: string; provider?: string; accountLabel?: string; interval?: number; error?: string }>;
+}
+
+export async function fetchDeviceFlowStatus(): Promise<
+  Array<{ provider: string; role: string; accountLabel: string | null }>
+> {
+  const idUrl = await getIdServiceUrl();
+  const res = await fetch(`${idUrl}/api/auth/device-flow/status`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<Array<{ provider: string; role: string; accountLabel: string | null }>>;
+}
+
 // ---------------------------------------------------------------------------
 // Reports
 // ---------------------------------------------------------------------------
@@ -2242,6 +2679,22 @@ export async function fetchUsageByProject(days = 30): Promise<ProjectCost[]> {
   const res = await fetch(`/api/usage/by-project?days=${String(days)}`);
   if (!res.ok) return [];
   const data = await res.json() as { projects: ProjectCost[] };
+  return data.projects;
+}
+
+export interface ProjectSourceCost {
+  projectPath: string;
+  source: "chat" | "worker";
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  invocationCount: number;
+}
+
+export async function fetchUsageByProjectSource(days = 30): Promise<ProjectSourceCost[]> {
+  const res = await fetch(`/api/usage/by-project-source?days=${String(days)}`);
+  if (!res.ok) return [];
+  const data = await res.json() as { projects: ProjectSourceCost[] };
   return data.projects;
 }
 
@@ -2582,6 +3035,20 @@ export async function fetchHFAuthStatus(): Promise<{ authenticated: boolean; use
   return hfGet<{ authenticated: boolean; username?: string }>("/api/hf/auth/status");
 }
 
+export interface HFContainerStats {
+  name: string;
+  modelId: string;
+  cpuPct: string;
+  memUsage: string;
+  memLimit: string;
+  netIO: string;
+  blockIO: string;
+}
+
+export async function fetchHFContainerStats(): Promise<{ containers: HFContainerStats[] }> {
+  return hfGet<{ containers: HFContainerStats[] }>("/api/hf/models/stats");
+}
+
 // ---------------------------------------------------------------------------
 // HuggingFace Dataset API
 // ---------------------------------------------------------------------------
@@ -2749,4 +3216,96 @@ export async function restartGateway(): Promise<{ ok: boolean; message?: string 
     throw new Error(body.error ?? body.message ?? `HTTP ${res.status}`);
   }
   return body as { ok: boolean; message?: string };
+}
+
+// ---------------------------------------------------------------------------
+// Router API — /api/router, /api/usage
+// ---------------------------------------------------------------------------
+
+export async function fetchRouterStatus(): Promise<{ costMode: string; providers: Array<{ provider: string; healthy: boolean }> }> {
+  const res = await fetch("/api/router/status");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<{ costMode: string; providers: Array<{ provider: string; healthy: boolean }> }>;
+}
+
+export async function fetchUsageByProvider(days = 30): Promise<Array<{ provider: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>> {
+  const res = await fetch(`/api/usage/by-provider?days=${days}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<Array<{ provider: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>>;
+}
+
+export async function fetchUsageByModel(days = 30): Promise<Array<{ model: string; provider: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>> {
+  const res = await fetch(`/api/usage/by-model?days=${days}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<Array<{ model: string; provider: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>>;
+}
+
+export async function fetchUsageByCostMode(days = 30): Promise<Array<{ costMode: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>> {
+  const res = await fetch(`/api/usage/by-cost-mode?days=${days}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<Array<{ costMode: string; inputTokens: number; outputTokens: number; costUsd: number; invocationCount: number }>>;
+}
+
+export async function fetchCurrentPeriodUsage(): Promise<{ totalCostUsd: number; periodStart: string; requestCount: number }> {
+  const res = await fetch("/api/usage/current-period");
+  if (!res.ok) return { totalCostUsd: 0, periodStart: "", requestCount: 0 };
+  return res.json() as Promise<{ totalCostUsd: number; periodStart: string; requestCount: number }>;
+}
+
+// ---------------------------------------------------------------------------
+// Provider balance
+// ---------------------------------------------------------------------------
+
+export interface ProviderBalance {
+  providerId: string;
+  providerName: string;
+  /** Remaining USD credit at the provider, or null if unavailable. */
+  balance: number | null;
+  /** User-configured alert threshold in USD, or null if not set. */
+  threshold: number | null;
+  /** True when balance is not null and is at or below threshold. */
+  belowThreshold: boolean;
+}
+
+export async function fetchProviderBalances(): Promise<ProviderBalance[]> {
+  const res = await fetch("/api/providers/balance");
+  if (!res.ok) return [];
+  return res.json() as Promise<ProviderBalance[]>;
+}
+
+export async function fetchBalanceHistory(provider: string, days = 7): Promise<Array<{ balance: number; recordedAt: string }>> {
+  const res = await fetch(`/api/usage/balance-history?provider=${encodeURIComponent(provider)}&days=${days}`);
+  if (!res.ok) return [];
+  return res.json() as Promise<Array<{ balance: number; recordedAt: string }>>;
+}
+
+export type PromptPreviewRequestType =
+  | "chat"
+  | "project"
+  | "entity"
+  | "knowledge"
+  | "system"
+  | "worker"
+  | "taskmaster";
+
+export interface PromptPreview {
+  requestType: PromptPreviewRequestType;
+  prompt: string;
+  tokenEstimate: number;
+  sections: number;
+}
+
+export async function fetchPromptPreview(
+  requestType: PromptPreviewRequestType = "chat",
+): Promise<PromptPreview> {
+  const res = await fetch("/api/admin/prompt-preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requestType }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<PromptPreview>;
 }

@@ -1,6 +1,6 @@
 import type { TextChannel } from "discord.js";
 import { AttachmentBuilder } from "discord.js";
-import type { OutboundContent } from "@aionima/channel-sdk";
+import type { OutboundContent } from "@agi/channel-sdk";
 
 /** Discord's maximum text length per message. */
 const MAX_TEXT_LENGTH = 2000;

@@ -1,4 +1,4 @@
-import type { ChannelId, AionimaMessage } from "@aionima/channel-sdk";
+import type { ChannelId, AionimaMessage } from "@agi/channel-sdk";
 import type { GmailRawMessage } from "./gmail-client.js";
 import type { gmail_v1 } from "googleapis";
 

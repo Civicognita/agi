@@ -107,6 +107,50 @@ export const ProjectAiDatasetBindingSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Iterative-work mode — opt-in per-project. When enabled, the prompt assembler
+// injects agi/prompts/iterative-work.md into Aion's system prompt so the agent
+// participates in the tynn workflow (race-to-DONE, look-for-MORE, slice
+// discipline). The cron field is consumed by the scheduler (t436); leaving it
+// undefined while enabled means manual-fire only (e.g. via /next).
+// ---------------------------------------------------------------------------
+
+/**
+ * Cadence keys offered by the per-project iterative-work tab dropdown.
+ * Mirrors the gateway-core IterativeWorkCadence type (kept in sync; config
+ * package can't import gateway-core to avoid a circular dep). The user picks
+ * the cadence; the system auto-staggers the actual cron expression at save
+ * time via cadenceToStaggeredCron in iterative-work/cron.ts.
+ *
+ * Available options narrow by project category at the UI layer:
+ * - dev (web/app): 30m, 1h
+ * - ops (ops/administration): 30m, 1h, 5h, 12h, 1d, 5d, 1w
+ */
+export const IterativeWorkCadenceSchema = z.enum([
+  "30m",
+  "1h",
+  "5h",
+  "12h",
+  "1d",
+  "5d",
+  "1w",
+]);
+
+export const ProjectIterativeWorkSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    /** User-picked cadence (s118 redesign 2026-04-27). Stored alongside cron. */
+    cadence: IterativeWorkCadenceSchema.optional(),
+    /**
+     * Cron expression. When `cadence` is set, this is auto-computed from
+     * cadenceToStaggeredCron(cadence, projectPath) at save time. When only
+     * `cron` is set (legacy), it remains the source of truth — user-edited
+     * pre-redesign configs continue working.
+     */
+    cron: z.string().optional(),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
 // Root project config — the full ~/.agi/{slug}/project.json shape
 // ---------------------------------------------------------------------------
 
@@ -132,6 +176,8 @@ export const ProjectConfigSchema = z
     aiModels: z.array(ProjectAiModelBindingSchema).optional(),
     /** AI dataset dependencies. Datasets are mounted as read-only volumes. */
     aiDatasets: z.array(ProjectAiDatasetBindingSchema).optional(),
+    /** Iterative-work mode — toggles tynn-workflow prompt injection + cron-nudged scheduling. */
+    iterativeWork: ProjectIterativeWorkSchema.optional(),
   })
   .passthrough(); // Plugins can store custom keys at the root level
 
@@ -145,3 +191,5 @@ export type ProjectStackInstance = z.infer<typeof ProjectStackInstanceSchema>;
 export type ProjectCategory = z.infer<typeof ProjectCategorySchema>;
 export type ProjectAiModelBinding = z.infer<typeof ProjectAiModelBindingSchema>;
 export type ProjectAiDatasetBinding = z.infer<typeof ProjectAiDatasetBindingSchema>;
+export type ProjectIterativeWork = z.infer<typeof ProjectIterativeWorkSchema>;
+export type IterativeWorkCadence = z.infer<typeof IterativeWorkCadenceSchema>;

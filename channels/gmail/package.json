@@ -1,5 +1,5 @@
 {
-  "name": "@aionima/channel-gmail",
+  "name": "@agi/channel-gmail",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,8 +12,8 @@
     "entry": "./src/index.ts"
   },
   "dependencies": {
-    "@aionima/channel-sdk": "workspace:*",
-    "@aionima/plugins": "workspace:*",
+    "@agi/channel-sdk": "workspace:*",
+    "@agi/plugins": "workspace:*",
     "googleapis": "^146.0.0"
   }
 }

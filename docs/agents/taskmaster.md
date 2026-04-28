@@ -1,8 +1,10 @@
 # Taskmaster: System Reference
 
-**Taskmaster** is the built-in job orchestration engine in Aionima. It receives background task requests via the `worker_dispatch` tool, routes them to worker agents, enforces phase chains and gate transitions, and manages the full job lifecycle from dispatch to completion.
+**Taskmaster** is the built-in job orchestration engine in Aionima. It receives background task requests via the `taskmaster_dispatch` tool, routes them to worker agents scoped to the dispatching project, and manages the full job lifecycle from dispatch to completion. Workers run with Aion's full tool registry.
 
 > **Note:** Workers are defined in plugins via `api.registerWorker()`. The engine that runs them lives entirely in `packages/gateway-core/`. Prompts for the built-in workers are loaded from `prompts/workers/` by `WorkerPromptLoader`. There is no external BOTS repo.
+
+> **Not yet implemented (2026-04-15):** multi-phase plan decomposition (described in `prompts/taskmaster.md`) and enforced-chain auto-dispatch (`hacker→tester` etc.). Both are aspirational. Today each `taskmaster_dispatch` call runs a single worker; chain the tail yourself in a follow-up call.
 
 ---
 
@@ -10,18 +12,16 @@
 
 ```
 Agent (LLM tool call)
-  └── worker_dispatch tool
-        └── .dispatch/jobs/{jobId}.json   (flat dispatch file written to disk)
+  └── taskmaster_dispatch tool           (requires projectPath)
+        └── ~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json   (per-project dispatch file)
               └── JobBridge.ensureJob()
-                    └── ~/.agi/state/taskmaster.json   (structured state file)
+                    └── ~/.agi/state/taskmaster.json   (structured state index — global)
                           └── WorkerRuntime.executeJob()
                                 └── WorkerPromptLoader.getSystemPrompt()
-                                      └── LLM tool loop (up to 30 iterations)
-                                            ├── read_file
-                                            ├── write_file
-                                            ├── list_files
-                                            ├── search_files
-                                            └── run_command
+                                      └── LLM tool loop — worker calls the shared
+                                          ToolRegistry (same surface as Aion at its
+                                          tier: file tools, grep, git, plan tools,
+                                          etc.), not a hardcoded sandbox
                                       └── runtime:event emissions
                                             ├── tm:job_update
                                             ├── tm:phase_done
@@ -114,7 +114,29 @@ Worker identifiers use the pattern `$W.<domain>.<role>`, for example `$W.code.en
 
 ### 1. Dispatch
 
-The agent calls `worker_dispatch` with a `description`, `domain`, `worker`, and optional `priority`. The tool writes a flat JSON file to `.dispatch/jobs/{jobId}.json` and calls the `onJobCreated` callback to notify `WorkerRuntime`.
+The agent has two ways to dispatch work: an explicit tool call (`taskmaster_dispatch`) and an inline emission (`q:>` prefix on a single line in its response).
+
+**Explicit tool call.** The agent calls `taskmaster_dispatch` with a `projectPath` (required), `description`, `domain`, `worker`, and optional `priority`. The tool writes a flat JSON file to `~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json` and calls the `onJobCreated` callback (passing `projectPath`) to notify `WorkerRuntime`.
+
+**Inline `q:>` emission.** The agent may also emit a single line beginning with `q:>` in its response text — the runtime parses it as a dispatch and queues the work, same as if `taskmaster_dispatch` had been called. Maximum one `q:>` per turn; for parallel fan-out, use repeated `taskmaster_dispatch` tool calls instead.
+
+#### Tier-dependent emission visibility
+
+When the response text contains `q:>` lines, the runtime decides whether to **strip them from the user-visible reply** based on the entity's verification tier:
+
+| Tier | Behavior |
+|---|---|
+| `unverified` | `q:>` lines stripped from the response — user never sees them. |
+| `verified` | `q:>` lines stripped from the response — user never sees them. |
+| `sealed` | `q:>` lines **preserved** in the response — visible to the user. |
+
+The strip / preserve decision lives in `ToolRegistry.stripTaskmasterEmissions(text, tier)` (`packages/gateway-core/src/tool-registry.ts`); behavior pinned by the unit tests at `packages/gateway-core/src/agent.test.ts:1620+` (the canonical reference). Stripping also collapses any blank-line gaps the removed lines leave behind and trims the final text.
+
+**Why sealed preserves.** Sealed-tier entities (the owner) get to see the dispatch decisions Aion makes — preserving `q:>` keeps the audit transparent in conversation. Verified + unverified entities (paired or general users) see only the response prose; the dispatch happens in the background and surfaces via the Work Queue UI.
+
+**Common gotcha.** A sealed-tier entity reading a response with `q:>` lines may mistake them for manual instructions ("you should do this thing"). They're already-dispatched tasks — the runtime queued them when the response was emitted. Check the Work Queue, not the response text, for execution status.
+
+**Mixing forms in one turn.** If the agent both calls `taskmaster_dispatch` AND emits a `q:>` line in the same turn, the runtime processes both as separate dispatches — there is no automatic deduplication today. The agent's prompt asks for "maximum one `q:>` per turn"; if you need parallel fan-out use repeated `taskmaster_dispatch` calls instead of mixing forms.
 
 ```json
 {
@@ -125,6 +147,7 @@ The agent calls `worker_dispatch` with a `description`, `domain`, `worker`, and 
   "priority": "normal",
   "status": "pending",
   "coaReqId": "$A0.#E0.@A0.C010",
+  "projectPath": "/home/wishborn/_projects/civicognita_web",
   "createdAt": "2026-04-09T10:00:00.000Z"
 }
 ```
@@ -139,21 +162,13 @@ The agent calls `worker_dispatch` with a `description`, `domain`, `worker`, and 
 
 ### 4. Tool Loop
 
-The worker receives its system prompt (loaded by `WorkerPromptLoader`) and the task in the first user message. It can call sandboxed tools in a loop of up to 30 iterations. On each iteration, tool results are appended to the conversation and the LLM is called again.
+The worker receives its system prompt (loaded by `WorkerPromptLoader`) and the task in the first user message. It can call tools in a loop of up to 30 iterations. On each iteration, tool results are appended to the conversation and the LLM is called again.
 
-### Sandboxed Worker Tools
+### Worker Tool Surface
 
-Workers run with a restricted tool set. These are not the full agent tools — they are a sandboxed subset exposed only during worker execution:
+Workers use Aion's shared `ToolRegistry`, filtered by the worker's tier (typically `verified`). This means workers have the same file/git/plan/project/grep tools as Aion — not a hardcoded sandbox. All tool paths resolve relative to the project set at dispatch time (via `projectPath`).
 
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read a file by path relative to the project root |
-| `write_file` | Write content to a file relative to the project root |
-| `list_files` | List files in a directory (max depth 2, max 100 entries) |
-| `search_files` | Search `.ts`, `.tsx`, `.md` files by regex pattern (max 50 matches) |
-| `run_command` | Run a shell command in the project directory (timeout: 60s, output capped at 10KB) |
-
-All tool paths are resolved relative to `projectRoot`, which is the project directory set at dispatch time.
+The previous 5-tool mini-sandbox (`read_file` / `write_file` / `list_files` / `search_files` / `run_command`) has been retired. If a worker needs to, e.g., commit changes, it now calls `git_commit` — the same tool Aion uses.
 
 ### 5. Completion
 
@@ -161,9 +176,9 @@ When the tool loop finishes (either naturally or after 30 iterations), `WorkerRu
 
 ---
 
-## Enforced Chains
+## Chain Conventions
 
-Certain workers always trigger a follow-up worker. The chain is declared in the worker's system prompt (`chain_next` in the handoff) and validated by the runtime.
+Certain workers should be followed by a specific downstream worker. Today this is a **convention** — the dispatching agent queues the tail after the head returns. Automatic chain dispatch is a planned follow-up (see "Not yet implemented" above).
 
 | Source Worker | Chained Worker | Reason |
 |---------------|----------------|--------|
@@ -172,8 +187,6 @@ Certain workers always trigger a follow-up worker. The chain is declared in the 
 | `$W.comm.writer.policy` | `$W.comm.editor` | Policy writing must be edited |
 | `$W.data.modeler` | `$W.k.linguist` | Data models need naming review |
 | `$W.gov.auditor` | `$W.gov.archivist` | Audit findings must be archived |
-
-When a chained source worker completes, Taskmaster dispatches the chained worker in the next phase automatically.
 
 ---
 
@@ -187,7 +200,7 @@ Each job phase ends with a gate that controls progression:
 | `checkpoint` | Pauses the job and notifies the operator; resumed via `POST /api/taskmaster/approve/:jobId` |
 | `terminal` | Final phase — job is complete when all workers in this phase finish |
 
-Jobs dispatched via `worker_dispatch` receive a single phase with `gate: "terminal"`. Multi-phase plans created by the Taskmaster orchestrator may include `auto` or `checkpoint` gates for earlier phases.
+Jobs dispatched via `taskmaster_dispatch` receive a single phase with `gate: "terminal"`. Multi-phase plans would use `auto` or `checkpoint` gates for earlier phases — not currently implemented.
 
 ---
 
@@ -373,7 +386,7 @@ Configuration is read from disk each time `WorkerRuntime.reloadConfig()` is call
 ## Verification Checklist
 
 - [ ] `GET /api/workers/catalog` lists the new worker prompt
-- [ ] `worker_dispatch` with the new domain/role creates a job file in `.dispatch/jobs/`
+- [ ] `taskmaster_dispatch` with the new domain/role creates a job file in `~/.agi/{projectSlug}/dispatch/jobs/`
 - [ ] `GET /api/taskmaster/jobs` shows the job with correct status
 - [ ] If the worker uses an enforced chain, `chain_next` in the handoff matches the declared target
 - [ ] Job reaches `status: "complete"` in `~/.agi/state/taskmaster.json`

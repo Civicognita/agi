@@ -14,7 +14,7 @@ import { verifyWebhookSignature } from "./security.js";
 import { normalizeWebhook } from "./normalizer.js";
 import type { WhatsAppWebhookPayload } from "./types.js";
 import type { WhatsAppConfig } from "./config.js";
-import type { AionimaMessage } from "@aionima/channel-sdk";
+import type { AionimaMessage } from "@agi/channel-sdk";
 import type { ConversationWindowTracker } from "./outbound.js";
 
 export interface WebhookHandlerDeps {
@@ -22,7 +22,7 @@ export interface WebhookHandlerDeps {
   windowTracker: ConversationWindowTracker;
   onMessages: (messages: AionimaMessage[]) => Promise<void>;
   /** Called with raw phone numbers before normalization (for reverse hash map). */
-  onRawPhone?: (rawPhone: string) => void;
+  onRawPhone?: (rawPhone: string) => Promise<void>;
 }
 
 /**
@@ -120,7 +120,7 @@ async function handleInbound(
         for (const change of entry.changes) {
           if (change.field !== "messages") continue;
           for (const msg of change.value.messages ?? []) {
-            deps.onRawPhone(msg.from);
+            await deps.onRawPhone(msg.from);
           }
         }
       }

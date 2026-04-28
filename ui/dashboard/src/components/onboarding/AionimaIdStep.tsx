@@ -1,15 +1,14 @@
 /**
- * AionimaIdStep (IdentityStep) — Connect your Aionima ID to link accounts.
+ * AionimaIdStep — Connect to Aionima Local-ID service.
  *
- * Adapts based on hosting config:
- * - Central mode: Same popup handoff to id.aionima.ai
- * - Local mode: Handoff to local ID service at id.{baseDomain}
- *
- * Both modes use the same handoff flow — the only difference is the URL.
+ * Onboarding only connects to the ID service itself. Individual provider
+ * connections (GitHub, Google, Discord) happen through Local-ID's own
+ * interface — not through AGI's onboarding.
  */
 
-import { useEffect, useRef, useState } from "react";
-import { cn } from "@/lib/utils.js";
+import { useCallback, useEffect, useState } from "react";
+import { Card } from "@/components/ui/card.js";
+import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
 import type { OnboardingStepStatus, OnboardingState } from "@/types.js";
 
@@ -20,144 +19,50 @@ interface Props {
   idMode?: OnboardingState["idMode"];
 }
 
-interface ConnectedService {
-  provider: string;
-  role: string;
-  accountLabel?: string;
-}
-
-export function AionimaIdStep({ onNext, onSkip, status, idMode }: Props) {
-  const [connecting, setConnecting] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [services, setServices] = useState<ConnectedService[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [idHealthy, setIdHealthy] = useState<boolean | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const popupRef = useRef<Window | null>(null);
+export function AionimaIdStep({ onNext, onSkip, status }: Props) {
+  const [idStatus, setIdStatus] = useState<"checking" | "healthy" | "unreachable">("checking");
+  const [idUrl, setIdUrl] = useState<string | null>(null);
+  const [connectedServices, setConnectedServices] = useState<Array<{ provider: string; role: string; accountLabel: string | null }>>([]);
 
   const isCompleted = status === "completed";
-  const isLocal = idMode === "local";
 
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
-
-  // Check existing status
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/onboarding/aionima-id/status")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { step?: string; services?: ConnectedService[] } | null) => {
-        if (cancelled || !data) return;
-        if (data.services && data.services.length > 0) {
-          setServices(data.services);
-          setConnected(true);
-        } else if (data.step === "completed") {
-          setConnected(true);
-        }
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-
-  // Check local ID service health if in local mode
-  useEffect(() => {
-    if (!isLocal) return;
-    fetch("/api/onboarding/hosting/local-id-status")
-      .then((res) => res.json() as Promise<{ status: string }>)
-      .then((data) => setIdHealthy(data.status === "healthy"))
-      .catch(() => setIdHealthy(false));
-  }, [isLocal]);
-
-  useEffect(() => {
-    if (isCompleted) setConnected(true);
-  }, [isCompleted]);
-
-  const handleConnect = async () => {
-    setConnecting(true);
-    setError(null);
-
+  const checkIdService = useCallback(async () => {
+    setIdStatus("checking");
     try {
-      const res = await fetch("/api/onboarding/aionima-id/start", { method: "POST" });
-      if (!res.ok) {
-        const data = (await res.json()) as { error?: string };
-        throw new Error(data.error ?? `HTTP ${res.status}`);
+      // Get ID service URL from AGI backend
+      const urlRes = await fetch("/api/onboarding/id-service-url");
+      if (urlRes.ok) {
+        const { url } = await urlRes.json() as { url: string };
+        setIdUrl(url);
       }
-
-      const { url } = (await res.json()) as { url: string };
-
-      const popup = window.open(url, "aionima-id", "width=600,height=700");
-      if (!popup) {
-        throw new Error("Popup blocked. Please allow popups for this site.");
-      }
-      popupRef.current = popup;
-
-      // Poll for completion every 2 seconds
-      pollRef.current = setInterval(async () => {
-        if (popup.closed && !connected) {
+      // Check health via AGI backend (avoids CORS — AGI fetches server-side)
+      const healthRes = await fetch("/api/onboarding/hosting/local-id-status");
+      if (healthRes.ok) {
+        const data = await healthRes.json() as { status: string };
+        if (data.status === "healthy") {
+          setIdStatus("healthy");
+          // Fetch connected services via AGI backend proxy
           try {
-            const pollRes = await fetch("/api/onboarding/aionima-id/poll");
-            if (pollRes.ok) {
-              const data = (await pollRes.json()) as {
-                status: string;
-                services?: ConnectedService[];
-              };
-              if (data.status === "completed" && data.services) {
-                setConnected(true);
-                setServices(data.services);
-                setConnecting(false);
-                if (pollRef.current) clearInterval(pollRef.current);
-                return;
+            const statusRes = await fetch("/api/onboarding/aionima-id/status");
+            if (statusRes.ok) {
+              const statusData = await statusRes.json() as { services?: Array<{ provider: string; role: string }> };
+              if (statusData.services) {
+                setConnectedServices(statusData.services.map((s) => ({ ...s, accountLabel: null })));
               }
             }
-          } catch {
-            // ignore
-          }
-          setConnecting(false);
-          if (pollRef.current) clearInterval(pollRef.current);
-          return;
+          } catch { /* non-fatal */ }
+        } else {
+          setIdStatus("unreachable");
         }
-
-        try {
-          const pollRes = await fetch("/api/onboarding/aionima-id/poll");
-          if (!pollRes.ok) return;
-
-          const data = (await pollRes.json()) as {
-            status: string;
-            services?: ConnectedService[];
-          };
-
-          if (data.status === "completed" && data.services) {
-            setConnected(true);
-            setServices(data.services);
-            setConnecting(false);
-            if (pollRef.current) clearInterval(pollRef.current);
-            popup.close();
-          } else if (data.status === "expired" || data.status === "no_handoff") {
-            setError("Session expired. Please try again.");
-            setConnecting(false);
-            if (pollRef.current) clearInterval(pollRef.current);
-            popup.close();
-          }
-        } catch {
-          // Network error, keep polling
-        }
-      }, 2000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Connection failed");
-      setConnecting(false);
+      } else {
+        setIdStatus("unreachable");
+      }
+    } catch {
+      setIdStatus("unreachable");
     }
-  };
+  }, []);
 
-  const providerIcon = (provider: string) => {
-    if (provider === "google") return "M";
-    if (provider === "github") return "G";
-    if (provider === "discord") return "D";
-    return "?";
-  };
+  useEffect(() => { void checkIdService(); }, [checkIdService]);
 
   return (
     <div className="flex flex-col gap-5 sm:gap-6">
@@ -166,119 +71,94 @@ export function AionimaIdStep({ onNext, onSkip, status, idMode }: Props) {
           Connect your Identity
         </h2>
         <p className="text-[13px] sm:text-sm text-muted-foreground leading-relaxed">
-          {isLocal
-            ? "Link your accounts through your local Aionima ID service. Your tokens stay on your server."
-            : "Link your Google and GitHub accounts through Aionima ID — a single, secure sign-in that connects all your services. Your tokens are encrypted end-to-end and never stored in a browser."}
+          Link your gateway to Aionima ID — your local identity service that manages
+          authentication, OAuth connections, and entity registration.
         </p>
       </div>
 
       {isCompleted && (
         <div className="p-3 rounded-lg bg-green/5 border border-green/20 text-sm text-muted-foreground onboard-animate-in">
-          Identity is already connected. Continue to keep the current connection.
+          Identity service is connected. Continue to keep the current configuration.
         </div>
       )}
 
-      {/* Local mode: health check */}
-      {isLocal && idHealthy === false && (
-        <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive onboard-animate-in">
-          Local ID service is not reachable. Make sure it's running before connecting.
-        </div>
-      )}
-
-      {isLocal && idHealthy === true && (
-        <div className="p-3 rounded-lg bg-green/5 border border-green/20 text-sm text-muted-foreground onboard-animate-in">
-          Local ID service is healthy and ready.
-        </div>
-      )}
-
-      {/* Connection card */}
-      {!connected && (
-        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-4 rounded-lg bg-card border border-border onboard-animate-in onboard-stagger-1">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm shrink-0">
+      <Card className="p-5 onboard-animate-in onboard-stagger-1">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary font-bold text-sm">
               ID
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-medium">
-                {isLocal ? "Local Identity Service" : "Aionima ID"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Google, GitHub, Discord, and more
-              </p>
+            <div>
+              <div className="text-[13px] font-semibold">Aionima ID</div>
+              <div className="text-[11px] text-muted-foreground font-mono">
+                {idUrl ?? "Resolving..."}
+              </div>
             </div>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleConnect}
-            disabled={connecting || (isLocal && idHealthy === false)}
-            className="w-full sm:w-auto"
-          >
-            {connecting ? "Connecting..." : "Connect"}
-          </Button>
+          {idStatus === "checking" && (
+            <span className="text-[11px] text-muted-foreground">Checking...</span>
+          )}
+          {idStatus === "healthy" && (
+            <Badge variant="outline" className="text-green border-green/50">Connected</Badge>
+          )}
+          {idStatus === "unreachable" && (
+            <Badge variant="outline" className="text-red border-red/50">Unreachable</Badge>
+          )}
         </div>
-      )}
 
-      {/* Connected services list */}
-      {connected && services.length > 0 && (
-        <div className="flex flex-col gap-2 onboard-animate-in onboard-stagger-1">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Connected Services
-          </p>
-          {services.map((svc) => (
-            <div
-              key={`${svc.provider}-${svc.role}`}
-              className="flex items-center gap-3 p-3 rounded-lg bg-card border border-border"
-            >
-              <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-foreground font-semibold text-xs shrink-0">
-                {providerIcon(svc.provider)}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">
-                  {svc.provider === "google" ? "Google" : svc.provider === "github" ? "GitHub" : svc.provider === "discord" ? "Discord" : svc.provider}{" "}
-                  <span className="text-muted-foreground font-normal">
-                    ({svc.role})
-                  </span>
-                </p>
-                {svc.accountLabel && (
-                  <p className="text-xs text-muted-foreground truncate">
-                    {svc.accountLabel}
-                  </p>
-                )}
-              </div>
-              <span
-                className={cn(
-                  "text-[10px] font-medium px-1.5 py-0.5 rounded",
-                  "bg-green/10 text-green border border-green/30",
-                )}
-              >
-                Connected
-              </span>
+        {idStatus === "unreachable" && (
+          <div className="mt-3 space-y-2">
+            <p className="text-[11px] text-red">
+              Cannot reach the local ID service. Make sure it is running and the Caddy
+              reverse proxy is configured.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void checkIdService()}>
+              Retry
+            </Button>
+          </div>
+        )}
+
+        {idStatus === "healthy" && connectedServices.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-border">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
+              Connected Services
             </div>
-          ))}
-        </div>
-      )}
+            <div className="flex flex-wrap gap-2">
+              {connectedServices.map((svc) => (
+                <Badge key={`${svc.provider}-${svc.role}`} variant="secondary" className="text-[10px]">
+                  {svc.provider} {svc.accountLabel ? `(${svc.accountLabel})` : ""}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
 
-      {/* Connected but no services */}
-      {connected && services.length === 0 && (
-        <div className="p-4 rounded-lg bg-card border border-border onboard-animate-in onboard-stagger-1">
-          <p className="text-sm text-muted-foreground">
-            Identity linked successfully. You can connect services later from
-            your {isLocal ? "local" : "Aionima"} ID dashboard.
-          </p>
-        </div>
-      )}
+        {idStatus === "healthy" && idUrl && (
+          <div className="mt-3 pt-3 border-t border-border">
+            <p className="text-[11px] text-muted-foreground mb-2">
+              Manage your service connections (GitHub, Google, Discord) through the ID service dashboard:
+            </p>
+            <a
+              href={idUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[12px] text-primary underline font-mono"
+            >
+              Open Aionima ID →
+            </a>
+          </div>
+        )}
+      </Card>
 
-      {error !== null && (
-        <p className="text-xs text-destructive">{error}</p>
-      )}
-
-      <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 onboard-animate-in onboard-stagger-2">
-        <Button onClick={onNext} disabled={!connected} className="w-full sm:w-auto">
+      <div className="flex gap-3 onboard-animate-in onboard-stagger-2">
+        <Button
+          onClick={onNext}
+          disabled={idStatus !== "healthy" && !isCompleted}
+        >
           Continue
         </Button>
-        <Button variant="ghost" onClick={onSkip} className="w-full sm:w-auto">
+        <Button variant="ghost" onClick={onSkip}>
           Skip for now
         </Button>
       </div>

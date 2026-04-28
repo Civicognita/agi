@@ -122,11 +122,11 @@ export class ImpactScorer {
    *
    * @see docs/governance/impact-scoring-rules.md §6.1
    */
-  calculateBonus(entityId: string): number {
+  async calculateBonus(entityId: string): Promise<number> {
     const windowMs = this.bonusConfig.windowDays * 24 * 60 * 60 * 1000;
     const since = new Date(Date.now() - windowMs).toISOString();
 
-    const positiveSum = this.recorder.getPositiveBalanceSince(entityId, since);
+    const positiveSum = await this.recorder.getPositiveBalanceSince(entityId, since);
     const rawBonus = positiveSum / this.bonusConfig.divisor;
 
     return Math.min(rawBonus, this.bonusConfig.cap);
@@ -198,7 +198,7 @@ export class ImpactScorer {
     }
 
     // Step 4: Calculate 0BONUS
-    const bonus = this.calculateBonus(params.entityId);
+    const bonus = await this.calculateBonus(params.entityId);
 
     // Step 5: Compute $imp
     const value0bool = BOOL_VALUES[classification.label];
@@ -215,7 +215,7 @@ export class ImpactScorer {
       ? UNCLASSIFIED_CHANNEL
       : (params.channel ?? undefined);
 
-    const interaction = this.recorder.record({
+    const interaction = await this.recorder.record({
       entityId: params.entityId,
       coaFingerprint: params.coaFingerprint,
       channel,
@@ -242,7 +242,7 @@ export class ImpactScorer {
    * assessment is not acceptable. Falls through to NEUTRAL if
    * no Tier 1 rule matches.
    */
-  scoreSync(params: ScoreInteractionParams): ScoringResult {
+  async scoreSync(params: ScoreInteractionParams): Promise<ScoringResult> {
     const { quant, isUnknown: quantUnknown } = lookupQuant(params.workType);
 
     const classCtx: ClassificationContext = {
@@ -270,7 +270,7 @@ export class ImpactScorer {
       };
     }
 
-    const bonus = this.calculateBonus(params.entityId);
+    const bonus = await this.calculateBonus(params.entityId);
     const value0bool = BOOL_VALUES[classification.label];
     const impScore = quant * value0bool * (1 + bonus);
 
@@ -278,7 +278,7 @@ export class ImpactScorer {
       ? UNCLASSIFIED_CHANNEL
       : (params.channel ?? undefined);
 
-    const interaction = this.recorder.record({
+    const interaction = await this.recorder.record({
       entityId: params.entityId,
       coaFingerprint: params.coaFingerprint,
       channel,
@@ -306,19 +306,19 @@ export class ImpactScorer {
    * Dry-run the scoring pipeline without persisting.
    * Returns what the score WOULD be for given parameters.
    */
-  dryRun(params: {
+  async dryRun(params: {
     workType: string | null;
     verificationTier: VerificationTier;
     entityId: string;
     classificationCtx?: Partial<ClassificationContext>;
-  }): {
+  }): Promise<{
     quant: number;
     quantUnknown: boolean;
     boolLabel: BoolLabel;
     value0bool: number;
     bonus: number;
     projectedImpScore: number;
-  } {
+  }> {
     const { quant, isUnknown: quantUnknown } = lookupQuant(params.workType);
 
     const classCtx: ClassificationContext = {
@@ -335,7 +335,7 @@ export class ImpactScorer {
       boolLabel = tier1?.label ?? "NEUTRAL";
     }
 
-    const bonus = this.calculateBonus(params.entityId);
+    const bonus = await this.calculateBonus(params.entityId);
     const value0bool = BOOL_VALUES[boolLabel];
     const projectedImpScore = quant * value0bool * (1 + bonus);
 
@@ -352,22 +352,30 @@ export class ImpactScorer {
   /**
    * Get a complete entity impact profile for dashboarding.
    */
-  getEntityProfile(entityId: string): {
+  async getEntityProfile(entityId: string): Promise<{
     lifetimeBalance: number;
     windowBalance: number;
     currentBonus: number;
     distinctEventTypes: number;
     recentHistory: ImpactInteraction[];
-  } {
+  }> {
     const windowMs = this.bonusConfig.windowDays * 24 * 60 * 60 * 1000;
     const since = new Date(Date.now() - windowMs).toISOString();
 
+    const [lifetimeBalance, windowBalance, currentBonus, distinctEventTypes, recentHistory] = await Promise.all([
+      this.recorder.getBalance(entityId),
+      this.recorder.getBalanceSince(entityId, since),
+      this.calculateBonus(entityId),
+      this.recorder.getDistinctEventCount(entityId),
+      this.recorder.getHistory(entityId, { limit: 20 }),
+    ]);
+
     return {
-      lifetimeBalance: this.recorder.getBalance(entityId),
-      windowBalance: this.recorder.getBalanceSince(entityId, since),
-      currentBonus: this.calculateBonus(entityId),
-      distinctEventTypes: this.recorder.getDistinctEventCount(entityId),
-      recentHistory: this.recorder.getHistory(entityId, { limit: 20 }),
+      lifetimeBalance,
+      windowBalance,
+      currentBonus,
+      distinctEventTypes,
+      recentHistory,
     };
   }
 }

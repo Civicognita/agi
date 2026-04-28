@@ -1,5 +1,5 @@
 {
-  "name": "@aionima/plugins",
+  "name": "@agi/plugins",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,9 +7,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@aionima/gateway-core": "workspace:*",
-    "@aionima/channel-sdk": "workspace:*",
-    "@aionima/security": "workspace:*"
+    "@agi/gateway-core": "workspace:*",
+    "@agi/channel-sdk": "workspace:*",
+    "@agi/security": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0"

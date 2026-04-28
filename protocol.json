@@ -1,12 +1,11 @@
 {
-  "name": "aionima-agi",
+  "name": "agi",
   "version": "0.5.0",
   "protocol": "1.0.0",
   "pluginSchema": "1.0.0",
   "mappSchema": "1.0.0",
   "requires": {
-    "aionima-prime": ">=1.0.0",
-    "aionima-bots": ">=1.0.0",
-    "aionima-local-id": ">=1.0.0"
+    "agi-prime": ">=1.0.0",
+    "agi-local-id": ">=1.0.0"
   }
 }

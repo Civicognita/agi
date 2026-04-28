@@ -1,17 +1,16 @@
 /**
  * Dashboard Aggregation Queries — Task #154
  *
- * Efficient SQLite aggregation queries for the impact dashboard.
+ * Efficient Postgres/drizzle aggregation queries for the impact dashboard.
  * Time-bucketed impact summaries, domain-grouped breakdowns,
  * leaderboard ranking, and COA chain exploration.
  *
- * Uses prepared statements for performance.
- * All queries are read-only.
+ * All queries are read-only and async.
  */
 
-import type BetterSqlite3 from "better-sqlite3";
-
-import type { Database } from "@aionima/entity-model";
+import { and, asc, count, countDistinct, desc, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
+import type { AnyDb } from "@agi/db-schema/client";
+import { coaChains, entities, impactInteractions } from "@agi/db-schema";
 
 import type {
   ActivityEntry,
@@ -53,98 +52,20 @@ function workTypeToDomain(workType: string | null): string {
 }
 
 // ---------------------------------------------------------------------------
-// SQL bucket expressions
+// SQL bucket expressions (Postgres date_trunc)
 // ---------------------------------------------------------------------------
 
-function bucketExpression(bucket: TimeBucket): string {
+function bucketExpression(bucket: TimeBucket): ReturnType<typeof sql> {
   switch (bucket) {
     case "hour":
-      return "strftime('%Y-%m-%dT%H:00:00Z', created_at)";
+      return sql`date_trunc('hour', ${impactInteractions.createdAt})`;
     case "day":
-      return "strftime('%Y-%m-%dT00:00:00Z', created_at)";
+      return sql`date_trunc('day', ${impactInteractions.createdAt})`;
     case "week":
-      // ISO week: Monday-based. Use day-of-year minus weekday.
-      return "strftime('%Y-W%W', created_at)";
+      return sql`date_trunc('week', ${impactInteractions.createdAt})`;
     case "month":
-      return "strftime('%Y-%m-01T00:00:00Z', created_at)";
+      return sql`date_trunc('month', ${impactInteractions.createdAt})`;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Row types
-// ---------------------------------------------------------------------------
-
-interface OverviewRow {
-  total_imp: number;
-  interaction_count: number;
-  entity_count: number;
-}
-
-interface WindowImpRow {
-  window_imp: number;
-}
-
-interface TopChannelRow {
-  channel: string;
-  cnt: number;
-}
-
-interface ActivityRow {
-  id: string;
-  entity_id: string;
-  display_name: string;
-  channel: string | null;
-  work_type: string | null;
-  imp_score: number;
-  created_at: string;
-}
-
-interface TimelineRow {
-  bucket_start: string;
-  total_imp: number;
-  positive_imp: number;
-  negative_imp: number;
-  interaction_count: number;
-}
-
-interface BreakdownRow {
-  key: string;
-  total_imp: number;
-  cnt: number;
-}
-
-interface LeaderboardRow {
-  entity_id: string;
-  display_name: string;
-  verification_tier: string;
-  total_imp: number;
-}
-
-interface EntityProfileRow {
-  id: string;
-  type: string;
-  display_name: string;
-  verification_tier: string;
-  coa_alias: string;
-}
-
-interface COARow {
-  fingerprint: string;
-  resource_id: string;
-  entity_id: string;
-  display_name: string;
-  node_id: string;
-  chain_counter: number;
-  work_type: string;
-  ref: string | null;
-  action: string | null;
-  payload_hash: string | null;
-  created_at: string;
-  imp_score: number | null;
-}
-
-interface CountRow {
-  cnt: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -152,57 +73,53 @@ interface CountRow {
 // ---------------------------------------------------------------------------
 
 export class DashboardQueries {
-  private readonly db: Database;
-
-  // Cached prepared statements (lazy)
-  private _stmtOverview: BetterSqlite3.Statement<[], OverviewRow> | null = null;
-  private _stmtRecentActivity: BetterSqlite3.Statement<[{ limit: number }], ActivityRow> | null = null;
-
-  constructor(db: Database) {
-    this.db = db;
-  }
+  constructor(private readonly db: AnyDb) {}
 
   // ---------------------------------------------------------------------------
   // Overview
   // ---------------------------------------------------------------------------
 
-  getOverview(windowDays = 90, recentLimit = 20): DashboardOverview {
+  async getOverview(windowDays = 90, recentLimit = 20): Promise<DashboardOverview> {
     // Total stats
-    const overviewStmt = this._stmtOverview ?? (this._stmtOverview = this.db.prepare<[], OverviewRow>(`
-      SELECT
-        COALESCE(SUM(imp_score), 0) AS total_imp,
-        COUNT(*) AS interaction_count,
-        COUNT(DISTINCT entity_id) AS entity_count
-      FROM impact_interactions
-    `));
+    const [totalsRow] = await this.db
+      .select({
+        totalImp: sql<number>`COALESCE(SUM(${impactInteractions.impScore}), 0)`,
+        interactionCount: count(impactInteractions.id),
+        entityCount: countDistinct(impactInteractions.entityId),
+      })
+      .from(impactInteractions);
 
-    const overview = overviewStmt.get();
-    const totalImp = overview?.total_imp ?? 0;
-    const interactionCount = overview?.interaction_count ?? 0;
-    const entityCount = overview?.entity_count ?? 0;
+    const totalImp = totalsRow?.totalImp ?? 0;
+    const interactionCount = totalsRow?.interactionCount ?? 0;
+    const entityCount = totalsRow?.entityCount ?? 0;
 
     // Window stats
-    const since = new Date(Date.now() - windowDays * 86_400_000).toISOString();
-    const windowStmt = this.db.prepare<[{ since: string }], WindowImpRow>(`
-      SELECT COALESCE(SUM(imp_score), 0) AS window_imp
-      FROM impact_interactions
-      WHERE created_at >= @since
-    `);
-    const windowImp = windowStmt.get({ since })?.window_imp ?? 0;
+    const since = new Date(Date.now() - windowDays * 86_400_000);
+    const [windowRow] = await this.db
+      .select({
+        windowImp: sql<number>`COALESCE(SUM(${impactInteractions.impScore}), 0)`,
+      })
+      .from(impactInteractions)
+      .where(gte(impactInteractions.createdAt, since));
+
+    const windowImp = windowRow?.windowImp ?? 0;
 
     // Top channel
-    const topChannelStmt = this.db.prepare<[], TopChannelRow>(`
-      SELECT channel, COUNT(*) AS cnt
-      FROM impact_interactions
-      WHERE channel IS NOT NULL
-      GROUP BY channel
-      ORDER BY cnt DESC
-      LIMIT 1
-    `);
-    const topChannel = topChannelStmt.get()?.channel ?? null;
+    const [topChannelRow] = await this.db
+      .select({
+        channel: impactInteractions.channel,
+        cnt: count(impactInteractions.id),
+      })
+      .from(impactInteractions)
+      .where(isNotNull(impactInteractions.channel))
+      .groupBy(impactInteractions.channel)
+      .orderBy(desc(count(impactInteractions.id)))
+      .limit(1);
+
+    const topChannel = topChannelRow?.channel ?? null;
 
     // Recent activity
-    const recentActivity = this.getRecentActivity(recentLimit);
+    const recentActivity = await this.getRecentActivity(recentLimit);
 
     return {
       totalImp,
@@ -220,30 +137,30 @@ export class DashboardQueries {
   // Recent Activity
   // ---------------------------------------------------------------------------
 
-  getRecentActivity(limit = 20): ActivityEntry[] {
-    const stmt = this._stmtRecentActivity ?? (this._stmtRecentActivity = this.db.prepare<[{ limit: number }], ActivityRow>(`
-      SELECT
-        ii.id,
-        ii.entity_id,
-        COALESCE(e.display_name, 'Unknown') AS display_name,
-        ii.channel,
-        ii.work_type,
-        ii.imp_score,
-        ii.created_at
-      FROM impact_interactions ii
-      LEFT JOIN entities e ON e.id = ii.entity_id
-      ORDER BY ii.created_at DESC
-      LIMIT @limit
-    `));
+  async getRecentActivity(limit = 20): Promise<ActivityEntry[]> {
+    const rows = await this.db
+      .select({
+        id: impactInteractions.id,
+        entityId: impactInteractions.entityId,
+        displayName: sql<string>`COALESCE(${entities.displayName}, 'Unknown')`,
+        channel: impactInteractions.channel,
+        workType: impactInteractions.workType,
+        impScore: impactInteractions.impScore,
+        createdAt: impactInteractions.createdAt,
+      })
+      .from(impactInteractions)
+      .leftJoin(entities, eq(entities.id, impactInteractions.entityId))
+      .orderBy(desc(impactInteractions.createdAt))
+      .limit(limit);
 
-    return stmt.all({ limit }).map((row) => ({
+    return rows.map((row) => ({
       id: row.id,
-      entityId: row.entity_id,
-      entityName: row.display_name,
+      entityId: row.entityId,
+      entityName: row.displayName,
       channel: row.channel,
-      workType: row.work_type,
-      impScore: row.imp_score,
-      createdAt: row.created_at,
+      workType: row.workType,
+      impScore: row.impScore,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
     }));
   }
 
@@ -251,53 +168,48 @@ export class DashboardQueries {
   // Timeline
   // ---------------------------------------------------------------------------
 
-  getTimeline(
+  async getTimeline(
     bucket: TimeBucket,
     entityId?: string,
     since?: string,
     until?: string,
-  ): TimelineBucket[] {
+  ): Promise<TimelineBucket[]> {
     const bucketExpr = bucketExpression(bucket);
-    const conditions: string[] = [];
-    const params: Record<string, string> = {};
 
-    if (entityId !== undefined) {
-      conditions.push("entity_id = @entity_id");
-      params["entity_id"] = entityId;
-    }
-    if (since !== undefined) {
-      conditions.push("created_at >= @since");
-      params["since"] = since;
-    }
-    if (until !== undefined) {
-      conditions.push("created_at <= @until");
-      params["until"] = until;
-    }
+    const conditions = [];
+    if (entityId !== undefined) conditions.push(eq(impactInteractions.entityId, entityId));
+    if (since !== undefined) conditions.push(gte(impactInteractions.createdAt, new Date(since)));
+    if (until !== undefined) conditions.push(lte(impactInteractions.createdAt, new Date(until)));
 
-    const whereClause = conditions.length > 0
-      ? `WHERE ${conditions.join(" AND ")}`
-      : "";
+    const rows = await this.db
+      .select({
+        bucketStart: bucketExpr,
+        totalImp: sql<number>`COALESCE(SUM(${impactInteractions.impScore}), 0)`,
+        positiveImp: sql<number>`COALESCE(SUM(CASE WHEN ${impactInteractions.impScore} > 0 THEN ${impactInteractions.impScore} ELSE 0 END), 0)`,
+        negativeImp: sql<number>`COALESCE(SUM(CASE WHEN ${impactInteractions.impScore} < 0 THEN ${impactInteractions.impScore} ELSE 0 END), 0)`,
+        interactionCount: count(impactInteractions.id),
+      })
+      .from(impactInteractions)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .groupBy(bucketExpr)
+      .orderBy(asc(bucketExpr));
 
-    const sql = `
-      SELECT
-        ${bucketExpr} AS bucket_start,
-        COALESCE(SUM(imp_score), 0) AS total_imp,
-        COALESCE(SUM(CASE WHEN imp_score > 0 THEN imp_score ELSE 0 END), 0) AS positive_imp,
-        COALESCE(SUM(CASE WHEN imp_score < 0 THEN imp_score ELSE 0 END), 0) AS negative_imp,
-        COUNT(*) AS interaction_count
-      FROM impact_interactions
-      ${whereClause}
-      GROUP BY bucket_start
-      ORDER BY bucket_start ASC
-    `;
-
-    const stmt = this.db.prepare<[Record<string, string>], TimelineRow>(sql);
-    return stmt.all(params).map((row) => ({
-      bucketStart: row.bucket_start,
-      totalImp: row.total_imp,
-      positiveImp: row.positive_imp,
-      negativeImp: row.negative_imp,
-      interactionCount: row.interaction_count,
+    return rows.map((row) => ({
+      // Normalize bucketStart to ISO regardless of driver. node-postgres
+      // returns Date; pglite returns a Postgres timestamp string like
+      // "2026-04-01 00:00:00-06". Parse either through Date to get a
+      // stable ISO form for consumers.
+      bucketStart: (() => {
+        const raw = row.bucketStart;
+        if (raw instanceof Date) return raw.toISOString();
+        if (raw === null || raw === undefined) return "";
+        const parsed = new Date(String(raw));
+        return Number.isNaN(parsed.valueOf()) ? String(raw) : parsed.toISOString();
+      })(),
+      totalImp: row.totalImp,
+      positiveImp: row.positiveImp,
+      negativeImp: row.negativeImp,
+      interactionCount: row.interactionCount,
     }));
   }
 
@@ -305,56 +217,43 @@ export class DashboardQueries {
   // Breakdown
   // ---------------------------------------------------------------------------
 
-  getBreakdown(
+  async getBreakdown(
     dimension: BreakdownDimension,
     entityId?: string,
     since?: string,
     until?: string,
-  ): { slices: BreakdownSlice[]; total: number } {
+  ): Promise<{ slices: BreakdownSlice[]; total: number }> {
     if (dimension === "domain") {
       return this.getDomainBreakdown(entityId, since, until);
     }
 
-    const columnName = dimension === "channel" ? "channel" : "work_type";
-    const conditions: string[] = [`${columnName} IS NOT NULL`];
-    const params: Record<string, string> = {};
+    const column = dimension === "channel"
+      ? impactInteractions.channel
+      : impactInteractions.workType;
 
-    if (entityId !== undefined) {
-      conditions.push("entity_id = @entity_id");
-      params["entity_id"] = entityId;
-    }
-    if (since !== undefined) {
-      conditions.push("created_at >= @since");
-      params["since"] = since;
-    }
-    if (until !== undefined) {
-      conditions.push("created_at <= @until");
-      params["until"] = until;
-    }
+    const conditions = [isNotNull(column)];
+    if (entityId !== undefined) conditions.push(eq(impactInteractions.entityId, entityId));
+    if (since !== undefined) conditions.push(gte(impactInteractions.createdAt, new Date(since)));
+    if (until !== undefined) conditions.push(lte(impactInteractions.createdAt, new Date(until)));
 
-    const whereClause = conditions.length > 0
-      ? `WHERE ${conditions.join(" AND ")}`
-      : "";
+    const rows = await this.db
+      .select({
+        key: column,
+        totalImp: sql<number>`COALESCE(SUM(${impactInteractions.impScore}), 0)`,
+        cnt: count(impactInteractions.id),
+      })
+      .from(impactInteractions)
+      .where(and(...conditions))
+      .groupBy(column)
+      .orderBy(desc(sql<number>`SUM(${impactInteractions.impScore})`));
 
-    const sql = `
-      SELECT
-        ${columnName} AS key,
-        COALESCE(SUM(imp_score), 0) AS total_imp,
-        COUNT(*) AS cnt
-      FROM impact_interactions
-      ${whereClause}
-      GROUP BY ${columnName}
-      ORDER BY total_imp DESC
-    `;
-
-    const rows = this.db.prepare<[Record<string, string>], BreakdownRow>(sql).all(params);
-    const total = rows.reduce((sum, r) => sum + r.total_imp, 0);
+    const total = rows.reduce((sum, r) => sum + r.totalImp, 0);
 
     const slices: BreakdownSlice[] = rows.map((row) => ({
-      key: row.key,
-      totalImp: row.total_imp,
+      key: row.key ?? "",
+      totalImp: row.totalImp,
       count: row.cnt,
-      percentage: total !== 0 ? (row.total_imp / total) * 100 : 0,
+      percentage: total !== 0 ? (row.totalImp / total) * 100 : 0,
     }));
 
     return { slices, total };
@@ -365,54 +264,37 @@ export class DashboardQueries {
    * (governance, community, innovation, operations, knowledge, technology).
    * Computed in application code since the mapping is not in the DB.
    */
-  private getDomainBreakdown(
+  private async getDomainBreakdown(
     entityId?: string,
     since?: string,
     until?: string,
-  ): { slices: BreakdownSlice[]; total: number } {
-    const conditions: string[] = [];
-    const params: Record<string, string> = {};
+  ): Promise<{ slices: BreakdownSlice[]; total: number }> {
+    const conditions = [];
+    if (entityId !== undefined) conditions.push(eq(impactInteractions.entityId, entityId));
+    if (since !== undefined) conditions.push(gte(impactInteractions.createdAt, new Date(since)));
+    if (until !== undefined) conditions.push(lte(impactInteractions.createdAt, new Date(until)));
 
-    if (entityId !== undefined) {
-      conditions.push("entity_id = @entity_id");
-      params["entity_id"] = entityId;
-    }
-    if (since !== undefined) {
-      conditions.push("created_at >= @since");
-      params["since"] = since;
-    }
-    if (until !== undefined) {
-      conditions.push("created_at <= @until");
-      params["until"] = until;
-    }
-
-    const whereClause = conditions.length > 0
-      ? `WHERE ${conditions.join(" AND ")}`
-      : "";
-
-    const sql = `
-      SELECT
-        work_type AS key,
-        COALESCE(SUM(imp_score), 0) AS total_imp,
-        COUNT(*) AS cnt
-      FROM impact_interactions
-      ${whereClause}
-      GROUP BY work_type
-    `;
-
-    const rows = this.db.prepare<[Record<string, string>], BreakdownRow>(sql).all(params);
+    const rows = await this.db
+      .select({
+        key: impactInteractions.workType,
+        totalImp: sql<number>`COALESCE(SUM(${impactInteractions.impScore}), 0)`,
+        cnt: count(impactInteractions.id),
+      })
+      .from(impactInteractions)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .groupBy(impactInteractions.workType);
 
     // Aggregate by domain
     const domainMap = new Map<string, { totalImp: number; count: number }>();
     for (const row of rows) {
       const domain = workTypeToDomain(row.key);
       const existing = domainMap.get(domain) ?? { totalImp: 0, count: 0 };
-      existing.totalImp += row.total_imp;
+      existing.totalImp += row.totalImp;
       existing.count += row.cnt;
       domainMap.set(domain, existing);
     }
 
-    const total = [...domainMap.values()].reduce((sum, d) => sum + d.totalImp, 0);
+    const total = [...domainMap.values()].reduce((s, d) => s + d.totalImp, 0);
 
     const slices: BreakdownSlice[] = [...domainMap.entries()]
       .map(([key, data]) => ({
@@ -430,68 +312,71 @@ export class DashboardQueries {
   // Leaderboard
   // ---------------------------------------------------------------------------
 
-  getLeaderboard(
+  async getLeaderboard(
     windowDays = 90,
     limit = 25,
     offset = 0,
-  ): { entries: LeaderboardEntry[]; total: number } {
-    const since = new Date(Date.now() - windowDays * 86_400_000).toISOString();
+  ): Promise<{ entries: LeaderboardEntry[]; total: number }> {
+    const since = new Date(Date.now() - windowDays * 86_400_000);
 
-    // Count total entities with impact
-    const countStmt = this.db.prepare<[{ since: string }], CountRow>(`
-      SELECT COUNT(DISTINCT entity_id) AS cnt
-      FROM impact_interactions
-      WHERE created_at >= @since
-    `);
-    const total = countStmt.get({ since })?.cnt ?? 0;
+    // Count total entities with impact in window
+    const [countRow] = await this.db
+      .select({ cnt: countDistinct(impactInteractions.entityId) })
+      .from(impactInteractions)
+      .where(gte(impactInteractions.createdAt, since));
+
+    const total = countRow?.cnt ?? 0;
 
     // Get ranked entities
-    const sql = `
-      SELECT
-        ii.entity_id,
-        COALESCE(e.display_name, 'Unknown') AS display_name,
-        COALESCE(e.verification_tier, 'unverified') AS verification_tier,
-        COALESCE(SUM(ii.imp_score), 0) AS total_imp
-      FROM impact_interactions ii
-      LEFT JOIN entities e ON e.id = ii.entity_id
-      WHERE ii.created_at >= @since
-      GROUP BY ii.entity_id
-      ORDER BY total_imp DESC
-      LIMIT @limit OFFSET @offset
-    `;
+    const rows = await this.db
+      .select({
+        entityId: impactInteractions.entityId,
+        displayName: sql<string>`COALESCE(${entities.displayName}, 'Unknown')`,
+        verificationTier: sql<string>`COALESCE(${entities.verificationTier}, 'unverified')`,
+        windowImp: sql<number>`COALESCE(SUM(${impactInteractions.impScore}), 0)`,
+      })
+      .from(impactInteractions)
+      .leftJoin(entities, eq(entities.id, impactInteractions.entityId))
+      .where(gte(impactInteractions.createdAt, since))
+      .groupBy(impactInteractions.entityId, entities.displayName, entities.verificationTier)
+      .orderBy(desc(sql<number>`SUM(${impactInteractions.impScore})`))
+      .limit(limit)
+      .offset(offset);
 
-    type LeaderParams = { since: string; limit: number; offset: number };
-    const rows = this.db.prepare<[LeaderParams], LeaderboardRow>(sql)
-      .all({ since, limit, offset });
+    // For each entry, fetch lifetime balance and positive window sum
+    const entries: LeaderboardEntry[] = await Promise.all(
+      rows.map(async (row, index) => {
+        const [lifeRow] = await this.db
+          .select({ balance: sql<number>`COALESCE(SUM(${impactInteractions.impScore}), 0)` })
+          .from(impactInteractions)
+          .where(eq(impactInteractions.entityId, row.entityId));
 
-    // Calculate lifetime totals and bonus for each entry
-    const balanceStmt = this.db.prepare<[{ entity_id: string }], { balance: number }>(`
-      SELECT COALESCE(SUM(imp_score), 0) AS balance
-      FROM impact_interactions
-      WHERE entity_id = @entity_id
-    `);
+        const [posRow] = await this.db
+          .select({ balance: sql<number>`COALESCE(SUM(${impactInteractions.impScore}), 0)` })
+          .from(impactInteractions)
+          .where(
+            and(
+              eq(impactInteractions.entityId, row.entityId),
+              gte(impactInteractions.createdAt, since),
+              sql`${impactInteractions.impScore} > 0`,
+            ),
+          );
 
-    const bonusStmt = this.db.prepare<[{ entity_id: string; since: string }], { balance: number }>(`
-      SELECT COALESCE(SUM(imp_score), 0) AS balance
-      FROM impact_interactions
-      WHERE entity_id = @entity_id AND created_at >= @since AND imp_score > 0
-    `);
+        const lifetimeBalance = lifeRow?.balance ?? 0;
+        const positiveWindow = posRow?.balance ?? 0;
+        const bonus = Math.min(positiveWindow / 100, 2.0);
 
-    const entries: LeaderboardEntry[] = rows.map((row, index) => {
-      const lifetimeBalance = balanceStmt.get({ entity_id: row.entity_id })?.balance ?? 0;
-      const positiveWindow = bonusStmt.get({ entity_id: row.entity_id, since })?.balance ?? 0;
-      const bonus = Math.min(positiveWindow / 100, 2.0);
-
-      return {
-        entityId: row.entity_id,
-        entityName: row.display_name,
-        verificationTier: row.verification_tier,
-        totalImp: lifetimeBalance,
-        windowImp: row.total_imp,
-        currentBonus: bonus,
-        rank: offset + index + 1,
-      };
-    });
+        return {
+          entityId: row.entityId,
+          entityName: row.displayName,
+          verificationTier: row.verificationTier,
+          totalImp: lifetimeBalance,
+          windowImp: row.windowImp,
+          currentBonus: bonus,
+          rank: offset + index + 1,
+        };
+      }),
+    );
 
     return { entries, total };
   }
@@ -500,79 +385,92 @@ export class DashboardQueries {
   // Entity Profile
   // ---------------------------------------------------------------------------
 
-  getEntityProfile(entityId: string, windowDays = 90): EntityImpactProfile | null {
-    const entityStmt = this.db.prepare<[{ entity_id: string }], EntityProfileRow>(`
-      SELECT id, type, display_name, verification_tier, coa_alias
-      FROM entities
-      WHERE id = @entity_id
-    `);
+  async getEntityProfile(entityId: string, windowDays = 90): Promise<EntityImpactProfile | null> {
+    const [entity] = await this.db
+      .select({
+        id: entities.id,
+        type: entities.type,
+        displayName: entities.displayName,
+        verificationTier: entities.verificationTier,
+        coaAlias: entities.coaAlias,
+      })
+      .from(entities)
+      .where(eq(entities.id, entityId));
 
-    const entity = entityStmt.get({ entity_id: entityId });
     if (entity === undefined) return null;
 
-    const since = new Date(Date.now() - windowDays * 86_400_000).toISOString();
+    const since = new Date(Date.now() - windowDays * 86_400_000);
 
-    // Lifetime + window balances
-    const lifetimeStmt = this.db.prepare<[{ entity_id: string }], { balance: number }>(`
-      SELECT COALESCE(SUM(imp_score), 0) AS balance
-      FROM impact_interactions WHERE entity_id = @entity_id
-    `);
-    const windowStmt = this.db.prepare<[{ entity_id: string; since: string }], { balance: number }>(`
-      SELECT COALESCE(SUM(imp_score), 0) AS balance
-      FROM impact_interactions WHERE entity_id = @entity_id AND created_at >= @since
-    `);
-    const positiveStmt = this.db.prepare<[{ entity_id: string; since: string }], { balance: number }>(`
-      SELECT COALESCE(SUM(imp_score), 0) AS balance
-      FROM impact_interactions WHERE entity_id = @entity_id AND created_at >= @since AND imp_score > 0
-    `);
-    const eventCountStmt = this.db.prepare<[{ entity_id: string }], { cnt: number }>(`
-      SELECT COUNT(DISTINCT work_type) AS cnt
-      FROM impact_interactions WHERE entity_id = @entity_id
-    `);
+    const [[lifeRow], [windowRow], [posRow], [eventCountRow]] = await Promise.all([
+      this.db
+        .select({ balance: sql<number>`COALESCE(SUM(${impactInteractions.impScore}), 0)` })
+        .from(impactInteractions)
+        .where(eq(impactInteractions.entityId, entityId)),
+      this.db
+        .select({ balance: sql<number>`COALESCE(SUM(${impactInteractions.impScore}), 0)` })
+        .from(impactInteractions)
+        .where(and(eq(impactInteractions.entityId, entityId), gte(impactInteractions.createdAt, since))),
+      this.db
+        .select({ balance: sql<number>`COALESCE(SUM(${impactInteractions.impScore}), 0)` })
+        .from(impactInteractions)
+        .where(
+          and(
+            eq(impactInteractions.entityId, entityId),
+            gte(impactInteractions.createdAt, since),
+            sql`${impactInteractions.impScore} > 0`,
+          ),
+        ),
+      this.db
+        .select({ cnt: countDistinct(impactInteractions.workType) })
+        .from(impactInteractions)
+        .where(eq(impactInteractions.entityId, entityId)),
+    ]);
 
-    const lifetimeImp = lifetimeStmt.get({ entity_id: entityId })?.balance ?? 0;
-    const windowImp = windowStmt.get({ entity_id: entityId, since })?.balance ?? 0;
-    const positiveWindow = positiveStmt.get({ entity_id: entityId, since })?.balance ?? 0;
-    const distinctEventTypes = eventCountStmt.get({ entity_id: entityId })?.cnt ?? 0;
+    const lifetimeImp = lifeRow?.balance ?? 0;
+    const windowImp = windowRow?.balance ?? 0;
+    const positiveWindow = posRow?.balance ?? 0;
+    const distinctEventTypes = eventCountRow?.cnt ?? 0;
     const currentBonus = Math.min(positiveWindow / 100, 2.0);
 
     // Breakdowns
-    const { slices: domainBreakdown } = this.getBreakdown("domain", entityId);
-    const { slices: channelBreakdown } = this.getBreakdown("channel", entityId);
+    const [{ slices: domainBreakdown }, { slices: channelBreakdown }] = await Promise.all([
+      this.getBreakdown("domain", entityId),
+      this.getBreakdown("channel", entityId),
+    ]);
 
     // Recent activity
-    const recentStmt = this.db.prepare<[{ entity_id: string; limit: number }], ActivityRow>(`
-      SELECT
-        ii.id,
-        ii.entity_id,
-        COALESCE(e.display_name, 'Unknown') AS display_name,
-        ii.channel,
-        ii.work_type,
-        ii.imp_score,
-        ii.created_at
-      FROM impact_interactions ii
-      LEFT JOIN entities e ON e.id = ii.entity_id
-      WHERE ii.entity_id = @entity_id
-      ORDER BY ii.created_at DESC
-      LIMIT @limit
-    `);
+    const recentRows = await this.db
+      .select({
+        id: impactInteractions.id,
+        entityId: impactInteractions.entityId,
+        displayName: sql<string>`COALESCE(${entities.displayName}, 'Unknown')`,
+        channel: impactInteractions.channel,
+        workType: impactInteractions.workType,
+        impScore: impactInteractions.impScore,
+        createdAt: impactInteractions.createdAt,
+      })
+      .from(impactInteractions)
+      .leftJoin(entities, eq(entities.id, impactInteractions.entityId))
+      .where(eq(impactInteractions.entityId, entityId))
+      .orderBy(desc(impactInteractions.createdAt))
+      .limit(20);
 
-    const recentActivity = recentStmt.all({ entity_id: entityId, limit: 20 }).map((row) => ({
+    const recentActivity: ActivityEntry[] = recentRows.map((row) => ({
       id: row.id,
-      entityId: row.entity_id,
-      entityName: row.display_name,
+      entityId: row.entityId,
+      entityName: row.displayName,
       channel: row.channel,
-      workType: row.work_type,
-      impScore: row.imp_score,
-      createdAt: row.created_at,
+      workType: row.workType,
+      impScore: row.impScore,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
     }));
 
     return {
       entityId: entity.id,
-      entityName: entity.display_name,
+      entityName: entity.displayName,
       entityType: entity.type,
-      verificationTier: entity.verification_tier,
-      coaAlias: entity.coa_alias,
+      verificationTier: entity.verificationTier,
+      coaAlias: entity.coaAlias,
       lifetimeImp,
       windowImp,
       currentBonus,
@@ -590,88 +488,68 @@ export class DashboardQueries {
   // COA Explorer
   // ---------------------------------------------------------------------------
 
-  getCOAEntries(params: COAExplorerParams): {
+  async getCOAEntries(params: COAExplorerParams): Promise<{
     entries: COAExplorerEntry[];
     total: number;
     hasMore: boolean;
-  } {
+  }> {
     const limit = params.limit ?? 50;
     const offset = params.offset ?? 0;
-    const conditions: string[] = [];
-    const sqlParams: Record<string, string | number> = {};
 
-    if (params.entityId !== undefined) {
-      conditions.push("c.entity_id = @entity_id");
-      sqlParams["entity_id"] = params.entityId;
-    }
-    if (params.fingerprint !== undefined) {
-      conditions.push("c.fingerprint LIKE @fingerprint");
-      sqlParams["fingerprint"] = `%${params.fingerprint}%`;
-    }
-    if (params.workType !== undefined) {
-      conditions.push("c.work_type = @work_type");
-      sqlParams["work_type"] = params.workType;
-    }
-    if (params.since !== undefined) {
-      conditions.push("c.created_at >= @since");
-      sqlParams["since"] = params.since;
-    }
-    if (params.until !== undefined) {
-      conditions.push("c.created_at <= @until");
-      sqlParams["until"] = params.until;
-    }
+    const conditions = [];
+    if (params.entityId !== undefined) conditions.push(eq(coaChains.entityId, params.entityId));
+    if (params.fingerprint !== undefined) conditions.push(sql`${coaChains.fingerprint} LIKE ${"%" + params.fingerprint + "%"}`);
+    if (params.workType !== undefined) conditions.push(eq(coaChains.workType, params.workType));
+    if (params.since !== undefined) conditions.push(gte(coaChains.createdAt, new Date(params.since)));
+    if (params.until !== undefined) conditions.push(lte(coaChains.createdAt, new Date(params.until)));
 
-    const whereClause = conditions.length > 0
-      ? `WHERE ${conditions.join(" AND ")}`
-      : "";
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
     // Count total
-    const countSql = `SELECT COUNT(*) AS cnt FROM coa_chains c ${whereClause}`;
-    type SqlParams = Record<string, string | number>;
-    const total = this.db.prepare<[SqlParams], CountRow>(countSql)
-      .get(sqlParams)?.cnt ?? 0;
+    const [countRow] = await this.db
+      .select({ cnt: count(coaChains.fingerprint) })
+      .from(coaChains)
+      .where(whereClause);
+
+    const total = countRow?.cnt ?? 0;
 
     // Fetch page
-    const sql = `
-      SELECT
-        c.fingerprint,
-        c.resource_id,
-        c.entity_id,
-        COALESCE(e.display_name, 'Unknown') AS display_name,
-        c.node_id,
-        c.chain_counter,
-        c.work_type,
-        c.ref,
-        c.action,
-        c.payload_hash,
-        c.created_at,
-        ii.imp_score
-      FROM coa_chains c
-      LEFT JOIN entities e ON e.id = c.entity_id
-      LEFT JOIN impact_interactions ii ON ii.coa_fingerprint = c.fingerprint
-      ${whereClause}
-      ORDER BY c.created_at DESC
-      LIMIT @limit OFFSET @offset
-    `;
-
-    sqlParams["limit"] = limit;
-    sqlParams["offset"] = offset;
-
-    const rows = this.db.prepare<[SqlParams], COARow>(sql).all(sqlParams);
+    const rows = await this.db
+      .select({
+        fingerprint: coaChains.fingerprint,
+        resourceId: coaChains.resourceId,
+        entityId: coaChains.entityId,
+        displayName: sql<string>`COALESCE(${entities.displayName}, 'Unknown')`,
+        nodeId: coaChains.nodeId,
+        chainCounter: coaChains.chainCounter,
+        workType: coaChains.workType,
+        ref: coaChains.ref,
+        action: coaChains.action,
+        payloadHash: coaChains.payloadHash,
+        createdAt: coaChains.createdAt,
+        impScore: impactInteractions.impScore,
+      })
+      .from(coaChains)
+      .leftJoin(entities, eq(entities.id, coaChains.entityId))
+      .leftJoin(impactInteractions, eq(impactInteractions.coaFingerprint, coaChains.fingerprint))
+      .where(whereClause)
+      .orderBy(desc(coaChains.createdAt))
+      .limit(limit)
+      .offset(offset);
 
     const entries: COAExplorerEntry[] = rows.map((row) => ({
       fingerprint: row.fingerprint,
-      resourceId: row.resource_id,
-      entityId: row.entity_id,
-      entityName: row.display_name,
-      nodeId: row.node_id,
-      chainCounter: row.chain_counter,
-      workType: row.work_type,
+      resourceId: row.resourceId,
+      entityId: row.entityId,
+      entityName: row.displayName,
+      nodeId: row.nodeId,
+      chainCounter: row.chainCounter,
+      workType: row.workType,
       ref: row.ref,
       action: row.action,
-      payloadHash: row.payload_hash,
-      createdAt: row.created_at,
-      impScore: row.imp_score,
+      payloadHash: row.payloadHash,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+      impScore: row.impScore,
     }));
 
     return {

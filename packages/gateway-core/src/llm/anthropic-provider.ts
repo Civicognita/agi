@@ -43,6 +43,7 @@ const DEFAULT_CONFIG: Required<LLMProviderConfig> = {
   maxRetries: 3,
   retryBaseMs: 1000,
   baseUrl: "",
+  timeoutMs: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -256,6 +257,7 @@ export class AnthropicProvider implements LLMProvider {
     this.client = new Anthropic({
       apiKey: this.config.apiKey || undefined,
       ...(this.config.baseUrl ? { baseURL: this.config.baseUrl } : {}),
+      ...(this.config.timeoutMs > 0 ? { timeout: this.config.timeoutMs } : {}),
     });
   }
 

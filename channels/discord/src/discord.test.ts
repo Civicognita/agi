@@ -14,7 +14,7 @@ import {
   isChannelAllowed,
 } from "./security.js";
 import { createDiscordPlugin } from "./index.js";
-import { validateAdapter } from "@aionima/channel-sdk";
+import { validateAdapter } from "@agi/channel-sdk";
 
 // ---------------------------------------------------------------------------
 // Helpers

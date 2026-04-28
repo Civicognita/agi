@@ -14,6 +14,9 @@ const GatewayConfigSchema = z
      *  prevents runaway loops, so this is purely a cost ceiling. Set to 0
      *  for no cap (default). */
     maxToolLoops: z.number().int().min(0).optional(),
+    /** Periodically sync Plugin + MApp marketplaces in the background.
+     *  When true, a scheduled task checks for catalog updates every 30 min. */
+    autoSyncMarketplace: z.boolean().default(true).optional(),
   })
   .strict();
 
@@ -48,10 +51,27 @@ const AuthConfigSchema = z
   })
   .strict();
 
+const CostModeSchema = z.enum(["local", "economy", "balanced", "max"]);
+
+const RouterConfigSchema = z
+  .object({
+    /** Active cost mode — controls which models the router selects. */
+    costMode: CostModeSchema.default("balanced"),
+    /** Enable confidence-based escalation (cheap model first, re-route on low confidence). */
+    escalation: z.boolean().default(false),
+    /** Maximum escalations per turn to prevent cost spiraling. */
+    maxEscalationsPerTurn: z.number().int().min(0).default(1),
+    /** Token threshold below which a request is classified as "simple". */
+    simpleThresholdTokens: z.number().int().positive().default(500),
+    /** Token threshold above which a request is classified as "complex". */
+    complexThresholdTokens: z.number().int().positive().default(2000),
+  })
+  .strict();
+
 const ProviderConfigSchema = z
   .object({
-    /** Provider type. */
-    type: z.enum(["anthropic", "openai", "ollama"]),
+    /** Provider type. Built-in or plugin-contributed. */
+    type: z.string(),
     /** Model identifier for this provider. */
     model: z.string(),
     /** API key (falls back to env var per provider). */
@@ -61,14 +81,29 @@ const ProviderConfigSchema = z
   })
   .strict();
 
+const AgentPmConfigSchema = z
+  .object({
+    /** PM provider selector. Built-in: "tynn" (default — uses MCP to reach
+     *  tynn-the-service), "tynn-lite" (file-based fallback at
+     *  <project>/.tynn-lite/). Plugins can contribute additional ids via
+     *  api.registerPmProvider() (s118 t434). */
+    provider: z.string().default("tynn"),
+    /** Provider-specific config passed to the factory at instantiation.
+     *  E.g. tynn-lite: { projectRoot, projectName }; plugin-registered:
+     *  whatever the plugin's factory expects. */
+    config: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
 const AgentConfigSchema = z
   .object({
     /** COA resource identifier (e.g. "$A0"). */
     resourceId: z.string().default("$A0"),
     /** COA node identifier (e.g. "@A0"). */
     nodeId: z.string().default("@A0"),
-    /** LLM provider type. */
-    provider: z.enum(["anthropic", "openai", "ollama"]).default("anthropic"),
+    /** LLM provider type. Built-in: anthropic, openai, ollama. Plugins can
+     *  contribute additional types (e.g. "claude-max") via api.registerProvider(). */
+    provider: z.string().default("anthropic"),
     /** Default model identifier (provider-specific). */
     model: z.string().default("claude-sonnet-4-6"),
     /** Max response tokens. */
@@ -86,6 +121,11 @@ const AgentConfigSchema = z
     replyMode: z.enum(["autonomous", "human-in-loop"]).default("autonomous"),
     /** Enable developer identity and workspace context injection. */
     devMode: z.boolean().optional().default(false),
+    /** Intelligent routing configuration — always active. */
+    router: RouterConfigSchema.default({}),
+    /** PM provider selection — backs the canonical tynn workflow with
+     *  pluggable storage (built-in tynn or tynn-lite, or plugin-registered). */
+    pm: AgentPmConfigSchema.default({}),
   })
   .strict();
 
@@ -227,7 +267,7 @@ const LoggingConfigSchema = z
 const PrimeConfigSchema = z
   .object({
     /** Path to the PRIME knowledge corpus directory. */
-    dir: z.string().default("/opt/aionima-prime"),
+    dir: z.string().default("/opt/agi-prime"),
     /** Git remote URL for the PRIME corpus source. */
     source: z.string().default("git@github.com:Civicognita/aionima.git"),
     /** Branch to track. */
@@ -274,7 +314,7 @@ const OwnerConfigSchema = z
 
 const WorkerModelOverrideSchema = z
   .object({
-    provider: z.enum(["anthropic", "openai", "ollama"]),
+    provider: z.string(),
     model: z.string(),
     apiKey: z.string().optional(),
     baseUrl: z.string().optional(),
@@ -286,6 +326,8 @@ const ProviderCredentialSchema = z
     apiKey: z.string().optional(),
     baseUrl: z.string().optional(),
     model: z.string().optional(),
+    /** USD amount at which to alert when cumulative API spend reaches this threshold. */
+    balanceAlertThreshold: z.number().nonnegative().optional(),
   })
   .strict();
 
@@ -333,19 +375,19 @@ const DevConfigSchema = z
     /** Git remote URL for PRIME repo fork. */
     primeRepo: z.string().default("git@github.com:wishborn/aionima.git"),
     /** Dev directory for PRIME fork. */
-    primeDir: z.string().default("/opt/aionima-prime_dev"),
+    primeDir: z.string().default("/opt/agi-prime_dev"),
     /** Git remote URL for marketplace fork. */
-    marketplaceRepo: z.string().default("git@github.com:wishborn/aionima-marketplace.git"),
+    marketplaceRepo: z.string().default("git@github.com:wishborn/agi-marketplace.git"),
     /** Dev directory for marketplace fork. */
-    marketplaceDir: z.string().default("/opt/aionima-marketplace_dev"),
+    marketplaceDir: z.string().default("/opt/agi-marketplace_dev"),
     /** Git remote URL for ID service fork. */
-    idRepo: z.string().default("git@github.com:wishborn/aionima-local-id.git"),
+    idRepo: z.string().default("git@github.com:wishborn/agi-local-id.git"),
     /** Dev directory for ID service fork. */
-    idDir: z.string().default("/opt/aionima-local-id_dev"),
+    idDir: z.string().default("/opt/agi-local-id_dev"),
     /** Git remote URL for MApp marketplace fork. */
-    mappMarketplaceRepo: z.string().default("git@github.com:wishborn/aionima-mapp-marketplace.git"),
+    mappMarketplaceRepo: z.string().default("git@github.com:wishborn/agi-mapp-marketplace.git"),
     /** Dev directory for MApp marketplace fork. */
-    mappMarketplaceDir: z.string().default("/opt/aionima-mapp-marketplace_dev"),
+    mappMarketplaceDir: z.string().default("/opt/agi-mapp-marketplace_dev"),
   })
   .strict();
 
@@ -383,11 +425,11 @@ const WorkersConfigSchema = z
 const MarketplaceConfigSchema = z
   .object({
     /** Path to the official marketplace directory (plugins repo). */
-    dir: z.string().default("/opt/aionima-marketplace"),
+    dir: z.string().default("/opt/agi-marketplace"),
     /** Git remote URL for the marketplace source. */
     source: z
       .string()
-      .default("git@github.com:Civicognita/aionima-marketplace.git"),
+      .default("git@github.com:Civicognita/agi-marketplace.git"),
     /** Branch to track. */
     branch: z.string().default("main"),
   })
@@ -396,11 +438,11 @@ const MarketplaceConfigSchema = z
 const MAppMarketplaceConfigSchema = z
   .object({
     /** Path to the official MApp marketplace directory. */
-    dir: z.string().default("/opt/aionima-mapp-marketplace"),
+    dir: z.string().default("/opt/agi-mapp-marketplace"),
     /** Git remote URL for the MApp marketplace source. */
     source: z
       .string()
-      .default("git@github.com:Civicognita/aionima-mapp-marketplace.git"),
+      .default("git@github.com:Civicognita/agi-mapp-marketplace.git"),
     /** Branch to track. */
     branch: z.string().default("main"),
   })
@@ -447,9 +489,9 @@ const IdServiceLocalSchema = z
 const IdServiceConfigSchema = z
   .object({
     /** Path to the ID service directory. */
-    dir: z.string().default("/opt/aionima-local-id"),
+    dir: z.string().default("/opt/agi-local-id"),
     /** Git remote URL for the ID service source. */
-    source: z.string().default("git@github.com:Civicognita/aionima-local-id.git"),
+    source: z.string().default("git@github.com:Civicognita/agi-local-id.git"),
     /** Branch to track. */
     branch: z.string().default("main"),
     /** Local self-hosting configuration. */
@@ -530,6 +572,20 @@ const HfConfigSchema = z
   })
   .strict();
 
+const AionMicroConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    port: z.number().int().min(1024).default(5200),
+    idleTimeoutMs: z.number().int().positive().default(600_000),
+  })
+  .strict();
+
+const OpsConfigSchema = z
+  .object({
+    aionMicro: AionMicroConfigSchema.optional(),
+  })
+  .strict();
+
 export const AionimaConfigSchema = z
   .object({
     gateway: GatewayConfigSchema.optional(),
@@ -569,6 +625,7 @@ export const AionimaConfigSchema = z
     compliance: ComplianceConfigSchema.optional(),
     chat: ChatConfigSchema.optional(),
     hf: HfConfigSchema.optional(),
+    ops: OpsConfigSchema.optional(),
   })
   .passthrough();
 
@@ -612,3 +669,7 @@ export type IdServiceLocalConfig = z.infer<typeof IdServiceLocalSchema>;
 export type BackupConfig = z.infer<typeof BackupConfigSchema>;
 export type ComplianceConfig = z.infer<typeof ComplianceConfigSchema>;
 export type ChatConfig = z.infer<typeof ChatConfigSchema>;
+export type RouterConfig = z.infer<typeof RouterConfigSchema>;
+export type CostMode = z.infer<typeof CostModeSchema>;
+export type OpsConfig = z.infer<typeof OpsConfigSchema>;
+export type AionMicroConfig = z.infer<typeof AionMicroConfigSchema>;

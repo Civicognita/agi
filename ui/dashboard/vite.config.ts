@@ -1,21 +1,45 @@
 import path from "node:path";
+import { createRequire } from "node:module";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
 
+const require = createRequire(import.meta.url);
+// Read the root package.json version so the SW cache name is versioned.
+// When version bumps (every code-change commit), any stale precache partition
+// is evicted by cleanupOutdatedCaches even if individual asset hashes match.
+const rootPkg = require("../../package.json") as { version: string };
+const AGI_VERSION = rootPkg.version;
+
 export default defineConfig({
+  define: {
+    // Exposes the AGI version to runtime code (e.g. for diagnostics / about page).
+    __AGI_VERSION__: JSON.stringify(AGI_VERSION),
+  },
   plugins: [
     react(),
     tailwindcss(),
     VitePWA({
       registerType: "autoUpdate",
+      selfDestroying: false,
+      includeAssets: ["favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png", "logo.png", "logo-small.png"],
       workbox: {
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api\//, /^\/ws/],
+        // cacheId namespaces all workbox cache names with the AGI version.
+        // When the version bumps (every code-change commit), the precache
+        // partition name changes from e.g. "workbox-precache-v2" to
+        // "agi-0.4.44-precache-v2", so cleanupOutdatedCaches evicts the old
+        // partition even for static assets whose content hashes haven't changed.
+        cacheId: `agi-${AGI_VERSION}`,
+        // Never precache index.html — it must always come from the network
+        // so it references the latest hashed JS/CSS filenames after an upgrade.
+        // JS/CSS files have content hashes so cached versions are naturally unique.
+        globPatterns: ["**/*.{js,css,ico,png,svg,woff2}"],
+        navigateFallback: null,
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
-        // Load echarts on demand instead of precaching (too large for SW cache)
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         globIgnores: ["**/echarts-*.js"],
         runtimeCaching: [
           {

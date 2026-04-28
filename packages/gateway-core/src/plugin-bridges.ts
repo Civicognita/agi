@@ -3,9 +3,9 @@
  * to the gateway's core registries after plugin load.
  */
 
-import type { PluginRegistry } from "@aionima/plugins";
+import type { PluginRegistry } from "@agi/plugins";
 import type { ToolRegistry } from "./tool-registry.js";
-import type { SkillRegistry } from "@aionima/skills";
+import type { SkillRegistry } from "@agi/skills";
 import type { Logger } from "./logger.js";
 import { createComponentLogger } from "./logger.js";
 
@@ -93,7 +93,7 @@ export function unbridgePluginCapabilities(
   // Skills are named `plugin_${pluginId}_${skill.name}` (see bridgePluginCapabilities).
   const skillMap = (deps.skillRegistry as unknown as { skills: Map<string, unknown> }).skills;
   const prefix = `plugin_${pluginId}_`;
-  for (const key of [...skillMap.keys()]) {
+  for (const key of Array.from(skillMap.keys())) {
     if (key.startsWith(prefix)) {
       skillMap.delete(key);
       skillsRemoved++;

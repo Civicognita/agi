@@ -46,9 +46,9 @@ echo ""
 # Run install.sh
 # -----------------------------------------------------------------------
 echo "--- Configuring git safe.directory ---"
-sudo git config --system --add safe.directory /opt/aionima
-sudo git config --system --add safe.directory /opt/aionima-prime
-sudo git config --system --add safe.directory /opt/aionima-local-id
+sudo git config --system --add safe.directory /opt/agi
+sudo git config --system --add safe.directory /opt/agi-prime
+sudo git config --system --add safe.directory /opt/agi-local-id
 
 echo "--- Running install.sh ---"
 sudo AIONIMA_REPO=/mnt/agi AIONIMA_SKIP_HARDENING=1 LAN_IP="$(hostname -I | awk '{print $1}')" bash /mnt/agi/scripts/install.sh
@@ -63,23 +63,23 @@ check "aionima user exists" id aionima
 check "node installed" command -v node
 check_output "node version >= 22" "^v2[2-9]" node --version
 check "pnpm installed" command -v pnpm
-check "/opt/aionima exists" test -d /opt/aionima
-check "/opt/aionima has package.json" test -f /opt/aionima/package.json
-check "systemd unit exists" test -f /etc/systemd/system/aionima.service
-check "service is enabled" systemctl is-enabled aionima
-check ".env file exists" test -f /opt/aionima/.env
-check ".env has correct permissions (0600)" test "$(stat -c '%a' /opt/aionima/.env)" = "600"
+check "/opt/agi exists" test -d /opt/agi
+check "/opt/agi has package.json" test -f /opt/agi/package.json
+check "systemd unit exists" test -f /etc/systemd/system/agi.service
+check "service is enabled" systemctl is-enabled agi
+check ".env file exists" test -f /opt/agi/.env
+check ".env has correct permissions (0600)" test "$(stat -c '%a' /opt/agi/.env)" = "600"
 
 # Check that built artifacts exist
-check "cli/dist exists" test -d /opt/aionima/cli/dist
-check "gateway-core/dist exists" test -d /opt/aionima/packages/gateway-core/dist
+check "cli/dist exists" test -d /opt/agi/cli/dist
+check "gateway-core/dist exists" test -d /opt/agi/packages/gateway-core/dist
 
 # -----------------------------------------------------------------------
 # Start the service and test it responds
 # -----------------------------------------------------------------------
 echo ""
 echo "--- Starting service ---"
-sudo systemctl start aionima
+sudo systemctl start agi
 
 # Wait for the service to come up (max 30s)
 echo "Waiting for service to be ready..."
@@ -97,11 +97,11 @@ if [ "$READY" = "1" ]; then
 else
   echo "  Service failed to start within 30s."
   echo "  --- journalctl output ---"
-  sudo journalctl -u aionima --no-pager -n 50
+  sudo journalctl -u agi --no-pager -n 50
   echo "  ---"
 fi
 
-check "service is running" systemctl is-active aionima
+check "service is running" systemctl is-active agi
 check "health endpoint responds" curl -sf http://localhost:3100/health
 
 # Check health response content

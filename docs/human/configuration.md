@@ -59,7 +59,7 @@ JWT_SECRET=64-char-random-hex-string
 Set permissions:
 
 ```bash
-chmod 0600 /opt/aionima/.env
+chmod 0600 /opt/agi/.env
 ```
 
 ---
@@ -412,12 +412,12 @@ Multi-user dashboard authentication.
 
 ### prime
 
-PRIME knowledge corpus location. Defaults to the system-level repo at `/opt/aionima-prime`.
+PRIME knowledge corpus location. Defaults to the system-level repo at `/opt/agi-prime`.
 
 ```json
 {
   "prime": {
-    "dir": "/opt/aionima-prime",
+    "dir": "/opt/agi-prime",
     "source": "git@github.com:Civicognita/aionima.git",
     "branch": "main"
   }
@@ -475,8 +475,8 @@ ID service configuration. Controls the location and tracking of the local ID ser
 ```json
 {
   "idService": {
-    "dir": "/opt/aionima-local-id",
-    "source": "git@github.com:Civicognita/aionima-local-id.git",
+    "dir": "/opt/agi-local-id",
+    "source": "git@github.com:Civicognita/agi-local-id.git",
     "branch": "main",
     "local": {
       "enabled": false,
@@ -490,8 +490,8 @@ ID service configuration. Controls the location and tracking of the local ID ser
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `dir` | string | `"/opt/aionima-local-id"` | Path to the ID service directory |
-| `source` | string | `"git@github.com:Civicognita/aionima-local-id.git"` | Git remote URL |
+| `dir` | string | `"/opt/agi-local-id"` | Path to the ID service directory |
+| `source` | string | `"git@github.com:Civicognita/agi-local-id.git"` | Git remote URL |
 | `branch` | string | `"main"` | Branch to track |
 | `local.enabled` | boolean | `false` | Enable local ID service |
 | `local.port` | number | `3200` | HTTP port |
@@ -506,8 +506,8 @@ Plugin marketplace configuration. Controls where the official marketplace repo i
 ```json
 {
   "marketplace": {
-    "dir": "/opt/aionima-marketplace",
-    "source": "git@github.com:Civicognita/aionima-marketplace.git",
+    "dir": "/opt/agi-marketplace",
+    "source": "git@github.com:Civicognita/agi-marketplace.git",
     "branch": "main"
   }
 }
@@ -515,8 +515,8 @@ Plugin marketplace configuration. Controls where the official marketplace repo i
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `dir` | string | `"/opt/aionima-marketplace"` | Path to the official marketplace directory |
-| `source` | string | `"git@github.com:Civicognita/aionima-marketplace.git"` | Git remote URL |
+| `dir` | string | `"/opt/agi-marketplace"` | Path to the official marketplace directory |
+| `source` | string | `"git@github.com:Civicognita/agi-marketplace.git"` | Git remote URL |
 | `branch` | string | `"main"` | Branch to track |
 
 ### mappMarketplace
@@ -526,8 +526,8 @@ MApp marketplace configuration. Controls where the official MApp marketplace rep
 ```json
 {
   "mappMarketplace": {
-    "dir": "/opt/aionima-mapp-marketplace",
-    "source": "git@github.com:Civicognita/aionima-mapp-marketplace.git",
+    "dir": "/opt/agi-mapp-marketplace",
+    "source": "git@github.com:Civicognita/agi-mapp-marketplace.git",
     "branch": "main"
   }
 }
@@ -535,8 +535,8 @@ MApp marketplace configuration. Controls where the official MApp marketplace rep
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `dir` | string | `"/opt/aionima-mapp-marketplace"` | Path to the official MApp marketplace directory |
-| `source` | string | `"git@github.com:Civicognita/aionima-mapp-marketplace.git"` | Git remote URL |
+| `dir` | string | `"/opt/agi-mapp-marketplace"` | Path to the official MApp marketplace directory |
+| `source` | string | `"git@github.com:Civicognita/agi-mapp-marketplace.git"` | Git remote URL |
 | `branch` | string | `"main"` | Branch to track |
 
 ### dev
@@ -549,13 +549,13 @@ Developer mode configuration. When enabled, AGI switches all core repos to owner
     "enabled": false,
     "agiRepo": "git@github.com:wishborn/agi.git",
     "primeRepo": "git@github.com:wishborn/aionima.git",
-    "primeDir": "/opt/aionima-prime_dev",
-    "marketplaceRepo": "git@github.com:wishborn/aionima-marketplace.git",
-    "marketplaceDir": "/opt/aionima-marketplace_dev",
-    "idRepo": "git@github.com:wishborn/aionima-local-id.git",
-    "idDir": "/opt/aionima-local-id_dev",
-    "mappMarketplaceRepo": "git@github.com:wishborn/aionima-mapp-marketplace.git",
-    "mappMarketplaceDir": "/opt/aionima-mapp-marketplace_dev"
+    "primeDir": "/opt/agi-prime_dev",
+    "marketplaceRepo": "git@github.com:wishborn/agi-marketplace.git",
+    "marketplaceDir": "/opt/agi-marketplace_dev",
+    "idRepo": "git@github.com:wishborn/agi-local-id.git",
+    "idDir": "/opt/agi-local-id_dev",
+    "mappMarketplaceRepo": "git@github.com:wishborn/agi-mapp-marketplace.git",
+    "mappMarketplaceDir": "/opt/agi-mapp-marketplace_dev"
   }
 }
 ```
@@ -565,13 +565,13 @@ Developer mode configuration. When enabled, AGI switches all core repos to owner
 | `enabled` | boolean | `false` | Enable dev mode (switches core repos to owner forks) |
 | `agiRepo` | string | — | Git remote URL for AGI repo fork |
 | `primeRepo` | string | — | Git remote URL for PRIME repo fork |
-| `primeDir` | string | `"/opt/aionima-prime_dev"` | Dev directory for PRIME fork |
+| `primeDir` | string | `"/opt/agi-prime_dev"` | Dev directory for PRIME fork |
 | `marketplaceRepo` | string | — | Git remote URL for marketplace fork |
-| `marketplaceDir` | string | `"/opt/aionima-marketplace_dev"` | Dev directory for marketplace fork |
+| `marketplaceDir` | string | `"/opt/agi-marketplace_dev"` | Dev directory for marketplace fork |
 | `idRepo` | string | — | Git remote URL for ID service fork |
-| `idDir` | string | `"/opt/aionima-local-id_dev"` | Dev directory for ID service fork |
+| `idDir` | string | `"/opt/agi-local-id_dev"` | Dev directory for ID service fork |
 | `mappMarketplaceRepo` | string | — | Git remote URL for MApp marketplace fork |
-| `mappMarketplaceDir` | string | `"/opt/aionima-mapp-marketplace_dev"` | Dev directory for MApp marketplace fork |
+| `mappMarketplaceDir` | string | `"/opt/agi-mapp-marketplace_dev"` | Dev directory for MApp marketplace fork |
 
 Dev mode is toggled from the dashboard at Settings > Gateway > Contributing. Enabling it clones forks into the workspace as projects with the restricted `"aionima"` project type.
 

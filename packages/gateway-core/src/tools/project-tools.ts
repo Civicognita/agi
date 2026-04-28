@@ -5,7 +5,7 @@
  * Reuses logic from the REST API endpoints in server-runtime-state.ts.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
 import { projectConfigPath } from "../project-config-path.js";
@@ -75,8 +75,11 @@ export function createManageProjectHandler(config: ProjectToolConfig): ToolHandl
     if (action === "restart") {
       return handleRestart(config, input);
     }
+    if (action === "diagnose") {
+      return handleDiagnose(config, input);
+    }
 
-    return JSON.stringify({ error: `Unknown action: ${action}. Use "list", "create", "update", "info", "delete", "host", "unhost", or "restart".` });
+    return JSON.stringify({ error: `Unknown action: ${action}. Use "list", "create", "update", "info", "delete", "host", "unhost", "restart", or "diagnose".` });
   };
 }
 
@@ -529,19 +532,157 @@ function handleRestart(config: ProjectToolConfig, input: Record<string, unknown>
 }
 
 // ---------------------------------------------------------------------------
+// Failure class signals used by diagnose
+// ---------------------------------------------------------------------------
+
+interface DiagnoseResult {
+  class: string;
+  message: string;
+  remediation: string;
+  rawLogTail: string;
+}
+
+const FAILURE_PATTERNS: Array<{
+  pattern: RegExp;
+  class: string;
+  message: string;
+  remediation: string;
+}> = [
+  {
+    pattern: /ENOSPC|no space left on device|disk quota exceeded/i,
+    class: "disk_full",
+    message: "Disk space exhausted on host",
+    remediation: "Free disk space on the host (check `df -h`). Remove unused container images with `podman image prune -a`.",
+  },
+  {
+    pattern: /EADDRINUSE|address already in use|bind.*EADDRINUSE/i,
+    class: "port_conflict",
+    message: "Port already in use",
+    remediation: "Another process or container is bound to the same port. Check `ss -tlnp` and stop the conflicting process, or change the project's port in hosting config.",
+  },
+  {
+    pattern: /Cannot find module|MODULE_NOT_FOUND|No such file.*dist\/|missing.*dist\//i,
+    class: "missing_build_artifact",
+    message: "Build artifact missing",
+    remediation: "The container cannot find compiled output. Run the project build (e.g., `pnpm build` or `npm run build`) in the project directory, then restart the container.",
+  },
+  {
+    pattern: /Killed|OOM kill|Out of memory|memory limit exceeded/i,
+    class: "oom_killed",
+    message: "Container killed by OOM (out-of-memory)",
+    remediation: "The container exceeded its memory limit. Increase the container memory limit in hosting config, or reduce the application's memory usage.",
+  },
+  {
+    pattern: /ECONNREFUSED|connection refused|connect ECONNREFUSED/i,
+    class: "connection_refused",
+    message: "Dependency connection refused",
+    remediation: "The application tried to connect to a service (database, Redis, etc.) that is not reachable. Verify that dependent services are running and reachable from the container.",
+  },
+  {
+    pattern: /permission denied|EACCES|EPERM/i,
+    class: "permission_denied",
+    message: "File or socket permission denied",
+    remediation: "The container process does not have permission to access a file or socket. Check that the working directory and all required files are readable/writable by the container user.",
+  },
+];
+
+function handleDiagnose(config: ProjectToolConfig, input: Record<string, unknown>): string {
+  const pathStr = input.path ? String(input.path) : "";
+  if (!pathStr) return JSON.stringify({ error: "path is required" });
+  if (!config.hostingManager) return JSON.stringify({ error: "Hosting manager not available" });
+
+  const targetPath = resolvePath(pathStr);
+  const info = config.hostingManager.getProjectHostingInfo(targetPath) as {
+    enabled?: boolean;
+    containerName?: string;
+    status?: string;
+  } | null;
+
+  if (!info?.enabled) {
+    return JSON.stringify({ error: "Project is not hosted. Enable hosting first with the 'host' action." });
+  }
+
+  const containerName = info.containerName;
+  if (!containerName) {
+    return JSON.stringify({ error: "Could not determine container name for this project." });
+  }
+
+  // Fetch last 50 lines of container logs via spawnSync (no shell, no injection risk)
+  let rawLogTail = "";
+  const logsResult = spawnSync("podman", ["logs", "--tail", "50", containerName], {
+    timeout: 15000,
+    encoding: "utf8",
+  });
+  rawLogTail = ((logsResult.stdout ?? "") + (logsResult.stderr ?? "")).trim();
+
+  // Check dmesg for OOM kills (non-fatal — may require elevated permissions)
+  let dmesgOom = "";
+  try {
+    const dmesgResult = spawnSync("dmesg", ["--time-format", "iso"], {
+      timeout: 8000,
+      encoding: "utf8",
+    });
+    const dmesgOutput = dmesgResult.stdout ?? "";
+    dmesgOom = dmesgOutput
+      .split("\n")
+      .filter((line) => /oom|killed process/i.test(line))
+      .slice(-5)
+      .join("\n");
+  } catch { /* dmesg access may be restricted — non-fatal */ }
+
+  const combinedLog = `${rawLogTail}\n${dmesgOom}`.trim();
+
+  // Match against failure patterns (first match wins)
+  for (const fp of FAILURE_PATTERNS) {
+    if (fp.pattern.test(combinedLog)) {
+      const result: DiagnoseResult = {
+        class: fp.class,
+        message: fp.message,
+        remediation: fp.remediation,
+        rawLogTail: rawLogTail.slice(-3000), // cap at ~3 KB for token budget
+      };
+      return JSON.stringify(result);
+    }
+  }
+
+  // Check container status for generic exit
+  const containerStatus = info.status ?? "unknown";
+  if (containerStatus === "exited" || containerStatus === "stopped") {
+    const result: DiagnoseResult = {
+      class: "container_exited",
+      message: `Container exited (status: ${containerStatus}) — no recognised failure pattern found`,
+      remediation: "Review the raw log tail below for clues. Common causes: uncaught exception at startup, missing environment variable, or broken entrypoint. Use 'restart' after fixing the root cause.",
+      rawLogTail: rawLogTail.slice(-3000),
+    };
+    return JSON.stringify(result);
+  }
+
+  // Container appears healthy — surface status + recent logs
+  return JSON.stringify({
+    class: "healthy",
+    message: `Container is in '${containerStatus}' state with no error patterns in recent logs`,
+    remediation: "No action needed. If the project is inaccessible, check DNS and Caddy routing.",
+    rawLogTail: rawLogTail.slice(-3000),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Manifest + Input Schema
 // ---------------------------------------------------------------------------
 
 export const MANAGE_PROJECT_MANIFEST = {
   name: "manage_project",
   description:
-    "Manage workspace projects: list, create, update, info, delete, host, unhost, restart. " +
+    "Manage workspace projects: list, create, update, info, delete, host, unhost, restart, diagnose. " +
     "IMPORTANT: Projects run in Podman containers at https://{slug}.ai.on — NOT localhost. " +
     "After 'create', use 'host' to start the container. Use 'restart' after code changes. " +
     "Use 'info' to check container status and get the URL. " +
-    "NEVER run npm/node/python directly on the host.",
+    "Use 'diagnose' when a container is broken — it reads logs and classifies the failure class. " +
+    "NEVER run npm/node/python directly on the host. " +
+    "Aion-only: workers cannot mutate project configuration and must request changes via taskmaster_handoff.",
   requiresState: ["ONLINE" as const],
   requiresTier: ["verified" as const, "sealed" as const],
+  agentOnly: true as const,
 };
 
 export const MANAGE_PROJECT_INPUT_SCHEMA = {
@@ -549,8 +690,8 @@ export const MANAGE_PROJECT_INPUT_SCHEMA = {
   properties: {
     action: {
       type: "string",
-      enum: ["list", "create", "update", "info", "delete", "host", "unhost", "restart"],
-      description: 'Project operation. After create, use "host" to start the container. Use "restart" after code changes.',
+      enum: ["list", "create", "update", "info", "delete", "host", "unhost", "restart", "diagnose"],
+      description: 'Project operation. After create, use "host" to start the container. Use "restart" after code changes. Use "diagnose" when a container is failing to identify the failure class and remediation.',
     },
     name: {
       type: "string",

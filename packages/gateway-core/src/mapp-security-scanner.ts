@@ -9,7 +9,7 @@
  * - Permission analysis
  */
 
-import { MAppDefinitionSchema } from "@aionima/config";
+import { MAppDefinitionSchema } from "@agi/config";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,7 +44,7 @@ const PROMPT_INJECTION_PATTERNS = [
 ];
 
 const DANGEROUS_SHELL_PATTERNS = [
-  /rm\s+-rf\s+[\/~]/,
+  /rm\s+-rf\s+[/~]/,
   /curl\s+.*\|\s*(?:bash|sh|zsh)/,
   /wget\s+.*\|\s*(?:bash|sh|zsh)/,
   /mkfs\./,

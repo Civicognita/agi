@@ -107,7 +107,7 @@ For AI apps that use HuggingFace models:
 
 ### Taskmaster
 
-For complex multi-step tasks (like building a full application), use `worker_dispatch` to create background worker jobs. Workers handle:
+For complex multi-step tasks (like building a full application), use `taskmaster_queue` to create background worker jobs. Workers handle:
 - Code generation (worker-code)
 - Testing (worker-code-tester)
 - UI design (worker-ux)

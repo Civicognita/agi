@@ -3,13 +3,19 @@
  *
  * Claude Code-compatible: marketplaces are GitHub repos (or URLs) containing
  * .claude-plugin/marketplace.json. Plugins are installed from GitHub, npm, or git.
+ *
+ * After Phase 2.2: the store is Postgres/drizzle. All store calls are async.
+ * The concept of "MarketplaceSource" with a numeric id is replaced by sourceRef
+ * strings (the GitHub/URL reference). A lightweight in-memory source registry
+ * (loaded from config or gateway state) tracks the configured sources.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MarketplaceStore } from "./store.js";
 import { fetchCatalog, parseSourceRef } from "./catalog-fetcher.js";
-import { installPlugin, uninstallPlugin, computePluginIntegrityHash } from "./installer.js";
+import { installPlugin, uninstallPlugin, computePluginIntegrityHash, rebuildPlugin as rebuildPluginInstall } from "./installer.js";
+import type { RebuildAllResult } from "./installer.js";
 import type {
   MarketplaceSource,
   MarketplacePluginEntry,
@@ -20,12 +26,14 @@ import type {
 } from "./types.js";
 
 export interface MarketplaceManagerOptions {
-  dbPath: string;
+  store: MarketplaceStore;
   workspaceRoot: string;
   /** Override the plugin cache directory. Defaults to {workspaceRoot}/.plugins/cache. */
   cacheDir?: string;
   /** Path to the AGI install directory (for loading required-plugins.json). */
   installDir?: string;
+  /** Pre-configured source refs (replaces the old DB-backed sources table). */
+  sourceRefs?: string[];
 }
 
 export class MarketplaceManager {
@@ -33,12 +41,23 @@ export class MarketplaceManager {
   private workspaceRoot: string;
   private cacheDir?: string;
   private requiredPluginIds: Set<string>;
+  // In-memory source registry (sourceRef → display name)
+  private sources: Map<string, { ref: string; name: string; type: string }> = new Map();
+  // Legacy numeric-id counter for backward compat with callers that pass sourceId numbers
+  private sourceIdCounter = 1;
+  private sourceIdToRef: Map<number, string> = new Map();
+  private refToSourceId: Map<string, number> = new Map();
 
   constructor(options: MarketplaceManagerOptions) {
-    this.store = new MarketplaceStore(options.dbPath);
+    this.store = options.store;
     this.workspaceRoot = options.workspaceRoot;
     this.cacheDir = options.cacheDir;
     this.requiredPluginIds = this.loadRequiredPluginIds(options.installDir);
+
+    // Register any pre-configured source refs
+    for (const ref of options.sourceRefs ?? []) {
+      this.registerSource(ref, ref);
+    }
   }
 
   /** Expose the underlying store for shared access (e.g. MApp Marketplace Manager). */
@@ -60,12 +79,29 @@ export class MarketplaceManager {
     }
   }
 
+  private registerSource(ref: string, name: string): number {
+    if (this.refToSourceId.has(ref)) return this.refToSourceId.get(ref)!;
+    const { type } = parseSourceRef(ref);
+    const id = this.sourceIdCounter++;
+    this.sources.set(ref, { ref, name, type });
+    this.sourceIdToRef.set(id, ref);
+    this.refToSourceId.set(ref, id);
+    return id;
+  }
+
   // -------------------------------------------------------------------------
   // Sources
   // -------------------------------------------------------------------------
 
   getSources(): MarketplaceSource[] {
-    return this.store.getSources();
+    return [...this.sources.values()].map((s, i) => ({
+      id: this.refToSourceId.get(s.ref) ?? i + 1,
+      ref: s.ref,
+      sourceType: s.type as MarketplaceSource["sourceType"],
+      name: s.name,
+      lastSyncedAt: null,
+      pluginCount: 0,
+    }));
   }
 
   /**
@@ -75,33 +111,79 @@ export class MarketplaceManager {
    */
   addSource(ref: string, name?: string): MarketplaceSource {
     const { type } = parseSourceRef(ref);
-    return this.store.addSource(ref, type, name ?? ref);
+    const id = this.registerSource(ref, name ?? ref);
+    return {
+      id,
+      ref,
+      sourceType: type as MarketplaceSource["sourceType"],
+      name: name ?? ref,
+      lastSyncedAt: null,
+      pluginCount: 0,
+    };
   }
 
   removeSource(id: number): void {
-    this.store.removeSource(id);
+    const ref = this.sourceIdToRef.get(id);
+    if (ref) {
+      this.sources.delete(ref);
+      this.sourceIdToRef.delete(id);
+      this.refToSourceId.delete(ref);
+    }
+  }
+
+  getSource(id: number): MarketplaceSource | undefined {
+    const ref = this.sourceIdToRef.get(id);
+    if (!ref) return undefined;
+    const s = this.sources.get(ref);
+    if (!s) return undefined;
+    return {
+      id,
+      ref: s.ref,
+      sourceType: s.type as MarketplaceSource["sourceType"],
+      name: s.name,
+      lastSyncedAt: null,
+      pluginCount: 0,
+    };
   }
 
   async syncSource(
     id: number,
   ): Promise<{ ok: boolean; error?: string; diff?: CatalogDiff }> {
-    const source = this.store.getSource(id);
-    if (!source) return { ok: false, error: "Source not found" };
+    const ref = this.sourceIdToRef.get(id);
+    if (!ref) return { ok: false, error: "Source not found" };
 
-    const result = await fetchCatalog(source.ref);
+    const result = await fetchCatalog(ref);
     if (!result.ok || !result.catalog) {
       return { ok: false, error: result.error };
     }
 
-    const diff = this.store.syncPlugins(id, result.catalog.plugins, source.ref);
+    const diff = await this.store.syncPlugins(ref, result.catalog.plugins);
+
+    // Vacuum orphan catalog rows whose sourceRef is no longer in the
+    // active sources list. Catches cruft from older syncs (different ref
+    // formats, deleted sources, plugin renames). Cheap when nothing to
+    // remove; non-fatal on failure.
+    try {
+      const activeRefs = Array.from(this.sourceIdToRef.values());
+      await this.store.cleanupOrphanRows(activeRefs);
+    } catch { /* non-fatal */ }
+
     return { ok: true, diff };
+  }
+
+  /** Manual catalog vacuum — removes rows whose sourceRef isn't in the
+   *  active sources list. Same logic that runs after every syncSource(),
+   *  exposed separately so it can be triggered without a fresh sync. */
+  async dedupeCatalog(): Promise<{ removed: number; orphanRefs: string[] }> {
+    const activeRefs = Array.from(this.sourceIdToRef.values());
+    return await this.store.cleanupOrphanRows(activeRefs);
   }
 
   /**
    * Sync catalog from a local marketplace directory (reads marketplace.json).
    * Used at boot to ensure the DB catalog matches the local repo state.
    */
-  syncLocalCatalog(marketplaceDir: string): { ok: boolean; pluginCount?: number; error?: string } {
+  async syncLocalCatalog(marketplaceDir: string): Promise<{ ok: boolean; pluginCount?: number; error?: string }> {
     const catalogPath = join(marketplaceDir, "marketplace.json");
     if (!existsSync(catalogPath)) {
       return { ok: false, error: `marketplace.json not found at ${catalogPath}` };
@@ -113,11 +195,10 @@ export class MarketplaceManager {
       if (!Array.isArray(raw.plugins)) {
         return { ok: false, error: "marketplace.json missing plugins array" };
       }
-      const sources = this.store.getSources();
+      const sources = this.getSources();
       if (sources.length === 0) return { ok: false, error: "No marketplace sources configured" };
-      const sourceId = sources[0]!.id;
       const sourceRef = sources[0]!.ref;
-      this.store.syncPlugins(sourceId, raw.plugins as unknown as MarketplacePluginEntry[], sourceRef);
+      await this.store.syncPlugins(sourceRef, raw.plugins as unknown as MarketplacePluginEntry[]);
       return { ok: true, pluginCount: raw.plugins.length };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -129,13 +210,13 @@ export class MarketplaceManager {
    * Re-installs any plugins whose source files have changed (based on integrity hash).
    */
   async reconcileInstalled(marketplaceDir: string): Promise<{ updated: string[]; errors: string[] }> {
-    const installed = this.store.getInstalled();
+    const installed = await this.store.getInstalled();
     const updated: string[] = [];
     const errors: string[] = [];
 
     for (const item of installed) {
-      // Only reconcile plugins that came from a local marketplace source (relative paths)
-      const catalogPlugin = this.store.getPlugin(item.name, item.sourceId);
+      const sourceRef = item.sourceJson;
+      const catalogPlugin = await this.store.getPlugin(item.name, sourceRef);
       if (!catalogPlugin) continue;
       const source = catalogPlugin.source;
       if (typeof source !== "string") continue; // Not a relative path source
@@ -148,10 +229,12 @@ export class MarketplaceManager {
       const freshHash = computePluginIntegrityHash(srcDir);
       if (freshHash === item.integrityHash) continue; // No changes
 
+      const sourceId = this.refToSourceId.get(sourceRef) ?? this.registerSource(sourceRef, sourceRef);
+
       // Re-install from GitHub source and rebuild in cache
       try {
-        this.store.removeInstalled(item.name);
-        const result = await this.install(item.name, item.sourceId);
+        await this.store.removeInstalled(item.name);
+        const result = await this.install(item.name, sourceId);
         if (result.ok) {
           updated.push(item.name);
         } else {
@@ -169,43 +252,55 @@ export class MarketplaceManager {
   // Catalog
   // -------------------------------------------------------------------------
 
-  searchCatalog(params: CatalogSearchParams): (MarketplacePluginEntry & { sourceId: number; installed: boolean })[] {
-    const plugins = this.store.searchPlugins(params);
-    return plugins.map((p) => ({
-      ...p,
-      installed: this.store.isInstalled(p.name),
-    }));
+  async searchCatalog(params: CatalogSearchParams): Promise<(MarketplacePluginEntry & { sourceId: number; installed: boolean })[]> {
+    const plugins = await this.store.searchPlugins(params);
+    const results = await Promise.all(
+      plugins.map(async (p) => ({
+        ...p,
+        sourceId: this.refToSourceId.get(p.sourceRef) ?? 0,
+        installed: await this.store.isInstalled(p.name),
+      })),
+    );
+    return results;
   }
 
   // -------------------------------------------------------------------------
   // Install / Uninstall
   // -------------------------------------------------------------------------
 
-  async install(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; missingDeps?: string[]; autoInstalled?: string[] }> {
-    const plugin = this.store.getPlugin(pluginName, sourceId);
+  async install(
+    pluginName: string,
+    sourceId: number,
+  ): Promise<{ ok: boolean; error?: string; installPath?: string; missingDeps?: string[]; autoInstalled?: string[] }> {
+    const sourceRef = this.sourceIdToRef.get(sourceId) ?? "";
+    const plugin = await this.store.getPlugin(pluginName, sourceRef);
     if (!plugin) return { ok: false, error: "Plugin not found in catalog" };
 
-    if (this.store.isInstalled(pluginName)) {
+    if (await this.store.isInstalled(pluginName)) {
       return { ok: false, error: "Plugin already installed" };
     }
 
     // Auto-install missing dependencies
     const autoInstalled: string[] = [];
     if (plugin.depends && plugin.depends.length > 0) {
-      const installedNames = new Set(this.store.getInstalled().map(i => i.name));
+      const installed = await this.store.getInstalled();
+      const installedNames = new Set(installed.map(i => i.name));
       const missing = plugin.depends.filter(dep => !installedNames.has(dep));
 
       if (missing.length > 0) {
-        const allCatalog = this.store.searchPlugins({});
+        const allCatalog = await this.store.searchPlugins({});
         const unresolvedDeps: string[] = [];
 
         for (const dep of missing) {
-          const depPlugin = allCatalog.find(p => p.name === dep);
+          const depPlugin = allCatalog.find(p =>
+            p.name === dep || (Array.isArray(p.aliases) && p.aliases.includes(dep)),
+          );
           if (!depPlugin) {
             unresolvedDeps.push(dep);
             continue;
           }
-          const depResult = await this.install(dep, depPlugin.sourceId);
+          const depSourceId = this.refToSourceId.get(depPlugin.sourceRef) ?? 0;
+          const depResult = await this.install(dep, depSourceId);
           if (!depResult.ok) {
             return { ok: false, error: `Failed to auto-install dependency "${dep}": ${depResult.error}`, missingDeps: [dep] };
           }
@@ -221,23 +316,21 @@ export class MarketplaceManager {
 
     const itemType: MarketplaceItemType = (plugin.type as MarketplaceItemType) ?? "plugin";
 
-    const sourceInfo = this.store.getSource(sourceId);
-
     try {
       const { installPath, integrityHash } = await installPlugin(
         pluginName,
         plugin.source,
         itemType,
-        { workspaceRoot: this.workspaceRoot, cacheDir: this.cacheDir, sourceRef: sourceInfo?.ref },
+        { workspaceRoot: this.workspaceRoot, cacheDir: this.cacheDir, sourceRef },
       );
-      this.store.addInstalled({
+      await this.store.addInstalled({
         name: pluginName,
         sourceId,
         type: itemType,
         version: plugin.version ?? "0.0.0",
         installedAt: new Date().toISOString(),
         installPath,
-        sourceJson: plugin.sourceJson,
+        sourceJson: plugin.sourceRef,
         integrityHash: integrityHash || undefined,
         trustTier: plugin.trustTier,
       });
@@ -247,9 +340,10 @@ export class MarketplaceManager {
     }
   }
 
-  uninstall(pluginName: string, force?: boolean): { ok: boolean; error?: string; dependents?: string[] } {
-    const installed = this.store.getInstalled().find((i) => i.name === pluginName);
-    if (!installed) return { ok: false, error: "Plugin not installed" };
+  async uninstall(pluginName: string, force?: boolean): Promise<{ ok: boolean; error?: string; dependents?: string[] }> {
+    const installed = await this.store.getInstalled();
+    const item = installed.find((i) => i.name === pluginName);
+    if (!item) return { ok: false, error: "Plugin not installed" };
 
     // Block uninstall of required plugins
     if (this.requiredPluginIds.has(pluginName) && !force) {
@@ -258,8 +352,8 @@ export class MarketplaceManager {
 
     // Check if other installed plugins depend on this one
     if (!force) {
-      const allCatalog = this.store.searchPlugins({});
-      const installedNames = new Set(this.store.getInstalled().map(i => i.name));
+      const allCatalog = await this.store.searchPlugins({});
+      const installedNames = new Set(installed.map(i => i.name));
       const dependents = allCatalog
         .filter(p => installedNames.has(p.name) && p.depends?.includes(pluginName))
         .map(p => p.name);
@@ -269,21 +363,21 @@ export class MarketplaceManager {
     }
 
     try {
-      uninstallPlugin(installed.installPath);
-      this.store.removeInstalled(pluginName);
+      uninstallPlugin(item.installPath);
+      await this.store.removeInstalled(pluginName);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 
-  isInstalled(name: string): boolean {
+  async isInstalled(name: string): Promise<boolean> {
     return this.store.isInstalled(name);
   }
 
   /** Add an installed record for a plugin already in cache but missing from the DB. */
-  backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): void {
-    this.store.addInstalled({
+  async backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): Promise<void> {
+    await this.store.addInstalled({
       name: item.name,
       sourceId: item.sourceId,
       type: item.type as import("./types.js").MarketplaceItemType,
@@ -294,54 +388,54 @@ export class MarketplaceManager {
     });
   }
 
-  getInstalled(): InstalledItem[] {
+  async getInstalled(): Promise<InstalledItem[]> {
     return this.store.getInstalled();
   }
 
   /**
    * Update a single installed plugin to the latest version from the catalog.
-   * Removes old files, reinstalls from source, and updates the DB record.
    */
   async updatePlugin(
     pluginName: string,
     sourceId: number,
   ): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }> {
-    const installed = this.store.getInstalled().find((i) => i.name === pluginName);
-    if (!installed) return { ok: false, error: "Plugin not installed", oldVersion: "", newVersion: "" };
+    const installed = await this.store.getInstalled();
+    const item = installed.find((i) => i.name === pluginName);
+    if (!item) return { ok: false, error: "Plugin not installed", oldVersion: "", newVersion: "" };
 
-    const catalogPlugin = this.store.getPlugin(pluginName, sourceId);
-    if (!catalogPlugin) return { ok: false, error: "Plugin not found in catalog", oldVersion: installed.version, newVersion: "" };
+    const sourceRef = this.sourceIdToRef.get(sourceId) ?? item.sourceJson;
+    const catalogPlugin = await this.store.getPlugin(pluginName, sourceRef);
+    if (!catalogPlugin) return { ok: false, error: "Plugin not found in catalog", oldVersion: item.version, newVersion: "" };
 
-    const oldVersion = installed.version;
+    const oldVersion = item.version;
     const newVersion = catalogPlugin.version ?? "0.0.0";
 
     // Remove old plugin files from disk
     try {
-      uninstallPlugin(installed.installPath);
+      uninstallPlugin(item.installPath);
     } catch {
       // Best-effort — directory may already be gone
     }
-    this.store.removeInstalled(pluginName);
+    await this.store.removeInstalled(pluginName);
 
     // Reinstall from marketplace source
     const itemType: MarketplaceItemType = (catalogPlugin.type as MarketplaceItemType) ?? "plugin";
-    const sourceInfo = this.store.getSource(sourceId);
 
     try {
       const { installPath, integrityHash } = await installPlugin(
         pluginName,
         catalogPlugin.source,
         itemType,
-        { workspaceRoot: this.workspaceRoot, cacheDir: this.cacheDir, sourceRef: sourceInfo?.ref },
+        { workspaceRoot: this.workspaceRoot, cacheDir: this.cacheDir, sourceRef },
       );
-      this.store.addInstalled({
+      await this.store.addInstalled({
         name: pluginName,
         sourceId,
         type: itemType,
         version: newVersion,
         installedAt: new Date().toISOString(),
         installPath,
-        sourceJson: catalogPlugin.sourceJson,
+        sourceJson: catalogPlugin.sourceRef,
         integrityHash: integrityHash || undefined,
         trustTier: catalogPlugin.trustTier,
       });
@@ -351,20 +445,16 @@ export class MarketplaceManager {
     }
   }
 
-  /**
-   * Sync catalog from all GitHub sources, then update every installed plugin
-   * that has a newer version available. Returns what changed.
-   */
   async syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }> {
     // 1. Sync catalog from all configured sources (GitHub)
     let synced = 0;
-    for (const source of this.store.getSources()) {
+    for (const source of this.getSources()) {
       const result = await this.syncSource(source.id);
       if (result.ok) synced += result.diff?.total ?? 0;
     }
 
     // 2. Find and apply all available updates
-    const updates = this.checkUpdates();
+    const { updates } = await this.checkUpdates();
     const updated: string[] = [];
     const errors: string[] = [];
 
@@ -380,26 +470,61 @@ export class MarketplaceManager {
     return { synced, updated, errors };
   }
 
-  checkUpdates(): { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[] {
-    const installed = this.store.getInstalled();
+  async checkUpdates(): Promise<{
+    updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[];
+    newInMarketplace: { pluginName: string; version: string; description: string }[];
+  }> {
     const updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[] = [];
 
+    const installed = await this.store.getInstalled();
+    const installedNames = new Set(installed.map((i) => i.name));
+
     for (const item of installed) {
-      const catalogPlugin = this.store.getPlugin(item.name, item.sourceId);
+      const catalogPlugin = await this.store.getPlugin(item.name, item.sourceJson);
       if (catalogPlugin?.version && catalogPlugin.version !== item.version) {
         updates.push({
           pluginName: item.name,
           currentVersion: item.version,
           availableVersion: catalogPlugin.version,
-          sourceId: item.sourceId,
+          sourceId: this.refToSourceId.get(item.sourceJson) ?? 0,
         });
       }
     }
 
-    return updates;
+    const newInMarketplace: { pluginName: string; version: string; description: string }[] = [];
+    const allCatalog = await this.searchCatalog({});
+    for (const entry of allCatalog) {
+      if (!installedNames.has(entry.name)) {
+        newInMarketplace.push({
+          pluginName: entry.name,
+          version: entry.version ?? "0.0.0",
+          description: entry.description ?? "",
+        });
+      }
+    }
+
+    return { updates, newInMarketplace };
   }
 
-  close(): void {
-    this.store.close();
+  async rebuildPlugin(name: string): Promise<void> {
+    const installed = await this.store.getInstalled();
+    const item = installed.find(i => i.name === name);
+    if (!item) throw new Error(`Plugin "${name}" is not installed`);
+    await rebuildPluginInstall(item.installPath);
+  }
+
+  async rebuildAll(): Promise<RebuildAllResult> {
+    const installed = await this.store.getInstalled();
+    const rebuilt: string[] = [];
+    const failed: string[] = [];
+    for (const item of installed) {
+      try {
+        await rebuildPluginInstall(item.installPath);
+        rebuilt.push(item.name);
+      } catch {
+        failed.push(item.name);
+      }
+    }
+    return { rebuilt, failed };
   }
 }

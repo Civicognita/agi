@@ -36,6 +36,10 @@ const DEFAULT_CONFIG: Required<Omit<LLMProviderConfig, "apiKey">> & { apiKey: st
   maxRetries: 3,
   retryBaseMs: 1000,
   baseUrl: DEFAULT_BASE_URL,
+  // OllamaProvider intentionally ignores timeoutMs (uses native fetch with no
+  // client-side timeout). Field is required by `Required<>`; constructor
+  // doesn't read it. See factory.ts createSingleProvider("ollama") comment.
+  timeoutMs: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -325,6 +329,7 @@ export class OllamaProvider implements LLMProvider {
       maxRetries: DEFAULT_CONFIG.maxRetries,
       retryBaseMs: DEFAULT_CONFIG.retryBaseMs,
       baseUrl: DEFAULT_CONFIG.baseUrl,
+      timeoutMs: DEFAULT_CONFIG.timeoutMs,
       ...config,
     };
     this.usePromptFallback = config?.usePromptFallback ?? false;
@@ -381,13 +386,15 @@ export class OllamaProvider implements LLMProvider {
       } catch (err) {
         lastError = err;
 
-        // Clear error for connection refused (Ollama not running)
+        // Friendly error for connection refused — Ollama may be idle-unloaded,
+        // restarting, or genuinely not running. Callers see this only after the
+        // agent-invoker's retry has also failed.
         if (
           err instanceof Error &&
           (err.message.includes("ECONNREFUSED") || err.message.includes("fetch failed"))
         ) {
           throw new Error(
-            `Cannot connect to Ollama at ${baseUrl}. Is Ollama running? Start it with: ollama serve`,
+            `Ollama isn't responding yet. It may be reloading the model — try again in a moment. If it keeps failing, check that Ollama is running at ${baseUrl}.`,
           );
         }
 

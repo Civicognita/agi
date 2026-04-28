@@ -21,7 +21,7 @@
  * ```
  */
 
-import type { ServiceDefinition } from "@aionima/plugins";
+import type { ServiceDefinition } from "@agi/plugins";
 
 class ServiceBuilder {
   private def: Partial<ServiceDefinition> & { volumes: string[] };

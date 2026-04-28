@@ -26,20 +26,19 @@ const HEALTH_CHECK_INTERVAL_MS = 2_000;
 const HEALTH_CHECK_TIMEOUT_MS = 120_000;
 
 const DEFAULT_IMAGES: Record<ModelRuntimeType, string> = {
-  llm: "ghcr.io/ggerganov/llama.cpp:server",
+  llm: "ghcr.io/civicognita/transformers-server:latest",
   diffusion: "ghcr.io/civicognita/diffusion-server:latest",
   general: "ghcr.io/civicognita/transformers-server:latest",
-  // Custom runtimes have no shared default — image must be provided per-model
-  // via model.containerImage or containerConfig.image (set by CustomContainerBuilder).
   custom: "",
+  ollama: "",
 };
 
 const INTERNAL_PORTS: Record<ModelRuntimeType, number> = {
   llm: 8080,
   diffusion: 8000,
   general: 8000,
-  // Custom runtimes declare their own port via containerConfig.internalPort
   custom: 8000,
+  ollama: 11434,
 };
 
 // ---------------------------------------------------------------------------
@@ -102,8 +101,9 @@ export class ModelContainerManager {
   /**
    * Start a Podman container for the given model and return its running state.
    * Waits up to 120 s for the container's /health endpoint to respond.
+   * On ImportError crash, retries once with the missing package added.
    */
-  async start(model: InstalledModel, containerConfig: ModelContainerConfig): Promise<ModelContainerState> {
+  async start(model: InstalledModel, containerConfig: ModelContainerConfig, retryCount = 0): Promise<ModelContainerState> {
     if (this.activeContainers.size >= this.config.maxConcurrentModels) {
       throw new Error(
         `Cannot start model "${model.id}": maxConcurrentModels limit (${String(this.config.maxConcurrentModels)}) reached`,
@@ -128,9 +128,38 @@ export class ModelContainerManager {
       }
     }
 
+    // Ollama runtime — no container, model served by Ollama daemon
+    if (containerConfig.runtimeType === "ollama" && containerConfig.ollamaModelName) {
+      const ollamaModel = containerConfig.ollamaModelName;
+      this.events.emit("model:starting", model.id);
+      try {
+        execFileSync("ollama", ["pull", ollamaModel], { stdio: "pipe", timeout: 600_000 });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.events.emit("model:error", model.id, `Ollama pull failed: ${msg}`);
+        throw new Error(`Failed to pull Ollama model "${ollamaModel}": ${msg}`);
+      }
+
+      const state: ModelContainerState = {
+        modelId: model.id,
+        containerId: `ollama-${ollamaModel}`,
+        containerName: `ollama-${ollamaModel}`,
+        port: 11434,
+        runtimeType: "ollama",
+        startedAt: new Date().toISOString(),
+        status: "running",
+        healthCheckPassed: true,
+        estimatedRamBytes: containerConfig.estimatedRamBytes ?? model.fileSizeBytes,
+      };
+      this.activeContainers.set(model.id, state);
+      this.persistState();
+      this.events.emit("model:started", model.id, 11434);
+      return state;
+    }
+
     const port = this.allocatePort();
 
-    const containerName = `aionima-model-${this.sanitizeContainerName(model.id)}`;
+    const containerName = `agi-model-${this.sanitizeContainerName(model.id)}`;
 
     // Remove any stale container with the same name before starting
     try {
@@ -143,8 +172,19 @@ export class ModelContainerManager {
     }
 
     const internalPort = containerConfig.internalPort || INTERNAL_PORTS[containerConfig.runtimeType] || 8000;
-    // Resolution order: per-model containerImage (from store) → containerConfig.image (from CapabilityResolver) → DEFAULT_IMAGES
-    const image = model.containerImage ?? (containerConfig.image || DEFAULT_IMAGES[containerConfig.runtimeType]);
+    // Custom models store their built image in the DB — use it.
+    // Standard models always resolve the image from CapabilityResolver at start
+    // time so DEFAULT_IMAGES updates take effect without re-downloading.
+    let image = containerConfig.runtimeType === "custom"
+      ? (model.containerImage ?? (containerConfig.image || DEFAULT_IMAGES[containerConfig.runtimeType]))
+      : (containerConfig.image || DEFAULT_IMAGES[containerConfig.runtimeType]);
+
+    // Check for cached derivative image (has extra pip deps baked in)
+    const cachedTag = this.getCachedImageTag(model.id);
+    if (containerConfig.runtimeType !== "custom" && this.cachedImageExists(cachedTag)) {
+      image = cachedTag;
+      delete containerConfig.env.EXTRA_PIP_DEPS;
+    }
     const modelContainerPath = containerConfig.modelContainerPath;
     const modelFilename = containerConfig.modelFilename ?? model.modelFilename ?? "";
 
@@ -179,13 +219,19 @@ export class ModelContainerManager {
     const args: string[] = [
       "run", "-d",
       "--name", containerName,
-      "-p", `${String(port)}:${String(internalPort)}`,
+      // Explicit `127.0.0.1:` prefix so these model servers aren't exposed
+      // on the LAN. Previously bound to all interfaces (0.0.0.0) which is
+      // a security regression — the inference API is unauthenticated. The
+      // gateway (host process) reaches these via loopback. When gateway is
+      // eventually containerized on aionima (story #100 follow-up), drop
+      // the `-p` entirely and reach the model by container DNS instead.
+      "-p", `127.0.0.1:${String(port)}:${String(internalPort)}`,
       "-v", `${containerConfig.modelHostPath}:${modelContainerPath}:ro`,
       ...(containerConfig.memoryLimit ? ["--memory", containerConfig.memoryLimit] : []),
       "--restart", "on-failure:3",
-      "--label", "aionima.model=true",
-      "--label", `aionima.model.id=${model.id}`,
-      "--label", `aionima.model.runtime=${containerConfig.runtimeType}`,
+      "--label", "agi.model=true",
+      "--label", `agi.model.id=${model.id}`,
+      "--label", `agi.model.runtime=${containerConfig.runtimeType}`,
       ...envArgs,
       ...gpuFlags,
       image,
@@ -208,6 +254,27 @@ export class ModelContainerManager {
     this.events.emit("model:starting", model.id);
 
     const healthy = await this.waitForHealth(port, HEALTH_CHECK_TIMEOUT_MS);
+
+    // Self-repair: if unhealthy and retry budget remains, check for missing pip packages
+    if (!healthy && retryCount < 1) {
+      const missingPkg = this.extractMissingPackage(this.getContainerLogs(containerName));
+      if (missingPkg) {
+        this.events.emit("model:starting", model.id);
+        try { execFileSync("podman", ["rm", "-f", containerName], { stdio: "pipe", timeout: 10_000 }); } catch { /* ignore */ }
+        this.allocatedPorts.delete(port);
+        this.clearCachedImage(model.id);
+        const existing = containerConfig.env.EXTRA_PIP_DEPS ?? "";
+        const deps = existing ? existing.split(",") : [];
+        if (!deps.includes(missingPkg)) deps.push(missingPkg);
+        containerConfig.env.EXTRA_PIP_DEPS = deps.join(",");
+        return this.start(model, containerConfig, retryCount + 1);
+      }
+    }
+
+    // Cache the image if extra deps were installed and container is healthy
+    if (healthy && containerConfig.env.EXTRA_PIP_DEPS && !this.cachedImageExists(cachedTag)) {
+      this.commitContainer(containerId, cachedTag);
+    }
 
     const state: ModelContainerState = {
       modelId: model.id,
@@ -235,22 +302,27 @@ export class ModelContainerManager {
 
     this.events.emit("model:stopping", modelId);
 
-    try {
-      execFileSync("podman", ["stop", "-t", "10", state.containerName], {
-        stdio: "pipe",
-        timeout: 10_000,
-      });
-    } catch {
-      // Container may already be stopped
-    }
+    if (state.runtimeType === "ollama") {
+      try {
+        execFileSync("ollama", ["stop", state.containerName.replace("ollama-", "")], {
+          stdio: "pipe",
+          timeout: 10_000,
+        });
+      } catch { /* model may not be loaded */ }
+    } else {
+      try {
+        execFileSync("podman", ["stop", "-t", "10", state.containerName], {
+          stdio: "pipe",
+          timeout: 10_000,
+        });
+      } catch { /* container may already be stopped */ }
 
-    try {
-      execFileSync("podman", ["rm", "-f", state.containerName], {
-        stdio: "pipe",
-        timeout: 10_000,
-      });
-    } catch {
-      // Container may already be removed
+      try {
+        execFileSync("podman", ["rm", "-f", state.containerName], {
+          stdio: "pipe",
+          timeout: 10_000,
+        });
+      } catch { /* container may already be removed */ }
     }
 
     this.allocatedPorts.delete(state.port);
@@ -270,6 +342,73 @@ export class ModelContainerManager {
     return Array.from(this.activeContainers.values());
   }
 
+  // -------------------------------------------------------------------------
+  // Cached image + self-repair helpers
+  // -------------------------------------------------------------------------
+
+  private getCachedImageTag(modelId: string): string {
+    return `agi-model-${this.sanitizeContainerName(modelId)}:latest`;
+  }
+
+  private cachedImageExists(imageTag: string): boolean {
+    try {
+      execFileSync("podman", ["image", "exists", imageTag], { stdio: "pipe", timeout: 10_000 });
+      return true;
+    } catch { return false; }
+  }
+
+  private commitContainer(containerId: string, imageTag: string): void {
+    try {
+      execFileSync("podman", ["commit", containerId, imageTag], { stdio: "pipe", timeout: 120_000 });
+    } catch { /* non-fatal — next start will pip install again */ }
+  }
+
+  clearCachedImage(modelId: string): void {
+    const tag = this.getCachedImageTag(modelId);
+    try {
+      execFileSync("podman", ["rmi", tag], { stdio: "pipe", timeout: 15_000 });
+    } catch { /* image may not exist */ }
+  }
+
+  private getContainerLogs(containerName: string, tail = 50): string {
+    try {
+      return execFileSync("podman", ["logs", "--tail", String(tail), containerName], {
+        stdio: "pipe", timeout: 10_000,
+      }).toString();
+    } catch { return ""; }
+  }
+
+  private extractMissingPackage(logs: string): string | null {
+    const match = /(?:ModuleNotFoundError|ImportError): No module named '([^']+)'/.exec(logs);
+    if (!match?.[1]) return null;
+    const MODULE_TO_PACKAGE: Record<string, string> = {
+      accelerate: "accelerate",
+      auto_gptq: "auto-gptq",
+      autoawq: "autoawq",
+      bitsandbytes: "bitsandbytes",
+      flash_attn: "flash-attn",
+      mamba_ssm: "mamba-ssm",
+      causal_conv1d: "causal-conv1d",
+      eetq: "eetq",
+      hqq: "hqq",
+    };
+    return MODULE_TO_PACKAGE[match[1]] ?? match[1].replace(/_/g, "-");
+  }
+
+  /**
+   * Remove a model from the active-containers map and free its port allocation.
+   * Used by the background health monitor to evict containers that have stopped
+   * responding without going through the normal stop() flow.
+   */
+  removeFromActive(modelId: string): void {
+    const state = this.activeContainers.get(modelId);
+    if (state) {
+      this.allocatedPorts.delete(state.port);
+      this.activeContainers.delete(modelId);
+      this.persistState();
+    }
+  }
+
   /**
    * Live health probe against a single running container's /health endpoint.
    * Returns true if the endpoint responds 2xx within 1.5s, false otherwise.
@@ -279,6 +418,12 @@ export class ModelContainerManager {
   async probeHealth(modelId: string): Promise<boolean> {
     const state = this.activeContainers.get(modelId);
     if (!state) return false;
+    if (state.runtimeType === "ollama") {
+      try {
+        const res = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(3000) });
+        return res.ok;
+      } catch { return false; }
+    }
     try {
       const res = await fetch(`http://localhost:${String(state.port)}/health`, {
         signal: AbortSignal.timeout(1500),
@@ -443,22 +588,61 @@ export class ModelContainerManager {
   }
 
   private loadState(): void {
-    if (!existsSync(this.config.statePath)) return;
-
-    let data: PersistedState;
-    try {
-      data = JSON.parse(readFileSync(this.config.statePath, "utf8")) as PersistedState;
-    } catch {
-      return;
+    // First: restore from persisted file (if any)
+    if (existsSync(this.config.statePath)) {
+      try {
+        const data = JSON.parse(readFileSync(this.config.statePath, "utf8")) as PersistedState;
+        for (const state of data.containers) {
+          const { running } = this.inspectContainer(state.containerName);
+          if (!running) continue;
+          this.activeContainers.set(state.modelId, { ...state, status: "running" });
+          this.allocatedPorts.add(state.port);
+        }
+      } catch { /* corrupt file — fall through to discovery */ }
     }
 
-    for (const state of data.containers) {
-      // Verify the container is still alive before restoring state
-      const { running } = this.inspectContainer(state.containerName);
-      if (!running) continue;
+    // Second: discover any running HF model containers not in the persisted file.
+    // This catches containers started by a previous gateway session whose state
+    // file was cleared or lost.
+    try {
+      const output = execFileSync("podman", [
+        "ps", "--format", "{{.Names}}\t{{.Ports}}\t{{.ID}}",
+      ], { encoding: "utf-8", stdio: "pipe", timeout: 10_000 }).trim();
 
-      this.activeContainers.set(state.modelId, { ...state, status: "running" });
-      this.allocatedPorts.add(state.port);
+      for (const line of output.split("\n")) {
+        if (!line) continue;
+        const [name, ports, containerId] = line.split("\t");
+        if (!name?.startsWith("agi-model-")) continue;
+
+        const modelPart = name.slice("agi-model-".length);
+        const modelId = modelPart.replace(/--/g, "/");
+
+        if (this.activeContainers.has(modelId)) continue;
+
+        // Extract port from "127.0.0.1:6000->8080/tcp" format
+        let port = 0;
+        const portMatch = /:(\d+)->\d+\/tcp/.exec(ports ?? "");
+        if (portMatch?.[1]) port = Number(portMatch[1]);
+
+        if (port > 0) {
+          this.activeContainers.set(modelId, {
+            modelId,
+            containerId: containerId ?? "",
+            containerName: name ?? "",
+            port,
+            runtimeType: "general",
+            startedAt: new Date().toISOString(),
+            status: "running",
+            healthCheckPassed: true,
+          });
+          this.allocatedPorts.add(port);
+        }
+      }
+    } catch { /* podman unavailable — skip discovery */ }
+
+    // Re-persist so the discovered containers are saved
+    if (this.activeContainers.size > 0) {
+      this.persistState();
     }
   }
 

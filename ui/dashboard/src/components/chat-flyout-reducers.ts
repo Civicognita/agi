@@ -16,6 +16,14 @@ export interface ChatMessageShape {
   images?: string[];
   toolCards?: ToolCard[];
   toolCard?: ToolCard;
+  /** Routing metadata from the Intelligent Agent Router. Only present on assistant messages. */
+  routingMeta?: {
+    provider: string;
+    model: string;
+    costMode: string;
+    escalated: boolean;
+    estimatedCostUsd: number;
+  };
 }
 
 export interface ChatSessionShape {

@@ -1,9 +1,9 @@
-import type { AionimaMessage, OutboundContent } from "@aionima/channel-sdk";
-import type { EntityStore, MessageQueue, CommsLog } from "@aionima/entity-model";
-import type { COAChainLogger } from "@aionima/coa-chain";
-import type { VoicePipeline, VoiceGatewayState, AudioFormat } from "@aionima/voice";
+import type { AionimaMessage, OutboundContent } from "@agi/channel-sdk";
+import type { EntityStore, MessageQueue, CommsLog } from "@agi/entity-model";
+import type { COAChainLogger } from "@agi/coa-chain";
+import type { VoicePipeline, VoiceGatewayState, AudioFormat } from "@agi/voice";
 import type { PairingStore } from "./pairing-store.js";
-import type { OwnerConfig } from "@aionima/config";
+import type { OwnerConfig } from "@agi/config";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -130,12 +130,12 @@ export class InboundRouter {
           await this.outboundSender(channelId, userId, { type: "text", text: `Pairing code not found or expired: ${arg}` });
         } else {
           // Ensure the paired user has a verified entity
-          const pairedEntity = this.entityStore.resolveOrCreate(
+          const pairedEntity = await this.entityStore.resolveOrCreate(
             paired.channel,
             paired.channelUserId,
             paired.displayName,
           );
-          this.entityStore.updateEntity(pairedEntity.id, { verificationTier: "verified" });
+          await this.entityStore.updateEntity(pairedEntity.id, { verificationTier: "verified" });
 
           await this.outboundSender(channelId, userId, {
             type: "text",
@@ -208,9 +208,9 @@ export class InboundRouter {
 
         // Downgrade entity back to unverified
         if (revoked) {
-          const revokedEntity = this.entityStore.getEntityByChannel(revokeChannel, revokeUserId);
+          const revokedEntity = await this.entityStore.getEntityByChannel(revokeChannel, revokeUserId);
           if (revokedEntity !== null) {
-            this.entityStore.updateEntity(revokedEntity.id, { verificationTier: "unverified" });
+            await this.entityStore.updateEntity(revokedEntity.id, { verificationTier: "unverified" });
           }
         }
 
@@ -384,7 +384,7 @@ export class InboundRouter {
         ?? (routedMessage.metadata as Record<string, unknown>)["firstName"] as string | undefined
       : undefined;
 
-    const entity = this.entityStore.resolveOrCreate(
+    const entity = await this.entityStore.resolveOrCreate(
       channelId,
       routedMessage.channelUserId,
       displayName,
@@ -392,7 +392,7 @@ export class InboundRouter {
 
     // Update display name if entity already exists but name was "Unknown"
     if (entity.displayName === "Unknown" && displayName !== undefined && displayName !== "Unknown") {
-      this.entityStore.updateEntity(entity.id, { displayName });
+      await this.entityStore.updateEntity(entity.id, { displayName });
     }
 
     // Step 2 — generate a tracking ID for this inbound event.
@@ -401,7 +401,7 @@ export class InboundRouter {
     const coaFingerprint = `${this.resourceId}.${entity.coaAlias}.${this.nodeId}.pending`;
 
     // Step 3 — enqueue for agent processing
-    const queued = this.messageQueue.enqueue({
+    const queued = await this.messageQueue.enqueue({
       channel: channelId,
       direction: "inbound",
       payload: { message: routedMessage, entityId: entity.id, coaFingerprint },

@@ -8,6 +8,9 @@
  * No npm dependencies — uses only sibling modules and native Node.js.
  */
 
+import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
 import type {
   HfModelInfo,
   HardwareCapabilities,
@@ -46,6 +49,43 @@ const DIFFUSION_PIPELINE_TAGS = new Set([
   "image-to-image",
 ]);
 
+/** Quantization methods that need extra pip packages. */
+const QUANT_METHOD_DEPS: Record<string, string[]> = {
+  fp8: ["accelerate"],
+  gptq: ["auto-gptq", "accelerate"],
+  awq: ["autoawq", "accelerate"],
+  bnb: ["bitsandbytes", "accelerate"],
+  bitsandbytes: ["bitsandbytes", "accelerate"],
+  eetq: ["eetq", "accelerate"],
+  hqq: ["hqq", "accelerate"],
+};
+
+/** HuggingFace model ID → Ollama model name mapping. */
+const HF_TO_OLLAMA: Record<string, string> = {
+  "Qwen/Qwen2.5-1.5B-Instruct": "qwen2.5:1.5b-instruct",
+  "Qwen/Qwen2.5-Coder-1.5B-Instruct": "qwen2.5-coder:1.5b-instruct",
+  "Qwen/Qwen2.5-0.5B-Instruct": "qwen2.5:0.5b-instruct",
+  "Qwen/Qwen2.5-7B-Instruct": "qwen2.5:7b-instruct",
+  "Qwen/Qwen2.5-3B-Instruct": "qwen2.5:3b-instruct",
+  "Qwen/Qwen2.5-Coder-7B-Instruct": "qwen2.5-coder:7b-instruct",
+  "meta-llama/Llama-3.1-8B-Instruct": "llama3.1:8b-instruct",
+  "meta-llama/Llama-3.2-1B-Instruct": "llama3.2:1b",
+  "meta-llama/Llama-3.2-3B-Instruct": "llama3.2:3b",
+  "HuggingFaceTB/SmolLM2-135M-Instruct": "smollm2:135m",
+  "HuggingFaceTB/SmolLM2-360M-Instruct": "smollm2:360m",
+  "HuggingFaceTB/SmolLM2-1.7B-Instruct": "smollm2:1.7b",
+  "microsoft/Phi-3.5-mini-instruct": "phi3.5:3.8b",
+  "google/gemma-2-2b-it": "gemma2:2b",
+  "mistralai/Mistral-7B-Instruct-v0.3": "mistral:7b-instruct",
+};
+
+function ollamaAvailable(): boolean {
+  try {
+    execFileSync("which", ["ollama"], { stdio: "pipe", timeout: 3_000 });
+    return true;
+  } catch { return false; }
+}
+
 /** Bytes per gigabyte. */
 const GB = 1024 * 1024 * 1024;
 
@@ -71,11 +111,11 @@ const GGUF_QUANT_NAMES: GgufQuantization[] = [
 // ---------------------------------------------------------------------------
 
 const DEFAULT_IMAGES: Record<ModelRuntimeType, string> = {
-  llm: "ghcr.io/ggerganov/llama.cpp:server",
-  diffusion: "ghcr.io/huggingface/diffusers-api:latest",
-  general: "ghcr.io/huggingface/text-generation-inference:latest",
-  // Custom runtimes have no shared image — resolved per-model via the registry or model.containerImage
+  llm: "ghcr.io/civicognita/transformers-server:latest",
+  diffusion: "ghcr.io/civicognita/diffusion-server:latest",
+  general: "ghcr.io/civicognita/transformers-server:latest",
   custom: "",
+  ollama: "",
 };
 
 // ---------------------------------------------------------------------------
@@ -196,6 +236,34 @@ export class CapabilityResolver {
   ) {}
 
   // ---------------------------------------------------------------------------
+  // detectExtraDeps — read model config to find required pip packages
+  // ---------------------------------------------------------------------------
+
+  detectExtraDeps(model: InstalledModel): string[] {
+    const deps: string[] = [];
+    try {
+      const configPath = join(model.filePath, "config.json");
+      if (existsSync(configPath)) {
+        const config = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+        const qc = config.quantization_config as Record<string, unknown> | undefined;
+        if (qc?.quant_method && typeof qc.quant_method === "string") {
+          const method = qc.quant_method.toLowerCase();
+          deps.push(...(QUANT_METHOD_DEPS[method] ?? []));
+        }
+      }
+      const reqPath = join(model.filePath, "requirements.txt");
+      if (existsSync(reqPath)) {
+        const lines = readFileSync(reqPath, "utf8").split("\n");
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed && !trimmed.startsWith("#")) deps.push(trimmed);
+        }
+      }
+    } catch { /* model files may not be accessible */ }
+    return [...new Set(deps)];
+  }
+
+  // ---------------------------------------------------------------------------
   // resolveRuntimeType
   // ---------------------------------------------------------------------------
 
@@ -223,6 +291,7 @@ export class CapabilityResolver {
       ) ?? false;
 
       if (hasGguf) return "llm";
+      if (ollamaAvailable() && HF_TO_OLLAMA[model.id]) return "ollama";
       if (model.library_name === "transformers") return "general";
       return "llm";
     }
@@ -393,8 +462,9 @@ export class CapabilityResolver {
       // Filter out non-model files that happen to share model extensions
       if (!isModelFile(name)) continue;
 
-      // Prefer LFS size, then direct size, fall back to 0
+      // Prefer LFS size, then direct size — skip files with no known size
       const sizeBytes = sibling.lfs?.size ?? sibling.size ?? 0;
+      if (sizeBytes === 0) continue;
 
       const quantization: GgufQuantization | null =
         format === "gguf" ? extractGgufQuantization(name) : null;
@@ -457,8 +527,10 @@ export class CapabilityResolver {
     images?: { llm?: string; diffusion?: string; general?: string },
   ): ModelContainerConfig {
     const gpuPassthrough = this.capabilities.hasGpu;
-    const memoryBytes = model.fileSizeBytes * 1.5;
+    const RUNTIME_OVERHEAD = 512 * 1024 * 1024; // Python + transformers baseline
+    const memoryBytes = Math.max(model.fileSizeBytes * 1.5 + RUNTIME_OVERHEAD, RUNTIME_OVERHEAD);
     const memoryLimit = formatMemoryLimit(memoryBytes);
+    const extraDeps = model.runtimeType !== "custom" ? this.detectExtraDeps(model) : [];
 
     switch (model.runtimeType) {
       case "llm": {
@@ -468,6 +540,8 @@ export class CapabilityResolver {
         const modelRef = model.modelFilename
           ? `/models/${model.modelFilename}`
           : "/models";
+        const llmEnv: Record<string, string> = {};
+        if (extraDeps.length > 0) llmEnv.EXTRA_PIP_DEPS = extraDeps.join(",");
 
         return {
           runtimeType: "llm",
@@ -476,7 +550,7 @@ export class CapabilityResolver {
           modelHostPath: model.filePath,
           modelContainerPath: "/models",
           modelFilename: model.modelFilename,
-          env: {},
+          env: llmEnv,
           gpuPassthrough,
           memoryLimit,
           runtimeArgs: [
@@ -491,6 +565,11 @@ export class CapabilityResolver {
 
       case "diffusion": {
         const image = images?.diffusion ?? DEFAULT_IMAGES.diffusion;
+        const diffEnv: Record<string, string> = {
+          HF_TASK: model.pipelineTag,
+          MODEL_PATH: "/models",
+        };
+        if (extraDeps.length > 0) diffEnv.EXTRA_PIP_DEPS = extraDeps.join(",");
         return {
           runtimeType: "diffusion",
           image,
@@ -498,10 +577,7 @@ export class CapabilityResolver {
           modelHostPath: model.filePath,
           modelContainerPath: "/models",
           modelFilename: model.modelFilename,
-          env: {
-            HF_TASK: model.pipelineTag,
-            MODEL_PATH: "/models",
-          },
+          env: diffEnv,
           gpuPassthrough,
           memoryLimit,
           runtimeArgs: [],
@@ -517,7 +593,7 @@ export class CapabilityResolver {
         const env: Record<string, string> = {
           MODEL_ID: model.id,
           MODEL_PATH: "/models",
-          ...(def?.env ?? {}),
+          ...def?.env,
         };
 
         return {
@@ -534,8 +610,29 @@ export class CapabilityResolver {
         };
       }
 
+      case "ollama": {
+        const ollamaName = HF_TO_OLLAMA[model.id] ?? model.id.toLowerCase().replace("/", ":");
+        return {
+          runtimeType: "ollama",
+          image: "",
+          internalPort: 11434,
+          modelHostPath: "",
+          modelContainerPath: "",
+          ollamaModelName: ollamaName,
+          env: {},
+          gpuPassthrough: false,
+          runtimeArgs: [],
+        };
+      }
+
       default: {
         const image = images?.general ?? DEFAULT_IMAGES.general;
+        const extraDeps = this.detectExtraDeps(model);
+        const env: Record<string, string> = {
+          HF_TASK: model.pipelineTag,
+          MODEL_PATH: "/models",
+        };
+        if (extraDeps.length > 0) env.EXTRA_PIP_DEPS = extraDeps.join(",");
         return {
           runtimeType: "general",
           image,
@@ -543,10 +640,7 @@ export class CapabilityResolver {
           modelHostPath: model.filePath,
           modelContainerPath: "/models",
           modelFilename: model.modelFilename,
-          env: {
-            HF_TASK: model.pipelineTag,
-            MODEL_PATH: "/models",
-          },
+          env,
           gpuPassthrough,
           memoryLimit,
           runtimeArgs: [],

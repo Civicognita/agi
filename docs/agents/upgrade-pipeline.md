@@ -28,11 +28,11 @@ Five independent git repos are pulled during deployment:
 
 | Repo | Production Path | Config Key | Env Override |
 |------|----------------|------------|--------------|
-| AGI | `/opt/aionima` | (implicit -- always cwd) | -- |
-| PRIME | `/opt/aionima-prime` | `prime.dir` | `AIONIMA_PRIME_DIR` |
-| Plugin Marketplace | `/opt/aionima-marketplace` | `marketplace.dir` | `AIONIMA_MARKETPLACE_DIR` |
-| MApp Marketplace | `/opt/aionima-mapp-marketplace` | `mappMarketplace.dir` | `AIONIMA_MAPP_MARKETPLACE_DIR` |
-| ID | `/opt/aionima-local-id` | `idService.dir` | `AIONIMA_ID_DIR` |
+| AGI | `/opt/agi` | (implicit -- always cwd) | -- |
+| PRIME | `/opt/agi-prime` | `prime.dir` | `AIONIMA_PRIME_DIR` |
+| Plugin Marketplace | `/opt/agi-marketplace` | `marketplace.dir` | `AIONIMA_MARKETPLACE_DIR` |
+| MApp Marketplace | `/opt/agi-mapp-marketplace` | `mappMarketplace.dir` | `AIONIMA_MAPP_MARKETPLACE_DIR` |
+| ID | `/opt/agi-local-id` | `idService.dir` | `AIONIMA_ID_DIR` |
 
 If a repo directory doesn't exist, upgrade.sh auto-clones it (via `sudo git clone`). Clone failures are non-fatal — the system continues in degraded mode.
 
@@ -51,7 +51,7 @@ The script emits structured JSON to stdout for each phase:
 
 | Phase | What it does | Fatal? |
 |-------|-------------|--------|
-| `pull-agi` | `git pull --ff-only` in `/opt/aionima` | Yes |
+| `pull-agi` | `git pull --ff-only` in `/opt/agi` | Yes |
 | `pull-prime` / `clone-prime` | Pull or auto-clone PRIME corpus | No (degraded mode) |
 | `pull-marketplace` / `clone-marketplace` | Pull or auto-clone plugin marketplace | No (plugins still cached) |
 | `pull-mapp-marketplace` / `clone-mapp-marketplace` | Pull or auto-clone MApp marketplace | No (MApps still cached) |
@@ -73,16 +73,16 @@ When `idService.local.enabled` is `true` in `~/.agi/gateway.json`, upgrade.sh bu
 1. `npm install` — installs **all** dependencies (not `--omit=dev`) because `tsc` is a devDependency
 2. `npm run build` — compiles TypeScript to `dist/`
 3. `npx drizzle-kit migrate` — runs database migrations (non-fatal)
-4. `sudo systemctl restart aionima-local-id` — restarts the service if running
+4. `sudo systemctl restart agi-local-id` — restarts the service if running
 
-**Important:** The ID service's HTML view templates live in `src/views/` and are resolved at runtime from `process.cwd()`, not from `dist/`. This is because `tsc` only compiles `.ts` files — it does not copy `.html` files. The systemd unit sets `WorkingDirectory=/opt/aionima-local-id`, so `process.cwd()` always points to the project root.
+**Important:** The ID service's HTML view templates live in `src/views/` and are resolved at runtime from `process.cwd()`, not from `dist/`. This is because `tsc` only compiles `.ts` files — it does not copy `.html` files. The systemd unit sets `WorkingDirectory=/opt/agi-local-id`, so `process.cwd()` always points to the project root.
 
 #### Marketplace Plugin Symlink
 
 After building marketplace plugins, upgrade.sh creates a symlink:
 
 ```bash
-ln -sfn /opt/aionima/node_modules /opt/aionima-marketplace/node_modules
+ln -sfn /opt/agi/node_modules /opt/agi-marketplace/node_modules
 ```
 
 This allows bundled plugins (which mark packages like `better-sqlite3` as `external`) to resolve those dependencies from AGI's `node_modules/`. Without this, Node.js fails to resolve bare specifiers from the marketplace plugin location.
@@ -129,7 +129,7 @@ Each repo has a `protocol.json`:
 **ID** (`protocol.json`):
 ```json
 {
-  "name": "aionima-local-id",
+  "name": "agi-local-id",
   "version": "1.0.0",
   "protocol": "1.0.0"
 }

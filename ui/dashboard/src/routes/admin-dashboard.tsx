@@ -97,9 +97,13 @@ export default function AdminDashboardPage() {
   const projectList = projectsHook.projects;
 
   // Derive project-type breakdown for the Projects StatCard subtitle.
+  // ProjectInfo.type doesn't exist — the actual fields are
+  // `projectType.id` (e.g. "aionima", "web", "monorepo") and `category`
+  // (e.g. "monorepo", "literature"). Fall back in that order so the
+  // card shows meaningful counts instead of "unknown N".
   const projectsByType = new Map<string, number>();
   for (const p of projectList) {
-    const t = (p as Record<string, unknown>).type as string | undefined ?? "unknown";
+    const t = p.projectType?.id ?? p.category ?? "unknown";
     projectsByType.set(t, (projectsByType.get(t) ?? 0) + 1);
   }
   const topProjectTypes = [...projectsByType.entries()]
@@ -108,6 +112,9 @@ export default function AdminDashboardPage() {
     ? ""
     : topProjectTypes.slice(0, 3).map(([type, count]) => `${type} ${String(count)}`).join(" · ")
       + (topProjectTypes.length > 3 ? ` +${String(topProjectTypes.length - 3)} more` : "");
+
+  // Only show services whose container image is locally available.
+  const visibleServices = services.filter((s) => s.imageAvailable !== false);
 
   return (
     <PageScroll>
@@ -129,8 +136,8 @@ export default function AdminDashboardPage() {
           />
           <StatCard
             label="Services"
-            value={servicesLoading ? "..." : String(services.length)}
-            sub={`${String(services.filter((s) => s.status === "running").length)} running`}
+            value={servicesLoading ? "..." : String(visibleServices.length)}
+            sub={`${String(visibleServices.filter((s) => s.status === "running").length)} running`}
           />
           <StatCard
             label="HF Models"
@@ -187,12 +194,12 @@ export default function AdminDashboardPage() {
         <Card className="p-4">
           <h2 className="text-sm font-semibold text-foreground mb-3">Services</h2>
           {servicesLoading && <div className="text-sm text-muted-foreground">Loading...</div>}
-          {!servicesLoading && services.length === 0 && (
+          {!servicesLoading && visibleServices.length === 0 && (
             <div className="text-sm text-muted-foreground">No services configured.</div>
           )}
-          {!servicesLoading && services.length > 0 && (
+          {!servicesLoading && visibleServices.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {services.map((svc) => {
+              {visibleServices.map((svc) => {
                 const svcStatus = svc.status === "running" ? "healthy" : svc.status === "error" ? "down" : "unknown";
                 return (
                   <div key={svc.name} className="flex items-center gap-3 p-3 rounded-lg bg-surface0/50">

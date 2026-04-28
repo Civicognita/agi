@@ -36,6 +36,40 @@ export interface PersistedChatMessage {
   toolCards?: PersistedToolCard[];
   /** Single tool card data (for role: "tool" messages). */
   toolCard?: PersistedToolCard;
+  /**
+   * Next-step suggestions generated for this assistant response. Persisted
+   * so they survive page reloads — previously these lived only in ephemeral
+   * component state and vanished on refresh. Only meaningful on assistant
+   * messages.
+   */
+  suggestions?: string[];
+  /**
+   * Routing metadata from the Intelligent Agent Router. Persisted so the
+   * model/cost chip is visible when reloading a prior session. Only
+   * meaningful on assistant messages.
+   */
+  routingMeta?: {
+    provider: string;
+    model: string;
+    costMode: string;
+    escalated: boolean;
+    estimatedCostUsd: number;
+    /** Dynamic-context request type. */
+    requestType?: string;
+    /** How the request type was determined. */
+    classifierUsed?: string;
+    /** Context layers included in the assembled system prompt. */
+    contextLayers?: string[];
+    /** Per-section token breakdown. Populated from v0.4.53 onwards. */
+    tokenBreakdown?: {
+      identity: number;
+      context: number;
+      memory: number;
+      skills: number;
+      history: number;
+      response: number;
+    };
+  };
 }
 
 export interface PersistedChatSession {

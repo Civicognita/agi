@@ -244,7 +244,7 @@ Response:
   },
   "prime": {
     "status": "connected",
-    "dir": "/opt/aionima-prime",
+    "dir": "/opt/agi-prime",
     "entries": 142,
     "branch": "main"
   },
@@ -986,7 +986,7 @@ Response:
 [
   {
     "id": 1,
-    "ref": "Civicognita/aionima-marketplace",
+    "ref": "Civicognita/agi-marketplace",
     "sourceType": "github",
     "name": "Official Marketplace",
     "description": "Aionima official plugins",
@@ -1061,7 +1061,7 @@ Request body:
 Response:
 
 ```json
-{ "ok": true, "installPath": "/opt/aionima-marketplace/plugins/plugin-hosting" }
+{ "ok": true, "installPath": "/opt/agi-marketplace/plugins/plugin-hosting" }
 ```
 
 #### DELETE /api/marketplace/installed/:pluginName
@@ -1086,7 +1086,7 @@ Response:
     "type": "tool",
     "version": "1.0.0",
     "installedAt": "2026-03-01T10:00:00.000Z",
-    "installPath": "/opt/aionima-marketplace/plugins/plugin-hosting",
+    "installPath": "/opt/agi-marketplace/plugins/plugin-hosting",
     "sourceJson": {}
   }
 ]
@@ -1445,7 +1445,7 @@ Response:
   "source": "Civicognita/aionima",
   "branch": "main",
   "entries": 142,
-  "dir": "/opt/aionima-prime"
+  "dir": "/opt/agi-prime"
 }
 ```
 
@@ -1506,7 +1506,7 @@ Response:
 {
   "ok": true,
   "enabled": true,
-  "primeDir": "/opt/aionima-prime_dev",
+  "primeDir": "/opt/agi-prime_dev",
   "note": "Restart required for changes to take effect"
 }
 ```

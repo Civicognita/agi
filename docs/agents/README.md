@@ -86,7 +86,7 @@ Catppuccin color variables used: `--color-mantle`, `--color-surface0`, `--color-
 
 ## Deployment
 
-The production directory (`/opt/aionima/`) is its own git clone. `scripts/upgrade.sh` runs `git pull` which updates `docs/` along with everything else.
+The production directory (`/opt/agi/`) is its own git clone. `scripts/upgrade.sh` runs `git pull` which updates `docs/` along with everything else.
 
 Documentation changes are zero-downtime — the backend reads files from disk on each request, so no restart is needed.
 

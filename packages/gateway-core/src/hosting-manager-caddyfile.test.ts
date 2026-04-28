@@ -29,7 +29,10 @@ describe("buildCaddyfileContent — WhoDB block", () => {
     expect(out).toContain("header -X-Frame-Options");
     expect(out).toContain("header -Content-Security-Policy");
     expect(out).toContain(`header Content-Security-Policy "frame-ancestors 'self' https://ai.on https://*.ai.on"`);
-    expect(out).toContain("reverse_proxy localhost:5050");
+    // Caddy-on-aionima (story #100) — WhoDB reached by container DNS on the
+    // aionima podman network, not localhost. Default container name is
+    // `agi-whodb`; default internal port is 8080.
+    expect(out).toContain("reverse_proxy agi-whodb:8080");
   });
 
   it("still emits header strips when an existing Caddyfile has the OLD unfixed block", () => {
@@ -55,12 +58,19 @@ db.ai.on {
 `;
     const out = buildCaddyfileContent({ ...baseOpts, existingCaddyfile: legacyCaddyfile });
     expect(out).toContain("header -X-Frame-Options");
-    expect(out).toContain("reverse_proxy localhost:5050"); // new WhoDB port, not the legacy 3100
+    // New DNS-based WhoDB upstream; must not keep the legacy localhost:3100.
+    expect(out).toContain("reverse_proxy agi-whodb:8080");
+    expect(out).not.toContain("reverse_proxy localhost:3100");
   });
 
   it("respects a custom whodbPort when provided", () => {
-    const out = buildCaddyfileContent({ ...baseOpts, whodbPort: 8080 });
-    expect(out).toContain("reverse_proxy localhost:8080");
+    const out = buildCaddyfileContent({ ...baseOpts, whodbPort: 5050 });
+    expect(out).toContain("reverse_proxy agi-whodb:5050");
+  });
+
+  it("honors a custom whodbContainerName when provided", () => {
+    const out = buildCaddyfileContent({ ...baseOpts, whodbContainerName: "agi-whodb-dev" });
+    expect(out).toContain("reverse_proxy agi-whodb-dev:8080");
   });
 
   it("includes domain aliases in the frame-ancestors CSP", () => {
@@ -109,7 +119,8 @@ papa.ai.on {
       idService: { enabled: true, subdomain: "id", port: 3200 },
     });
     expect(out).toContain("id.ai.on {");
-    expect(out).toContain("reverse_proxy localhost:3200");
+    // ID reached by container DNS on aionima; default container is `agi-local-id`.
+    expect(out).toContain("reverse_proxy agi-local-id:3200");
   });
 
   it("skips the ID service block when idService.enabled is false or undefined", () => {
@@ -128,20 +139,29 @@ papa.ai.on {
     const out = buildCaddyfileContent({
       ...baseOpts,
       pluginSubdomainRoutes: [
+        // Legacy route (no containerName) — falls back to host.containers.internal
         { subdomain: "papa", target: 18789 },
+        // Route targeted at AGI gateway (on host) — resolved via host bridge
         { subdomain: "admin", target: "gateway" },
+        // Aionima-native route — container DNS
+        { subdomain: "myapp", target: 3000, containerName: "agi-myapp" },
       ],
     });
     expect(out).toContain("papa.ai.on {");
-    expect(out).toContain("reverse_proxy localhost:18789");
+    expect(out).toContain("reverse_proxy host.containers.internal:18789");
     expect(out).toContain("admin.ai.on {");
-    expect(out).toContain("reverse_proxy localhost:3100"); // "gateway" resolves to gatewayPort
+    expect(out).toContain("reverse_proxy host.containers.internal:3100");
+    expect(out).toContain("myapp.ai.on {");
+    expect(out).toContain("reverse_proxy agi-myapp:3000");
   });
 
-  it("writes project blocks in the PROJECT DOMAINS section", () => {
+  it("writes project blocks in the PROJECT DOMAINS section using container DNS when available", () => {
     const out = buildCaddyfileContent({
       ...baseOpts,
-      projects: [{ hostname: "blog", port: 4001 }, { hostname: "shop", port: 4002 }],
+      projects: [
+        { hostname: "blog", port: 4001, containerName: "agi-blog", internalPort: 3000 },
+        { hostname: "shop", port: 4002, containerName: "agi-shop", internalPort: 80 },
+      ],
     });
     const projStart = out.indexOf("# === PROJECT DOMAINS ===");
     const projEnd = out.indexOf("# === END PROJECT DOMAINS ===");
@@ -149,8 +169,52 @@ papa.ai.on {
     expect(projEnd).toBeGreaterThan(projStart);
     const projSection = out.slice(projStart, projEnd);
     expect(projSection).toContain("blog.ai.on {");
-    expect(projSection).toContain("reverse_proxy localhost:4001");
+    expect(projSection).toContain("reverse_proxy agi-blog:3000");
     expect(projSection).toContain("shop.ai.on {");
-    expect(projSection).toContain("reverse_proxy localhost:4002");
+    expect(projSection).toContain("reverse_proxy agi-shop:80");
+  });
+
+  it("falls back to host.containers.internal when a project has no containerName yet", () => {
+    // Pre-migration projects without containerName/internalPort keep working
+    // through the host bridge until they re-launch.
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      projects: [{ hostname: "legacy-blog", port: 4099 }],
+    });
+    const projStart = out.indexOf("# === PROJECT DOMAINS ===");
+    const projEnd = out.indexOf("# === END PROJECT DOMAINS ===");
+    const projSection = out.slice(projStart, projEnd);
+    expect(projSection).toContain("legacy-blog.ai.on {");
+    expect(projSection).toContain("reverse_proxy host.containers.internal:4099");
+  });
+
+  it("adds a 5xx-filtered handle_errors fallback block in each project block", () => {
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      projects: [{ hostname: "my-app", port: 4001, containerName: "agi-my-app", internalPort: 3000 }],
+    });
+    const projStart = out.indexOf("# === PROJECT DOMAINS ===");
+    const projEnd = out.indexOf("# === END PROJECT DOMAINS ===");
+    const projSection = out.slice(projStart, projEnd);
+    // Caddy 2.6 compatibility — use expression-matcher form, not the
+    // status-code filter (`handle_errors 502 503 504`) which requires
+    // Caddy 2.8+.
+    expect(projSection).toContain("handle_errors {");
+    expect(projSection).not.toContain("handle_errors 502 503 504");
+    expect(projSection).toContain("@5xx expression");
+    expect(projSection).toContain("{http.error.status_code} >= 500");
+    expect(projSection).toContain("handle @5xx {");
+    expect(projSection).toContain("respond `");
+    expect(projSection).toContain("503");
+    expect(projSection).toContain("Container not running");
+    expect(projSection).toContain("my-app");
+  });
+
+  it("uses the provided name in the offline page when name differs from hostname", () => {
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      projects: [{ hostname: "my-app", port: 4001, containerName: "agi-my-app", internalPort: 3000, name: "My Blog" }],
+    });
+    expect(out).toContain("My Blog");
   });
 });

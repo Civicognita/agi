@@ -5,6 +5,8 @@
  * - MApps are single JSON files (no git clone, no build step)
  * - Install = fetch JSON from GitHub → validate → write to ~/.agi/mapps/{author}/{id}.json
  * - Sources are GitHub repos containing a marketplace.json with a `mapps` array
+ *
+ * After Phase 2.2: all store calls are async.
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
@@ -26,10 +28,26 @@ export class MAppMarketplaceManager {
   private mappsDir: string;
   private updateChannel: string;
 
+  // In-memory source registry (sourceRef → display name)
+  private sources: Map<string, { ref: string; name: string; type: string }> = new Map();
+  private sourceIdCounter = 1;
+  private sourceIdToRef: Map<number, string> = new Map();
+  private refToSourceId: Map<string, number> = new Map();
+
   constructor(options: MAppMarketplaceManagerOptions) {
     this.store = options.store;
     this.mappsDir = options.mappsDir;
     this.updateChannel = options.updateChannel;
+  }
+
+  private registerSource(ref: string, name: string): number {
+    if (this.refToSourceId.has(ref)) return this.refToSourceId.get(ref)!;
+    const { type } = parseSourceRef(ref);
+    const id = this.sourceIdCounter++;
+    this.sources.set(ref, { ref, name, type });
+    this.sourceIdToRef.set(id, ref);
+    this.refToSourceId.set(ref, id);
+    return id;
   }
 
   // -------------------------------------------------------------------------
@@ -37,26 +55,46 @@ export class MAppMarketplaceManager {
   // -------------------------------------------------------------------------
 
   getSources(): MAppSource[] {
-    return this.store.getMAppSources();
+    return [...this.sources.values()].map((s) => ({
+      id: this.refToSourceId.get(s.ref)!,
+      ref: s.ref,
+      sourceType: s.type as MAppSource["sourceType"],
+      name: s.name,
+      lastSyncedAt: null,
+      mappCount: 0,
+    }));
   }
 
   addSource(ref: string, name?: string): MAppSource {
     const { type } = parseSourceRef(ref);
-    return this.store.addMAppSource(ref, type, name ?? ref);
+    const id = this.registerSource(ref, name ?? ref);
+    return {
+      id,
+      ref,
+      sourceType: type as MAppSource["sourceType"],
+      name: name ?? ref,
+      lastSyncedAt: null,
+      mappCount: 0,
+    };
   }
 
   removeSource(id: number): void {
-    this.store.removeMAppSource(id);
+    const ref = this.sourceIdToRef.get(id);
+    if (ref) {
+      this.sources.delete(ref);
+      this.sourceIdToRef.delete(id);
+      this.refToSourceId.delete(ref);
+    }
   }
 
   async syncSource(id: number): Promise<{ ok: boolean; error?: string; mappCount?: number }> {
-    const source = this.store.getMAppSource(id);
-    if (!source) return { ok: false, error: "Source not found" };
+    const ref = this.sourceIdToRef.get(id);
+    if (!ref) return { ok: false, error: "Source not found" };
 
-    const catalog = await this.fetchCatalogFromSource(source.ref);
+    const catalog = await this.fetchCatalogFromSource(ref);
     if (!catalog.ok) return { ok: false, error: catalog.error };
 
-    this.store.syncMApps(id, catalog.mapps);
+    await this.store.syncMApps(ref, catalog.mapps);
     return { ok: true, mappCount: catalog.mapps.length };
   }
 
@@ -64,12 +102,12 @@ export class MAppMarketplaceManager {
   // Catalog
   // -------------------------------------------------------------------------
 
-  getCatalog(): MAppCatalogEntry[] {
+  async getCatalog(): Promise<MAppCatalogEntry[]> {
     return this.store.getMAppCatalog();
   }
 
-  getCatalogWithInstalled(): (MAppCatalogEntry & { installed: boolean })[] {
-    const catalog = this.store.getMAppCatalog();
+  async getCatalogWithInstalled(): Promise<(MAppCatalogEntry & { installed: boolean })[]> {
+    const catalog = await this.store.getMAppCatalog();
     return catalog.map((entry) => ({
       ...entry,
       installed: existsSync(join(this.mappsDir, entry.author, `${entry.id}.json`)),
@@ -81,14 +119,14 @@ export class MAppMarketplaceManager {
   // -------------------------------------------------------------------------
 
   async install(appId: string, sourceId: number): Promise<{ ok: boolean; error?: string }> {
-    const entry = this.store.getMApp(appId, sourceId);
+    const ref = this.sourceIdToRef.get(sourceId);
+    if (!ref) return { ok: false, error: "Source not found" };
+
+    const entry = await this.store.getMApp(appId, ref);
     if (!entry) return { ok: false, error: "MApp not found in catalog" };
 
-    const source = this.store.getMAppSource(sourceId);
-    if (!source) return { ok: false, error: "Source not found" };
-
     // Fetch the MApp JSON from GitHub
-    const result = await this.fetchFileFromSource(source.ref, entry.sourcePath);
+    const result = await this.fetchFileFromSource(ref, entry.sourcePath);
     if (!result.ok) return { ok: false, error: result.error };
 
     // Write to disk
@@ -107,8 +145,8 @@ export class MAppMarketplaceManager {
     return { ok: true };
   }
 
-  getInstalled(): Array<{ id: string; author: string; version?: string }> {
-    const catalog = this.store.getMAppCatalog();
+  async getInstalled(): Promise<Array<{ id: string; author: string; version?: string }>> {
+    const catalog = await this.store.getMAppCatalog();
     const installed: Array<{ id: string; author: string; version?: string }> = [];
     for (const entry of catalog) {
       const path = join(this.mappsDir, entry.author, `${entry.id}.json`);
@@ -128,17 +166,14 @@ export class MAppMarketplaceManager {
   // Updates
   // -------------------------------------------------------------------------
 
-  /**
-   * Sync catalog from all sources, then update all installed MApps with new versions.
-   */
   async syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }> {
     let synced = 0;
-    for (const source of this.store.getMAppSources()) {
+    for (const source of this.getSources()) {
       const result = await this.syncSource(source.id);
       if (result.ok) synced += result.mappCount ?? 0;
     }
 
-    const catalog = this.store.getMAppCatalog();
+    const catalog = await this.store.getMAppCatalog();
     const updated: string[] = [];
     const errors: string[] = [];
 
@@ -152,11 +187,11 @@ export class MAppMarketplaceManager {
         if (local.version === entry.version) continue; // Already up to date
       } catch { /* re-fetch on parse error */ }
 
-      // Fetch and write updated version
-      const source = this.store.getMAppSource(entry.sourceId);
-      if (!source) continue;
+      const sourceId = this.refToSourceId.get(entry.sourcePath) ?? 0;
+      const ref = this.sourceIdToRef.get(sourceId);
+      if (!ref) continue;
 
-      const result = await this.fetchFileFromSource(source.ref, entry.sourcePath);
+      const result = await this.fetchFileFromSource(ref, entry.sourcePath);
       if (!result.ok) {
         errors.push(`${entry.id}: ${result.error}`);
         continue;

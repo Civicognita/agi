@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
+import { LemonadeBanner } from "@/components/LemonadeBanner.js";
 
 interface Props {
   domain: "MIND" | "SOUL" | "SKILL";
@@ -48,6 +49,7 @@ export function ZeroMeStep({ domain, onNext, onSkip }: Props) {
   const [completed, setCompleted] = useState(false);
   const [summary, setSummary] = useState("");
   const [saving, setSaving] = useState(false);
+  const [chatFailed, setChatFailed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -98,9 +100,10 @@ export function ZeroMeStep({ domain, onNext, onSkip }: Props) {
         setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
       }
     } catch {
+      setChatFailed(true);
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "Something went wrong. Please try again." },
+        { role: "assistant", content: "Couldn't reach a chat-capable LLM provider. Set up an API provider or install the Lemonade local runtime — see the banner above." },
       ]);
     } finally {
       setSending(false);
@@ -138,6 +141,7 @@ export function ZeroMeStep({ domain, onNext, onSkip }: Props) {
 
   return (
     <div className="flex flex-col gap-4 h-full">
+      {chatFailed && <LemonadeBanner context="onboarding" />}
       <div className="onboard-animate-in">
         <h2 className="text-xl sm:text-2xl font-semibold mb-1">
           {DOMAIN_COPY[domain].headline}

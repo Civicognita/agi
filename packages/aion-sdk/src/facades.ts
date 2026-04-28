@@ -68,7 +68,7 @@ export interface WorkspaceInfo {
 /** Security scan facade — run scans, query findings, list providers. */
 export function Security(): ADFSecurityContext {
   const ctx = getADFContext();
-  if (!ctx.security) throw new Error("Security module not initialized — is @aionima/security loaded?");
+  if (!ctx.security) throw new Error("Security module not initialized — is @agi/security loaded?");
   return ctx.security;
 }
 

@@ -152,7 +152,7 @@ if (myConfig?.enabled) {
 Or type it properly:
 
 ```ts
-import type { AionimaConfig } from "@aionima/config";
+import type { AionimaConfig } from "@agi/config";
 
 const rawConfig = api.getConfig() as Partial<AionimaConfig>;
 const myFeature = rawConfig.myFeature;
@@ -264,7 +264,7 @@ The `dev` section controls Contributing Mode — toggling between the production
 ```ts
 const DevConfigSchema = z.object({
   enabled: z.boolean().default(false),
-  primeDir: z.string().default("/opt/aionima-prime_dev"),
+  primeDir: z.string().default("/opt/agi-prime_dev"),
 }).strict();
 ```
 
@@ -275,7 +275,7 @@ Added to `AionimaConfigSchema` as `dev: DevConfigSchema.optional()`.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | `boolean` | `false` | Toggle contributing mode on/off |
-| `primeDir` | `string` | `"/opt/aionima-prime_dev"` | Path to dev PRIME corpus directory |
+| `primeDir` | `string` | `"/opt/agi-prime_dev"` | Path to dev PRIME corpus directory |
 
 When `dev.enabled` is `true`, `resolvePrimeDir()` (in `packages/gateway-core/src/resolve-paths.ts`) returns the dev path instead of the production path. COA audit records include a `fork_id` for traceability.
 

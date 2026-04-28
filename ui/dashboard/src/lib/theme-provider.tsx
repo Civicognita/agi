@@ -10,6 +10,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from "react";
 import { builtInThemes, SEMANTIC_KEYS } from "../themes/index.js";
 import type { BuiltInTheme } from "../themes/index.js";
+import { safeArray } from "./utils.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -128,7 +129,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   // Load saved theme + plugin themes on mount
   useEffect(() => {
-    Promise.all([fetchConfig(), fetchPluginThemes()]).then(([config, pThemes]) => {
+    Promise.all([fetchConfig(), fetchPluginThemes()]).then(([config, pThemesRaw]) => {
+      // Guard against a server response where the handler forgot to await
+      // an async store method and sent back `{}` instead of an array.
+      const pThemes = safeArray<ThemeEntry>(pThemesRaw);
       setPluginThemes(pThemes);
 
       const ui = config.ui as Record<string, unknown> | undefined;

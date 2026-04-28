@@ -28,7 +28,7 @@ describe("analyzeIssue", () => {
 
   it("identifies missing module import issues", async () => {
     const result = await analyzeIssue(
-      { issueText: "Error: Cannot find module '@aionima/skills'" },
+      { issueText: "Error: Cannot find module '@agi/skills'" },
       tmpDir,
     );
 

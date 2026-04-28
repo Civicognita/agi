@@ -1,17 +1,12 @@
 /**
- * Database Abstraction Layer — Task #188
+ * Database Abstraction Layer — Task #188 (updated: drizzle/Postgres rewrite)
  *
- * Unified async interface over SQLite (better-sqlite3) and PostgreSQL (pg).
- * All data access goes through DatabaseAdapter so callers don't care which
- * backend is in use.
- *
- * SQLite adapter wraps synchronous calls in resolved promises (negligible
- * overhead). PostgreSQL adapter uses native async pg pool.
+ * Unified async interface over PostgreSQL (pg).
+ * SQLiteAdapter is retained as a stub for migration tooling (migrateToPostgres)
+ * but should not be used for live data access — all stores now use drizzle
+ * via @agi/db-schema/client.
  */
 
-import type BetterSqlite3 from "better-sqlite3";
-
-import { ALL_DDL } from "./schema.sql.js";
 import type { TenantId } from "./tenant.js";
 import { DEFAULT_TENANT } from "./tenant.js";
 
@@ -46,8 +41,6 @@ export interface DatabaseAdapter {
   /**
    * Execute a query that returns rows.
    * Use `$1`, `$2`, etc. for PostgreSQL-style positional params.
-   * Use `?` for SQLite-style positional params.
-   * The adapter normalizes internally.
    */
   query<T extends Row = Row>(sql: string, params?: unknown[]): Promise<T[]>;
 
@@ -79,39 +72,51 @@ export interface DatabaseAdapter {
 }
 
 // ---------------------------------------------------------------------------
-// SQLite adapter
+// SQLite adapter (stub — for migration tooling only)
 // ---------------------------------------------------------------------------
 
 /**
- * SQLite adapter using better-sqlite3.
+ * SQLite adapter stub.
  *
- * Wraps synchronous APIs in resolved promises for interface compatibility.
- * The tenant_id concept is ignored (single-tenant mode).
+ * All live stores have been migrated to drizzle/Postgres via @agi/db-schema.
+ * This stub exists only to satisfy the DatabaseAdapter interface for
+ * migration.ts (migrateToPostgres) which reads from old SQLite databases.
+ *
+ * Pass the raw better-sqlite3 Database handle as `db: unknown` — this avoids
+ * a hard dependency on better-sqlite3 in the package.
  */
 export class SQLiteAdapter implements DatabaseAdapter {
   readonly backend = "sqlite" as const;
   readonly tenantId: TenantId;
 
   constructor(
-    private readonly db: BetterSqlite3.Database,
+    /** Legacy SQLite handle — typed as unknown to avoid better-sqlite3 dep. */
+    private readonly db: unknown,
     tenantId?: TenantId,
   ) {
     this.tenantId = tenantId ?? DEFAULT_TENANT;
   }
 
-  async query<T extends Row = Row>(sql: string, params?: unknown[]): Promise<T[]> {
-    const stmt = this.db.prepare(sql);
-    return (params ? stmt.all(...params) : stmt.all()) as T[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private get rawDb(): any {
+    return this.db;
   }
 
-  async queryOne<T extends Row = Row>(sql: string, params?: unknown[]): Promise<T | null> {
-    const stmt = this.db.prepare(sql);
-    const row = (params ? stmt.get(...params) : stmt.get()) as T | undefined;
+  async query<T extends Row = Row>(rawSql: string, params?: unknown[]): Promise<T[]> {
+    const stmt = this.rawDb.prepare(rawSql) as { all: (...a: unknown[]) => T[] };
+    return params ? stmt.all(...params) : stmt.all();
+  }
+
+  async queryOne<T extends Row = Row>(rawSql: string, params?: unknown[]): Promise<T | null> {
+    const stmt = this.rawDb.prepare(rawSql) as { get: (...a: unknown[]) => T | undefined };
+    const row = params ? stmt.get(...params) : stmt.get();
     return row ?? null;
   }
 
-  async execute(sql: string, params?: unknown[]): Promise<MutationResult> {
-    const stmt = this.db.prepare(sql);
+  async execute(rawSql: string, params?: unknown[]): Promise<MutationResult> {
+    const stmt = this.rawDb.prepare(rawSql) as {
+      run: (...a: unknown[]) => { changes: number; lastInsertRowid: number | bigint };
+    };
     const result = params ? stmt.run(...params) : stmt.run();
     return {
       changes: result.changes,
@@ -119,31 +124,24 @@ export class SQLiteAdapter implements DatabaseAdapter {
     };
   }
 
-  async exec(sql: string): Promise<void> {
-    this.db.exec(sql);
+  async exec(rawSql: string): Promise<void> {
+    this.rawDb.exec(rawSql);
   }
 
   async transaction<T>(fn: () => Promise<T>): Promise<T> {
-    // better-sqlite3 transactions are synchronous, but our fn is async.
-    // For SQLite we use SAVEPOINT manually.
-    this.db.exec("SAVEPOINT txn");
+    this.rawDb.exec("SAVEPOINT txn");
     try {
       const result = await fn();
-      this.db.exec("RELEASE txn");
+      this.rawDb.exec("RELEASE txn");
       return result;
     } catch (err) {
-      this.db.exec("ROLLBACK TO txn");
+      this.rawDb.exec("ROLLBACK TO txn");
       throw err;
     }
   }
 
   async close(): Promise<void> {
-    this.db.close();
-  }
-
-  /** Access the underlying better-sqlite3 handle (for legacy code migration). */
-  get raw(): BetterSqlite3.Database {
-    return this.db;
+    this.rawDb.close();
   }
 }
 
@@ -192,7 +190,6 @@ export class PostgresAdapter implements DatabaseAdapter {
     if (this.pool) return this.pool;
 
     // Dynamic import so pg is not required for SQLite-only deployments
-    // Variable bypasses TypeScript static module resolution
     const pgModule = "pg";
     const { Pool } = (await import(/* @vite-ignore */ pgModule)) as unknown as { Pool: PgPoolConstructor };
     this.pool = new Pool({
@@ -221,23 +218,23 @@ export class PostgresAdapter implements DatabaseAdapter {
     }
   }
 
-  async query<T extends Row = Row>(sql: string, params?: unknown[]): Promise<T[]> {
+  async query<T extends Row = Row>(rawSql: string, params?: unknown[]): Promise<T[]> {
     return this.withClient(async (client) => {
-      const result = await client.query(sql, params);
+      const result = await client.query(rawSql, params);
       return result.rows as T[];
     });
   }
 
-  async queryOne<T extends Row = Row>(sql: string, params?: unknown[]): Promise<T | null> {
+  async queryOne<T extends Row = Row>(rawSql: string, params?: unknown[]): Promise<T | null> {
     return this.withClient(async (client) => {
-      const result = await client.query(sql, params);
+      const result = await client.query(rawSql, params);
       return (result.rows[0] as T) ?? null;
     });
   }
 
-  async execute(sql: string, params?: unknown[]): Promise<MutationResult> {
+  async execute(rawSql: string, params?: unknown[]): Promise<MutationResult> {
     return this.withClient(async (client) => {
-      const result = await client.query(sql, params);
+      const result = await client.query(rawSql, params);
       return {
         changes: result.rowCount ?? 0,
         lastInsertRowid: 0,
@@ -245,9 +242,9 @@ export class PostgresAdapter implements DatabaseAdapter {
     });
   }
 
-  async exec(sql: string): Promise<void> {
+  async exec(rawSql: string): Promise<void> {
     return this.withClient(async (client) => {
-      await client.query(sql);
+      await client.query(rawSql);
     });
   }
 
@@ -287,7 +284,7 @@ interface PgPool {
 }
 
 interface PgClient {
-  query(sql: string, params?: unknown[]): Promise<{ rows: unknown[]; rowCount: number | null }>;
+  query(rawSql: string, params?: unknown[]): Promise<{ rows: unknown[]; rowCount: number | null }>;
   release(): void;
 }
 
@@ -310,8 +307,8 @@ export interface CreateDatabaseOptions {
 /**
  * Create a database adapter based on configuration.
  *
- * For SQLite, creates the database file and runs all DDL.
- * For PostgreSQL, assumes DDL is already applied (via migration).
+ * For SQLite, dynamically imports better-sqlite3 and runs all DDL.
+ * For PostgreSQL, assumes DDL is already applied (via drizzle migrations).
  */
 export async function createDatabaseAdapter(
   options: CreateDatabaseOptions,
@@ -319,18 +316,15 @@ export async function createDatabaseAdapter(
   if (options.backend === "sqlite") {
     const path = options.sqlitePath ?? ":memory:";
 
-    // Dynamic import to match the lazy pattern
-    const BetterSqlite3Module = await import("better-sqlite3");
-    const BetterSqlite3Constructor = BetterSqlite3Module.default;
+    // Dynamic import to avoid bundling better-sqlite3 for Postgres deployments
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const BetterSqlite3Module = await import("better-sqlite3" as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const BetterSqlite3Constructor: new (p: string) => any = BetterSqlite3Module.default;
     const db = new BetterSqlite3Constructor(path);
 
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
-
-    // Run DDL
-    for (const ddl of ALL_DDL) {
-      db.exec(ddl);
-    }
 
     return new SQLiteAdapter(db, options.tenantId);
   }

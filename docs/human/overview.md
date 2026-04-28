@@ -73,12 +73,12 @@ aionima/
 │   └── dashboard/          React dashboard (Vite + Tailwind + TanStack Query)
 ├── scripts/
 │   ├── upgrade.sh           Production deployment script
-│   └── aionima.service     systemd unit file
+│   └── agi.service     systemd unit file
 ├── skills/                 Agent skill definitions (.skill.md files)
 └── aionima.example.json    Example configuration to copy from
 ```
 
-> **Note:** All plugins live in the [MARKETPLACE repo](https://github.com/Civicognita/aionima-marketplace), not in this monorepo. This includes service plugins (MySQL, PostgreSQL, Redis, Adminer), runtime plugins (Node.js, PHP), project-type plugins (Web App, Mobile App, Literature, Media, Monorepo, Ops), the editor plugin, LLM provider plugins (Anthropic, OpenAI, Ollama), and channel plugins (Telegram, Discord, Gmail, Signal, WhatsApp). Only the core packages and SDK live here. Runtime data and configuration live in `~/.agi/` — see [Runtime Data Paths](#runtime-data-paths) below.
+> **Note:** All plugins live in the [MARKETPLACE repo](https://github.com/Civicognita/agi-marketplace), not in this monorepo. This includes service plugins (MySQL, PostgreSQL, Redis, Adminer), runtime plugins (Node.js, PHP), project-type plugins (Web App, Mobile App, Literature, Media, Monorepo, Ops), the editor plugin, LLM provider plugins (Anthropic, OpenAI, Ollama), and channel plugins (Telegram, Discord, Gmail, Signal, WhatsApp). Only the core packages and SDK live here. Runtime data and configuration live in `~/.agi/` — see [Runtime Data Paths](#runtime-data-paths) below.
 
 ---
 
@@ -173,8 +173,8 @@ Hot-reload (config.changed hook fires, relevant services update)
 | `~/.agi/chat-history/` | Chat session history (JSON files per session) |
 | `~/.agi/secrets/` | TPM2-sealed credentials |
 | `~/.agi/` | Runtime data root |
-| `/opt/aionima/` | Production deployment target |
-| `/opt/aionima-prime/` | PRIME knowledge corpus (external repo) — never write runtime data here |
+| `/opt/agi/` | Production deployment target |
+| `/opt/agi-prime/` | PRIME knowledge corpus (external repo) — never write runtime data here |
 | `logs/` | Application log files (configured via `logging.logDir`, default `./logs` relative to workspace root) |
 
 ---

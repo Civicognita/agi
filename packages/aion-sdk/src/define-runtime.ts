@@ -22,7 +22,7 @@
  * ```
  */
 
-import type { RuntimeDefinition, RuntimeDependency } from "@aionima/plugins";
+import type { RuntimeDefinition, RuntimeDependency } from "@agi/plugins";
 
 class RuntimeBuilder {
   private def: Partial<RuntimeDefinition> & { projectTypes: string[]; dependencies: RuntimeDependency[] };

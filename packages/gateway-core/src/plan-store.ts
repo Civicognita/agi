@@ -24,6 +24,7 @@ import { homedir } from "node:os";
 import { ulid } from "ulid";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import type { Plan, PlanStep, CreatePlanInput, UpdatePlanInput, PlanStatus, PlanStepStatus, PlanTynnRefs } from "./plan-types.js";
+import { projectSlug } from "./dispatch-paths.js";
 
 // ---------------------------------------------------------------------------
 // Frontmatter helpers
@@ -108,13 +109,8 @@ function metaToPlan(meta: Record<string, unknown>, body: string): Plan {
 // ---------------------------------------------------------------------------
 
 export class PlanStore {
-  /** Convert a project path to a filesystem-safe slug for directory naming. */
-  private projectSlug(projectPath: string): string {
-    return projectPath.replace(/^\//, "").replace(/\//g, "-").replace(/[^a-zA-Z0-9._-]/g, "_") || "general";
-  }
-
   private plansDir(projectPath: string): string {
-    return join(homedir(), ".agi", this.projectSlug(projectPath), "plans");
+    return join(homedir(), ".agi", projectSlug(projectPath), "plans");
   }
 
   private planPath(projectPath: string, planId: string): string {

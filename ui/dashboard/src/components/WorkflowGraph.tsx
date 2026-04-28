@@ -1,25 +1,12 @@
 /**
- * WorkflowGraph — React Flow canvas rendering the Taskmaster worker topology.
+ * WorkflowGraph — Canvas-based rendering of the Taskmaster worker topology.
  * Shows the Taskmaster orchestrator hub connected to domain groups containing
  * worker nodes. Enforced chain edges show mandatory worker sequences.
- * Uses react-fancy Card/Badge components for consistent design system styling.
+ * Uses react-fancy Canvas + Card/Badge components for consistent design system styling.
  */
 
-import { useCallback, useMemo, useState } from "react";
-import {
-  ReactFlow,
-  Background,
-  Controls,
-  MiniMap,
-  type Node,
-  type Edge,
-  type NodeTypes,
-  type NodeProps,
-  type NodeMouseHandler,
-  Handle,
-  Position,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+import { useCallback, useState } from "react";
+import { Canvas } from "@particle-academy/react-fancy";
 
 import { Card } from "@/components/ui/card.js";
 import { Badge } from "@/components/ui/badge.js";
@@ -61,181 +48,10 @@ const GROUP_GAP = 44;
 const WORKER_HEIGHT = 38;
 const WORKER_GAP = 6;
 const HEADER_HEIGHT = 34;
-const GROUP_PADDING_X = 10;
 const GROUP_PADDING_TOP = 42;
 const GROUP_PADDING_BOTTOM = 10;
 const TM_WIDTH = 200;
 const TM_HEIGHT = 64;
-
-/* ── Custom nodes (react-fancy styled) ─────────────────────────────── */
-
-function TaskmasterNode({ data }: NodeProps) {
-  const d = data as { workerCount: number; domainCount: number };
-  return (
-    <Card className="border-primary/50 bg-card shadow-md" style={{ width: TM_WIDTH }}>
-      <Handle type="source" position={Position.Bottom} style={{ width: 8, height: 8, background: "var(--color-primary)", border: "2px solid var(--color-card)" }} />
-      <div className="px-3 py-2 text-center">
-        <div className="text-[13px] font-bold text-primary tracking-wide">TASKMASTER</div>
-        <div className="text-[10px] text-muted-foreground mt-0.5">
-          {d.domainCount} domains &middot; {d.workerCount} workers
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-function DomainGroupNode({ data }: NodeProps) {
-  const d = data as { label: string; color: string; width: number; height: number; workerCount: number };
-  return (
-    <Card
-      className="overflow-hidden shadow-sm"
-      style={{
-        width: d.width,
-        height: d.height,
-        borderColor: d.color,
-        borderWidth: 1.5,
-      }}
-    >
-      <Handle type="target" position={Position.Top} style={{ width: 6, height: 6, background: d.color, border: "none" }} />
-      <div
-        className="flex items-center gap-2 px-3"
-        style={{ height: HEADER_HEIGHT, background: d.color }}
-      >
-        <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: "var(--color-crust)" }}>
-          {d.label}
-        </span>
-        <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4 ml-auto" style={{ background: "rgba(0,0,0,0.15)", color: "var(--color-crust)", border: "none" }}>
-          {d.workerCount}
-        </Badge>
-      </div>
-    </Card>
-  );
-}
-
-function WorkerNode({ data }: NodeProps) {
-  const d = data as { label: string; color: string; model?: string };
-  return (
-    <Card className="cursor-pointer hover:border-primary/50 transition-colors shadow-none border-border" style={{ minWidth: GROUP_WIDTH - GROUP_PADDING_X * 2 - 4 }}>
-      <Handle
-        type="source"
-        position={Position.Right}
-        style={{ width: 6, height: 6, background: d.color, border: "none" }}
-      />
-      <Handle
-        type="target"
-        position={Position.Left}
-        style={{ width: 6, height: 6, background: d.color, border: "none" }}
-      />
-      <div className="flex items-center gap-2 px-2.5 py-1.5">
-        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: d.color }} />
-        <span className="text-[11px] font-medium text-foreground truncate">{d.label}</span>
-      </div>
-    </Card>
-  );
-}
-
-const nodeTypes: NodeTypes = {
-  taskmaster: TaskmasterNode,
-  domainGroup: DomainGroupNode,
-  worker: WorkerNode,
-};
-
-/* ── Graph builder ──────────────────────────────────────────────────── */
-
-function buildGraph(): { nodes: Node[]; edges: Edge[] } {
-  const nodes: Node[] = [];
-  const edges: Edge[] = [];
-
-  const totalWorkers = domains.reduce((sum, d) => sum + d.workers.length, 0);
-
-  // Taskmaster hub — centered above domain groups
-  const totalWidth = domains.length * GROUP_WIDTH + (domains.length - 1) * GROUP_GAP;
-  const tmX = 40 + (totalWidth - TM_WIDTH) / 2;
-  const tmY = 20;
-
-  nodes.push({
-    id: "taskmaster",
-    type: "taskmaster",
-    position: { x: tmX, y: tmY },
-    data: { workerCount: totalWorkers, domainCount: domains.length },
-    draggable: true,
-    selectable: false,
-    connectable: false,
-  });
-
-  const groupStartY = tmY + TM_HEIGHT + 60;
-  let groupX = 40;
-
-  for (const domain of domains) {
-    const workerCount = domain.workers.length;
-    const groupHeight =
-      GROUP_PADDING_TOP +
-      workerCount * WORKER_HEIGHT +
-      (workerCount - 1) * WORKER_GAP +
-      GROUP_PADDING_BOTTOM;
-
-    // Domain group container
-    nodes.push({
-      id: `group-${domain.id}`,
-      type: "domainGroup",
-      position: { x: groupX, y: groupStartY },
-      data: {
-        label: domain.label,
-        color: domain.color,
-        width: GROUP_WIDTH,
-        height: groupHeight,
-        workerCount,
-      },
-      draggable: true,
-      selectable: false,
-      connectable: false,
-    });
-
-    // Edge from Taskmaster to domain group
-    edges.push({
-      id: `tm-to-${domain.id}`,
-      source: "taskmaster",
-      target: `group-${domain.id}`,
-      style: { stroke: domain.color, strokeWidth: 1.5, opacity: 0.4 },
-      type: "smoothstep",
-    });
-
-    // Worker nodes
-    for (let i = 0; i < domain.workers.length; i++) {
-      const worker = domain.workers[i];
-      nodes.push({
-        id: `${domain.id}-${worker}`,
-        type: "worker",
-        position: {
-          x: groupX + GROUP_PADDING_X,
-          y: groupStartY + GROUP_PADDING_TOP + i * (WORKER_HEIGHT + WORKER_GAP),
-        },
-        data: { label: worker, color: domain.color },
-        draggable: false,
-      });
-    }
-
-    groupX += GROUP_WIDTH + GROUP_GAP;
-  }
-
-  // Enforced chain edges
-  for (const chain of chains) {
-    edges.push({
-      id: `chain-${chain.source}-${chain.target}`,
-      source: chain.source,
-      target: chain.target,
-      label: chain.label,
-      animated: true,
-      style: { stroke: "var(--color-overlay0)", strokeWidth: 1.5, strokeDasharray: "6 3" },
-      labelStyle: { fontSize: 9, fill: "var(--color-muted-foreground)", fontWeight: 500 },
-      labelBgStyle: { fill: "var(--color-background)", fillOpacity: 0.85 },
-      labelBgPadding: [4, 2] as [number, number],
-      labelBgBorderRadius: 4,
-    });
-  }
-
-  return { nodes, edges };
-}
 
 /* ── Component ──────────────────────────────────────────────────────── */
 
@@ -243,58 +59,284 @@ interface WorkflowGraphProps {
   theme: "light" | "dark";
   config: AionimaConfig | null;
   onSaveConfig: (config: AionimaConfig) => Promise<void>;
+  routerStatus?: { costMode: string; escalation: boolean; providers: Array<{ provider: string; healthy: boolean }> };
 }
 
-export function WorkflowGraph({ theme, config, onSaveConfig }: WorkflowGraphProps) {
-  const { nodes, edges } = useMemo(() => buildGraph(), []);
-  const colorMode = theme === "light" ? "light" : "dark";
+export function WorkflowGraph({ theme: _theme, config, onSaveConfig, routerStatus }: WorkflowGraphProps) {
   const [selectedWorker, setSelectedWorker] = useState<SelectedWorker | null>(null);
+  const [, setViewport] = useState<{ panX: number; panY: number; zoom: number } | null>(null);
+  const handleViewportChange = useCallback((v: { panX: number; panY: number; zoom: number }) => setViewport(v), []);
 
-  const onNodeClick: NodeMouseHandler = useCallback((_event, node) => {
-    if (node.type !== "worker") return;
-    const dashIdx = node.id.indexOf("-");
-    if (dashIdx < 0) return;
-    const domain = node.id.slice(0, dashIdx);
-    const worker = node.id.slice(dashIdx + 1);
-    const d = node.data as { color: string };
-    setSelectedWorker({ nodeId: node.id, domain, worker, color: d.color });
-  }, []);
+  /* ── Layout math ─────────────────────────────────────────────────── */
 
-  const minimapNodeColor = useCallback(
-    (node: Node) => {
-      if (node.type === "taskmaster") return "var(--color-primary)";
-      if (node.type === "domainGroup") {
-        const d = node.data as { color: string };
-        return d.color;
-      }
-      return "var(--color-surface1)";
-    },
-    [],
-  );
+  const totalWorkers = domains.reduce((sum, d) => sum + d.workers.length, 0);
+  const totalWidth = domains.length * GROUP_WIDTH + (domains.length - 1) * GROUP_GAP;
+  const canvasStartX = 40;
+
+  const ROUTER_OFFSET = routerStatus ? 140 : 0;
+  const tmX = canvasStartX + (totalWidth - TM_WIDTH) / 2;
+  const tmY = 20 + ROUTER_OFFSET;
+
+  // Router layer positions
+  const stages = ["Classify", "Select", "Execute"];
+  const stageWidth = 70;
+  const stageGap = 30;
+  const totalStageWidth = stages.length * stageWidth + (stages.length - 1) * stageGap;
+  const stageStartX = canvasStartX + totalWidth / 2 - totalStageWidth / 2;
+  const routerHubX = canvasStartX + totalWidth / 2 - 110;
+
+  // Domain group positions
+  const groupStartY = tmY + TM_HEIGHT + 60;
+
+  const modeColors: Record<string, string> = {
+    local: "var(--color-green)",
+    economy: "var(--color-yellow)",
+    balanced: "var(--color-blue)",
+    max: "var(--color-mauve)",
+  };
+  const routerColor = routerStatus ? (modeColors[routerStatus.costMode] ?? "var(--color-blue)") : "var(--color-blue)";
 
   return (
-    <div style={{ width: "100%", height: "100%" }} className="min-h-[400px]">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        onNodeClick={onNodeClick}
-        fitView
-        fitViewOptions={{ padding: 0.15 }}
-        colorMode={colorMode}
+    <div style={{ width: "100%", height: 600 }}>
+      <Canvas
+        className="h-full w-full"
+        showGrid
+        fitOnMount
         minZoom={0.3}
         maxZoom={2}
-        proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{ type: "smoothstep" }}
+        onViewportChange={handleViewportChange}
       >
-        <Background gap={20} size={1} />
-        <Controls showInteractive={false} />
-        <MiniMap
-          nodeColor={minimapNodeColor}
-          maskColor={theme === "dark" ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.6)"}
-          style={{ borderRadius: 8 }}
-        />
-      </ReactFlow>
+        {/* ── Router layer ─────────────────────────────────────────── */}
+        {routerStatus && (
+          <>
+            {/* Router Hub node */}
+            <Canvas.Node id="router-hub" x={routerHubX} y={20} draggable>
+              <Card className="border-primary/50 bg-card shadow-md" style={{ width: 220 }}>
+                <div className="px-3 py-2 text-center">
+                  <div className="text-[13px] font-bold tracking-wide" style={{ color: routerColor }}>
+                    AGENT ROUTER
+                  </div>
+                  <div className="flex items-center justify-center gap-2 mt-1">
+                    <Badge
+                      variant="outline"
+                      className="text-[9px] px-1.5 py-0"
+                      style={{ borderColor: routerColor, color: routerColor }}
+                    >
+                      {routerStatus.costMode.toUpperCase()}
+                    </Badge>
+                    {routerStatus.escalation && (
+                      <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-muted-foreground text-muted-foreground">
+                        ESCALATION
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-center gap-1.5 mt-1.5">
+                    {routerStatus.providers.map((p) => (
+                      <div key={p.provider} className="flex items-center gap-0.5">
+                        <div
+                          className="w-1.5 h-1.5 rounded-full"
+                          style={{ background: p.healthy ? "var(--color-green)" : "var(--color-red)" }}
+                        />
+                        <span className="text-[8px] text-muted-foreground">{p.provider}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+            </Canvas.Node>
+
+            {/* Router stage nodes */}
+            {stages.map((label, i) => (
+              <Canvas.Node
+                key={`stage-${i}`}
+                id={`stage-${i}`}
+                x={stageStartX + i * (stageWidth + stageGap)}
+                y={85}
+                draggable
+              >
+                <Card className="border-border/50 bg-card shadow-sm px-3 py-1.5 text-center" style={{ minWidth: stageWidth }}>
+                  <div className="text-[9px] text-muted-foreground font-medium tracking-wide">{label}</div>
+                </Card>
+              </Canvas.Node>
+            ))}
+
+            {/* Router hub → stage 0 */}
+            <Canvas.Edge
+              from="router-hub"
+              to="stage-0"
+              fromAnchor="bottom"
+              toAnchor="top"
+              curve="bezier"
+              animated
+              color="var(--color-primary)"
+              strokeWidth={1.5}
+            />
+            {/* stage 0 → stage 1 */}
+            <Canvas.Edge
+              from="stage-0"
+              to="stage-1"
+              fromAnchor="bottom"
+              toAnchor="top"
+              curve="bezier"
+              animated
+              color="var(--color-primary)"
+              strokeWidth={1.5}
+            />
+            {/* stage 1 → stage 2 */}
+            <Canvas.Edge
+              from="stage-1"
+              to="stage-2"
+              fromAnchor="bottom"
+              toAnchor="top"
+              curve="bezier"
+              animated
+              color="var(--color-primary)"
+              strokeWidth={1.5}
+            />
+            {/* stage 2 → taskmaster */}
+            <Canvas.Edge
+              from="stage-2"
+              to="taskmaster"
+              fromAnchor="bottom"
+              toAnchor="top"
+              curve="bezier"
+              animated
+              color="var(--color-primary)"
+              strokeWidth={1.5}
+            />
+          </>
+        )}
+
+        {/* ── Taskmaster node ───────────────────────────────────────── */}
+        <Canvas.Node id="taskmaster" x={tmX} y={tmY} draggable>
+          <Card className="border-primary/50 bg-card shadow-md" style={{ width: TM_WIDTH }}>
+            <div className="px-3 py-2 text-center">
+              <div className="text-[13px] font-bold text-primary tracking-wide">TASKMASTER</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">
+                {domains.length} domains &middot; {totalWorkers} workers
+              </div>
+            </div>
+          </Card>
+        </Canvas.Node>
+
+        {/* ── Domain groups ─────────────────────────────────────────── */}
+        {domains.map((domain, di) => {
+          const workerCount = domain.workers.length;
+          const groupHeight =
+            GROUP_PADDING_TOP +
+            workerCount * WORKER_HEIGHT +
+            (workerCount - 1) * WORKER_GAP +
+            GROUP_PADDING_BOTTOM;
+          const gx = canvasStartX + di * (GROUP_WIDTH + GROUP_GAP);
+
+          return (
+            <Canvas.Node
+              key={`group-${domain.id}`}
+              id={`group-${domain.id}`}
+              x={gx}
+              y={groupStartY}
+              draggable
+            >
+              <Card
+                className="overflow-hidden shadow-sm"
+                style={{
+                  width: GROUP_WIDTH,
+                  height: groupHeight,
+                  borderColor: domain.color,
+                  borderWidth: 1.5,
+                }}
+              >
+                {/* Domain header */}
+                <div
+                  className="flex items-center gap-2 px-3"
+                  style={{ height: HEADER_HEIGHT, background: domain.color }}
+                >
+                  <span
+                    className="text-[11px] font-bold uppercase tracking-wider"
+                    style={{ color: "var(--color-crust)" }}
+                  >
+                    {domain.label}
+                  </span>
+                  <Badge
+                    variant="secondary"
+                    className="text-[9px] px-1.5 py-0 h-4 ml-auto"
+                    style={{ background: "rgba(0,0,0,0.15)", color: "var(--color-crust)", border: "none" }}
+                  >
+                    {workerCount}
+                  </Badge>
+                </div>
+
+                {/* Worker list */}
+                <div className="p-1.5 space-y-0.5">
+                  {domain.workers.map((w) => (
+                    <button
+                      key={w}
+                      type="button"
+                      className="w-full text-left px-2 py-1.5 rounded text-[10px] text-foreground hover:bg-accent cursor-pointer transition-colors flex items-center gap-2"
+                      onClick={() =>
+                        setSelectedWorker({
+                          nodeId: `${domain.id}-${w}`,
+                          domain: domain.id,
+                          worker: w,
+                          color: domain.color,
+                        })
+                      }
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: domain.color }} />
+                      <span className="font-medium truncate">{w}</span>
+                    </button>
+                  ))}
+                </div>
+              </Card>
+            </Canvas.Node>
+          );
+        })}
+
+        {/* ── Taskmaster → domain edges ─────────────────────────────── */}
+        {domains.map((domain) => (
+          <Canvas.Edge
+            key={`tm-to-${domain.id}`}
+            from="taskmaster"
+            to={`group-${domain.id}`}
+            fromAnchor="bottom"
+            toAnchor="top"
+            curve="step"
+            color={domain.color}
+            strokeWidth={1}
+          />
+        ))}
+
+        {/* ── Enforced chain edges ──────────────────────────────────── */}
+        {chains.map((chain) => {
+          // Workers are rendered inside domain group Cards, not as separate Canvas.Node.
+          // Connect group-to-group using the domain prefix of the source/target worker id.
+          const sourceDomain = chain.source.split("-")[0];
+          const targetDomain = chain.target.split("-")[0];
+          return (
+            <Canvas.Edge
+              key={`chain-${chain.source}-${chain.target}`}
+              from={`group-${sourceDomain}`}
+              to={`group-${targetDomain}`}
+              fromAnchor="right"
+              toAnchor="left"
+              curve="bezier"
+              dashed
+              animated
+              color="var(--color-overlay0)"
+              strokeWidth={1.5}
+              label={
+                <span className="text-[8px] text-muted-foreground bg-background/80 px-1 rounded">
+                  {chain.label}
+                </span>
+              }
+            />
+          );
+        })}
+
+        <Canvas.Controls />
+        <Canvas.Minimap />
+      </Canvas>
+
       <WorkerFlyout
         selected={selectedWorker}
         onClose={() => setSelectedWorker(null)}

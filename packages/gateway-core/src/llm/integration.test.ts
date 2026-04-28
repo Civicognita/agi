@@ -8,8 +8,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { createLLMProvider } from "./index.js";
-import type { AionimaConfig } from "@aionima/config";
+import { createLLMProvider, createAgentRouter } from "./index.js";
+import type { AionimaConfig } from "@agi/config";
 import type { LLMResponse, LLMInvokeParams } from "./index.js";
 
 // Full agent config defaults (Zod output type requires all default fields)
@@ -22,6 +22,14 @@ const DEFAULT_AGENT = {
   maxRetries: 3,
   replyMode: "autonomous" as const,
   devMode: false,
+  router: {
+    costMode: "balanced" as const,
+    escalation: false,
+    maxEscalationsPerTurn: 1,
+    simpleThresholdTokens: 500,
+    complexThresholdTokens: 2000,
+  },
+  pm: { provider: "tynn" },
 };
 
 // Minimal config factory
@@ -141,5 +149,30 @@ describe("provider tool conversion", () => {
     };
 
     expect(params.tools).toBeUndefined();
+  });
+});
+
+describe("createAgentRouter — factory", () => {
+  it("always creates a working provider", () => {
+    const provider = createAgentRouter(makeConfig());
+    expect(provider).toBeDefined();
+    expect(typeof provider.invoke).toBe("function");
+  });
+
+  it("defaults to balanced cost mode", () => {
+    const provider = createAgentRouter(makeConfig());
+    expect(typeof provider.invoke).toBe("function");
+    expect(typeof provider.continueWithToolResults).toBe("function");
+    expect(typeof provider.summarize).toBe("function");
+  });
+
+  it("respects explicit cost mode config", () => {
+    const provider = createAgentRouter(makeConfig({
+      agent: {
+        ...DEFAULT_AGENT,
+        router: { costMode: "economy", escalation: true, maxEscalationsPerTurn: 1, simpleThresholdTokens: 500, complexThresholdTokens: 2000 },
+      },
+    }));
+    expect(provider).toBeDefined();
   });
 });

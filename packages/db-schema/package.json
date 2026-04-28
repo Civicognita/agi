@@ -1,0 +1,71 @@
+{
+  "name": "@agi/db-schema",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Unified drizzle schema + Postgres client for agi_data. Shared by all AGI services and Local-ID — single source of truth per feedback_single_source_of_truth_db memory.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./auth": {
+      "types": "./dist/auth.d.ts",
+      "default": "./dist/auth.js"
+    },
+    "./entities": {
+      "types": "./dist/entities.d.ts",
+      "default": "./dist/entities.js"
+    },
+    "./audit": {
+      "types": "./dist/audit.d.ts",
+      "default": "./dist/audit.js"
+    },
+    "./compliance": {
+      "types": "./dist/compliance.d.ts",
+      "default": "./dist/compliance.js"
+    },
+    "./platform": {
+      "types": "./dist/platform.d.ts",
+      "default": "./dist/platform.js"
+    },
+    "./marketplaces": {
+      "types": "./dist/marketplaces.d.ts",
+      "default": "./dist/marketplaces.js"
+    },
+    "./hf": {
+      "types": "./dist/hf.d.ts",
+      "default": "./dist/hf.js"
+    },
+    "./security": {
+      "types": "./dist/security.d.ts",
+      "default": "./dist/security.js"
+    },
+    "./cost-ledger": {
+      "types": "./dist/cost-ledger.d.ts",
+      "default": "./dist/cost-ledger.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "generate": "drizzle-kit generate",
+    "generate:dist": "drizzle-kit generate --config=drizzle-generate.config.ts",
+    "migrate": "drizzle-kit migrate",
+    "push": "drizzle-kit push",
+    "studio": "drizzle-kit studio",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.38.3",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "drizzle-kit": "^0.30.4",
+    "typescript": "^5.7.0"
+  }
+}

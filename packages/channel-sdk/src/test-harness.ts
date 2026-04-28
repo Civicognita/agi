@@ -14,7 +14,7 @@
  *
  * @example
  * ```ts
- * import { testPlugin } from "@aionima/channel-sdk/test-harness";
+ * import { testPlugin } from "@agi/channel-sdk/test-harness";
  *
  * const results = await testPlugin(myPlugin);
  * if (results.passed) console.log("All tests passed!");

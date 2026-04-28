@@ -19,7 +19,7 @@ import {
   Compass, FileText, GitBranch, Store, ScrollText, Rocket,
   SlidersHorizontal, Activity, Blocks, ShieldHalf, ShieldCheck,
   AlertTriangle, Building2, HardDrive, Fingerprint, Sparkles, Cpu,
-  Shield, ArrowLeft,
+  Shield, ArrowLeft, FileSearch,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -63,6 +63,9 @@ const builtinSections: NavSectionWithMode[] = [
     { to: "/docs", label: "Documentation", icon: FileText },
   ]},
   // ── ADMIN ──
+  { mode: "admin", title: "Overview", items: [
+    { to: "/admin", label: "Dashboard", exact: true, icon: LayoutDashboard },
+  ]},
   { mode: "admin", title: "Marketplace", items: [
     { to: "/gateway/marketplace", label: "Plugins", icon: Store },
     { to: "/magic-apps/admin", label: "MagicApps", icon: Sparkles },
@@ -76,6 +79,7 @@ const builtinSections: NavSectionWithMode[] = [
   { mode: "admin", title: "System", items: [
     { to: "/system", label: "Resources", exact: true, icon: Activity },
     { to: "/system/services", label: "Services", icon: Blocks },
+    { to: "/system/agents", label: "Agents", icon: Cpu },
     { to: "/system/admin", label: "Machine", icon: ShieldHalf },
     { to: "/system/changelog", label: "Changelog", icon: ScrollText },
     { to: "/system/incidents", label: "Incidents", icon: AlertTriangle },
@@ -83,6 +87,7 @@ const builtinSections: NavSectionWithMode[] = [
     { to: "/system/backups", label: "Backups", icon: HardDrive },
     { to: "/system/security", label: "Security", icon: ShieldCheck },
     { to: "/system/identity", label: "Identity", icon: Fingerprint },
+    { to: "/system/prompt-inspector", label: "Prompt Inspector", icon: FileSearch },
     { to: "/settings", label: "Settings", icon: SlidersHorizontal },
   ]},
 ];
@@ -102,6 +107,29 @@ const domainRouteMap: Record<string, string> = {
   impactinomics: "", projects: "/projects", comms: "/comms",
   knowledge: "/knowledge", gateway: "/gateway", settings: "/settings", system: "/system",
 };
+
+/**
+ * Derive the testid for a nav item from its route path + label. Shape:
+ * `nav-<domain>-<label-slug>`. Matches what the Playwright e2e suite
+ * expects (navigation.spec.ts / dashboard-overview.spec.ts).
+ *
+ * `domain` is the leading path segment mapped via `domainRouteMap` keys
+ * (with `comms` → `communication` for the historic test fixture naming).
+ * `label-slug` is the item's label kebab-cased.
+ */
+function deriveNavTestId(to: string, label: string): string {
+  const firstSeg = to.split("/").filter(Boolean)[0] ?? "";
+  let domain: string;
+  if (firstSeg === "") domain = "impactinomics"; // root path
+  else if (firstSeg === "comms") domain = "communication";
+  else if (firstSeg === "coa" || firstSeg === "reports") domain = "impactinomics";
+  else if (firstSeg === "admin") domain = "impactinomics";
+  else if (firstSeg === "hf-marketplace") domain = "gateway";
+  else if (firstSeg === "magic-apps") domain = "gateway";
+  else domain = firstSeg;
+  const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `nav-${domain}-${slug}`;
+}
 
 const domainTitleMap: Record<string, string> = {
   impactinomics: "Overview", projects: "Projects", comms: "Communication",
@@ -248,8 +276,13 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = fa
   // Desktop — collapsible Sidebar
   // ---------------------------------------------------------------------------
 
+  // Wrapped in a div with the testid because the react-fancy <Sidebar>
+  // component doesn't forward `data-testid` to its rendered DOM root.
+  // Playwright specs target `[data-testid='app-sidebar']` — this wrapper
+  // makes that selector match the visible sidebar element.
   return (
-    <Sidebar defaultCollapsed={false} collapseMode="icons" data-testid="app-sidebar">
+    <div data-testid="app-sidebar">
+    <Sidebar defaultCollapsed={false} collapseMode="icons" className="!w-[200px] [&_button]:w-full [&_a]:w-full">
       {/* Logo */}
       <div className="px-3 py-3 border-b border-border">
         <Link to="/" className="flex items-center gap-2 text-foreground no-underline">
@@ -266,12 +299,14 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = fa
               ? currentPath === item.to
               : currentPath === item.to || currentPath.startsWith(item.to + "/");
             const Icon = item.icon;
+            const testId = deriveNavTestId(item.to, item.label);
             return (
               <Sidebar.Item
                 key={item.to}
                 active={isActive}
                 icon={Icon ? <Icon className="w-4 h-4" /> : undefined}
                 onClick={() => navigate(item.to)}
+                data-testid={testId}
               >
                 {item.label}
               </Sidebar.Item>
@@ -300,5 +335,6 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = fa
         <Sidebar.Toggle />
       </div>
     </Sidebar>
+    </div>
   );
 }

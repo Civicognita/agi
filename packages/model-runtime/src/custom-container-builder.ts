@@ -9,7 +9,7 @@
  * 5. Runs `podman build` (10-minute timeout) and returns the image tag
  * 6. Cleans up temp directory
  *
- * Image tag format: aionima-custom-{sanitized-model-id}:latest
+ * Image tag format: agi-custom-{sanitized-model-id}:latest
  */
 
 import { execFileSync, spawnSync } from "node:child_process";
@@ -128,10 +128,10 @@ export class CustomContainerBuilder {
    *
    * @param modelId  The HuggingFace model ID (e.g. "NeoQuasar/Kronos-base").
    * @param definition  The custom runtime definition for this model.
-   * @returns The image tag that was built (e.g. "aionima-custom-neoquasar--kronos-base:latest").
+   * @returns The image tag that was built (e.g. "agi-custom-neoquasar--kronos-base:latest").
    */
   async build(modelId: string, definition: CustomRuntimeDefinition): Promise<string> {
-    const imageTag = `aionima-custom-${this.sanitizeModelId(modelId)}:latest`;
+    const imageTag = `agi-custom-${this.sanitizeModelId(modelId)}:latest`;
 
     // Skip build if the image already exists in the local store
     try {

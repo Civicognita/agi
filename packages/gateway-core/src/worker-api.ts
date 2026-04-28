@@ -21,6 +21,13 @@ interface JobSummary {
   workers: string[];
   gate: "auto" | "checkpoint" | "terminal";
   createdAt: string;
+  /** Terminal-state fields — populated after the worker finishes. Surfaced
+   *  to the new Taskmaster project tab's expandable summary rows. */
+  summary?: string;
+  completedAt?: string;
+  error?: string;
+  tokens?: { input: number; output: number };
+  toolCalls?: Array<{ name: string; ts: string }>;
 }
 
 function toSummary(job: WorkerJob): JobSummary {
@@ -33,6 +40,11 @@ function toSummary(job: WorkerJob): JobSummary {
     workers: activePhase?.workers ?? [],
     gate: activePhase?.gate ?? "auto",
     createdAt: job.createdAt,
+    summary: job.summary,
+    completedAt: job.completedAt,
+    error: job.error,
+    tokens: job.tokens,
+    toolCalls: job.toolCalls,
   };
 }
 
@@ -40,22 +52,54 @@ export function registerWorkerApi(
   app: FastifyInstance,
   runtime: WorkerRuntime,
   promptLoader?: WorkerPromptLoader,
+  pluginRegistry?: { getWorkers(): Array<{ pluginId: string; worker: { id: string; name: string; domain: string; role: string; description: string; modelTier?: string } }> },
 ): void {
-  // GET /api/workers/catalog — dynamic worker prompt catalog
-  if (promptLoader) {
-    app.get("/api/workers/catalog", async () => {
-      return promptLoader.discover().map((entry) => ({
-        id: entry.id,
-        title: entry.name,
-        description: entry.description,
-        domain: entry.domain,
-        role: entry.role,
-        model: entry.model,
-        color: entry.color,
-        filePath: entry.filePath,
-      }));
-    });
-  }
+  // GET /api/workers/catalog — merges filesystem prompts + plugin-registered workers.
+  // Workers are primarily registered by plugins (plugin-worker-code, plugin-worker-comm, etc.)
+  // via api.registerWorker(). The filesystem loader is a legacy fallback.
+  app.get("/api/workers/catalog", async () => {
+    const entries: Array<{ id: string; title: string; description: string; domain: string; role: string; model?: string; color?: string }> = [];
+    const seenKeys = new Set<string>();
+
+    // Plugin-registered workers (primary source)
+    if (pluginRegistry) {
+      for (const { worker } of pluginRegistry.getWorkers()) {
+        const key = `${worker.domain}.${worker.role}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          entries.push({
+            id: worker.id,
+            title: worker.name,
+            description: worker.description,
+            domain: worker.domain,
+            role: worker.role,
+            model: worker.modelTier,
+          });
+        }
+      }
+    }
+
+    // Filesystem prompts (fallback for workers not registered as plugins)
+    if (promptLoader) {
+      for (const entry of promptLoader.discover()) {
+        const key = `${entry.domain}.${entry.role}`;
+        if (!seenKeys.has(key)) {
+          seenKeys.add(key);
+          entries.push({
+            id: entry.id,
+            title: entry.name,
+            description: entry.description,
+            domain: entry.domain,
+            role: entry.role,
+            model: entry.model,
+            color: entry.color,
+          });
+        }
+      }
+    }
+
+    return entries;
+  });
   app.post<{ Params: { jobId: string } }>("/api/taskmaster/approve/:jobId", async (request) => {
     await runtime.approveCheckpoint(request.params.jobId);
     return { ok: true };
@@ -68,8 +112,13 @@ export function registerWorkerApi(
   });
 
   // Returns bare array — frontend calls .map() on this.
-  app.get("/api/taskmaster/jobs", async () => {
-    const jobs = await runtime.listAllJobs();
+  // Supports ?projectPath= to scope the list to jobs dispatched from that
+  // project (reads ~/.agi/{projectSlug}/dispatch/jobs/). Omit to list globally.
+  app.get<{ Querystring: { projectPath?: string } }>("/api/taskmaster/jobs", async (request) => {
+    const projectPath = request.query.projectPath;
+    const jobs = projectPath !== undefined && projectPath.length > 0
+      ? await runtime.listJobsForProject(projectPath)
+      : await runtime.listAllJobs();
     return jobs.map(toSummary);
   });
 

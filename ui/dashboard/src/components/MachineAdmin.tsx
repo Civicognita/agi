@@ -14,7 +14,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { useMachineInfo, useLinuxUsers, useAgents } from "@/hooks.js";
+import { useMachineInfo, useMachineHardware, useLinuxUsers, useAgents } from "@/hooks.js";
 import {
   fetchSSHKeys,
   addSSHKey,
@@ -84,6 +84,152 @@ function ShareLink({ label, value, highlight }: { label: string; value: string; 
         {copied ? "Copied" : "Copy"}
       </button>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// HardwareSnapshotCard — full machine snapshot (firmware, motherboard, OS,
+// CPU detail, memory, storage, network). Pulled from /api/machine/hardware.
+// ---------------------------------------------------------------------------
+
+function bytesToHuman(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / (1024 ** 2)).toFixed(1)} MB`;
+  return `${(bytes / (1024 ** 3)).toFixed(2)} GB`;
+}
+
+function HardwareSnapshotCard() {
+  const hw = useMachineHardware();
+
+  if (hw.loading) {
+    return (
+      <Card className="p-6 gap-0">
+        <SectionHeading>Hardware Snapshot</SectionHeading>
+        <div className="text-[12px] text-muted-foreground">Probing hardware...</div>
+      </Card>
+    );
+  }
+  if (hw.error || !hw.data) {
+    return (
+      <Card className="p-6 gap-0">
+        <SectionHeading>Hardware Snapshot</SectionHeading>
+        <div className="text-[12px] text-red">Failed to load hardware: {hw.error ?? "unknown error"}</div>
+      </Card>
+    );
+  }
+
+  const d = hw.data;
+  const Field = ({ label, value }: { label: string; value: string | number | null | undefined }) => (
+    <div>
+      <div className="text-[11px] text-muted-foreground mb-1">{label}</div>
+      <code className="text-[13px] text-foreground break-all">{value !== null && value !== undefined && value !== "" ? value : "—"}</code>
+    </div>
+  );
+
+  return (
+    <Card className="p-6 gap-0">
+      <SectionHeading>Hardware Snapshot</SectionHeading>
+
+      {/* Identity */}
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 mt-2">Identity</div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 mb-4">
+        <Field label="Manufacturer" value={d.identity.manufacturer} />
+        <Field label="Product" value={d.identity.productName} />
+        <Field label="Family" value={d.identity.family} />
+        <Field label="Chassis" value={d.identity.chassisType} />
+        <Field label="Hostname" value={d.identity.hostname} />
+        <Field label="Serial" value={d.identity.serialNumber} />
+      </div>
+
+      {/* Motherboard + BIOS */}
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 mt-4">Motherboard & BIOS</div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 mb-4">
+        <Field label="Board Manufacturer" value={d.motherboard.manufacturer} />
+        <Field label="Board Product" value={d.motherboard.productName} />
+        <Field label="Board Version" value={d.motherboard.version} />
+        <Field label="Board Serial" value={d.motherboard.serialNumber} />
+        <Field label="BIOS Vendor" value={d.firmware.biosVendor} />
+        <Field label="BIOS Version" value={d.firmware.biosVersion} />
+        <Field label="BIOS Date" value={d.firmware.biosReleaseDate} />
+      </div>
+
+      {/* OS */}
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 mt-4">Operating System</div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 mb-4">
+        <Field label="Distro" value={d.os.distro} />
+        <Field label="Version" value={d.os.distroVersionId} />
+        <Field label="Kernel" value={d.os.kernel} />
+        <Field label="Architecture" value={d.os.arch} />
+        <Field label="Platform" value={d.os.platform} />
+        <Field label="Node.js" value={d.os.nodeVersion} />
+      </div>
+
+      {/* CPU */}
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 mt-4">CPU</div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 mb-2">
+        <Field label="Model" value={d.cpu.model} />
+        <Field label="Vendor" value={d.cpu.vendorId} />
+        <Field label="Cores" value={d.cpu.cores} />
+        <Field label="Threads" value={d.cpu.threads} />
+        <Field label="Architecture" value={d.cpu.arch} />
+      </div>
+      {d.cpu.flags.length > 0 && (
+        <div className="mb-4">
+          <div className="text-[11px] text-muted-foreground mb-1">Notable CPU features</div>
+          <div className="flex flex-wrap gap-1.5">
+            {d.cpu.flags.map((f) => (
+              <span key={f} className="text-[11px] px-2 py-0.5 rounded bg-muted text-foreground">{f}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Memory */}
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 mt-4">Memory</div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 mb-4">
+        <Field label="Total RAM" value={`${d.memory.totalGB} GB`} />
+        <Field label="Total Bytes" value={bytesToHuman(d.memory.totalBytes)} />
+      </div>
+
+      {/* Storage */}
+      {d.storage.length > 0 && (
+        <>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 mt-4">Storage</div>
+          <div className="flex flex-col gap-1.5 mb-4">
+            {d.storage.map((s) => (
+              <div key={s.name} className="flex items-center gap-3 text-[12px] py-1 border-b border-border last:border-b-0">
+                <code className="text-foreground w-24">/dev/{s.name}</code>
+                <span className="text-muted-foreground w-20">{s.type}</span>
+                <span className="text-foreground w-20">{s.size}</span>
+                <span className="text-muted-foreground flex-1 truncate">{s.model}</span>
+                <code className="text-muted-foreground text-[11px]">{s.mountpoint ?? ""}</code>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Network */}
+      {d.network.length > 0 && (
+        <>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 mt-4">Network Interfaces</div>
+          <div className="flex flex-col gap-1.5">
+            {d.network.map((n) => (
+              <div key={n.name} className="flex items-start gap-3 text-[12px] py-1 border-b border-border last:border-b-0">
+                <code className="text-foreground w-24">{n.name}</code>
+                <span className={cn(
+                  "px-1.5 rounded text-[10px]",
+                  n.state === "UP" ? "bg-green/15 text-green" : "bg-muted text-muted-foreground",
+                )}>{n.state}</span>
+                <code className="text-muted-foreground text-[11px] w-44">{n.mac}</code>
+                <span className="flex-1 text-foreground">{n.addresses.join(", ") || "—"}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
   );
 }
 
@@ -343,6 +489,16 @@ export function MachineAdmin() {
       )}
 
       {/* ================================================================= */}
+      {/* Hardware Section                                                  */}
+      {/* The complete machine snapshot (motherboard/BIOS/OS/CPU/memory/    */}
+      {/* storage/network) lives in HardwareSnapshotCard above, mounted     */}
+      {/* earlier in the render tree. The old HardwareScanner was removed   */}
+      {/* in task #295 (story #99) because it gated on hf.enabled and       */}
+      {/* framed its output as HF compatibility tier, not a raw snapshot.   */}
+      {/* HF compatibility tier info lives on the HF Marketplace page.     */}
+      {/* ================================================================= */}
+
+      {/* ================================================================= */}
       {/* Agents Section */}
       {/* ================================================================= */}
       <Card className="p-6 gap-0">
@@ -550,6 +706,14 @@ export function MachineAdmin() {
           <div className="text-[12px] text-muted-foreground">Failed to load machine info</div>
         )}
       </Card>
+
+      {/* ================================================================= */}
+      {/* Hardware Snapshot — complete machine info: motherboard, BIOS,    */}
+      {/* OS, CPU detail, memory, storage, network. Pulled from           */}
+      {/* /api/machine/hardware (the canonical surface; HF Marketplace    */}
+      {/* consumes the same data, doesn't own it).                         */}
+      {/* ================================================================= */}
+      <HardwareSnapshotCard />
 
       {/* ================================================================= */}
       {/* Linux Users Section */}

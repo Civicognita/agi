@@ -1,14 +1,14 @@
 /**
  * build-marketplace.ts — Compile marketplace plugins into self-contained ESM bundles.
  *
- * Each plugin's src/index.ts is bundled with esbuild, inlining @aionima/*
- * workspace imports so plugins don't need node_modules/@aionima/* at runtime.
+ * Each plugin's src/index.ts is bundled with esbuild, inlining @agi/*
+ * workspace imports so plugins don't need node_modules/@agi/* at runtime.
  *
  * Usage:
  *   tsx scripts/build-marketplace.ts [MARKETPLACE_DIR]
  *
  * Defaults:
- *   MARKETPLACE_DIR = /opt/aionima-marketplace (or AIONIMA_MARKETPLACE_DIR env)
+ *   MARKETPLACE_DIR = /opt/agi-marketplace (or AIONIMA_MARKETPLACE_DIR env)
  *   AGI_DIR         = process.cwd() (the AGI repo root)
  */
 
@@ -19,7 +19,7 @@ import { join, resolve } from "node:path";
 const AGI_DIR = process.cwd();
 const MARKETPLACE_DIR = process.argv[2]
   ?? process.env.AIONIMA_MARKETPLACE_DIR
-  ?? "/opt/aionima-marketplace";
+  ?? "/opt/agi-marketplace";
 
 const PLUGINS_DIR = join(MARKETPLACE_DIR, "plugins");
 
@@ -41,13 +41,13 @@ const nativeRequirePlugin: Plugin = {
   },
 };
 
-// Map @aionima/* imports to AGI workspace source so esbuild can bundle them
+// Map @agi/* imports to AGI workspace source so esbuild can bundle them
 const ALIASES: Record<string, string> = {
-  "@aionima/sdk": resolve(AGI_DIR, "packages/aion-sdk/src/index.ts"),
-  "@aionima/plugins": resolve(AGI_DIR, "packages/plugins/src/index.ts"),
-  "@aionima/channel-sdk": resolve(AGI_DIR, "packages/channel-sdk/src/index.ts"),
-  "@aionima/gateway-core": resolve(AGI_DIR, "packages/gateway-core/src/index.ts"),
-  "@aionima/config": resolve(AGI_DIR, "config/src/index.ts"),
+  "@agi/sdk": resolve(AGI_DIR, "packages/aion-sdk/src/index.ts"),
+  "@agi/plugins": resolve(AGI_DIR, "packages/plugins/src/index.ts"),
+  "@agi/channel-sdk": resolve(AGI_DIR, "packages/channel-sdk/src/index.ts"),
+  "@agi/gateway-core": resolve(AGI_DIR, "packages/gateway-core/src/index.ts"),
+  "@agi/config": resolve(AGI_DIR, "config/src/index.ts"),
 };
 
 async function buildPlugin(pluginDir: string, name: string): Promise<boolean> {

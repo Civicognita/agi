@@ -30,8 +30,8 @@ describe("shutdown marker", () => {
 
   it("roundtrips a valid marker and deletes it after read", () => {
     const marker = buildShutdownMarker(
-      [{ slug: "project-a", containerName: "aionima-project-a" }],
-      [{ modelId: "some/Model", containerName: "aionima-model-some--Model" }],
+      [{ slug: "project-a", containerName: "agi-project-a" }],
+      [{ modelId: "some/Model", containerName: "agi-model-some--Model" }],
       "restart",
     );
     writeShutdownMarker(marker, markerPath);
@@ -72,8 +72,8 @@ describe("shutdown marker", () => {
 
   it("buildShutdownMarker populates externals defaults", () => {
     const marker = buildShutdownMarker([], [], "sigterm");
-    expect(marker.externals.idPostgresContainer).toBe("aionima-id-postgres");
-    expect(marker.externals.idService).toBe("aionima-id.service");
+    expect(marker.externals.idPostgresContainer).toBe("agi-postgres-17");
+    expect(marker.externals.idService).toBe("agi-id.service");
     expect(marker.pid).toBe(process.pid);
     expect(new Date(marker.shutdownAt).toString()).not.toBe("Invalid Date");
   });
@@ -93,9 +93,9 @@ describe("classifyIncident — heuristics", () => {
     diskAgi: "",
   });
 
-  it("classifies ECONNREFUSED:5433 as postgres_unreachable", () => {
+  it("classifies ECONNREFUSED:5432 as postgres_unreachable", () => {
     const e = emptyEvidence();
-    e.gatewayLog = "Error: connect ECONNREFUSED 127.0.0.1:5433";
+    e.gatewayLog = "Error: connect ECONNREFUSED 127.0.0.1:5432";
     const c = classifyIncident(e);
     expect(c.classification).toBe("postgres_unreachable");
     expect(c.autoRecoverable).toBe(true);
@@ -120,7 +120,7 @@ describe("classifyIncident — heuristics", () => {
 
   it("classifies ID service failure", () => {
     const e = emptyEvidence();
-    e.idServiceJournal = "aionima-id.service: Start-Pre process exited with code 1";
+    e.idServiceJournal = "agi-id.service: Start-Pre process exited with code 1";
     const c = classifyIncident(e);
     expect(c.classification).toBe("id_service_failed");
     expect(c.autoRecoverable).toBe(true);

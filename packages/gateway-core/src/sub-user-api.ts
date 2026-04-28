@@ -105,7 +105,7 @@ export function registerSubUserRoutes(
     }
 
     // Fallback: legacy path (IdentityProvider + DashboardUserStore)
-    const identity = identityProvider.createEntityWithIdentity({
+    const identity = await identityProvider.createEntityWithIdentity({
       displayName: displayName.trim(),
     });
 

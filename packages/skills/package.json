@@ -1,5 +1,5 @@
 {
-  "name": "@aionima/skills",
+  "name": "@agi/skills",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,6 +7,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@aionima/gateway-core": "workspace:*"
+    "@agi/gateway-core": "workspace:*"
   }
 }

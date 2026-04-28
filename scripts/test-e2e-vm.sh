@@ -89,7 +89,7 @@ echo "==> VM IP: $VM_IP"
 # ---------------------------------------------------------------------------
 
 # Suite 1: Install test (runs inside VM)
-run_suite "Install Test" multipass exec aionima-test -- bash /mnt/agi/tests/e2e-vm/test-install.sh
+run_suite "Install Test" multipass exec agi-test -- bash /mnt/agi/tests/e2e-vm/test-install.sh
 
 # Wait a moment for service to stabilize after install test
 sleep 3
@@ -102,7 +102,7 @@ run_suite "Onboarding Flow" bash "$TEST_DIR/test-onboarding.sh" "$VM_IP"
 
 # Suite 4: Plugin tests (runs inside VM)
 if [ "$QUICK" = "0" ]; then
-  run_suite "Plugin Install Tests" multipass exec aionima-test -- bash /mnt/agi/tests/e2e-vm/test-plugins.sh
+  run_suite "Plugin Install Tests" multipass exec agi-test -- bash /mnt/agi/tests/e2e-vm/test-plugins.sh
 else
   skip_suite "Plugin Install Tests (--quick)"
 fi

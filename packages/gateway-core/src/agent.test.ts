@@ -28,7 +28,7 @@ import type { ToolExecutionContext } from "./tool-registry.js";
 import { WORKER_DISPATCH_MANIFEST } from "./tools/worker-dispatch.js";
 import { AgentInvoker } from "./agent-invoker.js";
 import type { AgentInvokerDeps } from "./agent-invoker.js";
-import type { COAChainLogger } from "@aionima/coa-chain";
+import type { COAChainLogger } from "@agi/coa-chain";
 
 // ---------------------------------------------------------------------------
 // Shared helpers / mock factories
@@ -54,9 +54,23 @@ function createMockCOALogger(): { logger: COAChainLogger; calls: Array<Record<st
   return { logger, calls };
 }
 
-/** Build a minimal SystemPromptContext for testing. */
+/** Build a minimal SystemPromptContext for testing.
+ *
+ * Default `requestType` is "entity" so the assembler renders every Layer-2
+ * section that the assertions in this file check for: ENTITY_CONTEXT (gated
+ * to non-chat/worker/taskmaster), COA_CONTEXT (entity/project/system),
+ * STATE_CONSTRAINTS (entity/system), TASKMASTER (non-chat/worker). Tests
+ * that need a different request type pass it explicitly via overrides.
+ *
+ * The pre-2026-04-20 assembler rendered all of these unconditionally, which
+ * is why this default was originally absent — when chat-mode trimming landed
+ * (commit 6fec70dc), the test fixture wasn't updated and the assertions
+ * silently started failing. Setting the default explicitly here pins the
+ * contract.
+ */
 function makePromptCtx(overrides: Partial<SystemPromptContext> = {}): SystemPromptContext {
   return {
+    requestType: "entity",
     entity: {
       entityId: "ent-001",
       coaAlias: "#E0",
@@ -597,24 +611,34 @@ describe("system-prompt.ts", () => {
       expect(separators).toBeGreaterThanOrEqual(6);
     });
 
-    it("includes a TASKMASTER section naming the orchestrator and WorkQueue tab", () => {
+    it("includes a TASKMASTER section naming the orchestrator and Work Queue tab", () => {
       const prompt = assembleSystemPrompt(makePromptCtx());
       expect(prompt).toContain("## TASKMASTER");
-      expect(prompt).toContain("WorkQueue");
-      expect(prompt).toContain("worker_dispatch");
+      expect(prompt).toContain("Work Queue");
+      expect(prompt).toContain("taskmaster_dispatch");
     });
 
-    it("TASKMASTER section precedes the final Response format section", () => {
+    it("Response format renders in Layer 1 (early); TASKMASTER renders in Layer 2 (later)", () => {
+      // Architecture: Layer 1 = Identity Core (always-rendered, ~500 tokens —
+      // identity, tools, state, owner, response format). Layer 2 = Request
+      // Context (conditionally rendered based on requestType — entity, COA,
+      // taskmaster, project, knowledge). Response format is intentionally
+      // EARLY so the model sees the format rules before any context;
+      // TASKMASTER is LATER because it's gated to non-chat/worker requests.
+      // The pre-2026-04-20 assembler had a different order; the layered
+      // design at commit 6fec70dc inverted the relative position deliberately.
       const prompt = assembleSystemPrompt(makePromptCtx());
       const tmIdx = prompt.indexOf("## TASKMASTER");
       const rfIdx = prompt.indexOf("Response format:");
       expect(tmIdx).toBeGreaterThan(-1);
-      expect(rfIdx).toBeGreaterThan(tmIdx);
+      expect(rfIdx).toBeGreaterThan(-1);
+      expect(tmIdx).toBeGreaterThan(rfIdx);
     });
 
-    it("worker_dispatch manifest description names TaskMaster and WorkQueue so the LLM can pick it", () => {
+    it("taskmaster_dispatch manifest names TaskMaster and Work Queue so the LLM can pick it", () => {
+      expect(WORKER_DISPATCH_MANIFEST.name).toBe("taskmaster_dispatch");
       expect(WORKER_DISPATCH_MANIFEST.description).toContain("TaskMaster");
-      expect(WORKER_DISPATCH_MANIFEST.description).toContain("WorkQueue");
+      expect(WORKER_DISPATCH_MANIFEST.description).toContain("Work Queue");
     });
 
     it("tool entry includes sizeCapBytes formatted as KB", () => {

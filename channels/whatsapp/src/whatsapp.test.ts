@@ -24,7 +24,7 @@ import {
 } from "./security.js";
 import { handleWebhook } from "./webhook.js";
 import { createWhatsAppPlugin } from "./index.js";
-import { validateAdapter } from "@aionima/channel-sdk";
+import { validateAdapter } from "@agi/channel-sdk";
 import type {
   WhatsAppWebhookPayload,
   WhatsAppSendRequest,

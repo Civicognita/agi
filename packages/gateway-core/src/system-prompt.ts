@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { hostname } from "node:os";
-import type { VerificationTier } from "@aionima/entity-model";
+import type { VerificationTier } from "@agi/entity-model";
 
 import type { GatewayState } from "./types.js";
 import type { StateCapabilities } from "./state-machine.js";
@@ -39,6 +39,13 @@ export interface ToolManifestEntry {
   requiresState: GatewayState[];
   requiresTier: VerificationTier[];
   sizeCapBytes?: number;
+  /**
+   * When true, only the primary agent (Aion) may call this tool — background
+   * Taskmaster workers cannot. Used for project/entity/gateway configuration
+   * tools where the agent is the sole authority and workers must request the
+   * change via `taskmaster_handoff` rather than mutating config directly.
+   */
+  agentOnly?: boolean;
 }
 
 /** Tier-based autonomy capabilities. */
@@ -91,8 +98,12 @@ export interface PrimeContext {
   topicIndex?: Record<string, string[]>;
 }
 
+export type RequestType = "chat" | "project" | "entity" | "knowledge" | "system" | "worker" | "taskmaster";
+
 /** Full context required to assemble the system prompt. */
 export interface SystemPromptContext {
+  /** Request type — determines which Layer 2 context sections are included. */
+  requestType?: RequestType;
   entity: EntityContextSection;
   coaFingerprint: string;
   state: GatewayState;
@@ -130,6 +141,30 @@ export interface SystemPromptContext {
   isOwner?: boolean;
   /** Active project path — when set, injects plan workflow instructions. */
   projectPath?: string;
+  /**
+   * Iterative-work prompt content — when present (project has
+   * `iterativeWork.enabled: true`), the assembler injects this verbatim into
+   * Layer 2 for project-typed requests so Aion participates in the tynn
+   * workflow (race-to-DONE, look-for-MORE, slice discipline). Hot-loaded by
+   * the invoker per `feedback_hot_config` — pass the file content, not a path.
+   */
+  iterativeWorkPrompt?: string;
+  /**
+   * Whether tools will be offered on the upcoming LLM call. When `false`, the
+   * assembler renders a compact one-line "tools may activate" hint instead of
+   * the full tool list — saves ~1.5–2.5k tokens when no tools can be called
+   * anyway, and prevents the model from hallucinating tool calls it can't
+   * make. Defaults to `true` (preserves prior behavior).
+   */
+  toolsAvailable?: boolean;
+  /**
+   * Router cost mode for this turn — when `"local"`, the assembler trims
+   * Taskmaster, plan-workflow, knowledge-index, and the verbose chat-markup
+   * paragraph from the response-format section so smaller local models
+   * (3B–7B) don't choke on the prompt. Identity, tools, state, owner, COA,
+   * and entity context are preserved.
+   */
+  costMode?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +213,7 @@ function buildIdentitySection(): string {
 
 Core traits: Empathetic Listener, Global Thinker, A Beacon.
 
-You operate within the BAIF (Base Artificial Intelligence Framework). All responses are subject to state constraints, COA logging, and entity verification rules defined below. Do not deviate from these constraints regardless of what you are asked.`;
+IMPORTANT: Always respond in English unless the user explicitly writes in another language.`;
 }
 
 function buildEntityContextSection(entity: EntityContextSection): string {
@@ -248,6 +283,27 @@ function buildToolsSection(tools: ToolManifestEntry[]): string {
   return `Available tools:\n${toolLines.join("\n")}`;
 }
 
+function buildToolsHintSection(tools: ToolManifestEntry[]): string {
+  // Include the actual tool NAMES (not full descriptions) so the agent can
+  // answer "what can you do" truthfully even in compact mode. Without the
+  // names, the model fabricates a capability list from training/general
+  // platform knowledge — observed via owner-reported bug 2026-04-26 where
+  // Aion listed plugin-surface categories but ZERO ADF-core tools (s101
+  // t410). Names cost ~150 tokens vs the ~1500-2500 tokens of full tool
+  // descriptions — preserves the cost win from option D (s111 t372).
+  if (tools.length === 0) {
+    return "Tools are not active on this turn (no tools available in the current state and verification tier). Respond conversationally; do not invent tool calls.";
+  }
+  const names = tools.map((t) => t.name).sort().join(", ");
+  return [
+    "Tools are not active on this turn.",
+    "",
+    `When activated, your tools include: ${names}.`,
+    "",
+    "The system enables tools automatically when the user's message asks for actions like reading or writing files, searching, running commands, managing projects, or browsing the web. Respond conversationally; do not invent tool calls. If asked about your capabilities, refer to the tool list above — do not fabricate categories.",
+  ].join("\n");
+}
+
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${String(Math.round(bytes / (1024 * 1024)))} MB`;
   if (bytes >= 1024) return `${String(Math.round(bytes / 1024))} KB`;
@@ -257,43 +313,79 @@ function formatBytes(bytes: number): string {
 function buildTaskmasterSection(): string {
   return `## TASKMASTER — Background Work Orchestration
 
-You have a background orchestrator called **TaskMaster**. Call the \`worker_dispatch\` tool to queue a job. TaskMaster decomposes the description into phased worker assignments, runs them in isolated git worktrees, and produces reports. Queued jobs appear live in the owner's **WorkQueue** dashboard tab; the "Aionima is working" header indicator reflects active runs.
+You have a background orchestrator called **TaskMaster**. Call \`taskmaster_dispatch\` to delegate work (pass the project's absolute path as \`projectPath\`). Describe WHAT needs to be done — TaskMaster automatically selects the right workers and execution sequence. You do NOT pick workers or domains.
+
+**Your role:** Coordinate the user's request, delegate work to TaskMaster, and verify the final result.
+**TaskMaster's role:** Decompose work into specialist worker phases, execute them in order, report results.
+
+**Feedback loop — you do NOT need to poll.** When TaskMaster completes or fails a job, a \`[taskmaster]\` note is injected into your next turn. Respond naturally. Use \`taskmaster_status\` only when the owner asks for a status update.
+
+Jobs appear live in the owner's **Work Queue** with per-phase progress.
 
 ### When to dispatch
-- Code changes touching >2 files, or anything reviewable (dispatch code.hacker \u2014 the runtime chains code.tester automatically)
-- Research, documentation, or policy drafts (k.analyst; comm.writer.tech\u2192editor; comm.writer.policy\u2192editor)
-- Architecture plans, backlog prioritization, compliance audits (strat.planner, strat.prioritizer, gov.auditor\u2192archivist)
-- Any phrasing from the owner like "dispatch", "queue", "delegate", "have a worker\u2026", "in the background"
-- Parallelizable subtasks \u2014 call \`worker_dispatch\` multiple times in one turn; jobs run concurrently
+- Code changes touching >2 files or multiple concerns
+- Research, documentation, design, or implementation work
+- Anything reviewable, testable, or multi-step
+- Any phrasing like "dispatch", "queue", "delegate", "have a worker", "in the background"
+- Complex tasks that benefit from decomposition into specialist phases
 
 ### When NOT to dispatch
 - Quick answers, lookups, or single-file edits that take <30 seconds
-- Conversation, clarifying questions, or anything requiring owner input mid-stream
-- Tasks the owner explicitly asks you to do yourself ("you do it", "don't delegate")
-
-### Domains and workers
-- **code** \u2014 engineer (architecture), hacker (implementation), reviewer, tester
-- **k** \u2014 analyst, cryptologist, librarian, linguist
-- **ux** \u2014 designer.web, designer.cli
-- **strat** \u2014 planner, prioritizer
-- **comm** \u2014 writer.tech, writer.policy, editor
-- **ops** \u2014 deployer, custodian, syncer
-- **gov** \u2014 auditor, archivist
-- **data** \u2014 modeler, migrator
-
-**Enforced chains** (you dispatch the head, TaskMaster runs the tail): hacker\u2192tester, writer.tech\u2192editor, writer.policy\u2192editor, modeler\u2192linguist, auditor\u2192archivist.
+- Conversation, clarifying questions, or anything requiring owner input
+- Tasks the owner explicitly asks you to do yourself
 
 ### Inline emission (\`q:>\`)
-You may emit a single \`q:> <task description>\` line on its own line in your reply. The runtime strips the line from the user-visible response and hands the task to TaskMaster with default routing. **Maximum one \`q:>\` emission per turn** (governance spec \u00a76.4). For parallel fan-out, use repeated \`worker_dispatch\` tool calls instead.
+You may emit a single \`q:> <task description>\` line in your reply. The runtime strips the line and hands the task to TaskMaster. **Maximum one \`q:>\` per turn**. For parallel fan-out, use repeated \`taskmaster_dispatch\` tool calls.
 
 ### Dispatch rules
-- One task per \`worker_dispatch\` call \u2014 don't batch unrelated work into one description
-- Descriptions must be specific and self-contained \u2014 the worker doesn't see this conversation
-- If unsure of routing, default to domain="code" worker="engineer" and let TaskMaster re-route`;
+- One body of work per \`taskmaster_dispatch\` call
+- Descriptions must be specific and self-contained — workers don't see this conversation
+- Describe WHAT to do, not WHICH worker to use — TaskMaster handles worker selection
+
+### TaskMaster tool surface
+- \`taskmaster_dispatch(projectPath, description, priority?, planRef?)\` — delegate work to TaskMaster. It decomposes the work into the right worker sequence automatically.
+- \`taskmaster_status(projectPath, jobId?)\` — check job status and per-phase progress
+- \`taskmaster_cancel(projectPath, jobId, reason?)\` — cancel a job
+
+### After TaskMaster reports completion
+When you receive a \`[taskmaster]\` completion note:
+1. Review the summary — did it address the user's request?
+2. If part of a plan, check if all steps are done and advance the plan status
+3. Report the result to the user
+
+### Plan lifecycle
+Status transitions (via \`update_plan\`): \`draft\` > \`reviewing\` > \`approved\` > \`executing\` > \`testing\` > \`complete\`.
+
+Step transitions happen automatically via \`planRef\`. You manage the plan's top-level status transitions and mark steps you handle yourself as \`complete\`.`;
+}
+
+
+function buildIterativeWorkSection(content: string): string {
+  return `## ITERATIVE-WORK MODE — Tynn Workflow Engagement
+
+Iterative-work mode is enabled for this project. The following discipline (sourced from agi/prompts/iterative-work.md) governs how you participate in the tynn workflow on this project's behalf:
+
+${content}`;
+}
+
+
+function buildLocalResponseFormatSection(): string {
+  return `Response rules:
+- Use only the tools listed above. If the user asks for something not in the list, say so plainly — do not invent capabilities.
+- Do not fabricate tool results. If a tool fails, report the failure.
+- Reply in the user's language. Keep responses concise.
+- Do not expose internal IDs (entity, COA, TID) unless explicitly asked for system info.`;
 }
 
 function buildResponseFormatSection(): string {
-  return `Response format:
+  return `Capability discipline (read before every response):
+- Your capabilities are **exactly** the tools enumerated in the "Available tools" section above and the TaskMaster tool surface listed in the TASKMASTER section. Nothing more.
+- Do not offer, imply, or promise capabilities you don't have — no inventing "delete and requeue" options, no "I can tweak the job", no "I'll cancel and rerun" unless those specific verbs map to a tool in your list.
+- When a user asks for something not covered by your tools, say so plainly ("I can't do that — here's what I can do: \u2026") rather than hallucinating a workflow.
+- If you aren't sure whether a capability exists, re-read the tool list above. If it isn't there, it isn't there.
+- Tool availability can shift with state/tier — always reason from the list currently in your prompt, never from memory of what you "usually" can do.
+
+Response format:
 - Respond in the language used by the entity unless instructed otherwise.
 - Do not expose internal identifiers (entity IDs, COA fingerprints, TIDs) in responses unless the entity explicitly requests system information.
 - Do not fabricate tool results. If a tool is unavailable, state it plainly.
@@ -601,26 +693,33 @@ export function getTierCapabilities(tier: VerificationTier): TierCapabilities {
 /**
  * Assemble the full system prompt from live context.
  *
- * This is the single entry point for prompt construction. Must be called on
- * every invocation — prompt components must not be cached between turns.
+ * Three-layer architecture:
+ *   Layer 1 — Identity Core (~500 tokens): persona, tools, response format, state
+ *   Layer 2 — Request Context (dynamic): only sections relevant to requestType
+ *   Layer 3 — Deep Knowledge (not injected): retrieved via tools at runtime
+ *
+ * Must be called on every invocation — prompt components must not be cached.
  */
 export function assembleSystemPrompt(ctx: SystemPromptContext): string {
-  // Resolve identity section — PRIME truth > persona files > hardcoded
-  let identityContent: string;
+  const rt = ctx.requestType ?? "chat";
+  const isLocal = ctx.costMode === "local";
+  const sections: string[] = [];
 
+  // -------------------------------------------------------------------------
+  // LAYER 1: Identity Core (always present, ~500 tokens)
+  // -------------------------------------------------------------------------
+
+  // Identity — PRIME truth > persona files > hardcoded
+  let identityContent: string;
   if (ctx.prime?.persona !== undefined || ctx.prime?.purpose !== undefined) {
-    // PRIME truth takes highest priority
     identityContent = buildPrimeIdentitySection(ctx.prime);
   } else if (ctx.persona?.soulPath !== undefined) {
-    // File-based persona takes precedence over hardcoded
     const loaded = loadPersonaFile(ctx.persona.soulPath);
     identityContent = loaded ?? (ctx.devMode === true ? buildDevIdentitySection() : buildIdentitySection());
   } else {
     identityContent = ctx.devMode === true ? buildDevIdentitySection() : buildIdentitySection();
   }
 
-  // Append identity capabilities subsection if identityPath is provided
-  // (only when PRIME truth is not in use, to preserve priority)
   if (
     ctx.prime?.persona === undefined &&
     ctx.prime?.purpose === undefined &&
@@ -632,69 +731,104 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
     }
   }
 
-  const sections = [
-    identityContent,
-    buildEntityContextSection(ctx.entity),
-    ...(ctx.userContext !== undefined ? [buildUserContextSection(ctx.userContext)] : []),
-    buildCOAContextSection(ctx.coaFingerprint),
-    buildStateConstraintsSection(ctx.state, ctx.capabilities),
-    buildToolsSection(ctx.tools),
-  ];
+  sections.push(identityContent);
 
-  // Inject runtime metadata line after identity section (index 1)
+  // Runtime metadata
   if (ctx.runtimeMeta !== undefined) {
-    sections.splice(1, 0, buildRuntimeMetadataSection(ctx.runtimeMeta, ctx.state));
+    sections.push(buildRuntimeMetadataSection(ctx.runtimeMeta, ctx.state));
   }
 
-  // Inject PRIME_DIRECTIVE after COA context (if directive or authority is present)
-  if (ctx.prime !== undefined && (ctx.prime.directive !== undefined || ctx.prime.authority !== undefined)) {
-    // Find COA section index and insert after it
-    const coaIdx = sections.findIndex((s) => s.startsWith("Chain of Accountability:"));
-    const insertAt = coaIdx >= 0 ? coaIdx + 1 : sections.length;
-    sections.splice(insertAt, 0, buildPrimeDirectiveSection(ctx.prime));
-  }
+  // Available tools — full list when offered, compact hint otherwise. The
+  // hint replaces ~1.5–2.5k tokens of unused tool definitions when the API
+  // call won't pass `tools:` anyway (chat with no action verbs).
+  sections.push(ctx.toolsAvailable === false ? buildToolsHintSection(ctx.tools) : buildToolsSection(ctx.tools));
 
-  // Inject knowledge index from PRIME corpus
-  if (ctx.prime?.topicIndex !== undefined) {
-    const indexSection = buildKnowledgeIndexSection(ctx.prime.topicIndex);
-    if (indexSection.length > 0) {
-      sections.push(indexSection);
-    }
-  }
-
-  // Inject workspace context in dev mode
-  if (ctx.devMode === true && ctx.workspaceRoot !== undefined) {
-    sections.push(buildWorkspaceContextSection(ctx.workspaceRoot, ctx.projectPaths));
-  }
-
-  // Inject Tynn project context in dev mode
-  if (ctx.devMode === true && ctx.tynnContext !== undefined) {
-    sections.push(buildTynnContextSection(ctx.tynnContext));
-  }
-
-  // Inject skills context if matched
-  if (ctx.skills !== undefined && ctx.skills.length > 0) {
-    sections.push(buildSkillsSection(ctx.skills));
-  }
-
-  // Inject memory context if recalled
-  if (ctx.memories !== undefined && ctx.memories.length > 0) {
-    sections.push(buildMemorySection(ctx.memories));
-  }
-
-  // Inject owner context when owner info is available
+  // State + owner (compact, one line each)
+  sections.push(`Operational state: ${ctx.state}`);
   if (ctx.ownerName !== undefined) {
     sections.push(buildOwnerContextSection(ctx.ownerName, ctx.isOwner ?? false));
   }
 
-  // Inject plan workflow instructions when a project context is active
-  if (ctx.projectPath !== undefined) {
-    sections.push(buildProjectContextSection(ctx.projectPath));
-    sections.push(buildPlanWorkflowSection());
+  // Response format (always — compact variant for local mode)
+  sections.push(isLocal ? buildLocalResponseFormatSection() : buildResponseFormatSection());
+
+  // -------------------------------------------------------------------------
+  // LAYER 2: Request Context (dynamic — only for relevant request types)
+  // -------------------------------------------------------------------------
+
+  // Entity context — for entity interactions and most non-chat requests
+  if (rt !== "chat" && rt !== "worker" && rt !== "taskmaster") {
+    sections.push(buildEntityContextSection(ctx.entity));
+    if (ctx.userContext !== undefined) {
+      sections.push(buildUserContextSection(ctx.userContext));
+    }
   }
 
-  sections.push(buildTaskmasterSection());
-  sections.push(buildResponseFormatSection());
+  // COA context — for entity interactions
+  if (rt === "entity" || rt === "project" || rt === "system") {
+    sections.push(buildCOAContextSection(ctx.coaFingerprint));
+    if (ctx.prime !== undefined && (ctx.prime.directive !== undefined || ctx.prime.authority !== undefined)) {
+      sections.push(buildPrimeDirectiveSection(ctx.prime));
+    }
+  }
+
+  // State constraints (full) — for entity and system interactions
+  if (rt === "entity" || rt === "system") {
+    sections.push(buildStateConstraintsSection(ctx.state, ctx.capabilities));
+  }
+
+  // Knowledge corpus index — for knowledge queries (agent pulls details via tools).
+  // Skipped under local mode: small models can't usefully pull on a topic index.
+  if (!isLocal && (rt === "knowledge" || rt === "project")) {
+    if (ctx.prime?.topicIndex !== undefined) {
+      const indexSection = buildKnowledgeIndexSection(ctx.prime.topicIndex);
+      if (indexSection.length > 0) {
+        sections.push(indexSection);
+      }
+    }
+  }
+
+  // Project context — for project work. Plan workflow is instruction-heavy
+  // and gets dropped in local mode; project path itself is preserved.
+  if (rt === "project" && ctx.projectPath !== undefined) {
+    sections.push(buildProjectContextSection(ctx.projectPath));
+    if (!isLocal) {
+      sections.push(buildPlanWorkflowSection());
+    }
+  }
+
+  // Iterative-work mode — project opt-in (iterativeWork.enabled). When the
+  // invoker hot-loads agi/prompts/iterative-work.md the content is injected
+  // here so Aion participates in the tynn workflow on project requests.
+  if (rt === "project" && ctx.iterativeWorkPrompt !== undefined && ctx.iterativeWorkPrompt.length > 0) {
+    sections.push(buildIterativeWorkSection(ctx.iterativeWorkPrompt));
+  }
+
+  // Workspace context — for dev mode project work
+  if (ctx.devMode === true && (rt === "project" || rt === "system")) {
+    if (ctx.workspaceRoot !== undefined) {
+      sections.push(buildWorkspaceContextSection(ctx.workspaceRoot, ctx.projectPaths));
+    }
+    if (ctx.tynnContext !== undefined) {
+      sections.push(buildTynnContextSection(ctx.tynnContext));
+    }
+  }
+
+  // TASKMASTER — only when taskmaster is relevant. Local models can't
+  // dispatch effectively, so we never inject this section under local mode.
+  if (!isLocal && rt !== "chat" && rt !== "worker") {
+    sections.push(buildTaskmasterSection());
+  }
+
+  // Skills — always inject if matched (they're request-relevant by definition)
+  if (ctx.skills !== undefined && ctx.skills.length > 0) {
+    sections.push(buildSkillsSection(ctx.skills));
+  }
+
+  // Memory — always inject if recalled (agent explicitly recalled these)
+  if (ctx.memories !== undefined && ctx.memories.length > 0) {
+    sections.push(buildMemorySection(ctx.memories));
+  }
 
   return sections.join("\n\n");
 }
@@ -705,4 +839,168 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
  */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.5);
+}
+
+/**
+ * Per-section token breakdown for a single invocation.
+ * Sections map to the logical groups in the system prompt.
+ */
+export interface SystemPromptTokenBreakdown {
+  /** Identity core: persona + runtime metadata + tools + state + response format. */
+  identity: number;
+  /** Context layer injected for the request type (entity, project, COA, state, etc.). */
+  context: number;
+  /** Recalled memories injected into the prompt. */
+  memory: number;
+  /** Matched skill snippets injected into the prompt. */
+  skills: number;
+  /** History window token estimate (assembled by AgentSessionManager, not counted here). */
+  history: number;
+  /** LLM output tokens for this turn. */
+  response: number;
+}
+
+/**
+ * Assemble the system prompt AND compute a per-section token estimate.
+ *
+ * Mirrors `assembleSystemPrompt` exactly but tracks which text was emitted
+ * for each logical section so the dashboard can display a breakdown.
+ */
+export function assembleSystemPromptWithBreakdown(
+  ctx: SystemPromptContext,
+  opts?: { historyTokens?: number; responseTokens?: number },
+): { prompt: string; breakdown: SystemPromptTokenBreakdown } {
+  const rt = ctx.requestType ?? "chat";
+  const isLocal = ctx.costMode === "local";
+  const identitySections: string[] = [];
+  const contextSections: string[] = [];
+  const memorySections: string[] = [];
+  const skillSections: string[] = [];
+
+  // -------------------------------------------------------------------------
+  // LAYER 1: Identity Core
+  // -------------------------------------------------------------------------
+
+  let identityContent: string;
+  if (ctx.prime?.persona !== undefined || ctx.prime?.purpose !== undefined) {
+    identityContent = buildPrimeIdentitySection(ctx.prime);
+  } else if (ctx.persona?.soulPath !== undefined) {
+    const loaded = loadPersonaFile(ctx.persona.soulPath);
+    identityContent = loaded ?? (ctx.devMode === true ? buildDevIdentitySection() : buildIdentitySection());
+  } else {
+    identityContent = ctx.devMode === true ? buildDevIdentitySection() : buildIdentitySection();
+  }
+
+  if (
+    ctx.prime?.persona === undefined &&
+    ctx.prime?.purpose === undefined &&
+    ctx.persona?.identityPath !== undefined
+  ) {
+    const capabilitiesContent = loadPersonaFile(ctx.persona.identityPath);
+    if (capabilitiesContent !== undefined) {
+      identityContent = `${identityContent}\n\n${capabilitiesContent}`;
+    }
+  }
+
+  identitySections.push(identityContent);
+
+  if (ctx.runtimeMeta !== undefined) {
+    identitySections.push(buildRuntimeMetadataSection(ctx.runtimeMeta, ctx.state));
+  }
+
+  identitySections.push(ctx.toolsAvailable === false ? buildToolsHintSection(ctx.tools) : buildToolsSection(ctx.tools));
+  identitySections.push(`Operational state: ${ctx.state}`);
+
+  if (ctx.ownerName !== undefined) {
+    identitySections.push(buildOwnerContextSection(ctx.ownerName, ctx.isOwner ?? false));
+  }
+
+  identitySections.push(isLocal ? buildLocalResponseFormatSection() : buildResponseFormatSection());
+
+  // -------------------------------------------------------------------------
+  // LAYER 2: Request Context
+  // -------------------------------------------------------------------------
+
+  if (rt !== "chat" && rt !== "worker" && rt !== "taskmaster") {
+    contextSections.push(buildEntityContextSection(ctx.entity));
+    if (ctx.userContext !== undefined) {
+      contextSections.push(buildUserContextSection(ctx.userContext));
+    }
+  }
+
+  if (rt === "entity" || rt === "project" || rt === "system") {
+    contextSections.push(buildCOAContextSection(ctx.coaFingerprint));
+    if (ctx.prime !== undefined && (ctx.prime.directive !== undefined || ctx.prime.authority !== undefined)) {
+      contextSections.push(buildPrimeDirectiveSection(ctx.prime));
+    }
+  }
+
+  if (rt === "entity" || rt === "system") {
+    contextSections.push(buildStateConstraintsSection(ctx.state, ctx.capabilities));
+  }
+
+  if (!isLocal && (rt === "knowledge" || rt === "project")) {
+    if (ctx.prime?.topicIndex !== undefined) {
+      const indexSection = buildKnowledgeIndexSection(ctx.prime.topicIndex);
+      if (indexSection.length > 0) {
+        contextSections.push(indexSection);
+      }
+    }
+  }
+
+  if (rt === "project" && ctx.projectPath !== undefined) {
+    contextSections.push(buildProjectContextSection(ctx.projectPath));
+    if (!isLocal) {
+      contextSections.push(buildPlanWorkflowSection());
+    }
+  }
+
+  if (rt === "project" && ctx.iterativeWorkPrompt !== undefined && ctx.iterativeWorkPrompt.length > 0) {
+    contextSections.push(buildIterativeWorkSection(ctx.iterativeWorkPrompt));
+  }
+
+  if (ctx.devMode === true && (rt === "project" || rt === "system")) {
+    if (ctx.workspaceRoot !== undefined) {
+      contextSections.push(buildWorkspaceContextSection(ctx.workspaceRoot, ctx.projectPaths));
+    }
+    if (ctx.tynnContext !== undefined) {
+      contextSections.push(buildTynnContextSection(ctx.tynnContext));
+    }
+  }
+
+  if (!isLocal && rt !== "chat" && rt !== "worker") {
+    contextSections.push(buildTaskmasterSection());
+  }
+
+  // -------------------------------------------------------------------------
+  // Skills and Memory
+  // -------------------------------------------------------------------------
+
+  if (ctx.skills !== undefined && ctx.skills.length > 0) {
+    skillSections.push(buildSkillsSection(ctx.skills));
+  }
+
+  if (ctx.memories !== undefined && ctx.memories.length > 0) {
+    memorySections.push(buildMemorySection(ctx.memories));
+  }
+
+  // -------------------------------------------------------------------------
+  // Assemble
+  // -------------------------------------------------------------------------
+
+  const all = [...identitySections, ...contextSections, ...skillSections, ...memorySections];
+  const prompt = all.join("\n\n");
+
+  const joinOverhead = Math.max(0, all.length - 1) * 1; // "\n\n" ≈ 1 token each
+
+  const breakdown: SystemPromptTokenBreakdown = {
+    identity: estimateTokens(identitySections.join("\n\n")) + joinOverhead,
+    context: contextSections.length > 0 ? estimateTokens(contextSections.join("\n\n")) : 0,
+    memory: memorySections.length > 0 ? estimateTokens(memorySections.join("\n\n")) : 0,
+    skills: skillSections.length > 0 ? estimateTokens(skillSections.join("\n\n")) : 0,
+    history: opts?.historyTokens ?? 0,
+    response: opts?.responseTokens ?? 0,
+  };
+
+  return { prompt, breakdown };
 }

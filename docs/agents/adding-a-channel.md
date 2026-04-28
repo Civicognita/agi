@@ -33,7 +33,7 @@ The discovery system reads the `"aionima"` field in `package.json`. For channels
 
 ```json
 {
-  "name": "@aionima/channel-<name>",
+  "name": "@agi/channel-<name>",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -48,8 +48,8 @@ The discovery system reads the `"aionima"` field in `package.json`. For channels
     "entry": "./src/index.ts"
   },
   "dependencies": {
-    "@aionima/channel-sdk": "workspace:*",
-    "@aionima/plugins": "workspace:*"
+    "@agi/channel-sdk": "workspace:*",
+    "@agi/plugins": "workspace:*"
   }
 }
 ```
@@ -91,11 +91,11 @@ export function createConfigAdapter() {
 
 ## Step 4: Normalize Inbound Messages
 
-The channel SDK requires all inbound messages to be normalized to `AionimaMessage`. Import from `@aionima/channel-sdk`.
+The channel SDK requires all inbound messages to be normalized to `AionimaMessage`. Import from `@agi/channel-sdk`.
 
 ```ts
 // channels/<name>/src/normalizer.ts
-import type { AionimaMessage } from "@aionima/channel-sdk";
+import type { AionimaMessage } from "@agi/channel-sdk";
 
 export const <NAME>_CHANNEL_ID = "<name>" as const;
 
@@ -125,8 +125,8 @@ The entry file must satisfy two contracts simultaneously:
 
 ```ts
 // channels/<name>/src/index.ts
-import type { AionimaChannelPlugin, AionimaMessage } from "@aionima/channel-sdk";
-import type { AionimaPlugin, AionimaPluginAPI } from "@aionima/plugins";
+import type { AionimaChannelPlugin, AionimaMessage } from "@agi/channel-sdk";
+import type { AionimaPlugin, AionimaPluginAPI } from "@agi/plugins";
 import { type <Name>Config, is<Name>Config, createConfigAdapter } from "./config.js";
 import { <NAME>_CHANNEL_ID, normalizeMessage } from "./normalizer.js";
 import { sendOutbound } from "./outbound.js";
@@ -227,7 +227,7 @@ For the channel to be loaded, add it to the `channels` array in `gateway.json`:
 
 ## Step 8: Deploy
 
-The production deployment directory (`/opt/aionima/`) is its own git clone. `scripts/upgrade.sh` runs `git pull` to update it, then `pnpm install --frozen-lockfile && pnpm build` to rebuild.
+The production deployment directory (`/opt/agi/`) is its own git clone. `scripts/upgrade.sh` runs `git pull` to update it, then `pnpm install --frozen-lockfile && pnpm build` to rebuild.
 
 New channel directories committed to the repo are automatically included when deploy pulls. No rsync or manual sync is needed.
 

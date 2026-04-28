@@ -54,7 +54,7 @@ export function AgentSettings({ config, update }: Props) {
               const next = e.target.value as Provider;
               update((prev) => ({
                 ...prev,
-                agent: { ...(prev.agent ?? {}), provider: next, model: "" },
+                agent: { ...prev.agent, provider: next, model: "" },
               }));
             }}
           >
@@ -74,7 +74,7 @@ export function AgentSettings({ config, update }: Props) {
               value={(config.agent as Record<string, unknown> | undefined)?.["model"] as string ?? ""}
               onChange={(e) => update((prev) => ({
                 ...prev,
-                agent: { ...(prev.agent ?? {}), model: e.target.value },
+                agent: { ...prev.agent, model: e.target.value },
               }))}
             >
               {agentModels.map((m) => (
@@ -91,7 +91,7 @@ export function AgentSettings({ config, update }: Props) {
             value={(config.agent as Record<string, unknown> | undefined)?.["replyMode"] as string ?? "autonomous"}
             onChange={(e) => update((prev) => ({
               ...prev,
-              agent: { ...(prev.agent ?? {}), replyMode: e.target.value },
+              agent: { ...prev.agent, replyMode: e.target.value },
             }))}
           >
             <option value="autonomous">Autonomous</option>

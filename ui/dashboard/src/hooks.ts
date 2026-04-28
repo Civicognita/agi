@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { DashboardEvent, LogEntry, AionimaConfig, ReportSummary, ReportDetail, HFModelSearchResult } from "./types.js";
+import type { DashboardEvent, LogEntry, AionimaConfig, ReportSummary, ReportDetail, HFModelSearchResult, CoreForkStatus } from "./types.js";
 import {
   fetchOverview, fetchConfig, saveConfig,
   fetchProjects, createProject, updateProject, deleteProject,
@@ -27,6 +27,7 @@ import {
   searchHFModels,
   fetchHFInstalledModels,
   fetchHFRunningModels,
+  fetchHFContainerStats,
   searchHFDatasets,
   fetchHFInstalledDatasets,
   listFineTuneJobs,
@@ -54,6 +55,33 @@ export function useOverview(windowDays = 90) {
     error: query.error?.message ?? null,
     refresh,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Version-mismatch auto-reload
+//
+// Called on every WS reconnect. If /health's `version` field differs from
+// the value Vite baked into this bundle at build time (__AGI_VERSION__),
+// the server has been upgraded and this tab is running stale JS. Reload
+// before the stale code hits an API response it can't parse.
+// ---------------------------------------------------------------------------
+let versionReloadScheduled = false;
+async function checkVersionAndReload(): Promise<void> {
+  if (versionReloadScheduled) return;
+  try {
+    const res = await fetch("/health", { cache: "no-store" });
+    if (!res.ok) return;
+    const body = (await res.json()) as { version?: string };
+    const serverVersion = body.version;
+    if (!serverVersion || serverVersion === "unknown") return;
+    if (serverVersion === __AGI_VERSION__) return;
+    versionReloadScheduled = true;
+    // Defer slightly so any in-flight saves can settle.
+    setTimeout(() => { window.location.reload(); }, 300);
+  } catch {
+    // Network hiccup — skip this round, we'll try again on the next
+    // reconnect.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +137,12 @@ export function useDashboardWS(
       ws.onclose = () => {
         wsRef.current = null;
         if (!cancelledRef.current) {
+          // After a reconnect, the gateway may have restarted on a new
+          // version. If /health reports a different version than this
+          // tab's build, the JS we have is stale — force a full reload
+          // to avoid "TypeError: _e is not iterable" crashes from
+          // shape drift. Runs lazily so the WS reconnect isn't blocked.
+          void checkVersionAndReload();
           setTimeout(connect, 3000);
         }
       };
@@ -149,9 +183,29 @@ export function useProjectConfigWS() {
         case "config:changed":
           void queryClient.invalidateQueries({ queryKey: ["config"] });
           break;
+        case "dev:core-fork-updated":
+          void queryClient.invalidateQueries({ queryKey: ["dev", "core-forks", "status"] });
+          break;
       }
     }, [queryClient]),
   );
+}
+
+// ---------------------------------------------------------------------------
+// useCoreForkStatus — ahead/behind vs upstream for all five core forks
+// ---------------------------------------------------------------------------
+
+export function useCoreForkStatus() {
+  return useQuery({
+    queryKey: ["dev", "core-forks", "status"],
+    queryFn: async (): Promise<{ forks: CoreForkStatus[]; branch?: string; error?: string }> => {
+      const res = await fetch("/api/dev/core-forks/status");
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+      return (await res.json()) as { forks: CoreForkStatus[]; branch?: string; error?: string };
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -604,6 +658,25 @@ export function useMachineInfo() {
 }
 
 // ---------------------------------------------------------------------------
+// useMachineHardware — full hardware snapshot (motherboard, BIOS, OS,
+// CPU detail, memory, storage, network). Refetches on a slow cadence
+// since hardware doesn't change often.
+// ---------------------------------------------------------------------------
+
+export function useMachineHardware() {
+  const query = useQuery({
+    queryKey: ["machine", "hardware"],
+    queryFn: () => import("./api.js").then((m) => m.fetchMachineHardware()),
+    refetchInterval: 5 * 60_000,
+  });
+  return {
+    data: query.data ?? null,
+    loading: query.isLoading,
+    error: query.error?.message ?? null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // useLinuxUsers — TanStack Query + mutations
 // ---------------------------------------------------------------------------
 
@@ -759,6 +832,14 @@ export function useHFRunningModels() {
   });
 }
 
+export function useHFContainerStats() {
+  return useQuery({
+    queryKey: ["hf", "container-stats"],
+    queryFn: fetchHFContainerStats,
+    refetchInterval: 10_000,
+  });
+}
+
 export function useHFDatasets(params: Parameters<typeof searchHFDatasets>[0]) {
   return useQuery({
     queryKey: ["hf", "datasets", "search", params],
@@ -823,6 +904,7 @@ import {
   exitSafemode as apiExitSafemode,
   fetchAdminIncidents as apiFetchAdminIncidents,
   fetchAdminIncidentMarkdown as apiFetchAdminIncidentMarkdown,
+  fetchRouterStatus,
 } from "./api.js";
 
 export function useSafemode() {
@@ -860,5 +942,17 @@ export function useAdminIncidentMarkdown(id: string | null) {
     queryFn: () => apiFetchAdminIncidentMarkdown(id!),
     enabled: id !== null && id.length > 0,
     staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// useRouterStatus — polls /api/router/status every 10s
+// ---------------------------------------------------------------------------
+
+export function useRouterStatus() {
+  return useQuery({
+    queryKey: ["router", "status"],
+    queryFn: () => fetchRouterStatus(),
+    refetchInterval: 10_000,
   });
 }

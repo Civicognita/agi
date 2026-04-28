@@ -5,9 +5,9 @@
 
 import type { FastifyInstance } from "fastify";
 import type { IncomingMessage } from "node:http";
-import type { IncidentStore, IncidentSeverity, IncidentStatus, BreachClassification } from "@aionima/entity-model";
-import type { VendorStore, VendorType } from "@aionima/entity-model";
-import type { SessionStore } from "@aionima/entity-model";
+import type { IncidentStore, IncidentSeverity, IncidentStatus, BreachClassification } from "@agi/entity-model";
+import type { VendorStore, VendorType } from "@agi/entity-model";
+import type { SessionStore } from "@agi/entity-model";
 import type { BackupManager } from "./backup-manager.js";
 
 function getClientIp(req: IncomingMessage): string {
@@ -52,7 +52,7 @@ export function registerComplianceRoutes(fastify: FastifyInstance, deps: Complia
       const err = guard(req);
       if (err) return reply.code(403).send({ error: err });
       const limit = Number((req.query as { limit?: string }).limit) || 50;
-      return reply.send({ incidents: store.list(limit) });
+      return reply.send({ incidents: await store.list(limit) });
     });
 
     fastify.post("/api/compliance/incidents", async (req, reply) => {
@@ -60,7 +60,7 @@ export function registerComplianceRoutes(fastify: FastifyInstance, deps: Complia
       if (err) return reply.code(403).send({ error: err });
       const body = req.body as { severity?: string; title?: string; description?: string; affectedDataTypes?: string[]; affectedSystems?: string[] };
       if (!body.title) return reply.code(400).send({ error: "title is required" });
-      const incident = store.create({
+      const incident = await store.create({
         severity: (body.severity as IncidentSeverity) ?? "medium",
         title: body.title,
         description: body.description ?? "",
@@ -75,8 +75,8 @@ export function registerComplianceRoutes(fastify: FastifyInstance, deps: Complia
       if (err) return reply.code(403).send({ error: err });
       const { status } = req.body as { status?: string };
       if (!status) return reply.code(400).send({ error: "status is required" });
-      store.updateStatus(req.params.id, status as IncidentStatus);
-      return reply.send({ ok: true, incident: store.get(req.params.id) });
+      await store.updateStatus(req.params.id, status as IncidentStatus);
+      return reply.send({ ok: true, incident: await store.get(req.params.id) });
     });
 
     fastify.put<{ Params: { id: string } }>("/api/compliance/incidents/:id/breach", async (req, reply) => {
@@ -84,8 +84,8 @@ export function registerComplianceRoutes(fastify: FastifyInstance, deps: Complia
       if (err) return reply.code(403).send({ error: err });
       const { classification } = req.body as { classification?: string };
       if (!classification) return reply.code(400).send({ error: "classification is required" });
-      store.updateBreachClassification(req.params.id, classification as BreachClassification);
-      return reply.send({ ok: true, incident: store.get(req.params.id) });
+      await store.updateBreachClassification(req.params.id, classification as BreachClassification);
+      return reply.send({ ok: true, incident: await store.get(req.params.id) });
     });
   }
 
@@ -99,7 +99,7 @@ export function registerComplianceRoutes(fastify: FastifyInstance, deps: Complia
     fastify.get("/api/compliance/vendors", async (req, reply) => {
       const err = guard(req);
       if (err) return reply.code(403).send({ error: err });
-      return reply.send({ vendors: store.list() });
+      return reply.send({ vendors: await store.list() });
     });
 
     fastify.post("/api/compliance/vendors", async (req, reply) => {
@@ -107,7 +107,7 @@ export function registerComplianceRoutes(fastify: FastifyInstance, deps: Complia
       if (err) return reply.code(403).send({ error: err });
       const body = req.body as { name?: string; type?: string; description?: string };
       if (!body.name) return reply.code(400).send({ error: "name is required" });
-      const vendor = store.upsert({
+      const vendor = await store.upsert({
         name: body.name,
         type: (body.type as VendorType) ?? "other",
         description: body.description,
@@ -120,7 +120,7 @@ export function registerComplianceRoutes(fastify: FastifyInstance, deps: Complia
       if (err) return reply.code(403).send({ error: err });
       const { status } = req.body as { status?: string };
       if (!status) return reply.code(400).send({ error: "status is required" });
-      store.updateCompliance(req.params.id, status as "compliant" | "review_needed" | "non_compliant" | "unknown");
+      await store.updateCompliance(req.params.id, status as "compliant" | "review_needed" | "non_compliant" | "unknown");
       return reply.send({ ok: true });
     });
 
@@ -128,7 +128,7 @@ export function registerComplianceRoutes(fastify: FastifyInstance, deps: Complia
       const err = guard(req);
       if (err) return reply.code(403).send({ error: err });
       const { signed } = req.body as { signed?: boolean };
-      store.updateDpa(req.params.id, signed === true);
+      await store.updateDpa(req.params.id, signed === true);
       return reply.send({ ok: true });
     });
 
@@ -136,7 +136,7 @@ export function registerComplianceRoutes(fastify: FastifyInstance, deps: Complia
       const err = guard(req);
       if (err) return reply.code(403).send({ error: err });
       const { signed } = req.body as { signed?: boolean };
-      store.updateBaa(req.params.id, signed === true);
+      await store.updateBaa(req.params.id, signed === true);
       return reply.send({ ok: true });
     });
   }
@@ -153,13 +153,13 @@ export function registerComplianceRoutes(fastify: FastifyInstance, deps: Complia
       if (err) return reply.code(403).send({ error: err });
       const { entityId } = req.query as { entityId?: string };
       if (!entityId) return reply.code(400).send({ error: "entityId query param required" });
-      return reply.send({ sessions: store.getActiveSessions(entityId) });
+      return reply.send({ sessions: await store.getActiveSessions(entityId) });
     });
 
     fastify.delete<{ Params: { id: string } }>("/api/compliance/sessions/:id", async (req, reply) => {
       const err = guard(req);
       if (err) return reply.code(403).send({ error: err });
-      store.revokeSession(req.params.id);
+      await store.revokeSession(req.params.id);
       return reply.send({ ok: true });
     });
 
@@ -168,7 +168,7 @@ export function registerComplianceRoutes(fastify: FastifyInstance, deps: Complia
       if (err) return reply.code(403).send({ error: err });
       const { entityId } = req.body as { entityId?: string };
       if (!entityId) return reply.code(400).send({ error: "entityId is required" });
-      store.revokeAllForEntity(entityId);
+      await store.revokeAllForEntity(entityId);
       return reply.send({ ok: true });
     });
   }

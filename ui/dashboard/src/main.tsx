@@ -11,9 +11,14 @@ import { setupContentRendererExtensions } from "./lib/content-renderer-setup.js"
 // widgets without per-callsite component wiring.
 setupContentRendererExtensions();
 
-// Register PWA service worker (skip in Electron — it has its own update mechanism)
+// Register PWA service worker (skip in Electron — it has its own update mechanism).
+// autoUpdate mode: new SWs activate immediately via skipWaiting + clientsClaim.
+// index.html is never precached, so navigation always hits the network and picks
+// up fresh asset references after an upgrade. No manual unregister needed.
 if (!isElectron()) {
-  import("virtual:pwa-register");
+  import("virtual:pwa-register").then(({ registerSW }) => {
+    registerSW({ immediate: true });
+  }).catch(() => {});
 }
 
 const root = document.getElementById("root");

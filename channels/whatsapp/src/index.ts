@@ -20,8 +20,8 @@
 import type {
   AionimaChannelPlugin,
   AionimaMessage,
-} from "@aionima/channel-sdk";
-import type { AionimaPlugin, AionimaPluginAPI } from "@aionima/plugins";
+} from "@agi/channel-sdk";
+import type { AionimaPlugin, AionimaPluginAPI } from "@agi/plugins";
 
 import {
   type WhatsAppConfig,
@@ -59,8 +59,8 @@ export type {
 
 /** Minimal EntityStore surface used by the WhatsApp plugin for persistence. */
 export interface WhatsAppEntityStore {
-  upsertPhoneHash(channel: string, hash: string, rawPhone: string): void;
-  lookupPhoneHash(channel: string, hash: string): string | undefined;
+  upsertPhoneHash(channel: string, hash: string, rawPhone: string): Promise<void>;
+  lookupPhoneHash(channel: string, hash: string): Promise<string | undefined>;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +130,7 @@ export function createWhatsAppPlugin(
           await messageHandler(msg);
         }
       },
-      onRawPhone: (rawPhone: string) => {
+      onRawPhone: async (rawPhone: string) => {
         // Called by webhook handler with the raw phone before normalization.
         const hash = hashPhoneNumber(rawPhone);
 
@@ -140,7 +140,7 @@ export function createWhatsAppPlugin(
         // Persist to DB so mapping survives restarts
         if (entityStore !== undefined) {
           try {
-            entityStore.upsertPhoneHash(WHATSAPP_CHANNEL_ID as string, hash, rawPhone);
+            await entityStore.upsertPhoneHash(WHATSAPP_CHANNEL_ID as string, hash, rawPhone);
           } catch (err) {
             console.warn("[whatsapp] failed to persist phone hash:", err instanceof Error ? err.message : String(err));
           }
@@ -191,7 +191,7 @@ export function createWhatsAppPlugin(
         // Check in-memory cache first, then fall back to DB.
         let phone = hashToPhone.get(channelUserId);
         if (phone === undefined && entityStore !== undefined) {
-          phone = entityStore.lookupPhoneHash(WHATSAPP_CHANNEL_ID as string, channelUserId);
+          phone = await entityStore.lookupPhoneHash(WHATSAPP_CHANNEL_ID as string, channelUserId);
           if (phone !== undefined) {
             // Repopulate in-memory cache from DB
             hashToPhone.set(channelUserId, phone);

@@ -2,12 +2,12 @@
  * Plugin system types — adapted from OpenClaw's plugin architecture.
  */
 
-import type { ProjectTypeDefinition, ProjectTypeTool } from "@aionima/gateway-core";
-export type { LogSourceDefinition } from "@aionima/gateway-core";
-import type { ComponentLogger } from "@aionima/gateway-core";
-import type { StackDefinition } from "@aionima/gateway-core";
-import type { AionimaChannelPlugin } from "@aionima/channel-sdk";
-import type { ScanProviderDefinition } from "@aionima/security";
+import type { ProjectTypeDefinition, ProjectTypeTool } from "@agi/gateway-core";
+export type { LogSourceDefinition } from "@agi/gateway-core";
+import type { ComponentLogger } from "@agi/gateway-core";
+import type { StackDefinition } from "@agi/gateway-core";
+import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import type { ScanProviderDefinition } from "@agi/security";
 
 // ---------------------------------------------------------------------------
 // Permissions
@@ -35,7 +35,7 @@ export type ProvidesLabel =
   | "project-types" | "stacks" | "services" | "runtimes"
   | "system-services" | "ux" | "agent-tools" | "skills"
   | "knowledge" | "themes" | "workflows" | "channels"
-  | "providers" | "security" | "workers";
+  | "providers" | "pm-providers" | "security" | "workers";
 
 /**
  * Map a legacy category string to provides labels for backward compatibility.
@@ -518,6 +518,19 @@ export type LLMProviderFactory = (config: {
   baseUrl?: string;
 }) => unknown; // Returns LLMProvider — avoids circular dep on gateway-core
 
+/** A configurable field declared by a provider plugin for the Providers settings UI. */
+export interface ProviderField {
+  id: string;
+  label: string;
+  type: "password" | "text" | "number" | "select";
+  placeholder?: string;
+  description?: string;
+  options?: Array<{ value: string; label: string }>;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
 export interface LLMProviderDefinition {
   id: string;           // "anthropic", "openai", "ollama", "groq"
   name: string;         // "Anthropic"
@@ -527,7 +540,43 @@ export interface LLMProviderDefinition {
   requiresApiKey: boolean;
   defaultBaseUrl?: string;
   models?: string[];
+  /** Declarative fields shown in the Providers settings UI. */
+  fields?: ProviderField[];
   factory: LLMProviderFactory;
+  /**
+   * Check the provider's remaining credit balance.
+   * Receives the provider's saved config (apiKey, adminApiKey, etc.).
+   * Returns the USD balance remaining, or null if unavailable/unsupported.
+   * Must not throw — wrap in try/catch at the call site.
+   */
+  checkBalance?: (config: Record<string, unknown>) => Promise<number | null>;
+}
+
+// ---------------------------------------------------------------------------
+// PM provider plugin contracts (s118 t434)
+//
+// Plugins can register additional PM providers (Linear, Jira, GitHub Projects,
+// etc.) alongside the built-in tynn / tynn-lite. The factory receives the
+// provider's saved config and returns an instance whose shape implements
+// `PmProvider` from `@agi/sdk`. The factory return type is `unknown` here to
+// avoid a circular dep on @agi/sdk — the SDK's `definePmProvider()` builder
+// wraps this in a type-safe API.
+// ---------------------------------------------------------------------------
+
+export type PmProviderFactory = (config: Record<string, unknown>) => unknown;
+
+export interface PmProviderDefinition {
+  /** Unique provider id used by `config.agent.pm.provider` to select this
+   *  implementation (e.g. "linear", "jira", "github-projects"). Must not
+   *  collide with built-in ids ("tynn", "tynn-lite"). */
+  id: string;
+  /** Human-readable name shown in any future "PM provider" settings UI. */
+  name: string;
+  description?: string;
+  /** Declarative fields shown in the (future) PM-provider settings UI —
+   *  same shape as ProviderField for visual + storage consistency. */
+  fields?: ProviderField[];
+  factory: PmProviderFactory;
 }
 
 // ---------------------------------------------------------------------------
@@ -616,8 +665,6 @@ export interface WorkerDefinition {
   modelTier?: "fast" | "balanced" | "capable";
   /** Tools this worker is allowed to use. */
   allowedTools?: string[];
-  /** Worker that must follow this one (enforced chain). */
-  chainTarget?: string;
   /** Minimum entity verification tier required to dispatch this worker. */
   requiredTier?: "verified" | "sealed";
   /** Keywords for auto-routing dispatch requests to this worker. */
@@ -657,6 +704,7 @@ export interface AionimaPluginAPI {
   registerDashboardDomain(def: DashboardInterfaceDomainDefinition): void;
   registerSubdomainRoute(def: SubdomainRouteDefinition): void;
   registerProvider(def: LLMProviderDefinition): void;
+  registerPmProvider(def: PmProviderDefinition): void;
   registerScanProvider(def: ScanProviderDefinition): void;
   registerWorker(def: WorkerDefinition): void;
   getChannelConfig(channelId: string): { enabled: boolean; config: Record<string, unknown> } | undefined;

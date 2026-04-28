@@ -22,6 +22,7 @@
  * Control characters (\p{Cc}): U+0000–U+001F and U+007F–U+009F.
  * EXCEPT tab (U+0009), newline (U+000A), and carriage return (U+000D).
  */
+// oxlint-disable-next-line no-control-regex
 const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
 
 /**
@@ -94,6 +95,7 @@ export function containsDangerousUnicode(input: string): boolean {
   // Must create fresh regexes (or reset lastIndex) because /g flag
   // mutates lastIndex on .test(), causing inconsistent results.
   return (
+    // oxlint-disable-next-line no-control-regex
     /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/.test(input) ||
     /[\u00AD\u0600-\u0605\u061C\u06DD\u070F\u0890\u0891\u08E2\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF\uFFF9-\uFFFB]/.test(input) ||
     /[\u200E\u200F\u202A-\u202E\u2066-\u2069]/.test(input) ||

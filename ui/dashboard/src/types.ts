@@ -297,7 +297,9 @@ export type DashboardEvent =
   | { type: "tm:job_update"; data: WorkerJobUpdate }
   | { type: "tm:report_ready"; data: WorkerReportReady }
   | { type: "notification:new"; data: Notification }
-  | { type: "config:changed"; data: { changedKeys: string[]; timestamp: string } };
+  | { type: "config:changed"; data: { changedKeys: string[]; timestamp: string } }
+  | { type: "usage:recorded"; data: { source: "chat" | "worker"; projectPath: string; costUsd: number } }
+  | { type: "dev:core-fork-updated"; data: { slug: string; newSha: string; agentic: boolean } };
 
 /** Structured log entry streamed from the gateway. */
 export interface LogEntry {
@@ -345,6 +347,11 @@ export interface LogSourceDefinition {
   containerPath?: string;
 }
 
+/** Runtime mode (s118 t122 / s122). Dashboard consults /api/system/runtime-mode
+ *  to hide features that don't make sense in test-VM (nested test-VM spawn,
+ *  contributing toggle, upgrade buttons, aionima-collection tiles). */
+export type RuntimeMode = "production" | "test-vm" | "dev";
+
 /** Project type definition from registry. */
 export interface ProjectTypeInfo {
   id: string;
@@ -353,8 +360,29 @@ export interface ProjectTypeInfo {
   hostable: boolean;
   /** Whether this project type contains code (vs. content like literature/media). */
   hasCode: boolean;
+  /** Whether this project type can have an iterative-work loop (s118 t445). */
+  iterativeWorkEligible?: boolean;
+  /** Whether this project type exposes the testing suite UX (s121).
+   *  Only app + web categories. */
+  testingUxEligible?: boolean;
   tools: ProjectTypeTool[];
   logSources?: LogSourceDefinition[];
+}
+
+/** Cadence keys offered by the iterative-work tab dropdown (s118 t442 D1). */
+export type IterativeWorkCadence = "30m" | "1h" | "5h" | "12h" | "1d" | "5d" | "1w";
+
+/** Cadence options visible per category (mirrors gateway-core cadenceOptionsFor). */
+export const ITERATIVE_WORK_CADENCE_OPTIONS: Record<string, IterativeWorkCadence[]> = {
+  web: ["30m", "1h"],
+  app: ["30m", "1h"],
+  ops: ["30m", "1h", "5h", "12h", "1d", "5d", "1w"],
+  administration: ["30m", "1h", "5h", "12h", "1d", "5d", "1w"],
+};
+
+export function cadenceOptionsForCategory(category: string | undefined): IterativeWorkCadence[] {
+  if (!category) return [];
+  return ITERATIVE_WORK_CADENCE_OPTIONS[category] ?? [];
 }
 
 /** A workspace project entry returned by GET /api/projects. */
@@ -372,9 +400,42 @@ export interface ProjectInfo {
   };
   projectType?: ProjectTypeInfo;
   category?: string;
+  /** Effective iterative-work eligibility (s118 t442 D1 slice 4) — based on
+   *  the project's actual category (overrides projectType-level default). */
+  iterativeWorkEligible?: boolean;
+  /** Effective testing-UX eligibility (s121) — based on EFFECTIVE category. */
+  testingUxEligible?: boolean;
   description?: string;
   magicApps?: string[];
+  /** When set, this project is a child of a named collection (e.g. "aionima"
+   *  for Dev Mode core forks). Dashboard groups + restricts UX accordingly. */
+  coreCollection?: string;
+  /** For core forks only: the CORE_REPOS spec slug ("agi", "prime", "id",
+   *  "marketplace", "mapp-marketplace"). Lets the dashboard call the
+   *  `/api/dev/core-forks/:slug/merge` endpoint without parsing the path. */
+  coreForkSlug?: string;
 }
+
+/** A single row returned by GET /api/dev/core-forks/status. */
+export interface CoreForkStatus {
+  slug: string;
+  displayName: string;
+  branch: string;
+  currentSha: string | null;
+  upstreamSha: string | null;
+  /** Commits on the fork that upstream doesn't have. */
+  ahead: number;
+  /** Commits on upstream that haven't been merged into the fork yet. */
+  behind: number;
+  lastFetchedAt: string;
+  error?: string;
+}
+
+/** Response shape of POST /api/dev/core-forks/:slug/merge. */
+export type CoreForkMergeResult =
+  | { ok: true; ff: boolean; agentic: boolean; newSha: string; pushed: boolean }
+  | { ok: false; conflict: true; agentic: boolean; reviewNeeded?: boolean; files: string[]; aionSummary?: string; reason?: string }
+  | { ok: false; conflict: false; reason: string };
 
 /** Git info for a workspace project, returned by GET /api/projects/info. */
 export interface ProjectGitInfo {
@@ -494,6 +555,9 @@ export interface WorkerModelOverride {
 export interface ProviderCredential {
   apiKey?: string;
   baseUrl?: string;
+  model?: string;
+  /** USD amount at which to alert when cumulative API spend reaches this threshold. */
+  balanceAlertThreshold?: number;
 }
 
 export interface WorkerConfig {
@@ -513,6 +577,13 @@ export interface AionimaConfig {
     maxTokens?: number;
     replyMode?: string;
     devMode?: boolean;
+    router?: {
+      costMode?: "local" | "economy" | "balanced" | "max";
+      escalation?: boolean;
+      maxEscalationsPerTurn?: number;
+      simpleThresholdTokens?: number;
+      complexThresholdTokens?: number;
+    };
   };
   providers?: Record<string, ProviderCredential>;
   workers?: WorkerConfig;
@@ -588,6 +659,10 @@ export interface ServiceInfo {
   status: "running" | "stopped" | "error";
   port: number | null;
   enabled: boolean;
+  /** When false, the container image is not locally available. Omitting the field is treated as true (backward compat). */
+  imageAvailable?: boolean;
+  /** Extension capabilities provided by this service (e.g. pgvector, PostGIS). */
+  extensions?: string[];
 }
 
 /** Runtime dependency bundled with a runtime (e.g. npm for Node). */
@@ -692,6 +767,13 @@ export interface WorkerJobSummary {
   workers: string[];
   gate: "auto" | "checkpoint" | "terminal";
   createdAt: string;
+  /** Terminal-state fields populated after the worker finishes. Surfaced by
+   *  the Taskmaster project tab's expandable summary rows. */
+  summary?: string;
+  completedAt?: string;
+  error?: string;
+  tokens?: { input: number; output: number };
+  toolCalls?: Array<{ name: string; ts: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -707,6 +789,62 @@ export interface MachineInfo {
   ip: string;
   cpuModel: string;
   totalMemoryGB: number;
+}
+
+/** Complete hardware/firmware/OS snapshot returned by /api/machine/hardware. */
+export interface MachineHardware {
+  identity: {
+    hostname: string;
+    manufacturer: string;
+    productName: string;
+    serialNumber: string;
+    family: string;
+    chassisType: string;
+  };
+  firmware: {
+    biosVendor: string;
+    biosVersion: string;
+    biosReleaseDate: string;
+  };
+  motherboard: {
+    manufacturer: string;
+    productName: string;
+    version: string;
+    serialNumber: string;
+  };
+  os: {
+    platform: string;
+    distro: string;
+    distroVersionId: string;
+    kernel: string;
+    arch: string;
+    nodeVersion: string;
+  };
+  cpu: {
+    model: string;
+    cores: number;
+    threads: number;
+    arch: string;
+    flags: string[];
+    vendorId: string;
+  };
+  memory: {
+    totalBytes: number;
+    totalGB: number;
+  };
+  storage: Array<{
+    name: string;
+    size: string;
+    model: string;
+    type: string;
+    mountpoint: string | null;
+  }>;
+  network: Array<{
+    name: string;
+    mac: string;
+    addresses: string[];
+    state: string;
+  }>;
 }
 
 export interface LinuxUser {
@@ -776,13 +914,27 @@ export interface PrimeStatus {
 export interface DevStatus {
   enabled: boolean;
   githubAuthenticated: boolean;
+  /** GitHub login/handle of the owner's connected account, if any. */
+  githubAccount?: string | null;
+  /** ISO timestamp the stored OAuth token expires at, or null if non-expiring. */
+  githubTokenExpiresAt?: string | null;
+  /** Space-delimited scopes granted to the stored token. */
+  githubTokenScopes?: string | null;
   agi: { remote: string };
   prime: { remote: string; branch: string; entries: number };
-  bots?: { remote: string; branch: string };
   id?: { remote: string; branch: string };
   marketplace?: { remote: string; branch: string };
   mappMarketplace?: { remote: string; branch: string };
   provisionedProjects?: string[];
+  /** True only when every /opt/* origin matches its dev.*Repo config.
+   *  When false with enabled=true, surface a yellow "Run agi upgrade
+   *  to complete Dev Mode migration" callout. Part of v0.4.66's
+   *  one-time origin-rewrite mechanism (ensure_origin_remote in
+   *  upgrade.sh). */
+  originsAligned?: boolean;
+  /** Human-readable list of misaligned origins when originsAligned is
+   *  false. Each entry is "<dir>: <current-url> (expected <dev-repo>)". */
+  originMisaligned?: string[];
 }
 
 /** System connection status from GET /api/system/connections. */
@@ -815,7 +967,7 @@ export interface ConnectionStatus {
 }
 
 // ---------------------------------------------------------------------------
-// Plugin extensibility types (mirrors @aionima/plugins types for dashboard)
+// Plugin extensibility types (mirrors @agi/plugins types for dashboard)
 // ---------------------------------------------------------------------------
 
 export interface UIField {
@@ -1256,6 +1408,12 @@ export interface HFModelResourceEstimate {
   loadTimeSeconds: number | null;
 }
 
+export interface ModelCapabilityInfo {
+  contextWindow: number;
+  toolSupport: boolean;
+  source: "family" | "provider-default" | "unknown";
+}
+
 export interface HFModelSearchResult {
   id: string;
   modelId: string;
@@ -1271,6 +1429,8 @@ export interface HFModelSearchResult {
   compatibility: HFCompatibility;
   compatibilityReason: string;
   estimate: HFModelResourceEstimate;
+  /** Static model-capability info for UI indicators. Null when unknown. */
+  capability: ModelCapabilityInfo | null;
 }
 
 export interface HFModelVariant {

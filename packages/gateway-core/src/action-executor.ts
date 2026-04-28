@@ -3,8 +3,8 @@
  */
 
 import { execFile } from "node:child_process";
-import type { PluginRegistry } from "@aionima/plugins";
-import type { HookBus } from "@aionima/plugins";
+import type { PluginRegistry } from "@agi/plugins";
+import type { HookBus } from "@agi/plugins";
 
 export interface ActionExecResult {
   ok: boolean;

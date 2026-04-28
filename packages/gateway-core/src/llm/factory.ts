@@ -5,13 +5,17 @@
  * Supports single-provider and failover-provider configurations.
  */
 
-import type { AionimaConfig } from "@aionima/config";
+import type { AionimaConfig } from "@agi/config";
 
 import type { LLMProvider, LLMProviderConfig } from "./provider.js";
 import { AnthropicProvider } from "./anthropic-provider.js";
 import { OpenAIProvider } from "./openai-provider.js";
 import { OllamaProvider } from "./ollama-provider.js";
 import { FailoverProvider } from "./failover-provider.js";
+import { AgentRouter } from "./agent-router.js";
+import type { AgentRouterConfig, CostMode } from "./agent-router.js";
+import type { Logger } from "../logger.js";
+import { timeoutMultiplierForTier, type ProviderCatalogEntry } from "../providers-api.js";
 
 // ---------------------------------------------------------------------------
 // ENV key map
@@ -25,13 +29,49 @@ const ENV_KEYS: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// Per-Provider deadline (s111 t413 — relaxed local timeouts)
+//
+// BASE_TIMEOUT_MS is the cloud-tuned baseline. Cloud Providers respond in
+// 2-5s end-to-end; 60s gives plenty of headroom for slow API edges. CPU-bound
+// local Providers can take 30-60s+ for first token alone (empirical: t326
+// close measured 60.9s on qwen2.5:3b CPU-only). Multiplying by the tier
+// multiplier from providers-api gives 360s for non-cloud Providers.
+//
+// The mapping below classifies Provider TYPE strings (used in factory.ts
+// switch cases) into the catalog tiers from providers-api.ts. Plugin-
+// registered Providers fall through to the default (cloud baseline) — they
+// can opt into a longer timeout by passing `timeoutMs` directly in their
+// factory config.
+// ---------------------------------------------------------------------------
+
+export const BASE_TIMEOUT_MS = 60_000;
+
+const TYPE_TIER: Record<string, ProviderCatalogEntry["tier"]> = {
+  anthropic: "cloud",
+  openai: "cloud",
+  ollama: "local",
+  lemonade: "local",
+  "hf-local": "core",
+  "aion-micro": "floor",
+};
+
+export function timeoutMsForProviderType(type: string): number {
+  const tier = TYPE_TIER[type] ?? "cloud";
+  return BASE_TIMEOUT_MS * timeoutMultiplierForTier(tier);
+}
+
+// ---------------------------------------------------------------------------
 // Single-provider factory
 // ---------------------------------------------------------------------------
 
-function createSingleProvider(
+export function createSingleProvider(
   type: string,
   config: Partial<LLMProviderConfig>,
 ): LLMProvider {
+  // Per-Provider deadline — relaxed for non-cloud tiers per t411/t413.
+  // Caller can override by passing `timeoutMs` explicitly in config.
+  const timeoutMs = config.timeoutMs ?? timeoutMsForProviderType(type);
+
   switch (type) {
     case "anthropic":
       return new AnthropicProvider({
@@ -40,6 +80,7 @@ function createSingleProvider(
         maxTokens: config.maxTokens ?? 8192,
         maxRetries: config.maxRetries ?? 3,
         baseUrl: config.baseUrl,
+        timeoutMs,
       });
 
     case "openai":
@@ -49,9 +90,14 @@ function createSingleProvider(
         maxTokens: config.maxTokens ?? 8192,
         maxRetries: config.maxRetries ?? 3,
         baseUrl: config.baseUrl,
+        timeoutMs,
       });
 
     case "ollama":
+      // OllamaProvider uses native fetch with no client-side timeout — leaving
+      // it untouched preserves the no-timeout behavior. Adding a deadline here
+      // would tighten Ollama (opposite of the directive); revisit only if
+      // evidence emerges of phantom Ollama failures from upstream callers.
       return new OllamaProvider({
         defaultModel: config.defaultModel ?? "llama3.1",
         maxTokens: config.maxTokens ?? 8192,
@@ -59,18 +105,108 @@ function createSingleProvider(
         baseUrl: config.baseUrl ?? "http://127.0.0.1:11434",
       });
 
-    case "hf-local":
+    case "lemonade":
+      // Phase K.2 — Lemonade serves OpenAI-compatible /v1/chat/completions
+      // with auto-routing between NPU / GPU / CPU internally. No API key
+      // required; default port 13305 matches the installed lemonade-server
+      // package (the PPA ships systemd unit bound to that port).
+      // The matching settings page + install lifecycle are in the
+      // `agi-lemonade-runtime` marketplace plugin.
+      return new OpenAIProvider({
+        apiKey: "not-needed",
+        defaultModel: config.defaultModel ?? "default",
+        maxTokens: config.maxTokens ?? 8192,
+        maxRetries: config.maxRetries ?? 2,
+        baseUrl: config.baseUrl ?? "http://127.0.0.1:13305",
+        timeoutMs,
+      });
+
+    case "aion-micro":
+      // s111 t379 (F1) — aion-micro as a chat-routable core Provider.
+      //
+      // aion-micro is the off-grid floor (alpha-stable-1 acceptance bar). The
+      // model itself runs on Lemonade — Phase K.4 moved serving from a custom
+      // FastAPI container to the Lemonade backplane (see AionMicroManager
+      // docstring). What this factory case adds is an addressable Provider
+      // identity so the agent-router can pick aion-micro by name without
+      // routing through AionMicroManager's diagnostic-surface wrapper.
+      //
+      // Model defaults to `wishborn/aion-micro-v1` to match
+      // AionMicroManager.DEFAULT_MODEL — when that model isn't pulled,
+      // OpenAIProvider's HTTP error surfaces; the prepare-runtime UX in
+      // the dashboard (Lemonade banner) handles install/pull with consent.
+      // The fallback-to-SmolLM2 logic in AionMicroManager is intentionally
+      // NOT replicated here — that two-tier behavior is specific to the
+      // diagnostic surface (doctor + merge-conflict). Chat routing wants
+      // a deterministic model identity per Provider invocation.
+      //
+      // Tier: "floor" (per providers-api catalog). timeoutMs computed via
+      // timeoutMsForProviderType resolves to BASE_TIMEOUT_MS * 6.0 = 360s
+      // — sufficient headroom for CPU-bound first-token on slow boxes.
+      return new OpenAIProvider({
+        apiKey: "not-needed",
+        defaultModel: config.defaultModel ?? "wishborn/aion-micro-v1",
+        maxTokens: config.maxTokens ?? 1024,
+        maxRetries: config.maxRetries ?? 2,
+        baseUrl: config.baseUrl ?? "http://127.0.0.1:13305",
+        timeoutMs,
+      });
+
+    case "hf-local": {
+      // Resolve the actual port from ModelAgentBridge if available.
+      // The bridge registers running text-generation models with their
+      // container port — hardcoding 6000 breaks when models start on
+      // other ports from the allocation pool.
+      let baseUrl = config.baseUrl;
+      if (!baseUrl && _modelAgentBridge) {
+        const modelId = config.defaultModel ?? "local";
+        const bridgeProvider = _modelAgentBridge.getProviderForModel(modelId);
+        if (bridgeProvider) {
+          baseUrl = bridgeProvider.baseUrl;
+        }
+      }
       return new OpenAIProvider({
         apiKey: "not-needed",
         defaultModel: config.defaultModel ?? "local",
         maxTokens: config.maxTokens ?? 4096,
         maxRetries: config.maxRetries ?? 2,
-        baseUrl: config.baseUrl ?? "http://127.0.0.1:6000",
+        baseUrl: baseUrl ?? "http://127.0.0.1:6000",
+        timeoutMs,
       });
+    }
 
-    default:
-      throw new Error(`Unknown LLM provider type: ${type}`);
+    default: {
+      // Check plugin-registered providers before giving up. Plugins call
+      // api.registerProvider(def) during boot; we look them up here so
+      // setting `agent.provider: "claude-max"` (or any plugin-contributed
+      // type) just works without hardcoding every provider.
+      const pluginDef = _pluginProviderRegistry?.getProvider(type);
+      if (pluginDef) {
+        return pluginDef.factory(config as Record<string, unknown>) as LLMProvider;
+      }
+      throw new Error(`Unknown LLM provider type: ${type}. No built-in or plugin-registered provider matches.`);
+    }
   }
+}
+
+/** Late-bound plugin registry ref — set by server.ts after plugins boot. */
+interface PluginProviderLookup {
+  getProvider(id: string): { factory: (config: Record<string, unknown>) => unknown } | undefined;
+}
+let _pluginProviderRegistry: PluginProviderLookup | null = null;
+
+export function setPluginProviderRegistry(registry: PluginProviderLookup): void {
+  _pluginProviderRegistry = registry;
+}
+
+/** Late-bound ModelAgentBridge ref for resolving HF local model ports. */
+interface ModelBridgeLookup {
+  getProviderForModel(modelId: string): { baseUrl: string; model: string } | undefined;
+}
+let _modelAgentBridge: ModelBridgeLookup | null = null;
+
+export function setModelAgentBridge(bridge: ModelBridgeLookup): void {
+  _modelAgentBridge = bridge;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,4 +263,72 @@ export function createLLMProvider(config: AionimaConfig): LLMProvider {
     maxRetries,
     baseUrl: baseUrl ?? providerCred?.baseUrl,
   });
+}
+
+// ---------------------------------------------------------------------------
+// AgentRouter factory
+// ---------------------------------------------------------------------------
+
+/**
+ * Create an AgentRouter from AionimaConfig.
+ *
+ * The router is always active and performs per-request model selection
+ * based on cost mode and request complexity.
+ *
+ * Note: the config snapshot is captured at construction time. For true
+ * hot-reload the caller (server.ts) should pass a getConfig closure that
+ * reads live config — that is Phase 4's concern.
+ */
+export function createAgentRouter(config: AionimaConfig, logger?: Logger): LLMProvider {
+  const agent = config.agent as {
+    provider?: string;
+    model?: string;
+    maxTokens?: number;
+    maxRetries?: number;
+    baseUrl?: string;
+    providers?: Array<{ type: string; model: string; apiKey?: string; baseUrl?: string }>;
+    router?: {
+      costMode?: string;
+      escalation?: boolean;
+      maxEscalationsPerTurn?: number;
+      simpleThresholdTokens?: number;
+      complexThresholdTokens?: number;
+      localFirst?: boolean;
+      offGrid?: boolean;
+    };
+  } | undefined ?? {};
+
+  const providersCred =
+    (config.providers as Record<string, { apiKey?: string; baseUrl?: string; model?: string }> | undefined) ?? {};
+
+  const routerConfig: AgentRouterConfig = {
+    router: {
+      costMode: (agent.router?.costMode as CostMode) ?? "balanced",
+      escalation: agent.router?.escalation ?? false,
+      maxEscalationsPerTurn: agent.router?.maxEscalationsPerTurn ?? 1,
+      simpleThresholdTokens: agent.router?.simpleThresholdTokens ?? 500,
+      complexThresholdTokens: agent.router?.complexThresholdTokens ?? 2000,
+      // Phase K.1 — default "local wins when present" mode. When a
+      // Lemonade provider is configured, every non-max turn routes
+      // through it. Owners revert to pre-K behavior by setting
+      // `agent.router.localFirst: false` in gateway.json.
+      localFirst: agent.router?.localFirst ?? true,
+      // s111 t415 — off-grid mode. When true, the router filters cloud
+      // Providers entirely and routes through the local chain
+      // (lemonade → ollama → hf-local → aion-micro). Mirrors the
+      // owner-facing toggle in Settings → Providers (providers-api
+      // PUT /api/providers/router body field `offGridMode`).
+      offGrid: agent.router?.offGrid ?? false,
+    },
+    defaultProvider: agent.provider ?? "anthropic",
+    defaultModel: agent.model ?? "claude-sonnet-4-6",
+    providers: providersCred,
+    baseUrl: agent.baseUrl,
+  };
+
+  return new AgentRouter(
+    () => routerConfig,
+    (type, provConfig) => createSingleProvider(type, provConfig),
+    logger,
+  );
 }

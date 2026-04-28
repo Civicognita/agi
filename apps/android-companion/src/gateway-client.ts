@@ -11,4 +11,4 @@ export {
   type PairingResult,
   type CompanionNotification,
   type GatewayClientHandlers,
-} from "@aionima/ios-companion/gateway-client";
+} from "@agi/ios-companion/gateway-client";

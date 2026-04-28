@@ -8,7 +8,7 @@ import {
   SlashCommandBuilder,
   PermissionFlagsBits,
 } from "discord.js";
-import type { AionimaPlugin, AionimaPluginAPI } from "@aionima/plugins";
+import type { AionimaPlugin, AionimaPluginAPI } from "@agi/plugins";
 import type {
   ChatInputCommandInteraction,
   Guild,
@@ -16,7 +16,7 @@ import type {
 import type {
   AionimaChannelPlugin,
   AionimaMessage,
-} from "@aionima/channel-sdk";
+} from "@agi/channel-sdk";
 
 import {
   type DiscordConfig,

@@ -77,8 +77,8 @@ import type {
   StackScaffoldingConfig,
   StackInstallAction,
   StackDevCommands,
-} from "@aionima/gateway-core";
-import type { ProjectCategory, ProjectTypeTool, LogSourceDefinition } from "@aionima/gateway-core";
+} from "@agi/gateway-core";
+import type { ProjectCategory, ProjectTypeTool, LogSourceDefinition } from "@agi/gateway-core";
 
 class StackBuilder {
   private def: Partial<StackDefinition> & {

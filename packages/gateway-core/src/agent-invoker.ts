@@ -20,8 +20,8 @@
 
 import { EventEmitter } from "node:events";
 
-import type { Entity } from "@aionima/entity-model";
-import type { COAChainLogger } from "@aionima/coa-chain";
+import type { Entity } from "@agi/entity-model";
+import type { COAChainLogger } from "@agi/coa-chain";
 
 import type { GatewayState } from "./types.js";
 import type { GatewayStateMachine } from "./state-machine.js";
@@ -30,17 +30,18 @@ import type { ToolRegistry, ToolExecutionResult } from "./tool-registry.js";
 import type { RateLimiter } from "./rate-limiter.js";
 
 import {
-  assembleSystemPrompt,
+  assembleSystemPromptWithBreakdown,
   computeAvailableTools,
   estimateTokens,
 } from "./system-prompt.js";
-import type { SystemPromptContext, EntityContextSection } from "./system-prompt.js";
+import type { SystemPromptContext, EntityContextSection, RequestType, SystemPromptTokenBreakdown } from "./system-prompt.js";
 import { gateInvocation, isHumanCommand } from "./invocation-gate.js";
 import { sanitize } from "./sanitizer.js";
 
 import type { LLMProvider, LLMToolCall, LLMToolResult, LLMMessage, LLMContentBlock } from "./llm/index.js";
 import type { UserContextStore } from "./user-context-store.js";
 import type { PrimeLoader } from "./prime-loader.js";
+import type { ProjectConfigManager } from "./project-config-manager.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -58,6 +59,79 @@ const FRIENDLY_TOOL_SUMMARY: Record<string, string> = {
   taskmaster_dispatch: "Work dispatched",
   search_prime: "Knowledge searched",
 };
+
+// ---------------------------------------------------------------------------
+// Request type classification — heuristic-based, zero LLM cost
+// ---------------------------------------------------------------------------
+
+const SYSTEM_KEYWORDS = /\b(status|restart|upgrade|doctor|service|container|hosting|deploy|config|podman|caddy|dnsmasq)\b/i;
+const KNOWLEDGE_KEYWORDS = /\b(impactiv|impactinomics|mycelium|protocol|lexicon|prime|civicognita|0scale|0stage|hive.id)\b/i;
+const TOOL_KEYWORDS = /\b(search|find|create|delete|install|uninstall|list|manage|run|build|start|stop)\b/i;
+
+function classifyRequestType(content: string, projectPath?: string): RequestType {
+  if (projectPath) return "project";
+  if (SYSTEM_KEYWORDS.test(content)) return "system";
+  if (KNOWLEDGE_KEYWORDS.test(content)) return "knowledge";
+  return "chat";
+}
+
+/**
+ * Which Layer 2 context sections `assembleSystemPrompt` includes for a request
+ * type. Mirrors the switching logic in system-prompt.ts so the UI can tell
+ * operators what Aion actually saw.
+ */
+function deriveContextLayers(requestType: string): string[] {
+  const layers = ["identity"];
+  switch (requestType) {
+    case "project":
+      layers.push("project", "workspace");
+      break;
+    case "entity":
+      layers.push("entity", "coa");
+      break;
+    case "knowledge":
+      layers.push("knowledge-index");
+      break;
+    case "system":
+      layers.push("state", "hosting");
+      break;
+    case "worker":
+      layers.push("worker-task");
+      break;
+    case "taskmaster":
+      layers.push("taskmaster", "worker-catalog");
+      break;
+    case "chat":
+    default:
+      break;
+  }
+  return layers;
+}
+
+/**
+ * Decide whether the upcoming LLM call should be given the tool list.
+ * Exported for unit testing — see agent-invoker-tools.test.ts.
+ *
+ * Returns true when:
+ *   - requestType is "system" or "project" (always tool-eligible by category), OR
+ *   - the user message contains an action verb from TOOL_KEYWORDS, regardless
+ *     of requestType (so action-verb chats reach tools — fixes s101 t361).
+ *
+ * Returns false otherwise (chitchat without action verbs stays cheap).
+ */
+export function shouldOfferTools(content: string, requestType: RequestType): boolean {
+  // System + project requests always get tools — they exist to act on infrastructure.
+  if (requestType === "system") return true;
+  if (requestType === "project") return true;
+  // Action-verb prompts get tools regardless of requestType — including "chat"
+  // requests like "list files in /tmp", "search the docs for X", "delete this".
+  // Pre-2026-04-25 the chat short-circuit ran before this check, so action-verb
+  // chats silently dropped tools (s101 t361). Reordered: TOOL_KEYWORDS first.
+  if (TOOL_KEYWORDS.test(content)) return true;
+  // Default: chat without action verbs gets no tools — keeps chitchat cheap +
+  // prevents the model from inventing unsolicited tool calls.
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Tool event helpers — sanitize inputs and extract structured detail
@@ -118,6 +192,10 @@ export interface AgentInvokerDeps {
   userContextStore?: UserContextStore;
   /** Optional PRIME knowledge loader — loads corpus for system prompt injection. */
   primeLoader?: PrimeLoader;
+  /** Optional project config manager — read at invocation time so iterative-work
+   *  mode + other per-project flags can shape prompt assembly. Null when
+   *  invoker is run without project context (e.g. entity-only requests). */
+  projectConfigManager?: ProjectConfigManager;
   /** Workspace root path — injected as context when devMode is true. */
   workspaceRoot?: string;
   /** Directories where projects are stored and worked on. */
@@ -131,6 +209,11 @@ export interface AgentInvokerDeps {
   /** Returns the configured per-turn tool-loop cap (0 = uncapped). Called per
    *  turn so config hot-reload takes effect. Defaults to uncapped. */
   getMaxToolLoops?: () => number;
+  /** Returns the active router cost mode for this turn. Read live so a Settings
+   *  toggle (Cloud → Local) takes effect on the next message without restart.
+   *  When the result is `"local"`, the system prompt assembler trims sections
+   *  small models can't usefully consume (Taskmaster, plan workflow, etc.). */
+  getCostMode?: () => string;
 }
 
 export interface InvocationRequest {
@@ -163,7 +246,7 @@ export interface InvocationRequest {
 }
 
 export type InvocationOutcome =
-  | { type: "response"; text: string; toolsUsed: string[]; coaFingerprint: string; taskmasterEmissions: string[]; model: string; provider: string; usage: { inputTokens: number; outputTokens: number }; toolCount: number; loopCount: number }
+  | { type: "response"; text: string; toolsUsed: string[]; coaFingerprint: string; taskmasterEmissions: string[]; model: string; provider: string; usage: { inputTokens: number; outputTokens: number }; toolCount: number; loopCount: number; routingMeta?: { costMode: string; complexity: string; selectedModel: string; selectedProvider: string; escalated: boolean; reason: string; requestType?: string; classifierUsed?: "heuristic" | "aion-micro"; contextLayers?: string[]; tokenBreakdown?: SystemPromptTokenBreakdown } }
   | { type: "queued"; reason: string; entityNotification: string }
   | { type: "human_routed"; content: string }
   | { type: "log_only" }
@@ -180,6 +263,12 @@ export class AgentInvoker extends EventEmitter {
 
   /** Per-session injection queues for mid-loop message injection. */
   private readonly injectionQueues = new Map<string, string[]>();
+
+  /** Set of session keys with an in-flight process() call. Used by server.ts
+   *  to decide whether a taskmaster-completion injection should kick off an
+   *  autonomous follow-up turn (idle) or just queue for the active loop to
+   *  drain (busy). */
+  private readonly activeSessions = new Set<string>();
 
   /** Resolve apiClient — supports both static LLMProvider and getter function. */
   private get apiClient(): LLMProvider {
@@ -218,6 +307,14 @@ export class AgentInvoker extends EventEmitter {
     return queue !== undefined && queue.length > 0;
   }
 
+  /** True when a process() call is in flight for this sessionKey — callers
+   *  (e.g. the TaskMaster runtime:event handler) use this to decide whether
+   *  to kick off an autonomous follow-up turn or let the active loop drain
+   *  the injection on its own. */
+  isBusy(sessionKey: string): boolean {
+    return this.activeSessions.has(sessionKey);
+  }
+
   /**
    * Process an inbound message through the full invocation pipeline.
    *
@@ -225,8 +322,21 @@ export class AgentInvoker extends EventEmitter {
    * callback (replacing AgentBridge.notify for autonomous operation).
    */
   async process(request: InvocationRequest): Promise<InvocationOutcome> {
+    const sKey = request.sessionKey ?? request.entity.id;
+
+    // Track this session as busy so the TaskMaster runtime:event handler can
+    // tell whether a completion-note injection should kick off an autonomous
+    // follow-up turn (session idle) or piggyback on the active loop.
+    this.activeSessions.add(sKey);
+    try {
+      return await this.processInner(request, sKey);
+    } finally {
+      this.activeSessions.delete(sKey);
+    }
+  }
+
+  private async processInner(request: InvocationRequest, sKey: string): Promise<InvocationOutcome> {
     const { entity, channel, content, coaFingerprint } = request;
-    const sKey = request.sessionKey ?? entity.id;
 
     // -----------------------------------------------------------------------
     // Step 3: /human command check (processed in ALL states)
@@ -393,6 +503,39 @@ export class AgentInvoker extends EventEmitter {
       };
     }
 
+    const sanitizedText = typeof sanitized.content === "string" ? sanitized.content : "";
+    const requestType = classifyRequestType(sanitizedText, request.projectContext);
+    // Decide whether tools will be offered on the upcoming LLM call. The same
+    // decision is reused at the API call site (line ~647) and threaded into
+    // the system prompt so the assembler can drop the full tool list when
+    // it would be unused — the model otherwise sees ~1.5–2.5k tokens of
+    // tools it cannot actually call.
+    const willOfferTools = shouldOfferTools(sanitizedText, requestType) && availableTools.length > 0;
+
+    // Iterative-work mode — when the project opts in via
+    // `iterativeWork.enabled: true`, hot-load agi/prompts/iterative-work.md so
+    // Aion participates in the tynn workflow on this turn. Read at use time
+    // (per `feedback_hot_config`); errors are swallowed so a missing prompt
+    // file never breaks invocation.
+    let iterativeWorkPrompt: string | undefined;
+    if (
+      requestType === "project" &&
+      request.projectContext !== undefined &&
+      this.deps.projectConfigManager !== undefined
+    ) {
+      const projectConfig = this.deps.projectConfigManager.read(request.projectContext);
+      if (projectConfig?.iterativeWork?.enabled === true) {
+        try {
+          const { readFileSync } = await import("node:fs");
+          const { resolve: resolvePath } = await import("node:path");
+          iterativeWorkPrompt = readFileSync(
+            resolvePath(process.cwd(), "prompts/iterative-work.md"),
+            "utf-8",
+          );
+        } catch { /* iterative-work.md missing — proceed without injection */ }
+      }
+    }
+
     const promptCtx: SystemPromptContext = {
       entity: entityCtx,
       coaFingerprint,
@@ -409,9 +552,14 @@ export class AgentInvoker extends EventEmitter {
       ownerName: this.deps.ownerConfig?.displayName,
       isOwner: request.isOwner,
       projectPath: request.projectContext,
+      requestType,
+      costMode: this.deps.getCostMode?.(),
+      toolsAvailable: willOfferTools,
+      iterativeWorkPrompt,
     };
 
-    let systemPrompt = assembleSystemPrompt(promptCtx);
+    const { prompt: baseSystemPrompt, breakdown: promptBreakdown } = assembleSystemPromptWithBreakdown(promptCtx);
+    let systemPrompt = baseSystemPrompt;
 
     // BuilderChat mode: prepend the builder system prompt
     if (request.builderMode) {
@@ -552,19 +700,40 @@ export class AgentInvoker extends EventEmitter {
         return { role: msg.role, content: msg.content };
       });
 
-      const thinkingConfig = { type: "enabled" as const, budget_tokens: 10_000 };
+      // Reuse the willOfferTools decision computed before prompt assembly so
+      // the prompt and the API call agree on whether tools are active. We
+      // re-AND with `providerTools.length > 0` as a defensive guard — these
+      // are derived from the same state/tier as `availableTools` so the
+      // result should already match.
+      const useTools = willOfferTools && providerTools.length > 0;
 
       // Accumulate token usage across all API calls in this invocation
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
 
-      let result = await this.apiClient.invoke({
-        system: systemPrompt,
-        messages: apiMessages,
-        tools: providerTools.length > 0 ? providerTools : undefined,
-        entityId: entity.id,
-        thinking: thinkingConfig,
-      });
+      let result: Awaited<ReturnType<typeof this.apiClient.invoke>>;
+      try {
+        result = await this.apiClient.invoke({
+          system: systemPrompt,
+          messages: apiMessages,
+          tools: useTools ? providerTools : undefined,
+          entityId: entity.id,
+        });
+      } catch (firstErr) {
+        // Retry once on connection errors (Ollama idle unload, transient failures)
+        const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+        if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed") || msg.includes("connection")) {
+          await new Promise((r) => setTimeout(r, 2_000));
+          result = await this.apiClient.invoke({
+            system: systemPrompt,
+            messages: apiMessages,
+            tools: useTools ? providerTools : undefined,
+            entityId: entity.id,
+          });
+        } else {
+          throw firstErr;
+        }
+      }
       totalInputTokens += result.usage.inputTokens;
       totalOutputTokens += result.usage.outputTokens;
 
@@ -646,6 +815,8 @@ export class AgentInvoker extends EventEmitter {
             entity,
             coaFingerprint,
             state,
+            sKey,
+            request.chatSessionId,
           );
           toolsUsed.push(toolCall.name);
 
@@ -704,7 +875,7 @@ export class AgentInvoker extends EventEmitter {
             messages: accumulatedMessages,
             tools: providerTools.length > 0 ? providerTools : undefined,
             entityId: entity.id,
-            thinking: thinkingConfig,
+            
           },
           assistantContent: prevContentBlocks,
           toolResults,
@@ -761,7 +932,7 @@ export class AgentInvoker extends EventEmitter {
           messages: accumulatedMessages,
           tools: providerTools.length > 0 ? providerTools : undefined,
           entityId: entity.id,
-          thinking: thinkingConfig,
+          
         });
         totalInputTokens += result.usage.inputTokens;
         totalOutputTokens += result.usage.outputTokens;
@@ -818,7 +989,7 @@ export class AgentInvoker extends EventEmitter {
           messages: accumulatedMessages,
           tools: providerTools.length > 0 ? providerTools : undefined,
           entityId: entity.id,
-          thinking: thinkingConfig,
+          
         });
         totalInputTokens += result.usage.inputTokens;
         totalOutputTokens += result.usage.outputTokens;
@@ -853,7 +1024,7 @@ export class AgentInvoker extends EventEmitter {
           for (let i = 0; i < result.toolCalls.length; i++) {
             const toolCall = result.toolCalls[i]!;
             this.emit("tool_start", { sessionKey: sKey, toolName: toolCall.name, toolIndex: i, loopIteration: loopCount, toolInput: sanitizeToolInput(toolCall.input ?? {}) });
-            const execResult = await this.executeToolSafe(toolCall, entity, coaFingerprint, state);
+            const execResult = await this.executeToolSafe(toolCall, entity, coaFingerprint, state, sKey, request.chatSessionId);
             toolsUsed.push(toolCall.name);
             // Merge result data into detail for tools that return structured output
             let acDetail = extractToolDetail(toolCall.name, toolCall.input ?? {});
@@ -880,7 +1051,7 @@ export class AgentInvoker extends EventEmitter {
 
           const prevContentBlocks = result.contentBlocks;
           result = await this.apiClient.continueWithToolResults({
-            original: { system: systemPrompt, messages: accumulatedMessages, tools: providerTools.length > 0 ? providerTools : undefined, entityId: entity.id, thinking: thinkingConfig },
+            original: { system: systemPrompt, messages: accumulatedMessages, tools: providerTools.length > 0 ? providerTools : undefined, entityId: entity.id,  },
             assistantContent: prevContentBlocks,
             toolResults,
           });
@@ -913,7 +1084,7 @@ export class AgentInvoker extends EventEmitter {
       // -----------------------------------------------------------------------
       // Step 8: COA log: message_out
       // -----------------------------------------------------------------------
-      const outboundFingerprint = this.deps.coaLogger.log({
+      const outboundFingerprint = await this.deps.coaLogger.log({
         resourceId: this.deps.resourceId,
         entityId: entity.id,
         entityAlias: entity.coaAlias,
@@ -975,6 +1146,21 @@ export class AgentInvoker extends EventEmitter {
         coaFingerprint: outboundFingerprint,
       });
 
+      const historyTokens = history.tokenEstimate;
+      const enrichedRoutingMeta = result.routingMeta
+        ? {
+            ...result.routingMeta,
+            requestType: promptCtx.requestType,
+            classifierUsed: "heuristic" as const,
+            contextLayers: deriveContextLayers(promptCtx.requestType ?? "chat"),
+            tokenBreakdown: {
+              ...promptBreakdown,
+              history: historyTokens,
+              response: totalOutputTokens,
+            },
+          }
+        : undefined;
+
       return {
         type: "response",
         text: cleanedText,
@@ -986,16 +1172,56 @@ export class AgentInvoker extends EventEmitter {
         usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
         toolCount: toolsUsed.length,
         loopCount,
+        routingMeta: enrichedRoutingMeta,
       };
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isBillingError =
+        errMsg.includes("credit balance") ||
+        errMsg.includes("insufficient_quota") ||
+        errMsg.includes("exceeded your current quota");
+      const isAuthError =
+        errMsg.includes("401") ||
+        errMsg.includes("invalid_x_api_key");
+
       this.emit("invocation_error", {
         entityId: entity.id,
-        error: err instanceof Error ? err.message : String(err),
+        error: errMsg,
       });
+
+      if (isBillingError) {
+        return {
+          type: "response",
+          text: "Your API credit balance is too low. Please add credits at your provider's billing page, or switch to a different provider in Settings > Providers.",
+          toolsUsed: [],
+          coaFingerprint: "",
+          taskmasterEmissions: [],
+          model: "unknown",
+          provider: "unknown",
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolCount: 0,
+          loopCount: 0,
+        };
+      }
+
+      if (isAuthError) {
+        return {
+          type: "response",
+          text: "API authentication failed. Please check your API key in Settings > Providers.",
+          toolsUsed: [],
+          coaFingerprint: "",
+          taskmasterEmissions: [],
+          model: "unknown",
+          provider: "unknown",
+          usage: { inputTokens: 0, outputTokens: 0 },
+          toolCount: 0,
+          loopCount: 0,
+        };
+      }
 
       return {
         type: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: errMsg,
       };
     }
   }
@@ -1009,6 +1235,8 @@ export class AgentInvoker extends EventEmitter {
     entity: Entity,
     coaChainBase: string,
     state: GatewayState,
+    sessionKey?: string,
+    chatSessionId?: string,
   ): Promise<ToolExecutionResult> {
     try {
       return await this.deps.toolRegistry.execute(
@@ -1022,6 +1250,8 @@ export class AgentInvoker extends EventEmitter {
           coaChainBase,
           resourceId: this.deps.resourceId,
           nodeId: this.deps.nodeId,
+          sessionKey,
+          chatSessionId,
         },
       );
     } catch (err) {

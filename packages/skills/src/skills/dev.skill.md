@@ -56,7 +56,7 @@ You are operating in developer mode with access to workspace tools. Use these to
 - Runner: vitest
 - Test files: `*.test.ts` co-located with source
 - Run all tests: `pnpm test`
-- Run single package: `pnpm --filter @aionima/gateway-core test`
+- Run single package: `pnpm --filter @agi/gateway-core test`
 
 **Type checking:**
 - After edits always validate: `npx tsc --noEmit`

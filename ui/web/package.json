@@ -1,5 +1,5 @@
 {
-  "name": "@aionima/web-ui",
+  "name": "@agi/web-ui",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "devDependencies": {
-    "@aionima/gateway-core": "workspace:*",
+    "@agi/gateway-core": "workspace:*",
     "@types/ws": "^8.5.14",
     "ws": "^8.18.1"
   }

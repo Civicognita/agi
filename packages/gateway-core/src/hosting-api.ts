@@ -719,7 +719,7 @@ export function registerHostingRoutes(
 
     return reply
       .header("Content-Type", "application/x-pem-file")
-      .header("Content-Disposition", "attachment; filename=\"aionima-ca.crt\"")
+      .header("Content-Disposition", "attachment; filename=\"agi-ca.crt\"")
       .send(cert);
   });
 

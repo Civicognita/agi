@@ -2,7 +2,7 @@
  * defineTool — chainable builder for AgentToolDefinition.
  */
 
-import type { AgentToolDefinition, AgentToolHandler } from "@aionima/plugins";
+import type { AgentToolDefinition, AgentToolHandler } from "@agi/plugins";
 
 class ToolBuilder {
   private def: Partial<AgentToolDefinition>;

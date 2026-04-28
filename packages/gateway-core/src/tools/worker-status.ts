@@ -1,30 +1,71 @@
 /**
- * worker_status tool — read worker job status from .dispatch/jobs/ directory.
+ * taskmaster_status tool — read TaskMaster job status from a project's
+ * dispatch dir, merged with live-state overlay so Aion sees the same
+ * status the Work Queue UI sees (dispatch files are write-once; progress
+ * lives in ~/.agi/state/taskmaster.json).
  *
- * Requires state ONLINE, tier unverified (read-only).
+ * Reads from `~/.agi/{projectSlug}/dispatch/jobs/` so Aion only sees jobs
+ * belonging to the project it's contextualized on. Tier-permissive (any
+ * tier, read-only).
  */
 import { readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
+import { dispatchJobsDir, loadLiveJobOverlay, mergeJobStatus } from "../dispatch-paths.js";
 
 export interface WorkerStatusConfig {
-  workspaceRoot: string;
-  botsDir?: string;
+  /** Override the dispatch base dir. Tests use this; production leaves it unset. */
+  dispatchDirOverride?: string;
+  /** Override the state dir (defaults to ~/.agi/state). Tests use this. */
+  stateDir?: string;
+}
+
+interface DispatchJobFile {
+  id: string;
+  status: "pending" | "running" | "checkpoint" | "complete" | "failed";
+  handoffs?: Array<{ question: string; askedAt: string }>;
+  [key: string]: unknown;
+}
+
+/** Layer the live overlay onto the raw dispatch record. Also exposes
+ *  startedAt/completedAt/error so Aion can reason about job timing. */
+function applyOverlay(
+  job: DispatchJobFile,
+  overlay: Map<string, ReturnType<typeof loadLiveJobOverlay> extends Map<string, infer V> ? V : never>,
+): DispatchJobFile {
+  const live = overlay.get(job.id);
+  const status = mergeJobStatus(job, live);
+  return {
+    ...job,
+    status,
+    ...(live?.startedAt !== undefined ? { startedAt: live.startedAt } : {}),
+    ...(live?.completedAt !== undefined ? { completedAt: live.completedAt } : {}),
+    ...(live?.error !== undefined ? { error: live.error } : {}),
+  };
 }
 
 export function createWorkerStatusHandler(
   config: WorkerStatusConfig,
 ): ToolHandler {
   return async (input: Record<string, unknown>): Promise<string> => {
+    const projectPath = String(input.projectPath ?? "").trim();
+    if (projectPath.length === 0) {
+      return JSON.stringify({
+        error: "projectPath is required — pass the absolute path of the project whose jobs to list (visible in your Project Context section).",
+      });
+    }
+
     const jobId = input.jobId !== undefined ? String(input.jobId).trim() : undefined;
-    const jobsDir = resolve(config.botsDir ?? join(config.workspaceRoot, ".dispatch"), "jobs");
+    const jobsDir = config.dispatchDirOverride !== undefined
+      ? join(config.dispatchDirOverride, "jobs")
+      : dispatchJobsDir(projectPath);
+    const overlay = loadLiveJobOverlay(config.stateDir);
 
     if (jobId !== undefined && jobId.length > 0) {
-      // Single job lookup
       const jobFile = join(jobsDir, `${jobId}.json`);
       try {
         const raw = readFileSync(jobFile, "utf-8");
-        const job = JSON.parse(raw) as unknown;
+        const job = applyOverlay(JSON.parse(raw) as DispatchJobFile, overlay);
         return JSON.stringify({ exitCode: 0, job });
       } catch (err) {
         const isNotFound =
@@ -39,7 +80,6 @@ export function createWorkerStatusHandler(
       }
     }
 
-    // List all jobs
     let files: string[];
     try {
       files = readdirSync(jobsDir).filter((f) => f.endsWith(".json"));
@@ -56,11 +96,11 @@ export function createWorkerStatusHandler(
       });
     }
 
-    const jobs: unknown[] = [];
+    const jobs: DispatchJobFile[] = [];
     for (const file of files.sort()) {
       try {
         const raw = readFileSync(join(jobsDir, file), "utf-8");
-        jobs.push(JSON.parse(raw) as unknown);
+        jobs.push(applyOverlay(JSON.parse(raw) as DispatchJobFile, overlay));
       } catch {
         // Skip unreadable job files
       }
@@ -71,22 +111,28 @@ export function createWorkerStatusHandler(
 }
 
 export const WORKER_STATUS_MANIFEST = {
-  name: "worker_status",
+  name: "taskmaster_status",
   description:
-    "Check worker job status from .dispatch/jobs/. " +
+    "Check TaskMaster job status for the current project. " +
     "If jobId is provided, returns details for that job. " +
-    "Otherwise lists all jobs and their statuses.",
-  requiresState: ["ONLINE" as const],
+    "Otherwise lists all jobs for the project. Scoped to the projectPath — " +
+    "never returns jobs from other projects.",
+  requiresState: [],
   requiresTier: ["unverified" as const, "verified" as const, "sealed" as const],
 };
 
 export const WORKER_STATUS_INPUT_SCHEMA = {
   type: "object",
   properties: {
+    projectPath: {
+      type: "string",
+      description:
+        "Absolute path of the project whose jobs to list. Read from your Project Context section. Required.",
+    },
     jobId: {
       type: "string",
-      description: "Optional job ID to look up. If omitted, lists all jobs.",
+      description: "Optional job ID to look up. If omitted, lists all jobs for the project.",
     },
   },
-  required: [] as string[],
+  required: ["projectPath"],
 };

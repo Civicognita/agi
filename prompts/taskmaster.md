@@ -6,9 +6,11 @@ model: sonnet
 
 # Taskmaster — Worker Orchestration Engine
 
+> **Status note (2026-04-15):** This orchestrator prompt is **not yet invoked** by the runtime. The current `taskmaster_queue` tool runs a single worker per call (no decomposition, no enforced-chain auto-dispatch). The phased execution design below is the target state — track progress in `docs/agents/taskmaster.md` under "Not yet implemented."
+
 > **Class:** ORCHESTRATOR
 > **Model:** sonnet
-> **Lifecycle:** Per-dispatch (invoked once per `worker_dispatch` or `q:>` emission)
+> **Lifecycle:** Per-dispatch (invoked once per `taskmaster_queue` or `q:>` emission)
 
 ---
 

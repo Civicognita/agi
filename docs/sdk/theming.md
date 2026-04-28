@@ -24,7 +24,7 @@ The dashboard uses **CSS custom properties** (variables) for all colors. When a 
 ## Creating a Theme Plugin
 
 ```typescript
-import { createPlugin, defineTheme } from "@aionima/sdk";
+import { createPlugin, defineTheme } from "@agi/sdk";
 
 export default createPlugin({
   async activate(api) {
@@ -315,7 +315,7 @@ Run with: `pnpm test:e2e:ui`
 ### Using the Mock API
 
 ```typescript
-import { testActivate } from "@aionima/sdk/testing";
+import { testActivate } from "@agi/sdk/testing";
 import * as plugin from "./index.js";
 
 const regs = await testActivate(plugin);

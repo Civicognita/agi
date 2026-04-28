@@ -2,7 +2,7 @@
  * defineWorkflow — chainable builder for WorkflowDefinition.
  */
 
-import type { WorkflowDefinition, WorkflowStep } from "@aionima/plugins";
+import type { WorkflowDefinition, WorkflowStep } from "@agi/plugins";
 
 class WorkflowBuilder {
   private def: Partial<WorkflowDefinition> & { steps: WorkflowStep[] };

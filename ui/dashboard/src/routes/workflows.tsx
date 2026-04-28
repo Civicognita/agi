@@ -22,12 +22,14 @@ import {
 } from "@/components/prompt-catalog.js";
 import type { PromptEntry } from "@/components/prompt-catalog.js";
 import { useRootContext } from "./root.js";
-import { useHFHardwareProfile } from "../hooks.js";
+import { useHFHardwareProfile, useRouterStatus } from "../hooks.js";
 
 export default function WorkflowsPage() {
   const { theme, configHook } = useRootContext();
   const [editorPath, setEditorPath] = useState<string | null>(null);
   const [workerEntries, setWorkerEntries] = useState<PromptEntry[]>(WORKER_ENTRIES);
+  const routerStatus = useRouterStatus();
+  const routerData = routerStatus.data ?? null;
 
   // Fetch dynamic worker catalog from API, fall back to static catalog
   useEffect(() => {
@@ -63,10 +65,24 @@ export default function WorkflowsPage() {
         </TabsList>
 
         <TabsContent value="topology">
+          {routerData && (
+            <div className="flex items-center gap-3 mb-3 px-1">
+              <span className="text-[11px] font-semibold text-muted-foreground">Router:</span>
+              <Badge variant="outline" className="text-[10px] uppercase">{routerData.costMode}</Badge>
+              <span className="text-[10px] text-muted-foreground">|</span>
+              {routerData.providers.map((p) => (
+                <div key={p.provider} className="flex items-center gap-1">
+                  <div className={`w-1.5 h-1.5 rounded-full ${p.healthy ? "bg-green-500" : "bg-red-500"}`} />
+                  <span className="text-[10px] text-muted-foreground">{p.provider}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <WorkflowGraph
             theme={theme}
             config={configHook.data}
             onSaveConfig={configHook.save}
+            routerStatus={routerData ? { costMode: routerData.costMode, escalation: configHook.data?.agent?.router?.escalation ?? false, providers: routerData.providers } : undefined}
           />
         </TabsContent>
 
@@ -158,11 +174,11 @@ const HF_WORKFLOW_CARDS: WorkflowCard[] = [
   },
   {
     title: "Run Local LLM",
-    description: "Chat with a locally-running language model. Uses llama.cpp for fast CPU/GPU inference.",
+    description: "Chat with a locally-running language model. Supports all model formats via the transformers runtime.",
     badge: "Language Model",
-    note: "Requires llama.cpp runtime image (ghcr.io/ggerganov/llama.cpp:server). GGUF format models only.",
+    note: "Requires the transformers-server container image. Supports safetensors, GGUF, and other formats.",
     steps: [
-      { label: "Install a GGUF model (text-generation pipeline)" },
+      { label: "Install a text-generation model from HF Models" },
       { label: "Start the model container" },
       { label: "Use via the agent or call the /api/hf/inference/{id}/chat endpoint" },
     ],

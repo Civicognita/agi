@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ChannelRegistry } from "./channel-registry.js";
 import type { ChannelHealth } from "./channel-registry.js";
-import type { AionimaChannelPlugin } from "@aionima/channel-sdk";
+import type { AionimaChannelPlugin } from "@agi/channel-sdk";
 
 // ---------------------------------------------------------------------------
 // Helpers

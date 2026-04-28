@@ -1,5 +1,5 @@
 {
-  "name": "@aionima/coa-chain",
+  "name": "@agi/coa-chain",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,10 +7,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^11.0.0"
+    "@agi/db-schema": "workspace:*",
+    "drizzle-orm": "^0.38.3"
   },
-  "devDependencies": {
-    "@aionima/entity-model": "workspace:*",
-    "@types/better-sqlite3": "^7.6.0"
-  }
+  "devDependencies": {}
 }

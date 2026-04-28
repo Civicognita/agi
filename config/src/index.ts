@@ -25,6 +25,8 @@ export {
   type FederationConfig,
   type IdentityConfig,
   type HfConfig,
+  type RouterConfig,
+  type CostMode,
 } from "./schema.js";
 
 export {
@@ -34,12 +36,14 @@ export {
   ProjectCategorySchema,
   ProjectAiModelBindingSchema,
   ProjectAiDatasetBindingSchema,
+  ProjectIterativeWorkSchema,
   type ProjectConfig,
   type ProjectHosting,
   type ProjectStackInstance,
   type ProjectCategory,
   type ProjectAiModelBinding,
   type ProjectAiDatasetBinding,
+  type ProjectIterativeWork,
 } from "./project-schema.js";
 
 export {

@@ -29,16 +29,18 @@ import type { DashboardApi } from "./dashboard-api.js";
 import type { DashboardQueries } from "./dashboard-queries.js";
 import { GatewayWebSocketServer } from "./ws-server.js";
 import { handlePlanRequest } from "./plan-api.js";
-import type { EntityStore, CommsLog, NotificationStore } from "@aionima/entity-model";
+import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model";
+import { fetchOwnerToken, injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
-import { appRouter, type AppContext } from "@aionima/trpc-api";
+import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";
+import { appRouter, type AppContext } from "@agi/trpc-api";
 import type { HostingManager } from "./hosting-manager.js";
 import { registerHostingRoutes } from "./hosting-api.js";
 import { registerStackRoutes } from "./stack-api.js";
 import { safemodeState } from "./safemode-state.js";
-import type { RouteHandler, RuntimeDefinition, RuntimeInstaller, HostingExtension } from "@aionima/plugins";
-import { categoryToProvides } from "@aionima/plugins";
+import type { RouteHandler, RuntimeDefinition, RuntimeInstaller, HostingExtension } from "@agi/plugins";
+import { categoryToProvides } from "@agi/plugins";
 import type { ServiceManager } from "./service-manager.js";
 import { registerCommsRoutes } from "./comms-api.js";
 import { registerModelsRoutes } from "./models-api.js";
@@ -55,11 +57,22 @@ import { registerIdentityRoutes } from "./identity-api.js";
 import { registerSubUserRoutes } from "./sub-user-api.js";
 import type { VisitorAuthManager } from "./visitor-auth.js";
 import type { FederationNode } from "./federation-node.js";
-import type { COAChainLogger } from "@aionima/coa-chain";
+import type { COAChainLogger } from "@agi/coa-chain";
 import type { DashboardSession } from "./dashboard-user-store.js";
 import type { FederationRouter as FedRouter } from "./federation-router.js";
 import { appendUpgradeLog, clearUpgradeLog, getUpgradeLog } from "./upgrade-log.js";
 import { projectConfigPath } from "./project-config-path.js";
+import type { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
+import { cadenceToStaggeredCron } from "./iterative-work/cron.js";
+import {
+  ITERATIVE_WORK_ELIGIBLE_CATEGORIES,
+  TESTING_UX_ELIGIBLE_CATEGORIES,
+  cadenceOptionsFor,
+  type IterativeWorkCadence,
+  type ProjectCategory,
+} from "./project-types.js";
+import type { ProjectConfigManager } from "./project-config-manager.js";
+import type { PmProvider } from "@agi/sdk";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -94,6 +107,21 @@ function resolveWidgetEndpoints(widgets: PanelWidgetAny[], pluginId: string): Pa
 }
 
 
+function resolveIdUrl(configPath?: string): string {
+  if (!configPath) return "https://id.ai.on";
+  try {
+    const cfg = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+    const idSvc = cfg.idService as { local?: { enabled?: boolean; subdomain?: string } } | undefined;
+    const hosting = cfg.hosting as { baseDomain?: string } | undefined;
+    if (idSvc?.local?.enabled) {
+      const sub = idSvc.local.subdomain ?? "id";
+      const domain = hosting?.baseDomain ?? "ai.on";
+      return `https://${sub}.${domain}`;
+    }
+  } catch { /* fallback */ }
+  return "https://id.ai.on";
+}
+
 export interface RuntimeStateDeps {
   auth: GatewayAuth;
   stateMachine: GatewayStateMachine;
@@ -124,6 +152,10 @@ export interface RuntimeStateDeps {
   workspaceRoot?: string;
   /** Path to the aionima source repo (enables update detection + upgrade). */
   selfRepoPath?: string;
+  /** Running AGI version (from root package.json). Surfaced on /health so
+   *  the dashboard's version-mismatch detector can force-reload stale tabs
+   *  after an upgrade. */
+  agiVersion?: string;
   /** Optional logger instance. */
   logger?: Logger;
   /**
@@ -133,6 +165,18 @@ export interface RuntimeStateDeps {
   dashboardQueries?: DashboardQueries;
   /** HostingManager — manages Caddy + Node.js process lifecycle for hosted projects. */
   hostingManager?: HostingManager;
+  /** IterativeWorkScheduler — exposes status + receives config changes for the
+   *  iterative-work API surface. Optional: when omitted, the iterative-work
+   *  routes return 503. */
+  iterativeWorkScheduler?: IterativeWorkScheduler;
+  /** ProjectConfigManager — used by the iterative-work PUT route to validate +
+   *  persist iterativeWork config changes through the same atomic-write path
+   *  as other project metadata mutations. */
+  projectConfigManager?: ProjectConfigManager;
+  /** PmProvider — used by the iterative-work progress route (t439) to
+   *  surface Race-to-DONE counts. Optional: when missing or when the
+   *  provider doesn't expose getActiveFocusProgress, the route returns 503. */
+  pmProvider?: PmProvider;
   /** Path to the MApp marketplace directory (for catalog browsing). */
   mappMarketplaceDir?: string;
   /** CommsLog — persistent message log for comms page. */
@@ -171,6 +215,7 @@ export interface RuntimeStateDeps {
     getServices(): { id: string; name: string; description: string; containerImage: string; defaultPort: number }[];
     getPluginProvides(pluginId: string): string[];
     getAllPluginProvides(): Map<string, string[]>;
+    getProviders(): { pluginId: string; provider: { id: string; name: string; description?: string; requiresApiKey: boolean; fields?: { id: string; label: string; type: string; placeholder?: string; description?: string; options?: { value: string; label: string }[]; min?: number; max?: number; step?: number }[]; checkBalance?: (config: Record<string, unknown>) => Promise<number | null> } }[];
   };
   /** All discovered plugins (including disabled ones) — for showing full list in GET /api/plugins. */
   discoveredPlugins?: {
@@ -198,20 +243,20 @@ export interface RuntimeStateDeps {
   /** SecretsManager — TPM2-sealed credential store. */
   secrets?: SecretsManager;
   /** UsageStore — LLM token usage and cost tracking. */
-  usageStore?: { getSummary(days?: number): unknown; getByProject(days?: number): unknown; getHistory(days?: number, bucket?: string): unknown };
+  usageStore?: { getSummary(days?: number): unknown; getByProject(days?: number): unknown; getByProjectAndSource(days?: number): unknown; getHistory(days?: number, bucket?: string): unknown };
 
   /** MAppRegistry — standalone MApp registry (NOT plugin-based). */
   mappRegistry?: import("./mapp-registry.js").MAppRegistry;
   /** InferenceGateway — used for model-inference workflow steps. */
-  inferenceGateway?: import("@aionima/model-runtime").InferenceGateway;
+  inferenceGateway?: import("@agi/model-runtime").InferenceGateway;
   /** ModelStore — used for model dependency status checks. */
-  modelStore?: import("@aionima/model-runtime").ModelStore;
+  modelStore?: import("@agi/model-runtime").ModelStore;
   mappMarketplaceManager?: {
     getSources(): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number }[];
     addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number };
     removeSource(id: number): void;
     syncSource(id: number): Promise<{ ok: boolean; error?: string; mappCount?: number }>;
-    getCatalogWithInstalled(): Array<{ id: string; sourceId: number; author: string; description?: string; category?: string; version?: string; sourcePath: string; installed: boolean }>;
+    getCatalogWithInstalled(): Promise<Array<{ id: string; sourceId: number; author: string; description?: string; category?: string; version?: string; sourcePath: string; installed: boolean }>>;
     install(appId: string, sourceId: number): Promise<{ ok: boolean; error?: string }>;
     uninstall(appId: string, author: string): { ok: boolean; error?: string };
     syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
@@ -225,26 +270,28 @@ export interface RuntimeStateDeps {
   webhookSecret?: string;
   /** PrimeLoader instance — enables GET /api/prime/status + POST /api/prime/switch. */
   primeLoader?: import("./prime-loader.js").PrimeLoader;
+  /** AionMicroManager — enables agentic merge conflict resolution for core forks. */
+  aionMicro?: import("./aion-micro-manager.js").AionMicroManager;
   /** Resolved prime directory path. */
   primeDir?: string;
-  /** Resolved bots directory path. */
-  botsDir?: string;
   /** MarketplaceManager — Claude Code-compatible plugin marketplace. */
   marketplaceManager?: {
     getSources(): { id: number; ref: string; sourceType: string; name: string; description?: string; lastSyncedAt: string | null; pluginCount: number }[];
     addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string };
     removeSource(id: number): void;
     syncSource(id: number): Promise<{ ok: boolean; error?: string; pluginCount?: number }>;
-    searchCatalog(params: { q?: string; type?: string; category?: string; provides?: string }): { name: string; sourceId: number; installed: boolean; description?: string; type?: string; version?: string; author?: { name: string; email?: string }; category?: string; provides?: string[]; depends?: string[]; tags?: string[]; keywords?: string[]; license?: string; homepage?: string; source: unknown }[];
+    searchCatalog(params: { q?: string; type?: string; category?: string; provides?: string }): Promise<{ name: string; sourceId: number; installed: boolean; description?: string; type?: string; version?: string; author?: { name: string; email?: string }; category?: string; provides?: string[]; depends?: string[]; tags?: string[]; keywords?: string[]; license?: string; homepage?: string; source: unknown }[]>;
     install(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; missingDeps?: string[]; autoInstalled?: string[] }>;
-    uninstall(pluginName: string, force?: boolean): { ok: boolean; error?: string; dependents?: string[] };
-    getInstalled(): { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }[];
-    checkUpdates(): { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[];
-    syncLocalCatalog(marketplaceDir: string): { ok: boolean; error?: string; pluginCount?: number };
+    uninstall(pluginName: string, force?: boolean): Promise<{ ok: boolean; error?: string; dependents?: string[] }>;
+    getInstalled(): Promise<{ name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }[]>;
+    checkUpdates(): Promise<{ updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[]; newInMarketplace: { pluginName: string; version: string; description: string }[] }>;
+    syncLocalCatalog(marketplaceDir: string): Promise<{ ok: boolean; error?: string; pluginCount?: number }>;
     reconcileInstalled(marketplaceDir: string): Promise<{ updated: string[]; errors: string[] }>;
     syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
-    backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): void;
+    backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): Promise<void>;
     updatePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }>;
+    rebuildPlugin(name: string): Promise<void>;
+    rebuildAll(): Promise<{ rebuilt: string[]; failed: string[] }>;
   };
   /** Callback to hot-load a newly installed plugin (discover, activate, bridge). */
   onPluginInstalled?: (installPath: string) => Promise<{ loaded: boolean; pluginId?: string; error?: string }>;
@@ -455,7 +502,7 @@ function parseGitStatus(raw: string): {
  *   2. GET /api/trpc/* — tRPC router (dashboard, config, system procedures)
  *   3. GET /api/dashboard/* — legacy routes via DashboardApi (backward compat)
  *   4. GET /api/channels — auth-gated channel list
- *   5. /api/plans/*, /api/projects/*, /api/bots/*, /api/reload, /api/config, /api/system/*
+ *   5. /api/plans/*, /api/projects/*, /api/taskmaster/*, /api/reload, /api/config, /api/system/*
  *   6. Static dashboard files (SPA with fallback to index.html)
  *   7. 404 fallback
  */
@@ -631,6 +678,11 @@ export async function createGatewayRuntimeState(
       uptime: process.uptime(),
       channels: channelRegistry.getRunningChannels().length,
       sessions: agentSessionManager.count,
+      // Client-side version-mismatch detector polls `/health` and
+      // reloads the page when this drifts from the build-time
+      // __AGI_VERSION__. Stops users from hitting TypeError crashes
+      // from stale JS after an `agi upgrade` restart.
+      version: deps.agiVersion ?? "unknown",
     });
   });
 
@@ -672,6 +724,43 @@ export async function createGatewayRuntimeState(
 
   fastify.get("/api/gateway/state", async () => {
     return { state: stateMachine.getState(), capabilities: stateMachine.getCapabilities() };
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/system/runtime-mode — dashboard consults this to gate features
+  // that don't make sense in test-VM (nested test-vm spawn, contributing
+  // toggle, upgrade buttons, aionima-collection tiles). s118 redesign t122.
+  //
+  // Mode resolution order:
+  //   1. AIONIMA_RUNTIME_MODE env var — explicit override
+  //   2. AIONIMA_TEST_VM=1 env var → "test-vm"
+  //   3. hostname matches /^agi-test\b/ → "test-vm"
+  //   4. NODE_ENV === "development" → "dev"
+  //   5. otherwise → "production"
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/system/runtime-mode", async (request, reply) => {
+    if (!isPrivateNetwork(getClientIp(request.raw))) {
+      return reply.code(403).send({ error: "System API only allowed from private network" });
+    }
+    const explicit = process.env["AIONIMA_RUNTIME_MODE"];
+    let mode: "production" | "test-vm" | "dev";
+    if (explicit === "production" || explicit === "test-vm" || explicit === "dev") {
+      mode = explicit;
+    } else if (process.env["AIONIMA_TEST_VM"] === "1") {
+      mode = "test-vm";
+    } else {
+      let hostname = "";
+      try { hostname = execFileSync("hostname", [], { encoding: "utf-8", stdio: "pipe" }).trim(); } catch { /* ignore */ }
+      if (/^agi-test\b/i.test(hostname)) {
+        mode = "test-vm";
+      } else if (process.env["NODE_ENV"] === "development") {
+        mode = "dev";
+      } else {
+        mode = "production";
+      }
+    }
+    return reply.send({ mode });
   });
 
   // -----------------------------------------------------------------------
@@ -742,7 +831,6 @@ export async function createGatewayRuntimeState(
 
     const idLocal = idCfg?.local as Record<string, unknown> | undefined;
     if (idLocal?.enabled) {
-      const port = (idLocal.port as number) ?? 3200;
       const hostingCfg = deps.configPath ? (() => {
         try {
           const raw = JSON.parse(readFileSync(deps.configPath!, "utf-8")) as Record<string, unknown>;
@@ -753,10 +841,16 @@ export async function createGatewayRuntimeState(
       const subdomain = (idLocal.subdomain as string) ?? "id";
       const url = `https://${subdomain}.${baseDomain}`;
 
+      // Story #100 — ID no longer binds a host port; reach it through
+      // Caddy at its public URL instead of `localhost:${port}`. The
+      // gateway already trusts the Caddy root CA (installed by
+      // hosting-setup.sh), so the internal cert validates. This path
+      // works regardless of whether the gateway is on-host or later
+      // moves into a container on aionima.
       try {
         const [healthRes, funcRes] = await Promise.all([
-          fetch(`http://localhost:${port}/health`, { signal: AbortSignal.timeout(3000) }).catch(() => null),
-          fetch(`http://localhost:${port}/federation/whoami`, { signal: AbortSignal.timeout(3000) }).catch(() => null),
+          fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) }).catch(() => null),
+          fetch(`${url}/federation/whoami`, { signal: AbortSignal.timeout(3000) }).catch(() => null),
         ]);
 
         if (healthRes?.ok && funcRes?.ok) {
@@ -828,7 +922,7 @@ export async function createGatewayRuntimeState(
   // -----------------------------------------------------------------------
 
   fastify.get("/api/dashboard/*", async (request, reply) => {
-    const handled = dashboardApi.handle(request.raw, reply.raw);
+    const handled = await dashboardApi.handle(request.raw, reply.raw);
     if (!handled) {
       await reply.code(404).send({ error: "Not Found" });
     }
@@ -839,7 +933,7 @@ export async function createGatewayRuntimeState(
     method: ["POST", "PUT", "DELETE", "PATCH"],
     url: "/api/dashboard/*",
     handler: async (request, reply) => {
-      dashboardApi.handle(request.raw, reply.raw);
+      await dashboardApi.handle(request.raw, reply.raw);
     },
   });
 
@@ -947,7 +1041,14 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Projects API only allowed from private network" });
     }
     const projectDirs = deps.workspaceProjects ?? [];
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; description?: string; magicApps?: string[] }[] = [];
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string }[] = [];
+
+    // Expand top-level entries into (fullPath, coreCollection, coreForkSlug) triples.
+    // A directory that contains a `collection.json` with
+    // `type: "aionima-collection"` is treated as a group — we skip the
+    // parent and list its children as projects, each flagged with the
+    // collection slug so the dashboard can render them as "core".
+    const expanded: Array<{ fullPath: string; name: string; coreCollection?: string; coreForkSlug?: string }> = [];
     for (const dir of projectDirs) {
       try {
         const entries = readdirSync(dir, { withFileTypes: true });
@@ -955,36 +1056,94 @@ export async function createGatewayRuntimeState(
           if (!entry.isDirectory()) continue;
           if (entry.name.startsWith(".")) continue;
           const fullPath = resolvePath(dir, entry.name);
-          const hasGit = existsSync(join(fullPath, ".git"));
-          let tynnToken: string | null = null;
-          let metaType: string | null = null;
-          let metaCategory: string | null = null;
-          let metaDescription: string | undefined;
-          let metaMagicApps: string[] | undefined;
-          const metaPath = projectConfigPath(fullPath);
-          if (existsSync(metaPath)) {
+
+          // Detect Aionima core collection: walk into it, skip the parent.
+          const collectionPath = join(fullPath, "collection.json");
+          if (existsSync(collectionPath)) {
             try {
-              const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string; magicApps?: string[] };
-              tynnToken = meta.tynnToken ?? null;
-              metaType = meta.type ?? null;
-              metaCategory = meta.category ?? null;
-              metaDescription = meta.description;
-              metaMagicApps = meta.magicApps;
-            } catch { /* ignore malformed metadata */ }
+              const collection = JSON.parse(readFileSync(collectionPath, "utf-8")) as { type?: string };
+              if (collection.type === "aionima-collection") {
+                const childEntries = readdirSync(fullPath, { withFileTypes: true });
+                for (const ce of childEntries) {
+                  if (!ce.isDirectory() || ce.name.startsWith(".")) continue;
+                  expanded.push({
+                    fullPath: resolvePath(fullPath, ce.name),
+                    name: ce.name,
+                    coreCollection: "aionima",
+                    coreForkSlug: ce.name,
+                  });
+                }
+                continue;
+              }
+            } catch { /* malformed collection.json — fall through and treat as normal project */ }
           }
-          const hosting = deps.hostingManager
-            ? deps.hostingManager.getProjectHostingInfo(fullPath)
-            : { enabled: false, type: "static", hostname: entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), docRoot: null, startCommand: null, port: null, mode: "production" as const, internalPort: null, status: "unconfigured" as const, url: null };
-          const detectedHosting = deps.hostingManager
-            ? deps.hostingManager.detectProjectDefaults(fullPath)
-            : undefined;
-          const projectTypeId = metaType ?? detectedHosting?.projectType ?? "static";
-          const registry = deps.hostingManager?.getProjectTypeRegistry();
-          const typeDef = registry?.get(projectTypeId);
-          const projectType = typeDef ? { id: typeDef.id, label: typeDef.label, category: typeDef.category, hostable: typeDef.hostable, hasCode: typeDef.hasCode, tools: typeDef.tools } : undefined;
-          const category = metaCategory ?? projectType?.category ?? null;
-          projects.push({ name: entry.name, path: fullPath, hasGit, tynnToken, hosting, detectedHosting, projectType, category: category ?? undefined, description: metaDescription, magicApps: metaMagicApps });
+
+          // Skip underscore-prefixed (reserved for collections we haven't
+          // identified). Matches hosting-manager's skip rule.
+          if (entry.name.startsWith("_")) continue;
+
+          expanded.push({ fullPath, name: entry.name });
         }
+      } catch { /* directory may not exist */ }
+    }
+
+    for (const { fullPath, name: entryName, coreCollection, coreForkSlug } of expanded) {
+      try {
+        const hasGit = existsSync(join(fullPath, ".git"));
+        let tynnToken: string | null = null;
+        let metaType: string | null = null;
+        let metaCategory: string | null = null;
+        let metaDescription: string | undefined;
+        let metaMagicApps: string[] | undefined;
+        const metaPath = projectConfigPath(fullPath);
+        if (existsSync(metaPath)) {
+          try {
+            const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string; magicApps?: string[] };
+            tynnToken = meta.tynnToken ?? null;
+            metaType = meta.type ?? null;
+            metaCategory = meta.category ?? null;
+            metaDescription = meta.description;
+            metaMagicApps = meta.magicApps;
+          } catch { /* ignore malformed metadata */ }
+        }
+        const hosting = deps.hostingManager
+          ? deps.hostingManager.getProjectHostingInfo(fullPath)
+          : { enabled: false, type: "static", hostname: entryName.toLowerCase().replace(/[^a-z0-9]+/g, "-"), docRoot: null, startCommand: null, port: null, mode: "production" as const, internalPort: null, status: "unconfigured" as const, url: null };
+        const detectedHosting = deps.hostingManager
+          ? deps.hostingManager.detectProjectDefaults(fullPath)
+          : undefined;
+        const projectTypeId = metaType ?? detectedHosting?.projectType ?? "static";
+        const registry = deps.hostingManager?.getProjectTypeRegistry();
+        const typeDef = registry?.get(projectTypeId);
+        const projectType = typeDef ? { id: typeDef.id, label: typeDef.label, category: typeDef.category, hostable: typeDef.hostable, hasCode: typeDef.hasCode, iterativeWorkEligible: typeDef.iterativeWorkEligible ?? false, testingUxEligible: typeDef.testingUxEligible ?? false, tools: typeDef.tools } : undefined;
+        const category = metaCategory ?? projectType?.category ?? null;
+        // Effective iterativeWorkEligible — true when the EFFECTIVE category
+        // (project.json override or projectType default) is in the eligible
+        // set. Mirrors the PUT /api/projects/iterative-work/config gate so
+        // the dashboard tab visibility matches what the API will accept.
+        const iterativeWorkEligible = category !== null
+          ? ITERATIVE_WORK_ELIGIBLE_CATEGORIES.has(category as ProjectCategory)
+          : (projectType?.iterativeWorkEligible ?? false);
+        // Effective testingUxEligible (s121) — only app/web categories.
+        const testingUxEligible = category !== null
+          ? TESTING_UX_ELIGIBLE_CATEGORIES.has(category as ProjectCategory)
+          : (projectType?.testingUxEligible ?? false);
+        projects.push({
+          name: entryName,
+          path: fullPath,
+          hasGit,
+          tynnToken,
+          hosting,
+          detectedHosting,
+          projectType,
+          category: category ?? undefined,
+          iterativeWorkEligible,
+          testingUxEligible,
+          description: metaDescription,
+          magicApps: metaMagicApps,
+          coreCollection,
+          coreForkSlug,
+        });
       } catch { /* directory may not exist */ }
     }
     return reply.send(projects);
@@ -1189,7 +1348,7 @@ export async function createGatewayRuntimeState(
 
     // Check hosting metadata
     let hostingEnabled = false;
-    const hostingMetaPath = join(targetPath, ".aionima-hosting.json");
+    const hostingMetaPath = join(targetPath, ".agi-hosting.json");
     if (existsSync(hostingMetaPath)) {
       try {
         const hostingMeta = JSON.parse(readFileSync(hostingMetaPath, "utf-8")) as { enabled?: boolean };
@@ -1293,6 +1452,237 @@ export async function createGatewayRuntimeState(
       return reply.send({ path: targetPath, branch, remote, status, commits });
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/projects/iterative-work/status — per-project IW snapshot
+  // (private network only)
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/projects/iterative-work/status", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    if (!deps.iterativeWorkScheduler) {
+      return reply.code(503).send({ error: "Iterative-work scheduler not available" });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    if (!pathParam) {
+      return reply.code(400).send({ error: "path query parameter is required" });
+    }
+    const targetPath = resolvePath(pathParam);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const status = deps.iterativeWorkScheduler.getStatus(targetPath);
+    if (status === null) {
+      return reply.code(404).send({ error: "Project has no project.json — create one first" });
+    }
+    return reply.send(status);
+  });
+
+  // -----------------------------------------------------------------------
+  // PUT /api/projects/iterative-work/config — set per-project IW config
+  // (private network only). Body: { path: string, iterativeWork: { enabled?,
+  //   cadence?, cron? } }.
+  //
+  // s118 redesign 2026-04-27 (t442 D1): when `cadence` is provided, the cron
+  // expression is auto-computed via cadenceToStaggeredCron(cadence, path) so
+  // project loops with the same cadence don't all fire at the same minute.
+  // Legacy callers still passing `cron` directly continue working.
+  //
+  // Eligibility: if project.category is set + not in
+  // ITERATIVE_WORK_ELIGIBLE_CATEGORIES, return 403. If cadence is set and
+  // not in cadenceOptionsFor(category), return 400.
+  //
+  // Hot-reloads — the scheduler picks up the new config on its next tick.
+  // -----------------------------------------------------------------------
+
+  fastify.put("/api/projects/iterative-work/config", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    if (!deps.projectConfigManager) {
+      return reply.code(503).send({ error: "Project config manager not available" });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const body = request.body as {
+      path?: string;
+      iterativeWork?: { enabled?: boolean; cadence?: string; cron?: string };
+    } | undefined;
+    if (!body?.path) {
+      return reply.code(400).send({ error: "body.path is required" });
+    }
+    if (body.iterativeWork === undefined) {
+      return reply.code(400).send({ error: "body.iterativeWork is required" });
+    }
+    const targetPath = resolvePath(body.path);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    if (!existsSync(projectConfigPath(targetPath))) {
+      return reply.code(404).send({ error: "Project has no project.json — create one first" });
+    }
+
+    // Read current config to access category for eligibility + cadence validation.
+    let projectCategory: ProjectCategory | undefined;
+    try {
+      const cur = await deps.projectConfigManager.read(targetPath);
+      projectCategory = cur?.category;
+    } catch {
+      /* fall through — read errors get caught by update() below */
+    }
+
+    // Eligibility gate (D4): non-eligible categories return 403.
+    if (projectCategory !== undefined && !ITERATIVE_WORK_ELIGIBLE_CATEGORIES.has(projectCategory)) {
+      return reply.code(403).send({
+        error: `Project category "${projectCategory}" is not eligible for iterative-work. Eligible: web/app/ops/administration.`,
+      });
+    }
+
+    // Build the persisted iterativeWork object.
+    const iw: { enabled?: boolean; cadence?: IterativeWorkCadence; cron?: string } = {};
+    if (body.iterativeWork.enabled !== undefined) iw.enabled = body.iterativeWork.enabled;
+
+    if (body.iterativeWork.cadence !== undefined) {
+      const cadence = body.iterativeWork.cadence as IterativeWorkCadence;
+      // Validate cadence is in the type-aware option set for this category.
+      if (projectCategory !== undefined) {
+        const opts = cadenceOptionsFor(projectCategory);
+        if (!opts.includes(cadence)) {
+          return reply.code(400).send({
+            error: `Cadence "${cadence}" is not available for category "${projectCategory}". Allowed: ${opts.join(", ")}.`,
+          });
+        }
+      }
+      iw.cadence = cadence;
+      // Auto-compute the staggered cron (D3).
+      iw.cron = cadenceToStaggeredCron(cadence, targetPath);
+    } else if (body.iterativeWork.cron !== undefined) {
+      // Legacy passthrough — caller manually set a cron expression. Preserve.
+      iw.cron = body.iterativeWork.cron;
+    }
+
+    try {
+      const updated = await deps.projectConfigManager.update(targetPath, { iterativeWork: iw });
+      return reply.send({ ok: true, iterativeWork: updated.iterativeWork ?? null });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/projects/iterative-work/log — per-project iteration log
+  // (private network only). Query: ?path=<projectPath>&limit=<N>.
+  // Returns the in-memory ring buffer (most-recent-first). Buffer is reset
+  // on gateway restart — persistence lands when storage choice is owner-blessed.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/projects/iterative-work/log", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    if (!deps.iterativeWorkScheduler) {
+      return reply.code(503).send({ error: "Iterative-work scheduler not available" });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    if (!pathParam) {
+      return reply.code(400).send({ error: "path query parameter is required" });
+    }
+    const targetPath = resolvePath(pathParam);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const rawLimit = query["limit"];
+    let limit: number | undefined;
+    if (rawLimit !== undefined) {
+      const parsed = Number.parseInt(rawLimit, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        return reply.code(400).send({ error: "limit must be a positive integer" });
+      }
+      limit = parsed;
+    }
+    const entries = deps.iterativeWorkScheduler.getLog(targetPath, limit);
+    return reply.send({ entries });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/projects/iterative-work/progress — Race-to-DONE task counts
+  // (private network only). Path arg currently unused — PmProvider's notion
+  // of "active focus" is project-agnostic (the provider's bound project).
+  // The arg stays in the signature so future per-project PmProviders can
+  // route on it without an API contract change. Returns the same shape
+  // as PmProvider.getActiveFocusProgress for direct consumption by the
+  // dashboard's two-tone bar.
+  // -----------------------------------------------------------------------
+
+  // -----------------------------------------------------------------------
+  // GET /api/loop/progress — system-wide progress bar feed (s120 t453).
+  //
+  // Single source of truth for both terminal statusline (via file mirror)
+  // and chat UI (via API). Returns { finished, qa, total, scopeLabel }
+  // for the iterative-work loop's TARGET version. When PmProvider doesn't
+  // expose getActiveFocusProgress, returns 503 — consumers gracefully hide.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/loop/progress", async (request, reply) => {
+    if (!isPrivateNetwork(getClientIp(request.raw))) {
+      return reply.code(403).send({ error: "Loop API only allowed from private network" });
+    }
+    if (!deps.pmProvider || deps.pmProvider.getActiveFocusProgress === undefined) {
+      return reply.code(503).send({ error: "PM provider doesn't expose progress" });
+    }
+    try {
+      const progress = await deps.pmProvider.getActiveFocusProgress();
+      return reply.send({
+        finished: progress.doneTasks,
+        qa: progress.qaTasks,
+        total: progress.totalTasks,
+        scopeLabel: "v0.4.0",
+      });
+    } catch (err) {
+      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get("/api/projects/iterative-work/progress", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    if (!deps.pmProvider) {
+      return reply.code(503).send({ error: "PM provider not available" });
+    }
+    if (deps.pmProvider.getActiveFocusProgress === undefined) {
+      return reply.code(503).send({ error: `PM provider "${deps.pmProvider.providerId}" doesn't expose progress` });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    if (!pathParam) {
+      return reply.code(400).send({ error: "path query parameter is required" });
+    }
+    const targetPath = resolvePath(pathParam);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    try {
+      const progress = await deps.pmProvider.getActiveFocusProgress();
+      return reply.send(progress);
+    } catch (err) {
+      return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
@@ -1453,6 +1843,7 @@ export async function createGatewayRuntimeState(
           return reply.code(400).send({ error: "message is required" });
         }
         // Sanitize: strip control chars except newlines/tabs
+        // oxlint-disable-next-line no-control-regex
         const sanitized = body.message.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
         const result = await execGitDashboard(["commit", "-m", sanitized], targetPath);
         return reply.send(result);
@@ -1728,7 +2119,7 @@ export async function createGatewayRuntimeState(
           try {
             const raw = readFileSync(deps.configPath, "utf-8");
             const cfg = JSON.parse(raw) as Record<string, unknown>;
-            cfg.prime = { ...(cfg.prime as Record<string, unknown> ?? {}), source: newSource, branch: newBranch };
+            cfg.prime = { ...(cfg.prime as Record<string, unknown>), source: newSource, branch: newBranch };
             writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
           } catch { /* config write failed — non-fatal */ }
         }
@@ -1747,10 +2138,9 @@ export async function createGatewayRuntimeState(
   {
     const workspaceRoot = deps.workspaceRoot ?? process.cwd();
     const primeDir = deps.primeDir ?? join(workspaceRoot, ".aionima");
-    const botsDir = deps.botsDir ?? join(workspaceRoot, ".bots");
-    const idDir = ((deps.config as Record<string, unknown> | undefined)?.idService as Record<string, string> | undefined)?.dir ?? "/opt/aionima-local-id";
-    const marketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.marketplace as Record<string, string> | undefined)?.dir ?? "/opt/aionima-marketplace";
-    const mappMarketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.mappMarketplace as Record<string, string> | undefined)?.dir ?? "/opt/aionima-mapp-marketplace";
+    const idDir = ((deps.config as Record<string, unknown> | undefined)?.idService as Record<string, string> | undefined)?.dir ?? "/opt/agi-local-id";
+    const marketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.marketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-marketplace";
+    const mappMarketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.mappMarketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-mapp-marketplace";
 
     const getRemote = (cwd: string): string => {
       try {
@@ -1787,20 +2177,245 @@ export async function createGatewayRuntimeState(
 
       const primeEntries = deps.primeLoader !== undefined ? deps.primeLoader.index() : 0;
 
-      // Check if GitHub is authenticated (OWNER_GITHUB_TOKEN exists)
-      const ghToken = deps.secrets?.readSecret("OWNER_GITHUB_TOKEN") ?? process.env["OWNER_GITHUB_TOKEN"] ?? "";
-      const githubAuthenticated = ghToken.length > 0;
+      // Query Local-ID for the GitHub connection's state so the dashboard
+      // can surface account label + token expiry (tynn #254). Local-ID
+      // lives at id.ai.on and is the canonical identity store; AGI just
+      // reads through it.
+      let githubAuthenticated = false;
+      let githubAccount: string | null = null;
+      let githubTokenExpiresAt: string | null = null;
+      let githubTokenScopes: string | null = null;
+      try {
+        const idUrl = resolveIdUrl(deps.configPath);
+        const idRes = await fetch(`${idUrl}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
+        if (idRes.ok) {
+          const conns = (await idRes.json()) as Array<{
+            provider: string;
+            accountLabel?: string | null;
+            tokenExpiresAt?: string | null;
+            scopes?: string | null;
+          }>;
+          const gh = conns.find((c) => c.provider === "github");
+          if (gh) {
+            githubAuthenticated = true;
+            githubAccount = gh.accountLabel ?? null;
+            githubTokenExpiresAt = gh.tokenExpiresAt ?? null;
+            githubTokenScopes = gh.scopes ?? null;
+          }
+        }
+      } catch { /* ID service unreachable — treat as not authenticated */ }
+
+      // When Dev Mode is ON, the authoritative clones live under the
+      // `_aionima/` core collection in the projects workspace — NOT the
+      // /opt/* deploy dirs. Prefer the collection paths if they exist,
+      // fall back to the legacy dirs. Without this preference, the
+      // Repository Status panel rendered stale Civicognita remotes from
+      // the /opt/ deploys even after Dev Mode successfully cloned the
+      // forks into _aionima/.
+      const projectsRoot = (deps.workspaceProjects ?? [])[0];
+      const coreCollectionRoot = projectsRoot ? join(projectsRoot, "_aionima") : null;
+      const pickDir = (legacy: string, slug: string): string => {
+        if (enabled && coreCollectionRoot) {
+          const corePath = join(coreCollectionRoot, slug);
+          if (existsSync(join(corePath, ".git"))) return corePath;
+        }
+        return legacy;
+      };
+
+      const agiDir = pickDir(workspaceRoot, "agi");
+      const effectivePrimeDir = pickDir(primeDir, "prime");
+      const effectiveIdDir = pickDir(idDir, "id");
+      const effectiveMarketplaceDir = pickDir(marketplaceDir, "marketplace");
+      const effectiveMappMarketplaceDir = pickDir(mappMarketplaceDir, "mapp-marketplace");
+
+      // Phase H.2 — origins alignment check. When Dev Mode is enabled,
+      // each /opt/*/.git origin should be pointing at the owner's fork
+      // (via v0.4.66's `ensure_origin_remote` in upgrade.sh). If any
+      // origin is still Civicognita, the one-time migration hasn't run
+      // yet — the dashboard surfaces a yellow callout prompting
+      // `agi upgrade`.
+      let originsAligned = false;
+      const originMisaligned: string[] = [];
+      if (enabled) {
+        try {
+          const cfg = deps.configPath
+            ? JSON.parse(readFileSync(deps.configPath, "utf-8")) as {
+                dev?: { agiRepo?: string; primeRepo?: string; idRepo?: string };
+              }
+            : {};
+          const probes: Array<[string, string, string | undefined]> = [
+            ["agi", "/opt/agi", cfg.dev?.agiRepo],
+            ["prime", "/opt/agi-prime", cfg.dev?.primeRepo],
+            ["id", "/opt/agi-local-id", cfg.dev?.idRepo],
+          ];
+          let aligned = true;
+          for (const [name, dir, expected] of probes) {
+            if (!existsSync(join(dir, ".git"))) {
+              // Dir missing — not misalignment, skip.
+              continue;
+            }
+            if (!expected) {
+              aligned = false;
+              originMisaligned.push(`${name}: no dev.${name}Repo in config`);
+              continue;
+            }
+            const current = getRemote(dir);
+            if (current !== expected) {
+              aligned = false;
+              originMisaligned.push(`${name}: ${current ?? "(unknown)"} (expected ${expected})`);
+            }
+          }
+          originsAligned = aligned;
+        } catch {
+          // Can't read config — leave originsAligned false but don't
+          // populate misalignment list (we don't know the expected).
+          originsAligned = false;
+        }
+      }
 
       return reply.send({
         enabled,
         githubAuthenticated,
-        agi: { remote: getRemote(workspaceRoot) },
-        prime: { remote: getRemote(primeDir), branch: getBranch(primeDir), entries: primeEntries },
-        bots: { remote: getRemote(botsDir), branch: getBranch(botsDir) },
-        id: { remote: getRemote(idDir), branch: getBranch(idDir) },
-        marketplace: { remote: getRemote(marketplaceDir), branch: getBranch(marketplaceDir) },
-        mappMarketplace: { remote: getRemote(mappMarketplaceDir), branch: getBranch(mappMarketplaceDir) },
+        githubAccount,
+        githubTokenExpiresAt,
+        githubTokenScopes,
+        originsAligned,
+        originMisaligned: originMisaligned.length > 0 ? originMisaligned : undefined,
+        agi: { remote: getRemote(agiDir), branch: getBranch(agiDir) },
+        prime: { remote: getRemote(effectivePrimeDir), branch: getBranch(effectivePrimeDir), entries: primeEntries },
+        id: { remote: getRemote(effectiveIdDir), branch: getBranch(effectiveIdDir) },
+        marketplace: { remote: getRemote(effectiveMarketplaceDir), branch: getBranch(effectiveMarketplaceDir) },
+        mappMarketplace: { remote: getRemote(effectiveMappMarketplaceDir), branch: getBranch(effectiveMappMarketplaceDir) },
       });
+    });
+
+    // -----------------------------------------------------------------------
+    // GET /api/dev/core-forks/status — ahead/behind per core fork (tynn #276)
+    // -----------------------------------------------------------------------
+    //
+    // Surfaces each of the five `_aionima/<slug>/` clones with its
+    // ahead/behind count vs `upstream/<branch>`. Branch defaults to
+    // `gateway.updateChannel` — whatever release channel the owner's
+    // gateway subscribes to. Fetch is bounded per-repo so one slow
+    // network link can't stall the whole listing.
+
+    fastify.get("/api/dev/core-forks/status", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+
+      const projectsRoot = (deps.workspaceProjects ?? [])[0];
+      if (!projectsRoot) {
+        return reply.send({ forks: [], error: "no workspace projects dir configured" });
+      }
+      const coreCollectionDir = join(projectsRoot, "_aionima");
+      if (!existsSync(coreCollectionDir)) {
+        return reply.send({ forks: [], error: "core-fork collection not provisioned — enable Dev Mode" });
+      }
+
+      let branch = "main";
+      if (deps.configPath !== undefined) {
+        try {
+          const cfg = JSON.parse(readFileSync(deps.configPath, "utf-8")) as {
+            gateway?: { updateChannel?: string };
+          };
+          if (typeof cfg.gateway?.updateChannel === "string" && cfg.gateway.updateChannel.length > 0) {
+            branch = cfg.gateway.updateChannel;
+          }
+        } catch { /* fall back to main */ }
+      }
+
+      const { getAllCoreForkStatuses } = await import("./dev-mode-merge.js");
+      const forks = await getAllCoreForkStatuses(coreCollectionDir, branch);
+      return reply.send({ forks, branch });
+    });
+
+    // -----------------------------------------------------------------------
+    // POST /api/dev/core-forks/:slug/merge — merge upstream into owner fork
+    // -----------------------------------------------------------------------
+    //
+    // Body `{ strategy?: "ff-only" | "agentic" }`, default `"ff-only"`.
+    // Attempts ff → merge-commit → (if strategy === "agentic") aion-micro
+    // assisted resolution. Successful merges get pushed to origin so the
+    // next `agi upgrade` picks them up; failures return a structured
+    // conflict response that the dashboard can render.
+
+    fastify.post("/api/dev/core-forks/:slug/merge", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+
+      const { slug } = request.params as { slug: string };
+      const { CORE_REPOS: CORE_REPO_SPECS } = await import("./dev-mode-forks.js");
+      const spec = CORE_REPO_SPECS.find((s) => s.slug === slug);
+      if (!spec) {
+        return reply.code(404).send({ error: `unknown core fork: ${slug}` });
+      }
+
+      const projectsRoot = (deps.workspaceProjects ?? [])[0];
+      if (!projectsRoot) {
+        return reply.code(500).send({ error: "no workspace projects dir configured" });
+      }
+      const targetDir = join(projectsRoot, "_aionima", spec.slug);
+      if (!existsSync(targetDir)) {
+        return reply.code(404).send({ error: `fork not provisioned — toggle Dev Mode to provision ${slug}` });
+      }
+
+      let branch = "main";
+      if (deps.configPath !== undefined) {
+        try {
+          const cfg = JSON.parse(readFileSync(deps.configPath, "utf-8")) as {
+            gateway?: { updateChannel?: string };
+          };
+          if (typeof cfg.gateway?.updateChannel === "string" && cfg.gateway.updateChannel.length > 0) {
+            branch = cfg.gateway.updateChannel;
+          }
+        } catch { /* fall back to main */ }
+      }
+
+      const body = (request.body as { strategy?: string } | undefined) ?? {};
+      const strategy: "ff-only" | "agentic" = body.strategy === "agentic" ? "agentic" : "ff-only";
+
+      const { attemptMerge } = await import("./dev-mode-merge.js");
+      const mergeLog = createComponentLogger(deps.logger ?? undefined, "dev-merge");
+      const result = await attemptMerge({
+        targetDir,
+        spec,
+        branch,
+        strategy,
+        aionMicro: strategy === "agentic" ? deps.aionMicro : undefined,
+        log: mergeLog,
+      });
+
+      // Notify the dashboard to re-poll status after a successful merge.
+      if (result.ok) {
+        try {
+          deps.wsRef?.server?.broadcast("dashboard_event", {
+            type: "dev:core-fork-updated" as const,
+            data: {
+              slug: spec.slug,
+              newSha: result.newSha,
+              agentic: result.agentic,
+            },
+          });
+        } catch { /* best-effort */ }
+      }
+
+      return reply.send(result);
     });
 
     // -----------------------------------------------------------------------
@@ -1827,14 +2442,72 @@ export async function createGatewayRuntimeState(
 
       const targetEnabled = body.enabled;
 
-      // Enabling dev mode requires GitHub authentication (for creating owner forks)
+      // Enabling dev mode requires GitHub authentication (checked via Local-ID)
+      let ownerGithubLogin: string | null = null;
       if (targetEnabled) {
-        const ghToken = deps.secrets?.readSecret("OWNER_GITHUB_TOKEN") ?? process.env["OWNER_GITHUB_TOKEN"] ?? "";
-        if (ghToken.length === 0) {
+        let hasGithub = false;
+        try {
+          const idUrl = resolveIdUrl(deps.configPath);
+          const idRes = await fetch(`${idUrl}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
+          if (idRes.ok) {
+            const conns = await idRes.json() as Array<{ provider: string; accountLabel?: string | null }>;
+            const gh = conns.find((c) => c.provider === "github");
+            if (gh) {
+              hasGithub = true;
+              ownerGithubLogin = gh.accountLabel?.trim() ?? null;
+            }
+          }
+        } catch { /* ID service unreachable */ }
+        if (!hasGithub) {
           return reply.code(403).send({
             error: "GitHub authentication required. Connect your GitHub account via Aionima ID before enabling dev mode.",
             reason: "github_not_authenticated",
           });
+        }
+      }
+
+      // When flipping ON, resolve (or fork) each of the canonical repos
+      // into the owner's GitHub account FIRST, then persist the fork
+      // URLs into `dev.*Repo`. Previously the toggle wrote `{enabled:
+      // true}` with nothing else and the clone loop silently no-op'd
+      // because the URLs were undefined. Owners reasonably expect the
+      // toggle to provision everything.
+      const forkFailures: Array<{ slug: string; reason: string }> = [];
+      let devRepoPatch: Record<string, string> = {};
+      let forkNotes: Array<{ slug: string; created: boolean; upstream: string }> = [];
+      if (targetEnabled) {
+        // Grab the owner's token from Local-ID so we can hit the GitHub API.
+        const tokenInfo = await fetchOwnerToken({ provider: "github", role: "owner" });
+        if (!tokenInfo) {
+          return reply.code(502).send({
+            error: "GitHub token unavailable from Local-ID. Reconnect your GitHub account at https://id.ai.on/dashboard.",
+            reason: "token_missing",
+          });
+        }
+        if (!ownerGithubLogin) {
+          return reply.code(502).send({
+            error: "Local-ID didn't return a GitHub login. Reconnect your GitHub account.",
+            reason: "github_login_missing",
+          });
+        }
+        const { resolveOrCreateForks } = await import("./dev-mode-forks.js");
+        const forks = await resolveOrCreateForks(tokenInfo.accessToken, ownerGithubLogin);
+        for (const f of forks) {
+          if (f.cloneUrl) {
+            // Map slug → dev.*Repo key
+            const keyMap: Record<string, string> = {
+              "agi": "agiRepo",
+              "prime": "primeRepo",
+              "id": "idRepo",
+              "marketplace": "marketplaceRepo",
+              "mapp-marketplace": "mappMarketplaceRepo",
+            };
+            const cfgKey = keyMap[f.slug];
+            if (cfgKey) devRepoPatch[cfgKey] = f.cloneUrl;
+            forkNotes.push({ slug: f.slug, created: f.created, upstream: f.upstreamUrl });
+          } else {
+            forkFailures.push({ slug: f.slug, reason: f.error ?? "fork resolution failed" });
+          }
         }
       }
 
@@ -1844,7 +2517,13 @@ export async function createGatewayRuntimeState(
         if (deps.configPath !== undefined) {
           const raw = readFileSync(deps.configPath, "utf-8");
           const cfg = JSON.parse(raw) as Record<string, unknown>;
-          cfg.dev = { ...(cfg.dev as Record<string, unknown> ?? {}), enabled: targetEnabled };
+          // Persist fork URLs alongside `enabled` so the clone loop + the
+          // auto-sync task resolver (dev-mode-sources.ts) see them.
+          cfg.dev = {
+            ...(cfg.dev as Record<string, unknown>),
+            enabled: targetEnabled,
+            ...devRepoPatch,
+          };
           // Backward compat — also set agent.devMode
           const agent = (cfg.agent as Record<string, unknown>) ?? {};
           agent.devMode = targetEnabled;
@@ -1852,8 +2531,12 @@ export async function createGatewayRuntimeState(
           writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
         }
 
-        // Provision fork repos into workspace when enabling dev mode
+        // Provision fork repos into workspace when enabling dev mode.
+        // Track failures per-repo so the switch response can surface them
+        // to the dashboard (tynn #252) instead of silently dropping the
+        // error into the log.
         const provisionedProjects: string[] = [];
+        const provisionFailures: Array<{ slug: string; reason: string }> = [];
         if (targetEnabled) {
           const projectDir = (deps.workspaceProjects ?? [])[0];
           if (projectDir && existsSync(projectDir)) {
@@ -1865,26 +2548,133 @@ export async function createGatewayRuntimeState(
                 devCfg = (cfgRaw.dev as Record<string, unknown>) ?? {};
               } catch { /* use empty defaults */ }
             }
-            const CORE_REPOS: Array<{ slug: string; name: string; repoKey: string }> = [
-              { slug: "agi", name: "AGI", repoKey: "agiRepo" },
-              { slug: "prime", name: "PRIME", repoKey: "primeRepo" },
-              { slug: "id", name: "ID", repoKey: "idRepo" },
-              { slug: "marketplace", name: "Marketplace", repoKey: "marketplaceRepo" },
-              { slug: "mapp-marketplace", name: "MApp Marketplace", repoKey: "mappMarketplaceRepo" },
-            ];
+            const { CORE_REPOS: CORE_REPO_SPECS, upstreamRemoteUrl: upstreamRemoteUrlFn } = await import("./dev-mode-forks.js");
+            const CORE_REPOS: Array<{ slug: string; name: string; repoKey: string; upstreamUrl: string }> = CORE_REPO_SPECS.map((s) => ({
+              slug: s.slug,
+              name: s.displayName,
+              repoKey: s.configKey,
+              upstreamUrl: upstreamRemoteUrlFn(s),
+            }));
+
+            // Fetch the owner's GitHub token once for all clones — Dev Mode
+            // forks live under wishborn/*, which may be private. HTTPS with
+            // x-access-token injects credentials; unauthenticated fallback
+            // works for public forks but fails with 404 on private ones.
+            const ownerToken = await fetchOwnerToken({ provider: "github", role: "owner" });
+
+            // Core forks live in a special `_aionima/` collection inside
+            // the workspace — NOT scattered next to regular projects. The
+            // `_`-prefix excludes the parent from hosting discovery (see
+            // hosting-manager's readdirSync walker). Each child inherits
+            // the `type: "aionima"` restricted UX so users see only the
+            // Editor + Repository tabs, not full project-config settings.
+            const coreCollectionDir = join(projectDir, "_aionima");
+            if (!existsSync(coreCollectionDir)) {
+              mkdirSync(coreCollectionDir, { recursive: true });
+              // Marker so the dashboard can identify this as "Aionima Core".
+              writeFileSync(
+                join(coreCollectionDir, "collection.json"),
+                JSON.stringify(
+                  {
+                    type: "aionima-collection",
+                    name: "Aionima Core",
+                    description: "Forks of the AGI platform repos — submit contributions as PRs.",
+                    createdAt: new Date().toISOString(),
+                  },
+                  null,
+                  2,
+                ) + "\n",
+                "utf-8",
+              );
+            }
 
             for (const repo of CORE_REPOS) {
               const repoUrl = devCfg[repo.repoKey] as string | undefined;
               if (!repoUrl) continue;
-              const targetDir = join(projectDir, repo.slug);
+              const targetDir = join(coreCollectionDir, repo.slug);
+              const cloneUrl = ownerToken
+                ? injectTokenIntoCloneUrl(repoUrl, ownerToken.accessToken)
+                : repoUrl;
               try {
-                // Clone if directory doesn't exist
+                // Clone if directory doesn't exist. Use execFileSync (no
+                // shell) so the authenticated URL isn't logged / eligible
+                // for accidental shell interpolation.
                 if (!existsSync(targetDir)) {
                   mkdirSync(targetDir, { recursive: true });
-                  execSync(`git clone ${JSON.stringify(repoUrl)} .`, {
+                  execFileSync("git", ["clone", cloneUrl, "."], {
                     cwd: targetDir, stdio: "pipe", timeout: 120_000,
                   });
+                  // SECURITY: the clone URL embedded the OAuth token as
+                  // `https://x-access-token:TOKEN@github.com/...`. git
+                  // persists whatever we clone from as `origin`. Leaving
+                  // the token in `.git/config` means it shows up in any
+                  // `git remote -v` and any API that exposes the remote.
+                  // Rewrite origin to the clean fork URL (no credentials).
+                  // Future fetch/push will use `GIT_ASKPASS`/credential
+                  // helpers, NOT an embedded URL.
+                  try {
+                    execFileSync("git", ["remote", "set-url", "origin", repoUrl], {
+                      cwd: targetDir, stdio: "pipe",
+                    });
+                  } catch {
+                    /* non-fatal — clone succeeded, token stays in origin */
+                  }
+                  // Configure `upstream` remote so the Repository tab can
+                  // compare the fork against the canonical Civicognita repo.
+                  // Without this, `git rev-list upstream/<branch>...HEAD`
+                  // fails and the dashboard has no way to show ahead/behind
+                  // against the release channel.
+                  try {
+                    execFileSync("git", ["remote", "add", "upstream", repo.upstreamUrl], {
+                      cwd: targetDir, stdio: "pipe",
+                    });
+                  } catch {
+                    /* already configured — overwrite below */
+                    try {
+                      execFileSync("git", ["remote", "set-url", "upstream", repo.upstreamUrl], {
+                        cwd: targetDir, stdio: "pipe",
+                      });
+                    } catch { /* ignore */ }
+                  }
                 }
+                // Migrate legacy clones that still have a token-bearing origin
+                // (produced by earlier versions of Dev Mode). Safe no-op if
+                // the URL is already clean.
+                try {
+                  const current = execFileSync("git", ["remote", "get-url", "origin"], {
+                    cwd: targetDir, stdio: "pipe",
+                  }).toString().trim();
+                  if (current.includes("x-access-token:") || /:gh[a-z]_[A-Za-z0-9]+@/.test(current)) {
+                    execFileSync("git", ["remote", "set-url", "origin", repoUrl], {
+                      cwd: targetDir, stdio: "pipe",
+                    });
+                    log.info(`dev: scrubbed token from ${repo.slug} origin URL`);
+                  }
+                } catch { /* ignore */ }
+                // Retrofit `upstream` remote on clones made before this
+                // commit. Newer clones set it inside the if-not-exists
+                // block above; pre-existing clones (the five that landed
+                // in earlier v0.4.x iterations) reach this code path
+                // instead and get the remote added on the next toggle.
+                try {
+                  let hasUpstream = false;
+                  try {
+                    execFileSync("git", ["remote", "get-url", "upstream"], {
+                      cwd: targetDir, stdio: "pipe",
+                    });
+                    hasUpstream = true;
+                  } catch { /* missing — add below */ }
+                  if (hasUpstream) {
+                    execFileSync("git", ["remote", "set-url", "upstream", repo.upstreamUrl], {
+                      cwd: targetDir, stdio: "pipe",
+                    });
+                  } else {
+                    execFileSync("git", ["remote", "add", "upstream", repo.upstreamUrl], {
+                      cwd: targetDir, stdio: "pipe",
+                    });
+                    log.info(`dev: added upstream remote for ${repo.slug}`);
+                  }
+                } catch { /* non-fatal — merge UI will surface the error */ }
                 // Write/update project.json with aionima type
                 const metaPath = projectConfigPath(targetDir);
                 mkdirSync(dirname(metaPath), { recursive: true });
@@ -1900,20 +2690,74 @@ export async function createGatewayRuntimeState(
                 writeFileSync(metaPath, JSON.stringify(meta, null, 2) + "\n", "utf-8");
                 provisionedProjects.push(repo.slug);
               } catch (cloneErr) {
-                log.warn(`dev: failed to provision ${repo.slug}: ${cloneErr instanceof Error ? cloneErr.message : String(cloneErr)}`);
+                const reason = cloneErr instanceof Error ? cloneErr.message : String(cloneErr);
+                log.warn(`dev: failed to provision ${repo.slug}: ${reason}`);
+                provisionFailures.push({ slug: repo.slug, reason });
               }
             }
+          }
+
+          // Provision test.ai.on for Playwright UI testing (best-effort).
+          // Precondition checks (tynn #256) — skip cleanly with a clear
+          // provisionFailure entry rather than silently crashing if
+          // multipass or sudo isn't available.
+          const haveMultipass = (() => {
+            try {
+              execFileSync("which", ["multipass"], { stdio: "pipe", timeout: 3000 });
+              return true;
+            } catch { return false; }
+          })();
+          const haveSudo = (() => {
+            try {
+              execFileSync("sudo", ["-n", "true"], { stdio: "pipe", timeout: 3000 });
+              return true;
+            } catch { return false; }
+          })();
+
+          if (!haveMultipass) {
+            provisionFailures.push({
+              slug: "test-vm",
+              reason: "multipass not installed — run `sudo snap install multipass` to enable test VM provisioning",
+            });
+          } else if (!haveSudo) {
+            provisionFailures.push({
+              slug: "test-vm",
+              reason: "passwordless sudo required for dnsmasq / Caddy setup — grant NOPASSWD in /etc/sudoers.d/ to enable test VM provisioning",
+            });
+          } else try {
+            const vmIpRaw = execSync("multipass info agi-test --format csv 2>/dev/null", { encoding: "utf-8", stdio: "pipe", timeout: 5000 });
+            const vmIpLine = vmIpRaw.trim().split("\n").pop() ?? "";
+            const vmIp = vmIpLine.split(",")[2]?.trim();
+            if (vmIp && vmIp.length > 0) {
+              // Update host dnsmasq
+              execSync(`sudo sed -i '/test\\.ai\\.on/d' /etc/dnsmasq.d/ai-on.conf`, { stdio: "pipe" });
+              execSync(`echo 'address=/test.ai.on/${vmIp}' | sudo tee -a /etc/dnsmasq.d/ai-on.conf`, { stdio: "pipe" });
+              execSync("sudo systemctl restart dnsmasq", { stdio: "pipe", timeout: 10000 });
+
+              // Update VM Caddy — add test.ai.on site
+              const caddySnippet = `\\ntest.ai.on {\\n  tls internal\\n  reverse_proxy localhost:3100\\n}`;
+              execSync(`multipass exec agi-test -- sudo bash -c "grep -q 'test.ai.on' /etc/caddy/Caddyfile || echo -e '${caddySnippet}' >> /etc/caddy/Caddyfile && sudo systemctl restart caddy"`, { stdio: "pipe", timeout: 15000 });
+
+              // Update VM /etc/hosts
+              execSync(`multipass exec agi-test -- sudo bash -c "grep -q 'test.ai.on' /etc/hosts || sudo sed -i 's/ai.on/ai.on test.ai.on/' /etc/hosts"`, { stdio: "pipe", timeout: 5000 });
+
+              log.info("dev: test.ai.on provisioned (VM IP: " + vmIp + ")");
+            }
+          } catch (testVmErr) {
+            const reason = testVmErr instanceof Error ? testVmErr.message : String(testVmErr);
+            log.warn(`dev: test.ai.on provisioning failed — ${reason}`);
+            provisionFailures.push({ slug: "test-vm", reason });
           }
         }
 
         if (deps.coaLogger && deps.entityStore) {
           const ownerEntity = deps.ownerEntityId
-            ? deps.entityStore.getEntity(deps.ownerEntityId)
+            ? await deps.entityStore.getEntity(deps.ownerEntityId)
             : null;
-          const auditEntity = ownerEntity ?? deps.entityStore.resolveOrCreate("system", "$DEV_MODE", "Dev Mode");
+          const auditEntity = ownerEntity ?? await deps.entityStore.resolveOrCreate("system", "$DEV_MODE", "Dev Mode");
           const actor = session?.username ?? "unknown";
           const ref = `dev.mode:${targetEnabled ? "enabled" : "disabled"}:${actor}`;
-          deps.coaLogger.log({
+          void deps.coaLogger.log({
             resourceId: deps.resourceId ?? "$A0",
             entityId: auditEntity.id,
             entityAlias: auditEntity.coaAlias,
@@ -1924,19 +2768,164 @@ export async function createGatewayRuntimeState(
           });
         }
 
+        // Merge fork-resolution failures with clone-provisioning failures
+        // so the UI renders one combined list.
+        const allFailures = [...forkFailures, ...provisionFailures];
+        const failureNote = allFailures.length > 0
+          ? ` ${allFailures.length} item${allFailures.length === 1 ? "" : "s"} failed: ${allFailures.map((f) => f.slug).join(", ")}.`
+          : "";
+        const createdCount = forkNotes.filter((n) => n.created).length;
+        const forkNote = createdCount > 0
+          ? ` Created ${createdCount} new fork${createdCount === 1 ? "" : "s"} on GitHub.`
+          : "";
+
         return reply.send({
           ok: true,
           enabled: targetEnabled,
           provisionedProjects,
+          // `provisionFailures` is always present in the response (possibly
+          // empty) so the dashboard can render a failure list without
+          // branching on undefined.
+          provisionFailures: allFailures,
+          // Per-repo fork outcome — dashboard can render "reused X" vs
+          // "created X" to match the user's expectation.
+          forks: forkNotes,
           note: targetEnabled && provisionedProjects.length > 0
-            ? `Provisioned ${provisionedProjects.length} repos. Restart required for path changes to take effect.`
-            : "Restart required for path changes to take effect",
+            ? `Provisioned ${provisionedProjects.length} repos.${forkNote} Restart required for path changes to take effect.${failureNote}`
+            : `Restart required for path changes to take effect.${forkNote}${failureNote}`,
         });
       } catch (err) {
         return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
       }
     });
   }
+
+  // -----------------------------------------------------------------------
+  // Test VM management (private network only, dev mode)
+  // -----------------------------------------------------------------------
+
+  const testVmScript = join(deps.selfRepoPath ?? "/opt/agi", "scripts", "test-vm.sh");
+  const ALLOWED_VM_COMMANDS = new Set([
+    "create", "destroy", "status", "setup", "provision",
+    "services-setup", "services-start", "services-stop", "services-status",
+    "test", "test-ui", "remount",
+  ]);
+
+  fastify.get("/api/test-vm/status", async (request, reply) => {
+    if (!isPrivateNetwork(getClientIp(request.raw))) {
+      return reply.code(403).send({ error: "Private network only" });
+    }
+    try {
+      const info = execFileSync("bash", [testVmScript, "status"], {
+        stdio: "pipe", timeout: 10_000,
+      }).toString();
+
+      const running = info.includes("Running");
+      const ipMatch = /IPv4:\s+(\S+)/.exec(info);
+      const ip = ipMatch?.[1] ?? null;
+
+      // Test-VM services are reported from inside the VM via
+      // `test-vm.sh services-status`. We surface only what the host
+      // dashboard actually renders: postgres, caddy, agi. The VM's ID
+      // service is VM-internal — it's not probed from the host, and the
+      // dashboard's red/green ID light tracks the HOST's Local-ID
+      // (reported separately via /api/system/connections). Removing the
+      // `id` field here avoids a cross-namespace "red light" when the
+      // host ID is up but the VM ID isn't (tynn #259).
+      let services = { postgres: "unknown", caddy: "unknown", agi: "unknown" };
+      if (running) {
+        try {
+          const svcOut = execFileSync("bash", [testVmScript, "services-status"], {
+            stdio: "pipe", timeout: 15_000,
+          }).toString();
+          services = {
+            postgres: svcOut.includes("PostgreSQL: active") ? "active" : "inactive",
+            caddy: svcOut.includes("Caddy: active") || svcOut.includes("Caddy:      active") ? "active" : "inactive",
+            agi: svcOut.includes("AGI:        running") || svcOut.includes("AGI: running") ? "running" : "stopped",
+          };
+        } catch { /* services-status may fail if services not set up */ }
+      }
+
+      return reply.send({ exists: true, running, ip, services });
+    } catch {
+      return reply.send({ exists: false, running: false, ip: null, services: { postgres: "unknown", caddy: "unknown", agi: "unknown" } });
+    }
+  });
+
+  fastify.post("/api/test-vm/command", async (request, reply) => {
+    if (!isPrivateNetwork(getClientIp(request.raw))) {
+      return reply.code(403).send({ error: "Private network only" });
+    }
+    const body = request.body as { command?: string } | undefined;
+    const command = body?.command;
+    if (!command || !ALLOWED_VM_COMMANDS.has(command)) {
+      return reply.code(400).send({ error: `Invalid command. Allowed: ${[...ALLOWED_VM_COMMANDS].join(", ")}` });
+    }
+
+    const child = spawn("bash", [testVmScript, command], {
+      cwd: deps.selfRepoPath ?? "/opt/agi",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const broadcast = (phase: string, status: string, message: string) => {
+      const data = { phase, status, message, timestamp: new Date().toISOString() };
+      deps.wsRef?.server?.broadcast("dashboard_event", { type: "system:test-vm", data });
+    };
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      for (const line of chunk.toString("utf-8").split("\n").filter(Boolean)) {
+        try {
+          const parsed = JSON.parse(line) as { phase?: string; status?: string; details?: string };
+          if (parsed.phase) {
+            broadcast(parsed.phase, parsed.status ?? "info", parsed.details ?? line);
+            continue;
+          }
+        } catch { /* not JSON */ }
+        broadcast(command, "info", line);
+      }
+    });
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      const text = chunk.toString("utf-8").trim();
+      if (text) broadcast(command, "warn", text);
+    });
+
+    child.on("close", (code) => {
+      if (code === 0) {
+        broadcast(command, "done", `${command} completed`);
+      } else {
+        broadcast(command, "error", `${command} failed (exit code ${String(code)})`);
+      }
+    });
+
+    return reply.send({ ok: true, command });
+  });
+
+  fastify.get("/api/test-vm/test-results", async (request, reply) => {
+    if (!isPrivateNetwork(getClientIp(request.raw))) {
+      return reply.code(403).send({ error: "Private network only" });
+    }
+    try {
+      const reportDir = join(homedir(), ".agi", "playwright", "report");
+      const indexPath = join(reportDir, "index.html");
+      if (!existsSync(indexPath)) {
+        return reply.send({ total: 0, passed: 0, failed: 0, skipped: 0, tests: [] });
+      }
+      const html = readFileSync(indexPath, "utf-8");
+      const passedMatch = /(\d+) passed/.exec(html);
+      const failedMatch = /(\d+) failed/.exec(html);
+      const skippedMatch = /(\d+) skipped/.exec(html);
+      return reply.send({
+        total: Number(passedMatch?.[1] ?? 0) + Number(failedMatch?.[1] ?? 0) + Number(skippedMatch?.[1] ?? 0),
+        passed: Number(passedMatch?.[1] ?? 0),
+        failed: Number(failedMatch?.[1] ?? 0),
+        skipped: Number(skippedMatch?.[1] ?? 0),
+        tests: [],
+      });
+    } catch {
+      return reply.send({ total: 0, passed: 0, failed: 0, skipped: 0, tests: [] });
+    }
+  });
 
   // -----------------------------------------------------------------------
   // GET /api/config — read current config (private network only)
@@ -1953,7 +2942,17 @@ export async function createGatewayRuntimeState(
       }
       try {
         const raw = readFileSync(deps.configPath, "utf-8");
-        const parsed: unknown = JSON.parse(raw);
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        // Redact API keys before sending to the browser — never expose secrets.
+        const providers = parsed.providers as Record<string, Record<string, unknown>> | undefined;
+        if (providers) {
+          for (const name of Object.keys(providers)) {
+            const prov = providers[name];
+            if (prov && typeof prov.apiKey === "string" && prov.apiKey.length > 0) {
+              prov.apiKey = "••••••••";
+            }
+          }
+        }
         return reply.send(parsed);
       } catch (err) {
         return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
@@ -1972,11 +2971,23 @@ export async function createGatewayRuntimeState(
       if (deps.configPath === undefined) {
         return reply.code(404).send({ error: "Not Found" });
       }
-      const parsed = request.body as unknown;
+      const parsed = request.body as Record<string, unknown>;
       if (typeof parsed !== "object" || parsed === null) {
         return reply.code(400).send({ error: "Invalid JSON object" });
       }
       try {
+        // Preserve existing API keys when the browser sends back the redacted placeholder.
+        const existing = JSON.parse(readFileSync(deps.configPath, "utf-8")) as Record<string, unknown>;
+        const incomingProviders = parsed.providers as Record<string, Record<string, unknown>> | undefined;
+        const existingProviders = existing.providers as Record<string, Record<string, unknown>> | undefined;
+        if (incomingProviders && existingProviders) {
+          for (const name of Object.keys(incomingProviders)) {
+            const inc = incomingProviders[name];
+            if (inc && inc.apiKey === "••••••••") {
+              inc.apiKey = existingProviders[name]?.apiKey;
+            }
+          }
+        }
         writeFileSync(deps.configPath, JSON.stringify(parsed, null, 2) + "\n", "utf-8");
         return reply.send({ ok: true, message: "Config saved and applied." });
       } catch (err) {
@@ -2036,13 +3047,19 @@ export async function createGatewayRuntimeState(
     fastify.get("/api/usage/summary", async (request, reply) => {
       if (!isPrivateNetwork(getClientIp(request.raw))) return reply.code(403).send({ error: "Private network only" });
       const days = Number((request.query as { days?: string }).days) || 30;
-      return reply.send(uStore.getSummary(days));
+      return reply.send(await uStore.getSummary(days));
     });
 
     fastify.get("/api/usage/by-project", async (request, reply) => {
       if (!isPrivateNetwork(getClientIp(request.raw))) return reply.code(403).send({ error: "Private network only" });
       const days = Number((request.query as { days?: string }).days) || 30;
-      return reply.send({ projects: uStore.getByProject(days) });
+      return reply.send({ projects: await uStore.getByProject(days) });
+    });
+
+    fastify.get("/api/usage/by-project-source", async (request, reply) => {
+      if (!isPrivateNetwork(getClientIp(request.raw))) return reply.code(403).send({ error: "Private network only" });
+      const days = Number((request.query as { days?: string }).days) || 30;
+      return reply.send({ projects: await uStore.getByProjectAndSource(days) });
     });
 
     fastify.get("/api/usage/history", async (request, reply) => {
@@ -2050,7 +3067,7 @@ export async function createGatewayRuntimeState(
       const query = request.query as { days?: string; bucket?: string };
       const days = Number(query.days) || 30;
       const bucket = query.bucket === "hour" ? "hour" : "day";
-      return reply.send({ history: uStore.getHistory(days, bucket) });
+      return reply.send({ history: await uStore.getHistory(days, bucket) });
     });
   }
 
@@ -2062,7 +3079,7 @@ export async function createGatewayRuntimeState(
   const STATS_HISTORY_MAX = 2880;
   const STATS_RECORD_INTERVAL_MS = 30_000;
   const STATS_FLUSH_INTERVAL_MS = 5 * 60 * 1000; // Write to disk every 5 minutes
-  type StatsPoint = { ts: string; cpu: number; mem: number; disk: number; diskRead: number; diskWrite: number; load1: number; load5: number; load15: number };
+  type StatsPoint = { ts: string; cpu: number; mem: number; disk: number; diskRead: number; diskWrite: number; load1: number; load5: number; load15: number; cpuWatts?: number; gpuWatts?: number };
   const statsHistory: StatsPoint[] = [];
 
   // Stats log file — JSONL format, rotated daily
@@ -2174,6 +3191,23 @@ export async function createGatewayRuntimeState(
   // Seed the initial disk sector reading so the first real sample has a baseline
   getDiskIO();
 
+  // s111 t377 — RAPL CPU power sampler. Returns watts on Linux/Intel hosts
+  // where /sys/class/powercap/intel-rapl:0/* is readable; null elsewhere
+  // (non-Linux, missing kernel module, permission denied). The sampler
+  // needs two consecutive readings to compute a delta, so the first call
+  // returns null. Seed it now so the first real /api/system/stats response
+  // can produce a watt reading.
+  const cpuPowerSampler = new CpuPowerSampler();
+  cpuPowerSampler.sample(); // seed; result discarded
+
+  // s111 t417 — NVIDIA GPU power sampler. Returns watts on hosts with an
+  // NVIDIA driver + nvidia-smi installed; null elsewhere (Intel iGPU, AMD,
+  // ARM, macOS, hardened distros without nvidia-smi). Unlike CpuPowerSampler,
+  // the first sample returns a real value — NVIDIA reports instantaneous
+  // power, no delta needed. Availability is cached after first probe so
+  // non-NVIDIA hosts pay the spawn cost once, not per sample.
+  const gpuPowerSampler = new GpuPowerSampler();
+
   fastify.get("/api/system/stats", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) {
@@ -2214,11 +3248,19 @@ export async function createGatewayRuntimeState(
 
     const diskIO = getDiskIO();
 
+    // s111 t377/t417 — power consumption. cpuWatts is null on non-Linux or
+    // when intel-rapl isn't exposed; gpuWatts is null on non-NVIDIA hosts.
+    // Future fields: npuWatts (vendor-specific), packageTotalWatts (multi-
+    // socket CPU aggregate), multi-GPU aggregation.
+    const cpuWatts = cpuPowerSampler.sample();
+    const gpuWatts = gpuPowerSampler.sample();
+
     return reply.send({
       cpu: { loadAvg, cores, usage: cpuUsage },
       memory: { total: totalMem, free: freeMem, used: usedMem, percent: memPercent },
       disk: { total: diskTotal, used: diskUsed, free: diskFree, percent: diskPercent },
       diskIO,
+      power: { cpuWatts, gpuWatts },
       uptime: os.uptime(),
       hostname: os.hostname(),
     });
@@ -2246,6 +3288,12 @@ export async function createGatewayRuntimeState(
 
       const diskIO = getDiskIO();
 
+      // s111 t377/t417 — power samples. Null on hosts without RAPL/NVIDIA;
+      // the JSONL parser already tolerates missing fields so older history
+      // points without these fields continue to load fine.
+      const cpuWatts = cpuPowerSampler.sample();
+      const gpuWatts = gpuPowerSampler.sample();
+
       statsHistory.push({
         ts: new Date().toISOString(),
         cpu: cpuUsage,
@@ -2253,6 +3301,8 @@ export async function createGatewayRuntimeState(
         disk: diskPercent,
         diskRead: diskIO.readBytesPerSec,
         diskWrite: diskIO.writeBytesPerSec,
+        cpuWatts: cpuWatts ?? undefined,
+        gpuWatts: gpuWatts ?? undefined,
         load1: Math.round(loadAvg[0]! * 100) / 100,
         load5: Math.round(loadAvg[1]! * 100) / 100,
         load15: Math.round(loadAvg[2]! * 100) / 100,
@@ -2434,8 +3484,8 @@ export async function createGatewayRuntimeState(
     // Check service repos (ID, PRIME, marketplace) for pending updates
     const serviceRepoPaths = [
       deps.primeDir,
-      deps.config ? (deps.config as Record<string, unknown>).idService ? ((deps.config as Record<string, unknown>).idService as Record<string, string>).dir ?? "/opt/aionima-local-id" : "/opt/aionima-local-id" : undefined,
-      deps.config ? (deps.config as Record<string, unknown>).marketplace ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string>).dir ?? "/opt/aionima-marketplace" : "/opt/aionima-marketplace" : undefined,
+      deps.config ? (deps.config as Record<string, unknown>).idService ? ((deps.config as Record<string, unknown>).idService as Record<string, string>).dir ?? "/opt/agi-local-id" : "/opt/agi-local-id" : undefined,
+      deps.config ? (deps.config as Record<string, unknown>).marketplace ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string>).dir ?? "/opt/agi-marketplace" : "/opt/agi-marketplace" : undefined,
     ].filter(Boolean) as string[];
 
     const serviceChecks = await Promise.all(serviceRepoPaths.map(checkServiceRepo));
@@ -2447,11 +3497,11 @@ export async function createGatewayRuntimeState(
     if (deps.marketplaceManager && totalServiceBehind > 0) {
       const mp = deps.marketplaceManager;
       const marketplaceDir = deps.config
-        ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string> | undefined)?.dir ?? "/opt/aionima-marketplace"
-        : "/opt/aionima-marketplace";
+        ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-marketplace"
+        : "/opt/agi-marketplace";
       if (existsSync(marketplaceDir)) {
-        mp.syncLocalCatalog(marketplaceDir);
-        const updates = mp.checkUpdates();
+        await mp.syncLocalCatalog(marketplaceDir);
+        const { updates } = await mp.checkUpdates();
         if (updates.length > 0) pluginUpdates = updates;
       }
     }
@@ -2544,6 +3594,7 @@ export async function createGatewayRuntimeState(
       "submodules": "pulling",
       "protocol-check": "pulling",
       "install": "building",
+      "rebuild": "building",
       "build": "building",
       "build-marketplace": "building",
       "required-check": "building",
@@ -2569,8 +3620,10 @@ export async function createGatewayRuntimeState(
         } catch {
           // Not JSON — fall through to plain text handling
         }
-        // Plain text output (from git, pnpm, etc.) — no step/status
-        broadcastUpgrade(currentPhase, line);
+        // Plain text output (from git, pnpm, etc.) — log to disk for
+        // debugging but do NOT broadcast to the dashboard. Raw pnpm output
+        // creates noise in the upgrade dropdown and shows out-of-order entries.
+        upgradeLog.debug(`[${lastStep}] ${line}`);
       }
     });
 
@@ -3052,24 +4105,114 @@ export async function createGatewayRuntimeState(
 
   // Only show settings/dashboard pages for installed or baked-in plugins
   // (marketplace plugins on disk but not installed should be invisible).
-  const getInstalledOrBakedInIds = (): Set<string> => {
+  const getInstalledOrBakedInIds = async (): Promise<Set<string>> => {
     const ids = new Set<string>();
-    for (const r of deps.marketplaceManager?.getInstalled() ?? []) ids.add(r.name);
+    for (const r of await (deps.marketplaceManager?.getInstalled() ?? Promise.resolve([]))) ids.add(r.name);
     for (const d of deps.discoveredPlugins ?? []) { if (d.bakedIn) ids.add(d.id); }
     return ids;
   };
 
   fastify.get("/api/dashboard/plugin-settings-pages", async (_request, reply) => {
-    const allowed = getInstalledOrBakedInIds();
+    const allowed = await getInstalledOrBakedInIds();
     const pages = (deps.pluginRegistry?.getSettingsPages() ?? [])
       .filter((p) => allowed.has(p.pluginId))
       .map((p) => ({ ...p.page, pluginId: p.pluginId }));
     return reply.send(pages);
   });
 
+  // -------------------------------------------------------------------------
+  // GET /api/providers — registered LLM providers with their declared fields
+  // -------------------------------------------------------------------------
+
+  fastify.get("/api/providers", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Providers API only allowed from private network" });
+    }
+
+    const registeredProviders = deps.pluginRegistry?.getProviders() ?? [];
+    const configProviders = deps.configPath
+      ? (() => {
+          try {
+            const raw = readFileSync(deps.configPath!, "utf-8");
+            return (JSON.parse(raw) as Record<string, unknown>).providers as Record<string, Record<string, unknown>> | undefined;
+          } catch {
+            return undefined;
+          }
+        })()
+      : undefined;
+
+    const result = registeredProviders.map((r) => {
+      const providerConfig = configProviders?.[r.provider.id] ?? {};
+      const currentValues = Object.fromEntries(
+        Object.entries(providerConfig).map(([k, v]) => {
+          if (k === "apiKey" && typeof v === "string" && v.length > 0) return [k, "••••••••"];
+          return [k, v];
+        })
+      );
+      return {
+        id: r.provider.id,
+        name: r.provider.name,
+        description: r.provider.description,
+        requiresApiKey: r.provider.requiresApiKey ?? false,
+        fields: r.provider.fields ?? [],
+        currentValues,
+      };
+    });
+
+    return reply.send(result);
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /api/providers/balance — live balance check for each registered provider
+  // -------------------------------------------------------------------------
+
+  fastify.get("/api/providers/balance", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Providers API only allowed from private network" });
+    }
+
+    const registeredProviders = deps.pluginRegistry?.getProviders() ?? [];
+    const configProviders = deps.configPath
+      ? (() => {
+          try {
+            const raw = readFileSync(deps.configPath!, "utf-8");
+            return (JSON.parse(raw) as Record<string, unknown>).providers as Record<string, Record<string, unknown>> | undefined;
+          } catch {
+            return undefined;
+          }
+        })()
+      : undefined;
+
+    const balances = await Promise.all(
+      registeredProviders.map(async (r) => {
+        const providerConfig = configProviders?.[r.provider.id] ?? {};
+        let balance: number | null = null;
+        if (r.provider.checkBalance) {
+          try {
+            balance = await r.provider.checkBalance(providerConfig);
+          } catch {
+            // balance check failed — leave as null
+          }
+        }
+        const threshold = (providerConfig as Record<string, unknown>).balanceAlertThreshold as number | undefined;
+        return {
+          providerId: r.provider.id,
+          providerName: r.provider.name,
+          balance,
+          threshold: threshold ?? null,
+          belowThreshold: balance !== null && threshold !== undefined && balance <= threshold,
+        };
+      })
+    );
+
+    return reply.send(balances);
+  });
+
   fastify.get("/api/dashboard/plugin-pages", async (request, reply) => {
     const query = request.query as Record<string, string>;
-    const allowed = getInstalledOrBakedInIds();
+    const allowed = await getInstalledOrBakedInIds();
     const pages = (deps.pluginRegistry?.getDashboardPages(query.domain) ?? [])
       .filter((p) => allowed.has(p.pluginId))
       .map((p) => ({
@@ -3158,9 +4301,18 @@ export async function createGatewayRuntimeState(
       return reply.send(result);
     });
 
+    fastify.post("/api/marketplace/dedupe", async (_request, reply) => {
+      const fn = (mp as unknown as { dedupeCatalog?: () => Promise<{ removed: number; orphanRefs: string[] }> }).dedupeCatalog;
+      if (typeof fn !== "function") {
+        return reply.code(501).send({ ok: false, error: "dedupeCatalog not implemented on this manager" });
+      }
+      const result = await fn.call(mp);
+      return reply.send({ ok: true, ...result });
+    });
+
     fastify.get("/api/marketplace/catalog", async (request, reply) => {
       const query = request.query as Record<string, string>;
-      const items = mp.searchCatalog({
+      const items = await mp.searchCatalog({
         q: query.q,
         type: query.type as string | undefined,
         category: query.category,
@@ -3173,7 +4325,7 @@ export async function createGatewayRuntimeState(
       const discovered = deps.discoveredPlugins ?? [];
       const prefs = deps.pluginPrefs;
       const loadedPlugins = deps.pluginRegistry?.getAll() ?? [];
-      const installedRecords = mp.getInstalled();
+      const installedRecords = await mp.getInstalled();
       const installedNames = new Set(installedRecords.map((r) => r.name));
       const catalogNames = new Set(items.map((i) => i.name));
 
@@ -3263,7 +4415,7 @@ export async function createGatewayRuntimeState(
       }
       // Also hot-load auto-installed dependencies
       if (deps.onPluginInstalled && result.autoInstalled) {
-        const installed = mp.getInstalled();
+        const installed = await mp.getInstalled();
         for (const depName of result.autoInstalled) {
           const depItem = installed.find(i => i.name === depName);
           if (depItem) {
@@ -3316,17 +4468,17 @@ export async function createGatewayRuntimeState(
         }
       }
 
-      const result = mp.uninstall(pluginName, force);
+      const result = await mp.uninstall(pluginName, force);
       if (!result.ok) return reply.code(400).send(result);
       return reply.send(result);
     });
 
     fastify.get("/api/marketplace/installed", async (_request, reply) => {
-      return reply.send(mp.getInstalled());
+      return reply.send(await mp.getInstalled());
     });
 
     fastify.get("/api/marketplace/updates", async (_request, reply) => {
-      return reply.send(mp.checkUpdates());
+      return reply.send(await mp.checkUpdates());
     });
 
     // POST /api/marketplace/update/:pluginName — hot-reload an installed plugin
@@ -3339,7 +4491,8 @@ export async function createGatewayRuntimeState(
       const { pluginName } = request.params;
       const body = request.body as { sourceId?: number } | undefined;
 
-      const installed = mp.getInstalled().find(i => i.name === pluginName);
+      const installedList = await mp.getInstalled();
+      const installed = installedList.find(i => i.name === pluginName);
       if (!installed) return reply.code(404).send({ error: "Plugin not installed" });
       const sourceId = body?.sourceId ?? installed.sourceId;
 
@@ -3405,8 +4558,9 @@ export async function createGatewayRuntimeState(
       const reloaded: string[] = [];
       const reloadErrors: string[] = [];
       if (deps.onPluginUpdated && deps.onPluginDeactivating) {
+        const allInstalled = await mp.getInstalled();
         for (const name of result.updated) {
-          const installed = mp.getInstalled().find(i => i.name === name);
+          const installed = allInstalled.find(i => i.name === name);
           if (!installed) {
             reloadErrors.push(`${name}: not found in installed list`);
             continue;
@@ -3439,6 +4593,109 @@ export async function createGatewayRuntimeState(
         reloaded,
         reloadErrors,
         errors: result.errors,
+      });
+    });
+
+    // POST /api/marketplace/rebuild/:name — rebuild a single installed plugin (esbuild only, no re-download)
+    fastify.post<{ Params: { name: string } }>("/api/marketplace/rebuild/:name", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
+      }
+
+      const { name } = request.params;
+
+      try {
+        await mp.rebuildPlugin(name);
+      } catch (e) {
+        return reply.code(400).send({ error: e instanceof Error ? e.message : String(e) });
+      }
+
+      // Hot-reload the rebuilt plugin using the same deactivate → reload flow as update
+      if (deps.onPluginDeactivating) {
+        try { await deps.onPluginDeactivating(name); } catch (deactErr) {
+          log.warn(`rebuild deactivation warning for "${name}": ${deactErr instanceof Error ? deactErr.message : String(deactErr)}`);
+        }
+        // Remove stale route handlers for this plugin
+        for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+          if (route.pluginId === name) {
+            pluginRouteHandlers.delete(`${route.method.toUpperCase()}:${route.path}`);
+          }
+        }
+      }
+
+      if (deps.onPluginUpdated) {
+        const rebuildInstalledList = await mp.getInstalled();
+        const installed = rebuildInstalledList.find(i => i.name === name);
+        if (installed) {
+          const hlResult = await deps.onPluginUpdated(installed.installPath);
+          if (!hlResult.loaded) {
+            return reply.code(500).send({ error: hlResult.error ?? "Failed to reload plugin after rebuild" });
+          }
+          // Re-register route handlers for the reloaded plugin
+          for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+            if (route.pluginId === name) {
+              pluginRouteHandlers.set(`${route.method.toUpperCase()}:${route.path}`, route.handler);
+            }
+          }
+        }
+      }
+
+      log.info(`plugin rebuilt and reloaded: ${name}`);
+      return reply.send({ ok: true, name });
+    });
+
+    // POST /api/marketplace/rebuild-all — rebuild all installed plugins (esbuild only, no re-download)
+    fastify.post("/api/marketplace/rebuild-all", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Marketplace API only allowed from private network" });
+      }
+
+      const result = await mp.rebuildAll();
+
+      // Hot-reload all successfully rebuilt plugins
+      const reloaded: string[] = [];
+      const reloadErrors: string[] = [];
+      for (const name of result.rebuilt) {
+        if (deps.onPluginDeactivating) {
+          try { await deps.onPluginDeactivating(name); } catch { /* deactivation is best-effort */ }
+          for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+            if (route.pluginId === name) {
+              pluginRouteHandlers.delete(`${route.method.toUpperCase()}:${route.path}`);
+            }
+          }
+        }
+        if (deps.onPluginUpdated) {
+          const rebuildAllInstalledList = await mp.getInstalled();
+          const installed = rebuildAllInstalledList.find(i => i.name === name);
+          if (installed) {
+            try {
+              const hlResult = await deps.onPluginUpdated(installed.installPath);
+              if (hlResult.loaded) {
+                for (const route of deps.pluginRegistry?.getRoutes() ?? []) {
+                  if (route.pluginId === name) {
+                    pluginRouteHandlers.set(`${route.method.toUpperCase()}:${route.path}`, route.handler);
+                  }
+                }
+                reloaded.push(name);
+              } else {
+                reloadErrors.push(`${name}: ${hlResult.error ?? "unknown error"}`);
+              }
+            } catch (err) {
+              reloadErrors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+        }
+      }
+
+      log.info(`rebuild-all: rebuilt=${result.rebuilt.length}, failed=${result.failed.length}, reloaded=${reloaded.length}`);
+      return reply.send({
+        ok: true,
+        rebuilt: result.rebuilt,
+        failed: result.failed,
+        reloaded,
+        reloadErrors,
       });
     });
   }
@@ -3559,7 +4816,7 @@ export async function createGatewayRuntimeState(
     const allDiscovered = deps.discoveredPlugins ?? [];
     const disc = allDiscovered.find((d) => d.id === pluginId);
     const loaded = reg?.getAll().find((l) => l.manifest.id === pluginId);
-    const installedRecords = deps.marketplaceManager?.getInstalled() ?? [];
+    const installedRecords = await (deps.marketplaceManager?.getInstalled() ?? Promise.resolve([]));
     const isInstalled = installedRecords.some((r) => r.name === pluginId) || (disc?.bakedIn ?? false);
 
     if (!disc && !loaded) {
@@ -3876,7 +5133,12 @@ export async function createGatewayRuntimeState(
     if (!deps.serviceManager) {
       return reply.send({ services: [] });
     }
-    return reply.send({ services: deps.serviceManager.getStatus() });
+    const sm = deps.serviceManager;
+    const services = sm.getStatus().map(svc => ({
+      ...svc,
+      imageAvailable: sm.isImageAvailable(svc.image),
+    }));
+    return reply.send({ services });
   });
 
   fastify.post<{ Params: { id: string } }>("/api/services/:id/start", async (request, reply) => {
@@ -4268,9 +5530,13 @@ export async function createGatewayRuntimeState(
       // Serve index.html as default
       index: "index.html",
       // Hashed assets (e.g. index-BhWVbYcJ.js) can cache forever;
-      // index.html must revalidate so the browser picks up new asset hashes after upgrades.
+      // index.html + sw.js + manifest must revalidate so the browser picks
+      // up new asset hashes and service worker updates after upgrades.
+      // Without no-cache on sw.js, the browser serves the stale SW from
+      // its HTTP cache and never picks up updated precache entries (icons, etc.).
       setHeaders(res, filePath) {
-        if (filePath.endsWith("/index.html") || filePath.endsWith("\\index.html")) {
+        const name = filePath.split(/[/\\]/).pop() ?? "";
+        if (name === "index.html" || name === "sw.js" || name === "manifest.webmanifest") {
           res.setHeader("Cache-Control", "no-cache");
         }
       },
@@ -4312,7 +5578,7 @@ export async function createGatewayRuntimeState(
     if (!deps.mappRegistry) return reply.code(404).send({ error: "MApp not found" });
     const def = deps.mappRegistry.get(id);
     if (!def) return reply.code(404).send({ error: "MApp not found" });
-    const { serializeMApp } = await import("@aionima/sdk");
+    const { serializeMApp } = await import("@agi/sdk");
     return reply.send({ app: serializeMApp(def) });
   });
 
@@ -4337,7 +5603,7 @@ export async function createGatewayRuntimeState(
     }
 
     // Parse and install
-    const { MAppDefinitionSchema } = await import("@aionima/config");
+    const { MAppDefinitionSchema } = await import("@agi/config");
     const parsed = MAppDefinitionSchema.safeParse(body.definition);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid MApp definition", issues: parsed.error.issues });
@@ -4353,7 +5619,7 @@ export async function createGatewayRuntimeState(
 
     // Register in live registry
     if (deps.mappRegistry) {
-      deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+      deps.mappRegistry.register(parsed.data as import("@agi/sdk").MAppDefinition);
     }
 
     return reply.send({ ok: true, id: parsed.data.id, path: installPath, scan: scanResult });
@@ -4444,7 +5710,7 @@ export async function createGatewayRuntimeState(
     fastify.get("/api/magic-apps/instances", async (_request, reply) => {
       // TODO: derive userEntityId from auth session; for now use owner
       const userId = deps.ownerEntityId ?? "#E0";
-      return reply.send({ instances: store.listInstances(userId) });
+      return reply.send({ instances: await store.listInstances(userId) });
     });
 
     // POST /api/magic-apps/instances — open a new instance (requires projectPath)
@@ -4638,7 +5904,7 @@ export async function createGatewayRuntimeState(
 
     // Catalog
     fastify.get("/api/mapp-marketplace/catalog", async (_request, reply) => {
-      const catalog = mappMp.getCatalogWithInstalled();
+      const catalog = await mappMp.getCatalogWithInstalled();
       // Wrap in { apps } for backward compatibility with dashboard
       return reply.send({ apps: catalog.map((entry) => ({
         definition: { id: entry.id, author: entry.author, description: entry.description, category: entry.category, version: entry.version, source: entry.sourcePath },
@@ -4661,8 +5927,8 @@ export async function createGatewayRuntimeState(
       if (!result.ok) return reply.code(400).send(result);
 
       // Register in live registry
-      const { MAppDefinitionSchema } = await import("@aionima/config");
-      const catalog = mappMp.getCatalogWithInstalled();
+      const { MAppDefinitionSchema } = await import("@agi/config");
+      const catalog = await mappMp.getCatalogWithInstalled();
       const entry = catalog.find((e) => e.id === body.appId);
       if (entry && deps.mappRegistry) {
         const mappsDir = join(homedir(), ".agi", "mapps");
@@ -4671,7 +5937,7 @@ export async function createGatewayRuntimeState(
           const raw = JSON.parse(readFileSync(filePath, "utf-8")) as Record<string, unknown>;
           const parsed = MAppDefinitionSchema.safeParse(raw);
           if (parsed.success) {
-            deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+            deps.mappRegistry.register(parsed.data as import("@agi/sdk").MAppDefinition);
           }
         } catch { /* non-fatal */ }
       }
@@ -4699,16 +5965,16 @@ export async function createGatewayRuntimeState(
 
       // Re-register updated MApps in live registry
       if (deps.mappRegistry && result.updated.length > 0) {
-        const { MAppDefinitionSchema } = await import("@aionima/config");
+        const { MAppDefinitionSchema } = await import("@agi/config");
         const mappsDir = join(homedir(), ".agi", "mapps");
         for (const appId of result.updated) {
-          const catalog = mappMp.getCatalogWithInstalled();
+          const catalog = await mappMp.getCatalogWithInstalled();
           const entry = catalog.find((e) => e.id === appId);
           if (!entry) continue;
           try {
             const raw = JSON.parse(readFileSync(join(mappsDir, entry.author, `${appId}.json`), "utf-8")) as Record<string, unknown>;
             const parsed = MAppDefinitionSchema.safeParse(raw);
-            if (parsed.success) deps.mappRegistry.register(parsed.data as import("@aionima/sdk").MAppDefinition);
+            if (parsed.success) deps.mappRegistry.register(parsed.data as import("@agi/sdk").MAppDefinition);
           } catch { /* non-fatal */ }
         }
       }

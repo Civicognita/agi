@@ -1,5 +1,5 @@
 /**
- * @aionima/sdk — Developer SDK for building Aionima plugins.
+ * @agi/sdk — Developer SDK for building Aionima plugins.
  *
  * ## Overview
  *
@@ -40,7 +40,7 @@
  * ### Plugin lifecycle
  *
  * ```ts
- * import { createPlugin, defineStack } from "@aionima/sdk";
+ * import { createPlugin, defineStack } from "@agi/sdk";
  *
  * export default createPlugin({
  *   async activate(api) {
@@ -57,7 +57,7 @@
  * ### Testing
  *
  * ```ts
- * import { testActivate } from "@aionima/sdk/testing";
+ * import { testActivate } from "@agi/sdk/testing";
  * import * as plugin from "./index.js";
  *
  * const regs = await testActivate(plugin);
@@ -95,12 +95,20 @@ export { defineWorkflow } from "./define-workflow.js";
 export { defineSidebar } from "./define-sidebar.js";
 export { defineChannel } from "./define-channel.js";
 export { defineProvider } from "./define-provider.js";
+export { definePmProvider } from "./define-pm-provider.js";
+export type { PmProviderDefinition, PmProviderFactory } from "./define-pm-provider.js";
+export type { ProviderField } from "./define-provider.js";
 export { defineSettingsPage } from "./define-settings-page.js";
 export { defineDashboardPage } from "./define-dashboard-page.js";
 export { defineDashboardDomain } from "./define-dashboard-domain.js";
 export { defineScan } from "./define-scan.js";
 export { defineWorker } from "./define-worker.js";
 export { defineMagicApp } from "./define-magic-app.js";
+
+// Layer D blockchain anchor — interface only in v0.4.0 (NoopAnchor lives in
+// packages/memory). Live Ethereum/L2 implementation arrives in v0.6.0 via
+// tynn s113. Callers depend on the interface; the swap is invisible.
+export type { AnchorRecord, AnchorResult, BlockchainAnchor } from "./anchor.js";
 
 // MApp Schema (MPx 1.0)
 export { MAPP_SCHEMA_VERSION, serializeMApp } from "./mapp-schema.js";
@@ -117,8 +125,25 @@ export type {
 export { UI_COMPONENTS, WIDGET_COMPONENT_MAP } from "./ui-components.js";
 export type { ContentRendererConfig, MAppWidgetType } from "./ui-components.js";
 
-// Testing utilities (separate entry point: @aionima/sdk/testing)
-// import { testActivate, createMockAPI } from "@aionima/sdk/testing";
+// Testing utilities (separate entry point: @agi/sdk/testing)
+// import { testActivate, createMockAPI } from "@agi/sdk/testing";
+
+// PmProvider interface — canonical PM workflow surface (s118 t432).
+// AGI's agentic operating model IS the tynn workflow; this interface is
+// what every backing service implements. Storage is pluggable; workflow
+// is canonical. See agi/docs/agents/tynn-and-related-concepts.md.
+export type {
+  PmStatus,
+  PmStoryStatus,
+  PmProject,
+  PmVersion,
+  PmStory,
+  PmTask,
+  PmComment,
+  PmCreateTaskInput,
+  PmIWishInput,
+  PmProvider,
+} from "./pm.js";
 
 // Types — full plugin schema surface
 export type * from "./types.js";

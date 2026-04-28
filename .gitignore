@@ -9,7 +9,12 @@ IDENTITY.md
 SOUL.md
 TOOLS.md
 USER.md
-memory/
+# Anchor `/memory/` to repo root so it ignores the legacy top-level
+# `memory/` runtime dir without shadowing `packages/memory/` (the
+# @agi/memory workspace package). Caught during s112 t383 hotfix when
+# `packages/memory/src/anchors/noop.ts` failed to commit because the
+# un-anchored rule matched the package's nested `memory` segment.
+/memory/
 .bots/
 .bots/state/
 coverage/
@@ -32,3 +37,9 @@ ui/dashboard/vendor/
 nexus-claw*
 .ai/
 .aionima-project.json
+
+# Dashboard walk snapshots — captured locally by e2e/walk/dashboard-walk.spec.ts.
+# Only verified screenshots get promoted to docs/human/screenshots/ by hand.
+e2e/walk/snapshots/
+# Temporary drizzle-push artifact dir from packages/db-schema/drizzle-push.config.ts
+packages/db-schema/drizzle-push-tmp/

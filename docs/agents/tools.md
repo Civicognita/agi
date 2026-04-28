@@ -15,6 +15,22 @@ The second batch is registered after services are available.
 
 ---
 
+## Shell Exec Policy — agi bash passthrough
+
+Every shell exec from any agent context (chat tool runtime, Taskmaster shell-exec plugin, cron-fired prompt runner, plugin SDK) must route through the `agi bash` passthrough rather than spawning a child process directly. This is the single secure entryway rule — the canonical reason it exists is documented in `~/temp_core/CLAUDE.md` § 3 and § 4.
+
+The passthrough surface (story **#104**, v0.4.0) provides:
+
+- Structured per-invocation logging at `~/.agi/logs/agi-bash-YYYY-MM-DD.jsonl` with caller attribution (set `AGI_CALLER` to a stable identifier — `chat-agent:<session>`, `taskmaster:<task-id>`, `cron-prompt:<cron-id>`)
+- Default deny patterns protecting production paths and destructive idioms
+- User-configurable extensions via `bash.policy` in `~/.agi/gateway.json`
+
+The caller migrations themselves (replacing direct `child_process.spawn("bash", …)` with calls through `agi bash`) are tracked under story **#105** (lockdown phase 2). Until that ships, individual `shell_exec`-style tools below are honest about whether they currently route through `agi bash` or fall back to direct execution.
+
+For full subcommand reference see `agi/docs/human/cli.md` § `agi bash`.
+
+---
+
 ## Dev Tools
 
 ### `shell_exec`
@@ -252,7 +268,7 @@ Path traversal sequences (`..`, absolute paths) are rejected.
 
 ### `manage_project`
 
-Manage workspace projects (list, create, update, inspect, delete).
+Manage workspace projects (list, create, update, inspect, delete, host, unhost, restart, diagnose).
 
 | Field | Value |
 |-------|-------|
@@ -265,15 +281,41 @@ Only registered when `workspace.projects` directories are configured.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `action` | string (required) | One of `"list"`, `"create"`, `"update"`, `"info"`, `"delete"` |
+| `action` | string (required) | One of `"list"`, `"create"`, `"update"`, `"info"`, `"delete"`, `"host"`, `"unhost"`, `"restart"`, `"diagnose"` |
 | `name` | string | Project name (for `create` and `update`) |
-| `path` | string | Project path (for `update`, `info`, `delete`) |
+| `path` | string | Project path (for `update`, `info`, `delete`, `restart`, `diagnose`) |
 | `repoRemote` | string | Git clone URL (for `create` only) |
 | `category` | string | Project category: `"web"`, `"app"`, `"literature"`, `"media"`, `"administration"`, `"ops"`, `"monorepo"` |
 | `tynnToken` | string | Tynn project token (for `create` and `update`; empty string or `null` to clear) |
 | `confirm` | boolean | Must be `true` to confirm a `delete` operation |
 
 Sacred projects (`agi`, `prime`, `id`, `marketplace`, `mapp-marketplace`) cannot be modified or deleted.
+
+#### `diagnose` action
+
+Use `diagnose` when a hosted project container is failing to start or crashing. The tool reads the last 50 lines of container logs and checks `dmesg` for OOM events, then classifies the failure into one of:
+
+| Class | Trigger | Remediation |
+|-------|---------|-------------|
+| `disk_full` | `ENOSPC`, `no space left on device` | Free disk space; prune unused images |
+| `port_conflict` | `EADDRINUSE` | Stop conflicting process or change port |
+| `missing_build_artifact` | `MODULE_NOT_FOUND`, missing `dist/` | Run the project build and restart |
+| `oom_killed` | OOM kill in logs or dmesg | Increase memory limit or reduce usage |
+| `connection_refused` | `ECONNREFUSED` | Verify dependent services are running |
+| `permission_denied` | `EACCES`, `EPERM` | Fix file/socket permissions |
+| `container_exited` | Generic exit, no pattern match | Review raw log tail |
+| `healthy` | No error signals | Check DNS and Caddy routing |
+
+**Output shape:**
+
+```json
+{
+  "class": "missing_build_artifact",
+  "message": "Build artifact missing",
+  "remediation": "Run pnpm build and restart the container.",
+  "rawLogTail": "...last 50 log lines..."
+}
+```
 
 ---
 
@@ -329,42 +371,44 @@ Step statuses: `"pending"`, `"running"`, `"complete"`, `"failed"`, `"skipped"`.
 
 ## Worker Tools
 
-### `worker_dispatch`
+### `taskmaster_dispatch`
 
-Dispatch a background task to a Taskmaster worker.
+Queue a background task with TaskMaster. The worker runs with Aion's full tool registry, scoped to the same project.
 
 | Field | Value |
 |-------|-------|
-| States | `ONLINE` |
+| States | *(audit-only — see compute-available-tools.ts)* |
 | Tiers | `verified`, `sealed` |
 
 **Key parameters:**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `projectPath` | string (required) | Absolute path of the project the task belongs to. Read from Project Context. |
 | `description` | string (required) | Human-readable task description |
 | `domain` | string | Worker domain: `"code"`, `"k"`, `"ux"`, `"strat"`, `"comm"`, `"ops"`, `"gov"`, `"data"` (defaults to `"code"`) |
 | `worker` | string | Worker role within the domain (defaults to `"engineer"`) |
 | `priority` | string | One of `"low"`, `"normal"`, `"high"`, `"critical"` (defaults to `"normal"`) |
 
-Writes a job file to `.dispatch/jobs/{jobId}.json` and notifies `WorkerRuntime` via callback. Returns the `jobId`.
+Writes a job file to `~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json` and notifies `WorkerRuntime` via callback. Returns the `jobId`.
 
 ---
 
-### `worker_status`
+### `taskmaster_status`
 
-Check the status of background jobs.
+Check the status of the current project's background jobs.
 
 | Field | Value |
 |-------|-------|
-| States | `ONLINE` |
+| States | *(audit-only)* |
 | Tiers | `unverified`, `verified`, `sealed` |
 
 **Key parameters:**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `jobId` | string | If provided, returns details for that job. If omitted, lists all jobs. |
+| `projectPath` | string (required) | Absolute path of the project whose jobs to list. |
+| `jobId` | string | If provided, returns details for that job. If omitted, lists all jobs for the project. |
 
 Reads from `.dispatch/jobs/`. This is a read-only tool — it does not modify job state.
 

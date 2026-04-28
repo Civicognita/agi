@@ -43,6 +43,16 @@ import {
   WORKER_STATUS_MANIFEST,
   WORKER_STATUS_INPUT_SCHEMA,
 } from "./worker-status.js";
+import {
+  createTaskmasterHandoffHandler,
+  TASKMASTER_HANDOFF_MANIFEST,
+  TASKMASTER_HANDOFF_INPUT_SCHEMA,
+} from "./taskmaster-handoff.js";
+import {
+  createTaskmasterCancelHandler,
+  TASKMASTER_CANCEL_MANIFEST,
+  TASKMASTER_CANCEL_INPUT_SCHEMA,
+} from "./taskmaster-cancel.js";
 
 // GitHub CLI tool
 import {
@@ -152,10 +162,21 @@ export interface ToolRegistrationConfig {
   projectDirs?: string[];
   /** ProjectConfigManager for validated project config I/O. */
   projectConfigManager?: import("../project-config-manager.js").ProjectConfigManager;
-  /** Resolved BOTS directory path. */
-  botsDir?: string;
-  /** Callback fired when worker_dispatch creates a job. */
-  onJobCreated?: (jobId: string, coaReqId: string) => void;
+  /** Optional override for the TaskMaster dispatch base dir. Production leaves this unset (defaults to ~/.agi/{projectSlug}/dispatch/). Tests use it to redirect dispatch writes. */
+  dispatchDirOverride?: string;
+  /** Callback fired when taskmaster_dispatch creates a job. */
+  onJobCreated?: (args: {
+    jobId: string;
+    coaReqId: string;
+    projectPath: string;
+    sessionKey?: string;
+    chatSessionId?: string;
+    planRef?: { planId: string; stepId: string };
+  }) => void;
+  /** Callback fired when a worker calls taskmaster_handoff. Wired to WorkerRuntime runtime:event. */
+  onHandoff?: (args: { jobId: string; question: string; projectPath: string; coaReqId?: string }) => void;
+  /** Callback fired when Aion calls taskmaster_cancel. Wired to WorkerRuntime.cancelJob. */
+  onCancel?: (args: { jobId: string; projectPath: string; reason: string }) => void;
   /** COA request ID for the current invocation context. */
   coaReqId?: string;
   /** Image blob store for screenshot storage (visual-inspect tool). */
@@ -194,7 +215,8 @@ export function registerAllTools(
   registry: ToolRegistry,
   config: ToolRegistrationConfig,
 ): number {
-  const toolConfig = { workspaceRoot: config.workspaceRoot, botsDir: config.botsDir };
+  const toolConfig = { workspaceRoot: config.workspaceRoot, dispatchDirOverride: config.dispatchDirOverride };
+  const tmToolConfig = { dispatchDirOverride: config.dispatchDirOverride };
   let count = 0;
 
   const register = (
@@ -227,11 +249,11 @@ export function registerAllTools(
     CANVAS_TOOL_INPUT_SCHEMA,
   );
 
-  // Worker tools
+  // TaskMaster tools — per-project dispatch dir, no workspaceRoot dependency.
   register(
     WORKER_DISPATCH_MANIFEST as ToolManifestEntry,
     createWorkerDispatchHandler({
-      ...toolConfig,
+      ...tmToolConfig,
       onJobCreated: config.onJobCreated,
       coaReqId: config.coaReqId,
     }),
@@ -239,8 +261,24 @@ export function registerAllTools(
   );
   register(
     WORKER_STATUS_MANIFEST as ToolManifestEntry,
-    createWorkerStatusHandler(toolConfig),
+    createWorkerStatusHandler(tmToolConfig),
     WORKER_STATUS_INPUT_SCHEMA,
+  );
+  register(
+    TASKMASTER_HANDOFF_MANIFEST as ToolManifestEntry,
+    createTaskmasterHandoffHandler({
+      ...tmToolConfig,
+      onHandoff: config.onHandoff,
+    }),
+    TASKMASTER_HANDOFF_INPUT_SCHEMA,
+  );
+  register(
+    TASKMASTER_CANCEL_MANIFEST as ToolManifestEntry,
+    createTaskmasterCancelHandler({
+      ...tmToolConfig,
+      onCancel: config.onCancel,
+    }),
+    TASKMASTER_CANCEL_INPUT_SCHEMA,
   );
 
   // GitHub CLI tool

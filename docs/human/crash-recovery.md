@@ -1,7 +1,7 @@
 # Crash Recovery & Safemode
 
 The gateway owns the full dependency chain — PostgreSQL (ID service), the
-`aionima-id.service` systemd unit, project containers, and HF model
+`agi-id.service` systemd unit, project containers, and HF model
 containers. When any of those drift or the machine itself crashes, the
 gateway detects it and recovers on its own. **You should never have to run
 `podman start`, `systemctl start`, or similar by hand.**
@@ -53,7 +53,7 @@ installed yet — the heuristic template is self-sufficient.
 
 Click **Recover now** (or run `agi safemode exit`). This will:
 
-1. Ensure `aionima-id-postgres` and `aionima-id.service` are up.
+1. Ensure `agi-id-postgres` and `agi-id.service` are up.
 2. Start any managed containers (`label=aionima.managed=true`) still in
    `Created` / `Exited` state.
 3. Restart HF model containers tracked in `~/.agi/model-containers.json`.

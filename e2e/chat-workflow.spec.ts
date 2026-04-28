@@ -12,10 +12,22 @@ import { test, expect } from "@playwright/test";
  * e2e and covered by manual smoke + component/unit tests.
  */
 
+/**
+ * Note: a `dismissStuckMagicAppModals` helper used to live here as a
+ * workaround for VMs carrying a non-minimized magic-app-instance across
+ * runs. Retired 2026-04-26 because the structural fixes are in place:
+ *   - Dashboard auto-collapse on first load (t357, v0.4.163)
+ *   - Test-VM auto-restart preflight on version drift (t360, v0.4.174)
+ *   - Same-commit staged-tree guard (t409, v0.4.195)
+ * If sticky modals reappear, the fix is to verify the auto-restart
+ * preflight + dashboard auto-collapse paths — not to re-introduce the
+ * DOM-level dismiss workaround.
+ */
+
 test.describe("Chat workflow", () => {
   test("chat flyout opens via sidebar button and exposes chat-flyout testid", async ({ page }) => {
     await page.goto("/");
-    const chatButton = page.getByTestId("sidebar-chat-button");
+    const chatButton = page.getByTestId("header-chat-button");
     await chatButton.click();
     await expect(page.getByTestId("chat-flyout")).toBeVisible();
   });
@@ -73,7 +85,7 @@ test.describe("Chat workflow", () => {
 
   test("chat flyout renders run-group containers once messages exist", async ({ page }) => {
     await page.goto("/");
-    await page.getByTestId("sidebar-chat-button").click();
+    await page.getByTestId("header-chat-button").click();
     const flyout = page.getByTestId("chat-flyout");
     await expect(flyout).toBeVisible();
 
@@ -86,7 +98,7 @@ test.describe("Chat workflow", () => {
 
   test("queued-card testid is wired and absent in an empty chat", async ({ page }) => {
     await page.goto("/");
-    await page.getByTestId("sidebar-chat-button").click();
+    await page.getByTestId("header-chat-button").click();
     const flyout = page.getByTestId("chat-flyout");
     await expect(flyout).toBeVisible();
     await expect(flyout.getByTestId("queued-card")).toHaveCount(0);
@@ -94,7 +106,7 @@ test.describe("Chat workflow", () => {
 
   test("live pill testid is wired (hidden when not thinking)", async ({ page }) => {
     await page.goto("/");
-    await page.getByTestId("sidebar-chat-button").click();
+    await page.getByTestId("header-chat-button").click();
     const flyout = page.getByTestId("chat-flyout");
     await expect(flyout).toBeVisible();
     // No active run → pill is not rendered.

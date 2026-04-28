@@ -2,7 +2,7 @@
  * ServiceManager — manages infrastructure service containers (databases, caches, etc.)
  * registered by plugins.
  *
- * Each service runs as a Podman container with `label=aionima.service=true`.
+ * Each service runs as a Podman container with `label=agi.service=true`.
  * Data volumes mount under `{dataDir}/services/{serviceId}/`.
  * Service port allocation uses range 5000-5099 to avoid colliding with project ports (4000-4099).
  */
@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
-import type { PluginRegistry } from "@aionima/plugins";
+import type { PluginRegistry } from "@agi/plugins";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,6 +26,7 @@ export interface ServiceStatus {
   status: "running" | "stopped" | "error";
   port: number | null;
   enabled: boolean;
+  extensions?: string[];
   error?: string;
 }
 
@@ -83,7 +84,7 @@ export class ServiceManager {
     // Clean stale service containers from prior runs
     try {
       const stale = execFileSync(this.containerRuntime, [
-        "ps", "-a", "--filter", "label=aionima.service=true", "--format", "{{.Names}}",
+        "ps", "-a", "--filter", "label=agi.service=true", "--format", "{{.Names}}",
       ], { stdio: "pipe", timeout: 15_000 }).toString().trim();
       if (stale.length > 0) {
         for (const name of stale.split("\n")) {
@@ -116,7 +117,7 @@ export class ServiceManager {
 
     const overrides = this.overrides[id];
     const port = overrides?.port ?? this.allocatePort();
-    const containerName = `aionima-svc-${id}`;
+    const containerName = `agi-svc-${id}`;
     const dataPath = join(this.dataDir, "services", id);
 
     if (!existsSync(dataPath)) {
@@ -127,8 +128,8 @@ export class ServiceManager {
       "run", "-d",
       "--name", containerName,
       "--restart=on-failure:5",
-      "--label", "aionima.service=true",
-      "--label", `aionima.service.id=${id}`,
+      "--label", "agi.service=true",
+      "--label", `agi.service.id=${id}`,
       "-p", `${String(port)}:${String(svc.defaultPort)}`,
     ];
 
@@ -169,7 +170,7 @@ export class ServiceManager {
     const entry = this.running.get(id);
     if (!entry) return;
 
-    const containerName = `aionima-svc-${id}`;
+    const containerName = `agi-svc-${id}`;
     try {
       execFileSync(this.containerRuntime, ["stop", "-t", "10", containerName], { stdio: "pipe", timeout: 30_000 });
     } catch (err: unknown) {
@@ -199,22 +200,50 @@ export class ServiceManager {
       const enabled = overrides?.enabled === true;
 
       if (!entry) {
+        // Service wasn't started by this manager — check if a container running
+        // the same image is already up (e.g. started by another service or an
+        // external compose stack).
+        let externalStatus: "running" | "stopped" = "stopped";
+        let externalPort: number | null = null;
+        try {
+          // First: exact ancestor match
+          const lines = execFileSync(this.containerRuntime, [
+            "ps", "--filter", `ancestor=${svc.containerImage}`,
+            "--format", "{{.Names}}\t{{.Ports}}",
+          ], { stdio: "pipe", timeout: 10_000 }).toString().trim();
+          if (lines.length > 0) {
+            externalStatus = "running";
+            // Try to extract the host port from "0.0.0.0:5432->5432/tcp" notation
+            const firstLine = lines.split("\n")[0] ?? "";
+            const portMatch = /(\d+)->\d+\/tcp/.exec(firstLine);
+            if (portMatch?.[1]) externalPort = Number(portMatch[1]);
+          }
+        } catch { /* runtime unavailable or no match */ }
+
+
+        // Parse extension badges from the service description
+        const extensions: string[] = [];
+        if (svc.description.includes("pgvector")) extensions.push("pgvector");
+        if (svc.description.includes("PostGIS")) extensions.push("PostGIS");
+        if (svc.description.includes("pgcrypto")) extensions.push("pgcrypto");
+
         return {
           id: svc.id,
           name: svc.name,
           description: svc.description,
           image: svc.containerImage,
-          status: "stopped" as const,
-          port: null,
+          status: externalStatus,
+          port: externalPort,
           enabled,
+          ...(extensions.length > 0 ? { extensions } : {}),
         };
       }
 
-      // Check actual container state
+      // Check actual container state for manager-owned container
       let status: "running" | "stopped" | "error" = "running";
       try {
         const raw = execFileSync(this.containerRuntime, [
-          "inspect", "--format", "{{.State.Status}}", `aionima-svc-${svc.id}`,
+          "inspect", "--format", "{{.State.Status}}", `agi-svc-${svc.id}`,
         ], { stdio: "pipe", timeout: 10_000 }).toString().trim();
         if (raw !== "running") status = raw === "exited" ? "stopped" : "error";
       } catch {
@@ -239,6 +268,19 @@ export class ServiceManager {
     }
     this.allocatedPorts.clear();
     this.log.info("service manager shut down");
+  }
+
+  /** Check whether a container image is locally available (pulled), or
+   *  whether an external container using the same engine is already running.
+   *  Returns true in both cases so the service card is always shown when the
+   *  service is reachable. */
+  isImageAvailable(image: string): boolean {
+    try {
+      execFileSync(this.containerRuntime, ["image", "exists", image], { stdio: "pipe", timeout: 5_000 });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   // -------------------------------------------------------------------------

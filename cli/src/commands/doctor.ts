@@ -4,14 +4,14 @@
 
 import { existsSync } from "node:fs";
 import { access, constants, readFile } from "node:fs/promises";
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { resolve, join } from "node:path";
 import type { Command } from "commander";
 import { loadConfig, validateConfigFile } from "../config-loader.js";
 import { GatewayClient } from "../gateway-client.js";
 import { bold, dim, formatCheck, green, red, yellow } from "../output.js";
-import type { AionimaConfig } from "@aionima/config";
+import type { AionimaConfig } from "@agi/config";
 
 interface Check {
   name: string;
@@ -119,19 +119,19 @@ async function coreChecks(configPath?: string): Promise<{ group: CheckGroup; con
   });
 
   // Systemd service
-  const serviceOk = fileExists("/etc/systemd/system/aionima.service");
+  const serviceOk = fileExists("/etc/systemd/system/agi.service");
   checks.push({
     name: "Systemd service",
     ok: serviceOk,
-    fix: serviceOk ? undefined : "Install: sudo cp scripts/aionima.service /etc/systemd/system/ && sudo systemctl daemon-reload",
+    fix: serviceOk ? undefined : "Install: sudo cp scripts/agi.service /etc/systemd/system/ && sudo systemctl daemon-reload",
   });
 
   // Deploy directory
-  const deployOk = dirExists("/opt/aionima");
+  const deployOk = dirExists("/opt/agi");
   checks.push({
     name: "Deploy directory",
     ok: deployOk,
-    fix: deployOk ? undefined : "Create: sudo mkdir -p /opt/aionima && sudo chown $USER:$USER /opt/aionima",
+    fix: deployOk ? undefined : "Create: sudo mkdir -p /opt/agi && sudo chown $USER:$USER /opt/agi",
   });
 
   // No secrets in config
@@ -212,23 +212,23 @@ function repoChecks(config: AionimaConfig): CheckGroup {
   const repos = [
     {
       name: "PRIME corpus",
-      path: config.prime?.dir ?? "/opt/aionima-prime",
+      path: config.prime?.dir ?? "/opt/agi-prime",
       repo: "https://github.com/Civicognita/aionima.git",
     },
     {
       name: "Plugin Marketplace",
-      path: config.marketplace?.dir ?? "/opt/aionima-marketplace",
-      repo: "https://github.com/Civicognita/aionima-marketplace.git",
+      path: config.marketplace?.dir ?? "/opt/agi-marketplace",
+      repo: "https://github.com/Civicognita/agi-marketplace.git",
     },
     {
       name: "MApp Marketplace",
-      path: mappMarketplaceConfig?.dir ?? "/opt/aionima-mapp-marketplace",
-      repo: "https://github.com/Civicognita/aionima-mapp-marketplace.git",
+      path: mappMarketplaceConfig?.dir ?? "/opt/agi-mapp-marketplace",
+      repo: "https://github.com/Civicognita/agi-mapp-marketplace.git",
     },
     {
       name: "ID service",
-      path: config.idService?.dir ?? "/opt/aionima-local-id",
-      repo: "https://github.com/Civicognita/aionima-local-id.git",
+      path: config.idService?.dir ?? "/opt/agi-local-id",
+      repo: "https://github.com/Civicognita/agi-local-id.git",
     },
   ];
 
@@ -344,21 +344,94 @@ function hostingChecks(config: AionimaConfig): CheckGroup | null {
   return { title: "Hosting", checks };
 }
 
+function getOriginUrl(dir: string): string | null {
+  try {
+    return execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 3000,
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
 function devChecks(config: AionimaConfig): CheckGroup | null {
   if (!config.dev?.enabled) return null;
 
   const checks: Check[] = [];
-  const dirs = [
-    { name: "Dev PRIME", path: config.dev.primeDir ?? "/opt/aionima-prime_dev" },
-    { name: "Dev Marketplace", path: config.dev.marketplaceDir ?? "/opt/aionima-marketplace_dev" },
+
+  // Origin alignment — since v0.4.66's `ensure_origin_remote` in
+  // upgrade.sh repoints /opt/agi* origins to the owner's fork on each
+  // upgrade cycle. If any origin is still pointing at Civicognita
+  // despite Dev Mode being enabled, `agi upgrade` hasn't completed the
+  // one-time migration yet. Flag red with a one-line remediation.
+  type OriginCheck = {
+    name: string;
+    dir: string;
+    expectedRepo: string | undefined;
+  };
+  const originChecks: OriginCheck[] = [
+    { name: "AGI origin", dir: "/opt/agi", expectedRepo: config.dev.agiRepo },
+    { name: "PRIME origin", dir: "/opt/agi-prime", expectedRepo: config.dev.primeRepo },
+    { name: "ID origin", dir: "/opt/agi-local-id", expectedRepo: config.dev.idRepo },
   ];
 
-  for (const dir of dirs) {
-    const exists = dirExists(dir.path);
+  for (const { name, dir, expectedRepo } of originChecks) {
+    if (!dirExists(dir)) {
+      checks.push({
+        name: `${name}: ${dir} not present`,
+        ok: false,
+        fix: "Run the AGI installer first.",
+      });
+      continue;
+    }
+    const current = getOriginUrl(dir);
+    if (current === null) {
+      checks.push({
+        name: `${name}: could not read ${dir}/.git/config`,
+        ok: false,
+        fix: "Check that the directory is a valid git repo and readable by the current user.",
+      });
+      continue;
+    }
+    if (!expectedRepo || expectedRepo.length === 0) {
+      // Dev Mode is on but this fork URL isn't configured. Probably an
+      // older install that toggled Dev Mode before v0.4.64 populated
+      // the dev.*Repo fields. User needs to re-toggle Dev Mode.
+      const repoSlug = name.toLowerCase().split(" ")[0];
+      checks.push({
+        name: `${name}: no dev.${repoSlug}Repo configured`,
+        ok: false,
+        warn: true,
+        fix: "Toggle Dev Mode off then on in the dashboard — /api/dev/switch will populate the fork URLs.",
+      });
+      continue;
+    }
+    const aligned = current === expectedRepo;
     checks.push({
-      name: `${dir.name} (${dir.path})`,
-      ok: exists,
-      fix: exists ? undefined : `Clone dev fork to ${dir.path}`,
+      name: `${name}: ${current}`,
+      ok: aligned,
+      warn: !aligned,
+      fix: aligned
+        ? undefined
+        : `Expected ${expectedRepo}. Run \`agi upgrade\` — ensure_origin_remote in upgrade.sh rewrites this on every cycle.`,
+    });
+  }
+
+  // NPU hardware check — Phase K.7 feeds in here too. If the kernel
+  // exposes /dev/accel/accel0 the AMD XDNA NPU is present. That alone
+  // doesn't mean it's USABLE (userspace from the agi-lemonade-runtime
+  // plugin handles that), but the hardware probe is a good first signal.
+  const npuPresent = dirExists("/dev/accel/accel0");
+  if (npuPresent || dirExists("/sys/class/accel")) {
+    checks.push({
+      name: "NPU hardware: /dev/accel/accel0",
+      ok: npuPresent,
+      warn: !npuPresent,
+      fix: npuPresent
+        ? undefined
+        : "NPU driver sysfs entry present but device node missing — reload amdxdna kernel module.",
     });
   }
 
@@ -375,21 +448,145 @@ async function gatewayChecks(config: AionimaConfig): Promise<CheckGroup> {
   checks.push({
     name: `Gateway (${host}:${String(port)})`,
     ok: gatewayOk,
-    fix: gatewayOk ? undefined : "Start: sudo systemctl start aionima",
+    fix: gatewayOk ? undefined : "Start: sudo systemctl start agi",
   });
 
   // Dashboard built
-  const selfRepo = config.workspace?.selfRepo ?? "/opt/aionima";
+  const selfRepo = config.workspace?.selfRepo ?? "/opt/agi";
   const dashIndex = join(selfRepo, "ui/dashboard/dist/index.html");
   const dashOk = fileExists(dashIndex);
   checks.push({
     name: "Dashboard built",
     ok: dashOk,
     warn: !dashOk,
-    fix: dashOk ? undefined : "Build: cd /opt/aionima && pnpm build",
+    fix: dashOk ? undefined : "Build: cd /opt/agi && pnpm build",
   });
 
   return { title: "Gateway", checks };
+}
+
+/**
+ * Lemonade runtime checks — Phase K.7 of the v0.4.0 closing plan.
+ *
+ * Probes `/api/lemonade/status` through the gateway. When the runtime
+ * plugin isn't installed the gateway returns 503; that single "not
+ * installed" finding supersedes the remaining checks. Otherwise we
+ * surface version, running-state, backend availability, and provider
+ * registration. NPU hardware presence is already flagged by devChecks
+ * (Dev Mode group) so we don't duplicate it here.
+ */
+async function lemonadeChecks(config: AionimaConfig): Promise<CheckGroup | null> {
+  const host = config.gateway?.host ?? "127.0.0.1";
+  const port = config.gateway?.port ?? 3100;
+  const client = new GatewayClient(host, port);
+  const gatewayReachable = await client.ping();
+  if (!gatewayReachable) {
+    // Gateway itself is down; suppressing this group prevents a noisy
+    // cascade of failures that really all point at "gateway not running".
+    return null;
+  }
+
+  const checks: Check[] = [];
+  const status = await client.lemonadeStatus();
+
+  if (status === null) {
+    checks.push({
+      name: "Lemonade runtime: not installed (proxy 503)",
+      ok: false,
+      warn: true,
+      fix: "Install the agi-lemonade-runtime plugin from the Plugin Marketplace.",
+    });
+    // Config-side check still runs — catches the case where provider is
+    // configured but the runtime plugin was removed.
+    const hasProvider = Boolean(config.providers?.["lemonade"]);
+    checks.push({
+      name: `Lemonade provider in config: ${hasProvider ? "present" : "absent"}`,
+      ok: hasProvider,
+      warn: !hasProvider,
+      fix: hasProvider
+        ? undefined
+        : "Once the plugin is installed, /api/dev/switch (or Settings > Providers) registers the provider.",
+    });
+    return { title: "Lemonade", checks };
+  }
+
+  // Runtime plugin reachable — drill into version, backends, provider.
+  const versionLabel = status.version ? ` v${status.version}` : "";
+  checks.push({
+    name: `Lemonade runtime: installed${versionLabel}`,
+    ok: Boolean(status.installed),
+    warn: !status.installed,
+    fix: status.installed
+      ? undefined
+      : "Plugin reports installed=false — reinstall via the Plugin Marketplace.",
+  });
+
+  checks.push({
+    name: `Lemonade server: ${status.running ? "running" : "stopped"}`,
+    ok: Boolean(status.running),
+    warn: !status.running,
+    fix: status.running
+      ? undefined
+      : "Start the Lemonade service from the plugin's Settings page or the CLI tool.",
+  });
+
+  // Backends — each reports independently. At least one needs to be
+  // available for Lemonade to serve; warn if all three are missing.
+  const npuAvailable = Boolean(status.devices?.amd_npu?.available);
+  const igpuAvailable = Boolean(status.devices?.amd_igpu?.available);
+  const cpuAvailable = Boolean(status.devices?.cpu?.available);
+  checks.push({
+    name: `Lemonade backend: AMD NPU ${npuAvailable ? "available" : "unavailable"}`,
+    ok: npuAvailable,
+    warn: !npuAvailable,
+    fix: npuAvailable
+      ? undefined
+      : "Optional backend — AMD XDNA NPU not detected by Lemonade. CPU/iGPU still work.",
+  });
+  checks.push({
+    name: `Lemonade backend: AMD iGPU ${igpuAvailable ? "available" : "unavailable"}`,
+    ok: igpuAvailable,
+    warn: !igpuAvailable,
+    fix: igpuAvailable
+      ? undefined
+      : "Optional backend — AMD integrated GPU not detected by Lemonade.",
+  });
+  checks.push({
+    name: `Lemonade backend: CPU ${cpuAvailable ? "available" : "unavailable"}`,
+    ok: cpuAvailable,
+    warn: !cpuAvailable,
+    fix: cpuAvailable
+      ? undefined
+      : "CPU backend unexpectedly absent — Lemonade normally always has CPU available.",
+  });
+
+  // Active model loaded — not a hard requirement but signals readiness.
+  if (status.activeModel !== undefined && status.activeModel !== null && status.activeModel !== "") {
+    checks.push({
+      name: `Lemonade active model: ${status.activeModel}`,
+      ok: true,
+    });
+  } else {
+    checks.push({
+      name: "Lemonade active model: none loaded",
+      ok: false,
+      warn: true,
+      fix: "Pull a model via the Lemonade plugin's Models page, or via the lemonade_pull agent tool.",
+    });
+  }
+
+  // Config-side provider registration.
+  const hasProvider = Boolean(config.providers?.["lemonade"]);
+  checks.push({
+    name: `Lemonade provider in config: ${hasProvider ? "present" : "absent"}`,
+    ok: hasProvider,
+    warn: !hasProvider,
+    fix: hasProvider
+      ? undefined
+      : "Provider auto-registers when the plugin activates; re-enable the plugin if this row stays absent.",
+  });
+
+  return { title: "Lemonade", checks };
 }
 
 // ---------------------------------------------------------------------------
@@ -401,7 +598,8 @@ export function registerDoctorCommand(program: Command): void {
     .command("doctor")
     .description("Run self-diagnostics")
     .option("--json", "Output results as JSON")
-    .action(async (cmdOpts: { json?: boolean }) => {
+    .option("--with-aion", "Use aion-micro for AI-powered diagnostic analysis")
+    .action(async (cmdOpts: { json?: boolean; withAion?: boolean }) => {
       const opts = program.opts<{ config?: string; host?: string; port?: number }>();
       const groups: CheckGroup[] = [];
 
@@ -421,6 +619,9 @@ export function registerDoctorCommand(program: Command): void {
         if (dev) groups.push(dev);
 
         groups.push(await gatewayChecks(config));
+
+        const lemonade = await lemonadeChecks(config);
+        if (lemonade) groups.push(lemonade);
       }
 
       // JSON output
@@ -455,6 +656,37 @@ export function registerDoctorCommand(program: Command): void {
           if (check.ok) totalPassed++;
           else if (check.warn) totalWarnings++;
           else totalFailed++;
+        }
+      }
+
+      // AI-powered diagnostic analysis via aion-micro
+      if (cmdOpts.withAion) {
+        const gatewayHost = config?.gateway?.host ?? "127.0.0.1";
+        const gatewayPort = config?.gateway?.port ?? 3100;
+        const allChecks = groups.flatMap((g) => g.checks.map((c) => ({ group: g.title, ...c })));
+        try {
+          const res = await fetch(`http://${gatewayHost}:${String(gatewayPort)}/api/admin/diagnose`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ checks: allChecks }),
+            signal: AbortSignal.timeout(60_000),
+          });
+          if (res.ok) {
+            const data = await res.json() as { analysis?: string };
+            if (data.analysis) {
+              console.log();
+              console.log(`  ${bold("AI Analysis")} ${dim("(aion-micro)")}`);
+              for (const line of data.analysis.split("\n")) {
+                console.log(`  ${line}`);
+              }
+            }
+          } else {
+            console.log();
+            console.log(`  ${dim("AI analysis unavailable — aion-micro image not installed")}`);
+          }
+        } catch {
+          console.log();
+          console.log(`  ${dim("AI analysis unavailable — gateway not reachable")}`);
         }
       }
 

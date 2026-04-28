@@ -93,7 +93,7 @@ export function generateRecoveryCodes(): string[] {
 
 /** Hash a recovery code for storage. */
 export function hashRecoveryCode(code: string): string {
-  return createHmac("sha256", "aionima-recovery").update(code).digest("hex");
+  return createHmac("sha256", "agi-recovery").update(code).digest("hex");
 }
 
 // ---------------------------------------------------------------------------

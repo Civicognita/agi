@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { AgentInvoker } from "./agent-invoker.js";
-import type { EntityStore } from "@aionima/entity-model";
-import type { COAChainLogger } from "@aionima/coa-chain";
+import type { EntityStore } from "@agi/entity-model";
+import type { COAChainLogger } from "@agi/coa-chain";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -73,7 +73,7 @@ export class HeartbeatScheduler {
       if (prompt.length === 0) return;
 
       // Create/resolve system entity for heartbeat
-      const systemEntity = this.deps.entityStore.resolveOrCreate(
+      const systemEntity = await this.deps.entityStore.resolveOrCreate(
         "system",
         "$HEARTBEAT",
         "Heartbeat System",

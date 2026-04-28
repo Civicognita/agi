@@ -76,6 +76,8 @@ MApp lifecycle events (mint, install, publish, execute) are tracked in the COA c
 
 The Projects section lists hosted projects — code repositories or web applications running on the local network via Caddy reverse proxy. Each project shows its hostname, status, runtime type, and quick controls (start/stop/restart container).
 
+In contributing (dev) mode, the top of the Projects page shows a **Sacred Projects** section with the five core-repo forks: **AGI**, **PRIME**, **ID**, **Plugins** (the Plugin Marketplace repo), and **MagicApps** (the MApp Marketplace repo). The last two are renamed from their older "Marketplace" / "MApp Marketplace" labels so the purpose of each fork is immediately readable.
+
 This section is only populated if `hosting.enabled` is `true` in `gateway.json`.
 
 #### Database in the Development Tab
@@ -117,7 +119,7 @@ Only channels that are configured in `gateway.json` appear in the sidebar.
 
 ### Knowledge
 
-The Knowledge section provides access to the PRIME knowledge corpus (stored in an external repo at the path configured by `prime.dir`, default `/opt/aionima-prime`). It allows browsing and reading corpus documents. Writing from the dashboard editor is not supported — the corpus is managed via its own source repository.
+The Knowledge section provides access to the PRIME knowledge corpus (stored in an external repo at the path configured by `prime.dir`, default `/opt/agi-prime`). It allows browsing and reading corpus documents. Writing from the dashboard editor is not supported — the corpus is managed via its own source repository.
 
 ### Documentation
 

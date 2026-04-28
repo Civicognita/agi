@@ -2,7 +2,7 @@
  * defineSettingsPage — chainable builder for SettingsPageDefinition.
  */
 
-import type { SettingsPageDefinition, SettingsSectionDefinition } from "@aionima/plugins";
+import type { SettingsPageDefinition, SettingsSectionDefinition } from "@agi/plugins";
 
 class SettingsPageBuilder {
   private def: Partial<SettingsPageDefinition> & { sections: SettingsSectionDefinition[] };

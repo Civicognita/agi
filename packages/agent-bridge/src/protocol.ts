@@ -1,4 +1,4 @@
-import type { OutboundContent } from "@aionima/channel-sdk";
+import type { OutboundContent } from "@agi/channel-sdk";
 
 // ---------------------------------------------------------------------------
 // Bridge → WebChat UI (server-to-client)

@@ -6,8 +6,8 @@
 
 import type { FastifyInstance } from "fastify";
 import type { IncomingMessage } from "node:http";
-import type { CommsLog } from "@aionima/entity-model";
-import type { NotificationStore } from "@aionima/entity-model";
+import type { CommsLog } from "@agi/entity-model";
+import type { NotificationStore } from "@agi/entity-model";
 
 // ---------------------------------------------------------------------------
 // Helpers (same as hosting-api.ts / server-runtime-state.ts)
@@ -74,8 +74,14 @@ export function registerCommsRoutes(
     const limit = Math.min(Number(request.query.limit) || 50, 200);
     const offset = Number(request.query.offset) || 0;
 
-    const entries = commsLog.query({ channel, direction, limit, offset });
-    const total = commsLog.count({ channel, direction });
+    // commsLog.query + commsLog.count are async (drizzle/pg under the
+    // hood) — without awaiting, the reply serializes unresolved Promises
+    // as `{}` and the client crashes when it tries to iterate `entries`.
+    // Same bug class as v0.4.65's dashboard-api recentActivity fix.
+    const [entries, total] = await Promise.all([
+      commsLog.query({ channel, direction, limit, offset }),
+      commsLog.count({ channel, direction }),
+    ]);
 
     return reply.send({ entries, total });
   });
@@ -93,8 +99,14 @@ export function registerCommsRoutes(
     const limit = Math.min(Number(request.query.limit) || 50, 200);
     const unreadOnly = request.query.unreadOnly === "true";
 
-    const notifications = notificationStore.getRecent({ limit, unreadOnly });
-    const unreadCount = notificationStore.countUnread();
+    // async store methods must be awaited — otherwise `notifications`
+    // serializes as `{}` and the client's setNotifications(items)
+    // plants a non-array into state, which then crashes the next
+    // WS notification:new handler with "_e is not iterable".
+    const [notifications, unreadCount] = await Promise.all([
+      notificationStore.getRecent({ limit, unreadOnly }),
+      notificationStore.countUnread(),
+    ]);
 
     return reply.send({ notifications, unreadCount });
   });
@@ -114,7 +126,7 @@ export function registerCommsRoutes(
       return reply.code(400).send({ error: "ids must be an array" });
     }
 
-    notificationStore.markRead(ids);
+    await notificationStore.markRead(ids);
     return reply.send({ ok: true });
   });
 
@@ -126,7 +138,7 @@ export function registerCommsRoutes(
     const err = guardPrivate(request);
     if (err !== null) return reply.code(403).send({ error: err });
 
-    notificationStore.markAllRead();
+    await notificationStore.markAllRead();
     return reply.send({ ok: true });
   });
 }

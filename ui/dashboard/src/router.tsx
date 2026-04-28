@@ -30,6 +30,9 @@ import { PluginPageResolver } from "./components/PluginPageResolver.js";
 import MarketplacePage from "./routes/marketplace.js";
 import HFMarketplacePage from "./routes/hf-marketplace.js";
 import SettingsHFPage from "./routes/settings-hf.js";
+import SettingsProvidersPage from "./routes/settings-providers.js";
+import ScheduledJobsPage from "./routes/settings-scheduled-jobs.js";
+import AionimaPage from "./routes/aionima.js";
 import { OnboardingPage } from "./routes/onboarding.js";
 import { GatewayOnboardingPage } from "./routes/gateway-onboarding.js";
 import ReportsPage from "./routes/reports.js";
@@ -41,6 +44,8 @@ import BackupsPage from "./routes/system-backups.js";
 import SecuritySettingsPage from "./routes/settings-security.js";
 import SystemSecurityPage from "./routes/system-security.js";
 import IdentityServicePage from "./routes/system-identity.js";
+import SystemAgentsPage from "./routes/system-agents.js";
+import PromptInspectorPage from "./routes/prompt-inspector.js";
 import MagicAppsPage from "./routes/magic-apps.js";
 import MagicAppDetailPage from "./routes/magic-app-detail.js";
 import MagicAppsAdminPage from "./routes/magic-apps-admin.js";
@@ -80,6 +85,7 @@ export const router = createBrowserRouter([
       { path: "gateway/logs", element: <LogsPage /> },
       { path: "gateway/marketplace", element: <MarketplacePage /> },
       { path: "hf-marketplace", element: <HFMarketplacePage /> },
+      { path: "aionima", element: <AionimaPage /> },
       { path: "gateway/onboarding", element: <GatewayOnboardingPage /> },
       // Redirect old settings path
       { path: "gateway/settings", element: <Navigate to="/settings/gateway" replace /> },
@@ -90,6 +96,8 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="/settings/gateway" replace /> },
           { path: "gateway", element: <SettingsGatewayPage /> },
+          { path: "providers", element: <SettingsProvidersPage /> },
+          { path: "scheduled-jobs", element: <ScheduledJobsPage /> },
           { path: "security", element: <SecuritySettingsPage /> },
           { path: "hf", element: <SettingsHFPage /> },
           { path: "plugins", element: <Navigate to="/settings/gateway" replace /> },
@@ -108,6 +116,8 @@ export const router = createBrowserRouter([
       { path: "system/backups", element: <BackupsPage /> },
       { path: "system/security", element: <SystemSecurityPage /> },
       { path: "system/identity", element: <IdentityServicePage /> },
+      { path: "system/agents", element: <SystemAgentsPage /> },
+      { path: "system/prompt-inspector", element: <PromptInspectorPage /> },
       // Redirects: old system/* paths → new locations
       { path: "system/plugins", element: <Navigate to="/gateway/marketplace" replace /> },
       { path: "system/workflows", element: <Navigate to="/gateway/workflows" replace /> },

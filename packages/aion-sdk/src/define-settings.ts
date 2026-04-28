@@ -2,7 +2,7 @@
  * defineSettings — chainable builder for SettingsSectionDefinition.
  */
 
-import type { SettingsSectionDefinition, UIField } from "@aionima/plugins";
+import type { SettingsSectionDefinition, UIField } from "@agi/plugins";
 
 class SettingsBuilder {
   private def: Partial<SettingsSectionDefinition> & { fields: UIField[] };

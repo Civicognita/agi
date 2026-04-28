@@ -1,8 +1,8 @@
 /**
- * Type re-exports from @aionima/plugins and @aionima/gateway-core for SDK consumers.
+ * Type re-exports from @agi/plugins and @agi/gateway-core for SDK consumers.
  *
  * This is the canonical type surface for plugin development. Every type a plugin
- * author needs is re-exported here so consumers only depend on `@aionima/sdk`.
+ * author needs is re-exported here so consumers only depend on `@agi/sdk`.
  *
  * ## Plugin Schema Reference (MPx 1.0)
  *
@@ -92,9 +92,9 @@ export type {
   LLMProviderDefinition,
   LLMProviderFactory,
   ProvidesLabel,
-} from "@aionima/plugins";
+} from "@agi/plugins";
 
-export type { AionimaChannelPlugin } from "@aionima/channel-sdk";
+export type { AionimaChannelPlugin } from "@agi/channel-sdk";
 
 export type {
   StackDefinition,
@@ -109,4 +109,4 @@ export type {
   StackDevCommands,
   ProjectStackInstance,
   StackInfo,
-} from "@aionima/gateway-core";
+} from "@agi/gateway-core";

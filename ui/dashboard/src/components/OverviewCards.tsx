@@ -3,6 +3,7 @@
  */
 
 import { Card, CardContent } from "@/components/ui/card";
+import { safeArray } from "@/lib/utils";
 import type { DashboardOverview } from "../types.js";
 
 export interface OverviewCardsProps {
@@ -39,7 +40,7 @@ export function OverviewCards({ data }: OverviewCardsProps) {
     },
     {
       label: "Activity",
-      value: String(data.recentActivity.length),
+      value: String(safeArray(data.recentActivity).length),
       sub: "Recent events tracked",
       accent: "border-l-red",
     },

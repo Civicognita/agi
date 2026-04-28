@@ -11,7 +11,7 @@ Defines a framework/runtime/database stack (e.g., TALL, Next.js).
 **Required:** `description`, `category`, `projectCategories`
 
 ```typescript
-import { defineStack } from "@aionima/sdk";
+import { defineStack } from "@agi/sdk";
 
 const stack = defineStack("nextjs", "Next.js")
   .description("React framework with SSR and API routes")
@@ -50,7 +50,7 @@ Defines a container runtime for a language (e.g., Node.js 22, PHP 8.5).
 **Required:** `language`, `version`, `containerImage`, `internalPort`
 
 ```typescript
-import { defineRuntime } from "@aionima/sdk";
+import { defineRuntime } from "@agi/sdk";
 
 const runtime = defineRuntime("node-22", "Node.js 22 LTS")
   .language("node")
@@ -83,7 +83,7 @@ Defines an infrastructure service (MySQL, Redis, PostgreSQL).
 **Required:** `description`, `containerImage`, `defaultPort`
 
 ```typescript
-import { defineService } from "@aionima/sdk";
+import { defineService } from "@agi/sdk";
 
 const service = defineService("mysql", "MySQL")
   .description("Relational database")
@@ -115,7 +115,7 @@ Defines an action button that can execute shell commands, API calls, or hooks.
 **Required:** `scope`, `handler`
 
 ```typescript
-import { defineAction } from "@aionima/sdk";
+import { defineAction } from "@agi/sdk";
 
 const action = defineAction("restart-redis", "Restart Redis")
   .description("Stop and restart the Redis container")
@@ -148,7 +148,7 @@ Defines a project panel with widgets.
 **Required:** `projectTypes`
 
 ```typescript
-import { definePanel } from "@aionima/sdk";
+import { definePanel } from "@agi/sdk";
 
 const panel = definePanel("redis-panel", "Redis")
   .projectTypes(["node", "php"])
@@ -175,7 +175,7 @@ Defines a settings section on the Settings page.
 **Required:** `configPath`
 
 ```typescript
-import { defineSettings } from "@aionima/sdk";
+import { defineSettings } from "@agi/sdk";
 
 const settings = defineSettings("redis-settings", "Redis")
   .description("Configure Redis service")
@@ -204,7 +204,7 @@ Defines an agent tool — a function the AI agent can invoke during conversation
 **Required:** `inputSchema`, `handler`
 
 ```typescript
-import { defineTool } from "@aionima/sdk";
+import { defineTool } from "@agi/sdk";
 
 const tool = defineTool("check_redis", "Check if Redis is running and responsive")
   .inputSchema({
@@ -237,7 +237,7 @@ Defines an agent skill — knowledge injected into the system prompt when trigge
 **Required:** `domain`, `content`
 
 ```typescript
-import { defineSkill } from "@aionima/sdk";
+import { defineSkill } from "@agi/sdk";
 
 const skill = defineSkill("redis-management")
   .description("How to manage Redis containers")
@@ -266,7 +266,7 @@ Defines a visual color theme for the dashboard. Themes must define all 21 semant
 **See [Theming Guide](./theming.md) for the full property reference, react-fancy/react-echarts integration, chart theming, and plugin seal compliance requirements.**
 
 ```typescript
-import { defineTheme } from "@aionima/sdk";
+import { defineTheme } from "@agi/sdk";
 
 const theme = defineTheme("solarized-dark", "Solarized Dark")
   .description("Solarized dark color scheme")
@@ -315,11 +315,11 @@ Defines a documentation namespace with topics.
 **Required:** `contentDir`
 
 ```typescript
-import { defineKnowledge } from "@aionima/sdk";
+import { defineKnowledge } from "@agi/sdk";
 
 const knowledge = defineKnowledge("redis-docs", "Redis Documentation")
   .description("Redis usage and configuration guides")
-  .contentDir("/opt/aionima-marketplace/plugins/plugin-redis/docs")
+  .contentDir("/opt/agi-marketplace/plugins/plugin-redis/docs")
   .topic({ id: "setup", title: "Setup Guide", file: "setup.md" })
   .topic({ id: "config", title: "Configuration", file: "config.md" })
   .build();
@@ -340,7 +340,7 @@ api.registerKnowledge(knowledge);
 Defines a multi-step automation with shell, API, agent, and approval steps.
 
 ```typescript
-import { defineWorkflow } from "@aionima/sdk";
+import { defineWorkflow } from "@agi/sdk";
 
 const workflow = defineWorkflow("deploy-redis", "Deploy Redis")
   .description("Install and configure Redis")
@@ -367,7 +367,7 @@ api.registerWorkflow(workflow);
 Defines a navigation section in the dashboard sidebar.
 
 ```typescript
-import { defineSidebar } from "@aionima/sdk";
+import { defineSidebar } from "@agi/sdk";
 
 const sidebar = defineSidebar("monitoring", "Monitoring")
   .item({ label: "Redis", path: "/monitoring/redis", icon: "database" })
@@ -392,7 +392,7 @@ Defines a messaging channel adapter. Channel builders require multiple adapter i
 **Required:** `configAdapter`, `gatewayAdapter`, `outboundAdapter`, `messagingAdapter`
 
 ```typescript
-import { defineChannel } from "@aionima/sdk";
+import { defineChannel } from "@agi/sdk";
 
 const channel = defineChannel("slack", "Slack")
   .version("1.0.0")
@@ -432,7 +432,7 @@ Defines an LLM provider integration.
 **Required:** `defaultModel`, `factory`; also `envKey` if `requiresApiKey` is true
 
 ```typescript
-import { defineProvider } from "@aionima/sdk";
+import { defineProvider } from "@agi/sdk";
 
 const provider = defineProvider("anthropic", "Anthropic")
   .description("Claude models by Anthropic")
@@ -470,7 +470,7 @@ Defines a security scan provider that can be registered via `api.registerScanPro
 **Required:** `scanType`, `handler`
 
 ```typescript
-import { defineScan } from "@aionima/sdk";
+import { defineScan } from "@agi/sdk";
 
 const phpScanner = defineScan("php-sast", "PHP SAST")
   .description("Static analysis for PHP projects")
@@ -506,7 +506,7 @@ Defines a background task worker that Taskmaster can dispatch.
 **Required:** `domain`, `role`, `description`, `prompt`
 
 ```typescript
-import { defineWorker } from "@aionima/sdk";
+import { defineWorker } from "@agi/sdk";
 
 const hacker = defineWorker("code.hacker", "Code Hacker")
   .domain("code")

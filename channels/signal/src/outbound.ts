@@ -1,4 +1,4 @@
-import type { OutboundContent } from "@aionima/channel-sdk";
+import type { OutboundContent } from "@agi/channel-sdk";
 import type { SignalCliClient } from "./signal-cli-client.js";
 
 /** Signal's practical maximum text length per message. */

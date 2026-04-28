@@ -28,8 +28,8 @@ user-facing behavior see [docs/human/crash-recovery.md](../human/crash-recovery.
   "reason": "sigterm" | "sigint" | "restart" | "upgrade",
   "pid": 57055,
   "externals": {
-    "idPostgresContainer": "aionima-id-postgres",
-    "idService": "aionima-id.service"
+    "idPostgresContainer": "agi-id-postgres",
+    "idService": "agi-id.service"
   },
   "projects": [{ "slug": "...", "containerName": "..." }],
   "models":   [{ "modelId": "...", "containerName": "..." }]

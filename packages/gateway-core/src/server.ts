@@ -19,20 +19,54 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { ulid } from "ulid";
-import { createDatabase, EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@aionima/entity-model";
+import { dispatchJobsDir } from "./dispatch-paths.js";
+import { resolveMarketplaceSource } from "./dev-mode-sources.js";
+
+/**
+ * Read the AGI version from package.json at the configured deploy root,
+ * with graceful fallback. Used by `/health` so the dashboard can force-
+ * reload stale tabs after an upgrade.
+ */
+function resolveAgiVersion(selfRepoPath: string | undefined): string {
+  const candidates = [
+    selfRepoPath ? join(selfRepoPath, "package.json") : null,
+    join(process.cwd(), "package.json"),
+  ].filter((p): p is string => p !== null);
+  for (const candidate of candidates) {
+    try {
+      const raw = readFileSync(candidate, "utf-8");
+      const pkg = JSON.parse(raw) as { version?: string };
+      if (typeof pkg.version === "string" && pkg.version.length > 0) return pkg.version;
+    } catch {
+      /* try next */
+    }
+  }
+  return "unknown";
+}
+import { EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@agi/entity-model";
+import type { Entity } from "@agi/entity-model";
+import { createDbClient } from "@agi/db-schema/client";
 import { BackupManager } from "./backup-manager.js";
 import { registerComplianceRoutes } from "./compliance-api.js";
 import { registerSecurityRoutes } from "./security-api.js";
+import { registerProvidersRoutes } from "./providers-api.js";
 import { registerAdminRoutes } from "./admin-api.js";
-import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@aionima/security";
-import { COAChainLogger } from "@aionima/coa-chain";
+import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
+import { COAChainLogger } from "@agi/coa-chain";
 import { PairingStore } from "./pairing-store.js";
-import type { AionimaMessage } from "@aionima/channel-sdk";
+import type { AionimaMessage } from "@agi/channel-sdk";
 import { createLogger, createComponentLogger } from "./logger.js";
 import type { Logger, LogEntry } from "./logger.js";
+import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";
+import { CostLedgerWriter } from "./cost-ledger-writer.js";
+import { CostLedgerReader } from "./cost-ledger-reader.js";
+import { McpClient } from "@agi/mcp-client";
+import { TynnPmProvider } from "./pm/tynn-provider.js";
+import { TynnLitePmProvider } from "./pm/tynn-lite-provider.js";
+import type { PmProvider, PmStatus } from "@agi/sdk";
 
-import type { AionimaConfig, ConfigReloadEvent } from "@aionima/config";
-import { ConfigWatcher } from "@aionima/config";
+import type { AionimaConfig, ConfigReloadEvent } from "@agi/config";
+import { ConfigWatcher } from "@agi/config";
 
 import { SecretsManager } from "./secrets.js";
 import {
@@ -45,6 +79,7 @@ import {
 } from "./boot-recovery.js";
 import { safemodeState } from "./safemode-state.js";
 import { LocalModelRuntime, DEFAULT_LOCAL_MODEL_ID } from "./local-model-runtime.js";
+import { AionMicroManager } from "./aion-micro-manager.js";
 import { runInvestigator } from "./safemode-investigator.js";
 import { GatewayAuth } from "./auth.js";
 import { GatewayStateMachine } from "./state-machine.js";
@@ -55,22 +90,22 @@ import { OutboundDispatcher } from "./outbound-dispatcher.js";
 import { QueueConsumer } from "./queue-consumer.js";
 import { AgentSessionManager } from "./agent-session.js";
 import { SessionStore } from "./session-store.js";
-import { createLLMProvider } from "./llm/index.js";
+import { createAgentRouter, AgentRouter, setPluginProviderRegistry, setModelAgentBridge } from "./llm/index.js";
 import type { LLMProvider } from "./llm/index.js";
 import { RateLimiter } from "./rate-limiter.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { AgentInvoker } from "./agent-invoker.js";
 import { ChatEventBuffer } from "./chat-event-buffer.js";
 import { registerAllTools, registerAgentTools } from "./tools/index.js";
-import { SkillRegistry } from "@aionima/skills";
-import { CompositeMemoryAdapter } from "@aionima/memory";
+import { SkillRegistry } from "@agi/skills";
+import { CompositeMemoryAdapter } from "@agi/memory";
 import {
   VoicePipeline,
   WhisperSTTProvider,
   LocalSTTProvider,
   EdgeTTSProvider,
   LocalTTSProvider,
-} from "@aionima/voice";
+} from "@agi/voice";
 import type { CanvasDocument } from "./canvas-types.js";
 import { ChannelRegistry } from "./channel-registry.js";
 import { DashboardApi } from "./dashboard-api.js";
@@ -93,14 +128,18 @@ import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
 import { projectConfigPath } from "./project-config-path.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
+import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
+import { listProjectsWithConfig } from "./iterative-work/list-projects.js";
+import { projectSlug } from "./project-config-path.js";
 import { SystemConfigService } from "./system-config-service.js";
 import { createProjectTypeRegistry } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
-import { discoverPlugins, getDefaultSearchPaths, loadPlugins, tryLoadManifest, PluginRegistry, HookBus } from "@aionima/plugins";
+import { discoverPlugins, getDefaultSearchPaths, loadPlugins, tryLoadManifest, PluginRegistry, HookBus } from "@agi/plugins";
 import { ServiceManager } from "./service-manager.js";
 import { bridgePluginCapabilities, unbridgePluginCapabilities } from "./plugin-bridges.js";
 import { ScheduledTaskManager } from "./scheduled-task-manager.js";
-import { MarketplaceManager } from "@aionima/marketplace";
+import { MarketplaceManager } from "@agi/marketplace";
+import { MarketplaceStore } from "@agi/marketplace";
 import { FederationNode, generateNodeKeypair } from "./federation-node.js";
 import { FederationRouter } from "./federation-router.js";
 import { FederationPeerStore } from "./federation-peer-store.js";
@@ -113,11 +152,11 @@ import { WorkerRuntime } from "./worker-runtime.js";
 import { ReportsStore } from "./reports-store.js";
 import { registerReportsApi } from "./reports-api.js";
 import { registerWorkerApi } from "./worker-api.js";
+import { registerUsageRoutes } from "./usage-api.js";
 import { appendUpgradeLog } from "./upgrade-log.js";
 import { EventEmitter } from "node:events";
-import { Pool } from "pg";
+import { HardwareProfiler } from "./machine/hardware-profiler.js";
 import {
-  HardwareProfiler,
   HfHubClient,
   ModelStore,
   DatasetStore,
@@ -127,9 +166,11 @@ import {
   ModelAgentBridge,
   KnownModelsRegistry,
   CustomContainerBuilder,
-} from "@aionima/model-runtime";
-import type { ModelRuntimeEventEmitter } from "@aionima/model-runtime";
+  cleanupHubOrphans,
+} from "@agi/model-runtime";
+import type { ModelRuntimeEventEmitter } from "@agi/model-runtime";
 import { registerHfRoutes } from "./hf-api.js";
+import { registerLemonadeRoutes } from "./lemonade-api.js";
 import { FineTuneManager } from "./finetune-manager.js";
 
 // ---------------------------------------------------------------------------
@@ -233,7 +274,7 @@ export async function startGatewayServer(
   // Read (and delete) the shutdown marker written by the previous close().
   // Presence of a marker = last exit was graceful → reconcile saved state.
   // Absence = crash → enter safemode (dashboard callout + investigator).
-  // External deps (ID Postgres, aionima-id.service) are started either way
+  // External deps (ID Postgres, agi-id.service) are started either way
   // because AGI's DBs live in them.
   // -------------------------------------------------------------------------
 
@@ -336,8 +377,7 @@ export async function startGatewayServer(
   // These are shared across InboundRouter, OutboundDispatcher, DashboardQueries.
   // -------------------------------------------------------------------------
 
-  const dbPath = config.entities?.path ?? "./data/entities.db";
-  const db = createDatabase(dbPath);
+  const { db, pool: dbPool } = createDbClient();
   const entityStore = new EntityStore(db);
   const messageQueue = new MessageQueue(db);
   const coaLogger = new COAChainLogger(db);
@@ -346,20 +386,21 @@ export async function startGatewayServer(
   const incidentStore = new IncidentStore(db);
   const vendorStore = new VendorStore(db);
   const complianceSessionStore = new ComplianceSessionStore(db);
-  // ConsentStore initialized — tables created on construction, available for future consent API
+  // ConsentStore instantiated — available for future consent API routes
   void new ConsentStore(db);
   const usageStore = new UsageStore(db);
 
-  // Seed vendors from configured providers
-  vendorStore.seedFromConfig(config as Record<string, unknown>);
+  // Seed vendors from configured providers (async — fire-and-forget at boot)
+  void vendorStore.seedFromConfig(config as Record<string, unknown>);
 
   // Start backup manager if enabled
   let backupManager: BackupManager | undefined;
   if (config.backup?.enabled !== false) {
     const backupDir = (config.backup?.dir ?? join(homedir(), ".agi", "backups")).replace(/^~/, homedir());
+    const databaseUrl = process.env.DATABASE_URL ?? "postgres://agi:aionima@localhost:5432/agi_data";
     backupManager = new BackupManager({
       backupDir,
-      databases: [{ name: "entities", db }],
+      databaseUrl,
       retentionDays: config.backup?.retentionDays ?? 30,
       logger,
     });
@@ -383,7 +424,7 @@ export async function startGatewayServer(
 
   // Protocol compatibility check — selfRepo is the AGI repo path (used by upgrade system)
   const agiRoot = config.workspace?.selfRepo ?? config.workspace?.root ?? process.cwd();
-  const protocolResult = checkProtocolCompatibility(agiRoot, primeDir, null, idDir);
+  const protocolResult = checkProtocolCompatibility(agiRoot, primeDir, idDir);
   if (!protocolResult.compatible) {
     for (const err of protocolResult.errors) {
       log.warn(`Protocol compatibility: ${err}`);
@@ -413,10 +454,10 @@ export async function startGatewayServer(
         (entry): entry is [string, string] => entry[1] !== undefined,
       );
 
-      let ownerEntity: ReturnType<EntityStore["resolveOrCreate"]> | undefined;
+      let ownerEntity: Entity | undefined;
 
       for (const [channel, channelUserId] of channelEntries) {
-        const existing = entityStore.getEntityByChannel(channel, channelUserId);
+        const existing = await entityStore.getEntityByChannel(channel, channelUserId);
         if (existing !== null) {
           ownerEntity = existing;
           break;
@@ -426,12 +467,12 @@ export async function startGatewayServer(
       // If no existing entity found, create one from the first channel
       if (ownerEntity === undefined) {
         const [firstChannel, firstUserId] = channelEntries[0]!;
-        ownerEntity = entityStore.resolveOrCreate(firstChannel, firstUserId, ownerConfig.displayName);
+        ownerEntity = await entityStore.resolveOrCreate(firstChannel, firstUserId, ownerConfig.displayName);
       }
 
       // Link all channels to the resolved entity
       for (const [channel, channelUserId] of channelEntries) {
-        entityStore.upsertChannelAccount({
+        await entityStore.upsertChannelAccount({
           entityId: ownerEntity.id,
           channel,
           channelUserId,
@@ -440,11 +481,11 @@ export async function startGatewayServer(
 
       // Ensure the owner entity is sealed (full access)
       if (ownerEntity.verificationTier !== "sealed") {
-        entityStore.updateEntity(ownerEntity.id, { verificationTier: "sealed" });
+        await entityStore.updateEntity(ownerEntity.id, { verificationTier: "sealed" });
       }
       // Update display name if it was "Unknown"
       if (ownerEntity.displayName === "Unknown") {
-        entityStore.updateEntity(ownerEntity.id, { displayName: ownerConfig.displayName });
+        await entityStore.updateEntity(ownerEntity.id, { displayName: ownerConfig.displayName });
       }
       ownerEntityId = ownerEntity.id;
       log.info(`owner entity resolved: ${ownerEntity.coaAlias} (${ownerEntity.displayName}) — sealed`);
@@ -510,7 +551,13 @@ export async function startGatewayServer(
   const outboundDispatcher = new OutboundDispatcher({
     getChannelAdapter: (channelId: string) => channelRegistry.getChannel(channelId)?.plugin.outbound,
     coaLogger,
-    resolveCoaAlias: (entityId: string) => entityStore.getEntity(entityId)?.coaAlias ?? "#E?",
+    // Look up the entity's COA alias for each outbound dispatch. Falls back to
+    // "#E?" on miss — entity might have been deleted between message enqueue
+    // and dispatch, which is rare but not pathological.
+    resolveCoaAlias: async (entityId: string) => {
+      const entity = await entityStore.getEntity(entityId);
+      return entity?.coaAlias ?? "#E?";
+    },
     resourceId,
     nodeId,
     voicePipeline,
@@ -546,8 +593,69 @@ export async function startGatewayServer(
   // Step 5b: Agent pipeline services
   // -------------------------------------------------------------------------
 
-  let llmProvider = createLLMProvider(config);
+  // createAgentRouter may fail here for plugin-contributed types (e.g.
+  // "claude-max") because plugins haven't loaded yet. Defer to a stub
+  // provider that throws on first use; the post-plugin boot block below
+  // replaces it with the real provider once plugins register their factories.
+  let llmProvider: ReturnType<typeof createAgentRouter>;
+  try {
+    llmProvider = createAgentRouter(config, logger);
+  } catch {
+    const providerType = (config.agent as { provider?: string } | undefined)?.provider ?? "unknown";
+    log.info(`LLM provider "${providerType}" deferred — will resolve after plugins load`);
+    llmProvider = {
+      async invoke() { throw new Error(`LLM provider "${providerType}" not yet initialized — waiting for plugins`); },
+      async continueWithToolResults() { throw new Error(`LLM provider "${providerType}" not yet initialized`); },
+      async summarize() { throw new Error(`LLM provider "${providerType}" not yet initialized`); },
+    };
+  }
   const getLLMProvider = () => llmProvider;
+
+  /**
+   * Wire the onProviderError callback on an AgentRouter instance.
+   * Must be called whenever llmProvider is (re)created so billing/auth errors
+   * are forwarded to the dashboard broadcaster as real-time notifications.
+   */
+  function wireProviderErrorCallback(provider: ReturnType<typeof createAgentRouter>): void {
+    if (provider instanceof AgentRouter) {
+      provider.onProviderError = (error) => {
+        dashboardBroadcasterRef?.emitNotification({
+          id: `provider-error-${Date.now()}`,
+          type: error.type === "billing" ? "warning" : "error",
+          title: `Provider ${error.type === "billing" ? "billing error" : "auth error"}: ${error.provider}`,
+          body: error.message,
+          metadata: { provider: error.provider, model: error.model, errorType: error.type },
+          createdAt: new Date().toISOString(),
+        });
+      };
+    }
+  }
+
+  wireProviderErrorCallback(llmProvider);
+
+  // s111 t424 — Cost ledger writer + power sampler thunks. Server.ts owns
+  // the writer (single drizzle client) + dedicated sampler instances (the
+  // server-runtime-state.ts samplers serve /api/system/stats and have their
+  // own delta state; per-instance state means independent readings for each
+  // consumer, both correct within their own time windows). The wiring
+  // assigns public optional fields after construction — same pattern as
+  // wireProviderErrorCallback above. When the AgentRouter is replaced by
+  // post-plugin re-creation (line 1399 / 4005), wireCostLedger() must be
+  // called again to re-attach.
+  const costLedgerWriter = new CostLedgerWriter(db, createComponentLogger(logger, "cost-ledger"));
+  const costLedgerReader = new CostLedgerReader(db);
+  const costCpuSampler = new CpuPowerSampler();
+  costCpuSampler.sample(); // seed; first reading needs a baseline for delta
+  const costGpuSampler = new GpuPowerSampler();
+
+  function wireCostLedger(provider: ReturnType<typeof createAgentRouter>): void {
+    if (provider instanceof AgentRouter) {
+      provider.costLedgerWriter = costLedgerWriter;
+      provider.sampleCpuWatts = () => costCpuSampler.sample();
+      provider.sampleGpuWatts = () => costGpuSampler.sample();
+    }
+  }
+  wireCostLedger(llmProvider);
 
   const agentSessionManager = new AgentSessionManager({
     contextWindowTokens: config.sessions?.contextWindowTokens ?? 200000,
@@ -588,6 +696,22 @@ export async function startGatewayServer(
   // In-flight session data for persistence — maps sessionId → PersistedChatSession
   const chatSessionData = new Map<string, PersistedChatSession>();
   const canvasDocuments: CanvasDocument[] = [];
+  /**
+   * Tracks which chat session dispatched each Taskmaster job, so worker
+   * completion / handoff events can inject a synthetic user turn back into
+   * the originating session via AgentInvoker.injectMessage. Populated in
+   * the taskmaster_dispatch onJobCreated callback, consumed in the runtime:event
+   * handler below registerAllTools.
+   */
+  const jobOriginBySessionKey = new Map<
+    string,
+    {
+      sessionKey?: string;
+      chatSessionId?: string;
+      projectPath: string;
+      planRef?: { planId: string; stepId: string };
+    }
+  >();
   // Late-bound worker runtime ref — populated after workerRuntime is created below.
   // The onJobCreated callback is only invoked during agent tool execution (after boot),
   // so workerRuntimeRef.current is always set by the time it is first called.
@@ -596,12 +720,26 @@ export async function startGatewayServer(
   const hostingManagerRef: { current: unknown | null } = { current: null };
   const stackRegistryRef: { current: unknown | null } = { current: null };
   const mappRegistryRef: { current: unknown | null } = { current: null };
+  const taskmasterOrchestratorRef: { current: import("./taskmaster-orchestrator.js").TaskmasterOrchestrator | null } = { current: null };
+  const pluginRegistryRef: { current: { getWorkers(): Array<{ pluginId: string; worker: { domain: string; role: string; name: string; description: string; modelTier?: string } }> } | null } = { current: null };
 
   // Config services — created early (no heavy dependencies) so tools can use them.
   const projectConfigManager = new ProjectConfigManager({ logger });
   const systemConfigService = opts?.configPath
     ? new SystemConfigService({ configPath: opts.configPath, logger })
     : null;
+
+  // Iterative-work scheduler — walks workspace projects each tick, decides
+  // who's due based on their iterativeWork.cron config, emits fire events.
+  // The fire→AgentInvoker handler is installed below (after agentInvoker
+  // exists). Auto-start happens at the same site so the scheduler is live
+  // for any project that already has iterativeWork.enabled in its
+  // project.json — adding/removing the flag hot-reloads on the next tick.
+  const iterativeWorkScheduler = new IterativeWorkScheduler({
+    projectConfigManager,
+    listProjectPaths: () => listProjectsWithConfig(projectPaths),
+    logger,
+  });
 
   const toolCount = registerAllTools(toolRegistry, {
     workspaceRoot,
@@ -614,15 +752,78 @@ export async function startGatewayServer(
     primeLoader,
     projectDirs: projectPaths,
     projectConfigManager,
-    botsDir: undefined, // Workers are file-driven prompts
     imageBlobStore,
     hostingManagerRef,
     stackRegistryRef,
     mappRegistryRef,
-    onJobCreated: (jobId: string, coaReqId: string) => {
-      workerRuntimeRef.current?.executeJob(jobId, coaReqId).catch((err: unknown) => {
+    onJobCreated: (args) => {
+      const { jobId, coaReqId, projectPath, sessionKey, chatSessionId, planRef } = args;
+      // Remember which chat session dispatched this job so the runtime:event
+      // handler below can inject worker reports back into Aion's next turn.
+      jobOriginBySessionKey.set(jobId, { sessionKey, chatSessionId, projectPath, planRef });
+      // Mark the linked plan step as running the moment we accept the job so
+      // the Plans drawer shows progress immediately, not only on completion.
+      if (planRef !== undefined) {
+        try {
+          planStore.update(projectPath, planRef.planId, {
+            stepUpdates: [{ id: planRef.stepId, status: "running" }],
+          });
+        } catch (err) {
+          log.warn(`plan step mark-running failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      const projectContext = projectPath.length > 0
+        ? { path: projectPath, name: projectPath.split("/").filter(Boolean).pop() ?? projectPath }
+        : undefined;
+      // Orchestrator decomposes the work into worker phases, then runtime
+      // executes them sequentially. If orchestrator isn't available or fails,
+      // fall back to single-phase execution.
+      const dispatchFile = join(dispatchJobsDir(projectPath), `${jobId}.json`);
+      void (async () => {
+        let phases: import("./taskmaster-orchestrator.js").WorkPhase[] | undefined;
+        if (taskmasterOrchestratorRef.current) {
+          try {
+            const dispatchData = JSON.parse(readFileSync(dispatchFile, "utf-8")) as { description: string };
+            const workers = pluginRegistryRef.current
+              ? pluginRegistryRef.current.getWorkers().map((w) => ({
+                  domain: w.worker.domain,
+                  role: w.worker.role,
+                  name: w.worker.name,
+                  description: w.worker.description,
+                  modelTier: w.worker.modelTier,
+                }))
+              : [];
+            if (workers.length > 0) {
+              phases = await taskmasterOrchestratorRef.current.decompose(
+                dispatchData.description, workers, coaReqId,
+              );
+              log.info(`[taskmaster] decomposed "${dispatchData.description.slice(0, 60)}" into ${String(phases.length)} phase(s): ${phases.map((p) => `${p.domain}.${p.role}`).join(" → ")}`);
+            }
+          } catch (err) {
+            log.warn(`[taskmaster] orchestrator failed, falling back to single-phase: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+        await workerRuntimeRef.current?.executeJob(jobId, coaReqId, projectContext, phases);
+      })().catch((err: unknown) => {
         log.error(`workerRuntime.executeJob error: ${err instanceof Error ? err.message : String(err)}`);
       });
+    },
+    onHandoff: (args) => {
+      // Re-emit as a runtime event so the dashboardBroadcaster routing
+      // (server.ts:3055-ish) surfaces the handoff to Work Queue + chat.
+      workerRuntimeRef.current?.emit("runtime:event", {
+        type: "worker_handoff",
+        jobId: args.jobId,
+        question: args.question,
+        projectPath: args.projectPath,
+        coaReqId: args.coaReqId,
+      });
+    },
+    onCancel: (args) => {
+      // Flip state to failed + drop from active jobs + emit job_failed so
+      // Work Queue + chat injection see it uniformly with other terminals.
+      workerRuntimeRef.current?.cancelJob(args.jobId, args.reason);
+      jobOriginBySessionKey.delete(args.jobId);
     },
   });
   log.info(`registered ${String(toolCount)} tools`);
@@ -665,6 +866,7 @@ export async function startGatewayServer(
     skillRegistry,
     userContextStore,
     primeLoader,
+    projectConfigManager,
     workspaceRoot,
     projectPaths,
     ownerConfig: ownerConfig !== undefined ? {
@@ -679,7 +881,63 @@ export async function startGatewayServer(
       const gw = (snap as { gateway?: { maxToolLoops?: number } }).gateway;
       return gw?.maxToolLoops ?? 0;
     },
+    getCostMode: () => {
+      const snap = systemConfigService?.read() ?? config;
+      const router = (snap as { agent?: { router?: { costMode?: string } } })
+        .agent?.router;
+      return router?.costMode ?? "balanced";
+    },
   });
+
+  // -------------------------------------------------------------------------
+  // Step 5a2: Iterative-work fire handler — closes the autonomy loop
+  // -------------------------------------------------------------------------
+  // When the scheduler decides a project is due, this handler resolves the
+  // $ITERATIVE-WORK system entity, builds a synthetic tick prompt, and routes
+  // it through agentInvoker.process() with projectContext set. The system
+  // prompt assembler (cycle 37 wiring) sees iterativeWork.enabled === true
+  // for this project and injects agi/prompts/iterative-work.md into Aion's
+  // context — Aion then participates in the tynn workflow on the project's
+  // behalf. markComplete is called in finally so a failed invocation still
+  // releases the in-flight slot for the next due tick.
+  //
+  // Pattern mirrors heartbeat.ts (channel: "system", synthetic coa, unique
+  // queueMessageId) — same "system-invoked agent call" shape.
+  const ITERATIVE_WORK_TICK_PROMPT = "[iterative-work tick] Continue your work on this project per the iterative-work discipline. First action: consume prior markers (don't re-derive). Then pick the highest-priority READY task and ship a slice. End-of-cycle: report Show-Stoppers / Drift / Clarity counts.";
+
+  iterativeWorkScheduler.on("fire", (fire) => {
+    void (async () => {
+      let outcome: { status: "done" | "error"; error?: string } = { status: "done" };
+      try {
+        const slug = projectSlug(fire.projectPath);
+        const systemEntity = await entityStore.resolveOrCreate(
+          "system",
+          "$ITERATIVE-WORK",
+          "Iterative Work System",
+        );
+        const coaFingerprint = `${resourceId}.${systemEntity.coaAlias}.${nodeId}.iterative-work(${slug})`;
+        log.info(`iterative-work fire: ${fire.projectPath} (cron=${fire.cron})`);
+        await agentInvoker.process({
+          entity: systemEntity,
+          channel: "system",
+          content: ITERATIVE_WORK_TICK_PROMPT,
+          coaFingerprint,
+          queueMessageId: `iter-work-${slug}-${String(fire.firedAt.getTime())}`,
+          projectContext: fire.projectPath,
+          isOwner: true,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log.error(`iterative-work fire failed for ${fire.projectPath}: ${message}`);
+        outcome = { status: "error", error: message };
+      } finally {
+        iterativeWorkScheduler.recordCompletion(fire.projectPath, outcome);
+        iterativeWorkScheduler.markComplete(fire.projectPath);
+      }
+    })();
+  });
+
+  iterativeWorkScheduler.start();
 
   // -------------------------------------------------------------------------
   // Step 5b-workers: Worker Runtime + Reports Store
@@ -700,8 +958,15 @@ export async function startGatewayServer(
       promptDir: resolvePath(workspaceRoot, "prompts", "workers"),
       stateDir: join(homedir(), ".agi", "state"),
       workspaceRoot,
+      resourceId,
+      nodeId,
+      workerTier: "verified",
     },
-    { llmProvider: getLLMProvider() },
+    {
+      llmProvider: getLLMProvider(),
+      toolRegistry,
+      getState: () => stateMachine.getState(),
+    },
   );
 
   // Wire the late-bound ref so onJobCreated callbacks reach the runtime.
@@ -718,7 +983,7 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const scanRegistry = new ScanProviderRegistry();
-  const scanStore = new ScanStore();
+  const scanStore = new ScanStore(db);
   const scanRunner = new ScanRunner(scanRegistry, scanStore, {
     debug: (msg: string) => log.debug(msg),
     info: (msg: string) => log.info(msg),
@@ -760,19 +1025,20 @@ export async function startGatewayServer(
         if (bootstrapContent.trim().length > 0) {
           log.info("first-run bootstrap: executing identity anchoring...");
 
-          const systemEntity = entityStore.resolveOrCreate("system", "$BOOTSTRAP", "System Bootstrap");
+          const systemEntity = await entityStore.resolveOrCreate("system", "$BOOTSTRAP", "System Bootstrap");
 
+          const bootstrapCoaFingerprint = await coaLogger.log({
+            resourceId,
+            entityId: systemEntity.id,
+            entityAlias: systemEntity.coaAlias,
+            nodeId,
+            workType: "action",
+          });
           await agentInvoker.process({
             entity: systemEntity,
             channel: "system",
             content: bootstrapContent,
-            coaFingerprint: coaLogger.log({
-              resourceId,
-              entityId: systemEntity.id,
-              entityAlias: systemEntity.coaAlias,
-              nodeId,
-              workType: "action",
-            }),
+            coaFingerprint: bootstrapCoaFingerprint,
             queueMessageId: "bootstrap-init",
           });
 
@@ -818,7 +1084,7 @@ export async function startGatewayServer(
           throw new Error(`Queue message ${message.id} missing entityId in payload`);
         }
 
-        const entity = entityStore.getEntity(entityId);
+        const entity = await entityStore.getEntity(entityId);
         if (entity === null) {
           // Throw so QueueConsumer.processMessage() calls fail() — do NOT call
           // fail() here because processMessage() also calls complete() on normal return.
@@ -917,7 +1183,7 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   {
-    const { initADF, Log } = await import("@aionima/sdk");
+    const { initADF, Log } = await import("@agi/sdk");
     initADF({
       logger: createComponentLogger(logger, "adf"),
       config: config as Record<string, unknown>,
@@ -948,26 +1214,27 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   // Create the marketplace manager early so we can auto-install required plugins.
-  const marketplaceDbPath = join(dirname(dbPath), "marketplace.db");
   const pluginCacheDir = join(homedir(), ".agi", "plugins", "cache");
+  const marketplaceStore = new MarketplaceStore(db);
   const marketplaceManager = new MarketplaceManager({
-    dbPath: marketplaceDbPath,
+    store: marketplaceStore,
     workspaceRoot,
     cacheDir: pluginCacheDir,
     installDir: process.cwd(),
   });
 
-  // Seed default marketplace source if none exist yet.
-  // The branch matches the gateway's update channel so plugin catalog
-  // versions align with the subscribed release track.
+  // Seed default marketplace source. Dev Mode routes to the owner's fork;
+  // otherwise Civicognita on the configured update channel. The resolver
+  // is pure (see `dev-mode-sources.ts`), so the auto-sync scheduled task
+  // below re-evaluates on every tick — toggling Dev Mode takes effect at
+  // the next poll without requiring a restart.
   const updateChannel = config.gateway?.updateChannel ?? "main";
-  const marketplaceRef = `Civicognita/aionima-marketplace#${updateChannel}`;
+  const marketplaceRef = resolveMarketplaceSource(config, "plugin");
   const existingSources = marketplaceManager.getSources();
   if (existingSources.length === 0) {
     marketplaceManager.addSource(marketplaceRef, "Aionima");
     log.info(`plugin-marketplace: seeded default source (${marketplaceRef})`);
   } else {
-    // Ensure the source ref matches the current update channel
     const defaultSource = existingSources[0]!;
     if (defaultSource.ref !== marketplaceRef) {
       marketplaceManager.removeSource(defaultSource.id);
@@ -1009,13 +1276,13 @@ export async function startGatewayServer(
         for (const req of reqData.plugins) {
           // Check if installed AND has a built dist/index.js.
           // If the cache entry exists but wasn't built, force-reinstall.
-          const isInDb = marketplaceManager.isInstalled(req.id);
+          const isInDb = await marketplaceManager.isInstalled(req.id);
           const cacheEntry = join(pluginCacheDir, req.id);
           const hasBuilt = existsSync(join(cacheEntry, "dist", "index.js"));
 
           if (isInDb && !hasBuilt) {
             log.info(`repairing unbuilt install for required plugin: ${req.id}`);
-            marketplaceManager.uninstall(req.id, true);
+            await marketplaceManager.uninstall(req.id, true);
           }
 
           if (!isInDb || !hasBuilt) {
@@ -1038,14 +1305,16 @@ export async function startGatewayServer(
       // If a plugin is installed, came from the default source, is no longer required,
       // AND is no longer in the synced catalog, clean it up.
       const requiredIds = new Set(reqData.plugins.map((p) => p.id));
-      const installed = marketplaceManager.getInstalled();
-      const catalogEntries = marketplaceManager.searchCatalog({});
+      const [installed, catalogEntries] = await Promise.all([
+        marketplaceManager.getInstalled(),
+        marketplaceManager.searchCatalog({}),
+      ]);
       const catalogNames = new Set(catalogEntries.map((c) => c.name));
       for (const item of installed) {
         if (!requiredIds.has(item.name) && !catalogNames.has(item.name)) {
           log.info(`auto-uninstalling removed plugin: ${item.name} (not in catalog or required list)`);
           try {
-            marketplaceManager.uninstall(item.name, true);
+            await marketplaceManager.uninstall(item.name, true);
           } catch (err) {
             log.warn(`failed to auto-uninstall ${item.name}: ${err instanceof Error ? err.message : String(err)}`);
           }
@@ -1057,6 +1326,15 @@ export async function startGatewayServer(
   }
 
   const pluginRegistry = new PluginRegistry();
+  pluginRegistryRef.current = pluginRegistry;
+
+  // TaskMaster Orchestrator — LLM-powered work decomposition. Uses the
+  // same LLM provider as Aion to decompose work descriptions into ordered
+  // sequences of worker phases.
+  const { TaskmasterOrchestrator } = await import("./taskmaster-orchestrator.js");
+  const taskmasterOrchestrator = new TaskmasterOrchestrator(llmProvider);
+  taskmasterOrchestratorRef.current = taskmasterOrchestrator;
+
   const hookBus = new HookBus();
   const installDir = process.cwd();
   const pluginSearchPaths = getDefaultSearchPaths({ workspaceRoot, installDir });
@@ -1086,9 +1364,9 @@ export async function startGatewayServer(
     if (defaultSourceId !== undefined) {
       let backfilled = 0;
       for (const ip of installedDiscovery.plugins) {
-        if (!marketplaceManager.isInstalled(ip.manifest.id)) {
-          const catalog = marketplaceManager.searchCatalog({ q: ip.manifest.id });
-          const match = catalog.find(c => c.name === ip.manifest.id);
+        if (!await marketplaceManager.isInstalled(ip.manifest.id)) {
+          const catalogEntries = await marketplaceManager.searchCatalog({ q: ip.manifest.id });
+          const match = catalogEntries.find(c => c.name === ip.manifest.id);
           marketplaceManager.backfillInstalled({
             name: ip.manifest.id,
             sourceId: match?.sourceId ?? defaultSourceId,
@@ -1196,6 +1474,77 @@ export async function startGatewayServer(
 
       // Bridge plugin-registered agent tools, skills, and knowledge into core registries
       bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
+
+      // Wire plugin-registered workers into the worker runtime so TaskMaster
+      // uses plugin-contributed prompts, not the old filesystem .md files.
+      workerRuntime.setPluginWorkers(pluginRegistry);
+
+      // Wire plugin-contributed LLM providers into the factory so
+      // `agent.provider: "claude-max"` (or any plugin type) resolves at
+      // config-change time without hardcoding every provider.
+      setPluginProviderRegistry(pluginRegistry as unknown as Parameters<typeof setPluginProviderRegistry>[0]);
+
+      // If the configured provider is plugin-contributed (not built-in),
+      // recreate the LLM provider now that plugins have loaded. On first
+      // boot, createLLMProvider ran before plugins — so it threw for unknown
+      // types. Recreating here picks up the plugin factory.
+      try {
+        const agentProvider = (config.agent as { provider?: string } | undefined)?.provider ?? "anthropic";
+        if (!["anthropic", "openai", "ollama", "hf-local"].includes(agentProvider)) {
+          try {
+            llmProvider = createAgentRouter(config, logger);
+            wireProviderErrorCallback(llmProvider);
+            wireCostLedger(llmProvider);
+            log.info(`LLM provider switched to plugin-contributed "${agentProvider}"`);
+          } catch {
+            // Provider not registered by any loaded plugin. Check if the
+            // marketplace catalog has a matching plugin and auto-install it
+            // so the user doesn't have to manually browse Settings → Plugins.
+            const catalogName = `provider-${agentProvider}`;
+            const catalog = await marketplaceManager.searchCatalog({});
+            const match = catalog.find((p) => p.name === catalogName || p.name === agentProvider);
+            if (match && !match.installed) {
+              log.info(`auto-installing provider plugin "${match.name}" from marketplace (config references "${agentProvider}")`);
+              try {
+                const installResult = await marketplaceManager.install(match.name, match.sourceId);
+                if (installResult.ok && installResult.installPath) {
+                  // Hot-load the newly installed plugin
+                  const discovery = tryLoadManifest(installResult.installPath);
+                  if (!("error" in discovery) && !pluginRegistry.has(discovery.manifest.id)) {
+                    await loadPlugins([discovery], {
+                      pluginRegistry,
+                      hookBus,
+                      projectTypeRegistry,
+                      config: config as Record<string, unknown>,
+                      logger,
+                      workspaceRoot: opts?.configPath ? dirname(resolvePath(opts.configPath)) : workspaceRoot,
+                      projectDirs: projectPaths,
+                      pluginPriorities: Object.fromEntries(
+                        Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
+                      ),
+                      channelRegistry,
+                      channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+                    });
+                    bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
+                    // Retry provider creation now that the plugin is loaded
+                    setPluginProviderRegistry(pluginRegistry as unknown as Parameters<typeof setPluginProviderRegistry>[0]);
+                    llmProvider = createAgentRouter(config, logger);
+                    log.info(`LLM provider "${agentProvider}" auto-installed and activated from marketplace`);
+                  }
+                } else {
+                  log.warn(`auto-install of "${match.name}" failed: ${installResult.error ?? "unknown"}`);
+                }
+              } catch (installErr) {
+                log.warn(`auto-install of "${catalogName}" failed: ${installErr instanceof Error ? installErr.message : String(installErr)}`);
+              }
+            } else {
+              log.warn(`plugin provider init failed: no plugin for "${agentProvider}" in marketplace catalog`);
+            }
+          }
+        }
+      } catch (err) {
+        log.warn(`plugin provider init failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 
@@ -1250,7 +1599,7 @@ export async function startGatewayServer(
   log.info(`MApps: ${String(mappDiscoveryResult.loaded)} loaded, ${String(mappDiscoveryResult.skipped)} skipped`);
 
   // MApp Marketplace Manager — multi-source MApp catalog, install, and updates
-  const { MAppMarketplaceManager } = await import("@aionima/marketplace");
+  const { MAppMarketplaceManager } = await import("@agi/marketplace");
   const mappMarketplaceManager = new MAppMarketplaceManager({
     store: marketplaceManager.getStore(),
     mappsDir,
@@ -1260,7 +1609,7 @@ export async function startGatewayServer(
   // Seed official MApp Marketplace source if none exist
   {
     const mappSources = mappMarketplaceManager.getSources();
-    const mappRef = `Civicognita/aionima-mapp-marketplace#${updateChannel}`;
+    const mappRef = resolveMarketplaceSource(config, "mapp");
     if (mappSources.length === 0) {
       mappMarketplaceManager.addSource(mappRef, "Aionima MApps");
       log.info(`mapp-marketplace: seeded default source (${mappRef})`);
@@ -1283,6 +1632,14 @@ export async function startGatewayServer(
       statusPollIntervalMs: hostingConfig?.statusPollIntervalMs ?? 10_000,
       tunnelMode: hostingConfig?.tunnelMode ?? "named",
       tunnelDomain: hostingConfig?.tunnelDomain,
+      idService: (() => {
+        const idCfg = (config as Record<string, unknown>).idService as { local?: { enabled?: boolean; subdomain?: string; port?: number } } | undefined;
+        return idCfg?.local?.enabled ? {
+          enabled: true,
+          subdomain: idCfg.local.subdomain ?? "id",
+          port: idCfg.local.port ?? 3200,
+        } : undefined;
+      })(),
     },
     workspaceProjects: projectPaths,
     projectTypeRegistry,
@@ -1330,19 +1687,46 @@ export async function startGatewayServer(
     apiToken: ((config as Record<string, unknown>).hf as { apiToken?: string } | undefined)?.apiToken,
   });
 
-  // Build PostgreSQL connection from ID service config
-  const idServiceConfig = (config as Record<string, unknown>).idService as { local?: { databaseUrl?: string } } | undefined;
-  const pgUrl = idServiceConfig?.local?.databaseUrl ?? "postgres://aionima_id:0a117a24fd397009f19dd7146e348f54@localhost:5433/aionima_id";
-  const pgPool = new Pool({ connectionString: pgUrl });
+  // ModelStore + DatasetStore use the shared db connection.
+  // Degrade gracefully when Postgres is unreachable — a gateway with HF models
+  // unavailable is better than a gateway that refuses to boot. Test VMs
+  // and fresh installs (before `agi-local-id` is up) hit this path.
+  const modelStore = new ModelStore(db);
+  try {
+    const reconciledModels = await modelStore.reconcileFromDisk(
+      hfCacheDir,
+      async (modelId) => {
+        try { return await hfClient.getModelInfo(modelId); }
+        catch { return null; }
+      },
+    );
+    if (reconciledModels > 0) {
+      log.info(`HF model store: reconciled ${String(reconciledModels)} model(s) from disk`);
+    }
 
-  const modelStore = new ModelStore(pgPool);
-  await modelStore.initialize(); // creates agi schema + tables
+    // GC pass — run after reconcile so legitimate models are in the DB first.
+    // Fire-and-forget; failures are logged but never crash the gateway.
+    cleanupHubOrphans(hfCacheDir, modelStore)
+      .then((gcResult) => {
+        if (gcResult.removed.length > 0) {
+          log.info(
+            `HF hub GC: removed ${String(gcResult.removed.length)} orphaned model director${gcResult.removed.length === 1 ? "y" : "ies"}: ${gcResult.removed.join(", ")}`,
+          );
+        }
+        if (gcResult.errors.length > 0) {
+          log.warn(`HF hub GC errors: ${gcResult.errors.join("; ")}`);
+        }
+      })
+      .catch((err) => {
+        log.warn(`HF hub GC failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+  } catch (err) {
+    log.warn(`ModelStore (HF models) disabled — Postgres unreachable: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
-  // Dataset store lives in the same PostgreSQL instance, agi schema
   const datasetsCacheDir = join(homedir(), ".agi", "datasets");
   mkdirSync(join(datasetsCacheDir, "hub"), { recursive: true });
-  const datasetStore = new DatasetStore(pgPool);
-  await datasetStore.initialize(); // creates agi.datasets table
+  const datasetStore = new DatasetStore(db);
 
   const profile = hardwareProfiler.scan();
 
@@ -1377,6 +1761,10 @@ export async function startGatewayServer(
     profile.capabilities,
   );
 
+  // Wire the bridge into the LLM factory so "hf-local" provider type
+  // resolves the actual container port dynamically instead of hardcoding 6000.
+  setModelAgentBridge(modelAgentBridge);
+
   // Known-models registry and custom container builder
   const knownModelsRegistry = new KnownModelsRegistry(
     join(homedir(), ".agi", "custom-runtimes"),
@@ -1403,6 +1791,7 @@ export async function startGatewayServer(
     knownModelsRegistry,
     customContainerBuilder,
     fineTuneManager,
+    hfCacheDir,
     isEnabled: () => Boolean(((config as Record<string, unknown>).hf as { enabled?: boolean } | undefined)?.enabled),
   };
 
@@ -1411,13 +1800,20 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const opsConfig = (config as Record<string, unknown>).ops as
-    | { localModel?: { modelId?: string } }
+    | { localModel?: { modelId?: string }; aionMicro?: { enabled?: boolean; port?: number; idleTimeoutMs?: number } }
     | undefined;
+
+  const aionMicroManager = new AionMicroManager(
+    opsConfig?.aionMicro,
+    createComponentLogger(logger, "aion-micro"),
+  );
+
   const localModelRuntime = new LocalModelRuntime(
     modelStore,
     inferenceGateway,
     { modelId: opsConfig?.localModel?.modelId ?? DEFAULT_LOCAL_MODEL_ID },
     createComponentLogger(logger, "local-model"),
+    aionMicroManager,
   );
 
   // If we booted into safemode, fire the investigator async (don't block boot).
@@ -1449,6 +1845,58 @@ export async function startGatewayServer(
   } else {
     log.info("HF Model Runtime initialized (disabled — enable via Settings > HF Marketplace)");
   }
+
+  // Background health monitor — checks running HF model containers every 30 s.
+  // Resets stale "running" DB entries and evicts dead containers from the
+  // in-memory map so they don't block port allocation.
+  const hfModelStopNotified = new Set<string>();
+  const hfHealthMonitorInterval = setInterval(() => {
+    void (async () => {
+      try {
+        const running = modelContainerManager.getRunning();
+        for (const state of running) {
+          // Skip models still loading (start() hasn't finished health check yet)
+          const dbModel = await modelStore.getById(state.modelId);
+          if (dbModel?.status === "starting") continue;
+
+          const healthy = await modelContainerManager.probeHealth(state.modelId);
+          if (!healthy) {
+            await modelStore.updateStatus(state.modelId, "ready");
+            modelContainerManager.removeFromActive(state.modelId);
+            log.warn(`HF model ${state.modelId} container unhealthy — status reset to ready`);
+            if (!hfModelStopNotified.has(state.modelId)) {
+              hfModelStopNotified.add(state.modelId);
+              dashboardBroadcasterRef?.emitNotification({
+                id: `hf-model-stopped-${state.modelId}-${Date.now()}`,
+                type: "warning",
+                title: "Model stopped",
+                body: `${state.modelId} container is no longer responding`,
+                metadata: { modelId: state.modelId },
+                createdAt: new Date().toISOString(),
+              });
+            }
+          } else {
+            hfModelStopNotified.delete(state.modelId);
+          }
+        }
+
+        // Watchdog: reset "starting" models stuck for > 5 minutes with no container
+        const allModels = await modelStore.getAll();
+        for (const model of allModels) {
+          if (model.status === "starting") {
+            const container = modelContainerManager.getStatus(model.id);
+            if (!container) {
+              const changedAt = model.statusChangedAt;
+              if (!changedAt || Date.now() - new Date(changedAt).getTime() > 5 * 60 * 1000) {
+                await modelStore.setError(model.id, "Container start timed out — try again from the Installed tab");
+                log.warn(`HF model ${model.id} start timed out — reset to error`);
+              }
+            }
+          }
+        }
+      } catch { /* health check cycle failed — skip */ }
+    })();
+  }, 30_000);
 
   // -------------------------------------------------------------------------
   // Step 3f: Federation & Identity subsystems
@@ -1522,6 +1970,218 @@ export async function startGatewayServer(
     mappRegistry,
   });
   log.info(`registered ${String(agentToolCount)} agent tools`);
+
+  // s118 t441 cycle 33 — MCP client + `mcp` agent tool. Instantiated empty;
+  // server config wiring (per-project mcp.servers block) ships in s118 t435.
+  // Until then, mcp.list-servers returns [] and call/list-tools/etc. error
+  // with "server X not registered" — Aion has the surface, not yet the data.
+  const mcpClient = new McpClient();
+
+  // s118 t432 cycle 36 — PM provider resolution + `pm` agent tool.
+  // PM provider resolution (s118 t434): config.agent.pm.provider selects
+  // which implementation backs the canonical tynn workflow. Built-in ids
+  // resolve to bundled classes; any other id is looked up against plugins
+  // that called api.registerPmProvider() with that id.
+  const pmConfig = (config as { agent?: { pm?: { provider?: string; config?: Record<string, unknown> } } })
+    .agent?.pm ?? {};
+  const pmProviderId = pmConfig.provider ?? "tynn";
+  const pmProviderConfig = pmConfig.config ?? {};
+  let pmProvider: PmProvider;
+  if (pmProviderId === "tynn") {
+    pmProvider = new TynnPmProvider({ mcpClient });
+  } else if (pmProviderId === "tynn-lite") {
+    const projectRoot = (pmProviderConfig.projectRoot as string | undefined) ?? workspaceRoot;
+    if (projectRoot === undefined || projectRoot.length === 0) {
+      throw new Error("agent.pm.provider 'tynn-lite' requires either pm.config.projectRoot or workspace.root to be set");
+    }
+    pmProvider = new TynnLitePmProvider({
+      projectRoot,
+      projectName: pmProviderConfig.projectName as string | undefined,
+    });
+  } else {
+    const def = pluginRegistry.getPmProvider(pmProviderId);
+    if (def === undefined) {
+      throw new Error(`agent.pm.provider '${pmProviderId}' is not registered (built-in: tynn, tynn-lite; plugin-registered: ${pluginRegistry.getPmProviders().map(p => p.provider.id).join(", ") || "none"})`);
+    }
+    pmProvider = def.factory(pmProviderConfig) as PmProvider;
+  }
+  log.info(`pm provider resolved: id=${pmProviderId}, providerId=${pmProvider.providerId}`);
+
+  toolRegistry.register(
+    {
+      name: "mcp",
+      description:
+        "Call any registered MCP (Model Context Protocol) server. Use action='list-servers' to see what's connected, " +
+        "action='list-tools' with serverId to enumerate a server's tools, action='call' with serverId+toolName+arguments " +
+        "to invoke a tool, action='list-resources'/'read-resource' to access server resources, action='list-prompts' " +
+        "to see prompt templates. MCP is how Aion reaches tynn (PM workflow) and any other MCP-compatible service.",
+      requiresState: [],
+      requiresTier: [],
+    },
+    async (input: Record<string, unknown>) => {
+      const action = String(input.action ?? "list-servers");
+      try {
+        switch (action) {
+          case "list-servers":
+            return JSON.stringify(mcpClient.listServers());
+          case "list-tools": {
+            const serverId = String(input.serverId ?? "");
+            return JSON.stringify(await mcpClient.listTools(serverId));
+          }
+          case "list-resources": {
+            const serverId = String(input.serverId ?? "");
+            return JSON.stringify(await mcpClient.listResources(serverId));
+          }
+          case "list-prompts": {
+            const serverId = String(input.serverId ?? "");
+            return JSON.stringify(await mcpClient.listPrompts(serverId));
+          }
+          case "call": {
+            const serverId = String(input.serverId ?? "");
+            const toolName = String(input.toolName ?? "");
+            const args = (input.arguments as Record<string, unknown>) ?? {};
+            return JSON.stringify(await mcpClient.callTool(serverId, toolName, args));
+          }
+          case "read-resource": {
+            const serverId = String(input.serverId ?? "");
+            const uri = String(input.uri ?? "");
+            return JSON.stringify(await mcpClient.readResource(serverId, uri));
+          }
+          default:
+            return JSON.stringify({ error: `unknown action: ${action}. Valid: list-servers, list-tools, list-resources, list-prompts, call, read-resource` });
+        }
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+    {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list-servers", "list-tools", "list-resources", "list-prompts", "call", "read-resource"], description: "Operation to perform" },
+        serverId: { type: "string", description: "MCP server id (required for all actions except list-servers)" },
+        toolName: { type: "string", description: "Tool name to invoke (required for action=call)" },
+        arguments: { type: "object", description: "Arguments to pass to the tool (required for action=call)" },
+        uri: { type: "string", description: "Resource URI (required for action=read-resource)" },
+      },
+      required: ["action"],
+    },
+  );
+
+  // s118 t432 cycle 36 — `pm` agent tool. Aion's canonical project-
+  // management surface. Routes to whatever PmProvider is active (currently
+  // tynn; tynn-lite + plugins land in t433/t434). Same action-dispatching
+  // pattern as the `mcp` tool from cycle 33.
+  toolRegistry.register(
+    {
+      name: "pm",
+      description:
+        "Project-management workflow operations (the tynn workflow — race-to-DONE, look-for-MORE). " +
+        "Action options: 'next' (active version + top story + tasks), 'task'/'story' (lookup by id or number), " +
+        "'find-tasks' (filtered list), 'comments' (entity audit trail), " +
+        "'start-task'/'testing'/'finished'/'block' (status transitions), " +
+        "'update-task' (modify fields), 'create-task'/'comment'/'iwish' (create entities), " +
+        "'progress' (race-to-DONE counts for active focus). " +
+        "Use this tool whenever you need to query or update the project's tracked work — never invent your own task tracking.",
+      requiresState: [],
+      requiresTier: [],
+    },
+    async (input: Record<string, unknown>) => {
+      const action = String(input.action ?? "next");
+      try {
+        switch (action) {
+          case "next":
+            return JSON.stringify(await pmProvider.getNext());
+          case "task": {
+            const idOrNumber = input.id !== undefined ? String(input.id) : Number(input.number);
+            return JSON.stringify(await pmProvider.getTask(idOrNumber));
+          }
+          case "story": {
+            const idOrNumber = input.id !== undefined ? String(input.id) : Number(input.number);
+            return JSON.stringify(await pmProvider.getStory(idOrNumber));
+          }
+          case "find-tasks": {
+            const filter: { storyId?: string; status?: PmStatus | PmStatus[]; limit?: number } = {};
+            if (typeof input.storyId === "string") filter.storyId = input.storyId;
+            if (Array.isArray(input.status)) filter.status = input.status as PmStatus[];
+            else if (typeof input.status === "string") filter.status = input.status as PmStatus;
+            if (typeof input.limit === "number") filter.limit = input.limit;
+            return JSON.stringify(await pmProvider.findTasks(filter));
+          }
+          case "comments": {
+            const entityType = String(input.entityType ?? "task") as "task" | "story" | "version";
+            const entityId = String(input.entityId ?? "");
+            return JSON.stringify(await pmProvider.getComments(entityType, entityId));
+          }
+          case "start-task":
+            return JSON.stringify(await pmProvider.setTaskStatus(String(input.taskId), "doing", typeof input.note === "string" ? input.note : undefined));
+          case "testing":
+            return JSON.stringify(await pmProvider.setTaskStatus(String(input.taskId), "testing", typeof input.note === "string" ? input.note : undefined));
+          case "finished":
+            return JSON.stringify(await pmProvider.setTaskStatus(String(input.taskId), "finished", typeof input.note === "string" ? input.note : undefined));
+          case "block":
+            return JSON.stringify(await pmProvider.setTaskStatus(String(input.taskId), "blocked", typeof input.note === "string" ? input.note : undefined));
+          case "update-task":
+            return JSON.stringify(await pmProvider.updateTask(String(input.taskId), (input.fields as Record<string, never>) ?? {}));
+          case "create-task": {
+            const taskInput = input.task as { storyId?: string; title?: string; description?: string; verificationSteps?: string[]; codeArea?: string } | undefined;
+            return JSON.stringify(await pmProvider.createTask({
+              storyId: String(taskInput?.storyId ?? ""),
+              title: String(taskInput?.title ?? ""),
+              description: String(taskInput?.description ?? ""),
+              ...(taskInput?.verificationSteps !== undefined ? { verificationSteps: taskInput.verificationSteps } : {}),
+              ...(taskInput?.codeArea !== undefined ? { codeArea: taskInput.codeArea } : {}),
+            }));
+          }
+          case "comment": {
+            const entityType = String(input.entityType ?? "task") as "task" | "story" | "version";
+            const entityId = String(input.entityId ?? "");
+            const body = String(input.body ?? "");
+            return JSON.stringify(await pmProvider.addComment(entityType, entityId, body));
+          }
+          case "iwish": {
+            const wish = input.wish as Record<string, string> | undefined;
+            return JSON.stringify(await pmProvider.iWish({
+              title: String(wish?.title ?? input.title ?? ""),
+              didnt: wish?.didnt,
+              when: wish?.when,
+              had: wish?.had,
+              needs: wish?.needs,
+              explain: wish?.explain,
+              priority: wish?.priority as "critical" | "high" | "normal" | "low" | undefined,
+            }));
+          }
+          case "progress":
+            return pmProvider.getActiveFocusProgress !== undefined
+              ? JSON.stringify(await pmProvider.getActiveFocusProgress())
+              : JSON.stringify({ error: `pm provider ${pmProvider.providerId} doesn't expose progress` });
+          default:
+            return JSON.stringify({ error: `unknown action: ${action}. Valid: next, task, story, find-tasks, comments, start-task, testing, finished, block, update-task, create-task, comment, iwish, progress` });
+        }
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+    {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["next", "task", "story", "find-tasks", "comments", "start-task", "testing", "finished", "block", "update-task", "create-task", "comment", "iwish", "progress"], description: "PM operation to perform" },
+        id: { type: "string", description: "Entity id (for task/story actions when known)" },
+        number: { type: "number", description: "Entity number (alternative to id for task/story)" },
+        taskId: { type: "string", description: "Task id (for status transitions / update-task)" },
+        storyId: { type: "string", description: "Story id (for find-tasks filter / create-task)" },
+        status: { type: ["string", "array"], description: "Status filter for find-tasks (PmStatus or array)" },
+        limit: { type: "number", description: "Max results for find-tasks" },
+        entityType: { type: "string", enum: ["task", "story", "version"], description: "Entity kind for comments/comment actions" },
+        entityId: { type: "string", description: "Entity id for comments/comment actions" },
+        body: { type: "string", description: "Comment body for comment action" },
+        note: { type: "string", description: "Optional note appended on status transitions" },
+        fields: { type: "object", description: "Field updates for update-task" },
+        task: { type: "object", description: "New task input for create-task: {storyId, title, description, verificationSteps?, codeArea?}" },
+        wish: { type: "object", description: "Wish input for iwish: {title, didnt?, when?, had?, needs?, explain?, priority?}" },
+      },
+      required: ["action"],
+    },
+  );
 
   // Register HF model management tool for the agent
   toolRegistry.register(
@@ -1602,9 +2262,7 @@ export async function startGatewayServer(
 
   // MagicApp state store — persistent app instance state across crashes/reloads
   const { MagicAppStateStore } = await import("./magic-app-state-store.js");
-  const magicAppStateStore = new MagicAppStateStore(
-    join(homedir(), ".agi", "magic-app-state.db"),
-  );
+  const magicAppStateStore = new MagicAppStateStore(db);
 
   const { httpServer, wsServer } = await createGatewayRuntimeState(
     {
@@ -1624,9 +2282,13 @@ export async function startGatewayServer(
       workspaceProjects: projectPaths,
       workspaceRoot,
       selfRepoPath: config.workspace?.selfRepo,
+      agiVersion: resolveAgiVersion(config.workspace?.selfRepo),
       webhookSecret: config.workspace?.webhookSecret,
       logger,
       hostingManager,
+      iterativeWorkScheduler,
+      projectConfigManager,
+      pmProvider,
       commsLog,
       notificationStore,
       chatPersistence,
@@ -1653,8 +2315,8 @@ export async function startGatewayServer(
       pluginPrefs,
       primeLoader,
       primeDir,
-      botsDir: undefined, // Workers are file-driven prompts
-      marketplaceManager,
+      aionMicro: aionMicroManager,
+        marketplaceManager,
       onPluginInstalled: async (installPath: string) => {
         try {
           // installPath is the plugin's own directory (e.g. ~/.agi/plugins/cache/<id>).
@@ -1789,11 +2451,53 @@ export async function startGatewayServer(
       },
       preListenHooks: [
         (f) => registerReportsApi(f, reportsStore),
-        (f) => registerWorkerApi(f, workerRuntime, workerPromptLoader),
+        (f) => registerWorkerApi(f, workerRuntime, workerPromptLoader, pluginRegistry),
         (f) => registerComplianceRoutes(f, { incidentStore, vendorStore, sessionStore: complianceSessionStore, backupManager }),
         (f) => registerSecurityRoutes(f, { scanRunner, scanStore }),
-        (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api")),
+        (f) => registerUsageRoutes(f, {
+          usageStore,
+          getRouterStatus: () => {
+            const router = llmProvider as AgentRouter;
+            const routerConfig = (config.agent as Record<string, unknown> | undefined)?.router as Record<string, unknown> | undefined;
+            return {
+              costMode: (routerConfig?.costMode as string | undefined) ?? "balanced",
+              providers: typeof router.getProviderHealth === "function"
+                ? router.getProviderHealth()
+                : [{ provider: "anthropic", healthy: true }],
+            };
+          },
+        }),
+        (f) => registerProvidersRoutes(f, {
+          // Read live config so the catalog + router state reflect any
+          // hot-reloaded changes since boot (per s111 t372 contract).
+          readConfig: () => systemConfigService?.read() ?? config,
+          // Patch config via the same systemConfigService write path the
+          // Settings flow uses. Omitted when no config service is wired,
+          // which puts the PUT endpoints in read-only-mode (503 response).
+          patchConfig: systemConfigService != null
+            ? (path, value) => systemConfigService.patch(path, value)
+            : undefined,
+          // s111 t423 — cost ledger reader thunks for the Providers UX
+          // ticker. The reader is constructed once with the same drizzle
+          // client as the writer (cycle 26) and reused per request.
+          getCostToday: () => costLedgerReader.today(),
+          getCostWeek: () => costLedgerReader.week(),
+          getCostRecent: (limit) => costLedgerReader.recent(limit),
+          // s111 t419 — Mission Control hero ring buffer. Empty list when
+          // llmProvider isn't an AgentRouter (early-boot stub, plugin-
+          // provided Provider) — UI hides the hero rather than throwing.
+          // Uses the same instanceof pattern as wireProviderErrorCallback.
+          getRecentDecisions: (limit) => {
+            const provider = getLLMProvider();
+            return provider instanceof AgentRouter ? provider.getRecentDecisions(limit) : [];
+          },
+        }),
+        (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
+        (f) => registerLemonadeRoutes(f, {
+          getConfig: () => config,
+          logger: createComponentLogger(logger, "lemonade-api"),
+        }),
       ],
     },
     { host, port },
@@ -1888,7 +2592,7 @@ export async function startGatewayServer(
     wsServer.sendTo(targetConnId, type, enriched);
   };
 
-  wsServer.on("message", (connectionId: string, message: WSMessage) => {
+  wsServer.on("message", (connectionId: string, message: WSMessage) => { void (async () => {
     // Update the owner → connection mapping on every message
     if (ownerEntityId !== undefined) {
       ownerConnectionMap.set(ownerEntityId, connectionId);
@@ -1976,13 +2680,13 @@ export async function startGatewayServer(
         }
 
         // Resolve the channelUserId for this entity+channel pairing
-        const replyEntity = entityStore.getEntity(entityId);
+        const replyEntity = await entityStore.getEntity(entityId);
         if (replyEntity === null) {
           log.warn(`reply_request: entity ${entityId} not found`);
           break;
         }
 
-        const channelAccounts = entityStore.getChannelAccounts(entityId);
+        const channelAccounts = await entityStore.getChannelAccounts(entityId);
         const account = channelAccounts.find((ca) => ca.channel === replyChannel);
         if (account === undefined) {
           log.warn(`reply_request: no channel account for entity ${entityId} on channel ${replyChannel}`);
@@ -2168,7 +2872,7 @@ export async function startGatewayServer(
           chatContent = chatText;
         }
 
-        const chatEntity = entityStore.getEntity(ownerEntityId);
+        const chatEntity = await entityStore.getEntity(ownerEntityId);
         if (chatEntity === null) {
           wsServer.sendTo(connectionId, "chat:error", { error: "Owner entity not found" });
           break;
@@ -2224,7 +2928,7 @@ export async function startGatewayServer(
           }
         }
 
-        const chatCoaFingerprint = coaLogger.log({
+        const chatCoaFingerprint = await coaLogger.log({
           resourceId,
           entityId: ownerEntityId,
           entityAlias: chatEntity.coaAlias,
@@ -2459,25 +3163,18 @@ export async function startGatewayServer(
             } else if (!text) {
               text = "[No response]";
             }
-            sendChat("chat:response", {
-              sessionId: chatSessionId,
-              runId,
-              text,
-              timestamp: new Date().toISOString(),
-            });
-            // Generate contextual next-step suggestions via LLM
+            // Generate next-step suggestions before emitting so they can
+            // ride on the chat:response payload AND get persisted onto the
+            // assistant message. Previously they lived only in ephemeral
+            // client state and vanished on page reload.
             const suggestions = await generateNextSteps(chatText ?? "", text, getLLMProvider());
-            if (suggestions.length > 0) {
-              sendChat("chat:suggestions", {
-                sessionId: chatSessionId,
-                suggestions,
-              });
-            }
 
-            // Record usage (tokens + cost + project attribution)
+            // Record usage (tokens + cost + project attribution) BEFORE
+            // emitting chat:response so the cost is available for the payload.
+            let chatUsageRec: { costUsd: number } | undefined;
             if (outcome.usage && outcome.model) {
               try {
-                usageStore.record({
+                chatUsageRec = await usageStore.record({
                   entityId: ownerEntityId,
                   projectPath: chatProjectPath,
                   provider: outcome.provider ?? "unknown",
@@ -2487,21 +3184,103 @@ export async function startGatewayServer(
                   coaFingerprint: outcome.coaFingerprint,
                   toolCount: outcome.toolCount ?? 0,
                   loopCount: outcome.loopCount ?? 0,
+                  source: "chat",
+                  costMode: outcome.routingMeta?.costMode,
+                  escalated: outcome.routingMeta?.escalated,
+                  originalModel: outcome.routingMeta?.escalated ? outcome.routingMeta?.reason : undefined,
                 });
+                dashboardBroadcasterRef?.emitUsageRecorded({
+                  source: "chat",
+                  projectPath: chatProjectPath ?? "",
+                  costUsd: chatUsageRec.costUsd,
+                });
+
+                // Phase 5: post-completion provider balance check
+                // Calls the provider plugin's checkBalance() to get actual
+                // remaining credit from the provider's API — NOT local spend.
+                if (chatUsageRec.costUsd > 0 && outcome.provider) {
+                  const providerDef = pluginRegistry.getProvider(outcome.provider);
+                  if (providerDef?.checkBalance) {
+                    const providerConfig = ((config.providers ?? {}) as Record<string, Record<string, unknown>>)[outcome.provider] ?? {};
+                    const threshold = providerConfig.balanceAlertThreshold as number | undefined;
+                    if (threshold !== undefined) {
+                      try {
+                        const balance = await providerDef.checkBalance(providerConfig);
+                        if (balance !== null) {
+                          // Record balance history for sparklines
+                          void usageStore.recordBalance(outcome.provider, balance);
+                        }
+                        if (balance !== null && balance <= threshold) {
+                          dashboardBroadcasterRef?.emitNotification({
+                            id: `balance-alert-${Date.now()}`,
+                            type: balance <= 0 ? "error" : "warning",
+                            title: `Low balance: ${providerDef.name}`,
+                            body: `Balance is $${balance.toFixed(2)}, threshold is $${threshold.toFixed(2)}`,
+                            metadata: { provider: outcome.provider, balance, threshold },
+                            createdAt: new Date().toISOString(),
+                          });
+                          // Auto-pause the provider when balance hits zero so the
+                          // router falls back to alternatives automatically.
+                          if (balance <= 0 && llmProvider instanceof AgentRouter) {
+                            llmProvider.disableProvider(outcome.provider);
+                          }
+                        }
+                      } catch { /* balance check is non-fatal */ }
+                    }
+                  }
+                }
               } catch (usageErr) {
                 log.warn(`usage recording failed: ${usageErr instanceof Error ? usageErr.message : String(usageErr)}`);
               }
             }
 
-            // Persist session to disk
+            // Build routing metadata for the response payload so the dashboard
+            // can display which model handled the request and its estimated cost.
+            const responseRoutingMeta = outcome.routingMeta
+              ? {
+                  provider: outcome.routingMeta.selectedProvider ?? outcome.provider ?? "unknown",
+                  model: outcome.routingMeta.selectedModel ?? outcome.model ?? "unknown",
+                  costMode: outcome.routingMeta.costMode ?? "unknown",
+                  escalated: outcome.routingMeta.escalated ?? false,
+                  estimatedCostUsd: chatUsageRec?.costUsd ?? 0,
+                  requestType: outcome.routingMeta.requestType,
+                  classifierUsed: outcome.routingMeta.classifierUsed,
+                  contextLayers: outcome.routingMeta.contextLayers,
+                  tokenBreakdown: outcome.routingMeta.tokenBreakdown,
+                }
+              : undefined;
+
+            const responseTimestamp = new Date().toISOString();
+            sendChat("chat:response", {
+              sessionId: chatSessionId,
+              runId,
+              text,
+              timestamp: responseTimestamp,
+              suggestions,
+              routingMeta: responseRoutingMeta,
+            });
+            // Keep emitting the legacy chat:suggestions frame for backwards
+            // compatibility with any client that still listens for it
+            // separately. No-op once the client reads from chat:response.
+            if (suggestions.length > 0) {
+              sendChat("chat:suggestions", {
+                sessionId: chatSessionId,
+                suggestions,
+              });
+            }
+
+            // Persist session to disk — include suggestions and routing
+            // metadata on the assistant message so they survive reload.
             if (chatSessionId) {
               const existing = chatSessionData.get(chatSessionId);
               if (existing) {
                 const updated = ChatPersistence.appendMessage(existing, {
                   role: "assistant",
                   content: text,
-                  timestamp: new Date().toISOString(),
+                  timestamp: responseTimestamp,
                   runId,
+                  suggestions: suggestions.length > 0 ? suggestions : undefined,
+                  routingMeta: responseRoutingMeta,
                 });
                 chatSessionData.set(chatSessionId, updated);
                 try { chatPersistence.save(updated); } catch { /* non-fatal */ }
@@ -2757,9 +3536,9 @@ export async function startGatewayServer(
           });
 
           // Trigger a background agent invocation with the sync prompt
-          const syncEntity = entityStore.getEntity(ownerEntityId);
+          const syncEntity = await entityStore.getEntity(ownerEntityId);
           if (syncEntity !== null) {
-            const syncCoaFingerprint = coaLogger.log({
+            const syncCoaFingerprint = await coaLogger.log({
               resourceId,
               entityId: ownerEntityId,
               entityAlias: syncEntity.coaAlias,
@@ -2840,8 +3619,9 @@ export async function startGatewayServer(
       case "log:subscribe": {
         logSubscribers.add(connectionId);
 
-        // Send recent history from activity.log
-        const logDir = config.logging?.logDir ?? "./logs";
+        // Send recent history from activity.log — must match the logger's
+        // default path (logger.ts uses ~/.agi/logs/, not ./logs/).
+        const logDir = (config.logging as { logDir?: string } | undefined)?.logDir ?? join(homedir(), ".agi", "logs");
         const activityLogPath = resolvePath(logDir, "activity.log");
         try {
           const raw = readFileSync(activityLogPath, "utf-8");
@@ -3017,7 +3797,7 @@ export async function startGatewayServer(
         // Unknown message type — ignore
         break;
     }
-  });
+  })(); });
 
   wsServer.on("disconnection", (connectionId: string) => {
     subscriptions.delete(connectionId);
@@ -3051,6 +3831,210 @@ export async function startGatewayServer(
 
   // Populate the late-bound ref so the chat:send handler can emit project activity.
   dashboardBroadcasterRef = dashboardBroadcaster;
+
+  /**
+   * Autonomous Aion turn triggered by a TaskMaster completion/handoff event
+   * on an idle session. Drains whatever's queued via injectMessage (the
+   * note(s) plus any siblings), fires a minimal invocation, and broadcasts
+   * the resulting response into the originating chat so the user sees it
+   * land without having to message first.
+   *
+   * Light compared to the chat:send path: no image handling, no abort
+   * controllers, no tool-activity progress events. Just "agent replies to
+   * the system-injected note."
+   */
+  async function fireAutonomousTurnForTaskmaster(args: {
+    sessionKey: string;
+    chatSessionId?: string;
+    projectPath: string;
+  }): Promise<void> {
+    if (ownerEntityId === undefined) return;
+    const entity = await entityStore.getEntity(ownerEntityId);
+    if (entity === null) return;
+
+    // Drain injected notes for this session — the content of this autonomous
+    // turn IS those notes, so swallowing them here prevents a double-drain
+    // on the next user turn.
+    const notes = agentInvoker.drainInjections(args.sessionKey);
+    if (notes.length === 0) return;
+    const content = notes.join("\n\n---\n\n");
+
+    const coaFingerprint = await coaLogger.log({
+      resourceId,
+      entityId: entity.id,
+      entityAlias: entity.coaAlias,
+      nodeId,
+      workType: "action",
+    });
+
+    const runId = ulid();
+    const targetConnId = ownerConnectionMap.get(ownerEntityId);
+
+    const emit = (type: string, payload: Record<string, unknown>): void => {
+      if (targetConnId === undefined) return;
+      recordAndSendChat(args.chatSessionId, targetConnId, type, payload);
+    };
+
+    emit("chat:thinking", {
+      sessionId: args.chatSessionId,
+      runId,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Persist the injection as a synthetic user turn so the chat transcript
+    // shows what Aion is responding to on reload. Prefixed so the client can
+    // style it differently if desired.
+    if (args.chatSessionId !== undefined) {
+      const existing = chatSessionData.get(args.chatSessionId);
+      if (existing !== undefined) {
+        chatSessionData.set(
+          args.chatSessionId,
+          ChatPersistence.appendMessage(existing, {
+            role: "user",
+            content,
+            timestamp: new Date().toISOString(),
+            runId,
+          }),
+        );
+      }
+    }
+
+    const outcome = await agentInvoker.process({
+      entity,
+      channel: "web",
+      content,
+      coaFingerprint,
+      queueMessageId: ulid(),
+      isOwner: true,
+      sessionKey: args.sessionKey,
+      projectContext: args.projectPath.length > 0 ? args.projectPath : undefined,
+      chatSessionId: args.chatSessionId,
+    });
+
+    if (outcome.type === "response") {
+      const text = outcome.text || "[No response]";
+      emit("chat:response", {
+        sessionId: args.chatSessionId,
+        runId,
+        text,
+        timestamp: new Date().toISOString(),
+      });
+      if (args.chatSessionId !== undefined) {
+        const existing = chatSessionData.get(args.chatSessionId);
+        if (existing !== undefined) {
+          const updated = ChatPersistence.appendMessage(existing, {
+            role: "assistant",
+            content: text,
+            timestamp: new Date().toISOString(),
+            runId,
+          });
+          chatSessionData.set(args.chatSessionId, updated);
+          try { chatPersistence.save(updated); } catch { /* non-fatal */ }
+        }
+      }
+    }
+  }
+
+  // Inject worker-completion / handoff reports back into Aion's chat session.
+  // Without this, a dispatched worker was fire-and-forget from Aion's
+  // perspective — it had no way to notice the job finished.
+  //
+  // Two delivery paths:
+  //   (a) If Aion is currently mid-turn on this session, queue the note via
+  //       injectMessage — the active tool loop drains it naturally.
+  //   (b) If the session is idle (no active invocation), fire an autonomous
+  //       follow-up turn so Aion processes the note without waiting for the
+  //       user to message. Without (b), the note sits in the queue forever.
+  workerRuntime.on("runtime:event", (event: { type: string; jobId: string; [key: string]: unknown }) => { void (async () => {
+    const origin = jobOriginBySessionKey.get(event.jobId);
+
+    // Auto-advance the linked plan step regardless of session presence —
+    // step status is a property of the plan, not the chat, so even
+    // background/resumed jobs should mark progress. Runs BEFORE the
+    // sessionKey guard so plan-only dispatches (no chat) still update.
+    if (origin?.planRef !== undefined) {
+      const stepStatus =
+        event.type === "report_ready" ? "complete" :
+        event.type === "job_failed" ? "failed" :
+        null;
+      if (stepStatus !== null) {
+        try {
+          planStore.update(origin.projectPath, origin.planRef.planId, {
+            stepUpdates: [{ id: origin.planRef.stepId, status: stepStatus }],
+          });
+        } catch (err) {
+          log.warn(`plan step auto-advance failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
+    // Record worker LLM usage so it shows up in the Usage section alongside
+    // Aion's own token spend. Previously workers burned API credits silently.
+    if (event.type === "report_ready" || event.type === "job_failed") {
+      const tokens = event.tokens as { input: number; output: number } | undefined;
+      if (tokens !== undefined && ownerEntityId !== undefined) {
+        try {
+          const workerUsageRec = await usageStore.record({
+            entityId: ownerEntityId,
+            projectPath: origin?.projectPath ?? "",
+            provider: "anthropic",
+            model: typeof event.model === "string" ? event.model : "worker",
+            inputTokens: tokens.input,
+            outputTokens: tokens.output,
+            coaFingerprint: typeof event.coaReqId === "string" ? event.coaReqId : "",
+            toolCount: Array.isArray(event.toolCalls) ? event.toolCalls.length : 0,
+            source: "worker",
+            loopCount: typeof event.toolLoops === "number" ? event.toolLoops : 0,
+          });
+          dashboardBroadcasterRef?.emitUsageRecorded({
+            source: "worker",
+            projectPath: origin?.projectPath ?? "",
+            costUsd: workerUsageRec.costUsd,
+          });
+        } catch (err) {
+          log.warn(`worker usage recording failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
+    if (!origin?.sessionKey) return;
+
+    let note: string | null = null;
+    if (event.type === "report_ready") {
+      const gist = typeof event.gist === "string" ? event.gist : "(no gist)";
+      note = `[taskmaster] Worker job \`${event.jobId}\` completed. Report:\n\n${gist}`;
+    } else if (event.type === "job_failed") {
+      const err = typeof event.error === "string" ? event.error : "(no detail)";
+      note = `[taskmaster] Worker job \`${event.jobId}\` FAILED. Error: ${err}`;
+    } else if (event.type === "worker_handoff") {
+      const question = typeof event.question === "string" ? event.question : "(no question)";
+      note = `[taskmaster] Worker job \`${event.jobId}\` raised a checkpoint:\n\n${question}\n\nThe worker has paused — decide how to answer and re-dispatch with clarification if needed.`;
+    }
+    if (note !== null) {
+      try {
+        agentInvoker.injectMessage(origin.sessionKey, note);
+      } catch (err) {
+        log.warn(`failed to inject worker event into session ${origin.sessionKey}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Path (b): session idle → fire an autonomous turn so Aion reads the
+      // note now, not on the user's next message. Fire-and-forget; errors
+      // are logged but don't propagate (this is a background flow).
+      if (!agentInvoker.isBusy(origin.sessionKey)) {
+        void fireAutonomousTurnForTaskmaster({
+          sessionKey: origin.sessionKey,
+          chatSessionId: origin.chatSessionId,
+          projectPath: origin.projectPath,
+        }).catch((err: unknown) => {
+          log.warn(`autonomous taskmaster turn failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+    }
+    // Terminal states free the map entry so we don't leak memory on long runs.
+    if (event.type === "report_ready" || event.type === "job_failed") {
+      jobOriginBySessionKey.delete(event.jobId);
+    }
+  })(); });
 
   // Wire worker runtime events to the dashboard broadcaster.
   if (dashboardBroadcaster !== null) {
@@ -3103,8 +4087,42 @@ export async function startGatewayServer(
           currentPhase: null,
           workers: [],
         });
+      } else if (event.type === "worker_handoff") {
+        // A worker is asking Aion for a decision. Surface it as a checkpoint
+        // on the Work Queue row; the chat transcript gets the same signal via
+        // the chat session WS routing below.
+        dashboardBroadcaster.emitTmJobUpdate({
+          jobId: event.jobId,
+          status: "checkpoint",
+          description: `Worker handoff: ${String(event.question ?? "decision requested")}`,
+          currentPhase: null,
+          workers: [],
+        });
+      } else if (event.type === "worker_tool_call") {
+        // Live tool-call trace — lets the UI animate a tool name under the
+        // job row without a full status change.
+        dashboardBroadcaster.emitTmJobUpdate({
+          jobId: event.jobId,
+          status: "running",
+          description: `Tool: ${String(event.tool ?? "?")}`,
+          currentPhase: null,
+          workers: [],
+        });
       }
     });
+  }
+
+  // Boot-time reconciliation — fires AFTER the runtime:event listeners above
+  // are wired so `job_failed` events emitted during reconcile flow through
+  // the same Work Queue + chat-injection paths as runtime completions.
+  // Covers SIGKILL-on-restart zombies and crash-survivors alike.
+  try {
+    const reconciled = await workerRuntime.reconcileOrphanedJobs();
+    if (reconciled > 0) {
+      log.info(`taskmaster reconciliation: ${String(reconciled)} orphaned job(s) flipped to failed`);
+    }
+  } catch (err) {
+    log.warn(`taskmaster reconciliation failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   let heartbeatScheduler: HeartbeatScheduler | null = null;
@@ -3194,6 +4212,54 @@ export async function startGatewayServer(
     enabled: true,
   });
 
+  // Register core scheduled task: marketplace auto-sync
+  const autoSyncEnabled = (config.gateway as { autoSyncMarketplace?: boolean } | undefined)?.autoSyncMarketplace !== false;
+  pluginRegistry.addScheduledTask("core", {
+    id: "marketplace-auto-sync",
+    name: "Marketplace Auto-Sync",
+    description: "Periodically syncs Plugin + MApp marketplace catalogs and auto-updates installed plugins",
+    intervalMs: 30 * 60 * 1000, // 30 minutes
+    handler: async () => {
+      try {
+        // Re-resolve the marketplace source each tick so Dev Mode toggles
+        // take effect without a restart (tynn #250/#251). We read config
+        // fresh from disk because gateway.json is hot-swappable.
+        let liveConfig: Parameters<typeof resolveMarketplaceSource>[0] = config;
+        try {
+          const cfgPath = join(homedir(), ".agi", "gateway.json");
+          if (existsSync(cfgPath)) {
+            liveConfig = JSON.parse(readFileSync(cfgPath, "utf-8")) as typeof liveConfig;
+          }
+        } catch {
+          // Fall back to the boot-time config snapshot
+        }
+
+        for (const [manager, kind, label] of [
+          [marketplaceManager, "plugin" as const, "plugin"],
+          [mappMarketplaceManager, "mapp" as const, "mapp"],
+        ] as const) {
+          const desiredRef = resolveMarketplaceSource(liveConfig, kind);
+          const sources = manager.getSources();
+          const current = sources[0];
+          if (current && current.ref !== desiredRef) {
+            manager.removeSource(current.id);
+            manager.addSource(desiredRef, label === "plugin" ? "Aionima" : "Aionima MApps");
+            log.info(`${label}-marketplace: source swapped (dev-mode toggle) → ${desiredRef}`);
+          }
+        }
+
+        const result = await marketplaceManager.syncAndUpdateAll();
+        if (result.updated.length > 0) {
+          log.info(`marketplace auto-sync: updated ${result.updated.join(", ")}`);
+        }
+      } catch (err) {
+        log.warn(`marketplace auto-sync failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+    skipIfRunning: true,
+    enabled: autoSyncEnabled,
+  });
+
   scheduledTaskManager.start();
 
   // -------------------------------------------------------------------------
@@ -3237,10 +4303,12 @@ export async function startGatewayServer(
       }
       Object.assign(configObj, freshConfig);
 
-      // Hot-swap LLM provider when agent or bots config changes
-      if (event.changedKeys.some((k) => k === "agent" || k === "bots")) {
+      // Hot-swap LLM provider when agent config changes
+      if (event.changedKeys.some((k) => k === "agent")) {
         try {
-          llmProvider = createLLMProvider(event.config);
+          llmProvider = createAgentRouter(event.config, logger);
+          wireProviderErrorCallback(llmProvider);
+          wireCostLedger(llmProvider);
           log.info("LLM provider hot-swapped");
         } catch (err) {
           log.error(`failed to hot-swap LLM provider: ${err instanceof Error ? err.message : String(err)}`);
@@ -3361,6 +4429,14 @@ export async function startGatewayServer(
       heartbeatScheduler.stop();
     }
 
+    // Stop iterative-work scheduler (no-op if never started — start is opt-in).
+    iterativeWorkScheduler.stop();
+
+    // Stop HF health monitor
+    clearInterval(hfHealthMonitorInterval);
+
+    // K.4: aion-micro is now Lemonade-backed — no container to stop.
+
     // Step 1: Stop QueueConsumer polling — drain in-flight messages first
     try {
       await queueConsumer.stop();
@@ -3411,7 +4487,6 @@ export async function startGatewayServer(
       log.error(`error stopping model containers: ${err instanceof Error ? err.message : String(err)}`);
     }
     modelAgentBridge.destroy();
-    await pgPool.end();
 
     // Step 5g2: Stop scheduled tasks
     scheduledTaskManager.stop();
@@ -3440,9 +4515,9 @@ export async function startGatewayServer(
       });
     });
 
-    // Step 8: Close database
+    // Step 8: Close database pool
     try {
-      db.close();
+      await dbPool.end();
     } catch (err) {
       log.error(`error closing database: ${err instanceof Error ? err.message : String(err)}`);
     }

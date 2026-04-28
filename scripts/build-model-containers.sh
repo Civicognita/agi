@@ -8,7 +8,7 @@
 # Images:
 #   ghcr.io/civicognita/transformers-server:latest  — general runtime
 #   ghcr.io/civicognita/diffusion-server:latest     — diffusion runtime
-#   (LLM runtime uses upstream ghcr.io/ggerganov/llama.cpp:server)
+#   LLM runtime also uses transformers-server (supports all model formats)
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -40,17 +40,21 @@ podman build \
   "${CONTAINERS_DIR}"
 ok "ghcr.io/civicognita/diffusion-server:latest built"
 
-# LLM runtime — pull upstream llama.cpp server image (ghcr.io is GitHub, not Docker Hub)
-info "Pulling LLM runtime image (llama.cpp server)..."
-podman pull ghcr.io/ggerganov/llama.cpp:server 2>/dev/null || \
-  warn "Could not pull llama.cpp server image — LLM runtime will not be available until manually pulled"
+# LLM runtime — uses the same transformers-server as general runtime (supports all formats)
+# No separate pull needed — transformers-server is built above
 
 # Fine-tune runtime (PEFT/LoRA via trl + transformers)
 info "Building fine-tune runtime image..."
 podman build \
-  -t aionima-finetune:latest \
+  -t agi-finetune:latest \
   -f "${CONTAINERS_DIR}/Containerfile.finetune" \
   "${CONTAINERS_DIR}"
-ok "aionima-finetune:latest built"
+ok "agi-finetune:latest built"
+
+# K.4: aion-micro is no longer a custom container — it's a fine-tuned
+# GGUF served by the agi-lemonade-runtime plugin. The model lives on
+# HuggingFace Hub (default: wishborn/aion-micro-v1) and is pulled via
+# `agi lemonade pull`. Training data + adapter live at agi/aion-micro/
+# for reproducibility and future re-training.
 
 ok "Model runtime container images ready"

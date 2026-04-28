@@ -14,8 +14,11 @@ import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile,
 import type { FileNode } from "../api.js";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
+import { CoreForkRepoPanel } from "./CoreForkRepoPanel.js";
 import { HostingPanel } from "./HostingPanel.js";
 import { EnvManager } from "./EnvManager.js";
+import { TaskmasterTab } from "./TaskmasterTab.js";
+import { IterativeWorkTab } from "./IterativeWorkTab.js";
 import { ProjectManagement } from "./ProjectManagement.js";
 import type { HostingStatus } from "../api.js";
 import { TreeNav, ContextMenu, useToast } from "@particle-academy/react-fancy";
@@ -62,6 +65,11 @@ export function ProjectDetail({
   const project = projects.find((p) => projectSlug(p.path) === slug);
   const isSacred = project ? (isSacredProject(project) || project.projectType?.id === "aionima") : false;
   const canViewSacred = Boolean(contributingEnabled);
+  // Core fork = provisioned by Dev Mode into the `_aionima/` collection.
+  // These get a drastically reduced UX — only Editor + Repository tabs.
+  // No hosting, no environment, no taskmaster, no plugins — they are
+  // source trees the owner submits PRs from, not deployables.
+  const isCoreFork = project?.coreCollection === "aionima" || project?.projectType?.id === "aionima";
 
   const [editName, setEditName] = useState<string | null>(null);
   const [editTynnToken, setEditTynnToken] = useState<string | null>(null);
@@ -292,22 +300,29 @@ export function ProjectDetail({
         )}
       </div>
 
+      {/* Aionima core forks get a restricted tab set. No Details,
+          hosting, environment, or plugin tabs — those projects are
+          source trees users contribute PRs against, not deployables. */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
         <TabsList variant="line">
-          <TabsTrigger value="details">Details</TabsTrigger>
+          {!isCoreFork && <TabsTrigger value="details">Details</TabsTrigger>}
           <TabsTrigger value="files">Editor</TabsTrigger>
           <TabsTrigger value="repository">Repository</TabsTrigger>
-          {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
+          {!isCoreFork && onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
             <TabsTrigger value="hosting">Development</TabsTrigger>
           )}
-          {project.projectType?.hasCode && (
+          {!isCoreFork && project.projectType?.hasCode && (
             <TabsTrigger value="environment">Environment</TabsTrigger>
           )}
-          <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>
-          {pluginPanels.map((p) => (
+          {!isCoreFork && <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>}
+          {!isCoreFork && <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>}
+          {!isCoreFork && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
+            <TabsTrigger value="iterative-work">Iterative Work</TabsTrigger>
+          )}
+          {!isCoreFork && pluginPanels.map((p) => (
             <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
           ))}
-          {project.projectType?.hasCode && (
+          {!isCoreFork && project.projectType?.hasCode && (
             <TabsTrigger value="security">Security</TabsTrigger>
           )}
         </TabsList>
@@ -645,7 +660,9 @@ export function ProjectDetail({
 
         <TabsContent value="repository" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <div className="rounded-xl bg-card border border-border p-4">
-            {project.hasGit ? (
+            {isCoreFork && project?.coreForkSlug ? (
+              <CoreForkRepoPanel slug={project.coreForkSlug} />
+            ) : project.hasGit ? (
               <>
                 <div className="flex items-center justify-end mb-2">
                   <Button size="sm" variant="outline" className="text-[11px] h-7" onClick={handleRefreshRepo}>
@@ -758,6 +775,18 @@ export function ProjectDetail({
             <div className="rounded-xl bg-card border border-border p-4">
               <EnvManager projectPath={project.path} />
             </div>
+          </TabsContent>
+        )}
+
+        <TabsContent value="taskmaster" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <div className="rounded-xl bg-card border border-border p-4">
+            <TaskmasterTab projectPath={project.path} />
+          </div>
+        </TabsContent>
+
+        {(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
+          <TabsContent value="iterative-work" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+            <IterativeWorkTab project={project} />
           </TabsContent>
         )}
 

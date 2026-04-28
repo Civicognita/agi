@@ -2,7 +2,7 @@
  * defineKnowledge — chainable builder for KnowledgeNamespace.
  */
 
-import type { KnowledgeNamespace, KnowledgeTopic } from "@aionima/plugins";
+import type { KnowledgeNamespace, KnowledgeTopic } from "@agi/plugins";
 
 class KnowledgeBuilder {
   private def: Partial<KnowledgeNamespace> & { topics: KnowledgeTopic[] };

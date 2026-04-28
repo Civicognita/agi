@@ -7,10 +7,36 @@
  *   3. Server-start guard (Phase 5): long-running servers are rejected so the
  *      agent routes them through the project's container via manage_project
  *      instead of binding to a host port.
+ *
+ * Routing (story #105 — caller migration):
+ *   When the live `agi` binary supports the `agi bash` subcommand
+ *   (story #104, v0.4.149+), every shell exec routes through it with
+ *   AGI_CALLER=chat-agent so the invocation lands in the JSONL log
+ *   surface at ~/.agi/logs/agi-bash-YYYY-MM-DD.jsonl and is filtered
+ *   by the configurable bash.policy in gateway.json. The detection runs
+ *   once at module load. When the binary doesn't yet have the
+ *   subcommand (e.g. before `agi upgrade` deploys the lockdown), we fall
+ *   back to direct execSync — the existing in-tool guards still run.
+ *
+ *   Tool-level guards in this file are intentionally redundant with the
+ *   agi bash policy as defense in depth; either layer rejecting a
+ *   command is enough to block it.
  */
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
+
+// One-shot probe at module load: does the live `agi` binary on PATH
+// expose the `agi bash` subcommand? Cached so per-call cost is zero.
+function detectAgiBashSupport(): boolean {
+  try {
+    const probe = spawnSync("agi", ["help"], { encoding: "utf-8", timeout: 5000 });
+    return probe.status === 0 && (probe.stdout ?? "").includes("bash CMD");
+  } catch {
+    return false;
+  }
+}
+const AGI_BASH_AVAILABLE = detectAgiBashSupport();
 
 const BLOCKED_COMMANDS: string[] = [
   "rm -rf /",
@@ -122,6 +148,43 @@ export function createShellExecHandler(config: ShellExecConfig): ToolHandler {
       }
     }
 
+    // Primary path (story #105 — caller migration): when the live agi
+    // binary supports `agi bash`, route through it so the invocation
+    // lands in the JSONL log with caller=chat-agent and is filtered by
+    // the configurable bash.policy. spawnSync uses argv-form (no shell
+    // injection on the outer call), and the inner `bash -c` is safely
+    // delegated to the agi passthrough.
+    if (AGI_BASH_AVAILABLE) {
+      const sr = spawnSync("agi", ["bash", "-c", command], {
+        cwd,
+        timeout: timeoutMs,
+        maxBuffer: 1024 * 1024,
+        encoding: "utf-8",
+        env: { ...process.env, AGI_CALLER: "chat-agent" },
+      });
+      // encoding: "utf-8" above means stdout/stderr are string | null; null
+      // can occur on spawn errors before the child wrote anything.
+      const stdoutStr = sr.stdout ?? "";
+      const stderrStr = sr.stderr ?? "";
+      const timedOut = sr.error !== undefined &&
+        (sr.error as NodeJS.ErrnoException).code === "ETIMEDOUT";
+      if (timedOut || sr.signal === "SIGTERM") {
+        return JSON.stringify({ error: "Command timed out", exitCode: -1, truncated: false });
+      }
+      if (sr.status === 0) {
+        const truncated = stdoutStr.length > 16_384;
+        const output = truncated ? stdoutStr.slice(0, 16_384) + "\n[...truncated]" : stdoutStr;
+        return JSON.stringify({ exitCode: 0, stdout: output, stderr: stderrStr, truncated });
+      }
+      return JSON.stringify({
+        exitCode: sr.status ?? 1,
+        stdout: stdoutStr.slice(0, 8192),
+        stderr: stderrStr.slice(0, 8192),
+        truncated: false,
+      });
+    }
+
+    // Fallback (pre-v0.4.149 deployments) — preserved as-is.
     try {
       const stdout = execSync(command, {
         cwd,

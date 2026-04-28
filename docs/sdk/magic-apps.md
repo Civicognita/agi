@@ -243,10 +243,10 @@ Buttons surfaced in the project toolbar when the MApp is active.
 
 The `defineMagicApp()` builder lets you construct a `MAppDefinition` in TypeScript and call `.build()` to get the validated JSON object. This is useful when generating MApp definitions programmatically (e.g. from the `create_magic_app` agent tool).
 
-Import from `@aionima/sdk`:
+Import from `@agi/sdk`:
 
 ```typescript
-import { defineMagicApp } from "@aionima/sdk";
+import { defineMagicApp } from "@agi/sdk";
 ```
 
 ### `defineMagicApp(id, name, author)`
@@ -281,7 +281,7 @@ const mapp = defineMagicApp("reader", "Reader", "civicognita")
 ### Complete Example
 
 ```typescript
-import { defineMagicApp } from "@aionima/sdk";
+import { defineMagicApp } from "@agi/sdk";
 
 const readerApp = defineMagicApp("reader", "Reader", "civicognita")
   .description("E-reader for literature projects")

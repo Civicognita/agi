@@ -118,24 +118,16 @@ async function saveSecret(
   process.env[name] = value;
 }
 
-function deriveAionimaIdServices(secrets: SecretsManager | undefined): OnboardingState["aionimaIdServices"] {
-  const read = (name: string): string | undefined => secrets?.readSecret(name) ?? process.env[name];
-  const services: NonNullable<OnboardingState["aionimaIdServices"]> = [];
-
-  if (read("OWNER_EMAIL_REFRESH_TOKEN") || read("OWNER_EMAIL_ACCESS_TOKEN")) {
-    services.push({ provider: "google", role: "owner" });
-  }
-  if (read("OWNER_GITHUB_TOKEN")) {
-    services.push({ provider: "github", role: "owner" });
-  }
-  if (read("AGENT_EMAIL_REFRESH_TOKEN") || read("AGENT_EMAIL_ACCESS_TOKEN")) {
-    services.push({ provider: "google", role: "agent" });
-  }
-  if (read("AGENT_GITHUB_TOKEN")) {
-    services.push({ provider: "github", role: "agent" });
-  }
-
-  return services.length > 0 ? services : undefined;
+async function deriveAionimaIdServices(config: Record<string, unknown>): Promise<OnboardingState["aionimaIdServices"]> {
+  try {
+    const idUrl = resolveIdServiceUrl(config);
+    const res = await fetch(`${idUrl}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const conns = await res.json() as Array<{ provider: string; role: string }>;
+      if (conns.length > 0) return conns.map((c) => ({ provider: c.provider, role: c.role }));
+    }
+  } catch { /* ID service unreachable */ }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +141,7 @@ interface ActiveHandoff {
 
 let activeHandoff: ActiveHandoff | null = null;
 
+// ---------------------------------------------------------------------------
 export function registerOnboardingRoutes(
   fastify: FastifyInstance,
   deps: OnboardingRouteDeps,
@@ -189,10 +182,8 @@ export function registerOnboardingRoutes(
       next.steps.aiKeys = "completed";
     }
 
-    const hasGithub = Boolean(
-      (secrets?.readSecret("OWNER_GITHUB_TOKEN") ?? process.env["OWNER_GITHUB_TOKEN"] ?? "").trim(),
-    );
-    if (hasGithub) {
+    const idServices = await deriveAionimaIdServices(cfg);
+    if (idServices && idServices.some((s) => s.provider === "github")) {
       next.steps.aionimaId = "completed";
     }
 
@@ -242,7 +233,7 @@ export function registerOnboardingRoutes(
       ...patch,
       steps: {
         ...current.steps,
-        ...(patch.steps ?? {}),
+        ...patch.steps,
       },
     };
 
@@ -707,7 +698,7 @@ export function registerOnboardingRoutes(
 
     const state = readOnboardingState(dataDir);
     const storedServices = state.aionimaIdServices ?? [];
-    const derivedServices = storedServices.length > 0 ? storedServices : (deriveAionimaIdServices(secrets) ?? []);
+    const derivedServices = storedServices.length > 0 ? storedServices : ((await deriveAionimaIdServices(readConfig())) ?? []);
 
     if (derivedServices.length > 0 && state.steps.aionimaId !== "completed") {
       state.steps.aionimaId = "completed";
@@ -878,7 +869,7 @@ export function registerOnboardingRoutes(
     if (err) return reply.code(403).send({ error: err });
 
     const cfg = readConfig();
-    const idDir = ((cfg.idService as Record<string, unknown>)?.dir as string) ?? "/opt/aionima-local-id";
+    const idDir = ((cfg.idService as Record<string, unknown>)?.dir as string) ?? "/opt/agi-local-id";
 
     // Check if setup script exists
     const setupScript = join(idDir, "scripts/setup-local.sh");
@@ -1007,5 +998,17 @@ export function registerOnboardingRoutes(
 
     log.info(`Federation config saved (enabled: ${body.enabled ?? false})`);
     return reply.send({ ok: true });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/onboarding/id-service-url — returns the Local-ID base URL
+  // so the dashboard can call it directly for device flow OAuth.
+  // All identity services live in Local-ID, not AGI.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/onboarding/id-service-url", async (request, reply) => {
+    const err = guardPrivate(request);
+    if (err) return reply.code(403).send({ error: err });
+    return reply.send({ url: resolveIdServiceUrl(readConfig()) });
   });
 }

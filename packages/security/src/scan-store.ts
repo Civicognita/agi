@@ -1,12 +1,11 @@
 /**
- * ScanStore — SQLite persistence for security scan runs and findings.
- * Database lives at ~/.agi/security.db following Aionima runtime data conventions.
+ * ScanStore — Postgres/drizzle persistence for security scan runs and findings.
+ * Uses the unified agi_data database via @agi/db-schema.
  */
 
-import Database from "better-sqlite3";
-import { join } from "node:path";
-import { homedir } from "node:os";
-import { mkdirSync } from "node:fs";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import type { Db } from "@agi/db-schema/client";
+import { scanRuns, securityFindings } from "@agi/db-schema";
 import type {
   SecurityFinding,
   ScanRun,
@@ -15,208 +14,287 @@ import type {
   FindingSeverity,
   FindingStatus,
   SecuritySummary,
+  ScannerRunResult,
 } from "./types.js";
 
+// ---------------------------------------------------------------------------
+// Row mappers
+// ---------------------------------------------------------------------------
+
+function rowToScanRun(row: typeof scanRuns.$inferSelect): ScanRun {
+  return {
+    id: row.id,
+    status: row.status as ScanStatus,
+    config: row.config as ScanConfig,
+    startedAt: row.startedAt instanceof Date ? row.startedAt.toISOString() : String(row.startedAt),
+    completedAt: row.completedAt
+      ? row.completedAt instanceof Date
+        ? row.completedAt.toISOString()
+        : String(row.completedAt)
+      : undefined,
+    findingCounts: (row.findingCounts ?? {}) as Record<FindingSeverity, number>,
+    totalFindings: row.totalFindings,
+    scannerResults: (row.scannerResults ?? []) as ScannerRunResult[],
+    error: row.error ?? undefined,
+  };
+}
+
+function rowToFinding(row: typeof securityFindings.$inferSelect): SecurityFinding {
+  return {
+    id: row.id,
+    scanId: row.scanId,
+    title: row.title,
+    description: row.description,
+    checkId: row.checkId,
+    scanType: row.scanType as SecurityFinding["scanType"],
+    severity: row.severity as SecurityFinding["severity"],
+    confidence: row.confidence as SecurityFinding["confidence"],
+    cwe: (row.cwe ?? []) as string[],
+    owasp: (row.owasp ?? []) as string[],
+    evidence: row.evidence as SecurityFinding["evidence"],
+    remediation: row.remediation as SecurityFinding["remediation"],
+    standards: row.standards as SecurityFinding["standards"] | undefined,
+    status: row.status as SecurityFinding["status"],
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ScanStore
+// ---------------------------------------------------------------------------
+
 export class ScanStore {
-  private readonly db: Database.Database;
-
-  constructor(dbPath?: string) {
-    const dir = join(homedir(), ".agi");
-    mkdirSync(dir, { recursive: true });
-    const path = dbPath ?? join(dir, "security.db");
-    this.db = new Database(path);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
-    this.migrate();
-  }
-
-  private migrate(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS scan_runs (
-        id TEXT PRIMARY KEY,
-        status TEXT NOT NULL DEFAULT 'pending',
-        config_json TEXT NOT NULL,
-        started_at TEXT NOT NULL,
-        completed_at TEXT,
-        finding_counts_json TEXT NOT NULL DEFAULT '{}',
-        total_findings INTEGER NOT NULL DEFAULT 0,
-        scanner_results_json TEXT NOT NULL DEFAULT '[]',
-        error TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS security_findings (
-        id TEXT PRIMARY KEY,
-        scan_id TEXT NOT NULL REFERENCES scan_runs(id),
-        title TEXT NOT NULL,
-        description TEXT NOT NULL DEFAULT '',
-        check_id TEXT NOT NULL,
-        scan_type TEXT NOT NULL,
-        severity TEXT NOT NULL,
-        confidence TEXT NOT NULL DEFAULT 'medium',
-        cwe_json TEXT NOT NULL DEFAULT '[]',
-        owasp_json TEXT NOT NULL DEFAULT '[]',
-        evidence_json TEXT NOT NULL DEFAULT '{}',
-        remediation_json TEXT NOT NULL DEFAULT '{}',
-        standards_json TEXT,
-        status TEXT NOT NULL DEFAULT 'open',
-        created_at TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_findings_scan_id ON security_findings(scan_id);
-      CREATE INDEX IF NOT EXISTS idx_findings_severity ON security_findings(severity);
-      CREATE INDEX IF NOT EXISTS idx_findings_status ON security_findings(status);
-      CREATE INDEX IF NOT EXISTS idx_findings_created ON security_findings(created_at);
-      CREATE INDEX IF NOT EXISTS idx_findings_scan_type ON security_findings(scan_type);
-    `);
-  }
+  constructor(private readonly db: Db) {}
 
   // -- Scan runs --
 
-  createScanRun(id: string, config: ScanConfig): void {
-    this.db.prepare(`
-      INSERT INTO scan_runs (id, status, config_json, started_at, finding_counts_json)
-      VALUES (?, 'pending', ?, ?, '{}')
-    `).run(id, JSON.stringify(config), new Date().toISOString());
+  async createScanRun(id: string, config: ScanConfig): Promise<void> {
+    await this.db.insert(scanRuns).values({
+      id,
+      status: "pending",
+      config: config as unknown as Record<string, unknown>,
+      findingCounts: {},
+      totalFindings: 0,
+      scannerResults: [],
+    });
   }
 
-  updateScanRun(id: string, updates: {
+  async updateScanRun(id: string, updates: {
     status?: ScanStatus;
     completedAt?: string;
     findingCounts?: Record<FindingSeverity, number>;
     totalFindings?: number;
     scannerResults?: unknown[];
     error?: string;
-  }): void {
-    const fields: string[] = [];
-    const values: unknown[] = [];
-    if (updates.status !== undefined) { fields.push("status = ?"); values.push(updates.status); }
-    if (updates.completedAt !== undefined) { fields.push("completed_at = ?"); values.push(updates.completedAt); }
-    if (updates.findingCounts !== undefined) { fields.push("finding_counts_json = ?"); values.push(JSON.stringify(updates.findingCounts)); }
-    if (updates.totalFindings !== undefined) { fields.push("total_findings = ?"); values.push(updates.totalFindings); }
-    if (updates.scannerResults !== undefined) { fields.push("scanner_results_json = ?"); values.push(JSON.stringify(updates.scannerResults)); }
-    if (updates.error !== undefined) { fields.push("error = ?"); values.push(updates.error); }
-    if (fields.length === 0) return;
-    values.push(id);
-    this.db.prepare(`UPDATE scan_runs SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+  }): Promise<void> {
+    const set: Partial<typeof scanRuns.$inferInsert> = {};
+    if (updates.status !== undefined) set.status = updates.status as typeof scanRuns.$inferInsert["status"];
+    if (updates.completedAt !== undefined) set.completedAt = new Date(updates.completedAt);
+    if (updates.findingCounts !== undefined) set.findingCounts = updates.findingCounts as Record<string, unknown>;
+    if (updates.totalFindings !== undefined) set.totalFindings = updates.totalFindings;
+    if (updates.scannerResults !== undefined) set.scannerResults = updates.scannerResults as unknown[];
+    if (updates.error !== undefined) set.error = updates.error;
+    if (Object.keys(set).length === 0) return;
+    await this.db.update(scanRuns).set(set).where(eq(scanRuns.id, id));
   }
 
-  getScanRun(id: string): ScanRun | undefined {
-    const row = this.db.prepare("SELECT * FROM scan_runs WHERE id = ?").get(id) as Record<string, unknown> | undefined;
-    if (!row) return undefined;
-    return this.rowToScanRun(row);
+  async getScanRun(id: string): Promise<ScanRun | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(scanRuns)
+      .where(eq(scanRuns.id, id));
+    return row ? rowToScanRun(row) : undefined;
   }
 
-  listScanRuns(opts?: { projectPath?: string; limit?: number; offset?: number }): ScanRun[] {
+  async listScanRuns(opts?: {
+    projectPath?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<ScanRun[]> {
     const limit = opts?.limit ?? 50;
     const offset = opts?.offset ?? 0;
-    let sql = "SELECT * FROM scan_runs";
-    const params: unknown[] = [];
+
     if (opts?.projectPath) {
-      sql += " WHERE json_extract(config_json, '$.targetPath') = ?";
-      params.push(opts.projectPath);
+      // Filter by targetPath inside the config jsonb
+      const rows = await this.db
+        .select()
+        .from(scanRuns)
+        .where(sql`${scanRuns.config}->>'targetPath' = ${opts.projectPath}`)
+        .orderBy(desc(scanRuns.startedAt))
+        .limit(limit)
+        .offset(offset);
+      return rows.map(rowToScanRun);
     }
-    sql += " ORDER BY started_at DESC LIMIT ? OFFSET ?";
-    params.push(limit, offset);
-    const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
-    return rows.map(r => this.rowToScanRun(r));
+
+    const rows = await this.db
+      .select()
+      .from(scanRuns)
+      .orderBy(desc(scanRuns.startedAt))
+      .limit(limit)
+      .offset(offset);
+    return rows.map(rowToScanRun);
   }
 
   // -- Findings --
 
-  insertFindings(findings: SecurityFinding[]): void {
-    const stmt = this.db.prepare(`
-      INSERT OR IGNORE INTO security_findings
-      (id, scan_id, title, description, check_id, scan_type, severity, confidence, cwe_json, owasp_json, evidence_json, remediation_json, standards_json, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const tx = this.db.transaction((items: SecurityFinding[]) => {
-      for (const f of items) {
-        stmt.run(
-          f.id, f.scanId, f.title, f.description, f.checkId, f.scanType,
-          f.severity, f.confidence,
-          JSON.stringify(f.cwe ?? []), JSON.stringify(f.owasp ?? []),
-          JSON.stringify(f.evidence), JSON.stringify(f.remediation),
-          f.standards ? JSON.stringify(f.standards) : null,
-          f.status, f.createdAt,
-        );
-      }
-    });
-    tx(findings);
+  async insertFindings(findings: SecurityFinding[]): Promise<void> {
+    if (findings.length === 0) return;
+    await this.db
+      .insert(securityFindings)
+      .values(
+        findings.map((f) => ({
+          id: f.id,
+          scanId: f.scanId,
+          title: f.title,
+          description: f.description,
+          checkId: f.checkId,
+          scanType: f.scanType,
+          severity: f.severity as typeof securityFindings.$inferInsert["severity"],
+          confidence: f.confidence as typeof securityFindings.$inferInsert["confidence"],
+          cwe: (f.cwe ?? []) as unknown[],
+          owasp: (f.owasp ?? []) as unknown[],
+          evidence: f.evidence as Record<string, unknown>,
+          remediation: f.remediation as unknown as Record<string, unknown>,
+          standards: f.standards as Record<string, unknown> | undefined,
+          status: f.status as typeof securityFindings.$inferInsert["status"],
+          createdAt: new Date(f.createdAt),
+        })),
+      )
+      .onConflictDoNothing();
   }
 
-  getFindings(scanId: string): SecurityFinding[] {
-    const rows = this.db.prepare("SELECT * FROM security_findings WHERE scan_id = ? ORDER BY severity, created_at").all(scanId) as Record<string, unknown>[];
-    return rows.map(r => this.rowToFinding(r));
+  async getFindings(scanId: string): Promise<SecurityFinding[]> {
+    const rows = await this.db
+      .select()
+      .from(securityFindings)
+      .where(eq(securityFindings.scanId, scanId))
+      .orderBy(
+        asc(securityFindings.severity),
+        asc(securityFindings.createdAt),
+      );
+    return rows.map(rowToFinding);
   }
 
-  queryFindings(opts?: {
+  async queryFindings(opts?: {
     severity?: FindingSeverity;
     scanType?: string;
     status?: FindingStatus;
     projectPath?: string;
     limit?: number;
     offset?: number;
-  }): SecurityFinding[] {
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-    if (opts?.severity) { conditions.push("f.severity = ?"); params.push(opts.severity); }
-    if (opts?.scanType) { conditions.push("f.scan_type = ?"); params.push(opts.scanType); }
-    if (opts?.status) { conditions.push("f.status = ?"); params.push(opts.status); }
+  }): Promise<SecurityFinding[]> {
+    const conditions = [];
+    if (opts?.severity) conditions.push(eq(securityFindings.severity, opts.severity as typeof securityFindings.$inferInsert["severity"]));
+    if (opts?.scanType) conditions.push(eq(securityFindings.scanType, opts.scanType));
+    if (opts?.status) conditions.push(eq(securityFindings.status, opts.status as "open" | "acknowledged" | "mitigated" | "false_positive"));
+
+    // Severity ordering via CASE expression
+    const severityOrder = sql`CASE ${securityFindings.severity} WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END`;
+
     if (opts?.projectPath) {
-      conditions.push("json_extract(r.config_json, '$.targetPath') = ?");
-      params.push(opts.projectPath);
+      // Join with scan_runs to filter by config->targetPath
+      const rows = await this.db
+        .select({ finding: securityFindings })
+        .from(securityFindings)
+        .innerJoin(scanRuns, eq(securityFindings.scanId, scanRuns.id))
+        .where(
+          and(
+            ...conditions,
+            sql`${scanRuns.config}->>'targetPath' = ${opts.projectPath}`,
+          ),
+        )
+        .orderBy(asc(severityOrder), desc(securityFindings.createdAt))
+        .limit(opts?.limit ?? 1000)
+        .offset(opts?.offset ?? 0);
+      return rows.map((r) => rowToFinding(r.finding));
     }
-    let sql = "SELECT f.* FROM security_findings f";
-    if (opts?.projectPath) sql += " JOIN scan_runs r ON f.scan_id = r.id";
-    if (conditions.length > 0) sql += " WHERE " + conditions.join(" AND ");
-    sql += " ORDER BY CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, f.created_at DESC";
+
+    const query = this.db
+      .select()
+      .from(securityFindings)
+      .orderBy(asc(severityOrder), desc(securityFindings.createdAt));
+
+    if (conditions.length > 0) {
+      query.where(and(...conditions));
+    }
+
     if (opts?.limit !== undefined) {
-      sql += ` LIMIT ? OFFSET ?`;
-      params.push(opts.limit, opts?.offset ?? 0);
+      query.limit(opts.limit).offset(opts.offset ?? 0);
     }
-    const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
-    return rows.map(r => this.rowToFinding(r));
+
+    const rows = await query;
+    return rows.map(rowToFinding);
   }
 
-  updateFindingStatus(findingId: string, status: FindingStatus): boolean {
-    const result = this.db.prepare("UPDATE security_findings SET status = ? WHERE id = ?").run(status, findingId);
-    return result.changes > 0;
+  async updateFindingStatus(findingId: string, status: FindingStatus): Promise<boolean> {
+    const result = await this.db
+      .update(securityFindings)
+      .set({ status: status as typeof securityFindings.$inferInsert["status"] })
+      .where(eq(securityFindings.id, findingId));
+    return (result.rowCount ?? 0) > 0;
   }
 
   // -- Summary --
 
-  getSummary(projectPath?: string): SecuritySummary {
-    const findingConditions: string[] = [];
-    const params: unknown[] = [];
-    let joinClause = "";
+  async getSummary(projectPath?: string): Promise<SecuritySummary> {
+    let scanRunIds: string[] | undefined;
 
     if (projectPath) {
-      joinClause = " JOIN scan_runs r ON f.scan_id = r.id";
-      findingConditions.push("json_extract(r.config_json, '$.targetPath') = ?");
-      params.push(projectPath);
+      const runs = await this.db
+        .select({ id: scanRuns.id })
+        .from(scanRuns)
+        .where(sql`${scanRuns.config}->>'targetPath' = ${projectPath}`);
+      scanRunIds = runs.map((r) => r.id);
+      if (scanRunIds.length === 0) {
+        return {
+          totalFindings: 0,
+          bySeverity: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+          byStatus: { open: 0, acknowledged: 0, mitigated: 0, false_positive: 0 },
+          byScanType: {} as Record<string, number>,
+          lastScanAt: undefined,
+          scanCount: 0,
+        };
+      }
     }
 
-    const severitySql = `SELECT severity, COUNT(*) as cnt FROM security_findings f${joinClause}${findingConditions.length ? " WHERE " + findingConditions.join(" AND ") : ""} GROUP BY severity`;
-    const severityRows = this.db.prepare(severitySql).all(...params) as { severity: string; cnt: number }[];
+    // Severity counts
+    const severityRows = await this.db
+      .select({
+        severity: securityFindings.severity,
+        cnt: sql<number>`COUNT(*)::int`,
+      })
+      .from(securityFindings)
+      .where(scanRunIds ? inArray(securityFindings.scanId, scanRunIds) : undefined)
+      .groupBy(securityFindings.severity);
 
-    const statusSql = `SELECT status, COUNT(*) as cnt FROM security_findings f${joinClause}${findingConditions.length ? " WHERE " + findingConditions.join(" AND ") : ""} GROUP BY status`;
-    const statusRows = this.db.prepare(statusSql).all(...params) as { status: string; cnt: number }[];
+    // Status counts
+    const statusRows = await this.db
+      .select({
+        status: securityFindings.status,
+        cnt: sql<number>`COUNT(*)::int`,
+      })
+      .from(securityFindings)
+      .where(scanRunIds ? inArray(securityFindings.scanId, scanRunIds) : undefined)
+      .groupBy(securityFindings.status);
 
-    const typeSql = `SELECT scan_type, COUNT(*) as cnt FROM security_findings f${joinClause}${findingConditions.length ? " WHERE " + findingConditions.join(" AND ") : ""} GROUP BY scan_type`;
-    const typeRows = this.db.prepare(typeSql).all(...params) as { scan_type: string; cnt: number }[];
+    // Scan type counts
+    const typeRows = await this.db
+      .select({
+        scanType: securityFindings.scanType,
+        cnt: sql<number>`COUNT(*)::int`,
+      })
+      .from(securityFindings)
+      .where(scanRunIds ? inArray(securityFindings.scanId, scanRunIds) : undefined)
+      .groupBy(securityFindings.scanType);
 
-    let scanCountSql = "SELECT COUNT(*) as cnt FROM scan_runs";
-    let lastScanSql = "SELECT MAX(started_at) as last FROM scan_runs";
-    const scanParams: unknown[] = [];
-    if (projectPath) {
-      const cond = " WHERE json_extract(config_json, '$.targetPath') = ?";
-      scanCountSql += cond;
-      lastScanSql += cond;
-      scanParams.push(projectPath);
-    }
-
-    const scanCount = (this.db.prepare(scanCountSql).get(...scanParams) as { cnt: number }).cnt;
-    const lastScan = (this.db.prepare(lastScanSql).get(...scanParams) as { last: string | null }).last;
+    // Scan run count + last scan
+    const [scanStats] = await this.db
+      .select({
+        cnt: sql<number>`COUNT(*)::int`,
+        last: sql<string | null>`MAX(${scanRuns.startedAt})`,
+      })
+      .from(scanRuns)
+      .where(scanRunIds ? inArray(scanRuns.id, scanRunIds) : undefined);
 
     const bySeverity = { critical: 0, high: 0, medium: 0, low: 0, info: 0 } as Record<FindingSeverity, number>;
     for (const r of severityRows) bySeverity[r.severity as FindingSeverity] = r.cnt;
@@ -225,50 +303,18 @@ export class ScanStore {
     for (const r of statusRows) byStatus[r.status] = r.cnt;
 
     const byScanType = {} as Record<string, number>;
-    for (const r of typeRows) byScanType[r.scan_type] = r.cnt;
+    for (const r of typeRows) byScanType[r.scanType] = r.cnt;
 
     const totalFindings = Object.values(bySeverity).reduce((a, b) => a + b, 0);
+    const lastScanAt = scanStats?.last ? String(scanStats.last) : undefined;
 
-    return { totalFindings, bySeverity, byStatus, byScanType, lastScanAt: lastScan ?? undefined, scanCount } as SecuritySummary;
-  }
-
-  // -- Helpers --
-
-  private rowToScanRun(row: Record<string, unknown>): ScanRun {
     return {
-      id: row.id as string,
-      status: row.status as ScanRun["status"],
-      config: JSON.parse(row.config_json as string),
-      startedAt: row.started_at as string,
-      completedAt: (row.completed_at as string) || undefined,
-      findingCounts: JSON.parse(row.finding_counts_json as string),
-      totalFindings: row.total_findings as number,
-      scannerResults: JSON.parse(row.scanner_results_json as string),
-      error: (row.error as string) || undefined,
-    };
-  }
-
-  private rowToFinding(row: Record<string, unknown>): SecurityFinding {
-    return {
-      id: row.id as string,
-      scanId: row.scan_id as string,
-      title: row.title as string,
-      description: row.description as string,
-      checkId: row.check_id as string,
-      scanType: row.scan_type as SecurityFinding["scanType"],
-      severity: row.severity as SecurityFinding["severity"],
-      confidence: row.confidence as SecurityFinding["confidence"],
-      cwe: JSON.parse(row.cwe_json as string),
-      owasp: JSON.parse(row.owasp_json as string),
-      evidence: JSON.parse(row.evidence_json as string),
-      remediation: JSON.parse(row.remediation_json as string),
-      standards: row.standards_json ? JSON.parse(row.standards_json as string) : undefined,
-      createdAt: row.created_at as string,
-      status: row.status as SecurityFinding["status"],
-    };
-  }
-
-  close(): void {
-    this.db.close();
+      totalFindings,
+      bySeverity,
+      byStatus,
+      byScanType,
+      lastScanAt,
+      scanCount: scanStats?.cnt ?? 0,
+    } as SecuritySummary;
   }
 }

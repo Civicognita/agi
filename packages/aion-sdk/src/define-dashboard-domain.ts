@@ -2,7 +2,7 @@
  * defineDashboardDomain — chainable builder for DashboardInterfaceDomainDefinition.
  */
 
-import type { DashboardInterfaceDomainDefinition, DashboardDomainPageDefinition } from "@aionima/plugins";
+import type { DashboardInterfaceDomainDefinition, DashboardDomainPageDefinition } from "@agi/plugins";
 
 class DashboardDomainBuilder {
   private def: Partial<DashboardInterfaceDomainDefinition> & { pages: DashboardDomainPageDefinition[] };

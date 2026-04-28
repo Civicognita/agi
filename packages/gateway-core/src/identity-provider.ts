@@ -6,8 +6,8 @@
  * automatically on creation.
  */
 
-import type { EntityStore, GEID } from "@aionima/entity-model";
-import { signIdentityStatement, formatAddress } from "@aionima/entity-model";
+import type { EntityStore, GEID } from "@agi/entity-model";
+import { signIdentityStatement, formatAddress } from "@agi/entity-model";
 import type { FederationNode } from "./federation-node.js";
 
 // ---------------------------------------------------------------------------
@@ -70,11 +70,11 @@ export class IdentityProvider {
    * Get the identity info for an entity (GEID + address).
    * Returns null if the entity has no GEID.
    */
-  getIdentity(entityId: string): IssuedIdentity | null {
-    const entity = this.entityStore.getEntity(entityId);
+  async getIdentity(entityId: string): Promise<IssuedIdentity | null> {
+    const entity = await this.entityStore.getEntity(entityId);
     if (!entity) return null;
 
-    const mapping = this.entityStore.getGeidMapping(entityId);
+    const mapping = await this.entityStore.getGeidMapping(entityId);
     if (!mapping) return null;
 
     const address = formatAddress(entity.coaAlias, this.config.nodeAlias);
@@ -90,11 +90,11 @@ export class IdentityProvider {
   /**
    * Resolve an entity by GEID.
    */
-  resolveByGeid(geid: string): IssuedIdentity | null {
-    const entity = this.entityStore.getByGeid(geid);
+  async resolveByGeid(geid: string): Promise<IssuedIdentity | null> {
+    const entity = await this.entityStore.getByGeid(geid);
     if (!entity) return null;
 
-    const mapping = this.entityStore.getGeidMapping(entity.id);
+    const mapping = await this.entityStore.getGeidMapping(entity.id);
     if (!mapping) return null;
 
     const address = formatAddress(entity.coaAlias, this.config.nodeAlias);
@@ -110,11 +110,11 @@ export class IdentityProvider {
   /**
    * Resolve an entity by COA address.
    */
-  resolveByAddress(address: string): IssuedIdentity | null {
-    const entity = this.entityStore.getByAddress(address);
+  async resolveByAddress(address: string): Promise<IssuedIdentity | null> {
+    const entity = await this.entityStore.getByAddress(address);
     if (!entity) return null;
 
-    const mapping = this.entityStore.getGeidMapping(entity.id);
+    const mapping = await this.entityStore.getGeidMapping(entity.id);
     if (!mapping) return null;
 
     return {
@@ -129,11 +129,11 @@ export class IdentityProvider {
    * Generate a signed identity statement for an entity.
    * Used for cross-node identity verification.
    */
-  generateIdentityStatement(entityId: string): {
+  async generateIdentityStatement(entityId: string): Promise<{
     statement: ReturnType<typeof signIdentityStatement>;
     nodeEndorsement: string;
-  } | null {
-    const mapping = this.entityStore.getGeidMapping(entityId);
+  } | null> {
+    const mapping = await this.entityStore.getGeidMapping(entityId);
     if (!mapping || !mapping.privateKeyPem) return null;
 
     const nodeId = this.federationNode?.getNodeId() ?? this.config.nodeAlias;
@@ -158,25 +158,25 @@ export class IdentityProvider {
    * Bind an OAuth identity to an existing entity.
    * Stores the provider + account info as a channel account.
    */
-  bindOAuthIdentity(
+  async bindOAuthIdentity(
     entityId: string,
     provider: string,
     providerUserId: string,
-  ): IdentityBindingResult {
-    const entity = this.entityStore.getEntity(entityId);
+  ): Promise<IdentityBindingResult> {
+    const entity = await this.entityStore.getEntity(entityId);
     if (!entity) {
       return { success: false, error: "Entity not found" };
     }
 
     // Store as a channel account with provider as channel name
     const channel = `oauth:${provider}`;
-    this.entityStore.upsertChannelAccount({
+    await this.entityStore.upsertChannelAccount({
       entityId,
       channel,
       channelUserId: providerUserId,
     });
 
-    const mapping = this.entityStore.getGeidMapping(entityId);
+    const mapping = await this.entityStore.getGeidMapping(entityId);
 
     return {
       success: true,
@@ -188,17 +188,17 @@ export class IdentityProvider {
   /**
    * Create a new entity with identity (for sub-user registration).
    */
-  createEntityWithIdentity(params: {
+  async createEntityWithIdentity(params: {
     displayName: string;
     type?: "E" | "O" | "T" | "F" | "A";
-  }): IssuedIdentity {
-    const entity = this.entityStore.createEntity({
+  }): Promise<IssuedIdentity> {
+    const entity = await this.entityStore.createEntity({
       type: params.type ?? "E",
       displayName: params.displayName,
     });
 
     // createEntity now auto-generates GEID, so just retrieve it
-    const mapping = this.entityStore.getGeidMapping(entity.id);
+    const mapping = await this.entityStore.getGeidMapping(entity.id);
     if (!mapping) {
       throw new Error("GEID generation failed during entity creation");
     }

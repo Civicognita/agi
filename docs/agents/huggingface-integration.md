@@ -12,7 +12,7 @@ The feature is opt-in: it is enabled or disabled via the `hf.enabled` flag in `g
 
 ---
 
-## Package: `@aionima/model-runtime`
+## Package: `@agi/model-runtime`
 
 All HF-related logic lives in `packages/model-runtime/`. This package is loaded by `gateway-core` during boot when `hf.enabled` is true.
 
@@ -87,7 +87,7 @@ The `ContainerRuntimeType` enum determines which Podman image and startup flags 
 
 | Type | Models | Image | Notes |
 |------|--------|-------|-------|
-| `llm` | Text generation LLMs | `ghcr.io/ggerganov/llama.cpp:server` | Serves GGUF files via llama.cpp HTTP server; OpenAI-compatible `/v1/chat/completions` |
+| `llm` | Text generation LLMs | `ghcr.io/civicognita/transformers-server:latest` | Serves all model formats via Transformers; OpenAI-compatible `/v1/chat/completions` |
 | `diffusion` | Image generation | `ghcr.io/huggingface/diffusers:latest` | Runs a Diffusers API server; returns base64-encoded images |
 | `general` | Embeddings, classification, audio | `ghcr.io/huggingface/transformers-inference:latest` | General-purpose Transformers server |
 
@@ -157,7 +157,7 @@ All model files land in `~/.agi/models/`:
     {variant-filename}.gguf   — downloaded variant file(s)
 ```
 
-The `modelDir` path in config is expanded at use-time (`~` → `$HOME`). Model files are never stored inside the AGI repo or `/opt/aionima/`.
+The `modelDir` path in config is expanded at use-time (`~` → `$HOME`). Model files are never stored inside the AGI repo or `/opt/agi/`.
 
 ---
 
@@ -165,7 +165,7 @@ The `modelDir` path in config is expanded at use-time (`~` → `$HOME`). Model f
 
 **Gateway Core** (`packages/gateway-core/src/`):
 
-- `boot.ts` — checks `hf.enabled`, imports `@aionima/model-runtime`, mounts `hf-api.ts` routes, registers `hf_models` agent tool
+- `boot.ts` — checks `hf.enabled`, imports `@agi/model-runtime`, mounts `hf-api.ts` routes, registers `hf_models` agent tool
 - `routes/index.ts` — includes the HF route plugin
 - `tool-registry.ts` — calls `registerHFTool()` from `agent-bridge.ts` when feature is enabled
 

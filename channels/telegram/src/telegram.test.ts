@@ -10,7 +10,7 @@ import {
 import { splitText } from "./outbound.js";
 import { createSecurityAdapter } from "./security.js";
 import { createTelegramPlugin } from "./index.js";
-import { validateAdapter } from "@aionima/channel-sdk";
+import { validateAdapter } from "@agi/channel-sdk";
 
 // ---------------------------------------------------------------------------
 // Helpers

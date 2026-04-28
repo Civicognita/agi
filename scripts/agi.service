@@ -1,0 +1,30 @@
+[Unit]
+Description=Aionima Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%AIONIMA_USER%
+Group=%AIONIMA_USER%
+WorkingDirectory=/opt/agi
+
+# Trust Caddy's local CA so Node.js accepts self-signed certs for *.ai.on domains.
+Environment=NODE_EXTRA_CA_CERTS=/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+
+# TPM2-sealed credentials — decrypted by systemd at startup.
+# Managed by SecretsManager; do not edit manually.
+# --- BEGIN CREDENTIALS ---
+# --- END CREDENTIALS ---
+
+ExecStart=/usr/bin/node /opt/agi/cli/dist/index.js run
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agi
+
+[Install]
+WantedBy=multi-user.target

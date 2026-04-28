@@ -13,6 +13,7 @@ import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks
 import type { EffectiveStartCommand } from "../api.js";
 import { ProjectToolbar } from "./ProjectToolbar.js";
 import { StackManager } from "./StackManager.js";
+import { DatabaseCard } from "./DatabaseCard.js";
 import { TerminalArea } from "./TerminalArea.js";
 
 export interface HostingPanelProps {
@@ -83,6 +84,7 @@ export function HostingPanel({
   const [stackDefs, setStackDefs] = useState<StackInfo[]>([]);
   const [stickyError, setStickyError] = useState<string | null>(null);
   const [logRefreshKey, setLogRefreshKey] = useState(0);
+  const [dbRestartNeeded, setDbRestartNeeded] = useState(false);
 
   // Sync state when hosting prop changes
   useEffect(() => {
@@ -375,6 +377,25 @@ export function HostingPanel({
             className="text-[12px] h-8"
           />
         </div>
+      </div>
+
+      {/* Database */}
+      <div className="mb-3 pt-2 border-t border-border">
+        {dbRestartNeeded && (
+          <div className="mb-2 text-[11px] text-yellow">
+            Database changed — restart the container to apply.
+          </div>
+        )}
+        <DatabaseCard
+          projectPath={projectPath}
+          installedStacks={projectStackInstances}
+          stackDefs={stackDefs}
+          onStackChange={() => {
+            fetchProjectStacks(projectPath).then(setProjectStackInstances).catch(() => {});
+            fetchStacks().then(setStackDefs).catch(() => {});
+          }}
+          onRestartNeeded={() => setDbRestartNeeded(true)}
+        />
       </div>
 
       {/* Stack Manager */}

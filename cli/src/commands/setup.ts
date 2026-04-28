@@ -11,7 +11,7 @@ import { resolve, dirname } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { randomBytes } from "node:crypto";
 import type { Command } from "commander";
-import { AionimaConfigSchema } from "@aionima/config";
+import { AionimaConfigSchema } from "@agi/config";
 import { bold, cyan, dim, green, red, yellow } from "../output.js";
 import { detectLanIp, openBrowser } from "./platform.js";
 import {
@@ -88,7 +88,7 @@ async function detectContext(
   rl: Parameters<typeof ask>[0],
   dirOverride?: string,
 ): Promise<SetupContext> {
-  const deployDir = "/opt/aionima";
+  const deployDir = "/opt/agi";
   const cwd = process.cwd();
 
   let targetDir: string;
@@ -549,7 +549,7 @@ async function printPostSetup(rl: import("node:readline/promises").Interface, ct
     console.log();
     console.log(
       dim(
-        "  For production deployment, run install.sh or upgrade.sh to sync to /opt/aionima",
+        "  For production deployment, run install.sh or upgrade.sh to sync to /opt/agi",
       ),
     );
   }

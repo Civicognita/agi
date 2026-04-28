@@ -9,13 +9,13 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 AIONIMA_USER="${AIONIMA_USER:-aionima}"
 AIONIMA_REPO="${AIONIMA_REPO:-https://github.com/Civicognita/agi.git}"
-INSTALL_DIR="${AIONIMA_INSTALL_DIR:-/opt/aionima}"
+INSTALL_DIR="${AIONIMA_INSTALL_DIR:-/opt/agi}"
 PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
-PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/aionima-prime}"
+PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/agi-prime}"
 # Plugin and MApp marketplaces are fetched from GitHub on demand by the gateway.
 # No local clones needed.
-ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/aionima-local-id.git}"
-ID_DIR="${AIONIMA_ID_DIR:-/opt/aionima-local-id}"
+ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/agi-local-id.git}"
+ID_DIR="${AIONIMA_ID_DIR:-/opt/agi-local-id}"
 BRANCH="${AIONIMA_BRANCH:-main}"
 SKIP_HARDENING="${AIONIMA_SKIP_HARDENING:-}"
 
@@ -277,7 +277,7 @@ chown "$AIONIMA_USER:$AIONIMA_USER" "$INSTALL_DIR/.deployed-commit"
 #
 # Ongoing upgrades are handled by `scripts/upgrade.sh` which reads
 # `~/.agi/gateway.json` → `idService.local.enabled` and restarts the
-# `aionima-local-id` service whenever the ID source changes.
+# `agi-id` service whenever the ID source changes.
 # ---------------------------------------------------------------------------
 if [ -d "$ID_DIR/.git" ]; then
   echo "==> Setting up local ID service..."
@@ -307,73 +307,81 @@ IDENVEOF
     echo "  [OK] Generated $ID_ENV"
   fi
 
-  # 9b. PostgreSQL via Podman — canonical container runtime for AGI infra.
-  # Uses host port 5433 to avoid colliding with any system postgres on 5432.
-  # Container is restart=unless-stopped so it survives reboots.
+  # 9b. PostgreSQL — managed by the agi-postgres plugin.
+  # The standalone Podman container previously created here has been removed.
+  # PostgreSQL is now provisioned through the Services page (agi-postgres plugin),
+  # which uses ghcr.io/civicognita/postgres:17 on port 5432.
+  # After install, enable the agi-postgres service in the dashboard, then add
+  # DATABASE_URL to $ID_ENV if it is not already present.
   if ! grep -q "^DATABASE_URL=" "$ID_ENV"; then
-    if ! command -v podman &>/dev/null; then
-      echo "  [WARN] podman not found — skipping PostgreSQL setup."
-      echo "         Run 'agi doctor' after install to finish container infra setup,"
-      echo "         then re-run this section by adding a DATABASE_URL to $ID_ENV manually."
-    else
-      ID_DB_PASS=$(openssl rand -hex 16)
-      ID_DB_CONTAINER="aionima-id-postgres"
-      ID_DB_NAME="aionima_id"
-      ID_DB_USER="aionima_id"
-
-      echo "  Starting PostgreSQL container ($ID_DB_CONTAINER)..."
-      podman rm -f "$ID_DB_CONTAINER" 2>/dev/null || true
-      podman volume create aionima-id-pgdata 2>/dev/null || true
-      podman run -d \
-        --name "$ID_DB_CONTAINER" \
-        --restart unless-stopped \
-        -e POSTGRES_DB="$ID_DB_NAME" \
-        -e POSTGRES_USER="$ID_DB_USER" \
-        -e POSTGRES_PASSWORD="$ID_DB_PASS" \
-        -v aionima-id-pgdata:/var/lib/postgresql/data \
-        -p 5433:5432 \
-        docker.io/postgres:16-alpine
-
-      echo "DATABASE_URL=postgres://$ID_DB_USER:$ID_DB_PASS@localhost:5433/$ID_DB_NAME" >> "$ID_ENV"
-      echo "  [OK] PostgreSQL running on host port 5433"
-    fi
+    echo "  [NOTE] DATABASE_URL not set in $ID_ENV."
+    echo "         Enable the agi-postgres service in the dashboard (Services page)"
+    echo "         and add the connection string to $ID_ENV, then restart agi-id."
   fi
 
-  # 9c. Install deps + build
-  echo "  Building ID service..."
-  run_as "cd '$ID_DIR' && npm install --omit=dev 2>&1 | tail -1"
-  run_as "cd '$ID_DIR' && npm run build 2>&1 | tail -1"
+  # 9c. Build the Local-ID container image. The Dockerfile there runs
+  # npm ci + tsc + drizzle-kit generate entirely inside the build stage;
+  # no host-side install is needed. Only AGI itself runs as a host process;
+  # everything else runs in a rootless Podman container.
+  echo "  Building Local-ID container image..."
+  run_as "cd '$ID_DIR' && podman build -t localhost/agi-local-id:latest . 2>&1 | tail -3"
 
-  # 9d. Run database migrations (safe no-op if already applied)
-  if grep -q "^DATABASE_URL=" "$ID_ENV"; then
-    echo "  Running ID database migrations..."
-    run_as "cd '$ID_DIR' && set -a && source .env && set +a && npx drizzle-kit migrate 2>&1 | tail -3" || \
-      echo "  [WARN] Migrations skipped or failed — see logs"
-  fi
+  # 9d. Ensure the `aionima` container network exists (shared with
+  # agi-postgres-17 so the services can reach each other by name).
+  run_as "podman network inspect aionima >/dev/null 2>&1 || podman network create aionima"
 
-  # 9e. Install + enable systemd unit
-  ID_SERVICE_FILE="$INSTALL_DIR/scripts/aionima-local-id.service"
-  ID_DEST_SERVICE="/etc/systemd/system/aionima-local-id.service"
-  if [ -f "$ID_SERVICE_FILE" ]; then
-    sed "s/%AIONIMA_USER%/$AIONIMA_USER/g" "$ID_SERVICE_FILE" > "$ID_DEST_SERVICE"
-    systemctl daemon-reload
-    systemctl enable aionima-local-id 2>/dev/null || true
-    echo "  [OK] aionima-local-id.service installed and enabled"
-  else
-    echo "  [WARN] $ID_SERVICE_FILE missing — skipping systemd unit install"
-  fi
+  # 9e. Enable linger so user-level systemd services survive logout.
+  loginctl enable-linger "$AIONIMA_USER" 2>/dev/null || true
+
+  # 9f. Install the persistent user-level systemd unit that manages the
+  # ID container. Story #100 moved off the old `podman generate systemd`
+  # scratch output (which pointed at /tmp/agi-id.container.env, a path
+  # that wipes on reboot and left ID dead across reboots). Instead:
+  #   - Write the DATABASE_URL-rewritten env to a persistent user path
+  #     at ~/.config/agi-local-id/container.env
+  #   - Install the committed unit template from scripts/agi-local-id.service
+  #     that references %h/.config/agi-local-id/container.env
+  #   - No host port binding — the container lives on the aionima network
+  #     and is reached by Caddy-on-aionima via podman DNS (agi-local-id:3200)
+  ID_USER_HOME="/home/$AIONIMA_USER"
+  ID_USER_SYSTEMD_DIR="$ID_USER_HOME/.config/systemd/user"
+  ID_USER_ENV_DIR="$ID_USER_HOME/.config/agi-local-id"
+  ID_USER_ENV_FILE="$ID_USER_ENV_DIR/container.env"
+
+  run_as "mkdir -p '$ID_USER_SYSTEMD_DIR' '$ID_USER_ENV_DIR'"
+
+  # Patch DATABASE_URL for the container — localhost in .env refers to the
+  # host, but a container on the aionima network reaches Postgres by
+  # service name `agi-postgres-17`. Write directly to the persistent path;
+  # no /tmp hop.
+  sed 's|@localhost:5432/|@agi-postgres-17:5432/|' "$ID_ENV" > "$ID_USER_ENV_FILE"
+  chmod 600 "$ID_USER_ENV_FILE"
+  chown "$AIONIMA_USER:$AIONIMA_USER" "$ID_USER_ENV_FILE"
+
+  # Install the committed unit template (no transient /tmp references)
+  cp "$INSTALL_DIR/scripts/agi-local-id.service" "$ID_USER_SYSTEMD_DIR/agi-local-id.service"
+  chown "$AIONIMA_USER:$AIONIMA_USER" "$ID_USER_SYSTEMD_DIR/agi-local-id.service"
+
+  # Seed the container so it's running when the unit activates. Recreate
+  # against the latest image if one already exists from a prior install.
+  run_as "podman rm -f agi-local-id 2>/dev/null || true"
+
+  run_as "systemctl --user daemon-reload" || true
+  run_as "systemctl --user enable --now agi-local-id.service" || \
+    echo "  [WARN] systemctl enable/start agi-local-id failed; retry via dashboard after agi-postgres-17 is up"
+  echo "  [OK] agi-local-id container on aionima (no host port), persistent env at $ID_USER_ENV_FILE"
 fi
 
 # ---------------------------------------------------------------------------
 # 10. Install systemd service
 # ---------------------------------------------------------------------------
 echo "==> Installing systemd service..."
-SERVICE_FILE="$INSTALL_DIR/scripts/aionima.service"
-DEST_SERVICE="/etc/systemd/system/aionima.service"
+SERVICE_FILE="$INSTALL_DIR/scripts/agi.service"
+DEST_SERVICE="/etc/systemd/system/agi.service"
 
 sed "s/%AIONIMA_USER%/$AIONIMA_USER/g" "$SERVICE_FILE" > "$DEST_SERVICE"
 systemctl daemon-reload
-systemctl enable aionima
+systemctl enable agi
 echo "  [OK] Service installed and enabled"
 
 # ---------------------------------------------------------------------------
@@ -415,9 +423,9 @@ fi
 # 14. Start the service
 # ---------------------------------------------------------------------------
 echo "==> Starting Aionima..."
-systemctl start aionima
+systemctl start agi
 sleep 3
-if systemctl is-active --quiet aionima; then
+if systemctl is-active --quiet agi; then
   echo "  [OK] Aionima is running"
 else
   echo "  [WARN] Aionima failed to start — run 'agi logs' to investigate"
@@ -432,7 +440,7 @@ else
   HARDENING="$INSTALL_DIR/scripts/hardening.sh"
   if [ -f "$HARDENING" ]; then
     echo "==> Running hardening..."
-    AIONIMA_USER="$AIONIMA_USER" AIONIMA_DEPLOY_DIR="$INSTALL_DIR" \
+    AIONIMA_USER="$AIONIMA_USER" AIONIMA_DEPLOY_DIR="$INSTALL_DIR" AGI_DEPLOY_DIR="$INSTALL_DIR" \
       bash "$HARDENING"
   fi
 fi

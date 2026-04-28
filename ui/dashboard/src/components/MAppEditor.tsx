@@ -105,6 +105,25 @@ export function MAppEditor({ initialDefinition, onSave, onClose }: MAppEditorPro
     setDirty(false);
   }, [state, onSave]);
 
+  // Validate invariants that would produce a broken MAppDefinition. Magic
+  // pages (`pageType: "magic"`) require (a) they aren't the first page and
+  // (b) the preceding page declares `processPage`. The Editor used to show
+  // these as paragraphs in the magic-page info block but let Save through
+  // anyway — so authors could ship a MApp that can never render its magic
+  // page. Gate Save on these invariants, don't just warn.
+  const validationErrors = useMemo(() => {
+    const errs: string[] = [];
+    state.pages.forEach((page, idx) => {
+      if (page.pageType !== "magic") return;
+      if (idx === 0) {
+        errs.push(`Page ${idx + 1}: magic page cannot be the first page.`);
+      } else if (!state.pages[idx - 1]?.processPage) {
+        errs.push(`Page ${idx + 1}: preceding page needs a processing prompt.`);
+      }
+    });
+    return errs;
+  }, [state.pages]);
+
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
       <div className="bg-card border border-border rounded-xl shadow-2xl w-[850px] max-h-[90vh] flex flex-col">
@@ -141,9 +160,25 @@ export function MAppEditor({ initialDefinition, onSave, onClose }: MAppEditorPro
         {/* Footer */}
         <div className="px-4 py-3 border-t border-border flex items-center justify-between">
           <Button variant="secondary" size="sm" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}>Back</Button>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            {validationErrors.length > 0 && (
+              <span
+                data-testid="mapp-editor-validation-errors"
+                title={validationErrors.join("\n")}
+                className="text-[11px] text-red"
+              >
+                {validationErrors.length} error{validationErrors.length === 1 ? "" : "s"}
+              </span>
+            )}
             {step < 4 && <Button size="sm" variant="outline" onClick={() => setStep((s) => s + 1)}>Next</Button>}
-            <Button size="sm" onClick={handleSave}>Save MApp</Button>
+            <Button
+              size="sm"
+              onClick={handleSave}
+              disabled={validationErrors.length > 0}
+              title={validationErrors.length > 0 ? validationErrors.join("\n") : undefined}
+            >
+              Save MApp
+            </Button>
           </div>
         </div>
       </div>
@@ -324,6 +359,27 @@ function PagesStep({ state, update }: { state: EditorState; update: <K extends k
   const moveField = (idx: number, dir: -1 | 1) => {
     const newIdx = idx + dir;
     if (newIdx < 0 || newIdx >= page!.fields.length) return;
+
+    // Reordering re-assigns A-cell refs in place (`A${i + 1}`), which means
+    // any formula that referenced the OLD `Aidx` or `AnewIdx` will now
+    // silently point at swapped content (story #101 task #315). Detect
+    // affected formulas and confirm with the author before committing the
+    // reorder. The proper auto-rewrite path needs a formula parser; this
+    // confirm-or-cancel guard is the alpha-stable-1 fix.
+    const oldA = `A${idx + 1}`;
+    const newA = `A${newIdx + 1}`;
+    const refRe = new RegExp(`\\b(?:${oldA}|${newA})\\b`);
+    const affected = (page!.formulas ?? []).filter((f) => refRe.test(f.expression));
+    if (affected.length > 0) {
+      const refList = affected.map((f) => `  ${f.cell}: ${f.expression}`).join("\n");
+      const ok = window.confirm(
+        `Reordering will swap which cells "${oldA}" and "${newA}" point at.\n\n` +
+          `These formulas reference them and will silently retarget:\n${refList}\n\n` +
+          `Proceed anyway? (Cancel keeps the current order.)`,
+      );
+      if (!ok) return;
+    }
+
     const pages = [...state.pages];
     const fields = [...page!.fields];
     [fields[idx], fields[newIdx]] = [fields[newIdx]!, fields[idx]!];

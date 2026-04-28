@@ -19,7 +19,7 @@ import {
   type ProjectConfig,
   type ProjectHosting,
   type ProjectStackInstance,
-} from "@aionima/config";
+} from "@agi/config";
 import { projectConfigPath } from "./project-config-path.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";

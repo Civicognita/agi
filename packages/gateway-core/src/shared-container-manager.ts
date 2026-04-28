@@ -1,7 +1,7 @@
 /**
  * SharedContainerManager — manages shared database containers.
  *
- * One container per `sharedKey` (e.g. "postgres-17" → container "aionima-shared-postgres-17").
+ * One container per `sharedKey` (e.g. "postgres-17" → container "agi-shared-postgres-17").
  * Port allocation from the same pool as project containers.
  * Persistence in ~/.agi/shared-containers.json.
  * Reference counting — auto-start on first add, auto-stop on last remove.
@@ -94,7 +94,7 @@ export class SharedContainerManager {
 
       if (!container) {
         const port = this.allocatePort();
-        const containerName = `aionima-shared-${sharedKey}`;
+        const containerName = `agi-shared-${sharedKey}`;
         container = {
           sharedKey,
           containerName,
@@ -244,9 +244,16 @@ export class SharedContainerManager {
       "run", "-d",
       "--name", containerName,
       "--replace",
-      "-p", `${port}:${config.internalPort}`,
-      "--label", "aionima.managed=true",
-      "--label", `aionima.shared-key=${container.sharedKey}`,
+      // Shared DB containers live on aionima so project/ID containers
+      // reach them by DNS name (e.g. `agi-postgres-17`). Keep the
+      // `-p 127.0.0.1:<port>` binding too — the AGI gateway is still a
+      // host process (not containerized), and reaches shared databases
+      // via loopback. Once the gateway itself is containerized on
+      // aionima (follow-up to story #100), drop this `-p`.
+      "--network=aionima",
+      "-p", `127.0.0.1:${String(port)}:${String(config.internalPort)}`,
+      "--label", "agi.managed=true",
+      "--label", `agi.shared-key=${container.sharedKey}`,
     ];
 
     for (const vol of volumes) {

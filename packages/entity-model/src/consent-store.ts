@@ -4,8 +4,10 @@
  * Compliance: UCS-PRIV-01 (GDPR Art 6/7 — lawful basis via consent).
  */
 
+import { and, eq } from "drizzle-orm";
 import { ulid } from "ulid";
-import type { Database } from "./db.js";
+import type { Db } from "@agi/db-schema/client";
+import { consents } from "@agi/db-schema";
 
 export type ConsentPurpose = "data_processing" | "analytics" | "communications" | "third_party_sharing";
 
@@ -19,75 +21,79 @@ export interface ConsentRecord {
   createdAt: string;
 }
 
-export const CREATE_CONSENTS = `
-CREATE TABLE IF NOT EXISTS consents (
-  id          TEXT NOT NULL PRIMARY KEY,
-  entity_id   TEXT NOT NULL,
-  purpose     TEXT NOT NULL,
-  granted     INTEGER NOT NULL DEFAULT 0,
-  source      TEXT NOT NULL DEFAULT 'system',
-  version     TEXT NOT NULL DEFAULT '1.0',
-  created_at  TEXT NOT NULL,
-  UNIQUE (entity_id, purpose)
-)` as const;
+// ---------------------------------------------------------------------------
+// Row mapper
+// ---------------------------------------------------------------------------
 
-interface ConsentRow {
-  id: string;
-  entity_id: string;
-  purpose: string;
-  granted: number;
-  source: string;
-  version: string;
-  created_at: string;
-}
-
-function toConsentRecord(row: ConsentRow): ConsentRecord {
+function toConsentRecord(row: typeof consents.$inferSelect): ConsentRecord {
   return {
     id: row.id,
-    entityId: row.entity_id,
+    entityId: row.entityId,
     purpose: row.purpose as ConsentPurpose,
-    granted: row.granted === 1,
+    granted: row.granted,
     source: row.source,
     version: row.version,
-    createdAt: row.created_at,
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
 }
 
+// ---------------------------------------------------------------------------
+// ConsentStore
+// ---------------------------------------------------------------------------
+
 export class ConsentStore {
-  constructor(private readonly db: Database) {
-    db.exec(CREATE_CONSENTS);
-  }
+  constructor(private readonly db: Db) {}
 
-  grant(entityId: string, purpose: ConsentPurpose, source = "user", version = "1.0"): ConsentRecord {
-    const now = new Date().toISOString();
+  async grant(entityId: string, purpose: ConsentPurpose, source = "user", version = "1.0"): Promise<ConsentRecord> {
+    const now = new Date();
     const id = ulid();
-    this.db.prepare(`
-      INSERT INTO consents (id, entity_id, purpose, granted, source, version, created_at)
-      VALUES (?, ?, ?, 1, ?, ?, ?)
-      ON CONFLICT (entity_id, purpose) DO UPDATE SET granted = 1, source = ?, version = ?, created_at = ?
-    `).run(id, entityId, purpose, source, version, now, source, version, now);
-    return this.get(entityId, purpose)!;
+
+    await this.db.insert(consents).values({
+      id,
+      entityId,
+      purpose,
+      granted: true,
+      source,
+      version,
+      createdAt: now,
+    }).onConflictDoUpdate({
+      target: [consents.entityId, consents.purpose],
+      set: { granted: true, source, version, createdAt: now },
+    });
+
+    const record = await this.get(entityId, purpose);
+    return record!;
   }
 
-  revoke(entityId: string, purpose: ConsentPurpose, source = "user"): void {
-    const now = new Date().toISOString();
-    this.db.prepare(`
-      UPDATE consents SET granted = 0, source = ?, created_at = ? WHERE entity_id = ? AND purpose = ?
-    `).run(source, now, entityId, purpose);
+  async revoke(entityId: string, purpose: ConsentPurpose, source = "user"): Promise<void> {
+    const now = new Date();
+    await this.db.update(consents)
+      .set({ granted: false, source, createdAt: now })
+      .where(and(eq(consents.entityId, entityId), eq(consents.purpose, purpose)));
   }
 
-  get(entityId: string, purpose: ConsentPurpose): ConsentRecord | null {
-    const row = this.db.prepare(`SELECT * FROM consents WHERE entity_id = ? AND purpose = ?`).get(entityId, purpose) as ConsentRow | undefined;
+  async get(entityId: string, purpose: ConsentPurpose): Promise<ConsentRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(consents)
+      .where(and(eq(consents.entityId, entityId), eq(consents.purpose, purpose)));
     return row ? toConsentRecord(row) : null;
   }
 
-  getAll(entityId: string): ConsentRecord[] {
-    const rows = this.db.prepare(`SELECT * FROM consents WHERE entity_id = ? ORDER BY purpose`).all(entityId) as ConsentRow[];
+  async getAll(entityId: string): Promise<ConsentRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(consents)
+      .where(eq(consents.entityId, entityId))
+      .orderBy(consents.purpose);
     return rows.map(toConsentRecord);
   }
 
-  hasConsent(entityId: string, purpose: ConsentPurpose): boolean {
-    const row = this.db.prepare(`SELECT granted FROM consents WHERE entity_id = ? AND purpose = ?`).get(entityId, purpose) as { granted: number } | undefined;
-    return row?.granted === 1;
+  async hasConsent(entityId: string, purpose: ConsentPurpose): Promise<boolean> {
+    const [row] = await this.db
+      .select({ granted: consents.granted })
+      .from(consents)
+      .where(and(eq(consents.entityId, entityId), eq(consents.purpose, purpose)));
+    return row?.granted === true;
   }
 }

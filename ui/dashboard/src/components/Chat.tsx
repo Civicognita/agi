@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "../hooks.js";
+import { LoopProgressBar } from "./LoopProgressBar.js";
 
 export interface ChatProps {
   messages: ChatMessage[];
@@ -67,6 +68,10 @@ export function Chat({ messages, thinking, error, onSend, theme }: ChatProps) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+      {/* Loop progress bar (s120) — mirror of terminal statusline */}
+      <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--border, #333)" }}>
+        <LoopProgressBar />
+      </div>
       {/* Message list */}
       <div
         ref={listRef}

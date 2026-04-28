@@ -10,7 +10,7 @@ import { EditorFlyout } from "@/components/EditorFlyout.js";
 import { TerminalFlyout } from "@/components/TerminalFlyout.js";
 import { WhoDBFlyout } from "@/components/WhoDBFlyout.js";
 
-import { cn } from "@/lib/utils";
+import { cn, safeArray } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AppSidebar } from "@/components/AppSidebar.js";
@@ -30,7 +30,9 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
-import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard } from "@/api.js";
+import { Chart } from "@particle-academy/react-fancy";
+import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard, fetchProviderBalances, fetchBalanceHistory } from "@/api.js";
+import type { ProviderBalance } from "@/api.js";
 import { LoginPage } from "@/components/LoginPage.js";
 import type { ActivityEntry, DashboardEvent, Notification, ProjectActivity, TimeBucket, UpdateCheck } from "@/types.js";
 
@@ -119,6 +121,7 @@ export default function RootLayout() {
   const projectsHook = useProjects();
   const hostingHook = useHosting();
   const contributingEnabled = Boolean(configHook.data?.dev?.enabled);
+
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -150,6 +153,8 @@ export default function RootLayout() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
+  const [providerBalances, setProviderBalances] = useState<ProviderBalance[]>([]);
+  const [balanceHistories, setBalanceHistories] = useState<Record<string, number[]>>({});
   const [upgradePhase, setUpgradePhase] = useState<string | null>(null);
   const [upgradeLogs, setUpgradeLogs] = useState<{ step: string; status: string; message: string; timestamp: string }[]>([]);
   const [upgradeDropdown, setUpgradeDropdown] = useState(false);
@@ -219,11 +224,36 @@ export default function RootLayout() {
   useEffect(() => {
     fetchNotifications({ limit: 50 })
       .then(({ notifications: items, unreadCount: count }) => {
-        setNotifications(items);
-        setUnreadCount(count);
+        // Defensive: if the server returned a bad shape (e.g. an
+        // un-awaited Promise that serialized as {}), coerce to an empty
+        // array so the subsequent WS notification:new handler doesn't
+        // crash with "_e is not iterable" on [event.data, ...prev].
+        setNotifications(safeArray<Notification>(items));
+        setUnreadCount(typeof count === "number" ? count : 0);
       })
       .catch(() => {});
   }, []);
+
+  // Fetch provider balances on mount
+  useEffect(() => {
+    fetchProviderBalances().then(setProviderBalances).catch(() => {});
+  }, []);
+
+  // Fetch balance histories whenever providerBalances change
+  useEffect(() => {
+    const withBalance = providerBalances.filter(b => b.balance !== null);
+    if (withBalance.length === 0) return;
+    Promise.all(
+      withBalance.map(async b => {
+        const h = await fetchBalanceHistory(b.providerId);
+        return { id: b.providerId, data: h.map(x => x.balance) };
+      })
+    ).then(results => {
+      const h: Record<string, number[]> = {};
+      for (const r of results) h[r.id] = r.data;
+      setBalanceHistories(h);
+    }).catch(() => {});
+  }, [providerBalances]);
 
   // Recover upgrade log after page reload (e.g. post-restart).
   // If a recent upgrade happened, restore logs so the user sees the full history.
@@ -399,8 +429,17 @@ export default function RootLayout() {
       setUpdateCheck(event.data);
     }
     if (event.type === "notification:new") {
-      setNotifications((prev) => [event.data, ...prev].slice(0, 100));
-      setUnreadCount((prev) => prev + 1);
+      setNotifications((prev) => {
+        // Belt-and-braces via safeArray: if a bad initial fetch planted
+        // a non-array into state, don't crash the whole app — recover
+        // with a clean list seeded from the new event.
+        return [event.data, ...safeArray<Notification>(prev)].slice(0, 100);
+      });
+      setUnreadCount((prev) => (typeof prev === "number" ? prev : 0) + 1);
+    }
+    if (event.type === "usage:recorded") {
+      // Refresh provider balances after each completion so alerts stay current
+      fetchProviderBalances().then(setProviderBalances).catch(() => {});
     }
   }, [overviewHook.refresh, hostingHook.refresh, projectsHook.refresh, queryClient]);
 
@@ -432,7 +471,10 @@ export default function RootLayout() {
             setUpgradePhase("complete");
             // Refresh update-check to get new commit info
             checkForUpdates().then((r) => setUpdateCheck(r)).catch(() => {});
-            // Show reload overlay after a brief pause so user sees the "complete" entry
+            // Show reload overlay after a brief pause so user sees the "complete" entry.
+            // No SW unregister needed — autoUpdate mode with skipWaiting + clientsClaim
+            // activates the new SW immediately, and index.html is never precached so
+            // navigations always hit the network for fresh asset references.
             setTimeout(() => {
               setUpgradeReloading(true);
               const tryReload = () => {
@@ -548,6 +590,45 @@ export default function RootLayout() {
           <div className="flex gap-2 items-center">
             {!isMobile && contributingEnabled && (
               <Badge className="text-xs bg-indigo-600 text-white">Contributing</Badge>
+            )}
+            {/* Multi-provider balance popover — shown when any provider has balance data */}
+            {providerBalances.some(b => b.balance !== null) && (
+              <Popover placement="bottom-end" offset={8}>
+                <PopoverTrigger>
+                  <button type="button" className="hidden sm:flex items-center gap-1.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors">
+                    <span className="font-mono">
+                      {(() => {
+                        const warning = providerBalances.find(b => b.belowThreshold);
+                        if (warning) return <span className="text-yellow-500">${warning.balance?.toFixed(2)}</span>;
+                        return "Balances";
+                      })()}
+                    </span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[300px] p-4 bg-card border border-border rounded-xl shadow-lg z-[200]">
+                  <div className="text-[12px] font-semibold text-foreground mb-3">Provider Balances</div>
+                  {providerBalances.filter(b => b.balance !== null).map(b => (
+                    <div key={b.providerId} className="flex items-center gap-3 py-2 border-b border-border last:border-b-0">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${b.belowThreshold ? "bg-red-500" : "bg-green-500"}`} />
+                      <span className="text-[11px] flex-1 text-foreground">{b.providerName}</span>
+                      {(balanceHistories[b.providerId]?.length ?? 0) > 1 && (
+                        <Chart.Sparkline
+                          data={balanceHistories[b.providerId]!}
+                          width={60}
+                          height={18}
+                          color={b.belowThreshold ? "var(--color-red)" : "var(--color-green)"}
+                        />
+                      )}
+                      <span className={`text-[11px] font-mono shrink-0 ${b.belowThreshold ? "text-red-500" : "text-foreground"}`}>
+                        ${b.balance?.toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                  {providerBalances.filter(b => b.balance !== null).length === 0 && (
+                    <div className="text-[11px] text-muted-foreground">No balance data available</div>
+                  )}
+                </PopoverContent>
+              </Popover>
             )}
             {/* Active downloads indicator */}
             <ActiveDownloads />
@@ -690,7 +771,10 @@ export default function RootLayout() {
               const initial = ownerName.charAt(0).toUpperCase();
               return (
                 <Popover placement="bottom-end" offset={8}>
-                  <PopoverTrigger className="pl-2 border-l border-border flex items-center gap-2 hover:opacity-80 transition-opacity">
+                  <PopoverTrigger
+                    className="pl-2 border-l border-border flex items-center gap-2 hover:opacity-80 transition-opacity"
+                    data-testid="header-owner-avatar"
+                  >
                     <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold cursor-pointer">
                       {initial}
                     </div>

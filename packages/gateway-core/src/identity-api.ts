@@ -119,12 +119,12 @@ export function registerIdentityRoutes(
       }
 
       // Create or resolve entity for this OAuth user
-      const entity = identityProvider.createEntityWithIdentity({
+      const entity = await identityProvider.createEntityWithIdentity({
         displayName: userInfo.displayName ?? userInfo.email ?? "Unknown",
       });
 
       // Bind the OAuth identity
-      identityProvider.bindOAuthIdentity(
+      await identityProvider.bindOAuthIdentity(
         entity.entityId,
         userInfo.provider,
         userInfo.providerUserId,

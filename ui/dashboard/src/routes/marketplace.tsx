@@ -36,6 +36,8 @@ import {
   fetchPluginMarketplaceUpdates,
   fetchPluginDetails,
   fetchUninstallPreview,
+  rebuildPlugin,
+  rebuildAllPlugins,
 } from "../api.js";
 import type { CleanupResource, CatalogDiff } from "../api.js";
 import type {
@@ -56,10 +58,31 @@ const tabs: { id: Tab; label: string }[] = [
 
 export default function MarketplacePage() {
   const [activeTab, setActiveTab] = useState<Tab>("browse");
+  const [updateCount, setUpdateCount] = useState(0);
+
+  useEffect(() => {
+    fetchPluginMarketplaceUpdates()
+      .then((result) => setUpdateCount(result.updates.length))
+      .catch(() => {});
+  }, []);
 
   return (
     <PageScroll>
     <div>
+      {/* Page-level update banner — only shows when installed plugins have version bumps */}
+      {updateCount > 0 && (
+        <div className="mb-4 px-4 py-2.5 rounded-lg border border-blue/30 bg-blue/5 text-[12px] text-foreground flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-blue shrink-0" />
+          <span>{updateCount} plugin update{updateCount > 1 ? "s" : ""} available</span>
+          <button
+            onClick={() => setActiveTab("installed")}
+            className="ml-auto text-blue text-[11px] font-medium cursor-pointer bg-transparent border-none"
+          >
+            View updates →
+          </button>
+        </div>
+      )}
+
       {/* Tab bar */}
       <div className="flex gap-1 mb-6 border-b border-border">
         {tabs.map((tab) => (
@@ -74,6 +97,9 @@ export default function MarketplacePage() {
             )}
           >
             {tab.label}
+            {tab.id === "installed" && updateCount > 0 && (
+              <span className="ml-1.5 inline-block px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-blue text-white">{updateCount}</span>
+            )}
           </button>
         ))}
       </div>
@@ -647,11 +673,15 @@ function InstalledTab() {
   const { toast } = useToast();
   const [items, setItems] = useState<PluginMarketplaceInstalledItem[]>([]);
   const [updates, setUpdates] = useState<PluginMarketplaceUpdate[]>([]);
+  const [newInMarketplace, setNewInMarketplace] = useState<{ pluginName: string; version: string; description: string }[]>([]);
   const [catalog, setCatalog] = useState<PluginMarketplaceCatalogItem[]>([]);
   const [sources, setSources] = useState<PluginMarketplaceSource[]>([]);
   const [uninstalling, setUninstalling] = useState<string | null>(null);
   const [updating, setUpdating] = useState<string | null>(null);
   const [pulling, setPulling] = useState(false);
+  const [rebuilding, setRebuilding] = useState<string | null>(null);
+  const [rebuildingAll, setRebuildingAll] = useState(false);
+  const [rebuildResult, setRebuildResult] = useState<{ rebuilt: string[]; failed: string[] } | null>(null);
   const [selectedPlugin, setSelectedPlugin] = useState<PluginMarketplaceCatalogItem | null>(null);
 
   // Cleanup preview state
@@ -661,14 +691,15 @@ function InstalledTab() {
   const [loadingPreview, setLoadingPreview] = useState(false);
 
   const load = useCallback(async () => {
-    const [installed, avail, catalogItems, srcs] = await Promise.all([
+    const [installed, updateResult, catalogItems, srcs] = await Promise.all([
       fetchPluginMarketplaceInstalled().catch(() => [] as PluginMarketplaceInstalledItem[]),
-      fetchPluginMarketplaceUpdates().catch(() => [] as PluginMarketplaceUpdate[]),
+      fetchPluginMarketplaceUpdates().catch(() => ({ updates: [] as PluginMarketplaceUpdate[], newInMarketplace: [] as { pluginName: string; version: string; description: string }[] })),
       searchPluginMarketplaceCatalog().catch(() => [] as PluginMarketplaceCatalogItem[]),
       fetchPluginMarketplaceSources().catch(() => [] as PluginMarketplaceSource[]),
     ]);
     setItems(installed.sort((a, b) => a.name.localeCompare(b.name)));
-    setUpdates(avail);
+    setUpdates(updateResult.updates);
+    setNewInMarketplace(updateResult.newInMarketplace);
     setCatalog(catalogItems);
     setSources(srcs);
   }, []);
@@ -761,12 +792,41 @@ function InstalledTab() {
 
   return (
     <div className="space-y-4">
-      <Card className="p-4 flex items-center justify-between">
+      {rebuildResult && (
+        <div className={`rounded-lg px-4 py-3 text-sm border ${rebuildResult.failed.length > 0 ? "bg-red/10 border-red/30 text-red" : "bg-green/10 border-green/30 text-green"}`}>
+          {rebuildResult.rebuilt.length > 0 && <span>Rebuilt: {rebuildResult.rebuilt.join(", ")}. </span>}
+          {rebuildResult.failed.length > 0 && <span>Failed: {rebuildResult.failed.join(", ")}.</span>}
+          <button className="ml-2 underline text-[11px] cursor-pointer bg-transparent border-none" onClick={() => setRebuildResult(null)}>dismiss</button>
+        </div>
+      )}
+
+      <Card className="p-4 flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
           {updates.length > 0
             ? `${updates.length} update${updates.length > 1 ? "s" : ""} available`
             : "All plugins up to date"}
         </p>
+        <div className="flex gap-2 shrink-0">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={rebuildingAll}
+          onClick={async () => {
+            setRebuildingAll(true);
+            setRebuildResult(null);
+            try {
+              const result = await rebuildAllPlugins();
+              setRebuildResult(result);
+            } catch {
+              setRebuildResult({ rebuilt: [], failed: ["Rebuild request failed"] });
+            } finally {
+              setRebuildingAll(false);
+              void load();
+            }
+          }}
+        >
+          {rebuildingAll ? "Rebuilding..." : "Rebuild All"}
+        </Button>
         <Button
           size="sm"
           variant={updates.length > 0 ? "default" : "outline"}
@@ -813,6 +873,7 @@ function InstalledTab() {
         >
           {pulling ? "Updating..." : updates.length > 0 ? "Update All" : "Check for Updates"}
         </Button>
+        </div>
       </Card>
 
       {/* Filters */}
@@ -923,6 +984,23 @@ function InstalledTab() {
                       {updating === item.name ? "Updating..." : "Update"}
                     </Button>
                   )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={rebuilding === item.name}
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setRebuilding(item.name);
+                      try {
+                        await rebuildPlugin(item.name);
+                        toast({ title: `Rebuilt ${item.name}`, variant: "success" });
+                      } catch (err) {
+                        toast({ title: `Rebuild failed`, description: err instanceof Error ? err.message : "Unexpected error", variant: "error" });
+                      } finally { setRebuilding(null); }
+                    }}
+                  >
+                    {rebuilding === item.name ? "Rebuilding..." : "Rebuild"}
+                  </Button>
                   <Button
                     size="sm"
                     variant="destructive"

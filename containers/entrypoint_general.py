@@ -11,6 +11,7 @@ Environment variables:
 
 import os
 import sys
+import subprocess
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -28,6 +29,33 @@ HF_TASK = os.environ.get("HF_TASK", "feature-extraction")
 PORT = int(os.environ.get("PORT", "8000"))
 
 pipeline_instance = None
+
+
+def install_extra_deps():
+    deps = []
+    extra = os.environ.get("EXTRA_PIP_DEPS", "")
+    if extra:
+        deps.extend([d.strip() for d in extra.split(",") if d.strip()])
+    model_dir = MODEL_PATH
+    if os.path.isfile(model_dir):
+        model_dir = os.path.dirname(model_dir)
+    req_file = os.path.join(model_dir, "requirements.txt")
+    if os.path.isfile(req_file):
+        with open(req_file) as f:
+            deps.extend([l.strip() for l in f if l.strip() and not l.startswith("#")])
+    if not deps:
+        return
+    deps = list(dict.fromkeys(deps))
+    log.info(f"Installing extra dependencies: {deps}")
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "--no-cache-dir"] + deps,
+            timeout=300,
+        )
+        log.info(f"Extra dependencies installed successfully")
+    except Exception as e:
+        log.error(f"Failed to install extra dependencies: {e}")
+        raise
 
 
 def load_model():
@@ -55,6 +83,7 @@ def load_model():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    install_extra_deps()
     load_model()
     yield
     log.info("Shutting down")
@@ -170,6 +199,68 @@ def transcribe(req: TranscribeRequest):
         return {"text": result["text"], "language": req.language}
     finally:
         os.unlink(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Chat completions — OpenAI-compatible for text-generation models
+# ---------------------------------------------------------------------------
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class ChatRequest(BaseModel):
+    model: str | None = None
+    messages: list[ChatMessage]
+    max_tokens: int = 512
+    temperature: float = 0.7
+    stop: list[str] | None = None
+
+@app.post("/v1/chat/completions")
+def chat_completions(req: ChatRequest):
+    if pipeline_instance is None:
+        raise HTTPException(503, "Model not loaded")
+
+    import time
+    start = time.time()
+
+    prompt_parts = []
+    for msg in req.messages:
+        if msg.role == "system":
+            prompt_parts.append(f"<|im_start|>system\n{msg.content}<|im_end|>")
+        elif msg.role == "user":
+            prompt_parts.append(f"<|im_start|>user\n{msg.content}<|im_end|>")
+        elif msg.role == "assistant":
+            prompt_parts.append(f"<|im_start|>assistant\n{msg.content}<|im_end|>")
+    prompt_parts.append("<|im_start|>assistant\n")
+    prompt = "\n".join(prompt_parts)
+
+    try:
+        results = pipeline_instance(
+            prompt,
+            max_new_tokens=req.max_tokens,
+            temperature=max(req.temperature, 0.01),
+            do_sample=req.temperature > 0,
+            return_full_text=False,
+        )
+        generated = results[0]["generated_text"] if results else ""
+    except Exception as e:
+        generated = f"[generation error: {e}]"
+
+    elapsed = time.time() - start
+    return {
+        "id": f"hf-{int(time.time())}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": MODEL_PATH,
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": generated.strip()},
+            "finish_reason": "stop",
+        }],
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        "timing": {"elapsed_ms": int(elapsed * 1000)},
+    }
 
 
 # ---------------------------------------------------------------------------

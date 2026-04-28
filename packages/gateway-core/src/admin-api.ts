@@ -20,6 +20,7 @@ import { join } from "node:path";
 import type { ComponentLogger } from "./logger.js";
 import { safemodeState } from "./safemode-state.js";
 import { recoverAllManagedContainers } from "./boot-recovery.js";
+import type { AionMicroManager } from "./aion-micro-manager.js";
 
 const INCIDENTS_DIR = join(homedir(), ".agi", "incidents");
 
@@ -84,6 +85,7 @@ function readIncident(id: string): string | null {
 export function registerAdminRoutes(
   fastify: FastifyInstance,
   log: ComponentLogger,
+  aionMicro?: AionMicroManager,
 ): void {
   function guard(req: { raw: IncomingMessage }): string | null {
     return isPrivateNetwork(getClientIp(req.raw)) ? null : "Admin API only from private network";
@@ -139,5 +141,53 @@ export function registerAdminRoutes(
     return reply
       .header("content-type", "text/markdown; charset=utf-8")
       .send(content);
+  });
+
+  fastify.post("/api/admin/diagnose", async (req, reply) => {
+    const err = guard(req);
+    if (err !== null) return reply.code(403).send({ error: err });
+    if (!aionMicro) return reply.code(503).send({ error: "aion-micro not configured" });
+    const body = req.body as { checks?: unknown[]; systemInfo?: unknown } | undefined;
+    if (!body?.checks) return reply.code(400).send({ error: "checks array required" });
+    const analysis = await aionMicro.diagnose(body.checks, body.systemInfo);
+    if (!analysis) return reply.code(503).send({ error: "aion-micro not available" });
+    return reply.send({ analysis });
+  });
+
+  fastify.get("/api/admin/aion-micro/status", async (req, reply) => {
+    const err = guard(req);
+    if (err !== null) return reply.code(403).send({ error: err });
+    if (!aionMicro || !aionMicro.isEnabled()) {
+      return reply.send({ enabled: false, reachable: false });
+    }
+    const reachable = await aionMicro.ensureAvailable();
+    return reply.send({
+      enabled: true,
+      reachable,
+      model: aionMicro.getModel(),
+      lemonadeBaseUrl: aionMicro.getLemonadeBaseUrl(),
+    });
+  });
+
+  fastify.post("/api/admin/prompt-preview", async (req, reply) => {
+    const err = guard(req);
+    if (err !== null) return reply.code(403).send({ error: err });
+    const body = req.body as { requestType?: string } | undefined;
+    const { assembleSystemPrompt, estimateTokens } = await import("./system-prompt.js");
+    const requestType = (body?.requestType ?? "chat") as import("./system-prompt.js").RequestType;
+    const prompt = assembleSystemPrompt({
+      requestType,
+      entity: { entityId: "preview", coaAlias: "#E0", displayName: "Preview", verificationTier: "verified", channel: "dashboard" },
+      coaFingerprint: "$A0.#E0.PREVIEW",
+      state: "ONLINE" as import("./types.js").GatewayState,
+      capabilities: { remoteOps: true, tynn: false, memory: true, deletions: false },
+      tools: [],
+    });
+    return reply.send({
+      requestType,
+      prompt,
+      tokenEstimate: estimateTokens(prompt),
+      sections: prompt.split("\n\n").length,
+    });
   });
 }

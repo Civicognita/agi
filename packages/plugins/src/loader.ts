@@ -5,10 +5,10 @@
 
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { createComponentLogger } from "@aionima/gateway-core";
+import { createComponentLogger } from "@agi/gateway-core";
 import { scanPluginSource } from "./scanner.js";
-import type { Logger, ComponentLogger, ProjectTypeRegistry, ProjectTypeDefinition, ProjectTypeTool } from "@aionima/gateway-core";
-import type { AionimaChannelPlugin } from "@aionima/channel-sdk";
+import type { Logger, ComponentLogger, ProjectTypeRegistry, ProjectTypeDefinition, ProjectTypeTool } from "@agi/gateway-core";
+import type { AionimaChannelPlugin } from "@agi/channel-sdk";
 import type { DiscoveredPlugin } from "./discovery.js";
 import { HookBus } from "./hooks.js";
 import { PluginRegistry } from "./registry.js";
@@ -20,10 +20,10 @@ import type {
   ThemeDefinition, AgentToolDefinition, SidebarSectionDefinition,
   ScheduledTaskDefinition, WorkflowDefinition,
   SettingsPageDefinition, DashboardInterfacePageDefinition, DashboardInterfaceDomainDefinition,
-  SubdomainRouteDefinition, LLMProviderDefinition, WorkerDefinition,
+  SubdomainRouteDefinition, LLMProviderDefinition, PmProviderDefinition, WorkerDefinition,
 } from "./types.js";
-import type { StackDefinition } from "@aionima/gateway-core";
-import type { ScanProviderDefinition } from "@aionima/security";
+import type { StackDefinition } from "@agi/gateway-core";
+import type { ScanProviderDefinition } from "@agi/security";
 
 export interface PluginLoaderDeps {
   pluginRegistry: PluginRegistry;
@@ -222,6 +222,10 @@ function createPluginAPI(
 
     registerProvider(def: LLMProviderDefinition): void {
       deps.pluginRegistry.addProvider(pluginId, def);
+    },
+
+    registerPmProvider(def: PmProviderDefinition): void {
+      deps.pluginRegistry.addPmProvider(pluginId, def);
     },
 
     registerAction(def: ActionDefinition): void {

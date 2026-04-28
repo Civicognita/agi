@@ -1,5 +1,5 @@
 {
-  "name": "@aionima/cli",
+  "name": "@agi/cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@aionima/config": "workspace:*",
+    "@agi/config": "workspace:*",
     "commander": "^13.1.0"
   }
 }

@@ -10,7 +10,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { AionimaConfigSchema, type AionimaConfig } from "@aionima/config";
+import { AionimaConfigSchema, type AionimaConfig } from "@agi/config";
 
 /** Default config file search paths (first found wins). The primary path is
  * `~/.agi/gateway.json`; the in-project paths are kept as fallbacks for dev

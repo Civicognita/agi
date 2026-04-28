@@ -11,6 +11,8 @@ interface NotificationItemProps {
 }
 
 function getTypeLabel(type: string): string {
+  if (type === "error") return "Error";
+  if (type === "warning") return "Warning";
   if (type.startsWith("tm:")) return "Worker";
   if (type.startsWith("comms:")) return "Comms";
   if (type.startsWith("system:")) return "System";
@@ -18,6 +20,8 @@ function getTypeLabel(type: string): string {
 }
 
 function getTypeColor(type: string): string {
+  if (type === "error") return "bg-red";
+  if (type === "warning") return "bg-yellow";
   if (type.startsWith("tm:")) return "bg-blue";
   if (type.startsWith("comms:")) return "bg-green";
   if (type.startsWith("system:")) return "bg-peach";

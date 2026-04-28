@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // callout, highlight). See src/lib/content-renderer-setup.tsx.
 import type { WorkerJobSummary, Plan, PlanStatus, PlanStep, ProjectInfo } from "../types.js";
 import { approveTaskmasterJob, fetchTaskmasterJobs, rejectTaskmasterJob } from "../api.js";
+import { useDashboardWS } from "../hooks.js";
 import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
 import type { ToolCard } from "./ToolCards.js";
 import { PlanViewer } from "./PlanViewer.js";
@@ -20,6 +21,7 @@ import { applyInjectionConsumed, shouldShowLivePill, applyStallTimeout, groupByT
 import type { ChatSessionShape, ChatMessageShape } from "./chat-flyout-reducers.js";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useIsMobile, useConfig } from "@/hooks.js";
 import { ContentRenderer } from "@particle-academy/react-fancy";
 import { Copy as CopyIcon, Check as CheckIcon } from "lucide-react";
@@ -41,6 +43,34 @@ interface ChatMessage {
   toolCards?: ToolCard[];
   /** Single tool card data (for role: "tool" messages). */
   toolCard?: ToolCard;
+  /** Next-step suggestions generated for this assistant turn. Persisted server-side so they survive reload. */
+  suggestions?: string[];
+  /** Routing metadata from the Intelligent Agent Router. Only present on assistant messages. */
+  routingMeta?: {
+    provider: string;
+    model: string;
+    costMode: string;
+    complexity?: string;
+    escalated: boolean;
+    estimatedCostUsd: number;
+    inputTokens: number;
+    outputTokens: number;
+    /** Dynamic-context request type (chat/project/entity/knowledge/system/worker/taskmaster). */
+    requestType?: string;
+    /** How the request type was determined. */
+    classifierUsed?: string;
+    /** Context layers included in the assembled system prompt. */
+    contextLayers?: string[];
+    /** Per-section token breakdown for this turn. */
+    tokenBreakdown?: {
+      identity: number;
+      context: number;
+      memory: number;
+      skills: number;
+      history: number;
+      response: number;
+    };
+  };
 }
 
 interface ChatSession {
@@ -163,12 +193,96 @@ export interface ChatFlyoutProps {
 }
 
 // ---------------------------------------------------------------------------
+// TokenBreakdownModal — per-turn token section breakdown
+// ---------------------------------------------------------------------------
+
+interface TokenBreakdownEntry {
+  label: string;
+  tokens: number;
+  description: string;
+}
+
+function TokenBreakdownModal({
+  open,
+  onClose,
+  breakdown,
+  totalIn,
+  totalOut,
+}: {
+  open: boolean;
+  onClose: () => void;
+  breakdown: NonNullable<ChatMessage["routingMeta"]>["tokenBreakdown"] | undefined;
+  totalIn: number;
+  totalOut: number;
+}) {
+  if (!open) return null;
+
+  const rows: TokenBreakdownEntry[] = breakdown
+    ? [
+        { label: "Identity", tokens: breakdown.identity, description: "Persona, tools manifest, owner context, response format" },
+        { label: "Context", tokens: breakdown.context, description: "Entity, COA, project, state constraints, knowledge index" },
+        { label: "Memory", tokens: breakdown.memory, description: "Recalled memories injected from entity memory store" },
+        { label: "Skills", tokens: breakdown.skills, description: "Matched skill snippets injected into the prompt" },
+        { label: "History", tokens: breakdown.history, description: "Conversation history window passed to the model" },
+        { label: "Response", tokens: breakdown.response, description: "Model output tokens for this turn" },
+      ]
+    : [];
+
+  const promptTotal = rows.slice(0, -1).reduce((s, r) => s + r.tokens, 0);
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-sm w-full">
+        <DialogHeader>
+          <DialogTitle className="text-sm font-semibold">Token Breakdown</DialogTitle>
+        </DialogHeader>
+        {breakdown ? (
+          <div className="mt-2 space-y-3">
+            <table className="w-full text-[11px] font-mono">
+              <thead>
+                <tr className="text-muted-foreground">
+                  <th className="text-left pb-1 font-normal">Section</th>
+                  <th className="text-right pb-1 font-normal">Tokens</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/40">
+                {rows.map((row) => (
+                  <tr key={row.label} title={row.description}>
+                    <td className="py-1 text-foreground/80">{row.label}</td>
+                    <td className="py-1 text-right tabular-nums">{row.tokens.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="border-t border-border pt-2 text-[10px] font-mono text-muted-foreground space-y-0.5">
+              <div className="flex justify-between">
+                <span>Prompt total (est.)</span>
+                <span className="tabular-nums">{promptTotal.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Reported in / out</span>
+                <span className="tabular-nums">{totalIn.toLocaleString()} / {totalOut.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-2 text-[11px] text-muted-foreground">Breakdown not available for this turn.</p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithContext, openWithMessage, openRequestId, docked = false }: ChatFlyoutProps) {
   // State
   const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  const deferredCreateRef = useRef(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -178,6 +292,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [tokenBreakdownMsg, setTokenBreakdownMsg] = useState<ChatMessage | null>(null);
   const isMobile = useIsMobile();
 
   // Display names for chat bubbles. User name comes from the gateway config's
@@ -264,6 +379,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         reader.onload = () => {
           const text = reader.result as string;
           // If it looks like binary (lots of null bytes or non-printable chars), skip
+          // oxlint-disable-next-line no-control-regex
           const nonPrintable = (text.match(/[\x00-\x08\x0E-\x1F]/g) ?? []).length;
           if (nonPrintable > text.length * 0.1) {
             setError(`Binary file "${file.name}" — only text, images, and PDFs are supported`);
@@ -392,6 +508,11 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         pendingContextRef.current = null;
         ws.send(JSON.stringify({ type: "chat:open", payload: { context: pending } }));
       }
+      // If a deferred session create was queued (from + button before WS ready), flush it
+      if (deferredCreateRef.current) {
+        deferredCreateRef.current = false;
+        ws.send(JSON.stringify({ type: "chat:open", payload: { context: "general" } }));
+      }
       // Start heartbeat. Every tick we ping; if we haven't seen a pong within
       // HEARTBEAT_TIMEOUT_MS we declare the WS dead and force-close it so the
       // reconnect path runs (ws.onclose -> 3s reconnect timer -> new WS).
@@ -453,14 +574,27 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                 ?? (p.context === "general"
                   ? "General"
                   : projects.find((pr) => pr.path === p.context)?.name ?? p.context.split("/").pop() ?? "Project");
+              // Hydrate session suggestions from the LAST assistant message's
+              // stored suggestions so they survive a page reload. Previously
+              // session.suggestions was reset to [] on load and the button
+              // row silently disappeared.
+              const hydratedMsgs = p.messages ?? [];
+              let hydratedSuggestions: string[] = [];
+              for (let i = hydratedMsgs.length - 1; i >= 0; i--) {
+                const m = hydratedMsgs[i]!;
+                if (m.role === "assistant") {
+                  hydratedSuggestions = m.suggestions ?? [];
+                  break;
+                }
+              }
               return [...prev, {
                 id: p.sessionId,
                 context: p.context,
                 contextLabel,
-                messages: p.messages ?? [],
+                messages: hydratedMsgs,
                 thinking: false,
                 pendingMessages: 0,
-                suggestions: [],
+                suggestions: hydratedSuggestions,
                 toolActivity: [],
                 activePlan: null,
                 progressText: undefined,
@@ -545,7 +679,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                   ? { ...s, thinking: false, toolActivity: [], progressText: undefined }
                   : s
               ));
-              setError("Session recovery unavailable — your last exchange may be incomplete. Please try again.");
+              setError("We lost sight of your last message (the gateway may have restarted). Your next message will start a fresh exchange.");
             }
             break;
           }
@@ -628,7 +762,23 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             break;
           }
           case "chat:response": {
-            const p = payload as { sessionId?: string; runId?: string; text: string; timestamp: string };
+            const p = payload as {
+              sessionId?: string;
+              runId?: string;
+              text: string;
+              timestamp: string;
+              suggestions?: string[];
+              routingMeta?: {
+                provider: string;
+                model: string;
+                costMode: string;
+                escalated: boolean;
+                estimatedCostUsd: number;
+                requestType?: string;
+                classifierUsed?: string;
+                contextLayers?: string[];
+              };
+            };
             if (!p.sessionId) break;
             setSessions((prev) => prev.map((s) => {
               if (s.id !== p.sessionId) return s;
@@ -648,7 +798,19 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                 progressText: undefined,
                 activeRunId: undefined,
                 queuedMessages: [],
-                messages: [...s.messages, ...queuedAsMsgs, { role: "assistant" as const, content: p.text, timestamp: p.timestamp, runId: p.runId ?? s.activeRunId }],
+                // Persist suggestions and routing metadata onto the assistant
+                // message so a reload finds them via the chat-history fetch.
+                messages: [...s.messages, ...queuedAsMsgs, {
+                  role: "assistant" as const,
+                  content: p.text,
+                  timestamp: p.timestamp,
+                  runId: p.runId ?? s.activeRunId,
+                  suggestions: p.suggestions && p.suggestions.length > 0 ? p.suggestions : undefined,
+                  routingMeta: p.routingMeta,
+                }],
+                // Mirror onto the session for the suggestion-button row below
+                // the latest response.
+                suggestions: p.suggestions ?? s.suggestions,
               };
             }));
             break;
@@ -754,7 +916,10 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
 
   const createSession = useCallback((context = "general") => {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      deferredCreateRef.current = true;
+      return;
+    }
     ws.send(JSON.stringify({ type: "chat:open", payload: { context } }));
   }, []);
 
@@ -1222,7 +1387,70 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                       // Assistant bubble gets a floating copy button top-right.
                       // Click copies styled HTML + plain-text fallback; Ctrl/Cmd+Click
                       // copies the raw markdown. See AgentBubble below.
-                      <AgentBubble content={msg.content} />
+                      <>
+                        <AgentBubble content={msg.content} />
+                        {msg.routingMeta && (
+                          <div className="flex flex-col gap-1 mt-1 px-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[9px] font-mono text-muted-foreground px-1.5 py-0.5 rounded bg-muted/50">
+                                {msg.routingMeta.model}
+                              </span>
+                              {msg.routingMeta.inputTokens > 0 && (
+                                <button
+                                  type="button"
+                                  className="text-[9px] font-mono text-muted-foreground hover:text-foreground transition-colors cursor-pointer bg-transparent border-0 p-0"
+                                  title="Click to see token breakdown by section"
+                                  onClick={() => setTokenBreakdownMsg(msg as unknown as ChatMessage)}
+                                >
+                                  {msg.routingMeta.inputTokens.toLocaleString()} in / {msg.routingMeta.outputTokens.toLocaleString()} out
+                                </button>
+                              )}
+                              {msg.routingMeta.estimatedCostUsd > 0 && (
+                                <span className="text-[9px] font-mono text-muted-foreground">
+                                  ${msg.routingMeta.estimatedCostUsd.toFixed(4)}
+                                </span>
+                              )}
+                              {msg.routingMeta.complexity && (
+                                <span className="text-[9px] font-mono text-muted-foreground px-1 rounded bg-muted/30">
+                                  {msg.routingMeta.complexity}
+                                </span>
+                              )}
+                              {msg.routingMeta.escalated && (
+                                <span className="text-[9px] text-yellow-500 font-mono">escalated</span>
+                              )}
+                            </div>
+                            {(msg.routingMeta.requestType !== undefined || (msg.routingMeta.contextLayers?.length ?? 0) > 0) && (
+                              <details className="group" data-testid="routing-details">
+                                <summary className="text-[9px] font-mono text-muted-foreground cursor-pointer hover:text-foreground select-none">
+                                  Routing {msg.routingMeta.requestType ? `· ${msg.routingMeta.requestType}` : ""}
+                                </summary>
+                                <div className="pl-3 mt-1 space-y-0.5 text-[9px] font-mono text-muted-foreground">
+                                  {msg.routingMeta.requestType && (
+                                    <div>
+                                      <span className="text-foreground/60">type: </span>
+                                      <span>{msg.routingMeta.requestType}</span>
+                                      {msg.routingMeta.classifierUsed && (
+                                        <span className="text-muted-foreground/60"> ({msg.routingMeta.classifierUsed})</span>
+                                      )}
+                                    </div>
+                                  )}
+                                  {(msg.routingMeta.contextLayers?.length ?? 0) > 0 && (
+                                    <div>
+                                      <span className="text-foreground/60">layers: </span>
+                                      <span>{msg.routingMeta.contextLayers!.join(" · ")}</span>
+                                    </div>
+                                  )}
+                                  <div>
+                                    <span className="text-foreground/60">route: </span>
+                                    <span>{msg.routingMeta.provider}/{msg.routingMeta.model}</span>
+                                    <span className="text-muted-foreground/60"> · {msg.routingMeta.costMode}</span>
+                                  </div>
+                                </div>
+                              </details>
+                            )}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 );
@@ -1328,8 +1556,19 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           )}
 
           {error !== null && (
-            <div className="px-2.5 py-1.5 rounded-md bg-secondary text-red text-xs">
-              {error}
+            <div
+              className="px-2.5 py-1.5 rounded-md bg-secondary text-red text-xs flex items-start justify-between gap-2"
+              data-testid="chat-error"
+            >
+              <span className="flex-1">{error}</span>
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                className="text-[11px] text-muted-foreground hover:text-foreground cursor-pointer bg-transparent border-none"
+                aria-label="Dismiss error"
+              >
+                Dismiss
+              </button>
             </div>
           )}
 
@@ -1502,13 +1741,22 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // When a plan is selected, it slides in on the left as a peer panel.
   if (docked) {
     return (
-      <div data-testid="chat-flyout" className="flex h-full border-l border-border bg-background" style={{ width: "50%" }}>
-        {planPane}
-        <div className={cn("flex flex-col h-full min-w-0", selectedPlanId ? "flex-1" : "w-full")}>
-          {panelHeader}
-          {panelBody}
+      <>
+        <div data-testid="chat-flyout" className="flex h-full border-l border-border bg-background" style={{ width: "50%" }}>
+          {planPane}
+          <div className={cn("flex flex-col h-full min-w-0", selectedPlanId ? "flex-1" : "w-full")}>
+            {panelHeader}
+            {panelBody}
+          </div>
         </div>
-      </div>
+        <TokenBreakdownModal
+          open={tokenBreakdownMsg !== null}
+          onClose={() => setTokenBreakdownMsg(null)}
+          breakdown={tokenBreakdownMsg?.routingMeta?.tokenBreakdown}
+          totalIn={tokenBreakdownMsg?.routingMeta?.inputTokens ?? 0}
+          totalOut={tokenBreakdownMsg?.routingMeta?.outputTokens ?? 0}
+        />
+      </>
     );
   }
 
@@ -1520,25 +1768,39 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     // The backdrop dim is cosmetic only — NOT click-dismissable — so the
     // modal stays open while the user navigates the rest of the UI. Close
     // via the explicit X in the header.
-    <div data-testid="chat-flyout" className="fixed inset-0 z-[200] flex justify-end pointer-events-none">
-      {!isFullscreen && (
-        <div className={cn("bg-black/10", isMobile ? "absolute inset-0" : "flex-1")} />
-      )}
-      {planPane !== null && !isMobile && (
-        <div className="h-screen border-l border-border bg-background shrink-0 pointer-events-auto w-[min(50vw,900px)] min-w-[520px]">
-          {planPane}
+    //
+    // Sized to sit BELOW the app header (not over it): on desktop the
+    // overlay starts at top-14 (≈56px, matching the header's py-3 layout);
+    // on mobile top-12 (≈48px, matching py-2). The header itself stays
+    // sticky at top-0 z-[100], visible + clickable above the flyout.
+    <>
+      <div data-testid="chat-flyout" className="fixed inset-x-0 top-12 md:top-14 bottom-0 z-[200] flex justify-end pointer-events-none">
+        {!isFullscreen && (
+          <div className={cn("bg-black/10", isMobile ? "absolute inset-0" : "flex-1")} />
+        )}
+        {planPane !== null && !isMobile && (
+          <div className="h-full border-l border-border bg-background shrink-0 pointer-events-auto w-[min(50vw,900px)] min-w-[520px]">
+            {planPane}
+          </div>
+        )}
+        <div className={cn(
+          "flex flex-col bg-background pointer-events-auto",
+          isMobile
+            ? "absolute bottom-0 left-0 right-0 h-[90dvh] border-t border-border rounded-t-2xl"
+            : cn("h-full", isFullscreen ? "w-screen" : "w-[33vw] max-w-full border-l border-border"),
+        )}>
+          {panelHeader}
+          {panelBody}
         </div>
-      )}
-      <div className={cn(
-        "flex flex-col bg-background pointer-events-auto",
-        isMobile
-          ? "fixed bottom-0 left-0 right-0 h-[90dvh] border-t border-border rounded-t-2xl"
-          : cn("h-screen", isFullscreen ? "w-screen" : "w-[33vw] max-w-full border-l border-border"),
-      )}>
-        {panelHeader}
-        {panelBody}
       </div>
-    </div>
+      <TokenBreakdownModal
+        open={tokenBreakdownMsg !== null}
+        onClose={() => setTokenBreakdownMsg(null)}
+        breakdown={tokenBreakdownMsg?.routingMeta?.tokenBreakdown}
+        totalIn={tokenBreakdownMsg?.routingMeta?.inputTokens ?? 0}
+        totalOut={tokenBreakdownMsg?.routingMeta?.outputTokens ?? 0}
+      />
+    </>
   );
 }
 
@@ -1568,23 +1830,41 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context, se
   const [taskmasterLoading, setTaskmasterLoading] = useState(false);
   const [actionPending, setActionPending] = useState<string | null>(null);
 
+  // Scope the Work Queue view to the chat's current project. In "general" mode
+  // (no project context) the scoped arg is null and the endpoint falls back to
+  // the global list.
+  const scopedProjectPath = context === "general" ? null : context;
+
   const loadJobs = useCallback(async () => {
     try {
-      const jobs = await fetchTaskmasterJobs();
+      const jobs = await fetchTaskmasterJobs(scopedProjectPath);
       setTaskmasterJobs(jobs);
       setTaskmasterError(null);
     } catch (err) {
       setTaskmasterError(err instanceof Error ? err.message : "Failed to load jobs");
     }
-  }, []);
+  }, [scopedProjectPath]);
 
   useEffect(() => {
     if (activeDrawer !== "work-queue") return;
     setTaskmasterLoading(true);
     void loadJobs().finally(() => setTaskmasterLoading(false));
-    const interval = setInterval(() => { void loadJobs(); }, 5000);
+    // Keep a low-frequency poll as a safety net in case the WS connection drops
+    // between reconnects. Primary refresh driver is the WS subscription below.
+    const interval = setInterval(() => { void loadJobs(); }, 30_000);
     return () => clearInterval(interval);
   }, [activeDrawer, loadJobs]);
+
+  // Live Work Queue updates — refresh on any tm:job_update or tm:report_ready
+  // frame from the dashboard broadcaster. Replaces the old 5s poll.
+  useDashboardWS(
+    useCallback((event) => {
+      if (activeDrawer !== "work-queue") return;
+      if (event.type === "tm:job_update" || event.type === "tm:report_ready") {
+        void loadJobs();
+      }
+    }, [activeDrawer, loadJobs]),
+  );
 
   const handleApprove = useCallback(async (jobId: string) => {
     setActionPending(jobId);
@@ -1646,18 +1926,26 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context, se
       {/* Drawer content */}
       {activeDrawer !== null && (
         <div className="px-3 py-2.5 bg-background border-t border-border max-h-[160px] overflow-y-auto">
-          {activeDrawer === "work-queue" && (
+          {activeDrawer === "work-queue" && (() => {
+            // Drawer shows ONLY active work so it doesn't pile up with
+            // completed rows. Full history lives in the project's Taskmaster
+            // tab (ProjectDetail → TaskMaster) where all statuses are
+            // filterable and completed jobs expand to reveal their summary.
+            const activeJobs = taskmasterJobs.filter(
+              (j) => j.status === "pending" || j.status === "running" || j.status === "checkpoint",
+            );
+            return (
             <div>
-              {taskmasterLoading && taskmasterJobs.length === 0 && (
+              {taskmasterLoading && activeJobs.length === 0 && (
                 <span className="text-[11px] text-muted-foreground">Loading...</span>
               )}
               {taskmasterError !== null && (
                 <span className="text-[11px] text-red">{taskmasterError}</span>
               )}
-              {!taskmasterLoading && taskmasterJobs.length === 0 && taskmasterError === null && (
-                <span className="text-[11px] text-muted-foreground">No active work</span>
+              {!taskmasterLoading && activeJobs.length === 0 && taskmasterError === null && (
+                <span className="text-[11px] text-muted-foreground">No active work — history is in the project's Taskmaster tab.</span>
               )}
-              {taskmasterJobs.map((job) => (
+              {activeJobs.map((job) => (
                 <div
                   key={job.id}
                   className="flex items-start gap-2 py-1.5 border-b border-border text-[11px]"
@@ -1700,7 +1988,8 @@ function DrawerSystem({ activeDrawer, onSetDrawer, onSendSuggestion, context, se
                 </div>
               ))}
             </div>
-          )}
+            );
+          })()}
 
           {activeDrawer === "project-info" && context !== "general" && (
             <div>

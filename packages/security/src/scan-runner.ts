@@ -166,7 +166,7 @@ export class ScanRunner {
       id: scanId,
       status,
       config,
-      startedAt: this.store.getScanRun(scanId)?.startedAt ?? new Date().toISOString(),
+      startedAt: (await this.store.getScanRun(scanId))?.startedAt ?? new Date().toISOString(),
       completedAt,
       findingCounts,
       totalFindings: cappedFindings.length,
@@ -178,16 +178,16 @@ export class ScanRunner {
     const controller = this.activeScanAborts.get(scanId);
     if (!controller) return false;
     controller.abort();
-    this.store.updateScanRun(scanId, { status: "cancelled", completedAt: new Date().toISOString() });
+    void this.store.updateScanRun(scanId, { status: "cancelled", completedAt: new Date().toISOString() });
     this.activeScanAborts.delete(scanId);
     return true;
   }
 
-  getFindings(scanId: string): SecurityFinding[] {
+  async getFindings(scanId: string): Promise<SecurityFinding[]> {
     return this.store.getFindings(scanId);
   }
 
-  getScanHistory(projectPath?: string, limit?: number): ScanRun[] {
+  async getScanHistory(projectPath?: string, limit?: number): Promise<ScanRun[]> {
     return this.store.listScanRuns({ projectPath, limit });
   }
 

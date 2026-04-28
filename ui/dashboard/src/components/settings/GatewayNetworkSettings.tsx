@@ -190,6 +190,7 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
   }, []);
 
   const channel = gateway.updateChannel ?? "main";
+  const autoSync = gateway.autoSyncMarketplace !== false;
   const tunnelMode = (config.hosting as Record<string, unknown> | undefined)?.["tunnelMode"] as string ?? "named";
   const tunnelDomain = (config.hosting as Record<string, unknown> | undefined)?.["tunnelDomain"] as string ?? "";
 
@@ -321,6 +322,29 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
         </p>
       </Card>}
 
+      {/* Marketplace auto-sync */}
+      {showGeneral && <Card className="p-6 gap-0 mb-4">
+        <SectionHeading>Marketplace</SectionHeading>
+        <div className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            checked={autoSync}
+            onChange={(e) => update((prev) => ({
+              ...prev,
+              gateway: {
+                ...(prev.gateway ?? { host: "127.0.0.1", port: 3100, state: "OFFLINE" as const }),
+                autoSyncMarketplace: e.target.checked,
+              },
+            }))}
+            className="w-4 h-4 rounded border-input cursor-pointer"
+          />
+          <div>
+            <div className="text-[13px] font-medium text-foreground">Auto-sync marketplaces</div>
+            <div className="text-[11px] text-muted-foreground">Periodically check for new plugins and updates (every 30 min)</div>
+          </div>
+        </div>
+      </Card>}
+
       {/* Agent behavior */}
       {showGeneral && <Card className="p-6 gap-0 mb-4">
         <SectionHeading>Agent Behavior</SectionHeading>
@@ -440,7 +464,7 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
                   value={tunnelMode}
                   onChange={(e) => update((prev) => ({
                     ...prev,
-                    hosting: { ...(prev.hosting as Record<string, unknown> ?? {}), tunnelMode: e.target.value },
+                    hosting: { ...(prev.hosting as Record<string, unknown>), tunnelMode: e.target.value },
                   }))}
                 >
                   <option value="named">Named (persistent URL, requires auth + domain)</option>
@@ -453,7 +477,7 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
                   value={tunnelDomain}
                   onChange={(e) => update((prev) => ({
                     ...prev,
-                    hosting: { ...(prev.hosting as Record<string, unknown> ?? {}), tunnelDomain: e.target.value || undefined },
+                    hosting: { ...(prev.hosting as Record<string, unknown>), tunnelDomain: e.target.value || undefined },
                   }))}
                   placeholder="example.com"
                 />

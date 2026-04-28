@@ -212,7 +212,7 @@ export interface ModelVariant {
 
 export type ModelStatus = "downloading" | "ready" | "starting" | "running" | "stopping" | "error" | "removing";
 
-export type ModelRuntimeType = "llm" | "diffusion" | "general" | "custom";
+export type ModelRuntimeType = "llm" | "diffusion" | "general" | "custom" | "ollama";
 
 // ---------------------------------------------------------------------------
 // Custom runtime definitions
@@ -292,6 +292,8 @@ export interface InstalledModel {
   lastUsedAt?: string;
   /** Error message if status is "error". */
   error?: string;
+  /** ISO timestamp of the last status change. */
+  statusChangedAt?: string;
 
   // Container binding (populated when running)
   containerId?: string;
@@ -345,6 +347,8 @@ export interface ModelContainerConfig {
   runtimeArgs: string[];
   /** Estimated RAM required in bytes (used for budget enforcement). */
   estimatedRamBytes?: number;
+  /** Ollama model name (e.g. "qwen2.5:1.5b-instruct"). Only for runtime="ollama". */
+  ollamaModelName?: string;
 }
 
 export interface ModelContainerState {
@@ -545,7 +549,7 @@ export interface InstalledDataset {
 }
 
 // ---------------------------------------------------------------------------
-// Configuration (mirrors HfConfigSchema from @aionima/config)
+// Configuration (mirrors HfConfigSchema from @agi/config)
 // ---------------------------------------------------------------------------
 
 export interface HfRuntimeConfig {

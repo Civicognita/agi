@@ -8,7 +8,7 @@
  * Anchor node emergency session endpoint.
  */
 
-import type { GovernanceTier } from "@aionima/entity-model";
+import type { GovernanceTier } from "@agi/entity-model";
 
 // ---------------------------------------------------------------------------
 // Types

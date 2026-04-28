@@ -15,8 +15,8 @@
  */
 
 import { randomBytes, verify, createHmac, timingSafeEqual } from "node:crypto";
-import type { GEID } from "@aionima/entity-model";
-import { isValidGEID, publicKeyFromGEID } from "@aionima/entity-model";
+import type { GEID } from "@agi/entity-model";
+import { isValidGEID, publicKeyFromGEID } from "@agi/entity-model";
 
 // ---------------------------------------------------------------------------
 // Types

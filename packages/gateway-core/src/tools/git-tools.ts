@@ -66,6 +66,7 @@ function validatePathInWorkspace(filePath: string, workspaceRoot: string): strin
 function sanitizeCommitMessage(message: string): string {
   // Remove shell-dangerous characters and control characters
   return message
+    // oxlint-disable-next-line no-control-regex
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "")
     .replace(/[`$\\]/g, "")
     .slice(0, 4096); // cap at 4KB

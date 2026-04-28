@@ -173,6 +173,14 @@ export class DashboardEventBroadcaster {
     });
   }
 
+  /** Emit a usage:recorded event so the Usage section updates live. */
+  emitUsageRecorded(data: { source: "chat" | "worker"; projectPath: string; costUsd: number }): void {
+    this.broadcastToSubscribers({
+      type: "usage:recorded",
+      data,
+    });
+  }
+
   /** Emit a notification:new event (real-time push). */
   emitNotification(data: NotificationData): void {
     this.broadcastToSubscribers({
@@ -309,6 +317,7 @@ function extractEntityId(event: DashboardEvent): string | null {
     case "tm:report_ready":
     case "tm:job_failed":
     case "notification:new":
+    case "usage:recorded":
       return null;
   }
 }

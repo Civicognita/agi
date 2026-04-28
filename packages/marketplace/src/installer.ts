@@ -37,7 +37,7 @@ export interface InstallContext {
   workspaceRoot: string;
   /** Cache directory for cloned/downloaded plugins. Defaults to .plugins/cache. */
   cacheDir?: string;
-  /** Marketplace source reference (e.g. "Civicognita/aionima-marketplace") for resolving relative-path sources. */
+  /** Marketplace source reference (e.g. "Civicognita/agi-marketplace") for resolving relative-path sources. */
   sourceRef?: string;
 }
 
@@ -50,11 +50,11 @@ export function getInstallPath(name: string, itemType: MarketplaceItemType, ctx:
     case "skill":
       return join(ctx.workspaceRoot, "skills", `${name}.skill.md`);
     case "knowledge":
-      return join(ctx.workspaceRoot, ".aionima", "marketplace-knowledge", name);
+      return join(ctx.workspaceRoot, ".agi", "marketplace-knowledge", name);
     case "theme":
       return join(cacheDir, `theme-${name}`);
     case "workflow":
-      return join(ctx.workspaceRoot, ".aionima", "workflows", `${name}.workflow.json`);
+      return join(ctx.workspaceRoot, ".agi", "workflows", `${name}.workflow.json`);
     case "channel":
       return join(ctx.workspaceRoot, "channels", name);
     case "agent-tool":
@@ -284,7 +284,7 @@ async function installDependencies(dir: string): Promise<void> {
 }
 
 /**
- * Build a plugin with esbuild — bundles @aionima/* workspace imports inline
+ * Build a plugin with esbuild — bundles @agi/* workspace imports inline
  * and injects createRequire so CJS packages (ulid, etc.) work in ESM output.
  * Uses sudo because the plugin cache dirs are root-owned.
  */
@@ -343,7 +343,21 @@ await build({
   banner: { js: ${JSON.stringify(banner)} },
   plugins: [nativeRequirePlugin],
   external: ["node:*", "grammy", "discord.js", "googleapis"],
+  // Let plugins import gateway deps (e.g. @anthropic-ai/sdk) that aren't
+  // in the plugin's own node_modules. Without this, only the explicitly
+  // aliased @agi/* packages resolve at build time.
+  nodePaths: [
+    ${JSON.stringify(resolve(agiDir, "node_modules"))},
+    ${JSON.stringify(resolve(agiDir, "node_modules", ".pnpm", "node_modules"))},
+    ${JSON.stringify(resolve(agiDir, "packages", "gateway-core", "node_modules"))},
+  ],
   alias: {
+    "@agi/sdk": ${JSON.stringify(resolve(agiDir, "packages/aion-sdk/src/index.ts"))},
+    "@agi/plugins": ${JSON.stringify(resolve(agiDir, "packages/plugins/src/index.ts"))},
+    "@agi/channel-sdk": ${JSON.stringify(resolve(agiDir, "packages/channel-sdk/src/index.ts"))},
+    "@agi/gateway-core": ${JSON.stringify(resolve(agiDir, "packages/gateway-core/src/index.ts"))},
+    "@agi/config": ${JSON.stringify(resolve(agiDir, "config/src/index.ts"))},
+    // Backward compat for marketplace plugins that still import @aionima/*
     "@aionima/sdk": ${JSON.stringify(resolve(agiDir, "packages/aion-sdk/src/index.ts"))},
     "@aionima/plugins": ${JSON.stringify(resolve(agiDir, "packages/plugins/src/index.ts"))},
     "@aionima/channel-sdk": ${JSON.stringify(resolve(agiDir, "packages/channel-sdk/src/index.ts"))},
@@ -367,6 +381,43 @@ await build({
   } finally {
     try { execSync(`sudo rm -f ${shellEscape(buildScript)}`, { stdio: "pipe" }); } catch { /* ignore */ }
   }
+}
+
+/**
+ * Rebuild a single installed plugin by re-running the esbuild step only.
+ * Does not re-download or re-run npm install.
+ */
+export async function rebuildPlugin(installPath: string): Promise<void> {
+  if (!existsSync(installPath)) {
+    throw new Error(`Plugin directory not found: ${installPath}`);
+  }
+  await buildPlugin(installPath);
+}
+
+export interface RebuildAllResult {
+  rebuilt: string[];
+  failed: string[];
+}
+
+/**
+ * Rebuild all plugins found in cacheDir by re-running the esbuild step.
+ * Returns lists of rebuilt and failed plugin directory names.
+ */
+export async function rebuildAll(cacheDir: string): Promise<RebuildAllResult> {
+  const installed = readdirSync(cacheDir).filter(d =>
+    existsSync(join(cacheDir, d, "package.json"))
+  );
+  const rebuilt: string[] = [];
+  const failed: string[] = [];
+  for (const name of installed) {
+    try {
+      await buildPlugin(join(cacheDir, name));
+      rebuilt.push(name);
+    } catch {
+      failed.push(name);
+    }
+  }
+  return { rebuilt, failed };
 }
 
 /** Uninstall a plugin by removing its install path. */

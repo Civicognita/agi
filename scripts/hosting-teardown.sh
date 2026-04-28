@@ -12,21 +12,21 @@ set -euo pipefail
 echo "=== Aionima Hosting Infrastructure Teardown ==="
 
 # ---------------------------------------------------------------------------
-# 1. Stop and remove aionima-managed containers
+# 1. Stop and remove agi-managed containers
 # ---------------------------------------------------------------------------
 
 SUDO_USER="${SUDO_USER:-wishborn}"
 
-echo "[...] Stopping aionima-managed containers..."
-CONTAINERS=$(su - "$SUDO_USER" -c "podman ps -a --filter label=aionima.managed=true --format '{{.Names}}'" 2>/dev/null || true)
+echo "[...] Stopping agi-managed containers..."
+CONTAINERS=$(su - "$SUDO_USER" -c "podman ps -a --filter label=agi.managed=true --format '{{.Names}}'" 2>/dev/null || true)
 if [ -n "$CONTAINERS" ]; then
   for name in $CONTAINERS; do
     su - "$SUDO_USER" -c "podman rm -f $name" 2>/dev/null || true
     echo "  removed: $name"
   done
-  echo "[OK] Aionima containers removed"
+  echo "[OK] AGI containers removed"
 else
-  echo "[OK] No aionima containers found"
+  echo "[OK] No agi containers found"
 fi
 
 # ---------------------------------------------------------------------------

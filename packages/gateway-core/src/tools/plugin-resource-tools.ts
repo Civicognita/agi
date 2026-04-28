@@ -6,7 +6,7 @@
  */
 
 import type { ToolHandler } from "../tool-registry.js";
-import type { PluginRegistry } from "@aionima/plugins";
+import type { PluginRegistry } from "@agi/plugins";
 import type { StackRegistry } from "../stack-registry.js";
 import type { ProjectTypeRegistry } from "../project-types.js";
 

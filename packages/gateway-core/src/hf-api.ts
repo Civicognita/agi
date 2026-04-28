@@ -12,9 +12,9 @@
 
 import { rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import type { FastifyInstance } from "fastify";
 import type {
-  HardwareProfiler,
   HfHubClient,
   ModelStore,
   DatasetStore,
@@ -23,10 +23,31 @@ import type {
   InferenceGateway,
   KnownModelsRegistry,
   CustomContainerBuilder,
-} from "@aionima/model-runtime";
-import type { ModelAgentBridge } from "@aionima/model-runtime";
-import { getBuildLog } from "@aionima/model-runtime";
+} from "@agi/model-runtime";
+import type { ModelAgentBridge } from "@agi/model-runtime";
+import { getBuildLog, resolveModelCapability, cleanupHubOrphans } from "@agi/model-runtime";
+import type { HardwareProfiler } from "./machine/hardware-profiler.js";
 import type { FineTuneManager } from "./finetune-manager.js";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/** Per-container resource stats returned by GET /api/hf/models/stats. */
+export interface ContainerStats {
+  name: string;
+  modelId: string;
+  /** CPU usage percentage string, e.g. "12.34%". */
+  cpuPct: string;
+  /** Memory usage / limit string, e.g. "512MiB / 16GiB". */
+  memUsage: string;
+  /** Memory limit string (may be empty if already embedded in memUsage). */
+  memLimit: string;
+  /** Network I/O string, e.g. "1.2MB / 3.4MB". */
+  netIO: string;
+  /** Block I/O string, e.g. "100MB / 0B". */
+  blockIO: string;
+}
 
 // ---------------------------------------------------------------------------
 // Deps shape
@@ -44,6 +65,8 @@ export interface HfApiDeps {
   knownModelsRegistry: KnownModelsRegistry;
   customContainerBuilder: CustomContainerBuilder;
   fineTuneManager: FineTuneManager;
+  /** Local HF cache directory (e.g. ~/.agi/models) — used by the GC endpoint. */
+  hfCacheDir?: string;
   /** Returns true if hf.enabled is set in the current (hot-reloaded) config. */
   isEnabled?: () => boolean;
 }
@@ -68,6 +91,7 @@ export function registerHfRoutes(
     knownModelsRegistry,
     customContainerBuilder,
     fineTuneManager,
+    hfCacheDir,
     isEnabled,
   } = deps;
 
@@ -141,11 +165,13 @@ export function registerHfRoutes(
       const enriched = models.map((model) => {
         const { compatibility, reason } = capabilityResolver.assessCompatibility(model);
         const estimate = capabilityResolver.estimateResources(model);
+        const capability = resolveModelCapability(model.id, "huggingface");
         return {
           ...model,
           compatibility,
           compatibilityReason: reason,
           estimate,
+          capability,
         };
       });
 
@@ -228,9 +254,10 @@ export function registerHfRoutes(
       const modelInfo = await hfClient.getModelInfo(id);
       const runtimeType = capabilityResolver.resolveRuntimeType(modelInfo);
 
-      // For custom models, resolve the container image from the known-models registry
+      // Only custom models store a container image at install time — standard
+      // models resolve the image from CapabilityResolver defaults at start time.
       const customDef = knownModelsRegistry.lookup(id);
-      const containerImage = customDef?.image ?? undefined;
+      const containerImage = runtimeType === "custom" ? (customDef?.image ?? undefined) : undefined;
       const sourceRepo = customDef?.sourceRepo ?? undefined;
       const endpoints = customDef ? Object.entries(customDef.endpoints).map(([name, path]) => ({
         path, method: "POST" as const, description: name,
@@ -350,7 +377,19 @@ export function registerHfRoutes(
   fastify.get("/api/hf/models", async (_request, reply) => {
     try {
       const models = await modelStore.getAll();
-      return reply.send(models);
+      // Cross-reference DB status with actual container state — self-heal stale "running"/"starting"
+      const corrected = models.map(model => {
+        if (model.status === "running" || model.status === "starting") {
+          const container = containerManager.getStatus(model.id);
+          if (!container) {
+            // Container is gone — self-heal the DB (fire-and-forget, don't delay response)
+            void modelStore.updateStatus(model.id, "ready");
+            return { ...model, status: "ready" as const, containerId: undefined, containerPort: undefined, containerName: undefined };
+          }
+        }
+        return model;
+      });
+      return reply.send(corrected);
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }
@@ -451,6 +490,15 @@ export function registerHfRoutes(
     },
   );
 
+  fastify.post<{ Params: { modelId: string } }>(
+    "/api/hf/models/:modelId/clear-cache",
+    async (request, reply) => {
+      const modelId = decodeURIComponent(request.params.modelId);
+      containerManager.clearCachedImage(modelId);
+      return reply.send({ ok: true });
+    },
+  );
+
   fastify.get<{ Params: { modelId: string } }>(
     "/api/hf/models/:modelId/status",
     async (request, reply) => {
@@ -461,9 +509,18 @@ export function registerHfRoutes(
           return reply.code(400).send({ error: "modelId is required" });
         }
 
-        const model = await modelStore.getById(modelId);
+        let model = await modelStore.getById(modelId);
         if (!model) {
           return reply.code(404).send({ error: `Model not found: ${modelId}` });
+        }
+
+        // Cross-reference DB status with actual container state — self-heal stale "running"/"starting"
+        if (model.status === "running" || model.status === "starting") {
+          const container = containerManager.getStatus(modelId);
+          if (!container) {
+            void modelStore.updateStatus(modelId, "ready");
+            model = { ...model, status: "ready" as const, containerId: undefined, containerPort: undefined, containerName: undefined };
+          }
         }
 
         const containerStatus = containerManager.getStatus(modelId);
@@ -554,6 +611,103 @@ export function registerHfRoutes(
         }),
       );
       return reply.send(enriched);
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/hf/models/stats — per-container CPU/RAM/IO stats for all running model containers.
+  // Shells `podman stats --no-stream --format json <containerName>` for each running container.
+  // Results are cached for 5 seconds to avoid hammering podman on rapid dashboard polling.
+  (() => {
+    let statsCache: { ts: number; data: ContainerStats[] } | null = null;
+
+    fastify.get("/api/hf/models/stats", async (_request, reply) => {
+      try {
+        const now = Date.now();
+        if (statsCache && now - statsCache.ts < 5_000) {
+          return reply.send({ containers: statsCache.data });
+        }
+
+        const running = containerManager.getRunning();
+        const results: ContainerStats[] = [];
+
+        for (const c of running) {
+          if (!c.containerName) continue;
+          try {
+            const raw = execFileSync(
+              "podman",
+              ["stats", "--no-stream", "--format", "json", c.containerName],
+              { stdio: "pipe", timeout: 8_000 },
+            ).toString("utf8").trim();
+
+            // podman stats --format json returns an array
+            const parsed = JSON.parse(raw) as Array<Record<string, string>>;
+            const row = parsed[0];
+            if (!row) continue;
+
+            results.push({
+              name: c.containerName,
+              modelId: c.modelId,
+              cpuPct: row["CPUPerc"] ?? row["CPU"] ?? "0%",
+              memUsage: row["MemUsage"] ?? row["MEM USAGE / LIMIT"] ?? "0B / 0B",
+              memLimit: row["MemLimit"] ?? "",
+              netIO: row["NetIO"] ?? "0B / 0B",
+              blockIO: row["BlockIO"] ?? "0B / 0B",
+            });
+          } catch {
+            // Container may have stopped between getRunning() and the stats call — skip it
+          }
+        }
+
+        statsCache = { ts: now, data: results };
+        return reply.send({ containers: results });
+      } catch (err) {
+        return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+  })();
+
+  // GET /api/hf/providers — running text-generation models available as LLM providers
+  fastify.get("/api/hf/providers", async (_request, reply) => {
+    try {
+      const running = containerManager.getRunning();
+      const installedIndex = new Map(
+        (await modelStore.getAll()).map((m) => [m.id, m]),
+      );
+      const LLM_TAGS = new Set(["text-generation", "text2text-generation", "conversational"]);
+      const providers = running
+        .filter((c) => {
+          const installed = installedIndex.get(c.modelId);
+          return installed && LLM_TAGS.has(installed.pipelineTag) && c.status === "running";
+        })
+        .map((c) => {
+          const installed = installedIndex.get(c.modelId)!;
+          return {
+            id: c.modelId,
+            name: `${installed.displayName} (local)`,
+            baseUrl: `http://127.0.0.1:${String(c.port)}`,
+            port: c.port,
+          };
+        });
+
+      // Also include Ollama-served models
+      try {
+        const ollamaRes = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(3_000) });
+        if (ollamaRes.ok) {
+          const data = await ollamaRes.json() as { models?: Array<{ name: string }> };
+          for (const m of data.models ?? []) {
+            providers.push({
+              id: `ollama:${m.name}`,
+              name: `${m.name} (Ollama)`,
+              baseUrl: "http://127.0.0.1:11434",
+              port: 11434,
+            });
+          }
+        }
+      } catch { /* Ollama not running */ }
+
+      return reply.send(providers);
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }
@@ -1193,4 +1347,26 @@ export function registerHfRoutes(
       }
     },
   );
+
+  // -------------------------------------------------------------------------
+  // On-demand hub GC — POST /api/hf/gc
+  // -------------------------------------------------------------------------
+
+  /**
+   * POST /api/hf/gc
+   * Runs the hub orphan cleanup immediately instead of waiting for next boot.
+   * Returns a summary of what was removed. Useful for reclaiming disk after
+   * bulk model churn or interrupted downloads.
+   */
+  fastify.post("/api/hf/gc", async (_request, reply) => {
+    if (!hfCacheDir) {
+      return reply.code(503).send({ error: "HF cache directory not available" });
+    }
+    try {
+      const result = await cleanupHubOrphans(hfCacheDir, modelStore);
+      return reply.send(result);
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
 }

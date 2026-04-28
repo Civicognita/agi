@@ -1,6 +1,24 @@
 import { EventEmitter } from "node:events";
 import type { Server as HttpServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
+
+/**
+ * True for connections from loopback, RFC1918 private ranges, or link-local.
+ * Matches the same check used by HTTP routes (admin-api.ts / chat-history-api.ts)
+ * so the WS upgrade path has consistent auth semantics with regular fetches.
+ */
+function isPrivateNetwork(ip: string): boolean {
+  if (ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1") return true;
+  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+  const parts = v4.split(".").map(Number);
+  if (parts.length === 4) {
+    if (parts[0] === 10) return true;
+    if (parts[0] === 172 && parts[1]! >= 16 && parts[1]! <= 31) return true;
+    if (parts[0] === 192 && parts[1] === 168) return true;
+  }
+  if (ip.startsWith("fe80:")) return true;
+  return false;
+}
 import { ulid } from "ulid";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
@@ -61,9 +79,15 @@ export class GatewayWebSocketServer extends EventEmitter {
       const verifyClient = auth
         ? (info: { req: { url?: string; socket: { remoteAddress?: string } } }, cb: (result: boolean, code?: number, message?: string) => void): void => {
             const ip = info.req.socket.remoteAddress ?? "unknown";
-            // Loopback connections bypass token auth (matches HTTP auth behavior)
-            const isLoopback = ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
-            if (isLoopback) {
+            // Private-network connections bypass token auth (matches HTTP
+            // auth behavior). After story #100, browser → Caddy (container
+            // on aionima) → host.containers.internal:3100 → gateway means
+            // the gateway sees WS upgrades from the aionima bridge IP
+            // (10.89.0.x), not 127.0.0.1 directly. Treating RFC1918
+            // ranges + loopback + link-local as private keeps the
+            // dashboard WS working without requiring every browser
+            // session to carry an auth token.
+            if (isPrivateNetwork(ip)) {
               cb(true);
               return;
             }

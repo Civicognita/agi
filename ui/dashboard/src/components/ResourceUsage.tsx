@@ -20,6 +20,12 @@ interface DataPoint {
   load1: number;
   load5: number;
   load15: number;
+  /** s111 t378 — RAPL CPU watts. 0 when unavailable (non-Linux, no intel-rapl,
+   *  or first-sample-of-session). The chart hides when no point reports >0W. */
+  cpuWatts: number;
+  /** s111 t417 — NVIDIA GPU watts. 0 when unavailable (non-NVIDIA host or
+   *  no nvidia-smi). Stacks with cpuWatts in the System power chart. */
+  gpuWatts: number;
 }
 
 function formatBytes(bytes: number): string {
@@ -169,6 +175,8 @@ export function ResourceUsage() {
       load1: Math.round(data.cpu.loadAvg[0] * 100) / 100,
       load5: Math.round(data.cpu.loadAvg[1] * 100) / 100,
       load15: Math.round(data.cpu.loadAvg[2] * 100) / 100,
+      cpuWatts: data.power?.cpuWatts ?? 0,
+      gpuWatts: data.power?.gpuWatts ?? 0,
     };
     setHistory((prev) => {
       const last = prev[prev.length - 1];
@@ -194,6 +202,23 @@ export function ResourceUsage() {
             Host: <span className="font-mono text-foreground">{data.hostname}</span>
             {" | "}
             Uptime: <span className="text-foreground">{formatUptime(data.uptime)}</span>
+            {/* s111 t378/t417 — current CPU + GPU watts inline; each chip
+                hides cleanly when its sampler returns null. Intel-iGPU host
+                shows CPU only; NVIDIA-only host shows GPU only; dual shows
+                both. Format: "Power: 18.3W CPU · 145.2W GPU" or subset. */}
+            {(data.power?.cpuWatts != null || data.power?.gpuWatts != null) && (
+              <>
+                {" | "}
+                Power:{" "}
+                {data.power?.cpuWatts != null && (
+                  <span className="text-foreground">{data.power.cpuWatts.toFixed(1)} W CPU</span>
+                )}
+                {data.power?.cpuWatts != null && data.power?.gpuWatts != null && " · "}
+                {data.power?.gpuWatts != null && (
+                  <span className="text-foreground">{data.power.gpuWatts.toFixed(1)} W GPU</span>
+                )}
+              </>
+            )}
           </div>
         )}
         <div className="flex items-center gap-1.5">
@@ -308,7 +333,7 @@ export function ResourceUsage() {
       </Card>
 
       {/* Disk I/O History */}
-      <Card className="p-4">
+      <Card className="p-4 mb-4">
         <h3 className="text-[13px] font-semibold text-foreground mb-2">Disk I/O</h3>
         <EChart
           option={makeAreaOption(
@@ -323,6 +348,33 @@ export function ResourceUsage() {
           style={{ height: 160 }}
         />
       </Card>
+
+      {/* System Power History (s111 t378+t417 — True Cost graph: System line
+          item, stacked CPU + GPU). Each series renders only if at least one
+          history point reports >0W for it — Intel-iGPU host shows CPU only,
+          NVIDIA-only host shows GPU only, dual hosts show both stacked.
+          Future: NPU watts joins the same chart when t-future-npu lands. */}
+      {(history.some((p) => p.cpuWatts > 0) || history.some((p) => p.gpuWatts > 0)) && (
+        <Card className="p-4">
+          <h3 className="text-[13px] font-semibold text-foreground mb-2">System Power</h3>
+          <EChart
+            option={makeAreaOption(
+              history,
+              [
+                ...(history.some((p) => p.cpuWatts > 0)
+                  ? [{ key: "cpuWatts" as const, name: "CPU W", color: COLORS.mauve }]
+                  : []),
+                ...(history.some((p) => p.gpuWatts > 0)
+                  ? [{ key: "gpuWatts" as const, name: "GPU W", color: COLORS.green }]
+                  : []),
+              ],
+              undefined,
+              (v) => `${v.toFixed(1)} W`,
+            )}
+            style={{ height: 200 }}
+          />
+        </Card>
+      )}
     </div>
   );
 }

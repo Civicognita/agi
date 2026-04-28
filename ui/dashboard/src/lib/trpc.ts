@@ -4,7 +4,7 @@
 
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import { createTRPCOptionsProxy } from "@trpc/tanstack-react-query";
-import type { AppRouter } from "@aionima/trpc-api";
+import type { AppRouter } from "@agi/trpc-api";
 import { queryClient } from "./query-client.js";
 
 /** Vanilla tRPC client for non-React usage. */

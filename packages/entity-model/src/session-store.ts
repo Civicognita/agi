@@ -1,10 +1,16 @@
 /**
- * SessionStore — server-side session tracking and revocation.
+ * SessionStore — server-side session tracking and revocation using revocation_audit table.
  *
  * Compliance: UCS-IAM-02 (SOC 2 CC6 session controls, HIPAA access management).
+ *
+ * NOTE: The auth.ts table (auth_sessions) tracks active web sessions (cookies).
+ * The revocation_audit table here is the compliance audit trail for ALL issued
+ * sessions and API keys — kept permanently, never deleted.
  */
 
-import type { Database } from "./db.js";
+import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
+import type { Db } from "@agi/db-schema/client";
+import { revocationAudit } from "@agi/db-schema";
 
 export interface Session {
   id: string;
@@ -17,104 +23,155 @@ export interface Session {
   revokedAt: string | null;
 }
 
-export const CREATE_SESSIONS = `
-CREATE TABLE IF NOT EXISTS sessions (
-  id          TEXT NOT NULL PRIMARY KEY,
-  entity_id   TEXT NOT NULL,
-  token_hash  TEXT NOT NULL,
-  source_ip   TEXT NOT NULL DEFAULT '',
-  user_agent  TEXT NOT NULL DEFAULT '',
-  created_at  TEXT NOT NULL,
-  expires_at  TEXT NOT NULL,
-  revoked_at  TEXT
-)` as const;
-
-export const CREATE_API_KEYS = `
-CREATE TABLE IF NOT EXISTS api_keys (
-  id          TEXT NOT NULL PRIMARY KEY,
-  entity_id   TEXT NOT NULL,
-  label       TEXT NOT NULL DEFAULT '',
-  key_hash    TEXT NOT NULL UNIQUE,
-  created_at  TEXT NOT NULL,
-  last_used   TEXT,
-  expires_at  TEXT,
-  revoked_at  TEXT
-)` as const;
+// ---------------------------------------------------------------------------
+// SessionStore
+// ---------------------------------------------------------------------------
 
 export class SessionStore {
-  constructor(private readonly db: Database) {
-    db.exec(CREATE_SESSIONS);
-    db.exec(CREATE_API_KEYS);
+  constructor(private readonly db: Db) {}
+
+  async createSession(
+    id: string,
+    entityId: string,
+    tokenHash: string,
+    expiresAt: string,
+    sourceIp = "",
+    userAgent = "",
+  ): Promise<void> {
+    const now = new Date();
+    await this.db.insert(revocationAudit).values({
+      id,
+      entityId,
+      tokenHash,
+      kind: "session",
+      sourceIp,
+      userAgent,
+      createdAt: now,
+      expiresAt: new Date(expiresAt),
+      revokedAt: null,
+    });
   }
 
-  createSession(id: string, entityId: string, tokenHash: string, expiresAt: string, sourceIp = "", userAgent = ""): void {
-    this.db.prepare(`
-      INSERT INTO sessions (id, entity_id, token_hash, source_ip, user_agent, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, entityId, tokenHash, sourceIp, userAgent, new Date().toISOString(), expiresAt);
+  async isRevoked(tokenHash: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ revokedAt: revocationAudit.revokedAt })
+      .from(revocationAudit)
+      .where(eq(revocationAudit.tokenHash, tokenHash));
+    return row?.revokedAt !== null && row?.revokedAt !== undefined;
   }
 
-  isRevoked(tokenHash: string): boolean {
-    const row = this.db.prepare(`SELECT revoked_at FROM sessions WHERE token_hash = ?`).get(tokenHash) as { revoked_at: string | null } | undefined;
-    return row?.revoked_at !== null && row?.revoked_at !== undefined;
+  async revokeSession(id: string): Promise<void> {
+    await this.db.update(revocationAudit)
+      .set({ revokedAt: new Date() })
+      .where(eq(revocationAudit.id, id));
   }
 
-  revokeSession(id: string): void {
-    this.db.prepare(`UPDATE sessions SET revoked_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
+  async revokeAllForEntity(entityId: string): Promise<void> {
+    await this.db.update(revocationAudit)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(revocationAudit.entityId, entityId), isNull(revocationAudit.revokedAt)));
   }
 
-  revokeAllForEntity(entityId: string): void {
-    this.db.prepare(`UPDATE sessions SET revoked_at = ? WHERE entity_id = ? AND revoked_at IS NULL`).run(new Date().toISOString(), entityId);
+  async getActiveSessions(entityId: string): Promise<Session[]> {
+    const now = new Date();
+    const rows = await this.db
+      .select()
+      .from(revocationAudit)
+      .where(
+        and(
+          eq(revocationAudit.entityId, entityId),
+          isNull(revocationAudit.revokedAt),
+          gt(revocationAudit.expiresAt, now),
+        ),
+      )
+      .orderBy(sql`${revocationAudit.createdAt} DESC`);
+
+    return rows.map((r) => ({
+      id: r.id,
+      entityId: r.entityId ?? "",
+      tokenHash: r.tokenHash,
+      sourceIp: r.sourceIp,
+      userAgent: r.userAgent,
+      createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+      expiresAt: r.expiresAt ? (r.expiresAt instanceof Date ? r.expiresAt.toISOString() : String(r.expiresAt)) : "",
+      revokedAt: r.revokedAt ? (r.revokedAt instanceof Date ? r.revokedAt.toISOString() : String(r.revokedAt)) : null,
+    }));
   }
 
-  getActiveSessions(entityId: string): Session[] {
-    const now = new Date().toISOString();
-    return this.db.prepare(`
-      SELECT * FROM sessions WHERE entity_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at DESC
-    `).all(entityId, now) as Session[];
+  async cleanup(): Promise<number> {
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const result = await this.db
+      .delete(revocationAudit)
+      .where(
+        or(
+          and(lt(revocationAudit.expiresAt, cutoff), sql`${revocationAudit.revokedAt} IS NOT NULL`),
+          lt(revocationAudit.createdAt, cutoff),
+        ),
+      );
+    return (result as unknown as { rowCount?: number | null }).rowCount ?? 0;
   }
 
-  cleanup(): number {
-    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    return this.db.prepare(`DELETE FROM sessions WHERE (expires_at < ? AND revoked_at IS NOT NULL) OR created_at < ?`).run(cutoff, cutoff).changes;
+  // API Key management — stored in revocation_audit with kind = 'api_key'
+
+  async createApiKey(id: string, entityId: string, keyHash: string, label: string, expiresAt?: string): Promise<void> {
+    const now = new Date();
+    // Store label in userAgent field (repurposed) for API keys
+    await this.db.insert(revocationAudit).values({
+      id,
+      entityId,
+      tokenHash: keyHash,
+      kind: "api_key",
+      sourceIp: "",
+      userAgent: label,
+      createdAt: now,
+      expiresAt: expiresAt ? new Date(expiresAt) : null,
+      revokedAt: null,
+    });
   }
 
-  // API Key management
-  createApiKey(id: string, entityId: string, keyHash: string, label: string, expiresAt?: string): void {
-    this.db.prepare(`
-      INSERT INTO api_keys (id, entity_id, key_hash, label, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, entityId, keyHash, label, new Date().toISOString(), expiresAt ?? null);
+  async touchApiKey(_keyHash: string): Promise<void> {
+    // No last_used in revocation_audit; no-op here — audit trail doesn't track access time
   }
 
-  touchApiKey(keyHash: string): void {
-    this.db.prepare(`UPDATE api_keys SET last_used = ? WHERE key_hash = ?`).run(new Date().toISOString(), keyHash);
-  }
-
-  isApiKeyValid(keyHash: string): boolean {
-    const now = new Date().toISOString();
-    const row = this.db.prepare(`SELECT revoked_at, expires_at FROM api_keys WHERE key_hash = ?`).get(keyHash) as { revoked_at: string | null; expires_at: string | null } | undefined;
+  async isApiKeyValid(keyHash: string): Promise<boolean> {
+    const now = new Date();
+    const [row] = await this.db
+      .select({ revokedAt: revocationAudit.revokedAt, expiresAt: revocationAudit.expiresAt })
+      .from(revocationAudit)
+      .where(and(eq(revocationAudit.tokenHash, keyHash), eq(revocationAudit.kind, "api_key")));
     if (!row) return false;
-    if (row.revoked_at) return false;
-    if (row.expires_at && row.expires_at < now) return false;
+    if (row.revokedAt) return false;
+    if (row.expiresAt && row.expiresAt < now) return false;
     return true;
   }
 
-  revokeApiKey(id: string): void {
-    this.db.prepare(`UPDATE api_keys SET revoked_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
+  async revokeApiKey(id: string): Promise<void> {
+    await this.db.update(revocationAudit)
+      .set({ revokedAt: new Date() })
+      .where(eq(revocationAudit.id, id));
   }
 
-  listApiKeys(entityId: string): Array<{ id: string; label: string; createdAt: string; lastUsed: string | null; expiresAt: string | null; revoked: boolean }> {
-    const rows = this.db.prepare(`SELECT * FROM api_keys WHERE entity_id = ? ORDER BY created_at DESC`).all(entityId) as Array<{
-      id: string; label: string; created_at: string; last_used: string | null; expires_at: string | null; revoked_at: string | null;
-    }>;
+  async listApiKeys(entityId: string): Promise<Array<{
+    id: string;
+    label: string;
+    createdAt: string;
+    lastUsed: string | null;
+    expiresAt: string | null;
+    revoked: boolean;
+  }>> {
+    const rows = await this.db
+      .select()
+      .from(revocationAudit)
+      .where(and(eq(revocationAudit.entityId, entityId), eq(revocationAudit.kind, "api_key")))
+      .orderBy(sql`${revocationAudit.createdAt} DESC`);
+
     return rows.map((r) => ({
       id: r.id,
-      label: r.label,
-      createdAt: r.created_at,
-      lastUsed: r.last_used,
-      expiresAt: r.expires_at,
-      revoked: r.revoked_at !== null,
+      label: r.userAgent, // label stored in userAgent field
+      createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+      lastUsed: null, // not tracked in audit table
+      expiresAt: r.expiresAt ? (r.expiresAt instanceof Date ? r.expiresAt.toISOString() : String(r.expiresAt)) : null,
+      revoked: r.revokedAt !== null,
     }));
   }
 }

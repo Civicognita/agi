@@ -6,7 +6,7 @@ test.describe("FlyoutPanel", () => {
 
   test("chat flyout opens and closes via sidebar button", async ({ page }) => {
     await page.goto("/");
-    const chatButton = page.getByTestId("sidebar-chat-button");
+    const chatButton = page.getByTestId("header-chat-button");
     await chatButton.click();
     // Chat button should show active state
     await expect(chatButton).toHaveClass(/bg-primary/);
