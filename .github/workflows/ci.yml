@@ -1,13 +1,12 @@
-# CI checks run locally via pre-push hook (scripts/pre-push-check.sh).
-# GitHub Actions disabled to avoid per-minute charges.
-#
-# To run manually: bash scripts/pre-push-check.sh
-# Checks: lockfile sync, typecheck, lint
+# CI checks for pull requests to main.
+# Public repo → GitHub Actions minutes are unlimited and free.
+# Local pre-push hook (scripts/pre-push-check.sh) runs the same checks.
 
-name: CI (disabled)
+name: CI
 
 on:
-  workflow_dispatch: # manual trigger only — never runs automatically
+  pull_request:
+    branches: [main]
 
 jobs:
   check:
