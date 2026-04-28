@@ -534,14 +534,14 @@ importers:
         specifier: ^1.2.0
         version: 1.2.3
       '@particle-academy/fancy-sheets':
-        specifier: ^0.4.5
-        version: 0.4.5(@particle-academy/react-fancy@1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        specifier: ^0.7.2
+        version: 0.7.2(@particle-academy/react-fancy@2.7.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@particle-academy/react-echarts':
-        specifier: ^1.0.0
-        version: 1.0.1(echarts@5.6.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        specifier: ^1.1.3
+        version: 1.1.3(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@particle-academy/react-fancy':
-        specifier: ^1.9.1
-        version: 1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
+        specifier: ^2.7.0
+        version: 2.7.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
       '@tailwindcss/vite':
         specifier: ^4.2.1
         version: 4.2.1(vite@6.4.2(@types/node@25.6.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.3))
@@ -607,8 +607,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/gateway-core
       '@particle-academy/fancy-code':
-        specifier: ^0.4.2
-        version: 0.4.2(@particle-academy/react-fancy@1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        specifier: ^0.4.4
+        version: 0.4.4(@particle-academy/react-fancy@2.7.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.14
@@ -2117,29 +2117,28 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@particle-academy/fancy-code@0.4.2':
-    resolution: {integrity: sha512-9wg6+LnWrgsZruHUWy6Ld6AvTyZPk7XgAtWb53RVewsKI3Hb1RFaBXf/US6oJ6TVZPlqf3gxavOBKmlToycXwg==}
+  '@particle-academy/fancy-code@0.4.4':
+    resolution: {integrity: sha512-aM2C0Xh624CTBw6zzxEpEe9lrjBfSOnunBwy/YnOGhTLDXOLai+Pnh25Hv3C48SKtdp14tNSNsJ7kU/f61vB6w==}
     peerDependencies:
       '@particle-academy/react-fancy': ^1.5.0
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@particle-academy/fancy-sheets@0.4.5':
-    resolution: {integrity: sha512-BoK/c8qJVFGrNvHVx0aNsLPdqzkxj3SmM41tpkQM5kw93Dvfj7K/38qvlUnhAYU3Jn4ETk0oJNOxVbt9eQAT6g==}
+  '@particle-academy/fancy-sheets@0.7.2':
+    resolution: {integrity: sha512-4WvJWhLzOwnn+qboR9eFPTuxNs5HHPszX94qZZ7AEHQsWTMV6lrsXLeeVAM4x29UtZiFJ9HK1bAal4Q9Vqt+HQ==}
     peerDependencies:
-      '@particle-academy/react-fancy': ^1.5.0
+      '@particle-academy/react-fancy': ^2.0.0
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@particle-academy/react-echarts@1.0.1':
-    resolution: {integrity: sha512-yJiSojrHlFkw1Z9beiYnRuR12ZQuczpv1RGs0neG4q1poY+nFFOqZHPYsb9yll1zPgV9lJtbOL74iOOEsAEIkg==}
+  '@particle-academy/react-echarts@1.1.3':
+    resolution: {integrity: sha512-eXYvvk7X11AF7yxB08Ym3LqunwwiD1Ygpd4Q1a+6aaXvQKFoBff3FmuM0W0Fhis5hMg5yNNtidoqnPL4JOeRbQ==}
     peerDependencies:
-      echarts: ^5.5.0
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@particle-academy/react-fancy@1.9.1':
-    resolution: {integrity: sha512-Qci5Kzg8nck4PgeGXJfKAdAEVw6wRyAV5j6Fi9u7tDjg4bMXDQGuvBhdE3+Vcr7nn0hB/1/fbGMpRHDQPGsoWg==}
+  '@particle-academy/react-fancy@2.7.0':
+    resolution: {integrity: sha512-CVxluoWiTM9QWBuedSdRj24fKqckj9KfHunufbZ+7F9AXMC0o13yhoHm4FmK+S+NzUCdVAtu87uINTWEo59MQw==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
@@ -9444,27 +9443,26 @@ snapshots:
   '@oxlint/win32-x64@0.16.12':
     optional: true
 
-  '@particle-academy/fancy-code@0.4.2(@particle-academy/react-fancy@1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@particle-academy/fancy-code@0.4.4(@particle-academy/react-fancy@2.7.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
-      '@particle-academy/react-fancy': 1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
+      '@particle-academy/react-fancy': 2.7.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
 
-  '@particle-academy/fancy-sheets@0.4.5(@particle-academy/react-fancy@1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@particle-academy/fancy-sheets@0.7.2(@particle-academy/react-fancy@2.7.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
-      '@particle-academy/react-fancy': 1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
+      '@particle-academy/react-fancy': 2.7.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
 
-  '@particle-academy/react-echarts@1.0.1(echarts@5.6.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@particle-academy/react-echarts@1.1.3(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
       echarts: 5.6.0
+      echarts-gl: 2.0.9(echarts@5.6.0)
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
-    optionalDependencies:
-      echarts-gl: 2.0.9(echarts@5.6.0)
 
-  '@particle-academy/react-fancy@1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)':
+  '@particle-academy/react-fancy@2.7.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)':
     dependencies:
       clsx: 2.1.1
       lucide-react: 0.511.0(react@19.2.4)
@@ -10953,8 +10951,7 @@ snapshots:
 
   classcat@5.0.5: {}
 
-  claygl@1.3.0:
-    optional: true
+  claygl@1.3.0: {}
 
   clean-stack@2.2.0: {}
 
@@ -11364,7 +11361,6 @@ snapshots:
       claygl: 1.3.0
       echarts: 5.6.0
       zrender: 5.6.1
-    optional: true
 
   echarts@5.6.0:
     dependencies:
