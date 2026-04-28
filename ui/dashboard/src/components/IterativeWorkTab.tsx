@@ -21,6 +21,8 @@ import {
   cadenceOptionsForCategory,
 } from "../types";
 import { Button } from "./ui/button";
+import { Card } from "./ui/card";
+import { Select } from "./ui/select";
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
@@ -149,15 +151,15 @@ export function IterativeWorkTab({ project }: IterativeWorkTabProps): JSX.Elemen
 
   if (!(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible)) {
     return (
-      <div className="rounded-xl bg-card border border-border p-4 text-[13px] text-muted-foreground">
+      <Card className="p-4 text-[13px] text-muted-foreground">
         Iterative work is not available for the <span className="font-mono">{project.projectType?.id ?? project.category ?? "(unknown)"}</span> project type.
         Eligible categories: web, app, ops, administration.
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className="rounded-xl bg-card border border-border p-4 space-y-4" data-testid="iterative-work-tab">
+    <Card className="p-4 space-y-4" data-testid="iterative-work-tab">
       <div>
         <h3 className="text-[13px] font-semibold mb-2">Iterative Work</h3>
         <p className="text-[12px] text-muted-foreground">
@@ -179,18 +181,17 @@ export function IterativeWorkTab({ project }: IterativeWorkTabProps): JSX.Elemen
 
       <div>
         <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Cadence</label>
-        <select
+        <Select
+          className="text-[12px]"
+          list={[
+            { value: "", label: "(pick one)" },
+            ...cadenceOptions.map((c) => ({ value: c, label: cadenceLabel(c) })),
+          ]}
           value={cadence}
-          onChange={(e) => setCadence(e.target.value as IterativeWorkCadence)}
-          className="text-[12px] rounded border border-border bg-background px-2 py-1"
+          onValueChange={(v) => setCadence(v as IterativeWorkCadence)}
           data-testid="iterative-work-cadence"
           disabled={!enabled}
-        >
-          <option value="" disabled>(pick one)</option>
-          {cadenceOptions.map((c) => (
-            <option key={c} value={c}>{cadenceLabel(c)}</option>
-          ))}
-        </select>
+        />
         <p className="text-[11px] text-muted-foreground mt-1">
           Available cadences for <span className="font-mono">{category}</span>: {cadenceOptions.join(", ")}.
         </p>
@@ -244,7 +245,7 @@ export function IterativeWorkTab({ project }: IterativeWorkTabProps): JSX.Elemen
           </ul>
         )}
       </div>
-    </div>
+    </Card>
   );
 }
 

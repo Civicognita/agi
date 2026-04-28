@@ -6,8 +6,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { cn } from "@/lib/utils";
+import { Callout } from "@particle-academy/react-fancy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes } from "../api.js";
@@ -332,7 +335,7 @@ export function ProjectDetail({
         </TabsList>
 
         <TabsContent value="details" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <div className="rounded-xl bg-card border border-border p-4">
+          <Card className="p-4">
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
                 <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Name</label>
@@ -359,37 +362,39 @@ export function ProjectDetail({
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
                 <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Purpose</label>
-                <select
+                <Select
+                  className="text-[13px]"
+                  list={[
+                    { value: "", label: "Auto-detect" },
+                    { value: "literature", label: "Literature" },
+                    { value: "app", label: "App" },
+                    { value: "web", label: "Web" },
+                    { value: "media", label: "Media" },
+                    { value: "administration", label: "Administration" },
+                  ]}
                   value={category}
-                  onChange={(e) => setEditCategory(e.target.value)}
+                  onValueChange={setEditCategory}
                   disabled={isSacred}
-                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-foreground text-[13px]"
-                >
-                  <option value="">Auto-detect</option>
-                  <option value="literature">Literature</option>
-                  <option value="app">App</option>
-                  <option value="web">Web</option>
-                  <option value="media">Media</option>
-                  <option value="administration">Administration</option>
-                </select>
+                />
               </div>
               <div>
                 <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Project Type</label>
-                <select
+                <Select
+                  className="text-[13px]"
+                  list={(() => {
+                    const items = [];
+                    if (project.projectType && !projectTypes.some((t) => t.id === project.projectType?.id)) {
+                      items.push({ value: project.projectType.id, label: `${project.projectType.label} (detected)` });
+                    }
+                    for (const pt of projectTypes) {
+                      items.push({ value: pt.id, label: `${pt.label}${pt.id === project.projectType?.id ? " (detected)" : ""}` });
+                    }
+                    return items;
+                  })()}
                   value={editProjectType ?? project.projectType?.id ?? ""}
-                  onChange={(e) => setEditProjectType(e.target.value || null)}
+                  onValueChange={(v) => setEditProjectType(v || null)}
                   disabled={isSacred}
-                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-foreground text-[13px]"
-                >
-                  {project.projectType && !projectTypes.some((t) => t.id === project.projectType?.id) && (
-                    <option value={project.projectType.id}>{project.projectType.label} (detected)</option>
-                  )}
-                  {projectTypes.map((pt) => (
-                    <option key={pt.id} value={pt.id}>
-                      {pt.label}{pt.id === project.projectType?.id ? " (detected)" : ""}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
             </div>
             <div className="text-[11px] text-muted-foreground font-mono mb-3">{project.path}</div>
@@ -406,12 +411,12 @@ export function ProjectDetail({
             >
               {saving || updating ? "Saving..." : isSacred ? "Locked" : "Save"}
             </Button>
-          </div>
+          </Card>
 
           {/* Danger Zone */}
           {!isSacred ? (
             <>
-              <div className="mt-6 rounded-xl border border-red/30 bg-red/5 p-4">
+              <Callout color="red" className="mt-6">
                 <h3 className="text-[13px] font-bold text-red mb-1">Danger Zone</h3>
                 <p className="text-[11px] text-muted-foreground mb-3">
                   Permanently delete this project and all its files. This action cannot be undone.
@@ -424,7 +429,7 @@ export function ProjectDetail({
                 >
                   {deleting ? "Deleting..." : "Delete Project"}
                 </Button>
-              </div>
+              </Callout>
 
               {/* Delete confirmation dialog */}
               <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -469,17 +474,17 @@ export function ProjectDetail({
               </Dialog>
             </>
           ) : (
-            <div className="mt-6 rounded-xl border border-yellow/30 bg-yellow/10 p-4">
+            <Callout color="amber" className="mt-6">
               <h3 className="text-[13px] font-bold text-yellow mb-1">Sacred Project</h3>
               <p className="text-[11px] text-muted-foreground">
                 Sacred projects are immutable and cannot be deleted.
               </p>
-            </div>
+            </Callout>
           )}
         </TabsContent>
 
         <TabsContent value="files" className="mt-4 flex-1 min-h-0 overflow-hidden">
-          <div className="rounded-xl bg-card border border-border overflow-hidden">
+          <Card className="overflow-hidden">
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-border">
               <span className="text-[11px] font-semibold text-muted-foreground">Editor</span>
@@ -659,11 +664,11 @@ export function ProjectDetail({
                 </div>
               )}
             </div>
-          </div>
+          </Card>
         </TabsContent>
 
         <TabsContent value="repository" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <div className="rounded-xl bg-card border border-border p-4">
+          <Card className="p-4">
             {isCoreFork && project?.coreForkSlug ? (
               <CoreForkRepoPanel slug={project.coreForkSlug} />
             ) : project.hasGit ? (
@@ -747,12 +752,12 @@ export function ProjectDetail({
                 )}
               </div>
             )}
-          </div>
+          </Card>
         </TabsContent>
 
         {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
           <TabsContent value="hosting" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-            <div className="rounded-xl bg-card border border-border p-4">
+            <Card className="p-4">
               <HostingPanel
                 projectPath={project.path}
                 hosting={project.hosting}
@@ -770,22 +775,22 @@ export function ProjectDetail({
                 tabLabel="Development"
                 availableTypes={projectTypes}
               />
-            </div>
+            </Card>
           </TabsContent>
         )}
 
         {project.projectType?.hasCode && (
           <TabsContent value="environment" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-            <div className="rounded-xl bg-card border border-border p-4">
+            <Card className="p-4">
               <EnvManager projectPath={project.path} />
-            </div>
+            </Card>
           </TabsContent>
         )}
 
         <TabsContent value="taskmaster" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <div className="rounded-xl bg-card border border-border p-4">
+          <Card className="p-4">
             <TaskmasterTab projectPath={project.path} />
-          </div>
+          </Card>
         </TabsContent>
 
         {(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
@@ -801,7 +806,7 @@ export function ProjectDetail({
         )}
 
         <TabsContent value="magic-apps" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <div className="rounded-xl bg-card border border-border p-4">
+          <Card className="p-4">
             <MagicAppPicker
               project={project}
               onOpenApp={(appId, projectPath) => {
@@ -809,18 +814,18 @@ export function ProjectDetail({
               }}
               onRefresh={onRefresh}
             />
-          </div>
+          </Card>
         </TabsContent>
 
         {pluginPanels.map((panel) => (
           <TabsContent key={panel.id} value={`plugin-${panel.id}`} className="mt-4">
-            <div className="rounded-xl bg-card border border-border p-4">
+            <Card className="p-4">
               <WidgetRenderer
                 widgets={panel.widgets}
                 actions={pluginActions}
                 projectPath={project.path}
               />
-            </div>
+            </Card>
           </TabsContent>
         ))}
 

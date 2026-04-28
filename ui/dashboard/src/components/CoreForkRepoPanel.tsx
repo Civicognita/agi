@@ -13,7 +13,9 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { Callout } from "@particle-academy/react-fancy";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { useCoreForkStatus } from "../hooks.js";
 import { fetchDevStatus } from "../api.js";
@@ -106,10 +108,10 @@ export function CoreForkRepoPanel({ slug }: CoreForkRepoPanelProps) {
 
   if (fork.error) {
     return (
-      <div className="p-4 rounded-lg border border-red/40 bg-red/10 text-[13px] text-red">
+      <Callout color="red" className="p-4 text-[13px]">
         <div className="font-semibold mb-1">{fork.displayName}</div>
         <div className="text-[12px] opacity-80">{fork.error}</div>
-      </div>
+      </Callout>
     );
   }
 
@@ -121,7 +123,7 @@ export function CoreForkRepoPanel({ slug }: CoreForkRepoPanelProps) {
   return (
     <div className="flex flex-col gap-4">
       {/* Header row: branch + SHAs + badges */}
-      <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg border border-border bg-mantle">
+      <Card className="flex flex-wrap items-center gap-3 p-3">
         <div className="flex flex-col gap-0.5">
           <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Branch</div>
           <div className="font-mono text-[13px]">{fork.branch}</div>
@@ -153,7 +155,7 @@ export function CoreForkRepoPanel({ slug }: CoreForkRepoPanelProps) {
             ↓ {behind} behind
           </span>
         </div>
-      </div>
+      </Card>
 
       {/* Action row */}
       <div className="flex flex-wrap items-center gap-2">
@@ -190,13 +192,13 @@ export function CoreForkRepoPanel({ slug }: CoreForkRepoPanelProps) {
 
       {/* Merge result feedback */}
       {mergeError && (
-        <div className="p-3 rounded-lg border border-red/40 bg-red/10 text-[12px] text-red">
+        <Callout color="red" className="text-[12px]">
           {mergeError}
-        </div>
+        </Callout>
       )}
 
       {mergeResult?.ok && (
-        <div className="p-3 rounded-lg border border-green/40 bg-green/10 text-[13px] text-green">
+        <Callout color="green" className="text-[13px]">
           {mergeResult.agentic
             ? `Aion-Micro resolved conflicts and merged upstream at ${shortSha(mergeResult.newSha)}.`
             : mergeResult.ff
@@ -207,17 +209,17 @@ export function CoreForkRepoPanel({ slug }: CoreForkRepoPanelProps) {
               Local merge succeeded but push to origin failed — run <code>git push</code> manually.
             </div>
           )}
-        </div>
+        </Callout>
       )}
 
       {mergeResult?.ok === false && !mergeResult.conflict && (
-        <div className="p-3 rounded-lg border border-peach/40 bg-peach/10 text-[12px] text-peach">
+        <Callout color="amber" className="text-[12px]">
           {mergeResult.reason}
-        </div>
+        </Callout>
       )}
 
       {showConflictPanel && mergeResult?.ok === false && mergeResult.conflict && (
-        <div className="p-3 rounded-lg border border-peach/40 bg-peach/10 text-[12px]">
+        <Callout color="amber" className="text-[12px]">
           <div className="font-semibold text-peach mb-1">
             {mergeResult.agentic && mergeResult.reviewNeeded
               ? "Aion-Micro couldn't confidently resolve this merge"
@@ -248,7 +250,7 @@ export function CoreForkRepoPanel({ slug }: CoreForkRepoPanelProps) {
               Open the Editor tab to resolve the conflicts manually — the file contents are in the working tree with conflict markers preserved.
             </div>
           )}
-        </div>
+        </Callout>
       )}
 
       <div className="text-[11px] text-muted-foreground mt-1">
