@@ -224,8 +224,13 @@ export class UsageStore {
     count: number;
   }>> {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const truncUnit = bucket === "hour" ? "hour" : "day";
-    const bucketExpr = sql`date_trunc(${truncUnit}, ${usageLog.createdAt})`;
+    // PostgreSQL's date_trunc expects a literal text first arg; drizzle 0.45's
+    // tighter param-type inference can fail to determine the type when the unit
+    // is interpolated as a bound parameter, throwing 500 at the api layer.
+    // Branch at compile time on the validated bucket so the SQL has a literal.
+    const bucketExpr = bucket === "hour"
+      ? sql`date_trunc('hour', ${usageLog.createdAt})`
+      : sql`date_trunc('day', ${usageLog.createdAt})`;
 
     const rows = await this.db
       .select({
