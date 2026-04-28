@@ -93,7 +93,7 @@ export function unbridgePluginCapabilities(
   // Skills are named `plugin_${pluginId}_${skill.name}` (see bridgePluginCapabilities).
   const skillMap = (deps.skillRegistry as unknown as { skills: Map<string, unknown> }).skills;
   const prefix = `plugin_${pluginId}_`;
-  for (const key of [...skillMap.keys()]) {
+  for (const key of Array.from(skillMap.keys())) {
     if (key.startsWith(prefix)) {
       skillMap.delete(key);
       skillsRemoved++;

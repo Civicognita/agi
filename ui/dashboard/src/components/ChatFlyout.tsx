@@ -379,6 +379,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         reader.onload = () => {
           const text = reader.result as string;
           // If it looks like binary (lots of null bytes or non-printable chars), skip
+          // oxlint-disable-next-line no-control-regex
           const nonPrintable = (text.match(/[\x00-\x08\x0E-\x1F]/g) ?? []).length;
           if (nonPrintable > text.length * 0.1) {
             setError(`Binary file "${file.name}" — only text, images, and PDFs are supported`);

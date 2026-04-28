@@ -79,5 +79,6 @@ function pad(s: string, width: number): string {
 
 /** Strip ANSI escape codes for width calculation */
 function stripAnsi(s: string): string {
+  // oxlint-disable-next-line no-control-regex
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }

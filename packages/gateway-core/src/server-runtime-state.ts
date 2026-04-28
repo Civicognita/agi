@@ -1843,6 +1843,7 @@ export async function createGatewayRuntimeState(
           return reply.code(400).send({ error: "message is required" });
         }
         // Sanitize: strip control chars except newlines/tabs
+        // oxlint-disable-next-line no-control-regex
         const sanitized = body.message.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
         const result = await execGitDashboard(["commit", "-m", sanitized], targetPath);
         return reply.send(result);
@@ -2118,7 +2119,7 @@ export async function createGatewayRuntimeState(
           try {
             const raw = readFileSync(deps.configPath, "utf-8");
             const cfg = JSON.parse(raw) as Record<string, unknown>;
-            cfg.prime = { ...(cfg.prime as Record<string, unknown> ?? {}), source: newSource, branch: newBranch };
+            cfg.prime = { ...(cfg.prime as Record<string, unknown>), source: newSource, branch: newBranch };
             writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
           } catch { /* config write failed — non-fatal */ }
         }
@@ -2519,7 +2520,7 @@ export async function createGatewayRuntimeState(
           // Persist fork URLs alongside `enabled` so the clone loop + the
           // auto-sync task resolver (dev-mode-sources.ts) see them.
           cfg.dev = {
-            ...(cfg.dev as Record<string, unknown> ?? {}),
+            ...(cfg.dev as Record<string, unknown>),
             enabled: targetEnabled,
             ...devRepoPatch,
           };

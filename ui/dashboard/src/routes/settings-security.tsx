@@ -47,7 +47,7 @@ export default function SecuritySettingsPage() {
       const parts = path.split(".");
       let cur = result;
       for (let i = 0; i < parts.length - 1; i++) {
-        cur[parts[i]!] = { ...(cur[parts[i]!] as Record<string, unknown> ?? {}) };
+        cur[parts[i]!] = { ...(cur[parts[i]!] as Record<string, unknown>) };
         cur = cur[parts[i]!] as Record<string, unknown>;
       }
       cur[parts[parts.length - 1]!] = value;

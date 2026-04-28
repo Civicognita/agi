@@ -20,7 +20,7 @@ export function setNestedValue(obj: AionimaConfig, path: string, value: unknown)
   let current: Record<string, unknown> = result;
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i]!;
-    current[part] = { ...(current[part] as Record<string, unknown> ?? {}) };
+    current[part] = { ...(current[part] as Record<string, unknown>) };
     current = current[part] as Record<string, unknown>;
   }
   current[parts[parts.length - 1]!] = value;

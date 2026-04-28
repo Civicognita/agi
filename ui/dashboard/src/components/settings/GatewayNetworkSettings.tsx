@@ -464,7 +464,7 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
                   value={tunnelMode}
                   onChange={(e) => update((prev) => ({
                     ...prev,
-                    hosting: { ...(prev.hosting as Record<string, unknown> ?? {}), tunnelMode: e.target.value },
+                    hosting: { ...(prev.hosting as Record<string, unknown>), tunnelMode: e.target.value },
                   }))}
                 >
                   <option value="named">Named (persistent URL, requires auth + domain)</option>
@@ -477,7 +477,7 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
                   value={tunnelDomain}
                   onChange={(e) => update((prev) => ({
                     ...prev,
-                    hosting: { ...(prev.hosting as Record<string, unknown> ?? {}), tunnelDomain: e.target.value || undefined },
+                    hosting: { ...(prev.hosting as Record<string, unknown>), tunnelDomain: e.target.value || undefined },
                   }))}
                   placeholder="example.com"
                 />
