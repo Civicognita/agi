@@ -121,49 +121,41 @@ export function Projects({
         </div>
       )}
 
-      {/* Sacred Projects — Contributing mode only */}
+      {/* Aionima — single platform-contribution portal tile (s119 redesign).
+          Replaces the per-core-repo sacred tiles. Users don't ship updates
+          per package; they contribute across channels through the
+          consolidated /aionima view (upstream alignment + PR + MINT).
+          Impactium-blockchain COA<>COI ties back to THIS single entry. */}
       {isContributing && (
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-3">
             <Star className="h-4 w-4 text-yellow" />
-            <h3 className="text-[13px] font-semibold text-foreground">Sacred Projects</h3>
+            <h3 className="text-[13px] font-semibold text-foreground">Aionima</h3>
           </div>
           <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-            {sacredEntries.map(({ sacred, project }) => {
-              const isProvisioned = project !== null;
-              const slug = project ? projectSlug(project.path) : null;
-              return (
-                <div
-                  key={sacred.id}
-                  onClick={() => {
-                    if (slug) void navigate(`/projects/${slug}`);
-                  }}
-                  className={cn(
-                    "rounded-xl border transition-colors duration-150",
-                    "bg-indigo-50/70 border-indigo-200/80",
-                    "dark:bg-indigo-950/40 dark:border-indigo-700/60",
-                    slug ? "cursor-pointer hover:border-yellow" : "cursor-not-allowed opacity-80",
-                  )}
-                  data-testid="project-card-sacred"
-                >
-                  <div className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Star className="h-4 w-4 text-yellow" />
-                      <span className="text-[15px] font-semibold text-card-foreground">{sacred.name}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">
-                        sacred
-                      </span>
-                    </div>
-                    <div className="text-[11px] text-muted-foreground font-mono break-all">
-                      {isProvisioned ? project!.path : "Not provisioned"}
-                    </div>
-                    {!isProvisioned && (
-                      <div className="text-[11px] mt-1 text-muted-foreground">Waiting for repository provisioning.</div>
-                    )}
-                  </div>
+            <div
+              onClick={() => { void navigate("/aionima"); }}
+              className={cn(
+                "rounded-xl border transition-colors duration-150 cursor-pointer hover:border-yellow",
+                "bg-indigo-50/70 border-indigo-200/80",
+                "dark:bg-indigo-950/40 dark:border-indigo-700/60",
+              )}
+              data-testid="project-card-aionima"
+            >
+              <div className="p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Star className="h-4 w-4 text-yellow" />
+                  <span className="text-[15px] font-semibold text-card-foreground">Aionima</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">
+                    platform
+                  </span>
                 </div>
-              );
-            })}
+                <div className="text-[11px] text-muted-foreground">
+                  Platform contribution portal — upstream alignment, PR submission, MINT impact ($WORK / $K / $RES). Wraps the {sacredEntries.length} core forks (agi, prime, id, marketplace, mapp-marketplace) as one user-facing surface.
+                </div>
+                <div className="text-[11px] text-yellow mt-2 font-medium">Open Aionima Development →</div>
+              </div>
+            </div>
           </div>
         </div>
       )}
