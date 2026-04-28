@@ -5,6 +5,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Card } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import { fetchVendors, upsertVendor, updateVendorDpa, updateVendorBaa, updateVendorCompliance } from "../api.js";
@@ -76,29 +78,34 @@ export default function VendorsPage() {
       </div>
 
       {showAdd && (
-        <div className="rounded-xl bg-card border border-border p-4 flex gap-3 items-end">
+        <Card className="p-4 flex gap-3 items-end">
           <div className="flex-1">
             <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Name</label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Vendor name" />
           </div>
           <div>
             <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Type</label>
-            <select value={type} onChange={(e) => setType(e.target.value)} className="h-9 px-3 rounded-md border border-border bg-background text-foreground text-[13px]">
-              <option value="llm_provider">LLM Provider</option>
-              <option value="oauth_provider">OAuth Provider</option>
-              <option value="voice_provider">Voice Provider</option>
-              <option value="hosting">Hosting</option>
-              <option value="payment">Payment</option>
-              <option value="other">Other</option>
-            </select>
+            <Select
+              className="text-[13px]"
+              list={[
+                { value: "llm_provider", label: "LLM Provider" },
+                { value: "oauth_provider", label: "OAuth Provider" },
+                { value: "voice_provider", label: "Voice Provider" },
+                { value: "hosting", label: "Hosting" },
+                { value: "payment", label: "Payment" },
+                { value: "other", label: "Other" },
+              ]}
+              value={type}
+              onValueChange={setType}
+            />
           </div>
           <Button size="sm" onClick={() => void handleAdd()} disabled={adding || !name.trim()}>
             {adding ? "Adding..." : "Add"}
           </Button>
-        </div>
+        </Card>
       )}
 
-      <div className="rounded-xl bg-card border border-border overflow-hidden">
+      <Card className="overflow-hidden">
         {vendors.length === 0 ? (
           <div className="text-center text-sm text-muted-foreground py-12">No vendors tracked. Providers are auto-populated from your config on restart.</div>
         ) : (
@@ -115,16 +122,17 @@ export default function VendorsPage() {
                         {v.complianceStatus.replace(/_/g, " ")}
                       </span>
                     </div>
-                    <select
+                    <Select
+                      className="text-[11px]"
+                      list={[
+                        { value: "compliant", label: "Compliant" },
+                        { value: "review_needed", label: "Review Needed" },
+                        { value: "non_compliant", label: "Non-Compliant" },
+                        { value: "unknown", label: "Unknown" },
+                      ]}
                       value={v.complianceStatus}
-                      onChange={(e) => void handleCompliance(v.id, e.target.value)}
-                      className="h-7 px-2 rounded border border-border bg-background text-foreground text-[11px]"
-                    >
-                      <option value="compliant">Compliant</option>
-                      <option value="review_needed">Review Needed</option>
-                      <option value="non_compliant">Non-Compliant</option>
-                      <option value="unknown">Unknown</option>
-                    </select>
+                      onValueChange={(val) => void handleCompliance(v.id, val)}
+                    />
                   </div>
                   <div className="flex items-center gap-4 text-[11px]">
                     <label className="flex items-center gap-1.5 cursor-pointer">
@@ -149,7 +157,7 @@ export default function VendorsPage() {
             })}
           </div>
         )}
-      </div>
+      </Card>
     </div>
     </PageScroll>
   );

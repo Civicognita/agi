@@ -5,6 +5,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Card } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import { fetchIncidents, createIncident, updateIncidentStatus, updateIncidentBreach } from "../api.js";
@@ -83,7 +85,7 @@ export default function IncidentsPage() {
       </div>
 
       {showCreate && (
-        <div className="rounded-xl bg-card border border-border p-4 space-y-3">
+        <Card className="p-4 space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Title</label>
@@ -91,13 +93,18 @@ export default function IncidentsPage() {
             </div>
             <div>
               <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Severity</label>
-              <select value={severity} onChange={(e) => setSeverity(e.target.value)} className="w-full h-9 px-3 rounded-md border border-border bg-background text-foreground text-[13px]">
-                <option value="critical">Critical</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-                <option value="info">Info</option>
-              </select>
+              <Select
+                className="text-[13px]"
+                list={[
+                  { value: "critical", label: "Critical" },
+                  { value: "high", label: "High" },
+                  { value: "medium", label: "Medium" },
+                  { value: "low", label: "Low" },
+                  { value: "info", label: "Info" },
+                ]}
+                value={severity}
+                onValueChange={setSeverity}
+              />
             </div>
           </div>
           <div>
@@ -107,10 +114,10 @@ export default function IncidentsPage() {
           <Button size="sm" onClick={() => void handleCreate()} disabled={creating || !title.trim()}>
             {creating ? "Creating..." : "Create Incident"}
           </Button>
-        </div>
+        </Card>
       )}
 
-      <div className="rounded-xl bg-card border border-border overflow-hidden">
+      <Card className="overflow-hidden">
         {incidents.length === 0 ? (
           <div className="text-center text-sm text-muted-foreground py-12">No incidents recorded.</div>
         ) : (
@@ -132,17 +139,18 @@ export default function IncidentsPage() {
                     </div>
                     <div className="flex items-center gap-1.5">
                       {inc.status !== "closed" && (
-                        <select
+                        <Select
+                          className="text-[11px]"
+                          list={[
+                            { value: "detected", label: "Detected" },
+                            { value: "investigating", label: "Investigating" },
+                            { value: "contained", label: "Contained" },
+                            { value: "resolved", label: "Resolved" },
+                            { value: "closed", label: "Closed" },
+                          ]}
                           value={inc.status}
-                          onChange={(e) => void handleStatusChange(inc.id, e.target.value)}
-                          className="h-7 px-2 rounded border border-border bg-background text-foreground text-[11px]"
-                        >
-                          <option value="detected">Detected</option>
-                          <option value="investigating">Investigating</option>
-                          <option value="contained">Contained</option>
-                          <option value="resolved">Resolved</option>
-                          <option value="closed">Closed</option>
-                        </select>
+                          onValueChange={(v) => void handleStatusChange(inc.id, v)}
+                        />
                       )}
                     </div>
                   </div>
@@ -167,7 +175,7 @@ export default function IncidentsPage() {
             })}
           </div>
         )}
-      </div>
+      </Card>
     </div>
     </PageScroll>
   );
