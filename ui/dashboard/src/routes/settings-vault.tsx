@@ -22,6 +22,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import { DevNotes } from "@/components/ui/dev-notes";
 import { cn } from "@/lib/utils";
 import {
   fetchVaultEntries,
@@ -93,31 +94,59 @@ export default function SettingsVaultPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-[28px] font-semibold tracking-tight">Vault</h1>
-          <p className="text-muted-foreground mt-1 max-w-[60ch] text-[13.5px]">
-            Private keys, passwords, and tokens encrypted via TPM2-sealed storage.
-            Reference entries from project config via{" "}
-            <code className="font-mono text-foreground">vault://&lt;id&gt;</code> — values never
-            land in <code className="font-mono text-foreground">.env</code> files or{" "}
-            <code className="font-mono text-foreground">project.json</code>.
-          </p>
+        <div className="flex items-start gap-2">
+          <div>
+            <h1 className="text-[28px] font-semibold tracking-tight">Vault</h1>
+            <p className="text-muted-foreground mt-1 max-w-[60ch] text-[13.5px]">
+              Private keys, passwords, and tokens encrypted via TPM2-sealed storage.
+              Reference entries from project config via{" "}
+              <code className="font-mono text-foreground">vault://&lt;id&gt;</code> — values never
+              land in <code className="font-mono text-foreground">.env</code> files or{" "}
+              <code className="font-mono text-foreground">project.json</code>.
+            </p>
+          </div>
+          <DevNotes title="Vault — dev notes">
+            <DevNotes.Item kind="info" heading="Backend selection (TPM2 vs filesystem)">
+              At boot, <code className="font-mono">detectTpm2Available()</code> probes for TPM2 hardware
+              via <code className="font-mono">sudo -n systemd-creds list</code>. Production with TPM2 →
+              <code className="font-mono">SecretsManager</code> (encrypted .cred). Test VM / dev / CI →
+              <code className="font-mono">FilesystemSecretsBackend</code> (plaintext .plain, mode 0o600).
+              Override via <code className="font-mono">AGI_VAULT_PLAINTEXT=1</code>. See server.ts:343-358.
+            </DevNotes.Item>
+            <DevNotes.Item kind="info" heading="Reference syntax: vault://&lt;id&gt;">
+              Resolved at MCP server <strong>connect time</strong>, not per-call (server.ts:2031-2046 +
+              2098+ for per-project). The value is fetched once + the resolved bearer token is held in
+              memory for the server's lifetime. <code className="font-mono">VaultResolver</code> uses
+              project-scope enforcement: scope mismatch throws
+              <code className="font-mono">VaultResolverScopeError</code>.
+            </DevNotes.Item>
+            <DevNotes.Item kind="todo" heading="Per-project picker (MCP tab + Stacks)">
+              The dashboard's MCP tab picker that surfaces vault entries inline (filtered by project +
+              type) is deferred to a follow-up cycle. Stacks panel integration sits behind the same gap.
+              For now: owner copies the entry's id from this Vault page + manually pastes
+              <code className="font-mono">vault://&lt;id&gt;</code> into project config.
+            </DevNotes.Item>
+            <DevNotes.Item kind="todo" heading="Migration helper UI">
+              <code className="font-mono">planMigration</code> + <code className="font-mono">executeMigration</code>
+              ship in vault/migration.ts (26 unit tests pass) but no &ldquo;Migrate from .env&rdquo; button
+              wires them yet. Adding it as a per-project workflow is the obvious next-step UX.
+            </DevNotes.Item>
+            <DevNotes.Item kind="info" heading="Audit trail">
+              Every successful vault read writes a <code className="font-mono">vault_read</code> COA
+              chain entry with <code className="font-mono">payloadHash = SHA256(entryId|projectPath)</code>
+              so audits don't store the path in plaintext. Boot-time resolves don't pass audit context yet
+              (auditor is auditor-optional); chat-time resolves through agent-invoker would when wired.
+            </DevNotes.Item>
+            <DevNotes.Item kind="deferred" heading="Per-call vault resolution">
+              Today: vault refs resolve <em>once</em> at MCP server registration. If an entry is rotated
+              while the gateway is running, the in-memory bearer stays stale until restart. Per-call
+              resolution + cache invalidation on entry update is a future enhancement; not blocking.
+            </DevNotes.Item>
+          </DevNotes>
         </div>
         <Button onClick={() => setCreateOpen(true)} data-testid="vault-create-open">
           New entry
         </Button>
-      </div>
-
-      {/* Disclaimer banner — first slice of the Vault UX */}
-      <div className="px-4 py-3 rounded-lg border-l-4 border-amber-400 border border-amber-400/30 bg-amber-400/5 text-[12.5px] leading-relaxed">
-        <strong className="text-amber-400 uppercase tracking-wider text-[11px]">
-          ⚠ First slice
-        </strong>
-        <p className="mt-1 text-foreground">
-          The list below shows vault entries across the gateway. Per-project filtering, the MCP-tab
-          picker, the Stacks integration, and the runtime resolver land in follow-up cycles
-          (s128 t496-t498).
-        </p>
       </div>
 
       {error !== null && (

@@ -673,8 +673,54 @@ cmd_services_stop() {
     # Write graceful shutdown marker so AGI does not enter safemode on next start
     mkdir -p ~/.agi
     echo "{\"version\":1,\"shutdownAt\":\"$(date -u +%Y-%m-%dT%H:%M:%S.000Z)\",\"reason\":\"sigterm\",\"pid\":$(cat /tmp/agi.pid 2>/dev/null || echo 0),\"projects\":[],\"models\":[]}" > ~/.agi/shutdown-state.json
-    [ -f /tmp/agi.pid ] && kill $(cat /tmp/agi.pid) 2>/dev/null && rm /tmp/agi.pid && echo "AGI stopped"
-    [ -f /tmp/agi-local-id.pid ] && kill $(cat /tmp/agi-local-id.pid) 2>/dev/null && rm /tmp/agi-local-id.pid && echo "ID stopped"
+
+    # AGI: SIGTERM → wait up to 5s for graceful exit → SIGKILL → verify port 3100
+    # is released. Previous version did kill $(cat pid) without waiting, which
+    # left stale processes bound to 3100 even after services-stop returned —
+    # forcing manual force-kill cycles in dev workflows.
+    if [ -f /tmp/agi.pid ]; then
+      AGI_PID=$(cat /tmp/agi.pid)
+      if kill -0 $AGI_PID 2>/dev/null; then
+        kill $AGI_PID 2>/dev/null
+        for i in 1 2 3 4 5; do
+          if ! kill -0 $AGI_PID 2>/dev/null; then break; fi
+          sleep 1
+        done
+        if kill -0 $AGI_PID 2>/dev/null; then
+          echo "  AGI did not exit after 5s SIGTERM — sending SIGKILL"
+          kill -9 $AGI_PID 2>/dev/null
+          sleep 1
+        fi
+      fi
+      rm -f /tmp/agi.pid
+      # Belt-and-braces: any orphaned node process bound to the cli/dist entrypoint
+      # (e.g. PID file mismatch from prior crash) gets cleaned too.
+      sudo pkill -9 -f "node.*cli/dist/index" 2>/dev/null || true
+      # Verify port 3100 is actually released before reporting stopped
+      for i in 1 2 3 4 5; do
+        if ! sudo ss -ltn 2>/dev/null | grep -q ":3100\b"; then break; fi
+        sleep 1
+      done
+      if sudo ss -ltn 2>/dev/null | grep -q ":3100\b"; then
+        echo "  WARN: AGI stopped but port 3100 still bound (may be a stale process)"
+      else
+        echo "AGI stopped"
+      fi
+    fi
+
+    if [ -f /tmp/agi-local-id.pid ]; then
+      ID_PID=$(cat /tmp/agi-local-id.pid)
+      if kill -0 $ID_PID 2>/dev/null; then
+        kill $ID_PID 2>/dev/null
+        for i in 1 2 3; do
+          if ! kill -0 $ID_PID 2>/dev/null; then break; fi
+          sleep 1
+        done
+        kill -9 $ID_PID 2>/dev/null || true
+      fi
+      rm -f /tmp/agi-local-id.pid
+      echo "ID stopped"
+    fi
   '
 }
 
@@ -698,6 +744,63 @@ cmd_services_restart() {
   cmd_services_stop
   echo "==> Starting VM services..."
   cmd_services_start
+}
+
+# Realign the test VM with the host's intended state in one shot:
+# 1. Stop VM services (with proper kill + port-release verification)
+# 2. Build the host (cli/dist + dashboard) so the VM's mounted source has
+#    fresh artifacts — the VM runs `node cli/dist/index.js`, so a stale
+#    cli/dist means stale-code runs even after restart.
+# 3. Start VM services
+# 4. Poll /health until the VM reports the host's version
+# 5. Report aligned OR fail with a diagnostic
+#
+# Used after any host-side code change that should be reflected in the VM
+# (committed or uncommitted). Replaces the prior cycle of stop → manual
+# pnpm build → manual pkill if stale → start.
+cmd_services_align() {
+  ensure_vm_running
+  echo "==> Aligning test VM with host source..."
+
+  local host_version
+  host_version=$(grep -m1 '"version"' "$REPO_DIR/package.json" 2>/dev/null | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+  [ -z "$host_version" ] && host_version="unknown"
+  echo "    Host source version: ${host_version}"
+
+  echo "==> Stopping VM services..."
+  cmd_services_stop
+
+  echo "==> Building host (cli/dist + dashboard)..."
+  if (cd "$REPO_DIR" && pnpm build 2>&1 | tail -3); then
+    echo "    build complete"
+  else
+    echo "    WARN: build failed; VM will run whatever's in cli/dist now"
+  fi
+
+  echo "==> Starting VM services..."
+  cmd_services_start
+
+  echo "==> Polling /health until VM reports host version (${host_version})..."
+  local vm_version waited=0
+  while [ $waited -lt 30 ]; do
+    vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk https://ai.on/health 2>/dev/null" 2>/dev/null \
+      | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
+      | tr -d '\r\n ')
+    if [ "$vm_version" = "$host_version" ]; then
+      echo "    aligned: VM reports v${vm_version}"
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+
+  echo ""
+  echo "    DRIFT: VM reports v${vm_version:-unreachable}, expected v${host_version}"
+  echo "    Common causes:"
+  echo "      - Stale process bound to port 3100 (try '$0 services-stop' again)"
+  echo "      - Build failed silently (check 'cd $REPO_DIR && pnpm build')"
+  echo "      - Mount stale (try 'multipass restart $VM_NAME')"
+  return 1
 }
 
 cmd_services_version() {
@@ -819,6 +922,7 @@ case "${1:-help}" in
   services-restart) cmd_services_restart ;;
   services-status)  cmd_services_status ;;
   services-version) cmd_services_version ;;
+  services-align|align) cmd_services_align ;;
   provision)        cmd_provision ;;
   test-services)    cmd_test_services ;;
   test-ui)          cmd_test_ui "${@:2}" ;;
@@ -843,6 +947,7 @@ case "${1:-help}" in
     echo "  services-restart Stop and start all services (fastest way to pick up host source changes)"
     echo "  services-status  Show status and health of all services"
     echo "  services-version Compare VM-running AGI version vs host source package.json (warns when stale)"
+    echo "  services-align   Realign VM with host (stop → build → start → poll until version matches). Alias: align"
     echo "  test-services    Run service integration tests against the running stack"
     echo "  test-ui          Run Playwright UI tests against https://test.ai.on"
     ;;
