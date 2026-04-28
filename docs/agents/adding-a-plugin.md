@@ -2,6 +2,14 @@
 
 This guide covers creating a plugin for the Aionima marketplace. All plugins live in the marketplace repo (`Civicognita/agi-marketplace`), not in the AGI repo. Use any existing plugin in `plugins/plugin-*/` in the marketplace repo as reference.
 
+## UI is a contract — use ADF primitives, file bugs upstream
+
+Any dashboard surface a plugin renders MUST consume the ADF UI primitive layer (`@particle-academy/react-fancy` + the project-side wrappers under `agi/ui/dashboard/src/components/ui/*`). Hand-rolling `<div>` + Tailwind chrome breaks the contract that owners (and other plugins, MApps, locally-hosted apps) depend on for consistent UX, theming, accessibility, and security.
+
+**See** [`docs/human/adf.md` § 5 UI components](../human/adf.md#5-ui-components) **for the full primitive cheatsheet** (Card / Tabs / Field / Action / ContentRenderer / Editor / Chart / Sidebar / TreeNav / etc.) and the bug-routing rules for `react-fancy` / `fancy-sheets` / `fancy-code` / `react-echarts` (→ `fancy-echarts`) — we own all four upstream repos. **Do not work around primitive bugs locally without filing the upstream issue first.**
+
+Reference implementation for "what right looks like": `agi/ui/dashboard/src/components/MCPTab.tsx` (Card + Tabs + ContentRenderer + content-block-aware result rendering). Copy the pattern, adapt the surface.
+
 ## What Plugins Can Do
 
 Plugins receive an `AionimaPluginAPI` instance during `activate()` and can:
