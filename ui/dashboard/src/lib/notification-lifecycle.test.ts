@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { isCompactByAge, FULL_PREVIEW_TTL_MS } from "./NotificationItem.js";
+import { isCompactByAge, FULL_PREVIEW_TTL_MS } from "./notification-lifecycle.js";
 
 /**
- * NotificationItem — lifecycle policy tests (s124 t473).
+ * notification-lifecycle — render-mode policy tests (s124 t473).
  *
  * Pure-logic tests for `isCompactByAge` — the policy that decides
  * whether an iterative-work notification renders in full-preview mode
@@ -16,7 +16,7 @@ function isoOffset(now: number, deltaMs: number): string {
   return new Date(now + deltaMs).toISOString();
 }
 
-describe("NotificationItem.isCompactByAge — s124 t473 lifecycle policy", () => {
+describe("notification-lifecycle.isCompactByAge — s124 t473 render policy", () => {
   it("returns false for non-iterative-work types regardless of age", () => {
     expect(
       isCompactByAge(

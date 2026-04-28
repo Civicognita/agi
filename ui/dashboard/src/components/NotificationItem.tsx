@@ -10,22 +10,8 @@
  */
 
 import { cn } from "@/lib/utils";
+import { isCompactByAge } from "@/lib/notification-lifecycle.js";
 import type { Notification } from "@/types.js";
-
-/** s124 t473: full preview window for iterative-work notifications. After
- *  this, the row collapses to a compact "title + project + age" line so
- *  the bell list doesn't drown in stale thumbnails. The full artifact is
- *  still reachable via the click-through (chat-routing per t472). 24h is
- *  the default; tunable here for future per-user preferences. */
-export const FULL_PREVIEW_TTL_MS = 24 * 60 * 60 * 1000;
-
-/** Pure helper: should this notification render in compact mode based on
- *  its type + age? Exported for unit testing the t473 lifecycle policy. */
-export function isCompactByAge(notification: { type: string; createdAt: string }, now: number = Date.now()): boolean {
-  if (notification.type !== "iterative-work") return false;
-  const ageMs = now - new Date(notification.createdAt).getTime();
-  return ageMs > FULL_PREVIEW_TTL_MS;
-}
 
 interface NotificationItemProps {
   notification: Notification;
