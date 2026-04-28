@@ -14,7 +14,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
-import { EmojiSelect } from "@particle-academy/react-fancy";
+import { Select } from "@/components/ui/select.js";
+import { Card } from "@/components/ui/card.js";
+import { EmojiSelect, Textarea, Callout } from "@particle-academy/react-fancy";
 import { MAppFormRenderer } from "./MAppFormRenderer.js";
 import { cn } from "@/lib/utils";
 
@@ -210,14 +212,17 @@ function BasicsStep({ state, update }: { state: EditorState; update: <K extends 
         </div>
         <div>
           <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Category</label>
-          <select value={state.category} onChange={(e) => update("category", e.target.value)} className="w-full h-9 px-3 rounded-md border border-border bg-background text-foreground text-[13px]">
-            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
+          <Select
+            className="text-[13px]"
+            list={CATEGORIES.map((c) => ({ value: c, label: c }))}
+            value={state.category}
+            onValueChange={(v) => update("category", v)}
+          />
         </div>
       </div>
       <div>
         <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Description</label>
-        <textarea value={state.description} onChange={(e) => update("description", e.target.value)} rows={2} placeholder="What does this MApp do?" className="w-full px-3 py-2 rounded-md border border-border bg-background text-foreground text-[13px]" />
+        <Textarea value={state.description} onChange={(e) => update("description", e.target.value)} rows={2} placeholder="What does this MApp do?" className="text-[13px]" />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -285,10 +290,15 @@ function ConstantsStep({ state, update }: { state: EditorState; update: <K exten
                     </button>
                   ))}
                 </div>
-                <select value={c.visibility} onChange={(e) => { const cs = [...state.constants]; cs[i] = { ...c, visibility: e.target.value as EditorConstant["visibility"] }; update("constants", cs); }}
-                  className="h-7 px-1 rounded border border-border bg-background text-[10px]">
-                  <option value="always">Visible</option><option value="hidden">Hidden</option>
-                </select>
+                <Select
+                  className="text-[10px]"
+                  list={[
+                    { value: "always", label: "Visible" },
+                    { value: "hidden", label: "Hidden" },
+                  ]}
+                  value={c.visibility}
+                  onValueChange={(v) => { const cs = [...state.constants]; cs[i] = { ...c, visibility: v as EditorConstant["visibility"] }; update("constants", cs); }}
+                />
               </div>
             </div>
           </div>
@@ -416,18 +426,34 @@ function PagesStep({ state, update }: { state: EditorState; update: <K extends k
         </div>
         <div>
           <label className="text-[10px] text-muted-foreground mb-0.5 block">Type</label>
-          <select value={page.pageType} onChange={(e) => { const ps = [...state.pages]; ps[activePage] = { ...page, pageType: e.target.value }; update("pages", ps); }} className="h-8 px-2 rounded border border-border bg-background text-[11px]">
-            <option value="standard">Standard</option><option value="magic">Magic</option><option value="embedded">Embedded</option><option value="canvas">Canvas</option>
-          </select>
+          <Select
+            className="text-[11px]"
+            list={[
+              { value: "standard", label: "Standard" },
+              { value: "magic", label: "Magic" },
+              { value: "embedded", label: "Embedded" },
+              { value: "canvas", label: "Canvas" },
+            ]}
+            value={page.pageType}
+            onValueChange={(v) => { const ps = [...state.pages]; ps[activePage] = { ...page, pageType: v }; update("pages", ps); }}
+          />
         </div>
         <div>
           <label className="text-[10px] text-muted-foreground mb-0.5 block">Visibility</label>
           {activePage === 0 ? (
             <div className="h-8 px-2 rounded border border-border bg-surface0/30 text-muted-foreground text-[11px] flex items-center">Always</div>
           ) : (
-            <select value={page.visibility} onChange={(e) => { const ps = [...state.pages]; ps[activePage] = { ...page, visibility: e.target.value }; update("pages", ps); }} className="h-8 px-2 rounded border border-border bg-background text-[11px]">
-              <option value="always">Always</option><option value="conditional">Conditional</option><option value="auto">Auto</option><option value="hidden">Hidden</option>
-            </select>
+            <Select
+              className="text-[11px]"
+              list={[
+                { value: "always", label: "Always" },
+                { value: "conditional", label: "Conditional" },
+                { value: "auto", label: "Auto" },
+                { value: "hidden", label: "Hidden" },
+              ]}
+              value={page.visibility}
+              onValueChange={(v) => { const ps = [...state.pages]; ps[activePage] = { ...page, visibility: v }; update("pages", ps); }}
+            />
           )}
         </div>
         {/* Prompt button */}
@@ -466,9 +492,12 @@ function PagesStep({ state, update }: { state: EditorState; update: <K extends k
               <div key={i} className="rounded-lg border border-border bg-mantle p-3">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-[9px] font-mono text-muted-foreground bg-surface0 px-1.5 py-0.5 rounded">{f.cell}</span>
-                  <select value={f.type} onChange={(e) => updateField(i, { type: e.target.value })} className="h-7 px-1 rounded border border-border bg-background text-[11px]">
-                    {FIELD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                  </select>
+                  <Select
+                    className="text-[11px]"
+                    list={FIELD_TYPES.map((t) => ({ value: t, label: t }))}
+                    value={f.type}
+                    onValueChange={(v) => updateField(i, { type: v })}
+                  />
                   <div className="flex-1" />
                   <button onClick={() => moveField(i, -1)} disabled={i === 0} className="text-[11px] text-muted-foreground disabled:opacity-30">{"\u25B2"}</button>
                   <button onClick={() => moveField(i, 1)} disabled={i === page.fields.length - 1} className="text-[11px] text-muted-foreground disabled:opacity-30">{"\u25BC"}</button>
@@ -497,8 +526,8 @@ function PagesStep({ state, update }: { state: EditorState; update: <K extends k
                 {(f.type === "select" || f.type === "multiselect") && (
                   <div className="mt-2">
                     <label className="text-[9px] text-muted-foreground">Options (one per line)</label>
-                    <textarea value={(f.options ?? []).join("\n")} onChange={(e) => updateField(i, { options: e.target.value.split("\n").filter(Boolean) })}
-                      rows={3} className="w-full px-2 py-1 rounded border border-border bg-background text-[11px]" placeholder={"Option 1\nOption 2\nOption 3"} />
+                    <Textarea value={(f.options ?? []).join("\n")} onChange={(e) => updateField(i, { options: e.target.value.split("\n").filter(Boolean) })}
+                      rows={3} className="text-[11px]" placeholder={"Option 1\nOption 2\nOption 3"} />
                   </div>
                 )}
                 {/* Type-specific: number min/max */}
@@ -571,8 +600,8 @@ function PagesStep({ state, update }: { state: EditorState; update: <K extends k
                 <li>Generate dynamic inputs for magic pages</li>
               </ul>
               <label className="block text-[12px] font-semibold text-foreground mb-2">Page Prompt</label>
-              <textarea value={page.processPage ?? ""} onChange={(e) => { const ps = [...state.pages]; ps[activePage] = { ...page, processPage: e.target.value || undefined }; update("pages", ps); }}
-                rows={8} placeholder="Analyze the inputs and determine what to show next..." className="w-full px-3 py-2 rounded-md border border-border bg-mantle text-foreground text-[12px]" />
+              <Textarea value={page.processPage ?? ""} onChange={(e) => { const ps = [...state.pages]; ps[activePage] = { ...page, processPage: e.target.value || undefined }; update("pages", ps); }}
+                rows={8} placeholder="Analyze the inputs and determine what to show next..." className="text-[12px]" />
             </div>
             <div className="px-4 py-3 border-t border-border flex justify-end gap-2">
               <Button variant="secondary" size="sm" onClick={() => setPromptModalOpen(false)}>Cancel</Button>
@@ -614,8 +643,8 @@ function OutputStep({ state, update }: { state: EditorState; update: <K extends 
         <label className="flex items-center gap-2 text-[13px] font-semibold text-foreground mb-2">
           {"\u2728"} Final Processing Prompt
         </label>
-        <textarea value={state.processingPrompt} onChange={(e) => update("processingPrompt", e.target.value)}
-          rows={10} placeholder="After completing the inputs, produce a comprehensive analysis..." className="w-full px-4 py-3 rounded-lg border border-border bg-mantle text-foreground text-[13px]" />
+        <Textarea value={state.processingPrompt} onChange={(e) => update("processingPrompt", e.target.value)}
+          rows={10} placeholder="After completing the inputs, produce a comprehensive analysis..." className="text-[13px]" />
         <p className="text-[11px] text-muted-foreground mt-1">This AI prompt receives all inputs from all pages and formula results to generate the final output.</p>
       </div>
 
