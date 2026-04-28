@@ -161,6 +161,22 @@ export function MCPTab({ project }: { project: ProjectInfo }): JSX.Element {
     }
   };
 
+  const reconnectServer = async (id: string): Promise<void> => {
+    setTesting(id);
+    try {
+      const res = await fetch(`/api/projects/mcp/server/reconnect?path=${encodeURIComponent(project.path)}&id=${encodeURIComponent(id)}`, { method: "POST" });
+      const body = await res.json() as { ok: boolean; error?: string };
+      if (!body.ok && body.error) {
+        setTestResult((prev) => ({ ...prev, [id]: { ok: false, message: body.error! } }));
+      }
+      await refresh();
+    } catch (err) {
+      setTestResult((prev) => ({ ...prev, [id]: { ok: false, message: err instanceof Error ? err.message : String(err) } }));
+    } finally {
+      setTesting(null);
+    }
+  };
+
   const removeEnvKey = async (key: string): Promise<void> => {
     if (!confirm(`Remove env key "${key}" from this project's .env?`)) return;
     try {
@@ -222,6 +238,11 @@ export function MCPTab({ project }: { project: ProjectInfo }): JSX.Element {
                   </td>
                   <td className="py-2">
                     <div className="flex gap-2">
+                      {s.state === "error" && (
+                        <Button onClick={() => { void reconnectServer(s.id); }} disabled={testing === s.id} data-testid={`mcp-reconnect-${s.id}`}>
+                          {testing === s.id ? "Reconnecting…" : "Reconnect"}
+                        </Button>
+                      )}
                       <Button onClick={() => { void testServer(s.id); }} disabled={testing === s.id} data-testid={`mcp-test-${s.id}`}>
                         {testing === s.id ? "Testing…" : "Test"}
                       </Button>

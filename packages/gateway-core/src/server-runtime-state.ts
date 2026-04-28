@@ -1889,6 +1889,42 @@ export async function createGatewayRuntimeState(
     }
   });
 
+  // POST /api/projects/mcp/server/reconnect?path=&id= — re-register the server
+  // from current project.json + .env state, then attempt connect. Lets the user
+  // recover from an `error` state caused by a transient network blip or a save
+  // race without having to remove + re-add the server.
+  fastify.post("/api/projects/mcp/server/reconnect", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient || !deps.projectConfigManager) return reply.code(503).send({ error: "MCP client or project config manager not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const targetPath = resolvePath(pathParam);
+    try {
+      const cur = await deps.projectConfigManager.read(targetPath);
+      const servers = ((cur as { mcp?: { servers?: Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> } }).mcp?.servers ?? []);
+      const target = servers.find((s) => s.id === idParam);
+      if (!target) return reply.code(404).send({ error: `Server "${idParam}" not configured for this project` });
+      const env = target.env ? resolveDollarVarsObject(target.env, readProjectEnv(targetPath)) : undefined;
+      const authToken = target.authToken ? resolveDollarVars(target.authToken, readProjectEnv(targetPath)) : undefined;
+      await deps.mcpClient.registerServer({
+        id: mcpServerNs(targetPath, target.id),
+        name: target.name,
+        transport: target.transport,
+        command: target.command,
+        env,
+        url: target.url,
+        autoConnect: true,
+        authToken,
+      });
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // GET /api/projects/mcp/available — list MCP server templates (built-in + plugin-registered).
   fastify.get("/api/projects/mcp/available", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
