@@ -340,6 +340,17 @@ export async function startGatewayServer(
   secrets.loadIntoEnv();
   log.info(`Secrets: ${String(secrets.listSecrets().length)} credential(s) on disk, CREDENTIALS_DIRECTORY ${process.env["CREDENTIALS_DIRECTORY"] ? "active" : "not set"}`);
 
+  // s128 t493/t494 — Vault: structured layer over SecretsManager. Vault
+  // entries live at ~/.agi/secrets/vault/<id>.json (metadata) + are
+  // value-encrypted via the existing TPM2-sealed `.cred` shape (keyed
+  // `vault_<id>`). Routes registered later under /api/vault.
+  const { VaultStorage } = await import("./vault/storage.js");
+  const vaultStorage = new VaultStorage({
+    vaultDir: join(homedir(), ".agi", "secrets", "vault"),
+    secretsBackend: secrets,
+  });
+  vaultStorage.initialize();
+
   // -------------------------------------------------------------------------
   // Step 2: Auth bootstrap
   // -------------------------------------------------------------------------
@@ -2625,6 +2636,12 @@ export async function startGatewayServer(
           getConfig: () => config,
           logger: createComponentLogger(logger, "lemonade-api"),
         }),
+        // s128 t494 — Vault REST surface (private-network gated; project-
+        // scoping enforced via ?requestingProject= query parameter).
+        async (f) => {
+          const { registerVaultRoutes } = await import("./vault/api.js");
+          registerVaultRoutes(f, { vaultStorage });
+        },
       ],
     },
     { host, port },
