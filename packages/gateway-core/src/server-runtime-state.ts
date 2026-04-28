@@ -65,6 +65,14 @@ import { projectConfigPath } from "./project-config-path.js";
 import type { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import { cadenceToStaggeredCron } from "./iterative-work/cron.js";
 import {
+  listProjectEnvKeys,
+  readProjectEnv,
+  removeProjectEnvVar,
+  resolveDollarVars,
+  resolveDollarVarsObject,
+  setProjectEnvVar,
+} from "./project-env-store.js";
+import {
   ITERATIVE_WORK_ELIGIBLE_CATEGORIES,
   TESTING_UX_ELIGIBLE_CATEGORIES,
   cadenceOptionsFor,
@@ -177,6 +185,9 @@ export interface RuntimeStateDeps {
    *  surface Race-to-DONE counts. Optional: when missing or when the
    *  provider doesn't expose getActiveFocusProgress, the route returns 503. */
   pmProvider?: PmProvider;
+  /** McpClient — used by the per-project MCP tab routes (Wish #7 / s125) to
+   *  register/unregister/test MCP servers + surface listServers state. */
+  mcpClient?: import("@agi/mcp-client").McpClient;
   /** Path to the MApp marketplace directory (for catalog browsing). */
   mappMarketplaceDir?: string;
   /** CommsLog — persistent message log for comms page. */
@@ -1684,6 +1695,219 @@ export async function createGatewayRuntimeState(
     } catch (err) {
       return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // Per-project MCP routes (Wish #7 / s125 — MCP tab on project detail).
+  //
+  // Surfaces project's MCP servers + .env-backed key storage to the dashboard
+  // MCP tab. Servers are namespaced as `<projectSlug>:<serverId>` when
+  // registered with mcpClient to avoid collision across projects.
+  //
+  // .env values are NEVER returned through these endpoints — only key NAMES.
+  // The project's .env file holds the secrets; dashboard sets values blindly.
+  // -----------------------------------------------------------------------
+
+  // Helper: project namespace prefix for MCP server ids.
+  const mcpServerNs = (projectPath: string, serverId: string): string => {
+    const slug = projectConfigPath(projectPath).split("/").slice(-2, -1)[0] ?? "default";
+    return `${slug}:${serverId}`;
+  };
+
+  // GET /api/projects/mcp/list?path= — list MCP servers + connection state.
+  fastify.get("/api/projects/mcp/list", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const cfg = await deps.projectConfigManager.read(targetPath);
+    const servers = (cfg as { mcp?: { servers?: Array<{ id: string; name?: string; transport: string; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> } }).mcp?.servers ?? [];
+    // Augment with live connection state from mcpClient.
+    const liveServers = deps.mcpClient?.listServers() ?? [];
+    const liveById = new Map(liveServers.map((s: { id: string; state: string }) => [s.id, s.state]));
+    return reply.send({
+      servers: servers.map((s) => ({
+        id: s.id,
+        name: s.name ?? s.id,
+        transport: s.transport,
+        command: s.command,
+        url: s.url,
+        envKeys: Object.keys(s.env ?? {}),
+        autoConnect: s.autoConnect ?? true,
+        hasAuthToken: typeof s.authToken === "string" && s.authToken.length > 0,
+        state: liveById.get(mcpServerNs(targetPath, s.id)) ?? "not-registered",
+      })),
+    });
+  });
+
+  // PUT /api/projects/mcp/server?path= — add/update a server (writes to project.json).
+  fastify.put("/api/projects/mcp/server", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const body = request.body as { path?: string; server?: { id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string } } | undefined;
+    if (!body?.path || !body.server?.id) return reply.code(400).send({ error: "path + server.id are required" });
+    const targetPath = resolvePath(body.path);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    if (!existsSync(projectConfigPath(targetPath))) return reply.code(404).send({ error: "Project has no project.json" });
+    try {
+      const cur = await deps.projectConfigManager.read(targetPath);
+      const servers = ((cur as { mcp?: { servers?: typeof body.server[] } }).mcp?.servers ?? []).filter((s) => s.id !== body.server!.id);
+      servers.push(body.server);
+      const updated = await deps.projectConfigManager.update(targetPath, { mcp: { servers } } as Record<string, unknown>);
+      // Re-register with mcpClient under namespaced id (best-effort; surfaces error in response).
+      let registerError: string | null = null;
+      if (deps.mcpClient && (body.server.autoConnect ?? true)) {
+        try {
+          const env = body.server.env ? resolveDollarVarsObject(body.server.env, readProjectEnv(targetPath)) : undefined;
+          const authToken = body.server.authToken ? resolveDollarVars(body.server.authToken, readProjectEnv(targetPath)) : undefined;
+          await deps.mcpClient.registerServer({
+            id: mcpServerNs(targetPath, body.server.id),
+            name: body.server.name,
+            transport: body.server.transport,
+            command: body.server.command,
+            env,
+            url: body.server.url,
+            autoConnect: true,
+            authToken,
+          });
+        } catch (err) {
+          registerError = err instanceof Error ? err.message : String(err);
+        }
+      }
+      return reply.send({ ok: true, mcp: (updated as { mcp?: unknown }).mcp ?? { servers: [] }, registerError });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // DELETE /api/projects/mcp/server?path=&id= — remove server.
+  fastify.delete("/api/projects/mcp/server", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id query params required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    try {
+      const cur = await deps.projectConfigManager.read(targetPath);
+      const servers = ((cur as { mcp?: { servers?: Array<{ id: string }> } }).mcp?.servers ?? []).filter((s) => s.id !== idParam);
+      await deps.projectConfigManager.update(targetPath, { mcp: { servers } } as Record<string, unknown>);
+      // Best-effort unregister.
+      try { await deps.mcpClient?.unregisterServer?.(mcpServerNs(targetPath, idParam)); } catch { /* ignore */ }
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/projects/mcp/env?path= — list .env KEY NAMES (never values).
+  fastify.get("/api/projects/mcp/env", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    return reply.send({ keys: listProjectEnvKeys(targetPath) });
+  });
+
+  // POST /api/projects/mcp/env?path= — body: { key, value }; value is write-only.
+  fastify.post("/api/projects/mcp/env", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const body = request.body as { path?: string; key?: string; value?: string } | undefined;
+    if (!body?.path || !body.key) return reply.code(400).send({ error: "path + key required" });
+    const targetPath = resolvePath(body.path);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    try {
+      setProjectEnvVar(targetPath, body.key, body.value ?? "");
+      return reply.send({ ok: true, keys: listProjectEnvKeys(targetPath) });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // DELETE /api/projects/mcp/env?path=&key= — remove a key from .env.
+  fastify.delete("/api/projects/mcp/env", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    const keyParam = query["key"];
+    if (!pathParam || !keyParam) return reply.code(400).send({ error: "path + key required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    try {
+      removeProjectEnvVar(targetPath, keyParam);
+      return reply.send({ ok: true, keys: listProjectEnvKeys(targetPath) });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/projects/mcp/server/test?path=&id= — try connecting + listTools.
+  fastify.post("/api/projects/mcp/server/test", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const targetPath = resolvePath(pathParam);
+    const nsId = mcpServerNs(targetPath, idParam);
+    try {
+      const tools = await deps.mcpClient.listTools(nsId);
+      return reply.send({ ok: true, toolCount: tools.length, tools: tools.slice(0, 5).map((t: { name: string }) => t.name) });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/projects/mcp/available — list MCP server templates (built-in + plugin-registered).
+  fastify.get("/api/projects/mcp/available", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    // Built-in templates. Future: plugin-registered MCP service definitions (Wish #8 — Tynn plugin).
+    const builtIn: Array<{ id: string; name: string; description: string; transport: "stdio" | "http" | "websocket"; defaultCommand?: string[]; defaultEnv?: Record<string, string>; defaultUrl?: string; authTokenKey?: string; pluginId?: string }> = [
+      {
+        id: "tynn",
+        name: "Tynn",
+        description: "Tynn-the-service via MCP. Provides PM tools (list-tasks, set-status, add-comment, getActiveFocusProgress, etc) for the agent.",
+        transport: "stdio",
+        defaultCommand: ["npx", "-y", "@tynn/mcp-server"],
+        defaultEnv: { TYNN_API_KEY: "$TYNN_API_KEY" },
+        authTokenKey: "TYNN_API_KEY",
+      },
+    ];
+    // Plugin-registered templates — when registered via api.registerMcpServerTemplate (future Wish #8).
+    const pluginTemplates = (deps.pluginRegistry as { getMcpServerTemplates?: () => typeof builtIn } | undefined)?.getMcpServerTemplates?.() ?? [];
+    return reply.send({ templates: [...builtIn, ...pluginTemplates] });
   });
 
   // -----------------------------------------------------------------------

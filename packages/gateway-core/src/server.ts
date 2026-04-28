@@ -2013,6 +2013,51 @@ export async function startGatewayServer(
     }
   }
 
+  // Per-project MCP servers (Wish #7 / s125 t478) — register each project's
+  // mcp.servers block under namespaced ids `<slug>:<id>`. Auth tokens + env
+  // values resolve from the project's .env file via $VAR notation.
+  try {
+    const { readProjectEnv, resolveDollarVars, resolveDollarVarsObject } = await import("./project-env-store.js");
+    const { projectConfigPath: pcp, projectSlug: pslug } = await import("./project-config-path.js");
+    for (const projectDir of projectPaths) {
+      try {
+        const { readdirSync, statSync } = await import("node:fs");
+        for (const entry of readdirSync(projectDir)) {
+          const fullPath = `${projectDir}/${entry}`;
+          if (!statSync(fullPath).isDirectory()) continue;
+          const cfgPath = pcp(fullPath);
+          if (!existsSync(cfgPath)) continue;
+          const raw = JSON.parse(readFileSync(cfgPath, "utf-8")) as { mcp?: { servers?: Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> } };
+          const projectServers = raw.mcp?.servers ?? [];
+          if (projectServers.length === 0) continue;
+          const projectEnv = readProjectEnv(fullPath);
+          for (const s of projectServers) {
+            if (s.autoConnect === false) continue;
+            try {
+              await mcpClient.registerServer({
+                id: `${pslug(fullPath)}:${s.id}`,
+                name: s.name,
+                transport: s.transport,
+                command: s.command,
+                env: resolveDollarVarsObject(s.env, projectEnv),
+                url: s.url ? resolveDollarVars(s.url, projectEnv) : undefined,
+                autoConnect: true,
+                authToken: s.authToken ? resolveDollarVars(s.authToken, projectEnv) : undefined,
+              });
+              log.info(`mcp: registered project-server "${pslug(fullPath)}:${s.id}" (project=${entry})`);
+            } catch (err) {
+              log.warn(`mcp: failed to register project-server "${pslug(fullPath)}:${s.id}": ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+        }
+      } catch (err) {
+        log.warn(`mcp: project enumeration failed for ${projectDir}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  } catch (err) {
+    log.warn(`mcp: per-project wiring init failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   // s118 t432 cycle 36 — PM provider resolution + `pm` agent tool.
   // PM provider resolution (s118 t434): config.agent.pm.provider selects
   // which implementation backs the canonical tynn workflow. Built-in ids
@@ -2325,6 +2370,7 @@ export async function startGatewayServer(
       iterativeWorkScheduler,
       projectConfigManager,
       pmProvider,
+      mcpClient,
       commsLog,
       notificationStore,
       chatPersistence,
