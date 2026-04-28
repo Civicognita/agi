@@ -416,3 +416,83 @@ describe("providers-api — PUT /api/providers/router (s111 t372 slice 2/2)", ()
     await app.close();
   });
 });
+
+describe("providers-api — PUT /api/providers/router floor/ceiling (s129 t510)", () => {
+  it("patches floor + ceiling + escalation triggers atomically", async () => {
+    const app = makeApp({});
+    const res = await app.inject({
+      method: "PUT", url: "/api/providers/router",
+      payload: {
+        floor: "economy",
+        ceiling: "max",
+        escalateOnLowConfidence: true,
+        escalateOnTimeoutSec: 30,
+        parallelRace: true,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as ActiveProviderState;
+    expect(body.router.floor).toBe("economy");
+    expect(body.router.ceiling).toBe("max");
+    expect(body.router.escalateOnLowConfidence).toBe(true);
+    expect(body.router.escalateOnTimeoutSec).toBe(30);
+    expect(body.router.parallelRace).toBe(true);
+    await app.close();
+  });
+
+  it("rejects floor > ceiling on the tier scale", async () => {
+    const app = makeApp({});
+    const res = await app.inject({
+      method: "PUT", url: "/api/providers/router",
+      payload: { floor: "max", ceiling: "local" },
+    });
+    expect(res.statusCode).toBe(400);
+    const details = (res.json() as { details: string[] }).details;
+    expect(details.join(" ")).toContain("floor must be <= ceiling");
+    await app.close();
+  });
+
+  it("rejects invalid tier values for floor/ceiling", async () => {
+    const app = makeApp({});
+    const res = await app.inject({
+      method: "PUT", url: "/api/providers/router",
+      payload: { floor: "extreme", ceiling: "ultra" },
+    });
+    expect(res.statusCode).toBe(400);
+    const details = (res.json() as { details: string[] }).details;
+    expect(details.some((d) => d.startsWith("floor must be one of"))).toBe(true);
+    expect(details.some((d) => d.startsWith("ceiling must be one of"))).toBe(true);
+    await app.close();
+  });
+
+  it("accepts escalateOnTimeoutSec=null (off) but rejects 0 or negative", async () => {
+    const app = makeApp({});
+    const okRes = await app.inject({
+      method: "PUT", url: "/api/providers/router",
+      payload: { escalateOnTimeoutSec: null },
+    });
+    expect(okRes.statusCode).toBe(200);
+
+    const badRes = await app.inject({
+      method: "PUT", url: "/api/providers/router",
+      payload: { escalateOnTimeoutSec: 0 },
+    });
+    expect(badRes.statusCode).toBe(400);
+    const details = (badRes.json() as { details: string[] }).details;
+    expect(details.join(" ")).toContain("escalateOnTimeoutSec must be null or a positive integer");
+    await app.close();
+  });
+
+  it("derives floor/ceiling on read when only legacy costMode is set", async () => {
+    const app = makeApp({
+      agent: { router: { costMode: "economy", escalation: true } },
+    } as Partial<AionimaConfig>);
+    const res = await app.inject({ method: "GET", url: "/api/providers/active" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as ActiveProviderState;
+    expect(body.router.floor).toBe("economy");
+    expect(body.router.ceiling).toBe("max");
+    expect(body.router.escalateOnLowConfidence).toBe(true);
+    await app.close();
+  });
+});

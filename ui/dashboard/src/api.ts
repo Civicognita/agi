@@ -461,6 +461,13 @@ export interface ActiveProviderState {
     simpleThresholdTokens?: number;
     complexThresholdTokens?: number;
     maxEscalationsPerTurn?: number;
+    /** s129 t510: tier range. floor === ceiling means "lock; never escalate".
+     *  When unset on the wire (legacy config), server derives from costMode. */
+    floor: string;
+    ceiling: string;
+    escalateOnLowConfidence: boolean;
+    escalateOnTimeoutSec: number | null;
+    parallelRace: boolean;
   };
   offGridMode: boolean;
 }
@@ -533,6 +540,11 @@ export async function updateRouterConfig(patch: {
   complexThresholdTokens?: number;
   maxEscalationsPerTurn?: number;
   offGridMode?: boolean;
+  floor?: string;
+  ceiling?: string;
+  escalateOnLowConfidence?: boolean;
+  escalateOnTimeoutSec?: number | null;
+  parallelRace?: boolean;
 }): Promise<ActiveProviderState> {
   const res = await fetch("/api/providers/router", {
     method: "PUT",

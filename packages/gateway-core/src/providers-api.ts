@@ -87,16 +87,31 @@ export function timeoutMultiplierForTier(tier: ProviderCatalogEntry["tier"]): nu
   return tier === "cloud" ? 1.0 : 6.0;
 }
 
-/** Active Provider + Agent Router config — drives the Mission Control hero. */
+/** Active Provider + Agent Router config — drives the Mission Control hero
+ *  + canonical Providers UX (`/settings/providers`). */
 export interface ActiveProviderState {
   activeProviderId: string;
   activeModel: string;
   router: {
+    /** Legacy single-tier knob. Kept for back-compat and as the seed for the
+     *  derived floor/ceiling when the explicit fields are unset. */
     costMode: string;
     escalation: boolean;
     simpleThresholdTokens?: number;
     complexThresholdTokens?: number;
     maxEscalationsPerTurn?: number;
+    /** s129 t510: tier range. floor = where every turn starts; ceiling = max
+     *  escalation tier. floor === ceiling means "lock to this tier; never
+     *  escalate". When unset, derived from costMode/escalation. */
+    floor: string;
+    ceiling: string;
+    /** Trigger gates. When floor === ceiling these are inert. */
+    escalateOnLowConfidence: boolean;
+    /** Null = off; positive integer = N seconds before escalating mid-turn. */
+    escalateOnTimeoutSec: number | null;
+    /** When true, kicks off floor + ceiling in parallel and takes the first
+     *  response (2× cost; cuts latency). */
+    parallelRace: boolean;
   };
   /** True when off-grid mode is enabled. When ON, cloud Providers are filtered
    *  from the router's option set; aion-micro remains the guaranteed floor. */
@@ -240,15 +255,30 @@ function getActiveState(config: AionimaConfig): ActiveProviderState {
   const agent = (cfgRoot["agent"] as Record<string, unknown> | undefined) ?? {};
   const router = (agent["router"] as Record<string, unknown> | undefined) ?? {};
 
+  const costMode = (router["costMode"] as string | undefined) ?? "balanced";
+  const escalation = (router["escalation"] as boolean | undefined) ?? false;
+  // s129 t510: floor/ceiling/escalation triggers. When unset, derive from
+  // legacy costMode/escalation so the canonical Providers UX renders sensibly
+  // for pre-migration configs (matches migrateRouterConfig() in
+  // agi/config/src/schema.ts).
+  const floor = (router["floor"] as string | undefined) ?? costMode;
+  const ceiling = (router["ceiling"] as string | undefined)
+    ?? (escalation ? "max" : costMode);
+
   return {
     activeProviderId: (agent["provider"] as string | undefined) ?? "anthropic",
     activeModel: (agent["model"] as string | undefined) ?? "claude-sonnet-4-6",
     router: {
-      costMode: (router["costMode"] as string | undefined) ?? "balanced",
-      escalation: (router["escalation"] as boolean | undefined) ?? false,
+      costMode,
+      escalation,
       simpleThresholdTokens: router["simpleThresholdTokens"] as number | undefined,
       complexThresholdTokens: router["complexThresholdTokens"] as number | undefined,
       maxEscalationsPerTurn: router["maxEscalationsPerTurn"] as number | undefined,
+      floor,
+      ceiling,
+      escalateOnLowConfidence: (router["escalateOnLowConfidence"] as boolean | undefined) ?? escalation,
+      escalateOnTimeoutSec: (router["escalateOnTimeoutSec"] as number | null | undefined) ?? null,
+      parallelRace: (router["parallelRace"] as boolean | undefined) ?? false,
     },
     offGridMode: (router["offGrid"] as boolean | undefined) ?? false,
   };
@@ -453,6 +483,11 @@ export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApi
     complexThresholdTokens?: number;
     maxEscalationsPerTurn?: number;
     offGridMode?: boolean;
+    floor?: string;
+    ceiling?: string;
+    escalateOnLowConfidence?: boolean;
+    escalateOnTimeoutSec?: number | null;
+    parallelRace?: boolean;
   } }>("/api/providers/router", async (req, reply) => {
     if (deps.patchConfig === undefined) {
       return reply.code(503).send({ error: "providers-api is read-only on this install" });
@@ -478,6 +513,31 @@ export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApi
     if (body.offGridMode !== undefined && typeof body.offGridMode !== "boolean") {
       validationErrors.push("offGridMode must be boolean");
     }
+    // s129 t510 — floor/ceiling/escalation triggers. Tier values share the
+    // KNOWN_COST_MODES set; ordering enforced (floor must <= ceiling) so a
+    // partial PUT can't leave config in a nonsensical state.
+    if (body.floor !== undefined && !KNOWN_COST_MODES.has(body.floor)) {
+      validationErrors.push(`floor must be one of ${Array.from(KNOWN_COST_MODES).join("|")}`);
+    }
+    if (body.ceiling !== undefined && !KNOWN_COST_MODES.has(body.ceiling)) {
+      validationErrors.push(`ceiling must be one of ${Array.from(KNOWN_COST_MODES).join("|")}`);
+    }
+    if (body.floor !== undefined && body.ceiling !== undefined) {
+      const order = ["local", "economy", "balanced", "max"];
+      if (order.indexOf(body.floor) > order.indexOf(body.ceiling)) {
+        validationErrors.push("floor must be <= ceiling on the local|economy|balanced|max scale");
+      }
+    }
+    if (body.escalateOnLowConfidence !== undefined && typeof body.escalateOnLowConfidence !== "boolean") {
+      validationErrors.push("escalateOnLowConfidence must be boolean");
+    }
+    if (body.escalateOnTimeoutSec !== undefined && body.escalateOnTimeoutSec !== null
+        && (!Number.isInteger(body.escalateOnTimeoutSec) || body.escalateOnTimeoutSec <= 0)) {
+      validationErrors.push("escalateOnTimeoutSec must be null or a positive integer");
+    }
+    if (body.parallelRace !== undefined && typeof body.parallelRace !== "boolean") {
+      validationErrors.push("parallelRace must be boolean");
+    }
 
     if (validationErrors.length > 0) {
       return reply.code(400).send({ error: "validation failed", details: validationErrors });
@@ -490,6 +550,11 @@ export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApi
       if (body.complexThresholdTokens !== undefined) deps.patchConfig("agent.router.complexThresholdTokens", body.complexThresholdTokens);
       if (body.maxEscalationsPerTurn !== undefined)  deps.patchConfig("agent.router.maxEscalationsPerTurn", body.maxEscalationsPerTurn);
       if (body.offGridMode !== undefined)            deps.patchConfig("agent.router.offGrid", body.offGridMode);
+      if (body.floor !== undefined)                  deps.patchConfig("agent.router.floor", body.floor);
+      if (body.ceiling !== undefined)                deps.patchConfig("agent.router.ceiling", body.ceiling);
+      if (body.escalateOnLowConfidence !== undefined) deps.patchConfig("agent.router.escalateOnLowConfidence", body.escalateOnLowConfidence);
+      if (body.escalateOnTimeoutSec !== undefined)   deps.patchConfig("agent.router.escalateOnTimeoutSec", body.escalateOnTimeoutSec);
+      if (body.parallelRace !== undefined)           deps.patchConfig("agent.router.parallelRace", body.parallelRace);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return reply.code(400).send({ error: `config patch rejected: ${message}` });
