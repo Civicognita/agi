@@ -340,15 +340,20 @@ export async function startGatewayServer(
   secrets.loadIntoEnv();
   log.info(`Secrets: ${String(secrets.listSecrets().length)} credential(s) on disk, CREDENTIALS_DIRECTORY ${process.env["CREDENTIALS_DIRECTORY"] ? "active" : "not set"}`);
 
-  // s128 t493/t494 — Vault: structured layer over SecretsManager. Vault
-  // entries live at ~/.agi/secrets/vault/<id>.json (metadata) + are
-  // value-encrypted via the existing TPM2-sealed `.cred` shape (keyed
-  // `vault_<id>`). Routes registered later under /api/vault.
+  // s128 t493/t494 — Vault: structured layer over SecretsManager (TPM2)
+  // OR FilesystemSecretsBackend (plaintext fallback for dev/test/CI
+  // environments without TPM2). Detection runs once at boot.
   const { VaultStorage } = await import("./vault/storage.js");
   const { VaultResolver } = await import("./vault/resolver.js");
+  const { FilesystemSecretsBackend, detectTpm2Available } = await import("./vault/filesystem-backend.js");
+  const tpm2Available = await detectTpm2Available();
+  const vaultBackend = tpm2Available
+    ? secrets
+    : new FilesystemSecretsBackend(join(homedir(), ".agi", "secrets"));
+  log.info(`Vault: using ${tpm2Available ? "SecretsManager (TPM2-sealed)" : "FilesystemSecretsBackend (plaintext — no TPM2 detected)"} for value storage`);
   const vaultStorage = new VaultStorage({
     vaultDir: join(homedir(), ".agi", "secrets", "vault"),
-    secretsBackend: secrets,
+    secretsBackend: vaultBackend,
   });
   vaultStorage.initialize();
   // s128 cycle 86 — VaultResolver wired for runtime vault://<id> substitution
