@@ -24,6 +24,7 @@ import {
   isVaultReference,
 } from "./types.js";
 import type { VaultStorage } from "./storage.js";
+import type { VaultAuditor } from "./audit.js";
 
 export class VaultResolverError extends Error {
   constructor(message: string) {
@@ -55,10 +56,33 @@ export interface ResolveContext {
   /** Calling project's absolute path. Required when resolving entries
    *  whose owningProject is set; optional for gateway-scoped entries. */
   projectPath?: string;
+  /** Audit context — caller's entity identity. When supplied alongside
+   *  a configured auditor, every successful resolve writes a `vault_read`
+   *  COA chain entry. */
+  audit?: {
+    entityId: string;
+    entityAlias?: string;
+    resourceId: string;
+    nodeId: string;
+  };
+}
+
+export interface VaultResolverOptions {
+  /** Optional audit hook — called after every successful resolve when
+   *  context.audit is also supplied. Skipped when undefined (test/dev
+   *  paths). Production wires a real VaultAuditor backed by COAChainLogger. */
+  auditor?: VaultAuditor;
 }
 
 export class VaultResolver {
-  constructor(private readonly storage: VaultStorage) {}
+  private readonly auditor: VaultAuditor | undefined;
+
+  constructor(
+    private readonly storage: VaultStorage,
+    options: VaultResolverOptions = {},
+  ) {
+    this.auditor = options.auditor;
+  }
 
   /**
    * Resolve a single value. If the value is a `vault://<id>` reference,
@@ -81,6 +105,21 @@ export class VaultResolver {
       && result.entry.owningProject !== context.projectPath
     ) {
       throw new VaultResolverScopeError(value, result.entry.owningProject, context.projectPath);
+    }
+
+    // s128 t498: audit every successful resolve. Skipped when no auditor
+    // is wired (tests/dev) or when context.audit is omitted. Audit failures
+    // are swallowed inside VaultAuditor.recordRead — they don't block
+    // legitimate reads.
+    if (this.auditor !== undefined && context.audit !== undefined) {
+      await this.auditor.recordRead({
+        entryId: id,
+        ...(context.projectPath !== undefined ? { requestingProject: context.projectPath } : {}),
+        entityId: context.audit.entityId,
+        ...(context.audit.entityAlias !== undefined ? { entityAlias: context.audit.entityAlias } : {}),
+        resourceId: context.audit.resourceId,
+        nodeId: context.audit.nodeId,
+      });
     }
 
     return result.value;

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { COAChainLogger } from "@agi/coa-chain";
 import {
   VaultResolver,
   VaultResolverError,
@@ -9,6 +10,7 @@ import {
   VaultResolverScopeError,
 } from "./resolver.js";
 import { VaultStorage, type SecretsBackend } from "./storage.js";
+import { VaultAuditor } from "./audit.js";
 
 function createMockBackend(): SecretsBackend & { _store: Map<string, string> } {
   const store = new Map<string, string>();
@@ -240,6 +242,107 @@ describe("VaultResolver (s128 t496)", () => {
       });
       expect(result.nested).toEqual({ ref: "vault://01HTEST0001" });
       expect(result.topLevel).toBe("secret-v");
+    });
+  });
+
+  describe("audit hook (s128 t498)", () => {
+    interface MockLogParams {
+      workType: string;
+      ref?: string;
+      entityId: string;
+      entityAlias?: string;
+      payloadHash?: string;
+    }
+
+    function createMockLogger(): { logger: COAChainLogger; calls: MockLogParams[] } {
+      const calls: MockLogParams[] = [];
+      const logger = {
+        log: async (params: MockLogParams): Promise<string> => {
+          calls.push(params);
+          return `fp-${String(calls.length)}`;
+        },
+      } as unknown as COAChainLogger;
+      return { logger, calls };
+    }
+
+    it("does NOT audit when no auditor is wired", async () => {
+      // resolver from beforeEach has no auditor — already implicit
+      const mock = createMockLogger();
+      await storage.create({ name: "k", type: "key", value: "v" });
+      const result = await resolver.resolve("vault://01HTEST0001");
+      expect(result).toBe("v");
+      expect(mock.calls).toHaveLength(0);
+    });
+
+    it("does NOT audit when auditor is wired but context.audit is omitted", async () => {
+      const mock = createMockLogger();
+      const audited = new VaultResolver(storage, { auditor: new VaultAuditor(mock.logger) });
+      await storage.create({ name: "k", type: "key", value: "v" });
+      const result = await audited.resolve("vault://01HTEST0001");
+      expect(result).toBe("v");
+      expect(mock.calls).toHaveLength(0);
+    });
+
+    it("DOES audit when both auditor + context.audit are supplied", async () => {
+      const mock = createMockLogger();
+      const audited = new VaultResolver(storage, { auditor: new VaultAuditor(mock.logger) });
+      await storage.create({ name: "k", type: "key", value: "v" });
+
+      const result = await audited.resolve("vault://01HTEST0001", {
+        audit: { entityId: "ent-x", entityAlias: "$A0", resourceId: "$AGI", nodeId: "@A0" },
+      });
+      expect(result).toBe("v");
+      expect(mock.calls).toHaveLength(1);
+      const call = mock.calls[0]!;
+      expect(call.workType).toBe("vault_read");
+      expect(call.ref).toBe("01HTEST0001");
+      expect(call.entityId).toBe("ent-x");
+      expect(call.entityAlias).toBe("$A0");
+    });
+
+    it("does NOT audit when resolution fails (NotFound — never had a value to log)", async () => {
+      const mock = createMockLogger();
+      const audited = new VaultResolver(storage, { auditor: new VaultAuditor(mock.logger) });
+
+      await expect(
+        audited.resolve("vault://nonexistent", {
+          audit: { entityId: "e", resourceId: "r", nodeId: "n" },
+        }),
+      ).rejects.toThrow(VaultResolverNotFoundError);
+      expect(mock.calls).toHaveLength(0);
+    });
+
+    it("does NOT audit when resolution fails (Scope — denied access shouldn't tag the chain as a read)", async () => {
+      const mock = createMockLogger();
+      const audited = new VaultResolver(storage, { auditor: new VaultAuditor(mock.logger) });
+      await storage.create({
+        name: "scoped",
+        type: "key",
+        value: "v",
+        owningProject: "/home/wishborn/projects/sample-go",
+      });
+
+      await expect(
+        audited.resolve("vault://01HTEST0001", {
+          projectPath: "/home/wishborn/projects/other",
+          audit: { entityId: "e", resourceId: "r", nodeId: "n" },
+        }),
+      ).rejects.toThrow(VaultResolverScopeError);
+      expect(mock.calls).toHaveLength(0);
+    });
+
+    it("audit failures don't block the resolve (returns the value even if logger throws)", async () => {
+      const failingLogger = {
+        log: async (): Promise<string> => { throw new Error("simulated failure"); },
+      } as unknown as COAChainLogger;
+      const audited = new VaultResolver(storage, { auditor: new VaultAuditor(failingLogger) });
+      await storage.create({ name: "k", type: "key", value: "v" });
+
+      // Should NOT throw — the audit-side error is swallowed inside VaultAuditor.
+      const result = await audited.resolve("vault://01HTEST0001", {
+        audit: { entityId: "e", resourceId: "r", nodeId: "n" },
+      });
+      expect(result).toBe("v");
     });
   });
 });
