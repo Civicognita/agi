@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useIsMobile, useConfig } from "@/hooks.js";
-import { ContentRenderer } from "@particle-academy/react-fancy";
+import { ContentRenderer, Textarea } from "@particle-academy/react-fancy";
 import { Copy as CopyIcon, Check as CheckIcon } from "lucide-react";
 import { PlansDrawer } from "./PlansDrawer.js";
 import { PlanPane } from "./PlanPane.js";
@@ -1672,14 +1672,14 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             >
               &#128206;
             </button>
-            <textarea
+            <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder="Message Aionima..."
               rows={1}
-              className="flex-1 px-3 py-2 rounded-[10px] border border-border bg-background text-foreground text-[13px] font-[inherit] resize-none outline-none min-h-[44px] max-h-[100px]"
+              className="flex-1 text-[13px] resize-none min-h-[44px] max-h-[100px]"
             />
             {activeSession?.thinking ? (
               <button
