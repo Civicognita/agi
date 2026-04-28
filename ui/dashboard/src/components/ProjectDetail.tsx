@@ -19,6 +19,7 @@ import { HostingPanel } from "./HostingPanel.js";
 import { EnvManager } from "./EnvManager.js";
 import { TaskmasterTab } from "./TaskmasterTab.js";
 import { IterativeWorkTab } from "./IterativeWorkTab.js";
+import { MCPTab } from "./MCPTab.js";
 import { ProjectManagement } from "./ProjectManagement.js";
 import type { HostingStatus } from "../api.js";
 import { TreeNav, ContextMenu, useToast } from "@particle-academy/react-fancy";
@@ -318,6 +319,9 @@ export function ProjectDetail({
           {!isCoreFork && <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>}
           {!isCoreFork && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
             <TabsTrigger value="iterative-work">Iterative Work</TabsTrigger>
+          )}
+          {!isCoreFork && project.projectType?.hasCode && (
+            <TabsTrigger value="mcp">MCP</TabsTrigger>
           )}
           {!isCoreFork && pluginPanels.map((p) => (
             <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
@@ -787,6 +791,12 @@ export function ProjectDetail({
         {(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
           <TabsContent value="iterative-work" className="mt-4 flex-1 min-h-0 overflow-y-auto">
             <IterativeWorkTab project={project} />
+          </TabsContent>
+        )}
+
+        {project.projectType?.hasCode && (
+          <TabsContent value="mcp" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+            <MCPTab project={project} />
           </TabsContent>
         )}
 

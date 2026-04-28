@@ -151,6 +151,43 @@ export const ProjectIterativeWorkSchema = z
   .strict();
 
 // ---------------------------------------------------------------------------
+// Per-project MCP servers (s118 t446 / Wish #7) — surfaces on the project's
+// MCP tab. Each server reaches an external Model Context Protocol service
+// (tynn, github, custom plugins). Auth tokens reference values in the
+// project's .env file via $VAR notation; never store secrets in project.json.
+// ---------------------------------------------------------------------------
+
+export const ProjectMcpServerSchema = z
+  .object({
+    /** Stable id used to reference this server from agent tools / config.
+     *  Per-project ids are namespaced at boot as `<slug>:<id>` to avoid
+     *  collision across projects. */
+    id: z.string(),
+    /** Display name shown in UX. Defaults to id. */
+    name: z.string().optional(),
+    /** Transport selector. */
+    transport: z.enum(["stdio", "http", "websocket"]),
+    /** Stdio: command to spawn. */
+    command: z.array(z.string()).optional(),
+    /** Stdio: env vars to inject. Values may be `$VAR` to resolve from
+     *  the project's .env at registration time. */
+    env: z.record(z.string()).optional(),
+    /** http/websocket: server URL. May include `$VAR` for env-resolved bits. */
+    url: z.string().optional(),
+    /** Whether to register on gateway boot (auto) or lazily on first call. */
+    autoConnect: z.boolean().default(true),
+    /** Auth token, env-var-resolvable (e.g. `$TYNN_API_KEY`). */
+    authToken: z.string().optional(),
+  })
+  .strict();
+
+export const ProjectMcpSchema = z
+  .object({
+    servers: z.array(ProjectMcpServerSchema).default([]),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
 // Root project config — the full ~/.agi/{slug}/project.json shape
 // ---------------------------------------------------------------------------
 
@@ -178,6 +215,8 @@ export const ProjectConfigSchema = z
     aiDatasets: z.array(ProjectAiDatasetBindingSchema).optional(),
     /** Iterative-work mode — toggles tynn-workflow prompt injection + cron-nudged scheduling. */
     iterativeWork: ProjectIterativeWorkSchema.optional(),
+    /** Per-project MCP servers (Wish #7) — surfaces on the project's MCP tab. */
+    mcp: ProjectMcpSchema.optional(),
   })
   .passthrough(); // Plugins can store custom keys at the root level
 
@@ -193,3 +232,5 @@ export type ProjectAiModelBinding = z.infer<typeof ProjectAiModelBindingSchema>;
 export type ProjectAiDatasetBinding = z.infer<typeof ProjectAiDatasetBindingSchema>;
 export type ProjectIterativeWork = z.infer<typeof ProjectIterativeWorkSchema>;
 export type IterativeWorkCadence = z.infer<typeof IterativeWorkCadenceSchema>;
+export type ProjectMcpServer = z.infer<typeof ProjectMcpServerSchema>;
+export type ProjectMcp = z.infer<typeof ProjectMcpSchema>;

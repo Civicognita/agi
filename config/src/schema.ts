@@ -81,6 +81,38 @@ const ProviderConfigSchema = z
   })
   .strict();
 
+/**
+ * MCP server config block (s118 t446 D5). Wired at boot to the McpClient
+ * via mcpClient.registerServer(...) so TynnPmProvider + the `mcp` agent
+ * tool can reach external MCP servers (tynn, github, custom plugins).
+ *
+ * Per-server: id (stable ref), transport (stdio/http/websocket), command
+ * + env (stdio), url (http/websocket), authToken (env-var-resolvable
+ * via $VAR notation), autoConnect (default true).
+ */
+const McpServerConfigSchema = z
+  .object({
+    id: z.string(),
+    name: z.string().optional(),
+    transport: z.enum(["stdio", "http", "websocket"]),
+    command: z.array(z.string()).optional(),
+    env: z.record(z.string()).optional(),
+    url: z.string().optional(),
+    autoConnect: z.boolean().default(true),
+    authToken: z.string().optional(),
+  })
+  .strict();
+
+const McpConfigSchema = z
+  .object({
+    /** External MCP servers to register at gateway boot. Each entry passes
+     *  to mcpClient.registerServer(). When transport=stdio + autoConnect,
+     *  the subprocess spawns at startup and stays alive for the gateway's
+     *  lifetime. */
+    servers: z.array(McpServerConfigSchema).default([]),
+  })
+  .strict();
+
 const AgentPmConfigSchema = z
   .object({
     /** PM provider selector. Built-in: "tynn" (default — uses MCP to reach
@@ -607,6 +639,7 @@ export const AionimaConfigSchema = z
     nexus: LegacyNexusConfigSchema.optional(),
     hosting: HostingConfigSchema.optional(),
     plugins: z.record(z.string(), PluginPreferenceSchema).optional(),
+    mcp: McpConfigSchema.optional(),
     services: ServicesConfigSchema.optional(),
     owner: OwnerConfigSchema.optional(),
     logging: LoggingConfigSchema.optional(),
