@@ -419,10 +419,20 @@ export class AgentInvoker extends EventEmitter {
     // Step 6: System prompt assembly
     // -----------------------------------------------------------------------
     const capabilities = this.deps.stateMachine.getCapabilities();
+
+    // Resolve project category once — used for both the tool gate (ops-mode
+    // tools surface only on ops/admin projects) and the iterativeWork hot-load
+    // below. Read at use time per `feedback_hot_config`.
+    const projectConfigForTurn = (request.projectContext !== undefined && this.deps.projectConfigManager !== undefined)
+      ? this.deps.projectConfigManager.read(request.projectContext)
+      : null;
+    const projectCategory = (projectConfigForTurn as { category?: string } | null | undefined)?.category;
+
     const availableTools = computeAvailableTools(
       state,
       entity.verificationTier,
       this.deps.toolRegistry.getManifests(),
+      projectCategory,
     );
 
     const entityCtx: EntityContextSection = {
@@ -520,20 +530,16 @@ export class AgentInvoker extends EventEmitter {
     let iterativeWorkPrompt: string | undefined;
     if (
       requestType === "project" &&
-      request.projectContext !== undefined &&
-      this.deps.projectConfigManager !== undefined
+      projectConfigForTurn?.iterativeWork?.enabled === true
     ) {
-      const projectConfig = this.deps.projectConfigManager.read(request.projectContext);
-      if (projectConfig?.iterativeWork?.enabled === true) {
-        try {
-          const { readFileSync } = await import("node:fs");
-          const { resolve: resolvePath } = await import("node:path");
-          iterativeWorkPrompt = readFileSync(
-            resolvePath(process.cwd(), "prompts/iterative-work.md"),
-            "utf-8",
-          );
-        } catch { /* iterative-work.md missing — proceed without injection */ }
-      }
+      try {
+        const { readFileSync } = await import("node:fs");
+        const { resolve: resolvePath } = await import("node:path");
+        iterativeWorkPrompt = readFileSync(
+          resolvePath(process.cwd(), "prompts/iterative-work.md"),
+          "utf-8",
+        );
+      } catch { /* iterative-work.md missing — proceed without injection */ }
     }
 
     const promptCtx: SystemPromptContext = {
@@ -552,6 +558,7 @@ export class AgentInvoker extends EventEmitter {
       ownerName: this.deps.ownerConfig?.displayName,
       isOwner: request.isOwner,
       projectPath: request.projectContext,
+      projectCategory,
       requestType,
       costMode: this.deps.getCostMode?.(),
       toolsAvailable: willOfferTools,
@@ -661,6 +668,7 @@ export class AgentInvoker extends EventEmitter {
       const providerTools = this.deps.toolRegistry.toProviderTools(
         state,
         entity.verificationTier,
+        projectCategory,
       );
 
       // Build API messages: resolve image refs on ALL history turns so the

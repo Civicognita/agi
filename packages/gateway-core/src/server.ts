@@ -2088,6 +2088,24 @@ export async function startGatewayServer(
   }
   log.info(`pm provider resolved: id=${pmProviderId}, providerId=${pmProvider.providerId}`);
 
+  // s126 — Ops-mode tools (cross-project + infrastructure) registered after
+  // pmProvider is resolved. requiresProjectCategory: [ops, administration]
+  // hides them from non-ops projects via computeAvailableTools.
+  try {
+    const { registerOpsTools } = await import("./ops-tools.js");
+    const opsCount = registerOpsTools({
+      toolRegistry,
+      workspaceProjects: projectPaths,
+      projectConfigManager,
+      pmProvider,
+      hostingManager,
+      stackRegistry,
+    });
+    log.info(`registered ${String(opsCount)} ops-mode tools (gated on project.category in [ops, administration])`);
+  } catch (err) {
+    log.warn(`ops-mode tools registration failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   toolRegistry.register(
     {
       name: "mcp",

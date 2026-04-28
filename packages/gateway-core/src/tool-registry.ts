@@ -118,10 +118,12 @@ export class ToolRegistry {
 
   /**
    * Get available tools for the current state and entity tier.
-   * Delegates to system-prompt.ts computeAvailableTools.
+   * Delegates to system-prompt.ts computeAvailableTools. When `projectCategory`
+   * is provided, ops-mode tools (those with requiresProjectCategory set) are
+   * surfaced to ops/administration projects; others see the regular palette.
    */
-  getAvailable(state: GatewayState, tier: VerificationTier): ToolManifestEntry[] {
-    return computeAvailableTools(state, tier, this.getManifests());
+  getAvailable(state: GatewayState, tier: VerificationTier, projectCategory?: string): ToolManifestEntry[] {
+    return computeAvailableTools(state, tier, this.getManifests(), projectCategory);
   }
 
   /**
@@ -130,8 +132,9 @@ export class ToolRegistry {
   toProviderTools(
     state: GatewayState,
     tier: VerificationTier,
+    projectCategory?: string,
   ): Array<{ name: string; description: string; input_schema: Record<string, unknown> }> {
-    const available = this.getAvailable(state, tier);
+    const available = this.getAvailable(state, tier, projectCategory);
     const result: Array<{ name: string; description: string; input_schema: Record<string, unknown> }> = [];
 
     for (const manifest of available) {

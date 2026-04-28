@@ -115,4 +115,44 @@ describe("computeAvailableTools — tier-only filtering", () => {
     // a passes (tier matches; state ignored), c passes (tier-exempt; state ignored), b excluded by tier
     expect(verifiedInLimbo.sort()).toEqual(["a", "c"]);
   });
+
+  // -----------------------------------------------------------------------
+  // requiresProjectCategory — s126 ops-mode gate
+  // -----------------------------------------------------------------------
+  // Ops-mode tools (pm.list-all-tasks, hosting.*, stacks.*) MUST surface
+  // ONLY when the calling project's category is ops or administration.
+  // Non-ops projects must never see them, even at sealed tier.
+  describe("ops-mode gate (requiresProjectCategory)", () => {
+    const opsTools: ToolManifestEntry[] = [
+      makeTool("regular", { requiresTier: ["sealed"] }),
+      makeTool("pm.list-all-tasks", { requiresTier: ["sealed"], requiresProjectCategory: ["ops", "administration"] }),
+      makeTool("hosting.list", { requiresTier: ["sealed"], requiresProjectCategory: ["ops", "administration"] }),
+    ];
+
+    it("ops project sees the ops tools + the regular tools", () => {
+      const result = computeAvailableTools("ONLINE", "sealed", opsTools, "ops").map((t) => t.name);
+      expect(result.sort()).toEqual(["hosting.list", "pm.list-all-tasks", "regular"]);
+    });
+
+    it("administration project also sees the ops tools", () => {
+      const result = computeAvailableTools("ONLINE", "sealed", opsTools, "administration").map((t) => t.name);
+      expect(result.sort()).toEqual(["hosting.list", "pm.list-all-tasks", "regular"]);
+    });
+
+    it("non-ops project (e.g. app) sees only regular tools, never ops tools", () => {
+      const result = computeAvailableTools("ONLINE", "sealed", opsTools, "app").map((t) => t.name);
+      expect(result).toEqual(["regular"]);
+    });
+
+    it("project with no category sees only regular tools — ops tools require explicit category", () => {
+      const result = computeAvailableTools("ONLINE", "sealed", opsTools, undefined).map((t) => t.name);
+      expect(result).toEqual(["regular"]);
+    });
+
+    it("ops gate stacks with tier gate — verified tier still excluded from sealed-only ops tools", () => {
+      const result = computeAvailableTools("ONLINE", "verified", opsTools, "ops").map((t) => t.name);
+      // All three tools are sealed-only; verified tier excludes them all regardless of category.
+      expect(result).toEqual([]);
+    });
+  });
 });

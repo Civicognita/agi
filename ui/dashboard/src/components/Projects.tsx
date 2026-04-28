@@ -190,11 +190,24 @@ export function Projects({
                       tynn
                     </span>
                   )}
-                  {(p.category ?? p.projectType?.category) && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface1 text-muted-foreground font-medium capitalize">
-                      {p.category ?? p.projectType?.category}
-                    </span>
-                  )}
+                  {(() => {
+                    const cat = p.category ?? p.projectType?.category;
+                    if (!cat) return null;
+                    const isOps = cat === "ops" || cat === "administration";
+                    return (
+                      <span
+                        className={cn(
+                          "text-[10px] px-1.5 py-0.5 rounded font-medium capitalize",
+                          isOps
+                            ? "bg-yellow/20 text-yellow font-semibold"
+                            : "bg-surface1 text-muted-foreground",
+                        )}
+                        title={isOps ? "Ops mode — agent has cross-project tool access" : undefined}
+                      >
+                        {isOps ? `${cat} · ops mode` : cat}
+                      </span>
+                    );
+                  })()}
                   {p.hosting && (
                     <span className={cn(
                       "text-[10px] px-1.5 py-0.5 rounded font-semibold",

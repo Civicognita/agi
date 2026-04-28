@@ -46,6 +46,14 @@ export interface ToolManifestEntry {
    * change via `taskmaster_handoff` rather than mutating config directly.
    */
   agentOnly?: boolean;
+  /**
+   * Ops-mode gate (s126). When set, the tool is only available when the
+   * agent is acting on a project whose effective category is in this list.
+   * Used for cross-project + infrastructure tools that should only surface
+   * when the agent is at an ops/administration project. Empty/undefined =
+   * available to all eligible projects (gated only by state + tier).
+   */
+  requiresProjectCategory?: ("ops" | "administration" | "web" | "app" | "literature" | "media" | "monorepo")[];
 }
 
 /** Tier-based autonomy capabilities. */
@@ -141,6 +149,15 @@ export interface SystemPromptContext {
   isOwner?: boolean;
   /** Active project path — when set, injects plan workflow instructions. */
   projectPath?: string;
+  /**
+   * Active project category — sourced from `project.json`'s `category` field
+   * (literature/app/web/media/administration/ops/monorepo). When the category
+   * is `"ops"` or `"administration"`, the assembler injects an ops-mode
+   * preamble that tells the agent it has cross-project authority + lists the
+   * gated ops tools that just became available (pm.list-all-tasks,
+   * hosting.list-projects, etc.). Drives s126 ops-mode activation.
+   */
+  projectCategory?: string;
   /**
    * Iterative-work prompt content — when present (project has
    * `iterativeWork.enabled: true`), the assembler injects this verbatim into
@@ -573,6 +590,29 @@ export function buildTynnContextSection(ctx: TynnContextSection): string {
 }
 
 /**
+ * Build ops-mode preamble — surfaces only when the active project's category
+ * is `ops` or `administration`. Tells the agent it has been granted
+ * cross-project authority + names the ops-only tools it just gained, so it
+ * doesn't have to discover them by inspection. Pairs with the
+ * `requiresProjectCategory` gate in computeAvailableTools (s126).
+ */
+function buildOpsModeSection(): string {
+  return [
+    "## Ops Mode Active",
+    "",
+    "This project's category is `ops` (or `administration`). You have cross-project authority — your tool palette includes ops-only tools that surface ONLY for ops projects:",
+    "",
+    "- `pm.list-all-tasks` — read tasks across ALL workspace projects (cross-project triage).",
+    "- `pm.bulk-update` — transition tasks across projects in one call.",
+    "- `hosting.list-projects` — see every hosted project + its status.",
+    "- `hosting.restart` / `hosting.stop` / `hosting.deploy` — control hosted-project containers.",
+    "- `stacks.list` / `stacks.add` — read or attach stacks (postgres, redis, etc.) to any project.",
+    "",
+    "Use these tools to coordinate work across the workspace. Every cross-project action is COA-logged back to this ops project + you, so the audit chain stays intact. Do not assume non-ops projects can call these tools — they cannot.",
+  ].join("\n");
+}
+
+/**
  * Build project context section — tells the agent which project it is scoped to.
  * Reads the project's package.json for name/version/description.
  * Injected before plan workflow instructions when projectPath is set.
@@ -669,6 +709,7 @@ export function computeAvailableTools(
   _state: GatewayState,
   tier: VerificationTier,
   registeredTools: ToolManifestEntry[],
+  projectCategory?: string,
 ): ToolManifestEntry[] {
   const tierCaps = TIER_CAPABILITIES[tier];
 
@@ -679,7 +720,15 @@ export function computeAvailableTools(
   }
 
   return registeredTools.filter((tool) => {
-    return tool.requiresTier.length === 0 || tool.requiresTier.includes(tier);
+    // Tier gate
+    if (tool.requiresTier.length !== 0 && !tool.requiresTier.includes(tier)) return false;
+    // Ops-mode gate (s126): if a tool requires a specific project category,
+    // hide it unless the agent is acting on a project of that category.
+    if (tool.requiresProjectCategory && tool.requiresProjectCategory.length > 0) {
+      if (!projectCategory) return false;
+      if (!(tool.requiresProjectCategory as string[]).includes(projectCategory)) return false;
+    }
+    return true;
   });
 }
 
@@ -792,6 +841,12 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
   // and gets dropped in local mode; project path itself is preserved.
   if (rt === "project" && ctx.projectPath !== undefined) {
     sections.push(buildProjectContextSection(ctx.projectPath));
+    // Ops-mode preamble — sits next to project context so the agent reads
+    // "this is project X" + "here's the cross-project authority you have"
+    // back-to-back. Gated on category, mirrors requiresProjectCategory tool gate.
+    if (ctx.projectCategory === "ops" || ctx.projectCategory === "administration") {
+      sections.push(buildOpsModeSection());
+    }
     if (!isLocal) {
       sections.push(buildPlanWorkflowSection());
     }
@@ -950,6 +1005,9 @@ export function assembleSystemPromptWithBreakdown(
 
   if (rt === "project" && ctx.projectPath !== undefined) {
     contextSections.push(buildProjectContextSection(ctx.projectPath));
+    if (ctx.projectCategory === "ops" || ctx.projectCategory === "administration") {
+      contextSections.push(buildOpsModeSection());
+    }
     if (!isLocal) {
       contextSections.push(buildPlanWorkflowSection());
     }
