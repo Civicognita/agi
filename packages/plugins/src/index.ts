@@ -7,6 +7,7 @@ export type {
   AionimaPermission,
   PluginCategory,
   ProvidesLabel,
+  AdfElement,
   AionimaPluginManifest,
   AionimaPluginAPI,
   AionimaPlugin,

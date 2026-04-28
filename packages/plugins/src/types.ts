@@ -59,6 +59,27 @@ export function categoryToProvides(category?: string): ProvidesLabel[] {
 }
 
 // ---------------------------------------------------------------------------
+// ADF classification (s127 t487)
+// ---------------------------------------------------------------------------
+
+/** ADF (Agent Development Framework) elements a plugin extends. A plugin
+ *  may extend more than one element — e.g., the Tynn plugin extends 0UX
+ *  (the future Kanban MApp) AND 0AGENT (PM tool extensions for the agent
+ *  via the registered PmProvider).
+ *
+ *  Element semantics (per `agi/docs/human/adf.md`):
+ *  - `0UX`     — owner-facing UX surfaces (dashboard tabs, settings pages, MApps)
+ *  - `0AGENT`  — agent capability extensions (tools, prompt fragments, providers)
+ *  - `0FUNC`   — pure functional logic (reusable computations, validators)
+ *  - `0FLOW`   — workflow/state-machine extensions (state transitions, schedulers)
+ *  - `0ENV`    — environment/runtime extensions (services, containers, host integrations)
+ *
+ *  Used by the Plugin Marketplace UX to categorize + filter plugins by what
+ *  ADF surface they extend.
+ */
+export type AdfElement = "0UX" | "0AGENT" | "0FUNC" | "0FLOW" | "0ENV";
+
+// ---------------------------------------------------------------------------
 // Plugin Manifest
 // ---------------------------------------------------------------------------
 
@@ -75,6 +96,9 @@ export interface AionimaPluginManifest {
   category?: PluginCategory;
   /** Capability labels describing what this plugin provides. */
   provides?: ProvidesLabel[];
+  /** ADF elements this plugin extends — used by the Plugin Marketplace UX
+   *  to categorize plugins by ADF surface. See `AdfElement` above. */
+  adf?: AdfElement[];
   /** Plugin IDs this plugin depends on. */
   depends?: string[];
   /** Pre-installed from marketplace during onboarding. Cannot be uninstalled. */
