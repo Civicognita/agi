@@ -345,11 +345,16 @@ export async function startGatewayServer(
   // value-encrypted via the existing TPM2-sealed `.cred` shape (keyed
   // `vault_<id>`). Routes registered later under /api/vault.
   const { VaultStorage } = await import("./vault/storage.js");
+  const { VaultResolver } = await import("./vault/resolver.js");
   const vaultStorage = new VaultStorage({
     vaultDir: join(homedir(), ".agi", "secrets", "vault"),
     secretsBackend: secrets,
   });
   vaultStorage.initialize();
+  // s128 cycle 86 — VaultResolver wired for runtime vault://<id> substitution
+  // at MCP server registration. Audit hook skipped this slice; follow-up
+  // wires audit identity context for boot-time resolves.
+  const vaultResolver = new VaultResolver(vaultStorage);
 
   // -------------------------------------------------------------------------
   // Step 2: Auth bootstrap
@@ -2019,19 +2024,38 @@ export async function startGatewayServer(
   // $VAR), autoConnect: bool }.
   const mcpClient = new McpClient();
   const mcpServersConfig = (config as { mcp?: { servers?: Array<Record<string, unknown>> } }).mcp?.servers ?? [];
+  // s128 cycle 86 — secret-reference resolver for MCP server config. Handles
+  // both $VAR (legacy, reads from process.env) AND vault://<id> (Vault).
+  // Vault refs are gateway-scoped here (no projectPath context); per-project
+  // servers below pass their own context.
+  const resolveSecretRef = async (raw: string | undefined): Promise<string | undefined> => {
+    if (raw === undefined) return undefined;
+    if (raw.startsWith("$")) return process.env[raw.slice(1)];
+    if (raw.startsWith("vault://")) {
+      try {
+        const resolved = await vaultResolver.resolve(raw);
+        return typeof resolved === "string" ? resolved : raw;
+      } catch (err) {
+        log.warn(`mcp: vault reference "${raw}" failed to resolve: ${err instanceof Error ? err.message : String(err)}`);
+        return undefined;
+      }
+    }
+    return raw;
+  };
+
   for (const serverCfg of mcpServersConfig) {
     try {
-      // Resolve $VAR-prefixed authToken via process.env so secrets stay
-      // out of gateway.json. {"authToken": "$TYNN_API_KEY"} → real token
-      // from process.env.TYNN_API_KEY at registration time.
-      const resolvedAuthToken = typeof serverCfg.authToken === "string" && serverCfg.authToken.startsWith("$")
-        ? process.env[serverCfg.authToken.slice(1)]
-        : (serverCfg.authToken as string | undefined);
-      // Resolve $VAR in env block too — `{"FOO": "$REAL_FOO"}` reads from process.env.
+      // Resolve authToken via $VAR + vault:// — the latter is the s128 t492-t498
+      // path that lets owners reference TPM2-sealed Vault entries from gateway
+      // config without putting plaintext into gateway.json.
+      const resolvedAuthToken = await resolveSecretRef(serverCfg.authToken as string | undefined);
+      // Resolve env values too (same dual-shape rule: $VAR or vault://).
       const resolvedEnv = typeof serverCfg.env === "object" && serverCfg.env !== null
         ? Object.fromEntries(
-            Object.entries(serverCfg.env as Record<string, string>).map(([k, v]) =>
-              [k, v.startsWith("$") ? (process.env[v.slice(1)] ?? "") : v],
+            await Promise.all(
+              Object.entries(serverCfg.env as Record<string, string>).map(async ([k, v]) =>
+                [k, (await resolveSecretRef(v)) ?? ""] as [string, string],
+              ),
             ),
           )
         : undefined;
@@ -2069,18 +2093,43 @@ export async function startGatewayServer(
           const projectServers = raw.mcp?.servers ?? [];
           if (projectServers.length === 0) continue;
           const projectEnv = readProjectEnv(fullPath);
+          // s128 cycle 86 — per-project secret resolver. $VAR reads from the
+          // project's .env (legacy); vault://<id> resolves through VaultResolver
+          // with the project's path as the scope context (so project-scoped
+          // entries stay scoped, gateway-scoped entries pass).
+          const resolveProjectSecretRef = async (raw: string | undefined): Promise<string | undefined> => {
+            if (raw === undefined) return undefined;
+            if (raw.startsWith("$")) return resolveDollarVars(raw, projectEnv);
+            if (raw.startsWith("vault://")) {
+              try {
+                const resolved = await vaultResolver.resolve(raw, { projectPath: fullPath });
+                return typeof resolved === "string" ? resolved : raw;
+              } catch (err) {
+                log.warn(`mcp: vault reference "${raw}" for project ${fullPath} failed to resolve: ${err instanceof Error ? err.message : String(err)}`);
+                return undefined;
+              }
+            }
+            return raw;
+          };
           for (const s of projectServers) {
             if (s.autoConnect === false) continue;
             try {
+              const projectEnvResolved = s.env !== undefined
+                ? Object.fromEntries(
+                    await Promise.all(
+                      Object.entries(s.env).map(async ([k, v]) => [k, (await resolveProjectSecretRef(v)) ?? ""] as [string, string]),
+                    ),
+                  )
+                : undefined;
               await mcpClient.registerServer({
                 id: `${pslug(fullPath)}:${s.id}`,
                 name: s.name,
                 transport: s.transport,
                 command: s.command,
-                env: resolveDollarVarsObject(s.env, projectEnv),
-                url: s.url ? resolveDollarVars(s.url, projectEnv) : undefined,
+                env: projectEnvResolved ?? resolveDollarVarsObject(s.env, projectEnv),
+                url: s.url ? (await resolveProjectSecretRef(s.url)) : undefined,
                 autoConnect: true,
-                authToken: s.authToken ? resolveDollarVars(s.authToken, projectEnv) : undefined,
+                authToken: s.authToken ? (await resolveProjectSecretRef(s.authToken)) : undefined,
               });
               log.info(`mcp: registered project-server "${pslug(fullPath)}:${s.id}" (project=${entry})`);
             } catch (err) {
