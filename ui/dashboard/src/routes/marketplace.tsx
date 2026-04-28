@@ -7,12 +7,13 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { useToast } from "@particle-academy/react-fancy";
+import { useToast, Callout } from "@particle-academy/react-fancy";
 import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
@@ -71,7 +72,7 @@ export default function MarketplacePage() {
     <div>
       {/* Page-level update banner — only shows when installed plugins have version bumps */}
       {updateCount > 0 && (
-        <div className="mb-4 px-4 py-2.5 rounded-lg border border-blue/30 bg-blue/5 text-[12px] text-foreground flex items-center gap-2">
+        <Callout color="blue" className="mb-4 text-[12px] text-foreground flex items-center gap-2">
           <span className="inline-block w-2 h-2 rounded-full bg-blue shrink-0" />
           <span>{updateCount} plugin update{updateCount > 1 ? "s" : ""} available</span>
           <button
@@ -80,7 +81,7 @@ export default function MarketplacePage() {
           >
             View updates →
           </button>
-        </div>
+        </Callout>
       )}
 
       {/* Tab bar */}
@@ -520,38 +521,36 @@ function BrowseTab() {
           onChange={(e) => setQuery(e.target.value)}
           className="flex-1"
         />
-        <select
-          className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm cursor-pointer"
+        <Select
+          className="text-sm"
+          list={[
+            { value: "", label: "All capabilities" },
+            ...Object.entries(PROVIDES_LABELS).map(([value, label]) => ({ value, label: label as string })),
+          ]}
           value={providesFilter}
-          onChange={(e) => setProvidesFilter(e.target.value)}
-        >
-          <option value="">All capabilities</option>
-          {Object.entries(PROVIDES_LABELS).map(([value, label]) => (
-            <option key={value} value={value}>{label}</option>
-          ))}
-        </select>
-        <select
-          className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm cursor-pointer"
-          value={sourceFilter}
-          onChange={(e) => setSourceFilter(e.target.value === "" ? "" : Number(e.target.value))}
-        >
-          <option value="">All sources</option>
-          {sources.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
-          ))}
-        </select>
+          onValueChange={setProvidesFilter}
+        />
+        <Select
+          className="text-sm"
+          list={[
+            { value: "", label: "All sources" },
+            ...sources.map((s) => ({ value: String(s.id), label: s.name })),
+          ]}
+          value={sourceFilter === "" ? "" : String(sourceFilter)}
+          onValueChange={(v) => setSourceFilter(v === "" ? "" : Number(v))}
+        />
       </div>
 
       {installError && (
-        <div className="rounded-lg bg-red/10 border border-red/30 px-4 py-3 text-sm text-red">
+        <Callout color="red" className="text-sm">
           {installError}
-        </div>
+        </Callout>
       )}
 
       {installNotice && (
-        <div className="rounded-lg bg-green/10 border border-green/30 px-4 py-3 text-sm text-green">
+        <Callout color="green" className="text-sm">
           {installNotice}
-        </div>
+        </Callout>
       )}
 
       {loading ? (
@@ -884,26 +883,24 @@ function InstalledTab() {
           onChange={(e) => setInstalledQuery(e.target.value)}
           className="flex-1"
         />
-        <select
-          className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm cursor-pointer"
+        <Select
+          className="text-sm"
+          list={[
+            { value: "", label: "All capabilities" },
+            ...Object.entries(PROVIDES_LABELS).map(([value, label]) => ({ value, label: label as string })),
+          ]}
           value={installedProvidesFilter}
-          onChange={(e) => setInstalledProvidesFilter(e.target.value)}
-        >
-          <option value="">All capabilities</option>
-          {Object.entries(PROVIDES_LABELS).map(([value, label]) => (
-            <option key={value} value={value}>{label}</option>
-          ))}
-        </select>
-        <select
-          className="h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm cursor-pointer"
-          value={installedSourceFilter}
-          onChange={(e) => setInstalledSourceFilter(e.target.value === "" ? "" : Number(e.target.value))}
-        >
-          <option value="">All sources</option>
-          {sources.map((s) => (
-            <option key={s.id} value={s.id}>{s.name}</option>
-          ))}
-        </select>
+          onValueChange={setInstalledProvidesFilter}
+        />
+        <Select
+          className="text-sm"
+          list={[
+            { value: "", label: "All sources" },
+            ...sources.map((s) => ({ value: String(s.id), label: s.name })),
+          ]}
+          value={installedSourceFilter === "" ? "" : String(installedSourceFilter)}
+          onValueChange={(v) => setInstalledSourceFilter(v === "" ? "" : Number(v))}
+        />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
