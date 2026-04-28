@@ -937,17 +937,26 @@ export async function startGatewayServer(
     })();
   });
 
-  // s124 t470: route iterative-work completions into NotificationStore so
-  // Toast UI (t471) + Notifications page can render previews. The mapper
-  // produces the canonical `iterative-work` typed metadata; artifact fields
-  // are populated incrementally as the agent-observability hook (t469)
-  // fills them. Subscriber failures are non-fatal — the iteration itself
-  // already completed; a missed notification is recoverable from the log.
+  // s124 t470 + t471: route iterative-work completions into NotificationStore
+  // (persistent) AND broadcast as `notification:new` over the dashboard WS
+  // (real-time, wakes Toast UI). The mapper produces canonical `iterative-work`
+  // typed metadata; artifact fields populate incrementally as the agent-
+  // observability hook (t469) fills them. Subscriber failures are non-fatal —
+  // the iteration itself already completed; a missed notification is
+  // recoverable from the iteration log.
   iterativeWorkScheduler.on("complete", (completion) => {
     void (async () => {
       try {
         const { mapIterativeWorkCompletionToParams } = await import("./iterative-work/notification-mapper.js");
-        await notificationStore.create(mapIterativeWorkCompletionToParams(completion));
+        const created = await notificationStore.create(mapIterativeWorkCompletionToParams(completion));
+        dashboardBroadcasterRef?.emitNotification({
+          id: created.id,
+          type: created.type,
+          title: created.title,
+          body: created.body,
+          metadata: created.metadata,
+          createdAt: created.createdAt,
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         log.warn(`iterative-work notification create failed for ${completion.projectPath}: ${message}`);

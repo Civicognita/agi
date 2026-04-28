@@ -26,6 +26,7 @@ import { ActivityDot } from "@/components/ActivityDot.js";
 import { ActiveDownloads } from "@/components/ActiveDownloads.js";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator.js";
 import { NotificationBell } from "@/components/NotificationBell.js";
+import { IterativeWorkToastStack } from "@/components/IterativeWorkToastStack.js";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover.js";
 import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
@@ -152,6 +153,10 @@ export default function RootLayout() {
   const [systemActive, setSystemActive] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  // s124 t471 — most recent iterative-work notification, drives the toast
+  // stack. The stack itself owns the active-toasts list + dismissal timers;
+  // this state just bumps when a fresh `notification:new` event arrives.
+  const [latestIterativeWorkToast, setLatestIterativeWorkToast] = useState<Notification | null>(null);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
   const [providerBalances, setProviderBalances] = useState<ProviderBalance[]>([]);
   const [balanceHistories, setBalanceHistories] = useState<Record<string, number[]>>({});
@@ -436,6 +441,11 @@ export default function RootLayout() {
         return [event.data, ...safeArray<Notification>(prev)].slice(0, 100);
       });
       setUnreadCount((prev) => (typeof prev === "number" ? prev : 0) + 1);
+      // s124 t471: surface iterative-work completions as toasts (other
+      // notification types stay bell-only).
+      if (event.data.type === "iterative-work") {
+        setLatestIterativeWorkToast(event.data);
+      }
     }
     if (event.type === "usage:recorded") {
       // Refresh provider balances after each completion so alerts stay current
@@ -919,6 +929,11 @@ export default function RootLayout() {
           </div>
         </div>
       )}
+
+      {/* s124 t471 — iterative-work toast stack (bottom-right, fixed).
+          Subscribes to the same notification:new WS stream as the bell;
+          only renders entries with type === "iterative-work". */}
+      <IterativeWorkToastStack latest={latestIterativeWorkToast} />
     </div>
   );
 }
