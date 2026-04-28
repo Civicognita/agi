@@ -1971,11 +1971,47 @@ export async function startGatewayServer(
   });
   log.info(`registered ${String(agentToolCount)} agent tools`);
 
-  // s118 t441 cycle 33 — MCP client + `mcp` agent tool. Instantiated empty;
-  // server config wiring (per-project mcp.servers block) ships in s118 t435.
-  // Until then, mcp.list-servers returns [] and call/list-tools/etc. error
-  // with "server X not registered" — Aion has the surface, not yet the data.
+  // s118 t441 cycle 33 — MCP client + `mcp` agent tool.
+  // s118 t446 D5 (cycle 67+) — boot-time wiring: read config.mcp.servers
+  // and registerServer each. TynnPmProvider's callTool("tynn", ...) +
+  // /api/projects/iterative-work/progress + the `mcp` agent tool's
+  // listServers/listTools/callTool now have real data when servers are
+  // configured. Each server block: { id, transport: stdio|http|websocket,
+  // command/env (stdio), url (http/ws), authToken (env-resolvable via
+  // $VAR), autoConnect: bool }.
   const mcpClient = new McpClient();
+  const mcpServersConfig = (config as { mcp?: { servers?: Array<Record<string, unknown>> } }).mcp?.servers ?? [];
+  for (const serverCfg of mcpServersConfig) {
+    try {
+      // Resolve $VAR-prefixed authToken via process.env so secrets stay
+      // out of gateway.json. {"authToken": "$TYNN_API_KEY"} → real token
+      // from process.env.TYNN_API_KEY at registration time.
+      const resolvedAuthToken = typeof serverCfg.authToken === "string" && serverCfg.authToken.startsWith("$")
+        ? process.env[serverCfg.authToken.slice(1)]
+        : (serverCfg.authToken as string | undefined);
+      // Resolve $VAR in env block too — `{"FOO": "$REAL_FOO"}` reads from process.env.
+      const resolvedEnv = typeof serverCfg.env === "object" && serverCfg.env !== null
+        ? Object.fromEntries(
+            Object.entries(serverCfg.env as Record<string, string>).map(([k, v]) =>
+              [k, v.startsWith("$") ? (process.env[v.slice(1)] ?? "") : v],
+            ),
+          )
+        : undefined;
+      await mcpClient.registerServer({
+        id: serverCfg.id as string,
+        name: serverCfg.name as string | undefined,
+        transport: serverCfg.transport as "stdio" | "http" | "websocket",
+        command: serverCfg.command as string[] | undefined,
+        env: resolvedEnv,
+        url: serverCfg.url as string | undefined,
+        autoConnect: (serverCfg.autoConnect as boolean | undefined) ?? true,
+        authToken: resolvedAuthToken,
+      });
+      log.info(`mcp: registered server "${String(serverCfg.id)}" (transport=${String(serverCfg.transport)})`);
+    } catch (err) {
+      log.warn(`mcp: failed to register server "${String(serverCfg.id)}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // s118 t432 cycle 36 — PM provider resolution + `pm` agent tool.
   // PM provider resolution (s118 t434): config.agent.pm.provider selects
