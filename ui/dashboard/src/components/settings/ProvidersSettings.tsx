@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { Accordion, Chart } from "@particle-academy/react-fancy";
+import { Accordion, Chart, Slider } from "@particle-academy/react-fancy";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
@@ -114,6 +114,22 @@ export function ProvidersSettings({ config, update }: Props) {
 
   const routerCostMode = ((config.agent as Record<string, unknown> | undefined)?.router as Record<string, unknown> | undefined)?.costMode as string ?? "balanced";
   const routerEscalation = ((config.agent as Record<string, unknown> | undefined)?.router as Record<string, unknown> | undefined)?.escalation as boolean ?? false;
+  // s129: floor/ceiling. When unset, derive from costMode/escalation so the
+  // slider renders sensibly for legacy configs (matches the migration matrix
+  // in agi/config/src/schema.ts migrateRouterConfig()).
+  const routerObj = (config.agent as Record<string, unknown> | undefined)?.router as Record<string, unknown> | undefined;
+  const TIER_ORDER = ["local", "economy", "balanced", "max"] as const;
+  const explicitFloor = routerObj?.floor as typeof TIER_ORDER[number] | undefined;
+  const explicitCeiling = routerObj?.ceiling as typeof TIER_ORDER[number] | undefined;
+  const derivedFloor = (routerCostMode as typeof TIER_ORDER[number]);
+  const derivedCeiling = routerEscalation
+    ? (routerCostMode === "max" ? "max" : "max")
+    : (routerCostMode as typeof TIER_ORDER[number]);
+  const routerFloor = explicitFloor ?? derivedFloor;
+  const routerCeiling = explicitCeiling ?? derivedCeiling;
+  const routerEscalateOnLowConfidence = (routerObj?.escalateOnLowConfidence as boolean | undefined) ?? routerEscalation;
+  const routerEscalateOnTimeoutSec = (routerObj?.escalateOnTimeoutSec as number | null | undefined) ?? null;
+  const routerParallelRace = (routerObj?.parallelRace as boolean | undefined) ?? false;
 
   // --- Data fetching ---
 
@@ -264,6 +280,59 @@ export function ProvidersSettings({ config, update }: Props) {
     }));
   }, [update]);
 
+  const setRouterRange = useCallback((floor: string, ceiling: string) => {
+    update((prev) => ({
+      ...prev,
+      agent: {
+        ...prev.agent,
+        router: {
+          ...(prev.agent as Record<string, unknown> | undefined)?.router,
+          floor,
+          ceiling,
+        },
+      },
+    }));
+  }, [update]);
+
+  const setEscalateOnLowConfidence = useCallback((enabled: boolean) => {
+    update((prev) => ({
+      ...prev,
+      agent: {
+        ...prev.agent,
+        router: {
+          ...(prev.agent as Record<string, unknown> | undefined)?.router,
+          escalateOnLowConfidence: enabled,
+        },
+      },
+    }));
+  }, [update]);
+
+  const setEscalateOnTimeoutSec = useCallback((sec: number | null) => {
+    update((prev) => ({
+      ...prev,
+      agent: {
+        ...prev.agent,
+        router: {
+          ...(prev.agent as Record<string, unknown> | undefined)?.router,
+          escalateOnTimeoutSec: sec,
+        },
+      },
+    }));
+  }, [update]);
+
+  const setParallelRace = useCallback((enabled: boolean) => {
+    update((prev) => ({
+      ...prev,
+      agent: {
+        ...prev.agent,
+        router: {
+          ...(prev.agent as Record<string, unknown> | undefined)?.router,
+          parallelRace: enabled,
+        },
+      },
+    }));
+  }, [update]);
+
   const updateProviderField = useCallback((providerId: string, fieldId: string, value: unknown) => {
     update((prev) => ({
       ...prev,
@@ -370,46 +439,92 @@ export function ProvidersSettings({ config, update }: Props) {
           Controls how the router selects models for each request. The router classifies request
           complexity and picks the right model tier automatically.
         </p>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl">
-          {([
-            { mode: "local" as const, label: "Local Only", cost: "Free", desc: "Ollama / HF models only" },
-            { mode: "economy" as const, label: "Economy", cost: "$", desc: "Haiku / GPT-4o Mini first" },
-            { mode: "balanced" as const, label: "Balanced", cost: "$$", desc: "Route by complexity" },
-            { mode: "max" as const, label: "Max Quality", cost: "$$$", desc: "Always strongest model" },
-          ] as const).map((m) => {
-            const isActive = routerCostMode === m.mode;
-            return (
-              <button
-                key={m.mode}
-                type="button"
-                className={`text-left p-3 rounded-lg border cursor-pointer transition-colors ${
-                  isActive
-                    ? "border-primary bg-primary/5"
-                    : "border-border hover:border-primary/50"
-                }`}
-                onClick={() => setCostMode(m.mode)}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[12px] font-semibold text-foreground">{m.label}</span>
-                  <span className="text-[10px] text-muted-foreground font-mono">{m.cost}</span>
-                </div>
-                <div className="text-[10px] text-muted-foreground">{m.desc}</div>
-              </button>
-            );
-          })}
-        </div>
-        {(routerCostMode === "economy" || routerCostMode === "balanced") && (
-          <label className="flex items-center gap-2 mt-4 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={routerEscalation}
-              onChange={(e) => setEscalation(e.target.checked)}
-              className="rounded border-input"
+        <div className="max-w-2xl space-y-5">
+          {/* Floor + Ceiling range slider — s129 replaces the 4-button picker.
+              Floor = where every turn starts. Ceiling = max escalation tier.
+              Floor === Ceiling means "lock to this tier; never escalate". */}
+          <div className="px-2">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] text-muted-foreground">Tier range</span>
+              <span className="text-[11px] font-mono text-foreground">
+                {routerFloor === routerCeiling
+                  ? `${routerFloor} only`
+                  : `${routerFloor} → ${routerCeiling}`}
+              </span>
+            </div>
+            <Slider
+              range
+              min={0}
+              max={3}
+              step={1}
+              value={[TIER_ORDER.indexOf(routerFloor), TIER_ORDER.indexOf(routerCeiling)]}
+              onValueChange={([floorIdx, ceilingIdx]) => {
+                const f = TIER_ORDER[floorIdx] ?? "balanced";
+                const c = TIER_ORDER[ceilingIdx] ?? "max";
+                setRouterRange(f, c);
+              }}
+              marks={[
+                { value: 0, label: "local" },
+                { value: 1, label: "economy" },
+                { value: 2, label: "balanced" },
+                { value: 3, label: "max" },
+              ]}
             />
-            <span className="text-[12px] text-foreground">Enable escalation</span>
-            <span className="text-[10px] text-muted-foreground">(auto-upgrade to stronger model when response quality is low)</span>
-          </label>
-        )}
+            <p className="text-[10px] text-muted-foreground mt-2">
+              Router starts at <span className="font-mono">{routerFloor}</span> tier;
+              {routerFloor === routerCeiling
+                ? " no escalation."
+                : ` escalates up to ${routerCeiling} on low-confidence or timeout.`}
+            </p>
+          </div>
+
+          {/* Escalation triggers — only meaningful when floor < ceiling. */}
+          {routerFloor !== routerCeiling && (
+            <div className="space-y-2 px-2 pt-3 border-t border-border">
+              <span className="text-[11px] text-muted-foreground uppercase tracking-wide">Escalation triggers</span>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={routerEscalateOnLowConfidence}
+                  onChange={(e) => setEscalateOnLowConfidence(e.target.checked)}
+                  className="rounded border-input"
+                />
+                <span className="text-[12px] text-foreground">On low confidence</span>
+                <span className="text-[10px] text-muted-foreground">(short answer to a complex question or hedging phrases)</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={routerEscalateOnTimeoutSec !== null && routerEscalateOnTimeoutSec > 0}
+                  onChange={(e) => setEscalateOnTimeoutSec(e.target.checked ? 30 : null)}
+                  className="rounded border-input"
+                />
+                <span className="text-[12px] text-foreground">On timeout</span>
+                {routerEscalateOnTimeoutSec !== null && routerEscalateOnTimeoutSec > 0 && (
+                  <Input
+                    type="number"
+                    value={routerEscalateOnTimeoutSec}
+                    onChange={(e) => setEscalateOnTimeoutSec(Number(e.target.value) || null)}
+                    className="w-16 h-7 text-[11px]"
+                    min={1}
+                    step={1}
+                  />
+                )}
+                <span className="text-[10px] text-muted-foreground">{routerEscalateOnTimeoutSec !== null && routerEscalateOnTimeoutSec > 0 ? "seconds" : "(off)"}</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={routerParallelRace}
+                  onChange={(e) => setParallelRace(e.target.checked)}
+                  className="rounded border-input"
+                />
+                <span className="text-[12px] text-foreground">Race floor + ceiling in parallel</span>
+                <span className="text-[10px] text-muted-foreground">(2x cost; cuts latency)</span>
+              </label>
+            </div>
+          )}
+        </div>
       </Card>
 
       {/* 3. Providers — collapsible accordion rows */}
