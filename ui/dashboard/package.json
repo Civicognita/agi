@@ -24,7 +24,7 @@
     "@codemirror/view": "^6.36.0",
     "@lezer/highlight": "^1.2.0",
     "@particle-academy/react-echarts": "^1.1.3",
-    "@particle-academy/react-fancy": "^2.7.0",
+    "@particle-academy/react-fancy": "^2.8.1",
     "@particle-academy/fancy-sheets": "^0.7.2",
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-query": "^5.90.21",
@@ -49,7 +49,7 @@
   },
   "devDependencies": {
     "@agi/gateway-core": "workspace:*",
-    "@particle-academy/fancy-code": "^0.4.4",
+    "@particle-academy/fancy-code": "^0.4.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",

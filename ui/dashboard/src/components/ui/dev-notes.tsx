@@ -153,15 +153,18 @@ function DevNotesRoot({ title = "Dev Notes", children, className }: DevNotesProp
       {open && (
         <>
           {/* Click-outside scrim — transparent layer that closes the panel
-              without dimming the page. */}
+              without dimming the page. Sits one tier below the panel itself
+              so panel clicks still reach. Both above the chat flyout
+              (z-[200]) per cycle 87 z-index policy: header-triggered surfaces
+              stack above page content. */}
           <div
             aria-hidden="true"
-            className="fixed inset-0 z-40"
+            className="fixed inset-0 z-[290]"
             onClick={() => { setOpen(false); }}
           />
           <Card
             data-testid="dev-notes-panel"
-            className="absolute z-50 right-0 top-full mt-2 w-[420px] max-h-[60vh] overflow-y-auto p-4 shadow-lg space-y-3"
+            className="absolute z-[300] right-0 top-full mt-2 w-[420px] max-h-[60vh] overflow-y-auto p-4 shadow-lg space-y-3"
             onClick={(e) => { e.stopPropagation(); }}
           >
             <div className="flex items-center justify-between gap-2 mb-2">
