@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "@agi/db-schema": "workspace:*",
-    "drizzle-orm": "^0.38.3",
+    "drizzle-orm": "^0.45.2",
     "ulid": "^2.3.0"
   },
   "devDependencies": {}
