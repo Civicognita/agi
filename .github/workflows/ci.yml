@@ -26,5 +26,8 @@ jobs:
           cache: 'pnpm'
 
       - run: pnpm install --frozen-lockfile
+      # @agi/db-schema exports point at ./dist/* — must build before
+      # typecheck so consumers can resolve the package types.
+      - run: pnpm --filter @agi/db-schema build
       - run: pnpm typecheck
       - run: pnpm lint
