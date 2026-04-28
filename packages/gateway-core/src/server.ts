@@ -923,7 +923,7 @@ export async function startGatewayServer(
 
   iterativeWorkScheduler.on("fire", (fire) => {
     void (async () => {
-      let outcome: { status: "done" | "error"; error?: string } = { status: "done" };
+      const outcome: { status: "done" | "error"; error?: string; artifact?: import("./iterative-work/types.js").IterativeWorkArtifact } = { status: "done" };
       try {
         const slug = projectSlug(fire.projectPath);
         const systemEntity = await entityStore.resolveOrCreate(
@@ -942,10 +942,37 @@ export async function startGatewayServer(
           projectContext: fire.projectPath,
           isOwner: true,
         });
+
+        // s124 t469 — capture a screenshot of the project's deployed URL
+        // (when hosting is configured). Resolved Q-2 mechanism: full-page
+        // headless Chromium via Playwright (not Puppeteer — Playwright is
+        // already in deps for e2e). Failure-tolerant: a missed thumbnail
+        // just leaves artifact.thumbnailPath undefined; the
+        // IterativeWorkArtifactCard renders gracefully without it.
+        try {
+          const hosting = projectConfigManager.readHosting(fire.projectPath) as { hostname?: string } | null;
+          const hostname = hosting?.hostname;
+          if (typeof hostname === "string" && hostname.length > 0) {
+            const baseDomain = (config as { hosting?: { baseDomain?: string } }).hosting?.baseDomain ?? "ai.on";
+            const url = `https://${hostname}.${baseDomain}`;
+            const { captureProjectScreenshot } = await import("./iterative-work/screenshot.js");
+            const thumbnailPath = await captureProjectScreenshot({
+              hostingUrl: url,
+              log: (msg) => { log.warn(`iter-screenshot: ${msg}`); },
+            });
+            if (thumbnailPath !== null) {
+              outcome.artifact = { ...(outcome.artifact ?? {}), thumbnailPath };
+              log.info(`iterative-work screenshot captured: ${thumbnailPath}`);
+            }
+          }
+        } catch (err) {
+          log.warn(`iterative-work screenshot block failed for ${fire.projectPath}: ${err instanceof Error ? err.message : String(err)}`);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         log.error(`iterative-work fire failed for ${fire.projectPath}: ${message}`);
-        outcome = { status: "error", error: message };
+        outcome.status = "error";
+        outcome.error = message;
       } finally {
         iterativeWorkScheduler.recordCompletion(fire.projectPath, outcome);
         iterativeWorkScheduler.markComplete(fire.projectPath);
@@ -2690,6 +2717,28 @@ export async function startGatewayServer(
         async (f) => {
           const { registerVaultRoutes } = await import("./vault/api.js");
           registerVaultRoutes(f, { vaultStorage });
+        },
+        // s124 t469 — serve iterative-work thumbnails. Files live in
+        // ~/.agi/thumbs/ written by captureProjectScreenshot. Strict
+        // filename allowlist (iter-<ulid>.png) prevents path traversal.
+        (f) => {
+          const thumbsDir = join(homedir(), ".agi", "thumbs");
+          f.get<{ Params: { filename: string } }>("/api/thumbs/:filename", async (request, reply) => {
+            const { filename } = request.params;
+            // Allowlist: iter-<ulid>.png. ULIDs are 26 chars; allow 20-32 to
+            // accommodate any future id shape. No `..`, no slashes.
+            if (!/^iter-[A-Z0-9]{20,32}\.png$/i.test(filename)) {
+              return reply.code(400).send({ error: "invalid thumbnail filename" });
+            }
+            const fullPath = join(thumbsDir, filename);
+            if (!existsSync(fullPath)) {
+              return reply.code(404).send({ error: "thumbnail not found" });
+            }
+            const buf = readFileSync(fullPath);
+            reply.header("Content-Type", "image/png");
+            reply.header("Cache-Control", "public, max-age=86400");
+            return reply.send(buf);
+          });
         },
       ],
     },

@@ -48,6 +48,15 @@ function projectNameFromPath(path: string): string {
   return segments[segments.length - 1] ?? path;
 }
 
+/** Resolve a thumbnailPath (absolute filesystem path on the gateway host)
+ *  into a URL the browser can fetch. Files live at ~/.agi/thumbs/<basename>;
+ *  the gateway serves them via /api/thumbs/:filename. */
+function thumbnailUrl(absolutePath: string): string {
+  const segments = absolutePath.split("/");
+  const filename = segments[segments.length - 1] ?? "";
+  return `/api/thumbs/${filename}`;
+}
+
 function formatDuration(ms: number): string {
   const totalSec = Math.max(1, Math.round(ms / 1000));
   if (totalSec < 60) return `${String(totalSec)}s`;
@@ -116,7 +125,7 @@ export function IterativeWorkArtifactCard({
       <div className={cn("flex gap-3", compact ? "items-center" : "items-start")}>
         {thumb !== undefined && thumb.length > 0 && (
           <img
-            src={thumb}
+            src={thumbnailUrl(thumb)}
             alt=""
             className={cn(
               "rounded object-cover bg-secondary shrink-0",
