@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { Callout } from "@particle-academy/react-fancy";
 import { Card } from "@/components/ui/card.js";
 import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
@@ -77,9 +78,9 @@ export function AionimaIdStep({ onNext, onSkip, status }: Props) {
       </div>
 
       {isCompleted && (
-        <div className="p-3 rounded-lg bg-green/5 border border-green/20 text-sm text-muted-foreground onboard-animate-in">
+        <Callout color="green" className="text-sm text-muted-foreground onboard-animate-in">
           Identity service is connected. Continue to keep the current configuration.
-        </div>
+        </Callout>
       )}
 
       <Card className="p-5 onboard-animate-in onboard-stagger-1">
