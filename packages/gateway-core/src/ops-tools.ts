@@ -3,14 +3,14 @@
  * only when the agent acts on an ops/administration-category project.
  *
  * s126 — Ops mode auto-activated for ops/admin project types. The toolset:
- *   - pm.list-all-tasks       — read tasks across ALL workspace projects
- *   - pm.bulk-update          — bulk status transitions across projects
- *   - hosting.list-projects   — see all hosted projects + their statuses
- *   - hosting.restart         — restart a hosted project
- *   - hosting.stop            — stop a hosted project
- *   - hosting.deploy          — trigger a project deploy
- *   - stacks.list             — list stacks for a project
- *   - stacks.add              — add a stack to a project
+ *   - pm_list_all_tasks       — read tasks across ALL workspace projects
+ *   - pm_bulk_update          — bulk status transitions across projects
+ *   - hosting_list_projects   — see all hosted projects + their statuses
+ *   - hosting_restart         — restart a hosted project
+ *   - hosting_stop            — stop a hosted project
+ *   - hosting_deploy          — trigger a project deploy
+ *   - stacks_list             — list stacks for a project
+ *   - stacks_add              — add a stack to a project
  *
  * Each tool takes a `targetProjectPath` (or wildcard for list ops) and
  * authenticates via the calling ops project's COA<>COI chain. Cross-project
@@ -44,10 +44,10 @@ export function registerOpsTools(deps: OpsToolsDeps): number {
   const { toolRegistry } = deps;
   let count = 0;
 
-  // pm.list-all-tasks — aggregate tasks across all workspace projects.
+  // pm_list_all_tasks — aggregate tasks across all workspace projects.
   toolRegistry.register(
     {
-      name: "pm.list-all-tasks",
+      name: "pm_list_all_tasks",
       description: "List tasks across ALL workspace projects (ops mode). Returns a flat array with `projectPath` per task. Useful for cross-project triage + aggregate queue view.",
       requiresState: ["online"] as never,
       requiresTier: ["sealed"] as never,
@@ -75,10 +75,10 @@ export function registerOpsTools(deps: OpsToolsDeps): number {
   );
   count++;
 
-  // pm.bulk-update — transition multiple tasks across projects in one call.
+  // pm_bulk_update — transition multiple tasks across projects in one call.
   toolRegistry.register(
     {
-      name: "pm.bulk-update",
+      name: "pm_bulk_update",
       description: "Bulk-transition tasks across one or more projects (ops mode). Body: { updates: [{projectPath, taskId, status}, ...] }. Returns success/failure per update.",
       requiresState: ["online"] as never,
       requiresTier: ["sealed"] as never,
@@ -103,10 +103,10 @@ export function registerOpsTools(deps: OpsToolsDeps): number {
   );
   count++;
 
-  // hosting.list-projects — see all hosted projects + their statuses.
+  // hosting_list_projects — see all hosted projects + their statuses.
   toolRegistry.register(
     {
-      name: "hosting.list-projects",
+      name: "hosting_list_projects",
       description: "List all hosted projects + their statuses (ops mode). Returns hostname, internal port, status, container name.",
       requiresState: ["online"] as never,
       requiresTier: ["sealed"] as never,
@@ -122,10 +122,10 @@ export function registerOpsTools(deps: OpsToolsDeps): number {
   );
   count++;
 
-  // hosting.restart — restart a hosted project by path.
+  // hosting_restart — restart a hosted project by path.
   toolRegistry.register(
     {
-      name: "hosting.restart",
+      name: "hosting_restart",
       description: "Restart a hosted project by absolute path (ops mode). Useful for picking up config changes or recovering an unhealthy container.",
       requiresState: ["online"] as never,
       requiresTier: ["sealed"] as never,
@@ -142,10 +142,10 @@ export function registerOpsTools(deps: OpsToolsDeps): number {
   );
   count++;
 
-  // hosting.stop — stop a hosted project.
+  // hosting_stop — stop a hosted project.
   toolRegistry.register(
     {
-      name: "hosting.stop",
+      name: "hosting_stop",
       description: "Stop a hosted project's container (ops mode). Project remains configured; just no longer running.",
       requiresState: ["online"] as never,
       requiresTier: ["sealed"] as never,
@@ -166,10 +166,10 @@ export function registerOpsTools(deps: OpsToolsDeps): number {
   );
   count++;
 
-  // hosting.deploy — trigger a deploy for a project.
+  // hosting_deploy — trigger a deploy for a project.
   toolRegistry.register(
     {
-      name: "hosting.deploy",
+      name: "hosting_deploy",
       description: "Trigger a deploy of a hosted project (git pull + rebuild + restart) (ops mode). Equivalent to clicking the Deploy button on the project tile.",
       requiresState: ["online"] as never,
       requiresTier: ["sealed"] as never,
@@ -187,10 +187,10 @@ export function registerOpsTools(deps: OpsToolsDeps): number {
   );
   count++;
 
-  // stacks.list — list stacks attached to a project.
+  // stacks_list — list stacks attached to a project.
   toolRegistry.register(
     {
-      name: "stacks.list",
+      name: "stacks_list",
       description: "List stacks attached to a project (ops mode). Returns stackId + per-stack metadata. Pass projectPath OR omit for all projects.",
       requiresState: ["online"] as never,
       requiresTier: ["sealed"] as never,
@@ -211,10 +211,10 @@ export function registerOpsTools(deps: OpsToolsDeps): number {
   );
   count++;
 
-  // stacks.add — add a stack to a project.
+  // stacks_add — add a stack to a project.
   toolRegistry.register(
     {
-      name: "stacks.add",
+      name: "stacks_add",
       description: "Attach a stack (e.g. stack-postgres-17, stack-redis) to a project (ops mode). Body: { projectPath, stackId, options? }. Stack-registry validates stackId exists + applies defaults.",
       requiresState: ["online"] as never,
       requiresTier: ["sealed"] as never,

@@ -280,25 +280,6 @@ export class AnthropicProvider implements LLMProvider {
     const anthropicMessages = toAnthropicMessages(params.messages);
     const anthropicTools = params.tools ? toAnthropicTools(params.tools) : undefined;
 
-    // Diagnostic — Anthropic enforces tool names match
-    // `^[a-zA-Z0-9_-]{1,128}$`. Surface any violator with its index +
-    // name so the bug can be caught at registration time, not at the
-    // first turn. Without this the API responds with a generic
-    // "tools.<n>.custom.name" error that requires guesswork to map.
-    if (anthropicTools !== undefined) {
-      const VALID_NAME_RE = /^[a-zA-Z0-9_-]{1,128}$/;
-      const bad = anthropicTools
-        .map((t, i) => ({ i, name: t.name }))
-        .filter((x) => !VALID_NAME_RE.test(x.name));
-      if (bad.length > 0) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `[anthropic-provider] invalid tool names (regex /^[a-zA-Z0-9_-]{1,128}$/):`,
-          bad,
-        );
-      }
-    }
-
     const requestBody = {
       model,
       max_tokens: maxTokens,

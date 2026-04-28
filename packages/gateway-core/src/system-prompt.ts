@@ -154,8 +154,8 @@ export interface SystemPromptContext {
    * (literature/app/web/media/administration/ops/monorepo). When the category
    * is `"ops"` or `"administration"`, the assembler injects an ops-mode
    * preamble that tells the agent it has cross-project authority + lists the
-   * gated ops tools that just became available (pm.list-all-tasks,
-   * hosting.list-projects, etc.). Drives s126 ops-mode activation.
+   * gated ops tools that just became available (pm_list_all_tasks,
+   * hosting_list_projects, etc.). Drives s126 ops-mode activation.
    */
   projectCategory?: string;
   /**
@@ -602,11 +602,11 @@ function buildOpsModeSection(): string {
     "",
     "This project's category is `ops` (or `administration`). You have cross-project authority — your tool palette includes ops-only tools that surface ONLY for ops projects:",
     "",
-    "- `pm.list-all-tasks` — read tasks across ALL workspace projects (cross-project triage).",
-    "- `pm.bulk-update` — transition tasks across projects in one call.",
-    "- `hosting.list-projects` — see every hosted project + its status.",
-    "- `hosting.restart` / `hosting.stop` / `hosting.deploy` — control hosted-project containers.",
-    "- `stacks.list` / `stacks.add` — read or attach stacks (postgres, redis, etc.) to any project.",
+    "- `pm_list_all_tasks` — read tasks across ALL workspace projects (cross-project triage).",
+    "- `pm_bulk_update` — transition tasks across projects in one call.",
+    "- `hosting_list_projects` — see every hosted project + its status.",
+    "- `hosting_restart` / `hosting_stop` / `hosting_deploy` — control hosted-project containers.",
+    "- `stacks_list` / `stacks_add` — read or attach stacks (postgres, redis, etc.) to any project.",
     "",
     "Use these tools to coordinate work across the workspace. Every cross-project action is COA-logged back to this ops project + you, so the audit chain stays intact. Do not assume non-ops projects can call these tools — they cannot.",
   ].join("\n");
