@@ -10,7 +10,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // below). The legacy ReactMarkdown + markdownComponents path was retired
 // in favor of ContentRenderer + registered extensions (thinking, question,
 // callout, highlight). See src/lib/content-renderer-setup.tsx.
-import type { WorkerJobSummary, Plan, PlanStatus, PlanStep, ProjectInfo } from "../types.js";
+import type { WorkerJobSummary, Plan, PlanStatus, PlanStep, ProjectInfo, Notification } from "../types.js";
+import { IterativeWorkArtifactCard } from "./IterativeWorkArtifactCard.js";
 import { approveTaskmasterJob, fetchTaskmasterJobs, rejectTaskmasterJob } from "../api.js";
 import { useDashboardWS } from "../hooks.js";
 import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
@@ -190,6 +191,13 @@ export interface ChatFlyoutProps {
   openRequestId?: string | null;
   /** When true, renders as an inline flex child instead of a fixed overlay. */
   docked?: boolean;
+  /** s124 cycle 86 rework — global notification list. ChatFlyout filters
+   *  to iterative-work entries matching the active session's project path
+   *  and renders the latest as an inline IterativeWorkArtifactCard at the
+   *  top of the message list. Per-project scoping per the owner's
+   *  clarification "display everything in the toast or canvas for the
+   *  project the response belongs to." */
+  notifications?: Notification[];
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +285,7 @@ function TokenBreakdownModal({
 // Component
 // ---------------------------------------------------------------------------
 
-export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithContext, openWithMessage, openRequestId, docked = false }: ChatFlyoutProps) {
+export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithContext, openWithMessage, openRequestId, docked = false, notifications: notificationsProp }: ChatFlyoutProps) {
   // State
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const sessionsRef = useRef(sessions);
@@ -321,6 +329,29 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
     [sessions, activeSessionId],
   );
+
+  /** s124 cycle 86 rework — most-recent iterative-work artifact for the active
+   *  session's project. Filters the global notifications stream by type
+   *  + matching projectPath; takes the newest. Null when no recent artifact
+   *  applies to this chat session (e.g., session is not project-scoped, or
+   *  no iteration has fired since the session opened). */
+  const latestIterationArtifact = useMemo(() => {
+    if (notificationsProp === undefined) return null;
+    if (activeSession === null) return null;
+    const projectPath = activeSession.context;
+    if (typeof projectPath !== "string" || projectPath.length === 0) return null;
+
+    let candidate: Notification | null = null;
+    for (const n of notificationsProp) {
+      if (n.type !== "iterative-work") continue;
+      const meta = n.metadata as { projectPath?: string } | null;
+      if (meta?.projectPath !== projectPath) continue;
+      if (candidate === null || new Date(n.createdAt).getTime() > new Date(candidate.createdAt).getTime()) {
+        candidate = n;
+      }
+    }
+    return candidate;
+  }, [notificationsProp, activeSession]);
 
   // -------------------------------------------------------------------------
   // File attachment handlers
@@ -1278,6 +1309,14 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           onScroll={handleScroll}
           className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-4"
         >
+          {/* s124 cycle 86 rework — latest iterative-work artifact for this
+              project, scoped to the open session's context. Replaces the
+              prior global IterativeWorkToastStack (which was the wrong
+              surface per the owner's clarification). */}
+          {latestIterationArtifact !== null && (
+            <IterativeWorkArtifactCard notification={latestIterationArtifact} compact />
+          )}
+
           {activeSession === null && (
             <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
               Click + to start a new chat

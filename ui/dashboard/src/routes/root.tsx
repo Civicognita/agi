@@ -26,7 +26,6 @@ import { ActivityDot } from "@/components/ActivityDot.js";
 import { ActiveDownloads } from "@/components/ActiveDownloads.js";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator.js";
 import { NotificationBell } from "@/components/NotificationBell.js";
-import { IterativeWorkToastStack } from "@/components/IterativeWorkToastStack.js";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover.js";
 import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
@@ -153,10 +152,6 @@ export default function RootLayout() {
   const [systemActive, setSystemActive] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  // s124 t471 — most recent iterative-work notification, drives the toast
-  // stack. The stack itself owns the active-toasts list + dismissal timers;
-  // this state just bumps when a fresh `notification:new` event arrives.
-  const [latestIterativeWorkToast, setLatestIterativeWorkToast] = useState<Notification | null>(null);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
   const [providerBalances, setProviderBalances] = useState<ProviderBalance[]>([]);
   const [balanceHistories, setBalanceHistories] = useState<Record<string, number[]>>({});
@@ -317,28 +312,11 @@ export default function RootLayout() {
     setChatOpen(true);
   }, []);
 
-  // s124 t472 — chat-routing for iterative-work toasts. Routes to the
-  // project's chat using ChatFlyout's existing find-or-create logic
-  // (matched by `session.context === projectPath`). The toast doesn't
-  // need to know whether a session exists; ChatFlyout reuses if matched,
-  // creates fresh otherwise. Seed-message-on-create lands as a follow-up
-  // enhancement once t469 provides meaningful summary text in the
-  // notification metadata; for now the chat opens empty when new.
-  const handleOpenChatForIterativeWork = useCallback((notification: Notification) => {
-    const meta = notification.metadata as { projectPath?: string; summary?: string } | null;
-    const projectPath = meta?.projectPath;
-    if (projectPath === undefined || projectPath.length === 0) return;
-    // When the iteration produced a meaningful summary (t469-populated
-    // path), seed the chat WITH the iteration context so a fresh session
-    // starts with what the agent shipped. Existing sessions ignore the
-    // seed via ChatFlyout's openWithMessage gate (existing path doesn't
-    // consume the message). Empty summary → plain open without seed.
-    if (meta?.summary !== undefined && meta.summary.length > 0) {
-      handleOpenChatWithMessage(projectPath, `Reviewing iteration: ${meta.summary}`);
-    } else {
-      handleOpenChat(projectPath);
-    }
-  }, [handleOpenChat, handleOpenChatWithMessage]);
+  // s124 cycle 86 rework — handleOpenChatForIterativeWork removed. The
+  // toast click-through is no longer needed because the artifact card now
+  // renders INSIDE the project's chat flyout directly. Owners see the
+  // artifact when they open that project's chat; no global toast →
+  // chat-routing dispatch is required.
 
   const handleOpenEditor = useCallback((path: string) => {
     setEditorFilePath(path);
@@ -464,11 +442,11 @@ export default function RootLayout() {
         return [event.data, ...safeArray<Notification>(prev)].slice(0, 100);
       });
       setUnreadCount((prev) => (typeof prev === "number" ? prev : 0) + 1);
-      // s124 t471: surface iterative-work completions as toasts (other
-      // notification types stay bell-only).
-      if (event.data.type === "iterative-work") {
-        setLatestIterativeWorkToast(event.data);
-      }
+      // s124 cycle 86 rework: iterative-work completions now render INSIDE
+      // the project's chat flyout (per-project surface) via ChatFlyout's
+      // notifications prop + filter on activeSession.context. The previous
+      // setLatestIterativeWorkToast / global toast stack is gone — the chat
+      // surface IS the per-project surface.
     }
     if (event.type === "usage:recorded") {
       // Refresh provider balances after each completion so alerts stay current
@@ -850,6 +828,7 @@ export default function RootLayout() {
               openWithContext={chatContext}
               openWithMessage={chatInitialMessage}
               openRequestId={chatRequestId}
+              notifications={notifications}
               docked
             />
           </div>
@@ -879,6 +858,7 @@ export default function RootLayout() {
               openWithContext={chatContext}
               openWithMessage={chatInitialMessage}
               openRequestId={chatRequestId}
+              notifications={notifications}
             />
           </>
         )}
@@ -953,14 +933,11 @@ export default function RootLayout() {
         </div>
       )}
 
-      {/* s124 t471 — iterative-work toast stack (bottom-right, fixed).
-          Subscribes to the same notification:new WS stream as the bell;
-          only renders entries with type === "iterative-work". Click-through
-          (s124 t472) routes to the project's chat via find-or-create. */}
-      <IterativeWorkToastStack
-        latest={latestIterativeWorkToast}
-        onActivate={handleOpenChatForIterativeWork}
-      />
+      {/* s124 cycle 86 rework — iterative-work artifacts now render INSIDE
+          the project's chat flyout (per-project surface), not as a global
+          bottom-right toast stack. The IterativeWorkToastStack component
+          is deprecated by this change; ChatFlyout consumes notifications
+          directly + filters to its active session's project path. */}
     </div>
   );
 }
