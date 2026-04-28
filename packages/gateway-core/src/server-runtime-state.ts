@@ -1889,6 +1889,90 @@ export async function createGatewayRuntimeState(
     }
   });
 
+  // GET /api/projects/mcp/server/tools|prompts|resources?path=&id= — browse what
+  // a connected server provides. Lets the MCPTab UI render the card's expanded
+  // inspector. Errors surface as 502 with the underlying SDK message.
+  fastify.get("/api/projects/mcp/server/tools", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"]; const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const nsId = mcpServerNs(resolvePath(pathParam), idParam);
+    try {
+      const tools = await deps.mcpClient.listTools(nsId);
+      return reply.send({ ok: true, tools });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get("/api/projects/mcp/server/prompts", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"]; const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const nsId = mcpServerNs(resolvePath(pathParam), idParam);
+    try {
+      const prompts = await deps.mcpClient.listPrompts(nsId);
+      return reply.send({ ok: true, prompts });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get("/api/projects/mcp/server/resources", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"]; const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const nsId = mcpServerNs(resolvePath(pathParam), idParam);
+    try {
+      const resources = await deps.mcpClient.listResources(nsId);
+      return reply.send({ ok: true, resources });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/projects/mcp/server/call-tool|read-resource — invoke a tool or
+  // read a resource. Body: {path, id, toolName/uri, arguments?}. Lets the user
+  // test individual surfaces from the UI without round-tripping through chat.
+  fastify.post("/api/projects/mcp/server/call-tool", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const body = request.body as { path?: string; id?: string; toolName?: string; arguments?: Record<string, unknown> } | undefined;
+    if (!body?.path || !body.id || !body.toolName) return reply.code(400).send({ error: "path + id + toolName required" });
+    const nsId = mcpServerNs(resolvePath(body.path), body.id);
+    try {
+      const result = await deps.mcpClient.callTool(nsId, body.toolName, body.arguments ?? {});
+      return reply.send({ ok: true, result });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.post("/api/projects/mcp/server/read-resource", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const body = request.body as { path?: string; id?: string; uri?: string } | undefined;
+    if (!body?.path || !body.id || !body.uri) return reply.code(400).send({ error: "path + id + uri required" });
+    const nsId = mcpServerNs(resolvePath(body.path), body.id);
+    try {
+      const result = await deps.mcpClient.readResource(nsId, body.uri);
+      return reply.send({ ok: true, result });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // POST /api/projects/mcp/server/reconnect?path=&id= — re-register the server
   // from current project.json + .env state, then attempt connect. Lets the user
   // recover from an `error` state caused by a transient network blip or a save
