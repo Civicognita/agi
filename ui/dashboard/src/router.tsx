@@ -31,6 +31,7 @@ import MarketplacePage from "./routes/marketplace.js";
 import HFMarketplacePage from "./routes/hf-marketplace.js";
 import SettingsHFPage from "./routes/settings-hf.js";
 import SettingsProvidersPage from "./routes/settings-providers.js";
+import SettingsVaultPage from "./routes/settings-vault.js";
 import ScheduledJobsPage from "./routes/settings-scheduled-jobs.js";
 import AionimaPage from "./routes/aionima.js";
 import { OnboardingPage } from "./routes/onboarding.js";
@@ -97,6 +98,7 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="/settings/gateway" replace /> },
           { path: "gateway", element: <SettingsGatewayPage /> },
           { path: "providers", element: <SettingsProvidersPage /> },
+          { path: "vault", element: <SettingsVaultPage /> },
           { path: "scheduled-jobs", element: <ScheduledJobsPage /> },
           { path: "security", element: <SecuritySettingsPage /> },
           { path: "hf", element: <SettingsHFPage /> },

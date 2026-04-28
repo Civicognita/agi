@@ -3321,3 +3321,65 @@ export async function fetchPromptPreview(
   }
   return res.json() as Promise<PromptPreview>;
 }
+
+// ---------------------------------------------------------------------------
+// Vault API (s128 t495)
+// ---------------------------------------------------------------------------
+
+export type VaultEntryType = "key" | "password" | "token";
+
+export interface VaultEntrySummary {
+  id: string;
+  name: string;
+  type: VaultEntryType;
+  created: string;
+  lastAccessed: string | null;
+  ownedByProject: boolean;
+  description?: string;
+}
+
+export interface VaultEntryCreateInput {
+  name: string;
+  type: VaultEntryType;
+  value: string;
+  owningProject?: string;
+  description?: string;
+}
+
+export async function fetchVaultEntries(requestingProject?: string): Promise<VaultEntrySummary[]> {
+  const url = new URL("/api/vault", window.location.origin);
+  if (requestingProject !== undefined) url.searchParams.set("requestingProject", requestingProject);
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { entries: VaultEntrySummary[] };
+  return data.entries;
+}
+
+export async function createVaultEntry(input: VaultEntryCreateInput): Promise<VaultEntrySummary> {
+  const res = await fetch("/api/vault", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { entry: VaultEntrySummary };
+  return data.entry;
+}
+
+export async function deleteVaultEntry(id: string, requestingProject?: string): Promise<boolean> {
+  const url = new URL(`/api/vault/${encodeURIComponent(id)}`, window.location.origin);
+  if (requestingProject !== undefined) url.searchParams.set("requestingProject", requestingProject);
+  const res = await fetch(url.toString(), { method: "DELETE" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { deleted: boolean };
+  return data.deleted;
+}
