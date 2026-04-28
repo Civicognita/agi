@@ -11,6 +11,7 @@ import { fetchMagicApps, fetchMAppCatalog, installMApp, uninstallMApp, fetchMApp
 import type { MagicAppInfo, MAppCatalogEntry } from "@/types.js";
 import { Button } from "@/components/ui/button.js";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card.js";
+import { Input } from "@/components/ui/input.js";
 import type { RootContext } from "./root.js";
 
 const DEFAULT_AUTHOR = "civicognita";
@@ -127,7 +128,7 @@ export default function MagicAppsAdminPage() {
       </div>
 
       {/* Sources section */}
-      <div className="mb-4 p-3 rounded-lg border border-border bg-card">
+      <Card className="mb-4 p-3">
         <div className="flex items-center justify-between mb-2">
           <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Sources</span>
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handlePull()} disabled={pulling}>
@@ -147,19 +148,19 @@ export default function MagicAppsAdminPage() {
           </div>
         ))}
         <div className="flex gap-2 mt-2">
-          <input
+          <Input
             type="text"
             value={newSourceRef}
             onChange={(e) => setNewSourceRef(e.target.value)}
             placeholder="owner/repo (e.g. myorg/my-mapps)"
-            className="flex-1 h-7 px-2 rounded border border-border bg-background text-foreground text-[11px]"
+            className="flex-1 text-[11px]"
             onKeyDown={(e) => { if (e.key === "Enter") void handleAddSource(); }}
           />
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleAddSource()} disabled={!newSourceRef.trim()}>
             Add Source
           </Button>
         </div>
-      </div>
+      </Card>
 
       {/* Tab switcher */}
       <div className="flex gap-1 mb-6 border-b border-border">

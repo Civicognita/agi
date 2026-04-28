@@ -7,6 +7,7 @@ import { useParams } from "react-router";
 import { fetchMagicApp, openMagicAppInstance } from "@/api.js";
 import type { MagicAppInfo } from "@/types.js";
 import { Button } from "@/components/ui/button.js";
+import { Card } from "@/components/ui/card.js";
 import { PageScroll } from "@/components/PageScroll.js";
 import { useOutletContext } from "react-router";
 import type { RootContext } from "./root.js";
@@ -56,22 +57,22 @@ export default function MagicAppDetailPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-6">
-        <div className="p-4 rounded-xl border border-border bg-card">
+        <Card className="p-4">
           <div className="text-xs text-muted-foreground mb-1">Project Types</div>
           <div className="text-sm font-semibold">{app.projectTypes.join(", ") || "None"}</div>
-        </div>
-        <div className="p-4 rounded-xl border border-border bg-card">
+        </Card>
+        <Card className="p-4">
           <div className="text-xs text-muted-foreground mb-1">Categories</div>
           <div className="text-sm font-semibold">{app.projectCategories.join(", ") || "None"}</div>
-        </div>
-        <div className="p-4 rounded-xl border border-border bg-card">
+        </Card>
+        <Card className="p-4">
           <div className="text-xs text-muted-foreground mb-1">Agent Prompts</div>
           <div className="text-sm font-semibold">{app.agentPromptCount}</div>
-        </div>
-        <div className="p-4 rounded-xl border border-border bg-card">
+        </Card>
+        <Card className="p-4">
           <div className="text-xs text-muted-foreground mb-1">Workflows</div>
           <div className="text-sm font-semibold">{app.workflowCount}</div>
-        </div>
+        </Card>
       </div>
     </div>
     </PageScroll>
