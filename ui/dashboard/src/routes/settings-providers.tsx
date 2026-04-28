@@ -318,15 +318,48 @@ function CostModeDial({
 // "looks like real data but isn't" UX bug.
 // ---------------------------------------------------------------------------
 
+interface CostRollup {
+  turns: number;
+  dollarCost: number;
+  totalTokens: number;
+  watts: number;
+  byProvider: Array<{ providerId: string; turns: number; dollarCost: number }>;
+}
+
 function CostTicker() {
+  const [today, setToday] = useState<CostRollup | null>(null);
+  const [week, setWeek] = useState<CostRollup | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async (): Promise<void> => {
+      try {
+        const [t, w] = await Promise.all([
+          fetch("/api/providers/cost/today").then((r) => r.ok ? r.json() as Promise<CostRollup> : null).catch(() => null),
+          fetch("/api/providers/cost/week").then((r) => r.ok ? r.json() as Promise<CostRollup> : null).catch(() => null),
+        ]);
+        if (!cancelled) {
+          setToday(t);
+          setWeek(w);
+        }
+      } catch { /* ignore */ }
+    };
+    void refresh();
+    const id = window.setInterval(() => { void refresh(); }, 30_000);
+    return (): void => { cancelled = true; window.clearInterval(id); };
+  }, []);
+
+  const fmtUsd = (v: number | undefined): string => v === undefined ? "—" : `$${v.toFixed(2)}`;
+  const fmtTokens = (v: number | undefined): string => v === undefined ? "—" : v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v);
+
   const tiles: Array<{ label: string; value: string; unit: string; sub: string }> = [
-    { label: "Today", value: "—", unit: "USD", sub: "cost ledger pending" },
-    { label: "This week", value: "—", unit: "USD", sub: "cost ledger pending" },
-    { label: "Tokens used", value: "—", unit: "in/out", sub: "cost ledger pending" },
+    { label: "Today", value: fmtUsd(today?.dollarCost), unit: "USD", sub: today ? `${String(today.turns)} turns` : "cost ledger online" },
+    { label: "This week", value: fmtUsd(week?.dollarCost), unit: "USD", sub: week ? `${String(week.turns)} turns` : "cost ledger online" },
+    { label: "Tokens used", value: fmtTokens(today?.totalTokens), unit: "today", sub: today && today.watts > 0 ? `${today.watts.toFixed(1)} Wh` : "—" },
     { label: "$IMP minted", value: "—", unit: "$IMP", sub: "via 0SCALE · v0.6.0+" },
   ];
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4" data-testid="cost-ticker">
       {tiles.map((t) => (
         <div key={t.label} className="bg-secondary rounded-lg px-4 py-3">
           <div className="text-[11px] text-muted-foreground uppercase tracking-wider">{t.label}</div>
