@@ -168,11 +168,80 @@ function ModelContainerStatsSection() {
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
+// Power gauge — t378. Reads cpuWatts + gpuWatts from /api/system/stats, plus
+// energy-used-today from /api/providers/cost/today (cost ledger watt totals).
+// Both degrade to "—" when null (test VM has no RAPL exposure / no GPU; some
+// hosts lack one or both samplers). System line item on True Cost graphs lands
+// in a follow-up when the Impactinomics Resources tab is built.
+// ---------------------------------------------------------------------------
+
+function PowerGaugeSection() {
+  const [power, setPower] = useState<{ cpuWatts: number | null; gpuWatts: number | null } | null>(null);
+  const [energyToday, setEnergyToday] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async (): Promise<void> => {
+      try {
+        const [statsRes, costRes] = await Promise.all([
+          fetch("/api/system/stats").then((r) => r.ok ? r.json() as Promise<{ power?: { cpuWatts: number | null; gpuWatts: number | null } }> : null).catch(() => null),
+          fetch("/api/providers/cost/today").then((r) => r.ok ? r.json() as Promise<{ watts: number }> : null).catch(() => null),
+        ]);
+        if (!cancelled) {
+          setPower(statsRes?.power ?? null);
+          setEnergyToday(costRes?.watts ?? null);
+        }
+      } catch { /* ignore */ }
+    };
+    void refresh();
+    const id = window.setInterval(() => { void refresh(); }, 5_000);
+    return (): void => { cancelled = true; window.clearInterval(id); };
+  }, []);
+
+  const cpuStr = power?.cpuWatts !== null && power?.cpuWatts !== undefined ? `${power.cpuWatts.toFixed(1)} W` : "—";
+  const gpuStr = power?.gpuWatts !== null && power?.gpuWatts !== undefined ? `${power.gpuWatts.toFixed(1)} W` : "—";
+  const energyStr = energyToday !== null && energyToday > 0 ? `${energyToday.toFixed(2)} Wh` : "—";
+
+  const allNull = (power?.cpuWatts === null || power?.cpuWatts === undefined) && (power?.gpuWatts === null || power?.gpuWatts === undefined);
+
+  return (
+    <div className="grid grid-cols-3 gap-4" data-testid="power-gauge">
+      <div>
+        <span className="text-[9px] text-muted-foreground uppercase tracking-wider">CPU power</span>
+        <div className="text-[22px] font-bold text-foreground mt-0.5 tabular-nums">{cpuStr}</div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">RAPL / intel-rapl</div>
+      </div>
+      <div>
+        <span className="text-[9px] text-muted-foreground uppercase tracking-wider">GPU power</span>
+        <div className="text-[22px] font-bold text-foreground mt-0.5 tabular-nums">{gpuStr}</div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">NVML / nvidia-smi</div>
+      </div>
+      <div>
+        <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Energy today</span>
+        <div className="text-[22px] font-bold text-foreground mt-0.5 tabular-nums">{energyStr}</div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">cost ledger</div>
+      </div>
+      {allNull && (
+        <div className="col-span-3 mt-2 text-[10px] text-muted-foreground">
+          Power tracking unavailable on this machine — see <span className="font-mono">agi doctor</span> for details. Hardware-bound (RAPL + NVML); test VMs and machines without those samplers report null.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 export default function ResourcesPage() {
   return (
     <PageScroll>
       <ResourceUsage />
+      <div className="mt-4">
+        <Card className="p-4">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Power</h3>
+          <PowerGaugeSection />
+        </Card>
+      </div>
       <div className="mt-4">
         <Card className="p-4">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Running model containers</h3>
