@@ -6,7 +6,10 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
+import { Textarea } from "@particle-academy/react-fancy";
 import { Button } from "@/components/ui/button.js";
+import { Input } from "@/components/ui/input.js";
+import { Select } from "@/components/ui/select.js";
 import { WidgetRenderer } from "./WidgetRenderer.js";
 
 // ---------------------------------------------------------------------------
@@ -102,28 +105,38 @@ function formatValue(val: number | string, format: string): string {
 // ---------------------------------------------------------------------------
 
 function FieldInput({ field, value, onChange }: { field: MAppField; value: unknown; onChange: (v: unknown) => void }) {
-  const base = "w-full px-3 py-2 rounded-md border border-border bg-background text-foreground text-[13px]";
+  const cls = "text-[13px]";
 
   switch (field.type) {
     case "textarea":
-      return <textarea value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder} rows={3} className={base} style={{ resize: "vertical" }} />;
+      return <Textarea value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder} rows={3} className={cls} style={{ resize: "vertical" }} />;
 
     case "number": case "int": case "currency": case "percentage":
-      return <input type="number" value={String(value ?? "")} onChange={(e) => onChange(parseFloat(e.target.value) || 0)} placeholder={field.placeholder} min={field.min} max={field.max} step={field.type === "int" ? 1 : "any"} className={base} />;
+      return <Input type="number" value={String(value ?? "")} onChange={(e) => onChange(parseFloat(e.target.value) || 0)} placeholder={field.placeholder} min={field.min} max={field.max} step={field.type === "int" ? 1 : "any"} className={cls} />;
 
     case "select":
       return (
-        <select value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} className={base}>
-          <option value="">Select...</option>
-          {(field.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
+        <Select
+          className={cls}
+          list={[
+            { value: "", label: "Select..." },
+            ...(field.options ?? []).map((o) => ({ value: o, label: o })),
+          ]}
+          value={String(value ?? "")}
+          onValueChange={onChange}
+        />
       );
 
     case "multiselect":
       return (
-        <select value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} multiple className={base} style={{ minHeight: "80px" }}>
-          {(field.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
+        <Select
+          className={cls}
+          variant="listbox"
+          multiple
+          list={(field.options ?? []).map((o) => ({ value: o, label: o }))}
+          values={Array.isArray(value) ? (value as string[]) : value ? [String(value)] : []}
+          onValuesChange={onChange}
+        />
       );
 
     case "bool":
@@ -135,25 +148,25 @@ function FieldInput({ field, value, onChange }: { field: MAppField; value: unkno
       );
 
     case "date": case "date_range":
-      return <input type="date" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} className={base} />;
+      return <Input type="date" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} className={cls} />;
 
     case "time":
-      return <input type="time" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} className={base} />;
+      return <Input type="time" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} className={cls} />;
 
     case "email":
-      return <input type="email" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder ?? "email@example.com"} className={base} />;
+      return <Input type="email" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder ?? "email@example.com"} className={cls} />;
 
     case "url":
-      return <input type="url" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder ?? "https://"} className={base} />;
+      return <Input type="url" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder ?? "https://"} className={cls} />;
 
     case "phone":
-      return <input type="tel" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder} className={base} />;
+      return <Input type="tel" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder} className={cls} />;
 
     case "info":
       return <div className="text-[12px] text-muted-foreground py-1">{field.placeholder ?? field.label}</div>;
 
     default: // text and fallback
-      return <input type="text" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder} className={base} />;
+      return <Input type="text" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder} className={cls} />;
   }
 }
 
