@@ -23,47 +23,38 @@ import { test, expect, Page } from "@playwright/test";
  * to find one with all 4 modes (`navigateToFullModeProject`).
  */
 
-async function navigateToFullModeProject(page: Page, maxAttempts = 5): Promise<boolean> {
-  await page.goto("/projects");
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => { /* may not idle */ });
+/**
+ * Query /api/projects to find a non-restricted (web/app/monorepo/ops)
+ * project, then navigate directly to its workspace slug. Avoids the
+ * goBack-clobbers-grid-view problem of walking cards in the UI.
+ */
+async function navigateToFullModeProject(page: Page): Promise<boolean> {
+  const RESTRICTED = new Set(["literature", "media", "administration"]);
 
-  const gridToggle = page.getByTestId("projects-view-grid");
-  await gridToggle.waitFor({ state: "visible", timeout: 15_000 });
-  await gridToggle.click();
+  const apiResponse = await page.request.get("/api/projects");
+  if (!apiResponse.ok()) return false;
+  const projects = await apiResponse.json() as Array<{
+    name: string;
+    path: string;
+    coreForkSlug?: string | null;
+    category?: string;
+    projectType?: { id?: string; category?: string };
+  }>;
 
-  const cards = page.getByTestId("project-card");
-  const count = await cards.count();
-  if (count === 0) return false;
+  const candidate = projects.find((p) => {
+    if (p.coreForkSlug) return false; // core fork — picker hidden
+    if (p.projectType?.id === "aionima") return false;
+    const cat = p.category ?? p.projectType?.category;
+    if (!cat) return false;
+    return !RESTRICTED.has(cat);
+  });
+  if (!candidate) return false;
 
-  // Walk the first N cards until we find one with all 4 mode buttons
-  // visible (web/app/monorepo/ops categories). Skip core forks + restricted
-  // categories (literature/media/administration).
-  const tries = Math.min(count, maxAttempts);
-  for (let i = 0; i < tries; i++) {
-    await cards.nth(i).click();
-    await expect(page).toHaveURL(/\/projects\/[a-z0-9-]+/);
-
-    const picker = page.getByTestId("project-mode-picker");
-    const pickerVisible = await picker.waitFor({ state: "visible", timeout: 5_000 })
-      .then(() => true).catch(() => false);
-    if (!pickerVisible) {
-      // core fork — back to projects list
-      await page.goBack();
-      await page.getByTestId("projects-view-grid").waitFor({ state: "visible", timeout: 10_000 });
-      continue;
-    }
-
-    const developVisible = await page.getByTestId("project-mode-develop")
-      .isVisible().catch(() => false);
-    if (developVisible) {
-      return true; // landed on a project with all 4 modes
-    }
-
-    // restricted category — try next card
-    await page.goBack();
-    await page.getByTestId("projects-view-grid").waitFor({ state: "visible", timeout: 10_000 });
-  }
-  return false;
+  const slug = candidate.path.split("/").pop() ?? candidate.name;
+  await page.goto(`/projects/${slug}`);
+  await page.getByTestId("project-mode-picker").waitFor({ state: "visible", timeout: 15_000 });
+  await page.getByTestId("project-mode-develop").waitFor({ state: "visible", timeout: 5_000 });
+  return true;
 }
 
 test.describe("Project workspace mode picker (s134 t517)", () => {
