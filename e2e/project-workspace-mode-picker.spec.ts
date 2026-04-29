@@ -77,12 +77,15 @@ test.describe("Project workspace mode picker (s134 t517)", () => {
     test.skip(!found, "no full-mode project available");
 
     // Switch to Insight mode and verify Activity tab is present.
+    // react-fancy Tabs doesn't forward data-testid to the rendered button,
+    // so locate by role+name (the rendered <button role="tab">).
     await page.getByTestId("project-mode-insight").click();
     await expect(page.getByTestId("project-mode-insight")).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByTestId("project-tab-activity")).toBeVisible();
+    const activityTab = page.getByRole("tab", { name: "Activity" });
+    await expect(activityTab).toBeVisible();
 
     // Click Activity tab and verify the bar chart container renders.
-    await page.getByTestId("project-tab-activity").click();
+    await activityTab.click();
     await expect(page.getByTestId("project-activity-bars")).toBeVisible({ timeout: 10_000 });
   });
 
