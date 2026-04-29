@@ -771,7 +771,12 @@ cmd_services_align() {
   cmd_services_stop
 
   echo "==> Building host (cli/dist + dashboard)..."
-  if (cd "$REPO_DIR" && pnpm build 2>&1 | tail -3); then
+  # set -o pipefail propagates pnpm build's exit status through the | tail -3
+  # pipe. Without it, tail's success masks build failures, leaving cli/dist
+  # stale silently (cycle 119 root cause: activity-summary route was added
+  # cycle 105 but cli/dist hadn't been rebuilt since cycle 87 because every
+  # services-align reported "build complete" on a failed/skipped build).
+  if (cd "$REPO_DIR" && set -o pipefail && pnpm build 2>&1 | tail -3); then
     echo "    build complete"
   else
     echo "    WARN: build failed; VM will run whatever's in cli/dist now"
