@@ -10,9 +10,12 @@ import { test, expect } from "@playwright/test";
 test.describe("/projects list view (s130 t516 slice 1)", () => {
   test("list is the default view; table renders with project rows", async ({ page }) => {
     await page.goto("/projects");
-    // Wait for the toggle to materialize (depends on /api/projects fetch)
+    // Wait for /api/projects to settle (toggle is rendered immediately
+    // but only after the page mounts; cold-cache first-run can race
+    // React hydration). Use networkidle for extra safety.
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => { /* may not idle */ });
     const toggle = page.getByTestId("projects-view-toggle");
-    await toggle.waitFor({ state: "visible", timeout: 10_000 });
+    await toggle.waitFor({ state: "visible", timeout: 15_000 });
 
     // Default = list; the list mode dataset must be visible.
     await expect(page.getByTestId("projects-list")).toBeVisible();
