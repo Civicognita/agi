@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SACRED_PROJECTS, PAX_SACRED_PROJECTS, isSacredProject, isPaxProject, matchSacredProject, matchPaxProjects } from "@/lib/sacred-projects.js";
 import { Table } from "@particle-academy/react-fancy";
+import { fetchProjectActivitySummary, type ProjectActivitySummary } from "../api.js";
 import {
   Dialog,
   DialogContent,
@@ -61,6 +62,11 @@ export function Projects({
   // Default "list" matches projects-ux-v2/projects-browser-v2.html mockup.
   // "grid" preserved as opt-in toggle for power users / dense layouts.
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  // s130 t516 slice 2 (cycle 106) — activity sparklines. Map of
+  // projectPath → ProjectActivitySummary. Populated by a parallel
+  // batch-fetch when projects load. Errors per-project don't block
+  // the table render; a project without a summary just shows a flat line.
+  const [activitySummaries, setActivitySummaries] = useState<Record<string, ProjectActivitySummary>>({});
   const navigate = useNavigate();
   const isContributing = Boolean(contributingEnabled);
 
@@ -77,6 +83,50 @@ export function Projects({
   // portal card below, mirroring the Aionima consolidation pattern.
   const visibleProjects = projects.filter((p) => !isAionimaProject(p) && !isPaxProject(p));
   const paxProjects = isContributing ? matchPaxProjects(projects) : [];
+
+  // s130 t516 slice 2 — batch-fetch 30-day activity summaries for the
+  // visible projects. Runs once when the visible-projects set changes.
+  // Errors per-project are non-fatal (the row falls back to a flat
+  // sparkline). Skipped when viewMode is "grid" since the grid layout
+  // doesn't render the sparkline column.
+  useEffect(() => {
+    if (viewMode !== "list") return;
+    if (visibleProjects.length === 0) return;
+    let cancelled = false;
+    void Promise.all(
+      visibleProjects.map(async (p) => {
+        try {
+          const summary = await fetchProjectActivitySummary(p.path, 30);
+          return { path: p.path, summary };
+        } catch {
+          return null;
+        }
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      const next: Record<string, ProjectActivitySummary> = {};
+      for (const r of results) {
+        if (r !== null) next[r.path] = r.summary;
+      }
+      setActivitySummaries(next);
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleProjects.map((p) => p.path).join(","), viewMode]);
+
+  // Unicode-block sparkline renderer — turns a number array into a
+  // 8-step block-character string. Mirrors the projects-ux-v2 mockup's
+  // ▁▂▃▆█▃▁ aesthetic; zero dependency, works in any monospace font.
+  const renderSparkline = (values: number[]): string => {
+    const blocks = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
+    const max = Math.max(...values, 1);
+    return values
+      .map((v) => {
+        const idx = Math.min(Math.floor((v / max) * (blocks.length - 1)), blocks.length - 1);
+        return blocks[idx];
+      })
+      .join("");
+  };
 
   return (
     <div>
@@ -258,6 +308,7 @@ export function Projects({
               <Table.Column label="Project" />
               <Table.Column label="Category" />
               <Table.Column label="Tags" />
+              <Table.Column label="Activity (30d)" />
               <Table.Column label="Hosting" />
             </Table.Head>
             <Table.Body>
@@ -359,6 +410,24 @@ export function Projects({
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-semibold">tynn</span>
                         )}
                       </div>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {(() => {
+                        const summary = activitySummaries[p.path];
+                        if (!summary) {
+                          return <span className="text-[11px] text-muted-foreground/40 font-mono">·······</span>;
+                        }
+                        const intensity = summary.total === 0 ? "text-muted-foreground/40" : "text-green";
+                        return (
+                          <span
+                            className={cn("text-[12px] font-mono", intensity)}
+                            title={`${String(summary.total)} events over ${String(summary.days)} days`}
+                            data-testid={`project-activity-${projectSlug(p.path)}`}
+                          >
+                            {renderSparkline(summary.dailyCounts)}
+                          </span>
+                        );
+                      })()}
                     </Table.Cell>
                     <Table.Cell>
                       {p.hosting ? (

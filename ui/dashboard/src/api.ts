@@ -1381,6 +1381,30 @@ export interface PersistedChatSession {
   lastPreview: string;
 }
 
+/** Per-day activity counts for a project. s130 t516 slice 2 (cycle 105+106). */
+export interface ProjectActivitySummary {
+  path: string;
+  days: number;
+  total: number;
+  /** Length = days, oldest → newest. */
+  dailyCounts: number[];
+  /** YYYY-MM-DD per index (parallel to dailyCounts). */
+  dayKeys: string[];
+}
+
+export async function fetchProjectActivitySummary(
+  projectPath: string,
+  days = 30,
+): Promise<ProjectActivitySummary> {
+  const url = `/api/projects/activity-summary?path=${encodeURIComponent(projectPath)}&days=${String(days)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ProjectActivitySummary>;
+}
+
 export async function fetchChatSessions(): Promise<ChatSessionSummary[]> {
   const res = await fetch("/api/chat/sessions");
   if (!res.ok) {
