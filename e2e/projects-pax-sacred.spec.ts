@@ -14,10 +14,12 @@ import { test, expect } from "@playwright/test";
 
 test.describe("/projects — PAx sacred card (s136 t522)", () => {
   test("renders PAx sacred card alongside Aionima card when contributing-mode is on", async ({ page }) => {
-    await page.goto("/");
-    await page.waitForSelector("[data-testid='app-sidebar']", { timeout: 10_000 });
-
+    await page.goto("/", { waitUntil: "domcontentloaded" });
     const badge = page.getByText("Contributing", { exact: true });
+    // Wait up to 15s for the contributing-mode badge to materialize
+    // (header data depends on /api/dev/status fetch). isVisible at t=0
+    // races the network round-trip.
+    await badge.waitFor({ state: "visible", timeout: 15_000 }).catch(() => { /* may not be on */ });
     const devModeOn = await badge.isVisible().catch(() => false);
     test.skip(!devModeOn, "Contributing mode not enabled — skipping PAx sacred card assertion");
 
