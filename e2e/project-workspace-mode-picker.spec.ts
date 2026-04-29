@@ -47,6 +47,33 @@ test.describe("Project workspace mode picker (s134 t517)", () => {
     await expect(page.getByTestId("project-mode-operate")).toHaveAttribute("aria-pressed", "false");
   });
 
+  test("Insight mode shows Activity tab (s134 t517 cycle 117)", async ({ page }) => {
+    await page.goto("/projects");
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => { /* may not idle */ });
+
+    const gridToggle = page.getByTestId("projects-view-grid");
+    await gridToggle.waitFor({ state: "visible", timeout: 15_000 });
+    await gridToggle.click();
+
+    const cards = page.getByTestId("project-card");
+    const count = await cards.count();
+    test.skip(count === 0, "no projects available");
+    await cards.first().click();
+
+    const picker = page.getByTestId("project-mode-picker");
+    const pickerVisible = await picker.isVisible({ timeout: 5_000 }).catch(() => false);
+    test.skip(!pickerVisible, "first project is a core fork");
+
+    // Switch to Insight mode and verify Activity tab is present.
+    await page.getByTestId("project-mode-insight").click();
+    await expect(page.getByTestId("project-mode-insight")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("project-tab-activity")).toBeVisible();
+
+    // Click Activity tab and verify the bar chart container renders.
+    await page.getByTestId("project-tab-activity").click();
+    await expect(page.getByTestId("project-activity-bars")).toBeVisible({ timeout: 10_000 });
+  });
+
   test("clicking a mode button toggles active state", async ({ page }) => {
     await page.goto("/projects");
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => { /* may not idle */ });
