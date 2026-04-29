@@ -265,11 +265,67 @@ export function Projects({
                 const slug = projectSlug(p.path);
                 const cat = p.category ?? p.projectType?.category;
                 const isOps = cat === "ops" || cat === "administration";
+                // s130 t516 slice 3 (cycle 104) — click-to-expand inline
+                // panel via Table.Row's tray prop. Shows path + description
+                // + type details + quick actions. Uses data already on
+                // ProjectInfo; no new endpoint needed.
+                const tray = (
+                  <div className="px-4 py-3 bg-secondary/20" data-testid={`project-tray-${slug}`}>
+                    <div className="grid grid-cols-2 gap-x-6 gap-y-2 mb-3">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Path</div>
+                        <div className="text-[12px] font-mono text-foreground break-all">{p.path}</div>
+                      </div>
+                      {p.projectType?.label && (
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Project Type</div>
+                          <div className="text-[12px] text-foreground">{p.projectType.label}</div>
+                        </div>
+                      )}
+                      {p.description && (
+                        <div className="col-span-2">
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Description</div>
+                          <div className="text-[12px] text-muted-foreground">{p.description}</div>
+                        </div>
+                      )}
+                      {p.magicApps && p.magicApps.length > 0 && (
+                        <div className="col-span-2">
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">MagicApps</div>
+                          <div className="flex gap-1 flex-wrap">
+                            {p.magicApps.map((id) => (
+                              <span key={id} className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 font-medium">
+                                {id}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); void navigate(`/projects/${slug}`); }}
+                        className="text-[11px] px-2.5 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer font-medium"
+                      >
+                        Open workspace →
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onOpenChat(p.path); }}
+                        className="text-[11px] px-2.5 py-1 rounded bg-secondary text-secondary-foreground hover:bg-secondary/80 cursor-pointer font-medium"
+                      >
+                        Open chat
+                      </button>
+                    </div>
+                  </div>
+                );
                 return (
                   <Table.Row
                     key={p.path}
                     onClick={() => void navigate(`/projects/${slug}`)}
                     className="cursor-pointer hover:bg-secondary/30"
+                    tray={tray}
+                    trayTriggerPosition="end"
                   >
                     <Table.Cell>
                       {projectActivity?.[p.path] ? (
