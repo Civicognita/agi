@@ -85,6 +85,11 @@ export function ProjectDetail({
   const [repoSetupBusy, setRepoSetupBusy] = useState(false);
   const [repoSetupError, setRepoSetupError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("details");
+  // s134 t517 slice 2 (cycle 112) — workspace mode shell. The 4 modes
+  // group the existing 11 tabs per the projects-ux-v2/project-workspace-
+  // v2.html mockup. Default "develop" matches Editor as the most-common
+  // landing. Mode → tabs map below; the TabsList filters by mode.
+  const [currentMode, setCurrentMode] = useState<"develop" | "operate" | "coordinate" | "insight">("develop");
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
   const [pluginPanels, setPluginPanels] = useState<PluginPanel[]>([]);
@@ -121,6 +126,39 @@ export function ProjectDetail({
       .then((data) => setProjectTypes(data.types.map((t) => ({ id: t.id, label: t.label }))))
       .catch(() => {});
   }, []);
+
+  // s134 t517 slice 2 — mode → tab map. Each tab is assigned to one of
+  // the 4 modes per the projects-ux-v2 mockup B pre-pick table. Plugin
+  // panels default to Coordinate (safest fallback per the mockup README).
+  // When the active mode changes, switch activeTab to the first tab in
+  // the new mode so the user sees something immediately.
+  const TAB_MODES: Record<string, "develop" | "operate" | "coordinate" | "insight"> = {
+    "details": "develop",
+    "files": "develop",
+    "repository": "develop",
+    "environment": "develop",
+    "hosting": "operate",
+    "iterative-work": "operate",
+    "mcp": "operate",
+    "magic-apps": "coordinate",
+    "taskmaster": "coordinate",
+    "security": "insight",
+  };
+  const tabBelongsToMode = (tabId: string): boolean => {
+    if (tabId.startsWith("plugin-")) return currentMode === "coordinate";
+    return TAB_MODES[tabId] === currentMode;
+  };
+  // Auto-switch activeTab when mode changes if the current tab is no
+  // longer in the active mode.
+  useEffect(() => {
+    if (!tabBelongsToMode(activeTab)) {
+      // Find first tab in current mode (prefer the canonical first one)
+      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "magic-apps", "taskmaster", "security"];
+      const firstInMode = candidates.find((id) => TAB_MODES[id] === currentMode);
+      if (firstInMode) setActiveTab(firstInMode);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMode]);
 
   // Fetch file tree when Files tab is selected (or refresh triggered)
   useEffect(() => {
@@ -337,32 +375,61 @@ export function ProjectDetail({
         </div>
       )}
 
+      {/* s134 t517 slice 2 (cycle 112) — 4-mode picker per the
+          projects-ux-v2/project-workspace-v2.html mockup. Replaces
+          the visual organization of the existing 11 tabs by grouping
+          them into Develop / Operate / Coordinate / Insight modes.
+          Tabs themselves are unchanged; the picker filters which
+          ones show. Skipped for core forks (which already have a
+          restricted tab set unsuitable for mode grouping). */}
+      {!isCoreFork && (
+        <div className="flex items-center gap-1 mb-3 border-b border-border" data-testid="project-mode-picker">
+          {(["develop", "operate", "coordinate", "insight"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setCurrentMode(mode)}
+              className={cn(
+                "px-4 py-2 text-[13px] font-medium uppercase tracking-wider transition-colors cursor-pointer border-b-2",
+                currentMode === mode
+                  ? "text-foreground border-yellow"
+                  : "text-muted-foreground border-transparent hover:text-foreground",
+              )}
+              aria-pressed={currentMode === mode}
+              data-testid={`project-mode-${mode}`}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Aionima core forks get a restricted tab set. No Details,
           hosting, environment, or plugin tabs — those projects are
           source trees users contribute PRs against, not deployables. */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
         <TabsList variant="line">
-          {!isCoreFork && <TabsTrigger value="details">Details</TabsTrigger>}
-          <TabsTrigger value="files">Editor</TabsTrigger>
-          <TabsTrigger value="repository">Repository</TabsTrigger>
-          {!isCoreFork && onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
+          {!isCoreFork && tabBelongsToMode("details") && <TabsTrigger value="details">Details</TabsTrigger>}
+          {(isCoreFork || tabBelongsToMode("files")) && <TabsTrigger value="files">Editor</TabsTrigger>}
+          {(isCoreFork || tabBelongsToMode("repository")) && <TabsTrigger value="repository">Repository</TabsTrigger>}
+          {!isCoreFork && tabBelongsToMode("hosting") && onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
             <TabsTrigger value="hosting">Development</TabsTrigger>
           )}
-          {!isCoreFork && project.projectType?.hasCode && (
+          {!isCoreFork && tabBelongsToMode("environment") && project.projectType?.hasCode && (
             <TabsTrigger value="environment">Environment</TabsTrigger>
           )}
-          {!isCoreFork && <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>}
-          {!isCoreFork && <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>}
-          {!isCoreFork && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
+          {!isCoreFork && tabBelongsToMode("magic-apps") && <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>}
+          {!isCoreFork && tabBelongsToMode("taskmaster") && <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>}
+          {!isCoreFork && tabBelongsToMode("iterative-work") && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
             <TabsTrigger value="iterative-work">Iterative Work</TabsTrigger>
           )}
-          {!isCoreFork && project.projectType?.hasCode && (
+          {!isCoreFork && tabBelongsToMode("mcp") && project.projectType?.hasCode && (
             <TabsTrigger value="mcp">MCP</TabsTrigger>
           )}
-          {!isCoreFork && pluginPanels.map((p) => (
+          {!isCoreFork && currentMode === "coordinate" && pluginPanels.map((p) => (
             <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
           ))}
-          {!isCoreFork && project.projectType?.hasCode && (
+          {!isCoreFork && tabBelongsToMode("security") && project.projectType?.hasCode && (
             <TabsTrigger value="security">Security</TabsTrigger>
           )}
         </TabsList>
