@@ -441,6 +441,20 @@ export function ProjectDetail({
         );
       })()}
 
+      {/* Sub-surface picker (s134 t517 slice 5a — projects-ux-v2 mockup B
+          lines 138-145). Reads as subordinate to the mode picker via the
+          "<Mode> ›" prefix label, mirroring the mockup's visual
+          hierarchy: top-level mode picker → secondary sub-surface picker
+          → canvas content. The same filtered tab set as before; only the
+          chrome changes. Slice 5b will add Dependencies and reconsider
+          Details. */}
+      {!isCoreFork && (
+        <div className="flex items-center gap-2 mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">
+          <span className="font-semibold">{currentMode}</span>
+          <span>›</span>
+        </div>
+      )}
+
       {/* Aionima core forks get a restricted tab set. No Details,
           hosting, environment, or plugin tabs — those projects are
           source trees users contribute PRs against, not deployables. */}
