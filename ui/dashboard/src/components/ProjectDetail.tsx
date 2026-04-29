@@ -450,7 +450,7 @@ export function ProjectDetail({
           {(isCoreFork || tabBelongsToMode("files")) && <TabsTrigger value="files">Editor</TabsTrigger>}
           {(isCoreFork || tabBelongsToMode("repository")) && <TabsTrigger value="repository">Repository</TabsTrigger>}
           {!isCoreFork && tabBelongsToMode("hosting") && onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
-            <TabsTrigger value="hosting">Development</TabsTrigger>
+            <TabsTrigger value="hosting">Hosting</TabsTrigger>
           )}
           {!isCoreFork && tabBelongsToMode("environment") && project.projectType?.hasCode && (
             <TabsTrigger value="environment">Environment</TabsTrigger>
@@ -914,7 +914,7 @@ export function ProjectDetail({
                 tools={project.projectType?.tools}
                 onToolExecute={onToolExecute}
                 projectCategory={project.category}
-                tabLabel="Development"
+                tabLabel="Hosting"
                 availableTypes={projectTypes}
               />
             </Card>

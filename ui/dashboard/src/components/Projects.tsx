@@ -217,10 +217,17 @@ export function Projects({
           consolidated /aionima view (upstream alignment + PR + MINT).
           Impactium-blockchain COA<>COI ties back to THIS single entry. */}
       {isContributing && (
+        // Aionima + PAx render in a single Sacred row (owner directive
+        // 2026-04-29 cycle ~121): the two consolidation cards belong on
+        // the same row, not stacked. The auto-fill grid degrades to 1
+        // column at narrow widths and pairs them side-by-side at wider
+        // widths. Each card self-identifies via its name + badge so the
+        // per-section h3 ("Aionima", "PAx · ADF UI primitives") is
+        // dropped in favor of one shared "Sacred" header.
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-3">
             <Star className="h-4 w-4 text-yellow" />
-            <h3 className="text-[13px] font-semibold text-foreground">Aionima</h3>
+            <h3 className="text-[13px] font-semibold text-foreground">Sacred</h3>
           </div>
           <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
             <div
@@ -246,52 +253,41 @@ export function Projects({
                 <div className="text-[11px] text-yellow mt-2 font-medium">Open Aionima Development →</div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
 
-      {/* PAx — Particle-Academy ADF UI primitives sacred card (s136 t522).
-          Mirrors the Aionima consolidation pattern: instead of 4 separate
-          tiles for react-fancy/fancy-code/fancy-sheets/fancy-echarts, one
-          portal card that drills into Settings > Gateway > Contributing
-          where t512's grouped Repository Status panel shows each fork's
-          state. Only renders in contributing-mode (forks aren't provisioned
-          otherwise). */}
-      {isContributing && (
-        <div className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Star className="h-4 w-4 text-yellow" />
-            <h3 className="text-[13px] font-semibold text-foreground">PAx · ADF UI primitives</h3>
-          </div>
-          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-            <div
-              onClick={() => { void navigate("/settings/gateway"); }}
-              className={cn(
-                "rounded-xl border transition-colors duration-150 cursor-pointer hover:border-yellow",
-                "bg-indigo-50/70 border-indigo-200/80",
-                "dark:bg-indigo-950/40 dark:border-indigo-700/60",
-              )}
-              data-testid="project-card-pax"
-            >
-              <div className="p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Star className="h-4 w-4 text-yellow" />
-                  <span className="text-[15px] font-semibold text-card-foreground">PAx</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">
-                    primitives
-                  </span>
-                  {paxProjects.length > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">
-                      {paxProjects.length}/{PAX_SACRED_PROJECTS.length} provisioned
+            {/* PAx — Particle-Academy ADF UI primitives sacred card
+                (s136 t522). Mirrors the Aionima consolidation pattern.
+                Only renders in contributing-mode (forks aren't
+                provisioned otherwise). */}
+            {isContributing && (
+              <div
+                onClick={() => { void navigate("/settings/gateway"); }}
+                className={cn(
+                  "rounded-xl border transition-colors duration-150 cursor-pointer hover:border-yellow",
+                  "bg-indigo-50/70 border-indigo-200/80",
+                  "dark:bg-indigo-950/40 dark:border-indigo-700/60",
+                )}
+                data-testid="project-card-pax"
+              >
+                <div className="p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Star className="h-4 w-4 text-yellow" />
+                    <span className="text-[15px] font-semibold text-card-foreground">PAx</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">
+                      primitives
                     </span>
-                  )}
+                    {paxProjects.length > 0 && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">
+                        {paxProjects.length}/{PAX_SACRED_PROJECTS.length} provisioned
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    ADF UI primitive maintenance portal — wraps the {PAX_SACRED_PROJECTS.length} Particle-Academy packages (react-fancy, fancy-code, fancy-sheets, fancy-echarts) consumed by the dashboard, plugins, MApps, and locally-hosted apps. File issues + open PRs via the maintenance loop at agi/docs/agents/contributing-to-adf-packages.md.
+                  </div>
+                  <div className="text-[11px] text-yellow mt-2 font-medium">Open Contributing tab →</div>
                 </div>
-                <div className="text-[11px] text-muted-foreground">
-                  ADF UI primitive maintenance portal — wraps the {PAX_SACRED_PROJECTS.length} Particle-Academy packages (react-fancy, fancy-code, fancy-sheets, fancy-echarts) consumed by the dashboard, plugins, MApps, and locally-hosted apps. File issues + open PRs via the maintenance loop at agi/docs/agents/contributing-to-adf-packages.md.
-                </div>
-                <div className="text-[11px] text-yellow mt-2 font-medium">Open Contributing tab →</div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}
