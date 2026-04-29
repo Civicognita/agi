@@ -1,16 +1,17 @@
 /**
  * grep_search tool — regex search across files within workspace.
+ *
+ * s130 t515 slice 6c: gates path access via the shared cage-gate helper.
  */
 import { readdir, readFile } from "node:fs/promises";
 import { resolve, relative, join } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
+import { gatePath, type PathGateConfig } from "./cage-gate.js";
 
 const DEFAULT_MAX_RESULTS = 50;
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".next", ".cache"]);
 
-export interface GrepSearchConfig {
-  workspaceRoot: string;
-}
+export interface GrepSearchConfig extends PathGateConfig {}
 
 interface GrepMatch {
   file: string;
@@ -89,8 +90,9 @@ export function createGrepSearchHandler(config: GrepSearchConfig): ToolHandler {
 
     const absPath = resolve(config.workspaceRoot, searchPath);
 
-    if (!absPath.startsWith(config.workspaceRoot)) {
-      return JSON.stringify({ error: "Access denied: path escapes workspace boundary" });
+    const denial = gatePath(config, absPath);
+    if (denial !== null) {
+      return JSON.stringify({ error: denial });
     }
 
     try {

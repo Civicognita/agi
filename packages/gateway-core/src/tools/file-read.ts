@@ -1,15 +1,18 @@
 /**
  * file_read tool — read file contents within workspace boundary.
+ *
+ * s130 t515 slice 6c: gates path access via the shared cage-gate helper.
+ * When `cageProvider` is set on the config, paths must be in-cage; when
+ * absent or null, falls back to the workspaceRoot boundary check.
  */
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
+import { gatePath, type PathGateConfig } from "./cage-gate.js";
 
 const DEFAULT_LINE_LIMIT = 2000;
 
-export interface FileReadConfig {
-  workspaceRoot: string;
-}
+export interface FileReadConfig extends PathGateConfig {}
 
 export function createFileReadHandler(config: FileReadConfig): ToolHandler {
   return async (input: Record<string, unknown>): Promise<string> => {
@@ -19,8 +22,9 @@ export function createFileReadHandler(config: FileReadConfig): ToolHandler {
 
     const absPath = resolve(config.workspaceRoot, filePath);
 
-    if (!absPath.startsWith(config.workspaceRoot)) {
-      return JSON.stringify({ error: "Access denied: path escapes workspace boundary" });
+    const denial = gatePath(config, absPath);
+    if (denial !== null) {
+      return JSON.stringify({ error: denial });
     }
 
     try {
