@@ -120,11 +120,18 @@ describe("project-config-path", () => {
       const result = migrateProjectConfig(projectPath);
       expect(result.migrated).toBe(true);
       expect(result.scaffolded).toBeDefined();
-      // All eight s130 dirs should be created.
-      expect(result.scaffolded).toHaveLength(PROJECT_FOLDER_LAYOUT.length);
+      // After migration, all eight s130 layout dirs must exist. The
+      // `scaffolded` count may be less than 8 because `.agi/` was
+      // already created by the file-copy step (mkdirSync(dirname(newPath)))
+      // before scaffoldProjectFolders ran — so .agi/ is "pre-existing"
+      // from scaffold's perspective. The contract that matters is
+      // that every layout dir exists, not who created it.
       for (const rel of PROJECT_FOLDER_LAYOUT) {
         expect(existsSync(join(projectPath, rel))).toBe(true);
       }
+      // .agi was created by the file-copy step, so 7 of 8 are reported
+      // as scaffold-created (the rest are post-copy).
+      expect(result.scaffolded).toHaveLength(PROJECT_FOLDER_LAYOUT.length - 1);
     });
   });
 
