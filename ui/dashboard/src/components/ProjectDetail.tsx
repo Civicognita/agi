@@ -160,6 +160,21 @@ export function ProjectDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentMode]);
 
+  // s134 t517 slice 4 — auto-redirect when the default mode is hidden
+  // by the project's category (literature/media/administration). Pick
+  // the first visible mode for that category.
+  useEffect(() => {
+    const cat = project?.category ?? project?.projectType?.category;
+    const hideDevelop = cat === "literature" || cat === "media" || cat === "administration";
+    const hideOperate = cat === "literature" || cat === "media";
+    if (currentMode === "develop" && hideDevelop) {
+      setCurrentMode(hideOperate ? "coordinate" : "operate");
+    } else if (currentMode === "operate" && hideOperate) {
+      setCurrentMode("coordinate");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.category, project?.projectType?.category]);
+
   // Fetch file tree when Files tab is selected (or refresh triggered)
   useEffect(() => {
     if (activeTab !== "files" || !project) return;
@@ -381,28 +396,44 @@ export function ProjectDetail({
           them into Develop / Operate / Coordinate / Insight modes.
           Tabs themselves are unchanged; the picker filters which
           ones show. Skipped for core forks (which already have a
-          restricted tab set unsuitable for mode grouping). */}
-      {!isCoreFork && (
-        <div className="flex items-center gap-1 mb-3 border-b border-border" data-testid="project-mode-picker">
-          {(["develop", "operate", "coordinate", "insight"] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setCurrentMode(mode)}
-              className={cn(
-                "px-4 py-2 text-[13px] font-medium uppercase tracking-wider transition-colors cursor-pointer border-b-2",
-                currentMode === mode
-                  ? "text-foreground border-yellow"
-                  : "text-muted-foreground border-transparent hover:text-foreground",
-              )}
-              aria-pressed={currentMode === mode}
-              data-testid={`project-mode-${mode}`}
-            >
-              {mode}
-            </button>
-          ))}
-        </div>
-      )}
+          restricted tab set unsuitable for mode grouping).
+
+          s134 t517 slice 4 (cycle 115) — category-shaped mode visibility:
+          - literature/media (content projects): hide Develop + Operate
+            (no code → no editor/hosting tabs)
+          - administration: hide Develop (no code)
+          - Otherwise (web/app/monorepo/ops): all 4 modes visible */}
+      {!isCoreFork && (() => {
+        const cat = project.category ?? project.projectType?.category;
+        const hideDevelop = cat === "literature" || cat === "media" || cat === "administration";
+        const hideOperate = cat === "literature" || cat === "media";
+        const visibleModes = (["develop", "operate", "coordinate", "insight"] as const).filter((m) => {
+          if (m === "develop" && hideDevelop) return false;
+          if (m === "operate" && hideOperate) return false;
+          return true;
+        });
+        return (
+          <div className="flex items-center gap-1 mb-3 border-b border-border" data-testid="project-mode-picker">
+            {visibleModes.map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setCurrentMode(mode)}
+                className={cn(
+                  "px-4 py-2 text-[13px] font-medium uppercase tracking-wider transition-colors cursor-pointer border-b-2",
+                  currentMode === mode
+                    ? "text-foreground border-yellow"
+                    : "text-muted-foreground border-transparent hover:text-foreground",
+                )}
+                aria-pressed={currentMode === mode}
+                data-testid={`project-mode-${mode}`}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Aionima core forks get a restricted tab set. No Details,
           hosting, environment, or plugin tabs — those projects are
