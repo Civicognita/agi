@@ -163,4 +163,83 @@ describe("ProjectConfigManager", () => {
     expect(config.type).toBe("web-app");
     expect(config.description).toBe("A web app");
   });
+
+  // -------------------------------------------------------------------------
+  // s130 phase B (t515 slice 3) — provisionRepos()
+  // -------------------------------------------------------------------------
+
+  describe("provisionRepos", () => {
+    it("returns null when no project config exists", () => {
+      const result = mgr.provisionRepos(projectPath);
+      expect(result).toBeNull();
+    });
+
+    it("returns null when config has no repos[] field", () => {
+      mgr.create(projectPath, "Single-repo");
+      const result = mgr.provisionRepos(projectPath);
+      expect(result).toBeNull();
+    });
+
+    it("clones repos via the injected cloneFn when repos[] is populated", async () => {
+      mgr.create(projectPath, "Multi-repo");
+      await mgr.update(projectPath, {
+        repos: [
+          { name: "web", url: "https://example.com/web.git", writable: false },
+          { name: "api", url: "https://example.com/api.git", writable: false, branch: "dev" },
+        ],
+      });
+
+      const calls: Array<{ url: string; targetDir: string; branch?: string }> = [];
+      const cloneFn = (url: string, targetDir: string, branch?: string) => {
+        calls.push({ url, targetDir, branch });
+        return { ok: true };
+      };
+
+      const result = mgr.provisionRepos(projectPath, { cloneFn });
+      expect(result).not.toBeNull();
+      expect(result?.provisioned).toBe(2);
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.url).toBe("https://example.com/web.git");
+      expect(calls[1]?.branch).toBe("dev");
+    });
+
+    it("skips repos whose target dirs already exist (idempotent)", async () => {
+      mgr.create(projectPath, "Idempotent");
+      await mgr.update(projectPath, {
+        repos: [{ name: "web", url: "https://example.com/web.git", writable: false }],
+      });
+
+      let cloneCount = 0;
+      const cloneFn = (_url: string, targetDir: string) => {
+        cloneCount += 1;
+        mkdirSync(targetDir, { recursive: true });
+        return { ok: true };
+      };
+      const r1 = mgr.provisionRepos(projectPath, { cloneFn });
+      expect(r1?.provisioned).toBe(1);
+      expect(cloneCount).toBe(1);
+
+      const r2 = mgr.provisionRepos(projectPath, { cloneFn });
+      expect(r2?.skipped).toBe(1);
+      expect(cloneCount).toBe(1);
+    });
+
+    it("captures clone errors per-repo without aborting the run", async () => {
+      mgr.create(projectPath, "Errors");
+      await mgr.update(projectPath, {
+        repos: [
+          { name: "good", url: "https://example.com/good.git", writable: false },
+          { name: "bad", url: "https://example.com/bad.git", writable: false },
+        ],
+      });
+
+      const cloneFn = (url: string) => {
+        if (url.includes("bad")) return { ok: false, error: "fatal" };
+        return { ok: true };
+      };
+      const result = mgr.provisionRepos(projectPath, { cloneFn });
+      expect(result?.provisioned).toBe(1);
+      expect(result?.errors).toBe(1);
+    });
+  });
 });
