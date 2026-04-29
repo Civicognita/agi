@@ -187,8 +187,41 @@ export const ProjectMcpSchema = z
   })
   .strict();
 
+/**
+ * Per-repo entry inside `<projectPath>/repos/<name>/` — s130 phase B (t515).
+ *
+ * Each entry describes a sub-repo bind-mounted into the project's
+ * `repos/` folder. The gateway clones from `url` to
+ * `<projectPath>/repos/<name>/` lazily (or eagerly during a future
+ * provisioning step). Multiple repos under one project let a hosted
+ * service compose several codebases (e.g. `web` + `api` + `sdk` for
+ * an app project).
+ *
+ * Per Q-5 owner answer (cycle 88): bind-mounted git checkouts are
+ * the chosen shape — read-only by default; write-on-explicit-action.
+ */
+export const ProjectRepoSchema = z
+  .object({
+    /** Stable per-project name. Used as the directory name under
+     *  `<projectPath>/repos/<name>/`. Must be filesystem-safe. */
+    name: z.string().regex(/^[a-zA-Z0-9_-]+$/, "name must be filesystem-safe (a-z, A-Z, 0-9, _, -)"),
+    /** Git clone URL. Supports https://, ssh://, or shorthand owner/repo. */
+    url: z.string(),
+    /** Branch to check out at clone time. Defaults to the upstream's
+     *  default branch when omitted. */
+    branch: z.string().optional(),
+    /** Override the checkout path. Defaults to `<projectPath>/repos/<name>/`
+     *  when omitted; rare to override. */
+    path: z.string().optional(),
+    /** Whether the gateway has write permission to push back here.
+     *  Defaults to false — clones are read-only by default per
+     *  s130 Q-5 (write-on-explicit-action). */
+    writable: z.boolean().default(false),
+  })
+  .strict();
+
 // ---------------------------------------------------------------------------
-// Root project config — the full ~/.agi/{slug}/project.json shape
+// Root project config — the full <projectPath>/.agi/project.json shape
 // ---------------------------------------------------------------------------
 
 export const ProjectConfigSchema = z
@@ -217,6 +250,12 @@ export const ProjectConfigSchema = z
     iterativeWork: ProjectIterativeWorkSchema.optional(),
     /** Per-project MCP servers (Wish #7) — surfaces on the project's MCP tab. */
     mcp: ProjectMcpSchema.optional(),
+    /** Sub-repos served from this project — s130 phase B (t515).
+     *  Each entry clones into `<projectPath>/repos/<name>/`. Used by
+     *  multi-repo projects (e.g. app projects hosting web + api + sdk
+     *  in one container). When empty/undefined, the project is
+     *  single-repo and its source lives at the root. */
+    repos: z.array(ProjectRepoSchema).optional(),
   })
   .passthrough(); // Plugins can store custom keys at the root level
 
@@ -234,3 +273,4 @@ export type ProjectIterativeWork = z.infer<typeof ProjectIterativeWorkSchema>;
 export type IterativeWorkCadence = z.infer<typeof IterativeWorkCadenceSchema>;
 export type ProjectMcpServer = z.infer<typeof ProjectMcpServerSchema>;
 export type ProjectMcp = z.infer<typeof ProjectMcpSchema>;
+export type ProjectRepo = z.infer<typeof ProjectRepoSchema>;
