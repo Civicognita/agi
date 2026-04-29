@@ -1391,8 +1391,15 @@ export async function fetchChatSessions(): Promise<ChatSessionSummary[]> {
   return data.sessions;
 }
 
-export async function fetchChatSession(id: string): Promise<PersistedChatSession> {
-  const res = await fetch(`/api/chat/sessions/${id}`);
+export async function fetchChatSession(id: string, projectPath?: string): Promise<PersistedChatSession> {
+  // s130 t521 UI-side wiring slice (cycle 101): when projectPath is
+  // provided, append ?projectPath= so the gateway prefers the
+  // per-project copy at <projectPath>/k/chat/<id>.json over the
+  // global dir. When unset, falls back to global-only resolution.
+  const url = projectPath !== undefined && projectPath.length > 0
+    ? `/api/chat/sessions/${id}?projectPath=${encodeURIComponent(projectPath)}`
+    : `/api/chat/sessions/${id}`;
+  const res = await fetch(url);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
