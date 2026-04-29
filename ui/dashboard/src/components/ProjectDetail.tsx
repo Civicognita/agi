@@ -304,6 +304,39 @@ export function ProjectDetail({
         )}
       </div>
 
+      {/* s134 t517 slice 1 (cycle 111) — persistent stack strip per the
+          projects-ux-v2/project-workspace-v2.html mockup. Renders above
+          the existing tab strip; visible across all modes (today: tabs;
+          future: 4-mode picker per slice 2+). The strip is Aion-readable
+          context — when iterative-work or plan reasoning fires, the
+          stacks here scope what the agent can plan around (e.g. "you have
+          postgres + redis, so a cache-invalidation step is feasible").
+          Skipped for core forks (aionima collection) since they're
+          source trees, not deployable services. */}
+      {!isCoreFork && project.attachedStacks && project.attachedStacks.length > 0 && (
+        <div
+          className="flex items-center gap-2 px-3 py-2 mb-3 rounded-md bg-indigo-500/5 border border-indigo-500/20"
+          data-testid="project-stack-strip"
+        >
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">Stack</span>
+          {project.attachedStacks.map((s) => {
+            const label = s.stackId.replace(/^stack-/, "");
+            return (
+              <span
+                key={s.stackId}
+                className="text-[11px] px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 font-mono font-medium"
+                title={s.stackId}
+              >
+                ▣ {label}
+              </span>
+            );
+          })}
+          <span className="text-[10px] text-muted-foreground/60 italic ml-auto">
+            Aion's iterative-work + plan reasoning reads from here ↑
+          </span>
+        </div>
+      )}
+
       {/* Aionima core forks get a restricted tab set. No Details,
           hosting, environment, or plugin tabs — those projects are
           source trees users contribute PRs against, not deployables. */}
