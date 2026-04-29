@@ -1,14 +1,14 @@
 /**
  * Dev-Mode fork resolution.
  *
- * When Dev Mode is enabled, each of the five canonical Civicognita
+ * When Dev Mode is enabled, each of the canonical workspace-resident
  * repos needs an owner-scoped fork at `{ownerLogin}/{repo}`. Owners
  * expect the toggle to "just work" — they shouldn't have to visit
- * github.com and click Fork five times.
+ * github.com and click Fork N times.
  *
  * For each canonical repo:
  *   1. Look up the fork via GitHub's API. If it exists, use it.
- *   2. If it's missing, POST to /repos/{owner}/{repo}/forks to create it.
+ *   2. If it's missing, POST to /repos/{org}/{repo}/forks to create it.
  *      (The `repo` scope — which our owner token has — allows this.)
  *   3. Return the resolved fork URL (or a failure entry if steps 1 + 2
  *      both fail).
@@ -17,25 +17,72 @@
  * seconds. We return the expected `clone_url` even if it hasn't
  * propagated yet — the caller should tolerate a transient 404 on the
  * first clone attempt and retry.
+ *
+ * **Per-spec upstream organization (s136 t512, 2026-04-28):** before this
+ * task the registry was hardcoded to a single `CANONICAL_OWNER =
+ * "Civicognita"` constant. That worked while every workspace-resident
+ * repo lived under the same GitHub org. The PAx packages
+ * (react-fancy / fancy-code / fancy-sheets / fancy-echarts) live under
+ * `Particle-Academy` — different org, same workspace clone target. Each
+ * spec now carries its own `upstreamOrg`; `upstreamRemoteUrl()` builds
+ * the URL from the spec, not the constant. The constant remains only as
+ * a default for legacy specs that don't set the field.
  */
+
+/** GitHub org that owns the canonical upstream. */
+export type UpstreamOrg = "Civicognita" | "Particle-Academy";
 
 export interface CoreRepoSpec {
   /** Stable slug used in config + UI. */
-  slug: "agi" | "prime" | "id" | "marketplace" | "mapp-marketplace";
-  /** Civicognita repo name on GitHub (NOT the slug). */
+  slug:
+    | "agi"
+    | "prime"
+    | "id"
+    | "marketplace"
+    | "mapp-marketplace"
+    | "react-fancy"
+    | "fancy-code"
+    | "fancy-sheets"
+    | "fancy-echarts";
+  /** Repo name on GitHub (NOT the slug — sometimes diverges, e.g. prime
+   *  → aionima, id → agi-local-id). */
   upstream: string;
+  /** GitHub org that owns the canonical upstream. Defaults to
+   *  "Civicognita" when omitted (the legacy core-five behavior). */
+  upstreamOrg?: UpstreamOrg;
   /** Human display name. */
   displayName: string;
   /** Config key in `dev.*` that holds the fork URL. */
-  configKey: "agiRepo" | "primeRepo" | "idRepo" | "marketplaceRepo" | "mappMarketplaceRepo";
+  configKey:
+    | "agiRepo"
+    | "primeRepo"
+    | "idRepo"
+    | "marketplaceRepo"
+    | "mappMarketplaceRepo"
+    | "reactFancyRepo"
+    | "fancyCodeRepo"
+    | "fancySheetsRepo"
+    | "fancyEchartsRepo";
 }
 
 export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
+  // Civicognita-owned core five (legacy default — `upstreamOrg` omitted
+  // so they continue to use CANONICAL_OWNER = "Civicognita").
   { slug: "agi",              upstream: "agi",                  displayName: "AGI",              configKey: "agiRepo" },
   { slug: "prime",            upstream: "aionima",              displayName: "PRIME",            configKey: "primeRepo" },
   { slug: "id",               upstream: "agi-local-id",         displayName: "ID",               configKey: "idRepo" },
   { slug: "marketplace",      upstream: "agi-marketplace",      displayName: "Marketplace",      configKey: "marketplaceRepo" },
   { slug: "mapp-marketplace", upstream: "agi-mapp-marketplace", displayName: "MApp Marketplace", configKey: "mappMarketplaceRepo" },
+
+  // Particle-Academy (PAx) ADF UI primitives — workspace-resident per
+  // CLAUDE.md § 1.5. Same provisioning flow as the core five; different
+  // upstream org. Forks live at wishborn/<slug>; lookupFork is
+  // idempotent so existing forks (created manually in cycle 88) are
+  // reused without re-creating.
+  { slug: "react-fancy",   upstream: "react-fancy",   upstreamOrg: "Particle-Academy", displayName: "react-fancy",   configKey: "reactFancyRepo" },
+  { slug: "fancy-code",    upstream: "fancy-code",    upstreamOrg: "Particle-Academy", displayName: "fancy-code",    configKey: "fancyCodeRepo" },
+  { slug: "fancy-sheets",  upstream: "fancy-sheets",  upstreamOrg: "Particle-Academy", displayName: "fancy-sheets",  configKey: "fancySheetsRepo" },
+  { slug: "fancy-echarts", upstream: "fancy-echarts", upstreamOrg: "Particle-Academy", displayName: "fancy-echarts", configKey: "fancyEchartsRepo" },
 ] as const);
 
 export interface ForkResolveResult {
@@ -50,11 +97,20 @@ export interface ForkResolveResult {
   error?: string;
 }
 
-export const CANONICAL_OWNER = "Civicognita";
+/** Default org for specs that don't set `upstreamOrg`. The legacy
+ *  core-five rely on this default. New specs should set the field
+ *  explicitly. */
+export const CANONICAL_OWNER: UpstreamOrg = "Civicognita";
+
+/** Resolve a spec's upstream org (explicit field, falling back to the
+ *  legacy CANONICAL_OWNER default). */
+export function specUpstreamOrg(spec: CoreRepoSpec): UpstreamOrg {
+  return spec.upstreamOrg ?? CANONICAL_OWNER;
+}
 
 /** Full `upstream` remote URL for a given core-repo spec. */
 export function upstreamRemoteUrl(spec: CoreRepoSpec): string {
-  return `https://github.com/${CANONICAL_OWNER}/${spec.upstream}.git`;
+  return `https://github.com/${specUpstreamOrg(spec)}/${spec.upstream}.git`;
 }
 
 /**
@@ -74,7 +130,7 @@ export async function resolveOrCreateForks(
         continue;
       }
 
-      const created = await createFork(ownerToken, CANONICAL_OWNER, spec.upstream);
+      const created = await createFork(ownerToken, specUpstreamOrg(spec), spec.upstream);
       if (created) {
         results.push({ slug: spec.slug, cloneUrl: created, upstreamUrl, created: true });
       } else {

@@ -2574,6 +2574,17 @@ export async function createGatewayRuntimeState(
       const effectiveMarketplaceDir = pickDir(marketplaceDir, "marketplace");
       const effectiveMappMarketplaceDir = pickDir(mappMarketplaceDir, "mapp-marketplace");
 
+      // PAx (Particle-Academy) ADF UI primitive forks — s136 t512. No
+      // /opt/* deploy paths (these aren't production-deployed); the
+      // legacy fallback in pickDir's first arg is the workspace path
+      // itself, so when contributing-mode is off we report them as
+      // unknown gracefully (getRemote on a non-git dir returns "unknown").
+      const paxFallback = projectsRoot ? join(projectsRoot, "_aionima") : workspaceRoot;
+      const reactFancyDir   = pickDir(join(paxFallback, "react-fancy"),   "react-fancy");
+      const fancyCodeDir    = pickDir(join(paxFallback, "fancy-code"),    "fancy-code");
+      const fancySheetsDir  = pickDir(join(paxFallback, "fancy-sheets"),  "fancy-sheets");
+      const fancyEchartsDir = pickDir(join(paxFallback, "fancy-echarts"), "fancy-echarts");
+
       // Phase H.2 — origins alignment check. When Dev Mode is enabled,
       // each /opt/*/.git origin should be pointing at the owner's fork
       // (via v0.4.66's `ensure_origin_remote` in upgrade.sh). If any
@@ -2632,6 +2643,11 @@ export async function createGatewayRuntimeState(
         id: { remote: getRemote(effectiveIdDir), branch: getBranch(effectiveIdDir) },
         marketplace: { remote: getRemote(effectiveMarketplaceDir), branch: getBranch(effectiveMarketplaceDir) },
         mappMarketplace: { remote: getRemote(effectiveMappMarketplaceDir), branch: getBranch(effectiveMappMarketplaceDir) },
+        // PAx (Particle-Academy) ADF UI primitive forks — s136 t512.
+        reactFancy:   { remote: getRemote(reactFancyDir),   branch: getBranch(reactFancyDir) },
+        fancyCode:    { remote: getRemote(fancyCodeDir),    branch: getBranch(fancyCodeDir) },
+        fancySheets:  { remote: getRemote(fancySheetsDir),  branch: getBranch(fancySheetsDir) },
+        fancyEcharts: { remote: getRemote(fancyEchartsDir), branch: getBranch(fancyEchartsDir) },
       });
     });
 
@@ -2840,13 +2856,23 @@ export async function createGatewayRuntimeState(
         const forks = await resolveOrCreateForks(tokenInfo.accessToken, ownerGithubLogin);
         for (const f of forks) {
           if (f.cloneUrl) {
-            // Map slug → dev.*Repo key
+            // Map slug → dev.*Repo key. Civicognita-owned core five
+            // (legacy) + Particle-Academy PAx four (s136 t512). New
+            // entries here must match `CoreRepoSpec.configKey` in
+            // dev-mode-forks.ts AND the field added to DevConfigSchema
+            // in agi/config/src/schema.ts — three places kept in sync
+            // by hand (a future refactor could derive this from the
+            // CORE_REPOS spec list directly).
             const keyMap: Record<string, string> = {
               "agi": "agiRepo",
               "prime": "primeRepo",
               "id": "idRepo",
               "marketplace": "marketplaceRepo",
               "mapp-marketplace": "mappMarketplaceRepo",
+              "react-fancy": "reactFancyRepo",
+              "fancy-code": "fancyCodeRepo",
+              "fancy-sheets": "fancySheetsRepo",
+              "fancy-echarts": "fancyEchartsRepo",
             };
             const cfgKey = keyMap[f.slug];
             if (cfgKey) devRepoPatch[cfgKey] = f.cloneUrl;

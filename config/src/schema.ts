@@ -511,6 +511,22 @@ const DevConfigSchema = z
     mappMarketplaceRepo: z.string().default("git@github.com:wishborn/agi-mapp-marketplace.git"),
     /** Dev directory for MApp marketplace fork. */
     mappMarketplaceDir: z.string().default("/opt/agi-mapp-marketplace_dev"),
+
+    // PAx (Particle-Academy) ADF UI primitive forks — workspace-resident
+    // per CLAUDE.md § 1.5. Provisioned by the same Dev Mode toggle that
+    // handles the core five. Fork live at wishborn/<repo>; upstream lives
+    // at Particle-Academy/<repo> (different org from Civicognita-owned
+    // core five). No `*Dir` field — these clone into the same
+    // `_aionima/<slug>/` workspace collection as the core five (no /opt/
+    // production deploy for ADF primitives).
+    /** Git remote URL for react-fancy fork. */
+    reactFancyRepo: z.string().default("git@github.com:wishborn/react-fancy.git"),
+    /** Git remote URL for fancy-code fork. */
+    fancyCodeRepo: z.string().default("git@github.com:wishborn/fancy-code.git"),
+    /** Git remote URL for fancy-sheets fork. */
+    fancySheetsRepo: z.string().default("git@github.com:wishborn/fancy-sheets.git"),
+    /** Git remote URL for fancy-echarts fork. */
+    fancyEchartsRepo: z.string().default("git@github.com:wishborn/fancy-echarts.git"),
   })
   .strict();
 

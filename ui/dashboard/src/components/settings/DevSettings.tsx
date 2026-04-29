@@ -256,50 +256,102 @@ export function DevSettings({ config, update }: {
         )}
       </Card>
 
-      {/* Repo Status Cards — only shown when contributing mode is on */}
+      {/* Repo Status Cards — only shown when contributing mode is on.
+          Grouped by upstream org per s136 t512:
+            - Civicognita (the AGI core five — agi, prime, id, marketplace,
+              mapp-marketplace)
+            - Particle-Academy (PAx ADF UI primitives — react-fancy,
+              fancy-code, fancy-sheets, fancy-echarts) */}
       {devStatus?.enabled && (
         <Card className="p-6 gap-0 mb-4">
           <SectionHeading>Repository Status</SectionHeading>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading repo status...</p>
           ) : devStatus !== null ? (
-            <div className="grid gap-3">
-              <RepoCard
-                name="AGI"
-                remote={devStatus.agi.remote}
-                isOwnerFork={isOwnerFork(devStatus.agi.remote)}
-              />
-              <RepoCard
-                name="PRIME"
-                remote={devStatus.prime.remote}
-                branch={devStatus.prime.branch}
-                entries={devStatus.prime.entries}
-                isOwnerFork={isOwnerFork(devStatus.prime.remote)}
-              />
-              {devStatus.id && (
-                <RepoCard
-                  name="ID"
-                  remote={devStatus.id.remote}
-                  branch={devStatus.id.branch}
-                  isOwnerFork={isOwnerFork(devStatus.id.remote)}
-                />
-              )}
-              {devStatus.marketplace && (
-                <RepoCard
-                  name="Marketplace"
-                  remote={devStatus.marketplace.remote}
-                  branch={devStatus.marketplace.branch}
-                  isOwnerFork={isOwnerFork(devStatus.marketplace.remote)}
-                />
-              )}
-              {devStatus.mappMarketplace && (
-                <RepoCard
-                  name="MApp Marketplace"
-                  remote={devStatus.mappMarketplace.remote}
-                  branch={devStatus.mappMarketplace.branch}
-                  isOwnerFork={isOwnerFork(devStatus.mappMarketplace.remote)}
-                />
-              )}
+            <div className="space-y-5">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                  Civicognita · core platform
+                </div>
+                <div className="grid gap-3">
+                  <RepoCard
+                    name="AGI"
+                    remote={devStatus.agi.remote}
+                    isOwnerFork={isOwnerFork(devStatus.agi.remote)}
+                  />
+                  <RepoCard
+                    name="PRIME"
+                    remote={devStatus.prime.remote}
+                    branch={devStatus.prime.branch}
+                    entries={devStatus.prime.entries}
+                    isOwnerFork={isOwnerFork(devStatus.prime.remote)}
+                  />
+                  {devStatus.id && (
+                    <RepoCard
+                      name="ID"
+                      remote={devStatus.id.remote}
+                      branch={devStatus.id.branch}
+                      isOwnerFork={isOwnerFork(devStatus.id.remote)}
+                    />
+                  )}
+                  {devStatus.marketplace && (
+                    <RepoCard
+                      name="Marketplace"
+                      remote={devStatus.marketplace.remote}
+                      branch={devStatus.marketplace.branch}
+                      isOwnerFork={isOwnerFork(devStatus.marketplace.remote)}
+                    />
+                  )}
+                  {devStatus.mappMarketplace && (
+                    <RepoCard
+                      name="MApp Marketplace"
+                      remote={devStatus.mappMarketplace.remote}
+                      branch={devStatus.mappMarketplace.branch}
+                      isOwnerFork={isOwnerFork(devStatus.mappMarketplace.remote)}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                  Particle-Academy · ADF UI primitives (PAx)
+                </div>
+                <div className="grid gap-3">
+                  {devStatus.reactFancy && (
+                    <RepoCard
+                      name="react-fancy"
+                      remote={devStatus.reactFancy.remote}
+                      branch={devStatus.reactFancy.branch}
+                      isOwnerFork={isOwnerFork(devStatus.reactFancy.remote)}
+                    />
+                  )}
+                  {devStatus.fancyCode && (
+                    <RepoCard
+                      name="fancy-code"
+                      remote={devStatus.fancyCode.remote}
+                      branch={devStatus.fancyCode.branch}
+                      isOwnerFork={isOwnerFork(devStatus.fancyCode.remote)}
+                    />
+                  )}
+                  {devStatus.fancySheets && (
+                    <RepoCard
+                      name="fancy-sheets"
+                      remote={devStatus.fancySheets.remote}
+                      branch={devStatus.fancySheets.branch}
+                      isOwnerFork={isOwnerFork(devStatus.fancySheets.remote)}
+                    />
+                  )}
+                  {devStatus.fancyEcharts && (
+                    <RepoCard
+                      name="fancy-echarts"
+                      remote={devStatus.fancyEcharts.remote}
+                      branch={devStatus.fancyEcharts.branch}
+                      isOwnerFork={isOwnerFork(devStatus.fancyEcharts.remote)}
+                    />
+                  )}
+                </div>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Unable to load repo status</p>

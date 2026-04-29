@@ -925,6 +925,13 @@ export interface DevStatus {
   id?: { remote: string; branch: string };
   marketplace?: { remote: string; branch: string };
   mappMarketplace?: { remote: string; branch: string };
+  /** PAx (Particle-Academy) ADF UI primitive forks — s136 t512. Always
+   *  present in the response when contributing-mode is on; populated
+   *  with "unknown" remote when the workspace clone is missing. */
+  reactFancy?: { remote: string; branch: string };
+  fancyCode?: { remote: string; branch: string };
+  fancySheets?: { remote: string; branch: string };
+  fancyEcharts?: { remote: string; branch: string };
   provisionedProjects?: string[];
   /** True only when every /opt/* origin matches its dev.*Repo config.
    *  When false with enabled=true, surface a yellow "Run agi upgrade
