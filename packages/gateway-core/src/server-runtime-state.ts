@@ -1052,7 +1052,7 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Projects API only allowed from private network" });
     }
     const projectDirs = deps.workspaceProjects ?? [];
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string }[] = [];
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string }[] }[] = [];
 
     // Expand top-level entries into (fullPath, coreCollection, coreForkSlug) triples.
     // A directory that contains a `collection.json` with
@@ -1106,15 +1106,17 @@ export async function createGatewayRuntimeState(
         let metaCategory: string | null = null;
         let metaDescription: string | undefined;
         let metaMagicApps: string[] | undefined;
+        let metaRepos: { name: string; url: string; branch?: string }[] | undefined;
         const metaPath = projectConfigPath(fullPath);
         if (existsSync(metaPath)) {
           try {
-            const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string; magicApps?: string[] };
+            const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string; magicApps?: string[]; repos?: { name: string; url: string; branch?: string }[] };
             tynnToken = meta.tynnToken ?? null;
             metaType = meta.type ?? null;
             metaCategory = meta.category ?? null;
             metaDescription = meta.description;
             metaMagicApps = meta.magicApps;
+            metaRepos = meta.repos;
           } catch { /* ignore malformed metadata */ }
         }
         const hosting = deps.hostingManager
@@ -1154,6 +1156,7 @@ export async function createGatewayRuntimeState(
           magicApps: metaMagicApps,
           coreCollection,
           coreForkSlug,
+          repos: metaRepos,
         });
       } catch { /* directory may not exist */ }
     }

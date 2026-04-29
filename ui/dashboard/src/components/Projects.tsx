@@ -307,6 +307,7 @@ export function Projects({
               <Table.Column label="" />
               <Table.Column label="Project" />
               <Table.Column label="Category" />
+              <Table.Column label="Repos" />
               <Table.Column label="Tags" />
               <Table.Column label="Activity (30d)" />
               <Table.Column label="Hosting" />
@@ -347,6 +348,23 @@ export function Projects({
                               <span key={id} className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 font-medium">
                                 {id}
                               </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {p.repos && p.repos.length > 0 && (
+                        <div className="col-span-2">
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Repos ({p.repos.length})</div>
+                          <div className="space-y-0.5">
+                            {p.repos.map((r) => (
+                              <div key={r.name} className="flex items-center gap-2 text-[11px]">
+                                <span className="font-mono font-semibold text-foreground">{r.name}</span>
+                                <span className="text-muted-foreground font-mono">→</span>
+                                <span className="text-muted-foreground font-mono break-all">{r.url}</span>
+                                {r.branch && (
+                                  <span className="text-[10px] px-1 py-0.5 rounded bg-blue/15 text-blue font-mono">{r.branch}</span>
+                                )}
+                              </div>
                             ))}
                           </div>
                         </div>
@@ -400,6 +418,28 @@ export function Projects({
                           {isOps ? `${cat} · ops mode` : cat}
                         </span>
                       )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      {(() => {
+                        const repoCount = p.repos?.length ?? 0;
+                        if (repoCount === 0) {
+                          return (
+                            <span className="text-[11px] font-mono text-muted-foreground" title="Single-repo project">
+                              ⌗1
+                            </span>
+                          );
+                        }
+                        const names = (p.repos ?? []).map((r) => r.name).join(", ");
+                        return (
+                          <span
+                            className="text-[11px] font-mono text-foreground font-semibold"
+                            title={`Multi-repo: ${names}`}
+                            data-testid={`project-repos-${projectSlug(p.path)}`}
+                          >
+                            ⌗{repoCount}
+                          </span>
+                        );
+                      })()}
                     </Table.Cell>
                     <Table.Cell>
                       <div className="flex gap-1 flex-wrap">

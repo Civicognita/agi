@@ -414,6 +414,12 @@ export interface ProjectInfo {
    *  "marketplace", "mapp-marketplace"). Lets the dashboard call the
    *  `/api/dev/core-forks/:slug/merge` endpoint without parsing the path. */
   coreForkSlug?: string;
+  /** Multi-repo projects (s130 phase B / t515 slice 1) — list of sub-repos
+   *  declared in <projectPath>/.agi/project.json's repos[] field. When
+   *  empty/undefined, the project is single-repo and its source lives at
+   *  the project root. The Projects browser list view shows `⌗N` per row
+   *  (s130 t516 slice 4). */
+  repos?: { name: string; url: string; branch?: string }[];
 }
 
 /** A single row returned by GET /api/dev/core-forks/status. */
