@@ -23,6 +23,7 @@ import { EnvManager } from "./EnvManager.js";
 import { TaskmasterTab } from "./TaskmasterTab.js";
 import { IterativeWorkTab } from "./IterativeWorkTab.js";
 import { MCPTab } from "./MCPTab.js";
+import { ProjectActivityTab } from "./ProjectActivityTab.js";
 import { ProjectManagement } from "./ProjectManagement.js";
 import type { HostingStatus } from "../api.js";
 import { TreeNav, ContextMenu, useToast } from "@particle-academy/react-fancy";
@@ -143,6 +144,7 @@ export function ProjectDetail({
     "magic-apps": "coordinate",
     "taskmaster": "coordinate",
     "security": "insight",
+    "activity": "insight",
   };
   const tabBelongsToMode = (tabId: string): boolean => {
     if (tabId.startsWith("plugin-")) {
@@ -157,7 +159,7 @@ export function ProjectDetail({
   useEffect(() => {
     if (!tabBelongsToMode(activeTab)) {
       // Find first tab in current mode (prefer the canonical first one)
-      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "magic-apps", "taskmaster", "security"];
+      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "magic-apps", "taskmaster", "security", "activity"];
       const firstInMode = candidates.find((id) => TAB_MODES[id] === currentMode);
       if (firstInMode) setActiveTab(firstInMode);
     }
@@ -468,6 +470,9 @@ export function ProjectDetail({
             ))}
           {!isCoreFork && tabBelongsToMode("security") && project.projectType?.hasCode && (
             <TabsTrigger value="security">Security</TabsTrigger>
+          )}
+          {!isCoreFork && tabBelongsToMode("activity") && (
+            <TabsTrigger value="activity" data-testid="project-tab-activity">Activity</TabsTrigger>
           )}
         </TabsList>
 
@@ -969,6 +974,12 @@ export function ProjectDetail({
         {project.projectType?.hasCode && (
           <TabsContent value="security" className="mt-4 flex-1 min-h-0 overflow-y-auto">
             <SecurityTab projectPath={project.path} onFixFinding={onFixFinding ? (f) => onFixFinding(project.path, f) : undefined} />
+          </TabsContent>
+        )}
+
+        {!isCoreFork && (
+          <TabsContent value="activity" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+            <ProjectActivityTab projectPath={project.path} />
           </TabsContent>
         )}
       </Tabs>
