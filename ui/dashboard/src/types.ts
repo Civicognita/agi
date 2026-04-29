@@ -424,6 +424,11 @@ export interface ProjectInfo {
    *  from project.json's hosting.stacks[] field. Used by t516 slice 5
    *  for the Stack badge column on the Projects list view. */
   attachedStacks?: { stackId: string }[];
+  /** Knowledge layer counts (s130 phase A scaffold) — file counts in
+   *  the per-project k/ subdirs. Undefined when the project has no k/
+   *  scaffolded (i.e. not yet s130-migrated). Used by t516 slice 6 for
+   *  the Knowledge column on the Projects list view. */
+  knowledge?: { pages: number; plans: number; chatSessions: number };
 }
 
 /** A single row returned by GET /api/dev/core-forks/status. */

@@ -1052,7 +1052,7 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Projects API only allowed from private network" });
     }
     const projectDirs = deps.workspaceProjects ?? [];
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string }[]; attachedStacks?: { stackId: string }[] }[] = [];
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string }[]; attachedStacks?: { stackId: string }[]; knowledge?: { pages: number; plans: number; chatSessions: number } }[] = [];
 
     // Expand top-level entries into (fullPath, coreCollection, coreForkSlug) triples.
     // A directory that contains a `collection.json` with
@@ -1143,6 +1143,28 @@ export async function createGatewayRuntimeState(
         const testingUxEligible = category !== null
           ? TESTING_UX_ELIGIBLE_CATEGORIES.has(category as ProjectCategory)
           : (projectType?.testingUxEligible ?? false);
+        // s130 t516 slice 6 — knowledge counts. Walk the per-project
+        // k/ subdirs (s130 phase A scaffold) and count files. Cheap +
+        // synchronous; the dirs are typically small. Used by the
+        // Projects browser list view's Knowledge column to surface
+        // each project's knowledge density at a glance.
+        let knowledge: { pages: number; plans: number; chatSessions: number } | undefined;
+        try {
+          const countJson = (subdir: string): number => {
+            const dir = join(fullPath, "k", subdir);
+            if (!existsSync(dir)) return 0;
+            try {
+              return readdirSync(dir).filter((f) => f.endsWith(".md") || f.endsWith(".json") || f.endsWith(".mdx")).length;
+            } catch { return 0; }
+          };
+          const pages = countJson("knowledge");
+          const plans = countJson("plans");
+          const chatSessions = countJson("chat");
+          if (pages > 0 || plans > 0 || chatSessions > 0) {
+            knowledge = { pages, plans, chatSessions };
+          }
+        } catch { /* k/ scaffold absent — not s130-migrated, knowledge stays undefined */ }
+
         projects.push({
           name: entryName,
           path: fullPath,
@@ -1160,6 +1182,7 @@ export async function createGatewayRuntimeState(
           coreForkSlug,
           repos: metaRepos,
           attachedStacks: metaAttachedStacks,
+          knowledge,
         });
       } catch { /* directory may not exist */ }
     }

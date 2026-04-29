@@ -311,6 +311,7 @@ export function Projects({
               <Table.Column label="Stacks" />
               <Table.Column label="Tags" />
               <Table.Column label="Activity (30d)" />
+              <Table.Column label="Knowledge" />
               <Table.Column label="Hosting" />
             </Table.Head>
             <Table.Body>
@@ -494,6 +495,24 @@ export function Projects({
                             data-testid={`project-activity-${projectSlug(p.path)}`}
                           >
                             {renderSparkline(summary.dailyCounts)}
+                          </span>
+                        );
+                      })()}
+                    </Table.Cell>
+                    <Table.Cell>
+                      {(() => {
+                        const k = p.knowledge;
+                        if (!k) {
+                          return <span className="text-[11px] text-muted-foreground/40">—</span>;
+                        }
+                        const total = k.pages + k.plans + k.chatSessions;
+                        return (
+                          <span
+                            className="text-[11px] font-mono text-foreground"
+                            title={`${String(k.pages)} pages · ${String(k.plans)} plans · ${String(k.chatSessions)} chat sessions`}
+                            data-testid={`project-knowledge-${projectSlug(p.path)}`}
+                          >
+                            ▣ {total}
                           </span>
                         );
                       })()}
