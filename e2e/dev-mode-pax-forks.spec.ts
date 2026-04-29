@@ -55,16 +55,14 @@ test.describe("Dev-Mode PAx forks (s136 t512)", () => {
     const devModeOn = await badge.isVisible().catch(() => false);
     test.skip(!devModeOn, "Contributing mode not enabled — skipping Particle-Academy section assertion");
 
-    // Navigate to gateway settings → Contributing tab. The exact path
-    // varies by routing config; try canonical first.
-    const res = await page.goto("/settings/contributing", { waitUntil: "domcontentloaded" }).catch(() => null);
-    if (!(res && res.ok())) {
-      await page.goto("/settings/gateway");
-      // Click the Contributing tab if present
-      const tab = page.getByRole("tab", { name: /contributing/i }).first();
-      const tabVisible = await tab.isVisible().catch(() => false);
-      if (tabVisible) await tab.click();
-    }
+    // Navigate to /settings/gateway and click the "Contributing" tab.
+    // The Contributing tab is internal state inside the page (see
+    // routes/settings-gateway.tsx tabs array — { id: "dev", label:
+    // "Contributing" }), not a URL — so we click the tab button rather
+    // than navigate.
+    await page.goto("/settings/gateway");
+    const contribTab = page.getByRole("button", { name: /^contributing$/i }).first();
+    await contribTab.click();
 
     // Expect both group headings — "Civicognita · core platform" and
     // "Particle-Academy · ADF UI primitives (PAx)".
