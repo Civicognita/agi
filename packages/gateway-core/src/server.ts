@@ -966,7 +966,7 @@ export async function startGatewayServer(
               log: (msg) => { log.warn(`iter-screenshot: ${msg}`); },
             });
             if (thumbnailPath !== null) {
-              outcome.artifact = { ...(outcome.artifact ?? {}), thumbnailPath };
+              outcome.artifact = { ...outcome.artifact, thumbnailPath };
               log.info(`iterative-work screenshot captured: ${thumbnailPath}`);
             }
           }
