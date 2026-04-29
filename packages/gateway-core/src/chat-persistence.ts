@@ -189,17 +189,34 @@ export class ChatPersistence {
     }
   }
 
-  /** List all saved sessions, sorted by updatedAt descending. */
-  list(): ChatSessionSummary[] {
-    try {
-      const files = readdirSync(this.dir).filter((f) => f.endsWith(".json"));
-      const summaries: ChatSessionSummary[] = [];
+  /** List all saved sessions, sorted by updatedAt descending.
+   *
+   * **s130 t521 slice (2026-04-29):** accepts optional `additionalDirs`
+   * — per-project chat dirs (e.g. `<projectPath>/k/chat/`) the caller
+   * wants to combine with the global dir. Sessions found in multiple
+   * locations are deduplicated by id, preferring the entry with the
+   * most recent `updatedAt`. Until production wiring lands all dirs,
+   * the global dir remains the primary source.
+   */
+  list(additionalDirs: string[] = []): ChatSessionSummary[] {
+    const allDirs = [this.dir, ...additionalDirs];
+    const byId = new Map<string, ChatSessionSummary>();
+
+    for (const dir of allDirs) {
+      let files: string[];
+      try {
+        files = readdirSync(dir).filter((f) => f.endsWith(".json"));
+      } catch {
+        // Dir doesn't exist or unreadable — skip it (additionalDirs
+        // for projects with no chat history yet).
+        continue;
+      }
 
       for (const file of files) {
         try {
-          const raw = readFileSync(join(this.dir, file), "utf-8");
+          const raw = readFileSync(join(dir, file), "utf-8");
           const session = JSON.parse(raw) as PersistedChatSession;
-          summaries.push({
+          const summary: ChatSessionSummary = {
             id: session.id,
             context: session.context,
             contextLabel: session.contextLabel,
@@ -207,17 +224,19 @@ export class ChatPersistence {
             updatedAt: session.updatedAt,
             messageCount: session.messages.length,
             lastPreview: session.lastPreview,
-          });
+          };
+          // Dedupe by id, prefer more-recent updatedAt
+          const existing = byId.get(summary.id);
+          if (existing === undefined || summary.updatedAt > existing.updatedAt) {
+            byId.set(summary.id, summary);
+          }
         } catch {
           // Skip corrupt files
         }
       }
-
-      summaries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-      return summaries;
-    } catch {
-      return [];
     }
+
+    return Array.from(byId.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
   /** Delete a session file. Returns true if deleted, false otherwise.

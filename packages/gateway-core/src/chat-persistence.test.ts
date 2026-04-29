@@ -153,4 +153,68 @@ describe("ChatPersistence — s130 t518 slice 2 dual-write/delete", () => {
       // we could read the context; either way, we don't crash.
     });
   });
+
+  describe("list with additionalDirs (s130 t521 reader flip slice)", () => {
+    it("returns global sessions when no additionalDirs passed (legacy)", () => {
+      store.save(makeSession("g1", ""));
+      store.save(makeSession("g2", ""));
+      const summaries = store.list();
+      expect(summaries.map((s) => s.id).sort()).toEqual(["g1", "g2"]);
+    });
+
+    it("combines global dir + per-project additional dirs", () => {
+      // Global session
+      store.save(makeSession("global-1", ""));
+      // Per-project session — write directly into the migrated project's k/chat/
+      const projChat = join(migratedProjectPath, "k", "chat");
+      mkdirSync(projChat, { recursive: true });
+      writeFileSync(
+        join(projChat, "p1.json"),
+        JSON.stringify(makeSession("p1", migratedProjectPath)),
+        "utf-8",
+      );
+
+      const summaries = store.list([projChat]);
+      expect(summaries.map((s) => s.id).sort()).toEqual(["global-1", "p1"]);
+    });
+
+    it("deduplicates sessions present in both locations, preferring most recent", () => {
+      // Old version in global
+      const oldSession = makeSession("d1", migratedProjectPath);
+      oldSession.updatedAt = "2026-04-29T01:00:00Z";
+      writeFileSync(join(globalDir, "d1.json"), JSON.stringify(oldSession), "utf-8");
+
+      // Newer version in per-project
+      const projChat = join(migratedProjectPath, "k", "chat");
+      mkdirSync(projChat, { recursive: true });
+      const newSession = { ...oldSession, updatedAt: "2026-04-29T02:00:00Z", lastPreview: "newer" };
+      writeFileSync(join(projChat, "d1.json"), JSON.stringify(newSession), "utf-8");
+
+      const summaries = store.list([projChat]);
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]?.updatedAt).toBe("2026-04-29T02:00:00Z");
+      expect(summaries[0]?.lastPreview).toBe("newer");
+    });
+
+    it("silently skips additionalDirs that don't exist", () => {
+      store.save(makeSession("only-global", ""));
+      const summaries = store.list([
+        "/nonexistent/dir1",
+        "/nonexistent/dir2",
+      ]);
+      expect(summaries.map((s) => s.id)).toEqual(["only-global"]);
+    });
+
+    it("sorts combined list by updatedAt descending", () => {
+      const oldS = { ...makeSession("old", ""), updatedAt: "2026-04-29T01:00:00Z" };
+      const newS = { ...makeSession("new", ""), updatedAt: "2026-04-29T03:00:00Z" };
+      const midS = { ...makeSession("mid", ""), updatedAt: "2026-04-29T02:00:00Z" };
+      writeFileSync(join(globalDir, "old.json"), JSON.stringify(oldS), "utf-8");
+      writeFileSync(join(globalDir, "new.json"), JSON.stringify(newS), "utf-8");
+      writeFileSync(join(globalDir, "mid.json"), JSON.stringify(midS), "utf-8");
+
+      const summaries = store.list();
+      expect(summaries.map((s) => s.id)).toEqual(["new", "mid", "old"]);
+    });
+  });
 });
