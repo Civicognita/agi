@@ -788,23 +788,42 @@ cmd_services_align() {
   echo "==> Polling /health until VM reports host version (${host_version})..."
   local vm_version waited=0
   while [ $waited -lt 30 ]; do
-    vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk https://ai.on/health 2>/dev/null" 2>/dev/null \
+    vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk https://test.ai.on/health 2>/dev/null" 2>/dev/null \
       | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
       | tr -d '\r\n ')
     if [ "$vm_version" = "$host_version" ]; then
-      echo "    aligned: VM reports v${vm_version}"
-      return 0
+      break
     fi
     sleep 2
     waited=$((waited + 2))
   done
 
-  echo ""
-  echo "    DRIFT: VM reports v${vm_version:-unreachable}, expected v${host_version}"
-  echo "    Common causes:"
-  echo "      - Stale process bound to port 3100 (try '$0 services-stop' again)"
-  echo "      - Build failed silently (check 'cd $REPO_DIR && pnpm build')"
-  echo "      - Mount stale (try 'multipass restart $VM_NAME')"
+  if [ "$vm_version" != "$host_version" ]; then
+    echo ""
+    echo "    DRIFT: VM reports v${vm_version:-unreachable}, expected v${host_version}"
+    echo "    Common causes:"
+    echo "      - Stale process bound to port 3100 (try '$0 services-stop' again)"
+    echo "      - Build failed silently (check 'cd $REPO_DIR && pnpm build')"
+    echo "      - Mount stale (try 'multipass restart $VM_NAME')"
+    return 1
+  fi
+
+  # In-VM /health passed but the host needs test.ai.on reachable too
+  # (cycle 119 root cause: agi test --e2e fell back to VM IP and got
+  # SSL_PROTOCOL_ERROR because Caddy's bound to test.ai.on, not the IP).
+  echo "==> Polling test.ai.on reachability from host..."
+  local host_check_waited=0
+  while [ $host_check_waited -lt 30 ]; do
+    if curl -sk -o /dev/null -w "%{http_code}" --connect-timeout 3 "https://test.ai.on/api/system/stats" 2>/dev/null | grep -q "^2"; then
+      echo "    aligned: VM reports v${vm_version}, test.ai.on reachable from host"
+      return 0
+    fi
+    sleep 2
+    host_check_waited=$((host_check_waited + 2))
+  done
+  echo "    DRIFT: VM at v${vm_version} but test.ai.on unreachable from host"
+  echo "      - Caddy may not have bound test.ai.on yet — wait + retry"
+  echo "      - Verify host /etc/hosts maps test.ai.on to the VM IP"
   return 1
 }
 
@@ -815,7 +834,7 @@ cmd_services_version() {
   host_version=$(grep -m1 '"version"' "$REPO_DIR/package.json" 2>/dev/null | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
   [ -z "$host_version" ] && host_version="unknown"
 
-  vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk https://ai.on/health 2>/dev/null" 2>/dev/null \
+  vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk https://test.ai.on/health 2>/dev/null" 2>/dev/null \
     | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
     | tr -d '\r\n ')
   [ -z "$vm_version" ] && vm_version="unreachable"
