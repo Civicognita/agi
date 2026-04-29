@@ -101,6 +101,25 @@ function sanitizeId(id: string): string {
   return id.replace(/[^a-zA-Z0-9_-]/g, "");
 }
 
+/**
+ * Resolve the per-project chat dir `<projectPath>/k/chat/` when the
+ * session's context is a valid s130-migrated project (has `.agi/`).
+ * Returns null when:
+ * - context is empty/falsy (global session)
+ * - context is not a directory
+ * - context has no `.agi/` (project not yet migrated to s130 layout)
+ *
+ * The s130 migration is detected by the presence of `<context>/.agi/`
+ * (created by scaffoldProjectFolders / migrateProjectConfig). This
+ * means non-migrated projects continue to use the global dir
+ * exclusively until they're touched by the migration helper.
+ */
+function resolveProjectChatDir(context: string | undefined | null): string | null {
+  if (typeof context !== "string" || context.length === 0) return null;
+  if (!existsSync(join(context, ".agi"))) return null;
+  return join(context, "k", "chat");
+}
+
 function truncatePreview(text: string, maxLen = 100): string {
   if (text.length <= maxLen) return text;
   return text.slice(0, maxLen - 3) + "...";
@@ -120,12 +139,41 @@ export class ChatPersistence {
     }
   }
 
-  /** Save a session to disk. */
+  /** Save a session to disk.
+   *
+   * **s130 t518 slice 2 (2026-04-29):** dual-write — always write to
+   * the global dir (current readers consume from there), and ALSO
+   * write to `<projectPath>/k/chat/<id>.json` when the session has a
+   * project context AND that project has been migrated to s130 layout
+   * (`<projectPath>/.agi/` exists). Slice 3 will flip readers to the
+   * per-project location + drop the global write. Until then,
+   * dual-write keeps the per-project copy eventually consistent for
+   * future readers.
+   */
   save(session: PersistedChatSession): void {
     const safeId = sanitizeId(session.id);
     if (safeId.length === 0) return;
-    const filePath = join(this.dir, `${safeId}.json`);
-    writeFileSync(filePath, JSON.stringify(session, null, 2), "utf-8");
+    const data = JSON.stringify(session, null, 2);
+
+    // Primary write: global dir. This is what current readers see.
+    const globalPath = join(this.dir, `${safeId}.json`);
+    writeFileSync(globalPath, data, "utf-8");
+
+    // Secondary write: per-project location when applicable. Failures
+    // here are non-fatal — global write succeeded, so the session is
+    // discoverable through the current code path.
+    const projectChatDir = resolveProjectChatDir(session.context);
+    if (projectChatDir !== null) {
+      try {
+        if (!existsSync(projectChatDir)) {
+          mkdirSync(projectChatDir, { recursive: true });
+        }
+        writeFileSync(join(projectChatDir, `${safeId}.json`), data, "utf-8");
+      } catch {
+        // Per-project write failed (read-only fs, permissions). Silent
+        // skip — primary write covers functionality.
+      }
+    }
   }
 
   /** Load a session from disk. Returns null if not found or corrupt. */
@@ -172,17 +220,56 @@ export class ChatPersistence {
     }
   }
 
-  /** Delete a session file. Returns true if deleted, false otherwise. */
+  /** Delete a session file. Returns true if deleted, false otherwise.
+   *
+   * **s130 t518 slice 2 (2026-04-29):** dual-delete. To avoid the
+   * "session resurrects on slice 3 reader-flip" bug, we read the
+   * session first to get its project context, then delete from BOTH
+   * the global location AND the per-project location (if applicable).
+   * Returns true when at least one location was successfully deleted.
+   */
   delete(sessionId: string): boolean {
     const safeId = sanitizeId(sessionId);
     if (safeId.length === 0) return false;
-    const filePath = join(this.dir, `${safeId}.json`);
+
+    // Read the session first to know its context (so we can delete
+    // from the per-project location too). We read from the global dir
+    // because that's the canonical source today.
+    const globalPath = join(this.dir, `${safeId}.json`);
+    let context: string | undefined;
     try {
-      unlinkSync(filePath);
-      return true;
+      const raw = readFileSync(globalPath, "utf-8");
+      const session = JSON.parse(raw) as PersistedChatSession;
+      context = session.context;
     } catch {
-      return false;
+      // Couldn't read the global session — possibly already deleted
+      // from global but not from per-project. Skip the context lookup
+      // and just attempt both deletions blindly.
     }
+
+    let deletedAny = false;
+
+    // Delete from global.
+    try {
+      unlinkSync(globalPath);
+      deletedAny = true;
+    } catch {
+      // Already gone — ok.
+    }
+
+    // Delete from per-project location if applicable.
+    const projectChatDir = resolveProjectChatDir(context);
+    if (projectChatDir !== null) {
+      const projectPath = join(projectChatDir, `${safeId}.json`);
+      try {
+        unlinkSync(projectPath);
+        deletedAny = true;
+      } catch {
+        // Already gone — ok.
+      }
+    }
+
+    return deletedAny;
   }
 
   // -------------------------------------------------------------------------
