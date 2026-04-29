@@ -14,21 +14,25 @@ describe("ProjectConfigManager", () => {
   let tmpDir: string;
   let agiDir: string;
   let mgr: ProjectConfigManager;
+  let projectPath: string;
 
   beforeEach(() => {
     tmpDir = join(tmpdir(), `pcm-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     agiDir = join(tmpDir, ".agi");
     mkdirSync(agiDir, { recursive: true });
-    // Override HOME so projectConfigPath resolves to our temp dir
+    // Override HOME so legacy projectConfigPath fallback resolves to our
+    // temp dir (the new path lives at <projectPath>/.agi/ per s130 t514).
     process.env.HOME = tmpDir;
+    // Per t514 slice 1, project config lives at <projectPath>/.agi/
+    // not ~/.agi/{slug}/. Test projectPath must be a real writable dir.
+    projectPath = join(tmpDir, "my-project");
+    mkdirSync(projectPath, { recursive: true });
     mgr = new ProjectConfigManager();
   });
 
   afterEach(() => {
     try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* cleanup */ }
   });
-
-  const projectPath = "/test/my-project";
 
   it("read() returns null for missing file", () => {
     expect(mgr.read(projectPath)).toBeNull();
@@ -65,7 +69,10 @@ describe("ProjectConfigManager", () => {
   });
 
   it("write() creates parent directories", () => {
-    const deepPath = "/deep/nested/project";
+    // Per t514 slice 1, config lives at <projectPath>/.agi/ — write() needs
+    // to create that subdir. Use a tmpDir-based path with a real parent.
+    const deepPath = join(tmpDir, "deep", "nested", "project");
+    mkdirSync(deepPath, { recursive: true });
     mgr.write(deepPath, { name: "Deep", createdAt: new Date().toISOString() });
     expect(mgr.read(deepPath)?.name).toBe("Deep");
   });
