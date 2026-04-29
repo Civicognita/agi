@@ -57,9 +57,9 @@ describe("ProjectConfigManager", () => {
 
   it("read() preserves plugin passthrough keys", () => {
     mgr.create(projectPath, "Test");
-    // Manually add a plugin key
-    const slug = projectPath.replace(/^\//, "").replace(/\//g, "-");
-    const filePath = join(agiDir, slug, "project.json");
+    // Manually add a plugin key. Per t514 slice 1, config lives at
+    // <projectPath>/.agi/project.json (NOT ~/.agi/{slug}/ as before).
+    const filePath = join(projectPath, ".agi", "project.json");
     const data = JSON.parse(readFileSync(filePath, "utf-8"));
     data.customPlugin = { setting: true };
     writeFileSync(filePath, JSON.stringify(data));
