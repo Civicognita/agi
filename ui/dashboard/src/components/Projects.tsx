@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SACRED_PROJECTS, PAX_SACRED_PROJECTS, isSacredProject, isPaxProject, matchSacredProject, matchPaxProjects } from "@/lib/sacred-projects.js";
+import { Table } from "@particle-academy/react-fancy";
 import {
   Dialog,
   DialogContent,
@@ -56,6 +57,10 @@ export function Projects({
 }: ProjectsProps) {
   const [showModal, setShowModal] = useState(false);
   const [showSetupTerminal, setShowSetupTerminal] = useState(false);
+  // s130 t516 slice 1 (cycle 102) — list view via react-fancy Table.
+  // Default "list" matches projects-ux-v2/projects-browser-v2.html mockup.
+  // "grid" preserved as opt-in toggle for power users / dense layouts.
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const navigate = useNavigate();
   const isContributing = Boolean(contributingEnabled);
 
@@ -78,7 +83,38 @@ export function Projects({
       {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <h2 className="text-xl font-bold text-foreground">Projects</h2>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
+          {/* s130 t516 slice 1 — list/grid view toggle */}
+          <div className="inline-flex border border-border rounded-md overflow-hidden" data-testid="projects-view-toggle">
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              className={cn(
+                "px-3 py-1 text-[12px] font-medium transition-colors cursor-pointer",
+                viewMode === "list"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-card text-muted-foreground hover:text-foreground",
+              )}
+              aria-pressed={viewMode === "list"}
+              data-testid="projects-view-list"
+            >
+              List
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("grid")}
+              className={cn(
+                "px-3 py-1 text-[12px] font-medium transition-colors cursor-pointer border-l border-border",
+                viewMode === "grid"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-card text-muted-foreground hover:text-foreground",
+              )}
+              aria-pressed={viewMode === "grid"}
+              data-testid="projects-view-grid"
+            >
+              Grid
+            </button>
+          </div>
           <Button variant="outline" size="sm" onClick={onRefresh}>
             Refresh
           </Button>
@@ -210,7 +246,101 @@ export function Projects({
         </div>
       )}
 
-      {/* Project grid — compact cards only */}
+      {/* s130 t516 slice 1 (cycle 102) — list view via react-fancy Table.
+          Matches projects-ux-v2/projects-browser-v2.html mockup. Activity
+          sparkline (fancy-echarts), Knowledge column, and click-to-expand
+          inline panel land in subsequent slices. */}
+      {viewMode === "list" && (
+        <div data-testid="projects-list">
+          <Table>
+            <Table.Head>
+              <Table.Column label="" />
+              <Table.Column label="Project" />
+              <Table.Column label="Category" />
+              <Table.Column label="Tags" />
+              <Table.Column label="Hosting" />
+            </Table.Head>
+            <Table.Body>
+              {visibleProjects.map((p) => {
+                const slug = projectSlug(p.path);
+                const cat = p.category ?? p.projectType?.category;
+                const isOps = cat === "ops" || cat === "administration";
+                return (
+                  <Table.Row
+                    key={p.path}
+                    onClick={() => void navigate(`/projects/${slug}`)}
+                    className="cursor-pointer hover:bg-secondary/30"
+                  >
+                    <Table.Cell>
+                      {projectActivity?.[p.path] ? (
+                        <span className="inline-block w-2 h-2 rounded-full bg-green animate-[pulse-green_2s_ease-in-out_infinite]" />
+                      ) : (
+                        <span className="inline-block w-2 h-2 rounded-full bg-muted-foreground/20" />
+                      )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      <span className="text-[13px] font-semibold text-card-foreground">{p.name}</span>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {cat && (
+                        <span
+                          className={cn(
+                            "text-[10px] px-1.5 py-0.5 rounded font-medium capitalize",
+                            isOps ? "bg-yellow/20 text-yellow font-semibold" : "bg-surface1 text-muted-foreground",
+                          )}
+                          title={isOps ? "Ops mode" : undefined}
+                        >
+                          {isOps ? `${cat} · ops mode` : cat}
+                        </span>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell>
+                      <div className="flex gap-1 flex-wrap">
+                        {p.hasGit && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">git</span>
+                        )}
+                        {p.tynnToken !== null && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-semibold">tynn</span>
+                        )}
+                      </div>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {p.hosting ? (
+                        <div className="flex items-center gap-2">
+                          <span className={cn(
+                            "text-[10px] px-1.5 py-0.5 rounded font-semibold",
+                            p.hosting.status === "running" ? "bg-green/15 text-green" :
+                            p.hosting.status === "error" ? "bg-red/15 text-red" :
+                            "bg-muted-foreground/15 text-muted-foreground",
+                          )}>
+                            {p.hosting.status}
+                          </span>
+                          {p.hosting.hostname && (
+                            <a
+                              href={`https://${p.hosting.hostname}.${hostingStatus?.baseDomain ?? "ai.on"}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-[11px] text-blue underline"
+                            >
+                              {p.hosting.hostname}.{hostingStatus?.baseDomain ?? "ai.on"}
+                            </a>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground">—</span>
+                      )}
+                    </Table.Cell>
+                  </Table.Row>
+                );
+              })}
+            </Table.Body>
+          </Table>
+        </div>
+      )}
+
+      {/* Project grid — original compact card layout, opt-in via viewMode toggle */}
+      {viewMode === "grid" && (
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
         {visibleProjects.map((p) => {
           const slug = projectSlug(p.path);
@@ -313,6 +443,7 @@ export function Projects({
           );
         })}
       </div>
+      )}
 
       {/* Add Project Modal */}
       <AddProjectModal
