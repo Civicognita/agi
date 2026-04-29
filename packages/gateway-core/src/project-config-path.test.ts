@@ -14,6 +14,8 @@ import {
   legacyProjectConfigPath,
   migrateProjectConfig,
   projectConfigPath,
+  scaffoldProjectFolders,
+  PROJECT_FOLDER_LAYOUT,
 } from "./project-config-path.js";
 
 describe("project-config-path", () => {
@@ -108,6 +110,53 @@ describe("project-config-path", () => {
       const r2 = migrateProjectConfig(projectPath);
       expect(r1.migrated).toBe(true);
       expect(r2.migrated).toBe(false); // new exists now, no-op
+    });
+
+    it("scaffolds the s130 folder layout on successful migration", () => {
+      const legacyPath = legacyProjectConfigPath(projectPath);
+      mkdirSync(dirname(legacyPath), { recursive: true });
+      writeFileSync(legacyPath, JSON.stringify({ name: "legacy" }), "utf-8");
+
+      const result = migrateProjectConfig(projectPath);
+      expect(result.migrated).toBe(true);
+      expect(result.scaffolded).toBeDefined();
+      // All eight s130 dirs should be created.
+      expect(result.scaffolded).toHaveLength(PROJECT_FOLDER_LAYOUT.length);
+      for (const rel of PROJECT_FOLDER_LAYOUT) {
+        expect(existsSync(join(projectPath, rel))).toBe(true);
+      }
+    });
+  });
+
+  describe("scaffoldProjectFolders", () => {
+    it("creates all s130 layout folders when none exist", () => {
+      const result = scaffoldProjectFolders(projectPath);
+      expect(result.created).toHaveLength(PROJECT_FOLDER_LAYOUT.length);
+      for (const rel of PROJECT_FOLDER_LAYOUT) {
+        expect(existsSync(join(projectPath, rel))).toBe(true);
+      }
+    });
+
+    it("is idempotent — second call creates nothing new", () => {
+      scaffoldProjectFolders(projectPath);
+      const second = scaffoldProjectFolders(projectPath);
+      expect(second.created).toHaveLength(0);
+    });
+
+    it("creates only missing dirs when some exist", () => {
+      // Pre-create one dir; scaffold should create the remaining N-1.
+      mkdirSync(join(projectPath, ".agi"), { recursive: true });
+      const result = scaffoldProjectFolders(projectPath);
+      expect(result.created).toHaveLength(PROJECT_FOLDER_LAYOUT.length - 1);
+      // .agi was pre-existing, so it shouldn't be in the created list
+      expect(result.created.some((p) => p.endsWith(".agi"))).toBe(false);
+    });
+
+    it("layout includes all five k/ subfolders per Q-3 owner answer", () => {
+      const expected = ["k/plans", "k/knowledge", "k/pm", "k/memory", "k/chat"];
+      for (const rel of expected) {
+        expect(PROJECT_FOLDER_LAYOUT).toContain(rel);
+      }
     });
   });
 

@@ -58,9 +58,55 @@ export function legacyProjectConfigPath(projectPath: string): string {
 }
 
 /**
+ * Per-project folder layout per s130 (Q-3 owner answer 2026-04-28):
+ *
+ *   <projectPath>/
+ *   ├── .agi/                # runtime config (project.json + future)
+ *   ├── k/                   # knowledge layer
+ *   │   ├── plans/           # per-project plans (replaces _plans/_next/)
+ *   │   ├── knowledge/       # markdown notes, design docs, references
+ *   │   ├── pm/              # PM provider config (Tynn token, etc)
+ *   │   ├── memory/          # per-project Aion memory
+ *   │   └── chat/            # per-project chat history
+ *   ├── repos/               # bind-mounted git checkouts (multi-repo)
+ *   └── .trash/              # soft-delete buffer
+ *
+ * Subfolders ordered for deterministic creation logging.
+ */
+export const PROJECT_FOLDER_LAYOUT: readonly string[] = Object.freeze([
+  ".agi",
+  "k/plans",
+  "k/knowledge",
+  "k/pm",
+  "k/memory",
+  "k/chat",
+  ".trash",
+  "repos",
+]);
+
+/**
+ * Idempotently scaffold the s130 per-project folder layout. Returns
+ * the list of dirs newly created (empty when everything already
+ * existed). Safe to call repeatedly — `mkdirSync` with `recursive: true`
+ * is a no-op when the dir exists.
+ */
+export function scaffoldProjectFolders(projectPath: string): { created: string[] } {
+  const created: string[] = [];
+  for (const rel of PROJECT_FOLDER_LAYOUT) {
+    const abs = join(projectPath, rel);
+    if (!existsSync(abs)) {
+      mkdirSync(abs, { recursive: true });
+      created.push(abs);
+    }
+  }
+  return { created };
+}
+
+/**
  * Idempotent migration helper. If the legacy config exists and the new
- * one doesn't, copy the file (creating `<projectPath>/.agi/` if needed).
- * Returns details about what happened so callers can log the migration.
+ * one doesn't, copy the file (creating `<projectPath>/.agi/` if needed)
+ * and scaffold the s130 folder layout. Returns details about what
+ * happened so callers can log the migration.
  *
  * The legacy file is NOT deleted — a follow-up slice will sweep them
  * once the new location has been validated across a few upgrades.
@@ -70,6 +116,7 @@ export function migrateProjectConfig(projectPath: string): {
   from?: string;
   to: string;
   error?: string;
+  scaffolded?: string[];
 } {
   const newPath = newProjectConfigPath(projectPath);
   const oldPath = legacyProjectConfigPath(projectPath);
@@ -78,7 +125,11 @@ export function migrateProjectConfig(projectPath: string): {
   try {
     mkdirSync(dirname(newPath), { recursive: true });
     writeFileSync(newPath, readFileSync(oldPath, "utf-8"), "utf-8");
-    return { migrated: true, from: oldPath, to: newPath };
+    // Scaffold the s130 folder layout so consumers (plan-store,
+    // chat-history, knowledge index, etc.) always find their target
+    // dirs ready.
+    const { created } = scaffoldProjectFolders(projectPath);
+    return { migrated: true, from: oldPath, to: newPath, scaffolded: created };
   } catch (e) {
     return {
       migrated: false,
