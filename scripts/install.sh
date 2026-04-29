@@ -395,6 +395,35 @@ if [ -f "$HOSTING_SETUP" ]; then
     bash "$HOSTING_SETUP"
 fi
 
+# ---------------------------------------------------------------------------
+# 11b. Install + enable agi-caddy (rootless containerized Caddy)
+# ---------------------------------------------------------------------------
+# Story #100 cutover: production proxy is the rootless container, not the
+# host-mode caddy.service (apt package). The container lives on the
+# `aionima` podman network so it can reach project containers (bliss-
+# chronicles, kronos-trader, civicognita-website, ra-web, etc) by podman
+# DNS name — `host.containers.internal` doesn't work for that. The host
+# caddy.service was disabled in hosting-setup.sh; here we install + enable
+# the user-mode unit so it auto-starts on every reboot.
+#
+# 2026-04-29 cycle-after-reboot bug: this block was missing, so a reboot
+# left agi-caddy.service "loaded but disabled" and ai.on:443 had no
+# listener → ERR_CONNECTION_REFUSED until manually started.
+CADDY_USER_HOME="/home/$AIONIMA_USER"
+CADDY_USER_SYSTEMD_DIR="$CADDY_USER_HOME/.config/systemd/user"
+run_as "mkdir -p '$CADDY_USER_SYSTEMD_DIR'"
+cp "$INSTALL_DIR/scripts/agi-caddy.service" "$CADDY_USER_SYSTEMD_DIR/agi-caddy.service"
+chown "$AIONIMA_USER:$AIONIMA_USER" "$CADDY_USER_SYSTEMD_DIR/agi-caddy.service"
+
+# Linger keeps user-mode units alive without a login session — required so
+# agi-caddy starts on boot before the user logs in. Idempotent.
+loginctl enable-linger "$AIONIMA_USER" 2>/dev/null || true
+
+run_as "systemctl --user daemon-reload" || true
+run_as "systemctl --user enable --now agi-caddy.service" || \
+  echo "  [WARN] systemctl enable/start agi-caddy failed; run 'agi doctor' to investigate"
+echo "  [OK] agi-caddy (rootless containerized) enabled — survives reboots"
+
 # Configure the host machine to use itself for DNS so *.ai.on resolves locally
 RESOLV_OVERRIDE="/etc/systemd/resolved.conf.d/aionima-self-dns.conf"
 if [ ! -f "$RESOLV_OVERRIDE" ]; then
