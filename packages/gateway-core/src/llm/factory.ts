@@ -112,12 +112,23 @@ export function createSingleProvider(
       // package (the PPA ships systemd unit bound to that port).
       // The matching settings page + install lifecycle are in the
       // `agi-lemonade-runtime` marketplace plugin.
+      //
+      // baseUrl MUST include `/v1` — OpenAIProvider appends `/chat/completions`
+      // to baseUrl directly. Without `/v1`, requests hit Lemonade's
+      // `/chat/completions` (no version prefix) and return 404
+      // "page not found".
+      //
+      // defaultModel: lemonade has no model named "default" — model_not_found
+      // surfaces as a 404 status with a JSON body. Owner-set agent.model
+      // is honored via `config.defaultModel`; otherwise fall back to
+      // Gemma-4-E2B-it-GGUF (lemonade's `suggested:true` model in the
+      // catalog probe — small, vision-capable, llamacpp recipe).
       return new OpenAIProvider({
         apiKey: "not-needed",
-        defaultModel: config.defaultModel ?? "default",
+        defaultModel: config.defaultModel ?? "Gemma-4-E2B-it-GGUF",
         maxTokens: config.maxTokens ?? 8192,
         maxRetries: config.maxRetries ?? 2,
-        baseUrl: config.baseUrl ?? "http://127.0.0.1:13305",
+        baseUrl: config.baseUrl ?? "http://127.0.0.1:13305/v1",
         timeoutMs,
       });
 
@@ -148,7 +159,8 @@ export function createSingleProvider(
         defaultModel: config.defaultModel ?? "wishborn/aion-micro-v1",
         maxTokens: config.maxTokens ?? 1024,
         maxRetries: config.maxRetries ?? 2,
-        baseUrl: config.baseUrl ?? "http://127.0.0.1:13305",
+        // baseUrl MUST include `/v1` — see lemonade case above for why.
+        baseUrl: config.baseUrl ?? "http://127.0.0.1:13305/v1",
         timeoutMs,
       });
 
