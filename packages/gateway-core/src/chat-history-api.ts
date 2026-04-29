@@ -45,6 +45,18 @@ function getClientIp(req: IncomingMessage): string {
 export interface ChatHistoryRouteDeps {
   chatPersistence: ChatPersistence;
   imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
+  /**
+   * Per-project chat dir resolver — s130 t521 endpoint-wiring slice
+   * (2026-04-29). Returns the list of `<projectPath>/k/chat/` paths
+   * that exist for s130-migrated projects in the workspace. The list
+   * endpoint passes this as `additionalDirs` to `chatPersistence.list()`
+   * so per-project chat history is visible alongside the global dir.
+   *
+   * Optional — when undefined, list() falls back to global-only
+   * (today's behavior preserved). Caller (server.ts) wires this from
+   * gateway.json's workspace.projects + filters by s130-migrated state.
+   */
+  perProjectChatDirs?: () => string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -55,20 +67,30 @@ export function registerChatHistoryRoutes(
   fastify: FastifyInstance,
   deps: ChatHistoryRouteDeps,
 ): void {
-  const { chatPersistence, imageBlobStore } = deps;
+  const { chatPersistence, imageBlobStore, perProjectChatDirs } = deps;
 
-  // GET /api/chat/sessions — list all saved sessions
+  // GET /api/chat/sessions — list all saved sessions.
+  //
+  // s130 t521 endpoint-wiring slice (2026-04-29): when perProjectChatDirs
+  // is wired, the list combines global + per-project sessions with
+  // dedupe-by-id (most-recent updatedAt wins). When unwired, falls back
+  // to global-only (today's behavior).
   fastify.get("/api/chat/sessions", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) {
       return reply.code(403).send({ error: "Private network only" });
     }
 
-    const sessions = chatPersistence.list();
+    const additionalDirs = perProjectChatDirs?.() ?? [];
+    const sessions = chatPersistence.list(additionalDirs);
     return { sessions };
   });
 
-  // GET /api/chat/sessions/:id — load a full persisted session
+  // GET /api/chat/sessions/:id — load a full persisted session.
+  //
+  // s130 t521 endpoint-wiring slice: accepts ?projectPath=<absolute>
+  // query param; when provided + project is s130-migrated, the
+  // per-project copy is preferred over the global copy.
   fastify.get("/api/chat/sessions/:id", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) {
@@ -76,7 +98,8 @@ export function registerChatHistoryRoutes(
     }
 
     const { id } = request.params as { id: string };
-    const session = chatPersistence.load(id);
+    const projectPath = (request.query as { projectPath?: string })?.projectPath;
+    const session = chatPersistence.load(id, projectPath);
     if (session === null) {
       return reply.code(404).send({ error: "Session not found" });
     }

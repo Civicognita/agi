@@ -209,7 +209,7 @@ export interface RuntimeStateDeps {
     getRuntimeInstallers(): RuntimeInstaller[];
     getRuntimeInstaller(language: string): RuntimeInstaller | undefined;
     getActions(scope?: { type: string; projectType?: string }): { pluginId: string; action: { id: string; label: string; description?: string; icon?: string; scope: { type: string; projectTypes?: string[] }; handler: { kind: string; command?: string; endpoint?: string; hookName?: string }; confirm?: string; group?: string; destructive?: boolean } }[];
-    getPanels(projectType?: string): { pluginId: string; panel: { id: string; label: string; projectTypes: string[]; widgets: unknown[]; position?: number } }[];
+    getPanels(projectType?: string): { pluginId: string; panel: { id: string; label: string; projectTypes: string[]; widgets: unknown[]; position?: number; mode?: "develop" | "operate" | "coordinate" | "insight" } }[];
     getSettingsSections(): { pluginId: string; section: { id: string; label: string; description?: string; configPath: string; fields: unknown[]; position?: number } }[];
     getSidebarSections(): { pluginId: string; section: { id: string; title: string; items: { label: string; to: string; icon?: string; exact?: boolean }[]; position?: number } }[];
     getThemes(): { pluginId: string; theme: { id: string; name: string; description?: string; dark: boolean; properties: Record<string, string> } }[];
@@ -1052,7 +1052,7 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Projects API only allowed from private network" });
     }
     const projectDirs = deps.workspaceProjects ?? [];
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string }[] = [];
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string }[]; attachedStacks?: { stackId: string }[]; knowledge?: { pages: number; plans: number; chatSessions: number } }[] = [];
 
     // Expand top-level entries into (fullPath, coreCollection, coreForkSlug) triples.
     // A directory that contains a `collection.json` with
@@ -1106,15 +1106,19 @@ export async function createGatewayRuntimeState(
         let metaCategory: string | null = null;
         let metaDescription: string | undefined;
         let metaMagicApps: string[] | undefined;
+        let metaRepos: { name: string; url: string; branch?: string }[] | undefined;
+        let metaAttachedStacks: { stackId: string }[] | undefined;
         const metaPath = projectConfigPath(fullPath);
         if (existsSync(metaPath)) {
           try {
-            const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string; magicApps?: string[] };
+            const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string; magicApps?: string[]; repos?: { name: string; url: string; branch?: string }[]; hosting?: { stacks?: { stackId: string }[] } };
             tynnToken = meta.tynnToken ?? null;
             metaType = meta.type ?? null;
             metaCategory = meta.category ?? null;
             metaDescription = meta.description;
             metaMagicApps = meta.magicApps;
+            metaRepos = meta.repos;
+            metaAttachedStacks = meta.hosting?.stacks;
           } catch { /* ignore malformed metadata */ }
         }
         const hosting = deps.hostingManager
@@ -1139,6 +1143,28 @@ export async function createGatewayRuntimeState(
         const testingUxEligible = category !== null
           ? TESTING_UX_ELIGIBLE_CATEGORIES.has(category as ProjectCategory)
           : (projectType?.testingUxEligible ?? false);
+        // s130 t516 slice 6 — knowledge counts. Walk the per-project
+        // k/ subdirs (s130 phase A scaffold) and count files. Cheap +
+        // synchronous; the dirs are typically small. Used by the
+        // Projects browser list view's Knowledge column to surface
+        // each project's knowledge density at a glance.
+        let knowledge: { pages: number; plans: number; chatSessions: number } | undefined;
+        try {
+          const countJson = (subdir: string): number => {
+            const dir = join(fullPath, "k", subdir);
+            if (!existsSync(dir)) return 0;
+            try {
+              return readdirSync(dir).filter((f) => f.endsWith(".md") || f.endsWith(".json") || f.endsWith(".mdx")).length;
+            } catch { return 0; }
+          };
+          const pages = countJson("knowledge");
+          const plans = countJson("plans");
+          const chatSessions = countJson("chat");
+          if (pages > 0 || plans > 0 || chatSessions > 0) {
+            knowledge = { pages, plans, chatSessions };
+          }
+        } catch { /* k/ scaffold absent — not s130-migrated, knowledge stays undefined */ }
+
         projects.push({
           name: entryName,
           path: fullPath,
@@ -1154,6 +1180,9 @@ export async function createGatewayRuntimeState(
           magicApps: metaMagicApps,
           coreCollection,
           coreForkSlug,
+          repos: metaRepos,
+          attachedStacks: metaAttachedStacks,
+          knowledge,
         });
       } catch { /* directory may not exist */ }
     }
@@ -1464,6 +1493,115 @@ export async function createGatewayRuntimeState(
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/projects/activity-summary — daily activity counts (s130 t516 slice 2 prep)
+  // -----------------------------------------------------------------------
+  //
+  // Returns a per-day count array for the last N days (default 30) of
+  // project activity, sourced from git log + chat sessions. Used by the
+  // Projects browser list view to render an activity sparkline column
+  // (fancy-echarts) per row.
+  //
+  // Today: just commits + chat session updatedAt counts. Future:
+  // iterative-work fires, plan transitions, COA chain events.
+  //
+  // Security: uses execFileSync with array args (no shell), so the
+  // targetPath + days values can't escape into shell injection.
+
+  fastify.get("/api/projects/activity-summary", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    const daysParam = Number(query["days"] ?? "30");
+    const days = Number.isFinite(daysParam) && daysParam > 0 && daysParam <= 90 ? Math.floor(daysParam) : 30;
+    if (!pathParam) {
+      return reply.code(400).send({ error: "path query parameter is required" });
+    }
+    const targetPath = resolvePath(pathParam);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    if (!existsSync(targetPath) || !statSync(targetPath).isDirectory()) {
+      return reply.code(404).send({ error: "Project directory does not exist" });
+    }
+
+    // Build date keys for the last N days (oldest first → today last).
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const dayKeys: string[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(today);
+      d.setUTCDate(d.getUTCDate() - i);
+      dayKeys.push(d.toISOString().slice(0, 10));
+    }
+
+    const counts: Record<string, number> = {};
+    for (const k of dayKeys) counts[k] = 0;
+
+    // Git commits — count per day from `git log --since=<N> days
+    // --format=%ad --date=short`. execFileSync with array args (no
+    // shell) prevents injection — targetPath + days are safe even if
+    // the path contains shell metacharacters.
+    if (existsSync(join(targetPath, ".git"))) {
+      try {
+        const out = execFileSync(
+          "git",
+          [
+            "-C", targetPath,
+            "log",
+            `--since=${String(days)}.days`,
+            "--format=%ad",
+            "--date=short",
+          ],
+          { timeout: 5000, stdio: "pipe", encoding: "utf-8" },
+        ).trim();
+        if (out.length > 0) {
+          for (const line of out.split("\n")) {
+            const day = line.trim();
+            if (day in counts) counts[day] = (counts[day] ?? 0) + 1;
+          }
+        }
+      } catch { /* no git log; commits stay 0 */ }
+    }
+
+    // Chat sessions — count files in <projectPath>/k/chat/ whose
+    // updatedAt falls within each day. (s130 phase A.6 reader-flip
+    // landed cycle 100, so per-project chat dirs are populated for
+    // s130-migrated projects.)
+    const chatDir = join(targetPath, "k", "chat");
+    if (existsSync(chatDir)) {
+      try {
+        const files = readdirSync(chatDir).filter((f) => f.endsWith(".json"));
+        for (const file of files) {
+          try {
+            const raw = readFileSync(join(chatDir, file), "utf-8");
+            const session = JSON.parse(raw) as { updatedAt?: string };
+            if (typeof session.updatedAt === "string") {
+              const day = session.updatedAt.slice(0, 10);
+              if (day in counts) counts[day] = (counts[day] ?? 0) + 1;
+            }
+          } catch { /* skip corrupt session file */ }
+        }
+      } catch { /* unreadable chat dir; chat counts stay 0 */ }
+    }
+
+    const dailyCounts = dayKeys.map((k) => counts[k] ?? 0);
+    const total = dailyCounts.reduce((a, b) => a + b, 0);
+
+    return reply.send({
+      path: targetPath,
+      days,
+      total,
+      dailyCounts,
+      dayKeys,
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -1889,6 +2027,126 @@ export async function createGatewayRuntimeState(
     }
   });
 
+  // GET /api/projects/mcp/server/tools|prompts|resources?path=&id= — browse what
+  // a connected server provides. Lets the MCPTab UI render the card's expanded
+  // inspector. Errors surface as 502 with the underlying SDK message.
+  fastify.get("/api/projects/mcp/server/tools", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"]; const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const nsId = mcpServerNs(resolvePath(pathParam), idParam);
+    try {
+      const tools = await deps.mcpClient.listTools(nsId);
+      return reply.send({ ok: true, tools });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get("/api/projects/mcp/server/prompts", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"]; const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const nsId = mcpServerNs(resolvePath(pathParam), idParam);
+    try {
+      const prompts = await deps.mcpClient.listPrompts(nsId);
+      return reply.send({ ok: true, prompts });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get("/api/projects/mcp/server/resources", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"]; const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const nsId = mcpServerNs(resolvePath(pathParam), idParam);
+    try {
+      const resources = await deps.mcpClient.listResources(nsId);
+      return reply.send({ ok: true, resources });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/projects/mcp/server/call-tool|read-resource — invoke a tool or
+  // read a resource. Body: {path, id, toolName/uri, arguments?}. Lets the user
+  // test individual surfaces from the UI without round-tripping through chat.
+  fastify.post("/api/projects/mcp/server/call-tool", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const body = request.body as { path?: string; id?: string; toolName?: string; arguments?: Record<string, unknown> } | undefined;
+    if (!body?.path || !body.id || !body.toolName) return reply.code(400).send({ error: "path + id + toolName required" });
+    const nsId = mcpServerNs(resolvePath(body.path), body.id);
+    try {
+      const result = await deps.mcpClient.callTool(nsId, body.toolName, body.arguments ?? {});
+      return reply.send({ ok: true, result });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.post("/api/projects/mcp/server/read-resource", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const body = request.body as { path?: string; id?: string; uri?: string } | undefined;
+    if (!body?.path || !body.id || !body.uri) return reply.code(400).send({ error: "path + id + uri required" });
+    const nsId = mcpServerNs(resolvePath(body.path), body.id);
+    try {
+      const result = await deps.mcpClient.readResource(nsId, body.uri);
+      return reply.send({ ok: true, result });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/projects/mcp/server/reconnect?path=&id= — re-register the server
+  // from current project.json + .env state, then attempt connect. Lets the user
+  // recover from an `error` state caused by a transient network blip or a save
+  // race without having to remove + re-add the server.
+  fastify.post("/api/projects/mcp/server/reconnect", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient || !deps.projectConfigManager) return reply.code(503).send({ error: "MCP client or project config manager not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const targetPath = resolvePath(pathParam);
+    try {
+      const cur = await deps.projectConfigManager.read(targetPath);
+      const servers = ((cur as { mcp?: { servers?: Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> } }).mcp?.servers ?? []);
+      const target = servers.find((s) => s.id === idParam);
+      if (!target) return reply.code(404).send({ error: `Server "${idParam}" not configured for this project` });
+      const env = target.env ? resolveDollarVarsObject(target.env, readProjectEnv(targetPath)) : undefined;
+      const authToken = target.authToken ? resolveDollarVars(target.authToken, readProjectEnv(targetPath)) : undefined;
+      await deps.mcpClient.registerServer({
+        id: mcpServerNs(targetPath, target.id),
+        name: target.name,
+        transport: target.transport,
+        command: target.command,
+        env,
+        url: target.url,
+        autoConnect: true,
+        authToken,
+      });
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // GET /api/projects/mcp/available — list MCP server templates (built-in + plugin-registered).
   fastify.get("/api/projects/mcp/available", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
@@ -1898,14 +2156,16 @@ export async function createGatewayRuntimeState(
       {
         id: "tynn",
         name: "Tynn",
-        description: "Tynn-the-service via MCP. Provides PM tools (list-tasks, set-status, add-comment, getActiveFocusProgress, etc) for the agent.",
-        transport: "stdio",
-        defaultCommand: ["npx", "-y", "@tynn/mcp-server"],
-        defaultEnv: { TYNN_API_KEY: "$TYNN_API_KEY" },
+        description: "Tynn-the-service via MCP. Provides PM tools (list-tasks, set-status, add-comment, getActiveFocusProgress, etc) for the agent. Uses HTTP transport with Bearer auth against tynn.ai.",
+        transport: "http",
+        defaultUrl: "https://tynn.ai/mcp/tynn",
         authTokenKey: "TYNN_API_KEY",
       },
     ];
-    // Plugin-registered templates — when registered via api.registerMcpServerTemplate (future Wish #8).
+    // Plugin-registered templates (s127 t489) — registered via
+    // api.registerMcpServerTemplate from a marketplace plugin's activate
+    // body. Appended after built-ins so the dashboard's dropdown shows
+    // built-ins first, then plugin-provided templates in registration order.
     const pluginTemplates = (deps.pluginRegistry as { getMcpServerTemplates?: () => typeof builtIn } | undefined)?.getMcpServerTemplates?.() ?? [];
     return reply.send({ templates: [...builtIn, ...pluginTemplates] });
   });
@@ -2452,6 +2712,17 @@ export async function createGatewayRuntimeState(
       const effectiveMarketplaceDir = pickDir(marketplaceDir, "marketplace");
       const effectiveMappMarketplaceDir = pickDir(mappMarketplaceDir, "mapp-marketplace");
 
+      // PAx (Particle-Academy) ADF UI primitive forks — s136 t512. No
+      // /opt/* deploy paths (these aren't production-deployed); the
+      // legacy fallback in pickDir's first arg is the workspace path
+      // itself, so when contributing-mode is off we report them as
+      // unknown gracefully (getRemote on a non-git dir returns "unknown").
+      const paxFallback = projectsRoot ? join(projectsRoot, "_aionima") : workspaceRoot;
+      const reactFancyDir   = pickDir(join(paxFallback, "react-fancy"),   "react-fancy");
+      const fancyCodeDir    = pickDir(join(paxFallback, "fancy-code"),    "fancy-code");
+      const fancySheetsDir  = pickDir(join(paxFallback, "fancy-sheets"),  "fancy-sheets");
+      const fancyEchartsDir = pickDir(join(paxFallback, "fancy-echarts"), "fancy-echarts");
+
       // Phase H.2 — origins alignment check. When Dev Mode is enabled,
       // each /opt/*/.git origin should be pointing at the owner's fork
       // (via v0.4.66's `ensure_origin_remote` in upgrade.sh). If any
@@ -2510,6 +2781,11 @@ export async function createGatewayRuntimeState(
         id: { remote: getRemote(effectiveIdDir), branch: getBranch(effectiveIdDir) },
         marketplace: { remote: getRemote(effectiveMarketplaceDir), branch: getBranch(effectiveMarketplaceDir) },
         mappMarketplace: { remote: getRemote(effectiveMappMarketplaceDir), branch: getBranch(effectiveMappMarketplaceDir) },
+        // PAx (Particle-Academy) ADF UI primitive forks — s136 t512.
+        reactFancy:   { remote: getRemote(reactFancyDir),   branch: getBranch(reactFancyDir) },
+        fancyCode:    { remote: getRemote(fancyCodeDir),    branch: getBranch(fancyCodeDir) },
+        fancySheets:  { remote: getRemote(fancySheetsDir),  branch: getBranch(fancySheetsDir) },
+        fancyEcharts: { remote: getRemote(fancyEchartsDir), branch: getBranch(fancyEchartsDir) },
       });
     });
 
@@ -2718,13 +2994,23 @@ export async function createGatewayRuntimeState(
         const forks = await resolveOrCreateForks(tokenInfo.accessToken, ownerGithubLogin);
         for (const f of forks) {
           if (f.cloneUrl) {
-            // Map slug → dev.*Repo key
+            // Map slug → dev.*Repo key. Civicognita-owned core five
+            // (legacy) + Particle-Academy PAx four (s136 t512). New
+            // entries here must match `CoreRepoSpec.configKey` in
+            // dev-mode-forks.ts AND the field added to DevConfigSchema
+            // in agi/config/src/schema.ts — three places kept in sync
+            // by hand (a future refactor could derive this from the
+            // CORE_REPOS spec list directly).
             const keyMap: Record<string, string> = {
               "agi": "agiRepo",
               "prime": "primeRepo",
               "id": "idRepo",
               "marketplace": "marketplaceRepo",
               "mapp-marketplace": "mappMarketplaceRepo",
+              "react-fancy": "reactFancyRepo",
+              "fancy-code": "fancyCodeRepo",
+              "fancy-sheets": "fancySheetsRepo",
+              "fancy-echarts": "fancyEchartsRepo",
             };
             const cfgKey = keyMap[f.slug];
             if (cfgKey) devRepoPatch[cfgKey] = f.cloneUrl;
@@ -4948,7 +5234,29 @@ export async function createGatewayRuntimeState(
   // -----------------------------------------------------------------------
 
   if (deps.chatPersistence !== undefined) {
-    registerChatHistoryRoutes(fastify, { chatPersistence: deps.chatPersistence, imageBlobStore: deps.imageBlobStore });
+    // s130 t521 server.ts wire-up (cycle 100 — production reader flip).
+    // perProjectChatDirs returns the list of `<projectPath>/k/chat/`
+    // dirs for s130-migrated projects in the workspace. Filtered by
+    // existsSync(<projectPath>/.agi) — projects without the s130 layout
+    // are skipped (today's behavior preserved for them). The list is
+    // computed FRESH on each call so newly-added/migrated projects
+    // surface without a gateway restart.
+    const perProjectChatDirs = (): string[] => {
+      const projects = deps.workspaceProjects ?? [];
+      const dirs: string[] = [];
+      for (const projectPath of projects) {
+        if (existsSync(join(projectPath, ".agi"))) {
+          const chatDir = join(projectPath, "k", "chat");
+          if (existsSync(chatDir)) dirs.push(chatDir);
+        }
+      }
+      return dirs;
+    };
+    registerChatHistoryRoutes(fastify, {
+      chatPersistence: deps.chatPersistence,
+      imageBlobStore: deps.imageBlobStore,
+      perProjectChatDirs,
+    });
   }
 
   // -----------------------------------------------------------------------

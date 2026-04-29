@@ -4,6 +4,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { FlyoutPanel, FlyoutHeader, FlyoutBody, FlyoutFooter } from "@/components/ui/flyout-panel";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { WORKER_META, type WorkerMeta } from "./worker-meta";
 import { fetchModels, type ModelEntry } from "@/api";
 import type { AionimaConfig, WorkerModelOverride } from "@/types";
@@ -226,20 +228,16 @@ export function WorkerFlyout({ selected, onClose, config, onSaveConfig }: Worker
                     {/* Provider */}
                     <div>
                       <label className="text-xs text-muted-foreground block mb-0.5">Provider</label>
-                      <select
+                      <Select
+                        className="text-sm"
+                        list={PROVIDER_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
                         value={provider}
-                        onChange={(e) => {
-                          const next = e.target.value as Provider;
-                          setProvider(next);
+                        onValueChange={(v) => {
+                          setProvider(v as Provider);
                           setModel("");
                           setDirty(true);
                         }}
-                        className="w-full text-sm rounded border border-border bg-card text-foreground px-2 py-1.5"
-                      >
-                        {PROVIDER_OPTIONS.map((o) => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
-                        ))}
-                      </select>
+                      />
                     </div>
 
                     {/* Model */}
@@ -250,15 +248,12 @@ export function WorkerFlyout({ selected, onClose, config, onSaveConfig }: Worker
                       ) : modelsError ? (
                         <div className="text-xs text-red py-1.5">{modelsError}</div>
                       ) : availableModels.length > 0 ? (
-                        <select
+                        <Select
+                          className="text-sm"
+                          list={availableModels.map((m) => ({ value: m.id, label: m.name }))}
                           value={model}
-                          onChange={(e) => { setModel(e.target.value); setDirty(true); }}
-                          className="w-full text-sm rounded border border-border bg-card text-foreground px-2 py-1.5"
-                        >
-                          {availableModels.map((m) => (
-                            <option key={m.id} value={m.id}>{m.name}</option>
-                          ))}
-                        </select>
+                          onValueChange={(v) => { setModel(v); setDirty(true); }}
+                        />
                       ) : (
                         <div className="text-xs text-muted-foreground py-1.5">No models available</div>
                       )}
@@ -267,12 +262,12 @@ export function WorkerFlyout({ selected, onClose, config, onSaveConfig }: Worker
                     {/* API Key (optional per-worker override) */}
                     <div>
                       <label className="text-xs text-muted-foreground block mb-0.5">API Key (optional)</label>
-                      <input
+                      <Input
                         type="password"
                         value={apiKey}
                         onChange={(e) => { setApiKey(e.target.value); setDirty(true); }}
                         placeholder="Leave blank to use provider-level key"
-                        className="w-full text-sm rounded border border-border bg-card text-foreground px-2 py-1.5"
+                        className="text-sm"
                       />
                     </div>
 
@@ -280,12 +275,12 @@ export function WorkerFlyout({ selected, onClose, config, onSaveConfig }: Worker
                     {provider === "ollama" && (
                       <div>
                         <label className="text-xs text-muted-foreground block mb-0.5">Base URL</label>
-                        <input
+                        <Input
                           type="text"
                           value={baseUrl}
                           onChange={(e) => { setBaseUrl(e.target.value); setDirty(true); }}
                           placeholder="http://localhost:11434"
-                          className="w-full text-sm rounded border border-border bg-card text-foreground px-2 py-1.5"
+                          className="text-sm"
                         />
                       </div>
                     )}

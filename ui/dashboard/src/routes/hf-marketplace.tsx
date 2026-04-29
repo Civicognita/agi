@@ -9,7 +9,9 @@ import { PageScroll } from "@/components/PageScroll.js";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Callout } from "@particle-academy/react-fancy";
 import { ModelCapabilityBadges } from "@/components/ModelCapabilityBadges.js";
 import { LemonadeBanner } from "@/components/LemonadeBanner.js";
 import { LemonadeTab } from "@/components/hf/LemonadeTab.js";
@@ -270,24 +272,18 @@ function ModelsTab() {
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 text-[13px]"
         />
-        <select
+        <Select
+          className="text-[13px]"
+          list={TASK_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
           value={task}
-          onChange={(e) => setTask(e.target.value)}
-          className="text-[13px] rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-        >
-          {TASK_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
-        <select
+          onValueChange={setTask}
+        />
+        <Select
+          className="text-[13px]"
+          list={SORT_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
           value={sort}
-          onChange={(e) => setSort(e.target.value)}
-          className="text-[13px] rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-        >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
+          onValueChange={setSort}
+        />
       </div>
 
       {modelsQuery.isLoading && (
@@ -514,7 +510,7 @@ function ModelWizardDialog({
               </div>
 
               {analysis.isCustom && analysis.customDefinition && (
-                <div className="rounded-md border border-blue/30 bg-blue/5 p-3 space-y-1">
+                <Callout color="blue" className="space-y-1">
                   <p className="text-[12px] font-medium text-blue">Custom Runtime Detected</p>
                   <p className="text-[11px] text-muted-foreground">
                     {(analysis.customDefinition["description"] as string | undefined) ?? "This model uses a custom container runtime."}
@@ -524,7 +520,7 @@ function ModelWizardDialog({
                       Source: <span className="font-mono">{analysis.customDefinition["sourceRepo"] as string}</span>
                     </p>
                   )}
-                </div>
+                </Callout>
               )}
 
               <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
@@ -694,14 +690,14 @@ function ModelWizardDialog({
               )}
 
               {installPhase === "done" && (
-                <div className="rounded-md bg-blue/10 border border-blue/30 px-3 py-2 space-y-1">
+                <Callout color="blue" className="space-y-1">
                   <p className="text-[12px] font-medium text-blue">
                     {analysis.isCustom ? "Container build started. This may take several minutes." : "Download started. This may take several minutes for large models."}
                   </p>
                   <p className="text-[11px] text-muted-foreground">
                     Check the Installed tab for progress and to start the model when ready.
                   </p>
-                </div>
+                </Callout>
               )}
 
               {installPhase === "error" && installError && (
@@ -937,11 +933,11 @@ function ModelDetailDialog({
             <div className="space-y-3">
               {/* Recommendation callout */}
               {recommendedVariant && installPhase === "idle" && (
-                <div className="rounded-md border border-green/30 bg-green/5 px-4 py-2.5">
+                <Callout color="green">
                   <p className="text-[12px] text-green font-medium">
                     Recommended: {recommendedVariant.filename} ({formatBytes(recommendedVariant.sizeBytes)}) — best balance of quality and speed for your hardware
                   </p>
-                </div>
+                </Callout>
               )}
 
               <div className="divide-y divide-border rounded-md border">
@@ -1071,10 +1067,10 @@ function DownloadingNotice() {
 
 function DoneNotice() {
   return (
-    <div className="rounded-md bg-blue/10 border border-blue/30 px-3 py-2 space-y-1">
+    <Callout color="blue" className="space-y-1">
       <p className="text-[12px] font-medium text-blue">Download started. This may take several minutes for large models.</p>
       <p className="text-[11px] text-muted-foreground">You can close this dialog. Check the Installed tab for download progress and to start the model when ready.</p>
-    </div>
+    </Callout>
   );
 }
 
@@ -1457,15 +1453,12 @@ function DatasetsTab() {
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 text-[13px]"
         />
-        <select
+        <Select
+          className="text-[13px]"
+          list={DATASET_SORT_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
           value={sort}
-          onChange={(e) => setSort(e.target.value)}
-          className="text-[13px] rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
-        >
-          {DATASET_SORT_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
+          onValueChange={setSort}
+        />
       </div>
 
       {installError && (
@@ -1782,16 +1775,15 @@ function FineTuneTab() {
           {/* Base model selector */}
           <div className="space-y-1">
             <label className="text-[11px] text-muted-foreground uppercase tracking-wide">Base Model</label>
-            <select
+            <Select
+              className="text-[13px]"
+              list={[
+                { value: "", label: "Select an installed model..." },
+                ...installedModels.map((m) => ({ value: m.id, label: m.displayName })),
+              ]}
               value={baseModelId}
-              onChange={(e) => setBaseModelId(e.target.value)}
-              className="w-full text-[13px] rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="">Select an installed model...</option>
-              {installedModels.map((m) => (
-                <option key={m.id} value={m.id}>{m.displayName}</option>
-              ))}
-            </select>
+              onValueChange={setBaseModelId}
+            />
             {installedModels.length === 0 && (
               <p className="text-[10px] text-muted-foreground">No ready models. Install a model first.</p>
             )}
@@ -1800,16 +1792,15 @@ function FineTuneTab() {
           {/* Dataset selector */}
           <div className="space-y-1">
             <label className="text-[11px] text-muted-foreground uppercase tracking-wide">Dataset</label>
-            <select
+            <Select
+              className="text-[13px]"
+              list={[
+                { value: "", label: "Select an installed dataset..." },
+                ...installedDatasets.map((d) => ({ value: d.id, label: d.displayName })),
+              ]}
               value={datasetId}
-              onChange={(e) => setDatasetId(e.target.value)}
-              className="w-full text-[13px] rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="">Select an installed dataset...</option>
-              {installedDatasets.map((d) => (
-                <option key={d.id} value={d.id}>{d.displayName}</option>
-              ))}
-            </select>
+              onValueChange={setDatasetId}
+            />
             {installedDatasets.length === 0 && (
               <p className="text-[10px] text-muted-foreground">No ready datasets. Install a dataset first.</p>
             )}
@@ -1830,14 +1821,15 @@ function FineTuneTab() {
         {/* Method */}
         <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground uppercase tracking-wide">Method</label>
-          <select
+          <Select
+            className="text-[13px]"
+            list={[
+              { value: "lora", label: "LoRA" },
+              { value: "qlora", label: "QLoRA (4-bit quantized, lower VRAM)" },
+            ]}
             value={method}
-            onChange={(e) => setMethod(e.target.value as "lora" | "qlora")}
-            className="w-full text-[13px] rounded-md border border-input bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
-          >
-            <option value="lora">LoRA</option>
-            <option value="qlora">QLoRA (4-bit quantized, lower VRAM)</option>
-          </select>
+            onValueChange={(v) => setMethod(v as "lora" | "qlora")}
+          />
         </div>
 
         {/* LoRA config */}

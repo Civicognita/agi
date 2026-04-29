@@ -11,6 +11,7 @@
  */
 
 import { useState } from "react";
+import { Callout } from "@particle-academy/react-fancy";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { cn } from "@/lib/utils.js";
@@ -77,9 +78,9 @@ export function HostingStep({ onNext, onSkip, status }: Props) {
       </div>
 
       {isCompleted && (
-        <div className="p-3 rounded-lg bg-green/5 border border-green/20 text-sm text-muted-foreground onboard-animate-in">
+        <Callout color="green" className="text-sm text-muted-foreground onboard-animate-in">
           Hosting is already configured. Continue to keep existing settings, or update below.
-        </div>
+        </Callout>
       )}
 
       {/* Custom domain toggle */}
@@ -190,10 +191,10 @@ export function HostingStep({ onNext, onSkip, status }: Props) {
           </div>
         )}
         {idMode === "local" && localSetupStatus === "error" && (
-          <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+          <Callout color="red" className="text-sm">
             Local ID setup failed. You can set it up manually later via
             <code className="mx-1 text-xs">scripts/setup-local.sh</code>
-          </div>
+          </Callout>
         )}
       </div>
 

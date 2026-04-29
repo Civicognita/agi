@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { SectionHeading, FieldGroup } from "./SettingsShared.js";
 import {
   fetchCloudflaredStatus,
@@ -213,14 +214,15 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
               </div>
               <div className="grid grid-cols-4 gap-4">
                 <FieldGroup label="Method">
-                  <select
-                    className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+                  <Select
+                    className="font-mono"
+                    list={[
+                      { value: "static", label: "Static" },
+                      { value: "dhcp", label: "DHCP" },
+                    ]}
                     value={netMethod}
-                    onChange={(e) => setNetMethod(e.target.value as "static" | "dhcp")}
-                  >
-                    <option value="static">Static</option>
-                    <option value="dhcp">DHCP</option>
-                  </select>
+                    onValueChange={(v) => setNetMethod(v as "static" | "dhcp")}
+                  />
                 </FieldGroup>
                 {netMethod === "static" && (
                   <>
@@ -299,20 +301,21 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
         <SectionHeading>Release Channel</SectionHeading>
         <div className="grid grid-cols-2 gap-4">
           <FieldGroup label="Update Channel">
-            <select
-              className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+            <Select
+              className="font-mono"
+              list={[
+                { value: "main", label: "main (stable)" },
+                { value: "dev", label: "dev (bleeding edge)" },
+              ]}
               value={channel}
-              onChange={(e) => update((prev) => ({
+              onValueChange={(v) => update((prev) => ({
                 ...prev,
                 gateway: {
                   ...(prev.gateway ?? { host: "127.0.0.1", port: 3100, state: "OFFLINE" as const }),
-                  updateChannel: e.target.value as "main" | "dev",
+                  updateChannel: v as "main" | "dev",
                 },
               }))}
-            >
-              <option value="main">main (stable)</option>
-              <option value="dev">dev (bleeding edge)</option>
-            </select>
+            />
           </FieldGroup>
         </div>
         <p className="text-[12px] text-muted-foreground">
@@ -350,11 +353,11 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
         <SectionHeading>Agent Behavior</SectionHeading>
         <div className="grid grid-cols-2 gap-4">
           <FieldGroup label="Max Tool Loops per Turn">
-            <input
+            <Input
               type="number"
               min={0}
               step={1}
-              className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono"
+              className="font-mono"
               value={gateway.maxToolLoops ?? 0}
               onChange={(e) => {
                 const n = Number.parseInt(e.target.value, 10);
@@ -459,17 +462,18 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
             {/* Default Tunnel Mode + Domain */}
             <div className="grid grid-cols-2 gap-4 mb-4">
               <FieldGroup label="Default Tunnel Mode">
-                <select
-                  className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+                <Select
+                  className="font-mono"
+                  list={[
+                    { value: "named", label: "Named (persistent URL, requires auth + domain)" },
+                    { value: "quick", label: "Quick (ephemeral URL, no auth needed)" },
+                  ]}
                   value={tunnelMode}
-                  onChange={(e) => update((prev) => ({
+                  onValueChange={(v) => update((prev) => ({
                     ...prev,
-                    hosting: { ...(prev.hosting as Record<string, unknown>), tunnelMode: e.target.value },
+                    hosting: { ...(prev.hosting as Record<string, unknown>), tunnelMode: v },
                   }))}
-                >
-                  <option value="named">Named (persistent URL, requires auth + domain)</option>
-                  <option value="quick">Quick (ephemeral URL, no auth needed)</option>
-                </select>
+                />
               </FieldGroup>
               <FieldGroup label="Cloudflare Domain">
                 <Input

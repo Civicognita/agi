@@ -312,6 +312,12 @@ export default function RootLayout() {
     setChatOpen(true);
   }, []);
 
+  // s124 cycle 86 rework — handleOpenChatForIterativeWork removed. The
+  // toast click-through is no longer needed because the artifact card now
+  // renders INSIDE the project's chat flyout directly. Owners see the
+  // artifact when they open that project's chat; no global toast →
+  // chat-routing dispatch is required.
+
   const handleOpenEditor = useCallback((path: string) => {
     setEditorFilePath(path);
   }, []);
@@ -436,6 +442,11 @@ export default function RootLayout() {
         return [event.data, ...safeArray<Notification>(prev)].slice(0, 100);
       });
       setUnreadCount((prev) => (typeof prev === "number" ? prev : 0) + 1);
+      // s124 cycle 86 rework: iterative-work completions now render INSIDE
+      // the project's chat flyout (per-project surface) via ChatFlyout's
+      // notifications prop + filter on activeSession.context. The previous
+      // setLatestIterativeWorkToast / global toast stack is gone — the chat
+      // surface IS the per-project surface.
     }
     if (event.type === "usage:recorded") {
       // Refresh provider balances after each completion so alerts stay current
@@ -605,7 +616,7 @@ export default function RootLayout() {
                     </span>
                   </button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[300px] p-4 bg-card border border-border rounded-xl shadow-lg z-[200]">
+                <PopoverContent className="w-[300px] p-4 bg-card border border-border rounded-xl shadow-lg z-[300]">
                   <div className="text-[12px] font-semibold text-foreground mb-3">Provider Balances</div>
                   {providerBalances.filter(b => b.balance !== null).map(b => (
                     <div key={b.providerId} className="flex items-center gap-3 py-2 border-b border-border last:border-b-0">
@@ -649,7 +660,7 @@ export default function RootLayout() {
                   {upgradeLogs.length > 0 && <span className="ml-1 opacity-70">({upgradeLogs.length})</span>}
                 </Badge>
                 {upgradeDropdown && upgradeLogs.length > 0 && upgradePhase !== "complete" && !upgradeReloading && (
-                  <div className="absolute top-[calc(100%+8px)] right-0 w-[min(384px,calc(100vw-24px))] bg-card border border-border rounded-xl p-3 z-[200] shadow-lg max-h-[300px] overflow-y-auto">
+                  <div className="absolute top-[calc(100%+8px)] right-0 w-[min(384px,calc(100vw-24px))] bg-card border border-border rounded-xl p-3 z-[300] shadow-lg max-h-[300px] overflow-y-auto">
                     <div className="text-[13px] font-semibold mb-2">Deploy Log</div>
                     {upgradeLogs.map((entry, i) => (
                       <div key={i} className="text-xs py-1 border-b border-border flex items-center gap-2">
@@ -683,7 +694,7 @@ export default function RootLayout() {
                   )}
                 </Button>
                 {upgradeDropdown && (
-                  <div className="absolute top-[calc(100%+8px)] right-0 w-[min(320px,calc(100vw-24px))] bg-card border border-border rounded-xl p-4 z-[200] shadow-lg">
+                  <div className="absolute top-[calc(100%+8px)] right-0 w-[min(320px,calc(100vw-24px))] bg-card border border-border rounded-xl p-4 z-[300] shadow-lg">
                     <div className="text-[13px] font-semibold mb-2">
                       Pending commits{updateCheck.channel === "dev" ? " (dev)" : ""}
                     </div>
@@ -779,7 +790,7 @@ export default function RootLayout() {
                       {initial}
                     </div>
                   </PopoverTrigger>
-                  <PopoverContent className="p-0 w-auto border-0 bg-transparent shadow-none z-[200]">
+                  <PopoverContent className="p-0 w-auto border-0 bg-transparent shadow-none z-[300]">
                     <ProfileCard
                       displayName={ownerName}
                       channels={configHook.data?.owner?.channels}
@@ -817,6 +828,7 @@ export default function RootLayout() {
               openWithContext={chatContext}
               openWithMessage={chatInitialMessage}
               openRequestId={chatRequestId}
+              notifications={notifications}
               docked
             />
           </div>
@@ -846,6 +858,7 @@ export default function RootLayout() {
               openWithContext={chatContext}
               openWithMessage={chatInitialMessage}
               openRequestId={chatRequestId}
+              notifications={notifications}
             />
           </>
         )}
@@ -919,6 +932,12 @@ export default function RootLayout() {
           </div>
         </div>
       )}
+
+      {/* s124 cycle 86 rework — iterative-work artifacts now render INSIDE
+          the project's chat flyout (per-project surface), not as a global
+          bottom-right toast stack. The IterativeWorkToastStack component
+          is deprecated by this change; ChatFlyout consumes notifications
+          directly + filters to its active session's project path. */}
     </div>
   );
 }

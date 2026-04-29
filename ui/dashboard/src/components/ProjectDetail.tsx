@@ -6,8 +6,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { cn } from "@/lib/utils";
+import { Callout } from "@particle-academy/react-fancy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes } from "../api.js";
@@ -20,6 +23,7 @@ import { EnvManager } from "./EnvManager.js";
 import { TaskmasterTab } from "./TaskmasterTab.js";
 import { IterativeWorkTab } from "./IterativeWorkTab.js";
 import { MCPTab } from "./MCPTab.js";
+import { ProjectActivityTab } from "./ProjectActivityTab.js";
 import { ProjectManagement } from "./ProjectManagement.js";
 import type { HostingStatus } from "../api.js";
 import { TreeNav, ContextMenu, useToast } from "@particle-academy/react-fancy";
@@ -82,6 +86,11 @@ export function ProjectDetail({
   const [repoSetupBusy, setRepoSetupBusy] = useState(false);
   const [repoSetupError, setRepoSetupError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("details");
+  // s134 t517 slice 2 (cycle 112) — workspace mode shell. The 4 modes
+  // group the existing 11 tabs per the projects-ux-v2/project-workspace-
+  // v2.html mockup. Default "develop" matches Editor as the most-common
+  // landing. Mode → tabs map below; the TabsList filters by mode.
+  const [currentMode, setCurrentMode] = useState<"develop" | "operate" | "coordinate" | "insight">("develop");
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
   const [pluginPanels, setPluginPanels] = useState<PluginPanel[]>([]);
@@ -118,6 +127,59 @@ export function ProjectDetail({
       .then((data) => setProjectTypes(data.types.map((t) => ({ id: t.id, label: t.label }))))
       .catch(() => {});
   }, []);
+
+  // s134 t517 slice 2 — mode → tab map. Each tab is assigned to one of
+  // the 4 modes per the projects-ux-v2 mockup B pre-pick table. Plugin
+  // panels default to Coordinate (safest fallback per the mockup README).
+  // When the active mode changes, switch activeTab to the first tab in
+  // the new mode so the user sees something immediately.
+  const TAB_MODES: Record<string, "develop" | "operate" | "coordinate" | "insight"> = {
+    "details": "develop",
+    "files": "develop",
+    "repository": "develop",
+    "environment": "develop",
+    "hosting": "operate",
+    "iterative-work": "operate",
+    "mcp": "operate",
+    "magic-apps": "coordinate",
+    "taskmaster": "coordinate",
+    "security": "insight",
+    "activity": "insight",
+  };
+  const tabBelongsToMode = (tabId: string): boolean => {
+    if (tabId.startsWith("plugin-")) {
+      const panelId = tabId.slice("plugin-".length);
+      const panel = pluginPanels.find((p) => p.id === panelId);
+      return ((panel?.mode ?? "coordinate") as string) === currentMode;
+    }
+    return TAB_MODES[tabId] === currentMode;
+  };
+  // Auto-switch activeTab when mode changes if the current tab is no
+  // longer in the active mode.
+  useEffect(() => {
+    if (!tabBelongsToMode(activeTab)) {
+      // Find first tab in current mode (prefer the canonical first one)
+      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "magic-apps", "taskmaster", "security", "activity"];
+      const firstInMode = candidates.find((id) => TAB_MODES[id] === currentMode);
+      if (firstInMode) setActiveTab(firstInMode);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMode]);
+
+  // s134 t517 slice 4 — auto-redirect when the default mode is hidden
+  // by the project's category (literature/media/administration). Pick
+  // the first visible mode for that category.
+  useEffect(() => {
+    const cat = project?.category ?? project?.projectType?.category;
+    const hideDevelop = cat === "literature" || cat === "media" || cat === "administration";
+    const hideOperate = cat === "literature" || cat === "media";
+    if (currentMode === "develop" && hideDevelop) {
+      setCurrentMode(hideOperate ? "coordinate" : "operate");
+    } else if (currentMode === "operate" && hideOperate) {
+      setCurrentMode("coordinate");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.category, project?.projectType?.category]);
 
   // Fetch file tree when Files tab is selected (or refresh triggered)
   useEffect(() => {
@@ -301,38 +363,121 @@ export function ProjectDetail({
         )}
       </div>
 
+      {/* s134 t517 slice 1 (cycle 111) — persistent stack strip per the
+          projects-ux-v2/project-workspace-v2.html mockup. Renders above
+          the existing tab strip; visible across all modes (today: tabs;
+          future: 4-mode picker per slice 2+). The strip is Aion-readable
+          context — when iterative-work or plan reasoning fires, the
+          stacks here scope what the agent can plan around (e.g. "you have
+          postgres + redis, so a cache-invalidation step is feasible").
+          Skipped for core forks (aionima collection) since they're
+          source trees, not deployable services. */}
+      {!isCoreFork && project.attachedStacks && project.attachedStacks.length > 0 && (
+        <div
+          className="flex items-center gap-2 px-3 py-2 mb-3 rounded-md bg-indigo-500/5 border border-indigo-500/20"
+          data-testid="project-stack-strip"
+        >
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">Stack</span>
+          {project.attachedStacks.map((s) => {
+            const label = s.stackId.replace(/^stack-/, "");
+            return (
+              <span
+                key={s.stackId}
+                className="text-[11px] px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 font-mono font-medium"
+                title={s.stackId}
+              >
+                ▣ {label}
+              </span>
+            );
+          })}
+          <span className="text-[10px] text-muted-foreground/60 italic ml-auto">
+            Aion's iterative-work + plan reasoning reads from here ↑
+          </span>
+        </div>
+      )}
+
+      {/* s134 t517 slice 2 (cycle 112) — 4-mode picker per the
+          projects-ux-v2/project-workspace-v2.html mockup. Replaces
+          the visual organization of the existing 11 tabs by grouping
+          them into Develop / Operate / Coordinate / Insight modes.
+          Tabs themselves are unchanged; the picker filters which
+          ones show. Skipped for core forks (which already have a
+          restricted tab set unsuitable for mode grouping).
+
+          s134 t517 slice 4 (cycle 115) — category-shaped mode visibility:
+          - literature/media (content projects): hide Develop + Operate
+            (no code → no editor/hosting tabs)
+          - administration: hide Develop (no code)
+          - Otherwise (web/app/monorepo/ops): all 4 modes visible */}
+      {!isCoreFork && (() => {
+        const cat = project.category ?? project.projectType?.category;
+        const hideDevelop = cat === "literature" || cat === "media" || cat === "administration";
+        const hideOperate = cat === "literature" || cat === "media";
+        const visibleModes = (["develop", "operate", "coordinate", "insight"] as const).filter((m) => {
+          if (m === "develop" && hideDevelop) return false;
+          if (m === "operate" && hideOperate) return false;
+          return true;
+        });
+        return (
+          <div className="flex items-center gap-1 mb-3 border-b border-border" data-testid="project-mode-picker">
+            {visibleModes.map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setCurrentMode(mode)}
+                className={cn(
+                  "px-4 py-2 text-[13px] font-medium uppercase tracking-wider transition-colors cursor-pointer border-b-2",
+                  currentMode === mode
+                    ? "text-foreground border-yellow"
+                    : "text-muted-foreground border-transparent hover:text-foreground",
+                )}
+                aria-pressed={currentMode === mode}
+                data-testid={`project-mode-${mode}`}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+        );
+      })()}
+
       {/* Aionima core forks get a restricted tab set. No Details,
           hosting, environment, or plugin tabs — those projects are
           source trees users contribute PRs against, not deployables. */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
         <TabsList variant="line">
-          {!isCoreFork && <TabsTrigger value="details">Details</TabsTrigger>}
-          <TabsTrigger value="files">Editor</TabsTrigger>
-          <TabsTrigger value="repository">Repository</TabsTrigger>
-          {!isCoreFork && onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
+          {!isCoreFork && tabBelongsToMode("details") && <TabsTrigger value="details">Details</TabsTrigger>}
+          {(isCoreFork || tabBelongsToMode("files")) && <TabsTrigger value="files">Editor</TabsTrigger>}
+          {(isCoreFork || tabBelongsToMode("repository")) && <TabsTrigger value="repository">Repository</TabsTrigger>}
+          {!isCoreFork && tabBelongsToMode("hosting") && onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
             <TabsTrigger value="hosting">Development</TabsTrigger>
           )}
-          {!isCoreFork && project.projectType?.hasCode && (
+          {!isCoreFork && tabBelongsToMode("environment") && project.projectType?.hasCode && (
             <TabsTrigger value="environment">Environment</TabsTrigger>
           )}
-          {!isCoreFork && <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>}
-          {!isCoreFork && <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>}
-          {!isCoreFork && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
+          {!isCoreFork && tabBelongsToMode("magic-apps") && <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>}
+          {!isCoreFork && tabBelongsToMode("taskmaster") && <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>}
+          {!isCoreFork && tabBelongsToMode("iterative-work") && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
             <TabsTrigger value="iterative-work">Iterative Work</TabsTrigger>
           )}
-          {!isCoreFork && project.projectType?.hasCode && (
+          {!isCoreFork && tabBelongsToMode("mcp") && project.projectType?.hasCode && (
             <TabsTrigger value="mcp">MCP</TabsTrigger>
           )}
-          {!isCoreFork && pluginPanels.map((p) => (
-            <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
-          ))}
-          {!isCoreFork && project.projectType?.hasCode && (
+          {!isCoreFork && pluginPanels
+            .filter((p) => (p.mode ?? "coordinate") === currentMode)
+            .map((p) => (
+              <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
+            ))}
+          {!isCoreFork && tabBelongsToMode("security") && project.projectType?.hasCode && (
             <TabsTrigger value="security">Security</TabsTrigger>
+          )}
+          {!isCoreFork && tabBelongsToMode("activity") && (
+            <TabsTrigger value="activity" data-testid="project-tab-activity">Activity</TabsTrigger>
           )}
         </TabsList>
 
         <TabsContent value="details" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <div className="rounded-xl bg-card border border-border p-4">
+          <Card className="p-4">
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
                 <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Name</label>
@@ -359,37 +504,39 @@ export function ProjectDetail({
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
                 <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Purpose</label>
-                <select
+                <Select
+                  className="text-[13px]"
+                  list={[
+                    { value: "", label: "Auto-detect" },
+                    { value: "literature", label: "Literature" },
+                    { value: "app", label: "App" },
+                    { value: "web", label: "Web" },
+                    { value: "media", label: "Media" },
+                    { value: "administration", label: "Administration" },
+                  ]}
                   value={category}
-                  onChange={(e) => setEditCategory(e.target.value)}
+                  onValueChange={setEditCategory}
                   disabled={isSacred}
-                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-foreground text-[13px]"
-                >
-                  <option value="">Auto-detect</option>
-                  <option value="literature">Literature</option>
-                  <option value="app">App</option>
-                  <option value="web">Web</option>
-                  <option value="media">Media</option>
-                  <option value="administration">Administration</option>
-                </select>
+                />
               </div>
               <div>
                 <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Project Type</label>
-                <select
+                <Select
+                  className="text-[13px]"
+                  list={(() => {
+                    const items = [];
+                    if (project.projectType && !projectTypes.some((t) => t.id === project.projectType?.id)) {
+                      items.push({ value: project.projectType.id, label: `${project.projectType.label} (detected)` });
+                    }
+                    for (const pt of projectTypes) {
+                      items.push({ value: pt.id, label: `${pt.label}${pt.id === project.projectType?.id ? " (detected)" : ""}` });
+                    }
+                    return items;
+                  })()}
                   value={editProjectType ?? project.projectType?.id ?? ""}
-                  onChange={(e) => setEditProjectType(e.target.value || null)}
+                  onValueChange={(v) => setEditProjectType(v || null)}
                   disabled={isSacred}
-                  className="w-full h-9 px-3 rounded-md border border-border bg-background text-foreground text-[13px]"
-                >
-                  {project.projectType && !projectTypes.some((t) => t.id === project.projectType?.id) && (
-                    <option value={project.projectType.id}>{project.projectType.label} (detected)</option>
-                  )}
-                  {projectTypes.map((pt) => (
-                    <option key={pt.id} value={pt.id}>
-                      {pt.label}{pt.id === project.projectType?.id ? " (detected)" : ""}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
             </div>
             <div className="text-[11px] text-muted-foreground font-mono mb-3">{project.path}</div>
@@ -406,12 +553,12 @@ export function ProjectDetail({
             >
               {saving || updating ? "Saving..." : isSacred ? "Locked" : "Save"}
             </Button>
-          </div>
+          </Card>
 
           {/* Danger Zone */}
           {!isSacred ? (
             <>
-              <div className="mt-6 rounded-xl border border-red/30 bg-red/5 p-4">
+              <Callout color="red" className="mt-6">
                 <h3 className="text-[13px] font-bold text-red mb-1">Danger Zone</h3>
                 <p className="text-[11px] text-muted-foreground mb-3">
                   Permanently delete this project and all its files. This action cannot be undone.
@@ -424,7 +571,7 @@ export function ProjectDetail({
                 >
                   {deleting ? "Deleting..." : "Delete Project"}
                 </Button>
-              </div>
+              </Callout>
 
               {/* Delete confirmation dialog */}
               <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
@@ -469,17 +616,17 @@ export function ProjectDetail({
               </Dialog>
             </>
           ) : (
-            <div className="mt-6 rounded-xl border border-yellow/30 bg-yellow/10 p-4">
+            <Callout color="amber" className="mt-6">
               <h3 className="text-[13px] font-bold text-yellow mb-1">Sacred Project</h3>
               <p className="text-[11px] text-muted-foreground">
                 Sacred projects are immutable and cannot be deleted.
               </p>
-            </div>
+            </Callout>
           )}
         </TabsContent>
 
         <TabsContent value="files" className="mt-4 flex-1 min-h-0 overflow-hidden">
-          <div className="rounded-xl bg-card border border-border overflow-hidden">
+          <Card className="overflow-hidden">
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-border">
               <span className="text-[11px] font-semibold text-muted-foreground">Editor</span>
@@ -659,11 +806,11 @@ export function ProjectDetail({
                 </div>
               )}
             </div>
-          </div>
+          </Card>
         </TabsContent>
 
         <TabsContent value="repository" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <div className="rounded-xl bg-card border border-border p-4">
+          <Card className="p-4">
             {isCoreFork && project?.coreForkSlug ? (
               <CoreForkRepoPanel slug={project.coreForkSlug} />
             ) : project.hasGit ? (
@@ -747,12 +894,12 @@ export function ProjectDetail({
                 )}
               </div>
             )}
-          </div>
+          </Card>
         </TabsContent>
 
         {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
           <TabsContent value="hosting" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-            <div className="rounded-xl bg-card border border-border p-4">
+            <Card className="p-4">
               <HostingPanel
                 projectPath={project.path}
                 hosting={project.hosting}
@@ -770,22 +917,22 @@ export function ProjectDetail({
                 tabLabel="Development"
                 availableTypes={projectTypes}
               />
-            </div>
+            </Card>
           </TabsContent>
         )}
 
         {project.projectType?.hasCode && (
           <TabsContent value="environment" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-            <div className="rounded-xl bg-card border border-border p-4">
+            <Card className="p-4">
               <EnvManager projectPath={project.path} />
-            </div>
+            </Card>
           </TabsContent>
         )}
 
         <TabsContent value="taskmaster" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <div className="rounded-xl bg-card border border-border p-4">
+          <Card className="p-4">
             <TaskmasterTab projectPath={project.path} />
-          </div>
+          </Card>
         </TabsContent>
 
         {(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
@@ -801,7 +948,7 @@ export function ProjectDetail({
         )}
 
         <TabsContent value="magic-apps" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <div className="rounded-xl bg-card border border-border p-4">
+          <Card className="p-4">
             <MagicAppPicker
               project={project}
               onOpenApp={(appId, projectPath) => {
@@ -809,24 +956,30 @@ export function ProjectDetail({
               }}
               onRefresh={onRefresh}
             />
-          </div>
+          </Card>
         </TabsContent>
 
         {pluginPanels.map((panel) => (
           <TabsContent key={panel.id} value={`plugin-${panel.id}`} className="mt-4">
-            <div className="rounded-xl bg-card border border-border p-4">
+            <Card className="p-4">
               <WidgetRenderer
                 widgets={panel.widgets}
                 actions={pluginActions}
                 projectPath={project.path}
               />
-            </div>
+            </Card>
           </TabsContent>
         ))}
 
         {project.projectType?.hasCode && (
           <TabsContent value="security" className="mt-4 flex-1 min-h-0 overflow-y-auto">
             <SecurityTab projectPath={project.path} onFixFinding={onFixFinding ? (f) => onFixFinding(project.path, f) : undefined} />
+          </TabsContent>
+        )}
+
+        {!isCoreFork && (
+          <TabsContent value="activity" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+            <ProjectActivityTab projectPath={project.path} />
           </TabsContent>
         )}
       </Tabs>

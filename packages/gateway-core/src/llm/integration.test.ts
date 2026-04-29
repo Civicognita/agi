@@ -25,6 +25,11 @@ const DEFAULT_AGENT = {
   router: {
     costMode: "balanced" as const,
     escalation: false,
+    floor: "balanced" as const,
+    ceiling: "max" as const,
+    escalateOnLowConfidence: true,
+    escalateOnTimeoutSec: null,
+    parallelRace: false,
     maxEscalationsPerTurn: 1,
     simpleThresholdTokens: 500,
     complexThresholdTokens: 2000,
@@ -170,7 +175,7 @@ describe("createAgentRouter — factory", () => {
     const provider = createAgentRouter(makeConfig({
       agent: {
         ...DEFAULT_AGENT,
-        router: { costMode: "economy", escalation: true, maxEscalationsPerTurn: 1, simpleThresholdTokens: 500, complexThresholdTokens: 2000 },
+        router: { costMode: "economy", escalation: true, floor: "economy", ceiling: "max", escalateOnLowConfidence: true, escalateOnTimeoutSec: null, parallelRace: false, maxEscalationsPerTurn: 1, simpleThresholdTokens: 500, complexThresholdTokens: 2000 },
       },
     }));
     expect(provider).toBeDefined();

@@ -1913,7 +1913,7 @@ cmd_help() {
   echo "  ollama CMD      Manage Ollama (status|start|stop|pull|list)"
   echo "  test-vm CMD     Manage test VM (status|create|destroy|provision|setup|"
   echo "                  services-setup|services-start|services-stop|services-restart|"
-  echo "                  services-status|services-version|test|test-ui|remount)"
+  echo "                  services-status|services-version|services-align|test|test-ui|remount)"
   echo "  test [KIND] PAT Run the test suite (--unit|--e2e|--e2e-ui|--spot|--all|--list)"
   echo "                  agi test dashboard            — unit (default)"
   echo "                  agi test --e2e mapps-walk     — Playwright against VM"

@@ -3,6 +3,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Callout } from "@particle-academy/react-fancy";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -183,7 +184,7 @@ export function DevSettings({ config, update }: {
             popup to Local-ID's connect flow and watches /api/dev/status
             for the handle to appear. */}
         {devStatus !== null && !devStatus.enabled && !devStatus.githubAuthenticated && (
-          <div className="mt-3 p-3 rounded-md bg-surface0 border border-overlay0">
+          <Callout color="zinc" className="mt-3">
             <p className="text-sm text-card-foreground">GitHub authentication required</p>
             <p className="text-[13px] text-muted-foreground mt-1">
               Contributing mode clones owner forks of the AGI, PRIME, ID, and Marketplace repositories.
@@ -203,19 +204,19 @@ export function DevSettings({ config, update }: {
                 </span>
               )}
             </div>
-          </div>
+          </Callout>
         )}
 
         {/* Connected state — show the account + reassure the flow is done */}
         {devStatus !== null && devStatus.githubAuthenticated && (
-          <div className="mt-3 p-3 rounded-md bg-surface0 border border-overlay0 flex items-center gap-3">
+          <Callout color="green" className="mt-3 flex items-center gap-3">
             <Badge variant="outline" className="text-green border-green/50">
               ✓ GitHub connected{devStatus.githubAccount ? ` as ${devStatus.githubAccount}` : ""}
             </Badge>
             <span className="text-[12px] text-muted-foreground">
               Managed in <a href="https://id.ai.on/dashboard" target="_blank" rel="noopener noreferrer" className="text-primary underline">id.ai.on</a>
             </span>
-          </div>
+          </Callout>
         )}
 
         {/* Phase H.2 — origin alignment callout. Dev Mode is on but one or
@@ -224,7 +225,7 @@ export function DevSettings({ config, update }: {
             rewrites the origin on each cycle. Shows only after the
             githubAuthenticated block so it doesn't drown out that gate. */}
         {devStatus !== null && devStatus.enabled && devStatus.originsAligned === false && (
-          <div className="mt-3 p-3 rounded-md bg-yellow/10 border border-yellow/40">
+          <Callout color="amber" className="mt-3">
             <p className="text-sm text-card-foreground flex items-center gap-2">
               <span className="text-yellow">⚠</span>
               Origin rewrite pending — re-run <code className="px-1 py-0.5 rounded bg-surface0 text-xs">agi upgrade</code>
@@ -239,11 +240,11 @@ export function DevSettings({ config, update }: {
                 ))}
               </ul>
             )}
-          </div>
+          </Callout>
         )}
 
         {!loading && devStatus === null && (
-          <div className="mt-3 p-3 rounded-md bg-surface0 border border-overlay0">
+          <Callout color="zinc" className="mt-3">
             <p className="text-sm text-card-foreground">Contributing mode status unavailable</p>
             <p className="text-[13px] text-muted-foreground mt-1">
               Complete onboarding or sign in with dashboard auth to enable contributing mode controls.
@@ -251,54 +252,106 @@ export function DevSettings({ config, update }: {
             <div className="mt-2">
               <Link to="/gateway/onboarding" className="text-xs text-blue underline">Open onboarding</Link>
             </div>
-          </div>
+          </Callout>
         )}
       </Card>
 
-      {/* Repo Status Cards — only shown when contributing mode is on */}
+      {/* Repo Status Cards — only shown when contributing mode is on.
+          Grouped by upstream org per s136 t512:
+            - Civicognita (the AGI core five — agi, prime, id, marketplace,
+              mapp-marketplace)
+            - Particle-Academy (PAx ADF UI primitives — react-fancy,
+              fancy-code, fancy-sheets, fancy-echarts) */}
       {devStatus?.enabled && (
         <Card className="p-6 gap-0 mb-4">
           <SectionHeading>Repository Status</SectionHeading>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading repo status...</p>
           ) : devStatus !== null ? (
-            <div className="grid gap-3">
-              <RepoCard
-                name="AGI"
-                remote={devStatus.agi.remote}
-                isOwnerFork={isOwnerFork(devStatus.agi.remote)}
-              />
-              <RepoCard
-                name="PRIME"
-                remote={devStatus.prime.remote}
-                branch={devStatus.prime.branch}
-                entries={devStatus.prime.entries}
-                isOwnerFork={isOwnerFork(devStatus.prime.remote)}
-              />
-              {devStatus.id && (
-                <RepoCard
-                  name="ID"
-                  remote={devStatus.id.remote}
-                  branch={devStatus.id.branch}
-                  isOwnerFork={isOwnerFork(devStatus.id.remote)}
-                />
-              )}
-              {devStatus.marketplace && (
-                <RepoCard
-                  name="Marketplace"
-                  remote={devStatus.marketplace.remote}
-                  branch={devStatus.marketplace.branch}
-                  isOwnerFork={isOwnerFork(devStatus.marketplace.remote)}
-                />
-              )}
-              {devStatus.mappMarketplace && (
-                <RepoCard
-                  name="MApp Marketplace"
-                  remote={devStatus.mappMarketplace.remote}
-                  branch={devStatus.mappMarketplace.branch}
-                  isOwnerFork={isOwnerFork(devStatus.mappMarketplace.remote)}
-                />
-              )}
+            <div className="space-y-5">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                  Civicognita · core platform
+                </div>
+                <div className="grid gap-3">
+                  <RepoCard
+                    name="AGI"
+                    remote={devStatus.agi.remote}
+                    isOwnerFork={isOwnerFork(devStatus.agi.remote)}
+                  />
+                  <RepoCard
+                    name="PRIME"
+                    remote={devStatus.prime.remote}
+                    branch={devStatus.prime.branch}
+                    entries={devStatus.prime.entries}
+                    isOwnerFork={isOwnerFork(devStatus.prime.remote)}
+                  />
+                  {devStatus.id && (
+                    <RepoCard
+                      name="ID"
+                      remote={devStatus.id.remote}
+                      branch={devStatus.id.branch}
+                      isOwnerFork={isOwnerFork(devStatus.id.remote)}
+                    />
+                  )}
+                  {devStatus.marketplace && (
+                    <RepoCard
+                      name="Marketplace"
+                      remote={devStatus.marketplace.remote}
+                      branch={devStatus.marketplace.branch}
+                      isOwnerFork={isOwnerFork(devStatus.marketplace.remote)}
+                    />
+                  )}
+                  {devStatus.mappMarketplace && (
+                    <RepoCard
+                      name="MApp Marketplace"
+                      remote={devStatus.mappMarketplace.remote}
+                      branch={devStatus.mappMarketplace.branch}
+                      isOwnerFork={isOwnerFork(devStatus.mappMarketplace.remote)}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                  Particle-Academy · ADF UI primitives (PAx)
+                </div>
+                <div className="grid gap-3">
+                  {devStatus.reactFancy && (
+                    <RepoCard
+                      name="react-fancy"
+                      remote={devStatus.reactFancy.remote}
+                      branch={devStatus.reactFancy.branch}
+                      isOwnerFork={isOwnerFork(devStatus.reactFancy.remote)}
+                    />
+                  )}
+                  {devStatus.fancyCode && (
+                    <RepoCard
+                      name="fancy-code"
+                      remote={devStatus.fancyCode.remote}
+                      branch={devStatus.fancyCode.branch}
+                      isOwnerFork={isOwnerFork(devStatus.fancyCode.remote)}
+                    />
+                  )}
+                  {devStatus.fancySheets && (
+                    <RepoCard
+                      name="fancy-sheets"
+                      remote={devStatus.fancySheets.remote}
+                      branch={devStatus.fancySheets.branch}
+                      isOwnerFork={isOwnerFork(devStatus.fancySheets.remote)}
+                    />
+                  )}
+                  {devStatus.fancyEcharts && (
+                    <RepoCard
+                      name="fancy-echarts"
+                      remote={devStatus.fancyEcharts.remote}
+                      branch={devStatus.fancyEcharts.branch}
+                      isOwnerFork={isOwnerFork(devStatus.fancyEcharts.remote)}
+                    />
+                  )}
+                </div>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Unable to load repo status</p>

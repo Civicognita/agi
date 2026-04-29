@@ -23,6 +23,11 @@ import {
 import { projectConfigPath } from "./project-config-path.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
+import {
+  provisionProjectRepos,
+  type CloneFn,
+  type ProvisionResult,
+} from "./repos-provisioner.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -155,6 +160,50 @@ export class ProjectConfigManager extends EventEmitter {
 
     this.write(projectPath, config);
     return config;
+  }
+
+  // -------------------------------------------------------------------------
+  // s130 phase B (t515 slice 3) — multi-repo provisioning
+  // -------------------------------------------------------------------------
+
+  /**
+   * Provision all `repos[]` entries from the project's config into
+   * `<projectPath>/repos/<name>/`. Idempotent — entries whose target
+   * dir already exists are skipped. Errors are captured per-repo so
+   * one bad URL doesn't block the others.
+   *
+   * Returns a per-repo + aggregate result, or null when the project
+   * has no config (read returned null) or no repos[] field. Logs the
+   * outcomes via the manager's component logger.
+   *
+   * **Sync** — calls into git via execFileSync. Callers that need a
+   * non-blocking variant should wrap in setImmediate or use a worker
+   * thread. The default cloneFn enforces a 120s per-clone timeout.
+   *
+   * Pass options.cloneFn to inject a mock for tests.
+   */
+  provisionRepos(
+    projectPath: string,
+    options: { cloneFn?: CloneFn } = {},
+  ): ProvisionResult | null {
+    const config = this.read(projectPath);
+    if (config === null) return null;
+    const repos = config.repos;
+    if (!repos || repos.length === 0) return null;
+
+    const result = provisionProjectRepos(projectPath, repos, options);
+
+    if (result.provisioned > 0 || result.errors > 0) {
+      this.log.info(
+        `repos provisioned for ${projectPath}: ${String(result.provisioned)} cloned, ${String(result.skipped)} skipped, ${String(result.errors)} errored`,
+      );
+    }
+    for (const r of result.repos) {
+      if (r.outcome === "error") {
+        this.log.warn(`repo ${r.name} provisioning failed: ${r.error ?? "unknown"}`);
+      }
+    }
+    return result;
   }
 
   // -------------------------------------------------------------------------

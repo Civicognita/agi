@@ -10,8 +10,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // below). The legacy ReactMarkdown + markdownComponents path was retired
 // in favor of ContentRenderer + registered extensions (thinking, question,
 // callout, highlight). See src/lib/content-renderer-setup.tsx.
-import type { WorkerJobSummary, Plan, PlanStatus, PlanStep, ProjectInfo } from "../types.js";
+import type { WorkerJobSummary, Plan, PlanStatus, PlanStep, ProjectInfo, Notification } from "../types.js";
 import { approveTaskmasterJob, fetchTaskmasterJobs, rejectTaskmasterJob } from "../api.js";
+import { AccordionFlyout } from "./AccordionFlyout.js";
+import { AgentCanvas, type CanvasSurface } from "./AgentCanvas.js";
 import { useDashboardWS } from "../hooks.js";
 import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
 import type { ToolCard } from "./ToolCards.js";
@@ -23,10 +25,9 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useIsMobile, useConfig } from "@/hooks.js";
-import { ContentRenderer } from "@particle-academy/react-fancy";
+import { ContentRenderer, Textarea } from "@particle-academy/react-fancy";
 import { Copy as CopyIcon, Check as CheckIcon } from "lucide-react";
 import { PlansDrawer } from "./PlansDrawer.js";
-import { PlanPane } from "./PlanPane.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -190,6 +191,13 @@ export interface ChatFlyoutProps {
   openRequestId?: string | null;
   /** When true, renders as an inline flex child instead of a fixed overlay. */
   docked?: boolean;
+  /** s124 cycle 86 rework — global notification list. ChatFlyout filters
+   *  to iterative-work entries matching the active session's project path
+   *  and renders the latest as an inline IterativeWorkArtifactCard at the
+   *  top of the message list. Per-project scoping per the owner's
+   *  clarification "display everything in the toast or canvas for the
+   *  project the response belongs to." */
+  notifications?: Notification[];
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +285,7 @@ function TokenBreakdownModal({
 // Component
 // ---------------------------------------------------------------------------
 
-export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithContext, openWithMessage, openRequestId, docked = false }: ChatFlyoutProps) {
+export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithContext, openWithMessage, openRequestId, docked = false, notifications: notificationsProp }: ChatFlyoutProps) {
   // State
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const sessionsRef = useRef(sessions);
@@ -321,6 +329,29 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
     [sessions, activeSessionId],
   );
+
+  /** s124 cycle 86 rework — most-recent iterative-work artifact for the active
+   *  session's project. Filters the global notifications stream by type
+   *  + matching projectPath; takes the newest. Null when no recent artifact
+   *  applies to this chat session (e.g., session is not project-scoped, or
+   *  no iteration has fired since the session opened). */
+  const latestIterationArtifact = useMemo(() => {
+    if (notificationsProp === undefined) return null;
+    if (activeSession === null) return null;
+    const projectPath = activeSession.context;
+    if (typeof projectPath !== "string" || projectPath.length === 0) return null;
+
+    let candidate: Notification | null = null;
+    for (const n of notificationsProp) {
+      if (n.type !== "iterative-work") continue;
+      const meta = n.metadata as { projectPath?: string } | null;
+      if (meta?.projectPath !== projectPath) continue;
+      if (candidate === null || new Date(n.createdAt).getTime() > new Date(candidate.createdAt).getTime()) {
+        candidate = n;
+      }
+    }
+    return candidate;
+  }, [notificationsProp, activeSession]);
 
   // -------------------------------------------------------------------------
   // File attachment handlers
@@ -1278,6 +1309,12 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           onScroll={handleScroll}
           className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-4"
         >
+          {/* s134 cycle 87 rework — iterative-work artifacts now render in
+              AgentCanvas (the right-hand panel) rather than inline in chat.
+              Chat stays focused on conversation; canvas hosts rich content
+              like artifacts and plans. The artifact is wired into the
+              canvas surface state below. */}
+
           {activeSession === null && (
             <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
               Click + to start a new chat
@@ -1672,14 +1709,14 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             >
               &#128206;
             </button>
-            <textarea
+            <Textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder="Message Aionima..."
               rows={1}
-              className="flex-1 px-3 py-2 rounded-[10px] border border-border bg-background text-foreground text-[13px] font-[inherit] resize-none outline-none min-h-[44px] max-h-[100px]"
+              className="flex-1 text-[13px] resize-none min-h-[44px] max-h-[100px]"
             />
             {activeSession?.thinking ? (
               <button
@@ -1707,47 +1744,70 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     </div>
   );
 
-  // PlanPane — renders as a peer panel to the LEFT of the chat when a plan
-  // has been selected from the Plans drawer. Same height as the chat column.
-  // Approve/reject route through the same WS events PlanViewer uses.
-  const planPane = (selectedPlanId !== null && activeSession) ? (
-    <div
-      data-testid="plan-pane"
-      className={cn(
-        "flex-1 min-w-0 h-full",
-        // Width: ~50% of viewport capped at 900px on large screens, with a
-        // 520px minimum so markdown with code blocks doesn't horizontal-scroll.
-        // Plans can be long documents — narrow pane was a real problem.
-        !docked && !isMobile && "w-[min(50vw,900px)] min-w-[520px] flex-none",
-      )}
-    >
-      <PlanPane
-        projectPath={activeSession.context}
-        planId={selectedPlanId}
-        onClose={() => setSelectedPlanId(null)}
-        onApprove={(id) => {
-          approvePlan(id);
-          setSelectedPlanId(null);
-        }}
-        onReject={(id) => {
-          rejectPlan(id);
-          setSelectedPlanId(null);
-        }}
-      />
-    </div>
-  ) : null;
+  // s134 cycle 87 — Canvas surface state. Derives from selectedPlanId (user
+  // picked a plan from the drawer) and latestIterationArtifact (most recent
+  // iteration completion notification for this project's session). Plan
+  // wins when both are set, since plans are direct user-driven openings.
+  const canvasSurface: CanvasSurface = (() => {
+    if (selectedPlanId !== null && activeSession !== null) {
+      return { kind: "plan", planId: selectedPlanId, projectPath: activeSession.context };
+    }
+    if (latestIterationArtifact !== null) {
+      return { kind: "iteration-artifact", notification: latestIterationArtifact };
+    }
+    return { kind: "empty" };
+  })();
 
-  // Docked mode: render as inline flex child (no overlay, no backdrop).
-  // When a plan is selected, it slides in on the left as a peer panel.
+  const handleCanvasDismiss = () => {
+    if (selectedPlanId !== null) setSelectedPlanId(null);
+    // Iteration artifacts can't be "dismissed" — they fade naturally as
+    // newer iterations arrive. Leaving the canvas empty would just feel
+    // like a regression. So no-op on artifact dismiss for now.
+  };
+
+  // The chat slot — the existing panelHeader + panelBody composed into a
+  // full-height flex column. AccordionFlyout positions it inside its chat
+  // section.
+  const chatSlot = (
+    <div className="flex flex-col h-full min-w-0 w-full">
+      {panelHeader}
+      {panelBody}
+    </div>
+  );
+
+  // The canvas slot — AgentCanvas dispatches by surface kind. Approve/reject
+  // for plans route through the same WS events the inline PlanPane was using.
+  const canvasSlot = (
+    <AgentCanvas
+      surface={canvasSurface}
+      onDismiss={handleCanvasDismiss}
+      onPlanApprove={(id) => {
+        approvePlan(id);
+        setSelectedPlanId(null);
+      }}
+      onPlanReject={(id) => {
+        rejectPlan(id);
+        setSelectedPlanId(null);
+      }}
+    />
+  );
+
+  // Docked mode: inline flex child (no overlay, no backdrop). The
+  // AccordionFlyout owns the chat-vs-canvas split internally — this branch
+  // just sizes the outer container.
   if (docked) {
     return (
       <>
-        <div data-testid="chat-flyout" className="flex h-full border-l border-border bg-background" style={{ width: "50%" }}>
-          {planPane}
-          <div className={cn("flex flex-col h-full min-w-0", selectedPlanId ? "flex-1" : "w-full")}>
-            {panelHeader}
-            {panelBody}
-          </div>
+        <div
+          data-testid="chat-flyout"
+          className="flex h-full border-l border-border bg-background"
+          style={{ width: "50%" }}
+        >
+          <AccordionFlyout
+            chat={chatSlot}
+            canvas={canvasSlot}
+            isMobile={isMobile}
+          />
         </div>
         <TokenBreakdownModal
           open={tokenBreakdownMsg !== null}
@@ -1760,37 +1820,39 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     );
   }
 
-  // Overlay mode: fixed panel with backdrop
+  // Overlay mode: fixed panel with backdrop. Sits at z-[200]; header
+  // overlays (notifications/upgrade/dev-notes/settings) MUST use z-[300]+
+  // per the cycle 87 z-index policy so the header stays clickable on top.
+  // Sized to sit BELOW the app header: top-14 on desktop, top-12 on mobile;
+  // the header itself stays sticky at top-0 z-[100].
   return (
-    // Overlay mode: the root div is pointer-events-none so the user can
-    // interact with the rest of the dashboard through the backdrop region.
-    // The chat panel and plan pane re-enable pointer events for themselves.
-    // The backdrop dim is cosmetic only — NOT click-dismissable — so the
-    // modal stays open while the user navigates the rest of the UI. Close
-    // via the explicit X in the header.
-    //
-    // Sized to sit BELOW the app header (not over it): on desktop the
-    // overlay starts at top-14 (≈56px, matching the header's py-3 layout);
-    // on mobile top-12 (≈48px, matching py-2). The header itself stays
-    // sticky at top-0 z-[100], visible + clickable above the flyout.
     <>
-      <div data-testid="chat-flyout" className="fixed inset-x-0 top-12 md:top-14 bottom-0 z-[200] flex justify-end pointer-events-none">
+      <div
+        data-testid="chat-flyout"
+        className="fixed inset-x-0 top-12 md:top-14 bottom-0 z-[200] flex justify-end pointer-events-none"
+      >
         {!isFullscreen && (
           <div className={cn("bg-black/10", isMobile ? "absolute inset-0" : "flex-1")} />
         )}
-        {planPane !== null && !isMobile && (
-          <div className="h-full border-l border-border bg-background shrink-0 pointer-events-auto w-[min(50vw,900px)] min-w-[520px]">
-            {planPane}
-          </div>
-        )}
-        <div className={cn(
-          "flex flex-col bg-background pointer-events-auto",
-          isMobile
-            ? "absolute bottom-0 left-0 right-0 h-[90dvh] border-t border-border rounded-t-2xl"
-            : cn("h-full", isFullscreen ? "w-screen" : "w-[33vw] max-w-full border-l border-border"),
-        )}>
-          {panelHeader}
-          {panelBody}
+        <div
+          className={cn(
+            "bg-background pointer-events-auto",
+            isMobile
+              ? "absolute bottom-0 left-0 right-0 h-[90dvh] border-t border-border rounded-t-2xl"
+              : cn(
+                  "h-full border-l border-border",
+                  // Wider when canvas can be open (so it doesn't squish):
+                  // fullscreen → 100vw, otherwise ~66vw to give canvas + chat
+                  // each meaningful real estate (vs the old 33vw chat-only).
+                  isFullscreen ? "w-screen" : "w-[min(66vw,1200px)] min-w-[640px] max-w-full",
+                ),
+          )}
+        >
+          <AccordionFlyout
+            chat={chatSlot}
+            canvas={canvasSlot}
+            isMobile={isMobile}
+          />
         </div>
       </div>
       <TokenBreakdownModal

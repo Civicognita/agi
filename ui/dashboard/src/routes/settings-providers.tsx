@@ -205,14 +205,18 @@ function MissionControlHero({
 }
 
 // ---------------------------------------------------------------------------
-// Cost-mode dial (s111 t420 / A2 slice 4)
+// Cost-mode range dial (s111 t420 + s129 t510)
 //
-// Backend's KNOWN_COST_MODES (providers-api.ts:99) is local|economy|balanced|max.
-// The mockup shows a horizontal slider with 3 visible stops (Local/Balanced/
-// Max); we render 4 stops to expose `economy` as well — it's a real cost mode
-// the backend supports and economy = "Anthropic Haiku always" is owner-useful
-// distinct from local. Stop positions: local=0%, economy=33%, balanced=66%,
-// max=100%. The fill bar tracks the selected stop's left edge.
+// Backend's KNOWN_COST_MODES (providers-api.ts:158) is local|economy|balanced|max.
+// The dial renders all four stops on a single track. Two handles select a
+// floor (where every turn starts) and a ceiling (max escalation tier);
+// floor === ceiling means "lock to this tier; never escalate". When the
+// handles are equal the gradient between them collapses to a single dot, so
+// the visual reads as a locked tier; when they're separate the gradient runs
+// from emerald (low cost) → primary (high cost), matching the original
+// single-mode visual language. Clicking a stop or label snaps the NEAREST
+// handle. The legacy `costMode` continues to be patched alongside `floor`
+// so older Provider plugins reading `costMode` still see a coherent value.
 // ---------------------------------------------------------------------------
 
 const COST_MODES = ["local", "economy", "balanced", "max"] as const;
@@ -229,55 +233,103 @@ function isCostMode(s: string): s is CostMode {
   return (COST_MODES as readonly string[]).includes(s);
 }
 
-function CostModeDial({
-  current,
+function CostModeRangeDial({
+  floor,
+  ceiling,
   pending,
   onChange,
 }: {
-  current: CostMode;
+  floor: CostMode;
+  ceiling: CostMode;
   pending: boolean;
-  onChange: (next: CostMode) => void;
+  onChange: (next: { floor: CostMode; ceiling: CostMode }) => void;
 }) {
-  const idx = COST_MODES.indexOf(current);
-  const fillPct = COST_MODES.length > 1 ? (idx / (COST_MODES.length - 1)) * 100 : 0;
-  const description = COST_MODE_DESCRIPTIONS[current];
+  const floorIdx = COST_MODES.indexOf(floor);
+  const ceilingIdx = COST_MODES.indexOf(ceiling);
+  const max = COST_MODES.length - 1;
+  const floorPct = max > 0 ? (floorIdx / max) * 100 : 0;
+  const ceilingPct = max > 0 ? (ceilingIdx / max) * 100 : 0;
+  const locked = floor === ceiling;
+  const description = locked
+    ? `${COST_MODE_DESCRIPTIONS[floor]} (locked — no escalation)`
+    : `Starts at ${floor}; escalates up to ${ceiling} when warranted.`;
+
+  // Snap the nearest handle on click — distance ties go to ceiling so it's
+  // possible to widen a locked range without un-pinning floor first.
+  const snapNearest = (i: number): void => {
+    if (pending) return;
+    const distFloor = Math.abs(i - floorIdx);
+    const distCeil = Math.abs(i - ceilingIdx);
+    if (distFloor < distCeil) {
+      const nextFloor = COST_MODES[i]!;
+      const nextCeiling = i > ceilingIdx ? nextFloor : ceiling;
+      if (nextFloor === floor && nextCeiling === ceiling) return;
+      onChange({ floor: nextFloor, ceiling: nextCeiling });
+    } else {
+      const nextCeiling = COST_MODES[i]!;
+      const nextFloor = i < floorIdx ? nextCeiling : floor;
+      if (nextFloor === floor && nextCeiling === ceiling) return;
+      onChange({ floor: nextFloor, ceiling: nextCeiling });
+    }
+  };
+
   return (
     <Card className="p-6">
       <div className="grid md:grid-cols-2 gap-6 items-center">
         <div>
           <h3 className="text-base font-semibold">Cost preference</h3>
           <p className="text-muted-foreground text-[13px] mt-1">
-            Aion respects this preference for every routing decision unless a hard rule
-            overrides (off-grid mode, no internet, missing API key).
+            Set a tier range. Aion starts every turn at the floor, and may escalate up
+            to the ceiling when a request looks too complex or low-confidence. Drag the
+            handles together to lock a single tier (no escalation).
           </p>
           <p className="text-[12px] mt-3 px-3 py-2 rounded-md bg-secondary text-foreground">
-            <span className="text-primary font-semibold">{current}:</span> {description}
+            <span className="text-primary font-semibold">
+              {locked ? `${floor} only` : `${floor} → ${ceiling}`}:
+            </span>{" "}
+            {description}
           </p>
         </div>
         <div>
-          {/* Track + fill + clickable stops. Continuous-slider feel, discrete
-              backend semantics — clicking a stop snaps to that cost mode. */}
+          {/* Track + range fill + two handles. Visual language matches the original
+              single-mode dial (gradient emerald→primary, white handle with glow,
+              clickable stops + label row); range mode just adds the second handle
+              and constrains the gradient to the [floor, ceiling] window. */}
           <div
             className="relative h-3 bg-secondary rounded-full"
             role="presentation"
+            data-testid="cost-mode-range-dial"
           >
             <div
-              className="absolute left-0 top-0 bottom-0 rounded-full bg-gradient-to-r from-emerald-500 to-primary transition-all"
-              style={{ width: `${String(fillPct)}%` }}
+              className="absolute top-0 bottom-0 rounded-full bg-gradient-to-r from-emerald-500 to-primary transition-all"
+              style={{
+                left: `${String(floorPct)}%`,
+                width: `${String(ceilingPct - floorPct)}%`,
+              }}
             />
             {COST_MODES.map((mode, i) => {
-              const left = COST_MODES.length > 1 ? (i / (COST_MODES.length - 1)) * 100 : 0;
-              const isCurrent = mode === current;
+              const left = max > 0 ? (i / max) * 100 : 0;
+              const isFloor = i === floorIdx;
+              const isCeiling = i === ceilingIdx;
+              const isHandle = isFloor || isCeiling;
               return (
                 <button
                   key={mode}
                   type="button"
-                  onClick={() => !pending && !isCurrent && onChange(mode)}
-                  disabled={pending}
-                  aria-label={`Set cost mode to ${mode}`}
+                  onClick={() => snapNearest(i)}
+                  disabled={pending || (isFloor && isCeiling)}
+                  aria-label={
+                    isFloor && isCeiling
+                      ? `Locked at ${mode}`
+                      : isFloor
+                        ? `Floor: ${mode}`
+                        : isCeiling
+                          ? `Ceiling: ${mode}`
+                          : `Snap nearest handle to ${mode}`
+                  }
                   className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all ${
-                    isCurrent
-                      ? "w-5 h-5 bg-white shadow-[0_2px_12px_rgba(91,141,239,0.6)] cursor-default"
+                    isHandle
+                      ? "w-5 h-5 bg-white shadow-[0_2px_12px_rgba(91,141,239,0.6)] cursor-pointer"
                       : pending
                         ? "w-3 h-3 bg-muted-foreground cursor-wait"
                         : "w-3 h-3 bg-muted-foreground hover:bg-foreground cursor-pointer"
@@ -288,21 +340,140 @@ function CostModeDial({
             })}
           </div>
           <div className="flex justify-between mt-2 text-[11px]">
-            {COST_MODES.map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => !pending && mode !== current && onChange(mode)}
-                disabled={pending}
-                className={`capitalize font-medium ${
-                  mode === current ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                } ${pending ? "cursor-wait" : "cursor-pointer"}`}
-              >
-                {mode}
-              </button>
-            ))}
+            {COST_MODES.map((mode, i) => {
+              const isInRange = i >= floorIdx && i <= ceilingIdx;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => snapNearest(i)}
+                  disabled={pending}
+                  className={`capitalize font-medium ${
+                    isInRange ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                  } ${pending ? "cursor-wait" : "cursor-pointer"}`}
+                >
+                  {mode}
+                </button>
+              );
+            })}
           </div>
         </div>
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Escalation triggers — only meaningful when floor < ceiling.
+//
+// Three knobs: low-confidence detection, mid-turn timeout, and parallel race.
+// Visual language matches the dial above: same Card wrapper, same typography,
+// row gridded for label/control alignment.
+// ---------------------------------------------------------------------------
+
+function EscalationTriggers({
+  enabled,
+  state,
+  pending,
+  onChange,
+}: {
+  enabled: boolean;
+  state: {
+    escalateOnLowConfidence: boolean;
+    escalateOnTimeoutSec: number | null;
+    parallelRace: boolean;
+  };
+  pending: boolean;
+  onChange: (patch: Partial<{
+    escalateOnLowConfidence: boolean;
+    escalateOnTimeoutSec: number | null;
+    parallelRace: boolean;
+  }>) => void;
+}) {
+  if (!enabled) return null;
+  const timeoutOn = state.escalateOnTimeoutSec !== null && state.escalateOnTimeoutSec > 0;
+  return (
+    <Card className="p-6">
+      <h3 className="text-base font-semibold">Escalation triggers</h3>
+      <p className="text-muted-foreground text-[13px] mt-1 mb-4">
+        When the floor tier comes back uncertain, Aion can move up to the ceiling. Pick
+        the gates that should fire that move.
+      </p>
+      <div className="space-y-3">
+        <label className="flex items-start gap-3 cursor-pointer p-3 rounded-md hover:bg-secondary/50 transition-colors">
+          <input
+            type="checkbox"
+            checked={state.escalateOnLowConfidence}
+            onChange={(e) => onChange({ escalateOnLowConfidence: e.target.checked })}
+            disabled={pending}
+            className="mt-0.5 rounded border-input"
+          />
+          <div className="flex-1">
+            <div className="text-[13px] font-medium text-foreground">On low confidence</div>
+            <div className="text-[11.5px] text-muted-foreground mt-0.5">
+              Short answer to a complex question, hedging phrases, or self-flagged uncertainty
+              kicks the next call up one tier.
+            </div>
+          </div>
+        </label>
+
+        <label className="flex items-start gap-3 cursor-pointer p-3 rounded-md hover:bg-secondary/50 transition-colors">
+          <input
+            type="checkbox"
+            checked={timeoutOn}
+            onChange={(e) => onChange({ escalateOnTimeoutSec: e.target.checked ? 30 : null })}
+            disabled={pending}
+            className="mt-0.5 rounded border-input"
+          />
+          <div className="flex-1">
+            <div className="text-[13px] font-medium text-foreground flex items-center gap-2">
+              On timeout
+              {timeoutOn && (
+                <span className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    value={state.escalateOnTimeoutSec ?? 30}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      onChange({ escalateOnTimeoutSec: Number.isFinite(n) && n > 0 ? Math.floor(n) : null });
+                    }}
+                    disabled={pending}
+                    className="w-16 px-2 py-0.5 text-[12px] font-mono bg-secondary border border-input rounded"
+                    min={1}
+                    step={1}
+                  />
+                  <span className="text-[11px] text-muted-foreground">seconds</span>
+                </span>
+              )}
+            </div>
+            <div className="text-[11.5px] text-muted-foreground mt-0.5">
+              If the floor tier hasn't streamed a complete answer in N seconds, Aion fires
+              the next call to a higher tier.
+            </div>
+          </div>
+        </label>
+
+        <label className="flex items-start gap-3 cursor-pointer p-3 rounded-md hover:bg-secondary/50 transition-colors">
+          <input
+            type="checkbox"
+            checked={state.parallelRace}
+            onChange={(e) => onChange({ parallelRace: e.target.checked })}
+            disabled={pending}
+            className="mt-0.5 rounded border-input"
+          />
+          <div className="flex-1">
+            <div className="text-[13px] font-medium text-foreground">
+              Race floor + ceiling in parallel{" "}
+              <span className="text-[10px] text-amber-400 font-mono uppercase tracking-wider ml-1">
+                2× cost
+              </span>
+            </div>
+            <div className="text-[11.5px] text-muted-foreground mt-0.5">
+              Fire the call to both tiers simultaneously and take the first complete answer.
+              Cuts perceived latency at the price of doubled inference spend.
+            </div>
+          </div>
+        </label>
       </div>
     </Card>
   );
@@ -527,13 +698,41 @@ export default function SettingsProvidersPage() {
     }
   }, [active, togglePending]);
 
-  const onChangeCostMode = useCallback(
-    async (next: CostMode) => {
+  const onChangeRange = useCallback(
+    async (next: { floor: CostMode; ceiling: CostMode }) => {
       if (!active || costModePending) return;
-      if (active.router.costMode === next) return;
+      if (active.router.floor === next.floor && active.router.ceiling === next.ceiling) return;
       setCostModePending(true);
       try {
-        const updated = await updateRouterConfig({ costMode: next });
+        // Patch floor + ceiling alongside legacy costMode (= floor) so old
+        // Provider plugins reading agent.router.costMode still see a value
+        // that maps to the new range. Server-side schema validation enforces
+        // floor <= ceiling on the local|economy|balanced|max scale.
+        const updated = await updateRouterConfig({
+          floor: next.floor,
+          ceiling: next.ceiling,
+          costMode: next.floor,
+        });
+        setActive(updated);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setCostModePending(false);
+      }
+    },
+    [active, costModePending],
+  );
+
+  const onChangeTriggers = useCallback(
+    async (patch: Partial<{
+      escalateOnLowConfidence: boolean;
+      escalateOnTimeoutSec: number | null;
+      parallelRace: boolean;
+    }>) => {
+      if (!active || costModePending) return;
+      setCostModePending(true);
+      try {
+        const updated = await updateRouterConfig(patch);
         setActive(updated);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -640,13 +839,26 @@ export default function SettingsProvidersPage() {
         />
       )}
 
-      {/* Cost-mode dial + placeholder ticker (s111 t420) */}
+      {/* Cost-mode range dial + escalation triggers + placeholder ticker
+          (s111 t420 + s129 t510). Floor/ceiling come from server-projected
+          state (derived from legacy costMode/escalation when unset). */}
       {active && (
-        <div>
-          <CostModeDial
-            current={isCostMode(active.router.costMode) ? active.router.costMode : "balanced"}
+        <div className="space-y-4">
+          <CostModeRangeDial
+            floor={isCostMode(active.router.floor) ? active.router.floor : "balanced"}
+            ceiling={isCostMode(active.router.ceiling) ? active.router.ceiling : "max"}
             pending={costModePending}
-            onChange={(next) => void onChangeCostMode(next)}
+            onChange={(next) => void onChangeRange(next)}
+          />
+          <EscalationTriggers
+            enabled={active.router.floor !== active.router.ceiling}
+            state={{
+              escalateOnLowConfidence: active.router.escalateOnLowConfidence,
+              escalateOnTimeoutSec: active.router.escalateOnTimeoutSec,
+              parallelRace: active.router.parallelRace,
+            }}
+            pending={costModePending}
+            onChange={(patch) => void onChangeTriggers(patch)}
           />
           <CostTicker />
         </div>

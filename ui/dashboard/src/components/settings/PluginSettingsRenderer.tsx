@@ -5,8 +5,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { Callout } from "@particle-academy/react-fancy";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { SectionHeading, FieldGroup } from "./SettingsShared.js";
 import { RuntimeManagerSection } from "./RuntimeManagerSection.js";
 import { ServiceControlSection } from "./ServiceControlSection.js";
@@ -67,16 +69,15 @@ function ModelSelectField({ field, value, onChange }: { field: UIField; value: s
   }
 
   return (
-    <select
-      className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+    <Select
+      className="font-mono"
+      list={[
+        { value: "", label: field.placeholder ?? "Select a model..." },
+        ...models.map((m) => ({ value: m.id, label: m.name })),
+      ]}
       value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      <option value="">{field.placeholder ?? "Select a model..."}</option>
-      {models.map((m) => (
-        <option key={m.id} value={m.id}>{m.name}</option>
-      ))}
-    </select>
+      onValueChange={onChange}
+    />
   );
 }
 
@@ -146,9 +147,9 @@ function PluginToggleHeader({ pluginId }: { pluginId: string }) {
         )}
       </div>
       {restartNeeded && (
-        <div className="mt-2 rounded-lg bg-yellow/10 border border-yellow/30 px-3 py-2 text-[11px] text-yellow">
+        <Callout color="amber" className="mt-2 text-[11px] text-yellow">
           Plugin changes require a gateway restart to take effect.
-        </div>
+        </Callout>
       )}
     </Card>
   );
@@ -200,18 +201,15 @@ export function PluginSettingsRenderer({ pluginId, sections, config, update }: P
                       )} />
                     </button>
                   ) : field.type === "select" && field.options ? (
-                    <select
-                      className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+                    <Select
+                      className="font-mono"
+                      list={field.options.map((o) => ({ value: o.value, label: o.label }))}
                       value={String(getNestedValue(config as unknown as Record<string, unknown>, `${section.configPath}.${field.configKey ?? field.id}`) ?? field.defaultValue ?? "")}
-                      onChange={(e) => {
+                      onValueChange={(v) => {
                         const path = `${section.configPath}.${field.configKey ?? field.id}`;
-                        update((prev) => setNestedValue(prev, path, e.target.value));
+                        update((prev) => setNestedValue(prev, path, v));
                       }}
-                    >
-                      {field.options.map((o) => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
+                    />
                   ) : field.type === "model-select" ? (
                     <ModelSelectField
                       field={field}

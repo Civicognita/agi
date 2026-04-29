@@ -109,6 +109,31 @@ preflight() {
     log "VM '$VM_NAME' is '$state' — starting..."
     multipass start "$VM_NAME" >/dev/null || die "failed to start VM"
   fi
+
+  # Auto-align VM with host source when versions drift (s134 t517 cycle 117
+  # learning: services-restart doesn't rebuild dashboard; services-align
+  # does. Skipping the align silently runs tests against a stale dashboard
+  # bundle and leads to false-skip / false-pass results).
+  # Set AGI_TEST_SKIP_ALIGN=1 to bypass for fast iteration on a known-fresh VM.
+  if [ "${AGI_TEST_SKIP_ALIGN:-0}" = "1" ]; then
+    return 0
+  fi
+  local host_version vm_version
+  host_version=$(grep -m1 '"version"' "$REPO_DIR/package.json" 2>/dev/null \
+    | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+  vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk https://test.ai.on/health 2>/dev/null" 2>/dev/null \
+    | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
+    | tr -d '\r\n ')
+  if [ -n "$host_version" ] && [ -n "$vm_version" ] && [ "$host_version" != "$vm_version" ]; then
+    log "VM at v${vm_version}, host at v${host_version} — running services-align (set AGI_TEST_SKIP_ALIGN=1 to skip)"
+    # Keep stderr visible — silent failures hid a 30+ cycle build-skip bug
+    # (cycle 119 root cause). pipefail propagates the actual exit status.
+    set -o pipefail
+    if ! bash "$VM_TEST_SCRIPT" services-align 2>&1 | tail -8; then
+      log "services-align failed; running tests against potentially stale VM"
+    fi
+    set +o pipefail
+  fi
 }
 
 # ---------------------------------------------------------------------------

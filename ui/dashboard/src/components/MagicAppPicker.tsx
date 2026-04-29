@@ -9,6 +9,8 @@ import { useEffect, useState } from "react";
 import { fetchMagicApps, setProjectViewer, attachMagicApp, detachMagicApp } from "@/api.js";
 import type { MagicAppInfo, ProjectInfo } from "@/types.js";
 import { Button } from "@/components/ui/button.js";
+import { Card } from "@/components/ui/card.js";
+import { Select } from "@/components/ui/select.js";
 
 export interface MagicAppPickerProps {
   project: ProjectInfo;
@@ -73,24 +75,21 @@ export function MagicAppPicker({ project, onOpenApp, onRefresh }: MagicAppPicker
     <div className="space-y-4">
       {/* Viewer setting — non-dev projects only */}
       {!isCodeProject && (
-        <div className="p-3 rounded-lg border border-border bg-mantle">
+        <Card className="p-3">
           <h4 className="text-[12px] font-semibold text-foreground mb-2">Content Viewer</h4>
           <p className="text-[11px] text-muted-foreground mb-2">
             Choose which MagicApp serves this project's content at <strong>{project.hosting?.hostname}.ai.on</strong>
           </p>
-          <select
+          <Select
+            className="text-[12px]"
+            list={[
+              { value: "", label: "None (no viewer)" },
+              ...compatibleApps.map((a) => ({ value: a.id, label: `${a.name} (${a.category})` })),
+            ]}
             value={viewerId ?? ""}
-            onChange={(e) => void handleSetViewer(e.target.value)}
-            className="w-full h-8 px-2 rounded-md border border-border bg-background text-foreground text-[12px]"
-          >
-            <option value="">None (no viewer)</option>
-            {compatibleApps.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name} ({a.category})
-              </option>
-            ))}
-          </select>
-        </div>
+            onValueChange={(v) => void handleSetViewer(v)}
+          />
+        </Card>
       )}
 
       {/* Attached apps */}

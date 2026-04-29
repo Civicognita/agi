@@ -414,6 +414,21 @@ export interface ProjectInfo {
    *  "marketplace", "mapp-marketplace"). Lets the dashboard call the
    *  `/api/dev/core-forks/:slug/merge` endpoint without parsing the path. */
   coreForkSlug?: string;
+  /** Multi-repo projects (s130 phase B / t515 slice 1) — list of sub-repos
+   *  declared in <projectPath>/.agi/project.json's repos[] field. When
+   *  empty/undefined, the project is single-repo and its source lives at
+   *  the project root. The Projects browser list view shows `⌗N` per row
+   *  (s130 t516 slice 4). */
+  repos?: { name: string; url: string; branch?: string }[];
+  /** Stacks attached to this project (postgres/redis/mysql/etc) — surfaced
+   *  from project.json's hosting.stacks[] field. Used by t516 slice 5
+   *  for the Stack badge column on the Projects list view. */
+  attachedStacks?: { stackId: string }[];
+  /** Knowledge layer counts (s130 phase A scaffold) — file counts in
+   *  the per-project k/ subdirs. Undefined when the project has no k/
+   *  scaffolded (i.e. not yet s130-migrated). Used by t516 slice 6 for
+   *  the Knowledge column on the Projects list view. */
+  knowledge?: { pages: number; plans: number; chatSessions: number };
 }
 
 /** A single row returned by GET /api/dev/core-forks/status. */
@@ -925,6 +940,13 @@ export interface DevStatus {
   id?: { remote: string; branch: string };
   marketplace?: { remote: string; branch: string };
   mappMarketplace?: { remote: string; branch: string };
+  /** PAx (Particle-Academy) ADF UI primitive forks — s136 t512. Always
+   *  present in the response when contributing-mode is on; populated
+   *  with "unknown" remote when the workspace clone is missing. */
+  reactFancy?: { remote: string; branch: string };
+  fancyCode?: { remote: string; branch: string };
+  fancySheets?: { remote: string; branch: string };
+  fancyEcharts?: { remote: string; branch: string };
   provisionedProjects?: string[];
   /** True only when every /opt/* origin matches its dev.*Repo config.
    *  When false with enabled=true, surface a yellow "Run agi upgrade
@@ -1027,6 +1049,8 @@ export interface PluginPanel {
   projectTypes: string[];
   widgets: PanelWidget[];
   position?: number;
+  /** Workspace mode bucket (s134 t517). Unset defaults to "coordinate". */
+  mode?: "develop" | "operate" | "coordinate" | "insight";
 }
 
 export interface PluginSettingsSection {

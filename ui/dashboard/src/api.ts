@@ -461,6 +461,13 @@ export interface ActiveProviderState {
     simpleThresholdTokens?: number;
     complexThresholdTokens?: number;
     maxEscalationsPerTurn?: number;
+    /** s129 t510: tier range. floor === ceiling means "lock; never escalate".
+     *  When unset on the wire (legacy config), server derives from costMode. */
+    floor: string;
+    ceiling: string;
+    escalateOnLowConfidence: boolean;
+    escalateOnTimeoutSec: number | null;
+    parallelRace: boolean;
   };
   offGridMode: boolean;
 }
@@ -533,6 +540,11 @@ export async function updateRouterConfig(patch: {
   complexThresholdTokens?: number;
   maxEscalationsPerTurn?: number;
   offGridMode?: boolean;
+  floor?: string;
+  ceiling?: string;
+  escalateOnLowConfidence?: boolean;
+  escalateOnTimeoutSec?: number | null;
+  parallelRace?: boolean;
 }): Promise<ActiveProviderState> {
   const res = await fetch("/api/providers/router", {
     method: "PUT",
@@ -1369,6 +1381,30 @@ export interface PersistedChatSession {
   lastPreview: string;
 }
 
+/** Per-day activity counts for a project. s130 t516 slice 2 (cycle 105+106). */
+export interface ProjectActivitySummary {
+  path: string;
+  days: number;
+  total: number;
+  /** Length = days, oldest → newest. */
+  dailyCounts: number[];
+  /** YYYY-MM-DD per index (parallel to dailyCounts). */
+  dayKeys: string[];
+}
+
+export async function fetchProjectActivitySummary(
+  projectPath: string,
+  days = 30,
+): Promise<ProjectActivitySummary> {
+  const url = `/api/projects/activity-summary?path=${encodeURIComponent(projectPath)}&days=${String(days)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ProjectActivitySummary>;
+}
+
 export async function fetchChatSessions(): Promise<ChatSessionSummary[]> {
   const res = await fetch("/api/chat/sessions");
   if (!res.ok) {
@@ -1379,8 +1415,15 @@ export async function fetchChatSessions(): Promise<ChatSessionSummary[]> {
   return data.sessions;
 }
 
-export async function fetchChatSession(id: string): Promise<PersistedChatSession> {
-  const res = await fetch(`/api/chat/sessions/${id}`);
+export async function fetchChatSession(id: string, projectPath?: string): Promise<PersistedChatSession> {
+  // s130 t521 UI-side wiring slice (cycle 101): when projectPath is
+  // provided, append ?projectPath= so the gateway prefers the
+  // per-project copy at <projectPath>/k/chat/<id>.json over the
+  // global dir. When unset, falls back to global-only resolution.
+  const url = projectPath !== undefined && projectPath.length > 0
+    ? `/api/chat/sessions/${id}?projectPath=${encodeURIComponent(projectPath)}`
+    : `/api/chat/sessions/${id}`;
+  const res = await fetch(url);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -3308,4 +3351,66 @@ export async function fetchPromptPreview(
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<PromptPreview>;
+}
+
+// ---------------------------------------------------------------------------
+// Vault API (s128 t495)
+// ---------------------------------------------------------------------------
+
+export type VaultEntryType = "key" | "password" | "token";
+
+export interface VaultEntrySummary {
+  id: string;
+  name: string;
+  type: VaultEntryType;
+  created: string;
+  lastAccessed: string | null;
+  ownedByProject: boolean;
+  description?: string;
+}
+
+export interface VaultEntryCreateInput {
+  name: string;
+  type: VaultEntryType;
+  value: string;
+  owningProject?: string;
+  description?: string;
+}
+
+export async function fetchVaultEntries(requestingProject?: string): Promise<VaultEntrySummary[]> {
+  const url = new URL("/api/vault", window.location.origin);
+  if (requestingProject !== undefined) url.searchParams.set("requestingProject", requestingProject);
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { entries: VaultEntrySummary[] };
+  return data.entries;
+}
+
+export async function createVaultEntry(input: VaultEntryCreateInput): Promise<VaultEntrySummary> {
+  const res = await fetch("/api/vault", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { entry: VaultEntrySummary };
+  return data.entry;
+}
+
+export async function deleteVaultEntry(id: string, requestingProject?: string): Promise<boolean> {
+  const url = new URL(`/api/vault/${encodeURIComponent(id)}`, window.location.origin);
+  if (requestingProject !== undefined) url.searchParams.set("requestingProject", requestingProject);
+  const res = await fetch(url.toString(), { method: "DELETE" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { deleted: boolean };
+  return data.deleted;
 }

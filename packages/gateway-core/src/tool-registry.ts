@@ -99,6 +99,21 @@ export class ToolRegistry {
     handler: ToolHandler,
     inputSchema: Record<string, unknown>,
   ): void {
+    // Anthropic + OpenAI both enforce tool names match
+    // `^[a-zA-Z0-9_-]{1,128}$`. Validating at registration time means a
+    // bad name fails boot — not a customer-facing chat turn. Cycle 68
+    // outage (v0.4.275): the s126 ops tools used dot-notation
+    // (`pm.list-all-tasks`) which violated this regex; every chat with
+    // an ops project active failed with a 400 from Anthropic. The boot
+    // path now rejects names that would later cause an API error.
+    const VALID_TOOL_NAME = /^[a-zA-Z0-9_-]{1,128}$/;
+    if (!VALID_TOOL_NAME.test(manifest.name)) {
+      throw new Error(
+        `Tool name "${manifest.name}" violates the provider regex /^[a-zA-Z0-9_-]{1,128}$/. ` +
+          `Use snake_case or kebab-case; do not use ".", ":", "/", or other punctuation.`,
+      );
+    }
+
     if (this.tools.has(manifest.name)) {
       throw new Error(`Tool already registered: ${manifest.name}`);
     }
@@ -118,10 +133,12 @@ export class ToolRegistry {
 
   /**
    * Get available tools for the current state and entity tier.
-   * Delegates to system-prompt.ts computeAvailableTools.
+   * Delegates to system-prompt.ts computeAvailableTools. When `projectCategory`
+   * is provided, ops-mode tools (those with requiresProjectCategory set) are
+   * surfaced to ops/administration projects; others see the regular palette.
    */
-  getAvailable(state: GatewayState, tier: VerificationTier): ToolManifestEntry[] {
-    return computeAvailableTools(state, tier, this.getManifests());
+  getAvailable(state: GatewayState, tier: VerificationTier, projectCategory?: string): ToolManifestEntry[] {
+    return computeAvailableTools(state, tier, this.getManifests(), projectCategory);
   }
 
   /**
@@ -130,8 +147,9 @@ export class ToolRegistry {
   toProviderTools(
     state: GatewayState,
     tier: VerificationTier,
+    projectCategory?: string,
   ): Array<{ name: string; description: string; input_schema: Record<string, unknown> }> {
-    const available = this.getAvailable(state, tier);
+    const available = this.getAvailable(state, tier, projectCategory);
     const result: Array<{ name: string; description: string; input_schema: Record<string, unknown> }> = [];
 
     for (const manifest of available) {

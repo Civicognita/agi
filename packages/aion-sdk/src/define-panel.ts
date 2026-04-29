@@ -26,6 +26,11 @@ class PanelBuilder {
     return this;
   }
 
+  mode(mode: "develop" | "operate" | "coordinate" | "insight"): this {
+    this.def.mode = mode;
+    return this;
+  }
+
   build(): ProjectPanelDefinition {
     if (!this.def.projectTypes) throw new Error("ProjectPanelDefinition requires projectTypes");
     return this.def as ProjectPanelDefinition;

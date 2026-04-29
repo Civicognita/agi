@@ -91,6 +91,7 @@ export type {
   RouteHandler,
   LLMProviderDefinition,
   LLMProviderFactory,
+  McpServerTemplate,
   ProvidesLabel,
 } from "@agi/plugins";
 

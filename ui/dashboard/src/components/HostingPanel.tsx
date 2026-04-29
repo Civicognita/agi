@@ -5,9 +5,12 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { Callout } from "@particle-academy/react-fancy";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Card } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import type { ProjectHostingInfo, ProjectTypeTool, RuntimeInfo, StackInfo, ProjectStackInstance } from "../types.js";
 import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks, fetchEffectiveStartCommand } from "../api.js";
 import type { EffectiveStartCommand } from "../api.js";
@@ -181,7 +184,7 @@ export function HostingPanel({
   }[hosting.status];
 
   return (
-    <div className="p-3 rounded-lg border border-border bg-mantle">
+    <Card className="p-3">
       <div className="flex items-center justify-between mb-3">
         <div className="text-[12px] font-semibold text-card-foreground">
           {tabLabel}
@@ -197,13 +200,13 @@ export function HostingPanel({
       {/* Container status + actions — at the top */}
       <div className="mb-3 pb-2 border-b border-border">
         {stickyError && (
-          <div className="rounded-lg bg-red/10 border border-red/30 px-3 py-2 mb-2">
+          <Callout color="red" className="px-3 py-2 mb-2">
             <div className="flex items-center justify-between mb-0.5">
               <span className="text-[11px] font-semibold text-red">Container Error</span>
               <button onClick={() => setStickyError(null)} className="text-[10px] text-red/60 hover:text-red">Dismiss</button>
             </div>
             <div className="text-[11px] text-red/80 whitespace-pre-wrap break-words">{stickyError}</div>
-          </div>
+          </Callout>
         )}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -232,43 +235,36 @@ export function HostingPanel({
           <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
             Project Type
           </label>
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value)}
-            className="w-full h-8 px-2 rounded-md border border-border bg-background text-foreground text-[12px]"
-          >
-            {availableTypes && availableTypes.length > 0
-              ? availableTypes.map((pt) => (
-                  <option key={pt.id} value={pt.id}>{pt.label}</option>
-                ))
-              : <option value={type}>{type.replace(/-/g, " ")}</option>
+          <Select
+            className="text-[12px]"
+            list={availableTypes && availableTypes.length > 0
+              ? availableTypes.map((pt) => ({ value: pt.id, label: pt.label }))
+              : [{ value: type, label: type.replace(/-/g, " ") }]
             }
-          </select>
+            value={type}
+            onValueChange={setType}
+          />
         </div>
         {visibleRuntimes.length > 0 && (
           <div>
             <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
               Runtime
             </label>
-            <select
+            <Select
+              className="text-[12px]"
+              list={[
+                { value: "", label: "Default" },
+                ...visibleRuntimes.filter((r) => r.installed).map((r) => ({ value: r.id, label: r.label })),
+              ]}
               value={hosting.runtimeId ?? ""}
-              onChange={(e) => {
-                const val = e.target.value || undefined;
+              onValueChange={(v) => {
                 void onConfigure({
                   path: projectPath,
-                  runtimeId: val,
+                  runtimeId: v || undefined,
                 });
               }}
               disabled={busy}
-              className="w-full h-8 px-2 rounded-md border border-border bg-background text-foreground text-[12px] disabled:opacity-50"
-            >
-              <option value="">Default</option>
-              {visibleRuntimes.filter((r) => r.installed).map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
+            />
           </div>
         )}
         <div>
@@ -354,15 +350,16 @@ export function HostingPanel({
           <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
             Mode
           </label>
-          <select
+          <Select
+            className="text-[12px]"
+            list={[
+              { value: "production", label: "Production" },
+              { value: "development", label: "Development" },
+            ]}
             value={mode}
-            onChange={(e) => setMode(e.target.value as "production" | "development")}
+            onValueChange={(v) => setMode(v as "production" | "development")}
             disabled={busy}
-            className="w-full h-8 px-2 rounded-md border border-border bg-background text-foreground text-[12px] disabled:opacity-50"
-          >
-            <option value="production">Production</option>
-            <option value="development">Development</option>
-          </select>
+          />
         </div>
         <div>
           <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
@@ -448,6 +445,6 @@ export function HostingPanel({
       <div className="pt-2 border-t border-border">
         <TerminalArea projectPath={projectPath} refreshKey={logRefreshKey} />
       </div>
-    </div>
+    </Card>
   );
 }

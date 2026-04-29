@@ -63,7 +63,7 @@ export function NotificationBell({ notifications, unreadCount, onMarkRead, onMar
       {open && (
         <div className={cn(
           "absolute right-0 top-full mt-2 w-80 max-h-[420px] flex flex-col",
-          "rounded-xl border border-border bg-popover text-popover-foreground shadow-lg z-50",
+          "rounded-xl border border-border bg-popover text-popover-foreground shadow-lg z-[300]",
         )}>
           {/* Header */}
           <div className="flex items-center justify-between px-3 py-2 border-b border-border">

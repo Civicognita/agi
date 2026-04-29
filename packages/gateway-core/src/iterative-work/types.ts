@@ -64,9 +64,69 @@ export interface IterativeWorkLogEntry {
 }
 
 /**
+ * Optional artifact metadata captured at iteration completion. Populated by
+ * the agent-observability hook (s124 t469) — until that hook lands, all
+ * fields stay undefined and consumers receive completion events with empty
+ * artifact data. The shape is fixed now so downstream consumers
+ * (NotificationStore in t470, Toast UI in t471) can be wired against the
+ * real type without waiting for the hook.
+ *
+ * Field semantics:
+ * - `thumbnailPath`: file path or data URI to a representative screenshot
+ *   captured by the agent-observability hook (t469). Used by Toast preview
+ *   and the per-project Iteration log surface.
+ * - `summary`: 1-line natural-language description of what the iteration did
+ *   ("Shipped v0.4.290: ProjectDetail tabs to ADF primitives").
+ * - `chatSessionId`: id of the chat session that handled the iteration. Used
+ *   by chat-routing in t472 to detect "open existing chat" vs "create new
+ *   with seed message".
+ * - `taskNumber`: tynn task number that was worked on (when the iteration
+ *   touched tynn — most do under iterative-work mode).
+ * - `commitHash`: short git SHA of the commit shipped during this iteration
+ *   (when one shipped — some iterations are pure verification + don't ship).
+ * - `shipVersion`: package.json version at end of iteration (when bumped).
+ */
+export interface IterativeWorkArtifact {
+  thumbnailPath?: string;
+  summary?: string;
+  chatSessionId?: string;
+  taskNumber?: number;
+  commitHash?: string;
+  shipVersion?: string;
+}
+
+/**
+ * Completion event payload. Emitted by the scheduler when a fire-event
+ * consumer calls `recordCompletion()` to report terminal status. Carries
+ * the same fields as IterativeWorkLogEntry plus the project path (so
+ * NotificationStore can route events without a separate lookup) and
+ * optional artifact metadata (when available).
+ */
+export interface IterativeWorkCompletion {
+  /** Absolute path of the project. */
+  projectPath: string;
+  /** Cron expression that produced the original fire. */
+  cron: string;
+  /** ISO timestamp when the iteration fired. */
+  firedAt: string;
+  /** ISO timestamp when the iteration completed. */
+  completedAt: string;
+  /** Wall-clock duration in milliseconds. */
+  durationMs: number;
+  /** Terminal status. */
+  status: "done" | "error";
+  /** Error message when status === "error". */
+  error?: string;
+  /** Artifact metadata — fully populated only after the agent-observability
+   *  hook (t469) lands. Until then, fields are undefined. */
+  artifact?: IterativeWorkArtifact;
+}
+
+/**
  * The shape of every event the scheduler emits. Strongly typed so consumers
  * can `on("fire", ...)` without losing payload typing.
  */
 export interface IterativeWorkSchedulerEvents {
   fire: [IterativeWorkFire];
+  complete: [IterativeWorkCompletion];
 }

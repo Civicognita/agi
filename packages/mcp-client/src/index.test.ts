@@ -29,7 +29,7 @@ vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
 }));
 
 vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
-  StreamableHTTPClientTransport: vi.fn((url) => ({ __transport: "http", url: String(url) })),
+  StreamableHTTPClientTransport: vi.fn((url, opts) => ({ __transport: "http", url: String(url), opts })),
 }));
 
 vi.mock("@modelcontextprotocol/sdk/client/websocket.js", () => ({
@@ -95,6 +95,46 @@ describe("McpClient — server registration + lifecycle (s118 t441)", () => {
     });
     expect(mockClientInstance.connect).toHaveBeenCalledTimes(1);
     expect(client.listServers()[0]!.state).toBe("connected");
+  });
+
+  // Regression for the s125 cycle 67 outage: tynn.ai (and any auth-gated MCP)
+  // failed to connect because the HTTP transport ignored the resolved
+  // authToken. The fix threads it as `Authorization: Bearer <token>` via
+  // requestInit. Without this test, a future SDK upgrade or refactor could
+  // silently drop the header and break every authenticated HTTP MCP service.
+  it("threads authToken as `Authorization: Bearer …` on http transport", async () => {
+    mockClientInstance.connect.mockResolvedValueOnce(undefined);
+    const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const httpMock = StreamableHTTPClientTransport as unknown as ReturnType<typeof vi.fn>;
+    httpMock.mockClear();
+    const client = new McpClient();
+    await client.registerServer({
+      id: "tynn-http",
+      transport: "http",
+      url: "https://tynn.ai/mcp/tynn",
+      authToken: "rpk_TESTTOKEN",
+      autoConnect: true,
+    });
+    expect(httpMock).toHaveBeenCalledTimes(1);
+    const [, opts] = httpMock.mock.calls[0]!;
+    expect(opts).toBeDefined();
+    expect(opts.requestInit.headers.Authorization).toBe("Bearer rpk_TESTTOKEN");
+  });
+
+  it("omits Authorization header when authToken is not set", async () => {
+    mockClientInstance.connect.mockResolvedValueOnce(undefined);
+    const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+    const httpMock = StreamableHTTPClientTransport as unknown as ReturnType<typeof vi.fn>;
+    httpMock.mockClear();
+    const client = new McpClient();
+    await client.registerServer({
+      id: "no-auth-http",
+      transport: "http",
+      url: "https://open-mcp.example.com",
+      autoConnect: true,
+    });
+    const [, opts] = httpMock.mock.calls[0]!;
+    expect(opts).toBeUndefined();
   });
 
   it("connects via websocket transport when url is configured", async () => {

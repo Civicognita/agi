@@ -187,6 +187,24 @@ export interface ToolRegistrationConfig {
   stackRegistryRef?: { current: unknown | null };
   /** Late-bound MApp registry ref — populated after boot. */
   mappRegistryRef?: { current: unknown | null };
+  /**
+   * s130 t515 slice 6b (cycle 114) — cage production wire-up.
+   *
+   * Per-invocation cage provider for path-touching tools (shell_exec,
+   * file_read, file_write, dir_list, grep_search). When set, the
+   * tool registry threads this through to each handler's config; the
+   * handler calls it on each invocation to get the caller's current
+   * Cage and gates path access via isPathInCage.
+   *
+   * When undefined (today's default), tools fall back to the legacy
+   * workspaceRoot.startsWith check — preserves today's behavior.
+   *
+   * Slice 6b-ii (next slice) implements the actual session-context-
+   * derived provider in server.ts. This slice (6b-i) just adds the
+   * plumbing — registerAllTools accepts the field and passes it
+   * through.
+   */
+  cageProvider?: () => import("../agent-cage.js").Cage | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +233,16 @@ export function registerAllTools(
   registry: ToolRegistry,
   config: ToolRegistrationConfig,
 ): number {
-  const toolConfig = { workspaceRoot: config.workspaceRoot, dispatchDirOverride: config.dispatchDirOverride };
+  // s130 t515 slice 6b — thread cageProvider through to all path-touching
+  // tools. file-read/write/dir-list/grep-search use it via their shared
+  // PathGateConfig (cycle 96 cage-gate.ts); shell-exec uses it inline
+  // (cycle 95 slice 6a). When undefined, tools preserve legacy
+  // workspaceRoot.startsWith behavior.
+  const toolConfig = {
+    workspaceRoot: config.workspaceRoot,
+    dispatchDirOverride: config.dispatchDirOverride,
+    cageProvider: config.cageProvider,
+  };
   const tmToolConfig = { dispatchDirOverride: config.dispatchDirOverride };
   let count = 0;
 

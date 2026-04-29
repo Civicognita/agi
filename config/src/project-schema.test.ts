@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ProjectConfigSchema, ProjectHostingSchema, ProjectStackInstanceSchema } from "./project-schema.js";
+import { ProjectConfigSchema, ProjectHostingSchema, ProjectStackInstanceSchema, ProjectRepoSchema } from "./project-schema.js";
 
 const FIXTURES = join(__dirname, "../../test/fixtures/project-configs");
 
@@ -88,5 +88,97 @@ describe("ProjectConfigSchema", () => {
 
     const invalid = { addedAt: "2026-04-01T00:00:00.000Z" }; // missing stackId
     expect(ProjectStackInstanceSchema.safeParse(invalid).success).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // s130 phase B (t515) — multi-repo `repos` field
+  // -------------------------------------------------------------------------
+
+  describe("ProjectRepoSchema (s130 t515)", () => {
+    it("parses minimal repo entry (name + url)", () => {
+      const valid = { name: "web", url: "https://github.com/org/web.git" };
+      expect(ProjectRepoSchema.safeParse(valid).success).toBe(true);
+    });
+
+    it("parses full repo entry with branch + path + writable", () => {
+      const valid = {
+        name: "api",
+        url: "git@github.com:org/api.git",
+        branch: "dev",
+        path: "/custom/checkout/path",
+        writable: true,
+      };
+      const result = ProjectRepoSchema.safeParse(valid);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.writable).toBe(true);
+      }
+    });
+
+    it("defaults writable to false (read-only per Q-5 owner answer)", () => {
+      const valid = { name: "sdk", url: "owner/sdk" };
+      const result = ProjectRepoSchema.safeParse(valid);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.writable).toBe(false);
+      }
+    });
+
+    it("rejects names with filesystem-unsafe characters", () => {
+      const invalid = { name: "web/api", url: "https://x.com/repo.git" };
+      expect(ProjectRepoSchema.safeParse(invalid).success).toBe(false);
+    });
+
+    it("rejects names with spaces", () => {
+      const invalid = { name: "my project", url: "https://x.com/repo.git" };
+      expect(ProjectRepoSchema.safeParse(invalid).success).toBe(false);
+    });
+
+    it("accepts names with hyphens, underscores, digits", () => {
+      for (const name of ["web-1", "api_v2", "web", "_internal", "Repo123"]) {
+        expect(ProjectRepoSchema.safeParse({ name, url: "x" }).success).toBe(true);
+      }
+    });
+
+    it("requires both name and url", () => {
+      expect(ProjectRepoSchema.safeParse({ name: "web" }).success).toBe(false);
+      expect(ProjectRepoSchema.safeParse({ url: "x" }).success).toBe(false);
+      expect(ProjectRepoSchema.safeParse({}).success).toBe(false);
+    });
+  });
+
+  describe("ProjectConfigSchema with repos array (s130 t515)", () => {
+    it("accepts repos array on root", () => {
+      const data = {
+        name: "Multi-repo App",
+        repos: [
+          { name: "web", url: "https://github.com/org/web.git" },
+          { name: "api", url: "https://github.com/org/api.git", branch: "dev" },
+          { name: "sdk", url: "https://github.com/org/sdk.git", writable: true },
+        ],
+      };
+      const result = ProjectConfigSchema.safeParse(data);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.repos).toHaveLength(3);
+      }
+    });
+
+    it("repos array is optional — single-repo projects work without it", () => {
+      const data = { name: "Single-repo App" };
+      const result = ProjectConfigSchema.safeParse(data);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.repos).toBeUndefined();
+      }
+    });
+
+    it("rejects malformed repo entries inside the array", () => {
+      const data = {
+        name: "Bad",
+        repos: [{ name: "web/bad", url: "x" }], // bad name
+      };
+      expect(ProjectConfigSchema.safeParse(data).success).toBe(false);
+    });
   });
 });

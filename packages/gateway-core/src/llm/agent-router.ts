@@ -51,6 +51,24 @@ export type CostMode = "local" | "economy" | "balanced" | "max";
 export interface RouterConfig {
   costMode: CostMode;
   escalation: boolean;
+  /** s129 — starting tier for every turn. When undefined, falls back to
+   *  costMode mapping. Persistent floor means the router never picks a
+   *  provider below this tier even when costMode legacy logic would. */
+  floor?: CostMode;
+  /** s129 — maximum tier the router can escalate to. When undefined,
+   *  falls back to legacy ESCALATION_TARGETS chain. Floor === ceiling
+   *  means no escalation. */
+  ceiling?: CostMode;
+  /** s129 — explicit replacement for legacy `escalation` flag. When true,
+   *  isLowConfidence() triggers an escalation step. Defaults to true via
+   *  schema; legacy `escalation` flag is honored when this is undefined. */
+  escalateOnLowConfidence?: boolean;
+  /** s129 — escalate when the floor-tier provider doesn't respond within
+   *  N seconds. Critical for off-grid where local inference is slow. */
+  escalateOnTimeoutSec?: number | null;
+  /** s129 — race floor + ceiling in parallel; take first acceptable
+   *  response. Doubles cost; cuts latency. */
+  parallelRace?: boolean;
   maxEscalationsPerTurn: number;
   simpleThresholdTokens: number;
   complexThresholdTokens: number;
@@ -174,6 +192,31 @@ const HEDGING_PATTERNS = [
   "i'm not certain",
   "it's unclear",
 ];
+
+// ---------------------------------------------------------------------------
+// Tier helpers (s129 floor/ceiling support)
+// ---------------------------------------------------------------------------
+
+const TIER_ORDER: readonly CostMode[] = ["local", "economy", "balanced", "max"] as const;
+
+/** Position of a tier on the local→economy→balanced→max scale. Used for
+ *  ceiling-clamp comparisons. */
+function tierIndex(tier: CostMode): number {
+  return TIER_ORDER.indexOf(tier);
+}
+
+/** Map a concrete model id back to its CostMode tier. Used when checking
+ *  whether an escalation target would exceed the configured ceiling. Returns
+ *  null when the model is unknown to the routing table (e.g. local models
+ *  not in ESCALATION_TARGETS). */
+function tierFromModelName(model: string): CostMode | null {
+  for (const tier of TIER_ORDER) {
+    for (const complexity of ["simple", "moderate", "complex"] as const) {
+      if (ROUTING_TABLE[tier][complexity].model === model) return tier;
+    }
+  }
+  return null;
+}
 
 function isLowConfidence(response: LLMResponse, complexity: RequestComplexity): boolean {
   // Never escalate simple requests — they intentionally use cheap models.
@@ -469,13 +512,31 @@ export class AgentRouter implements LLMProvider {
     }
 
     // Escalation: if the response looks low-confidence, try a stronger model.
+    // s129 — `escalateOnLowConfidence` is the modern explicit flag; falls back
+    // to legacy `escalation` when the new field isn't set yet (pre-migration
+    // configs still in flight). Ceiling clamp (s129) prevents escalation above
+    // the configured ceiling tier — when ceiling = floor, no escalation
+    // happens regardless of confidence.
+    const lowConfEnabled = config.router.escalateOnLowConfidence ?? escalation;
     if (
-      escalation &&
+      lowConfEnabled &&
       maxEscalationsPerTurn > 0 &&
       isLowConfidence(response, classification.complexity)
     ) {
+      const ceiling = config.router.ceiling;
       const escalationTarget = ESCALATION_TARGETS[route.model];
-      if (escalationTarget) {
+      // Ceiling clamp: drop the escalation when target tier exceeds ceiling.
+      // `tierFromModelName()` maps a concrete model id back to its CostMode
+      // tier so we can compare against ceiling consistently.
+      const targetTier = escalationTarget ? tierFromModelName(escalationTarget.model) : null;
+      const ceilingExceeded = ceiling !== undefined && targetTier !== null
+        && tierIndex(targetTier) > tierIndex(ceiling);
+      if (ceilingExceeded) {
+        this.log.info(
+          `escalation suppressed: target tier ${targetTier ?? "?"} > ceiling ${ceiling}`,
+        );
+      }
+      if (escalationTarget && !ceilingExceeded) {
         this.log.info(`escalating from ${route.model} → ${escalationTarget.model}`);
 
         const escalatedProvider = this.getOrCreateProvider(
@@ -678,11 +739,18 @@ export class AgentRouter implements LLMProvider {
       if (config.providers["lemonade"]) {
         return { provider: "lemonade", model: "default" };
       }
+      // Explicit owner choice via Settings → Provider takes priority
+      // over the config.providers["<id>"] check. Local runtimes
+      // (lemonade/ollama/hf-local/aion-micro) don't require API keys
+      // and may not have a `providers.<id>` block. Honor the owner's
+      // explicit defaultProvider regardless.
       if (
+        config.defaultProvider === "lemonade" ||
         config.defaultProvider === "ollama" ||
-        config.defaultProvider === "hf-local"
+        config.defaultProvider === "hf-local" ||
+        config.defaultProvider === "aion-micro"
       ) {
-        return { provider: config.defaultProvider, model: config.defaultModel };
+        return { provider: config.defaultProvider, model: config.defaultModel || "default" };
       }
       if (config.providers["ollama"]) {
         return { provider: "ollama", model: "default" };

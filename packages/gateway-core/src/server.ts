@@ -340,6 +340,27 @@ export async function startGatewayServer(
   secrets.loadIntoEnv();
   log.info(`Secrets: ${String(secrets.listSecrets().length)} credential(s) on disk, CREDENTIALS_DIRECTORY ${process.env["CREDENTIALS_DIRECTORY"] ? "active" : "not set"}`);
 
+  // s128 t493/t494 — Vault: structured layer over SecretsManager (TPM2)
+  // OR FilesystemSecretsBackend (plaintext fallback for dev/test/CI
+  // environments without TPM2). Detection runs once at boot.
+  const { VaultStorage } = await import("./vault/storage.js");
+  const { VaultResolver } = await import("./vault/resolver.js");
+  const { FilesystemSecretsBackend, detectTpm2Available } = await import("./vault/filesystem-backend.js");
+  const tpm2Available = await detectTpm2Available();
+  const vaultBackend = tpm2Available
+    ? secrets
+    : new FilesystemSecretsBackend(join(homedir(), ".agi", "secrets"));
+  log.info(`Vault: using ${tpm2Available ? "SecretsManager (TPM2-sealed)" : "FilesystemSecretsBackend (plaintext — no TPM2 detected)"} for value storage`);
+  const vaultStorage = new VaultStorage({
+    vaultDir: join(homedir(), ".agi", "secrets", "vault"),
+    secretsBackend: vaultBackend,
+  });
+  vaultStorage.initialize();
+  // s128 cycle 86 — VaultResolver wired for runtime vault://<id> substitution
+  // at MCP server registration. Audit hook skipped this slice; follow-up
+  // wires audit identity context for boot-time resolves.
+  const vaultResolver = new VaultResolver(vaultStorage);
+
   // -------------------------------------------------------------------------
   // Step 2: Auth bootstrap
   // -------------------------------------------------------------------------
@@ -907,7 +928,7 @@ export async function startGatewayServer(
 
   iterativeWorkScheduler.on("fire", (fire) => {
     void (async () => {
-      let outcome: { status: "done" | "error"; error?: string } = { status: "done" };
+      const outcome: { status: "done" | "error"; error?: string; artifact?: import("./iterative-work/types.js").IterativeWorkArtifact } = { status: "done" };
       try {
         const slug = projectSlug(fire.projectPath);
         const systemEntity = await entityStore.resolveOrCreate(
@@ -926,13 +947,67 @@ export async function startGatewayServer(
           projectContext: fire.projectPath,
           isOwner: true,
         });
+
+        // s124 t469 — capture a screenshot of the project's deployed URL
+        // (when hosting is configured). Resolved Q-2 mechanism: full-page
+        // headless Chromium via Playwright (not Puppeteer — Playwright is
+        // already in deps for e2e). Failure-tolerant: a missed thumbnail
+        // just leaves artifact.thumbnailPath undefined; the
+        // IterativeWorkArtifactCard renders gracefully without it.
+        try {
+          const hosting = projectConfigManager.readHosting(fire.projectPath) as { hostname?: string } | null;
+          const hostname = hosting?.hostname;
+          if (typeof hostname === "string" && hostname.length > 0) {
+            const baseDomain = (config as { hosting?: { baseDomain?: string } }).hosting?.baseDomain ?? "ai.on";
+            const url = `https://${hostname}.${baseDomain}`;
+            const { captureProjectScreenshot } = await import("./iterative-work/screenshot.js");
+            const thumbnailPath = await captureProjectScreenshot({
+              hostingUrl: url,
+              log: (msg) => { log.warn(`iter-screenshot: ${msg}`); },
+            });
+            if (thumbnailPath !== null) {
+              outcome.artifact = { ...outcome.artifact, thumbnailPath };
+              log.info(`iterative-work screenshot captured: ${thumbnailPath}`);
+            }
+          }
+        } catch (err) {
+          log.warn(`iterative-work screenshot block failed for ${fire.projectPath}: ${err instanceof Error ? err.message : String(err)}`);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         log.error(`iterative-work fire failed for ${fire.projectPath}: ${message}`);
-        outcome = { status: "error", error: message };
+        outcome.status = "error";
+        outcome.error = message;
       } finally {
         iterativeWorkScheduler.recordCompletion(fire.projectPath, outcome);
         iterativeWorkScheduler.markComplete(fire.projectPath);
+      }
+    })();
+  });
+
+  // s124 t470 + t471: route iterative-work completions into NotificationStore
+  // (persistent) AND broadcast as `notification:new` over the dashboard WS
+  // (real-time, wakes Toast UI). The mapper produces canonical `iterative-work`
+  // typed metadata; artifact fields populate incrementally as the agent-
+  // observability hook (t469) fills them. Subscriber failures are non-fatal —
+  // the iteration itself already completed; a missed notification is
+  // recoverable from the iteration log.
+  iterativeWorkScheduler.on("complete", (completion) => {
+    void (async () => {
+      try {
+        const { mapIterativeWorkCompletionToParams } = await import("./iterative-work/notification-mapper.js");
+        const created = await notificationStore.create(mapIterativeWorkCompletionToParams(completion));
+        dashboardBroadcasterRef?.emitNotification({
+          id: created.id,
+          type: created.type,
+          title: created.title,
+          body: created.body,
+          metadata: created.metadata,
+          createdAt: created.createdAt,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log.warn(`iterative-work notification create failed for ${completion.projectPath}: ${message}`);
       }
     })();
   });
@@ -1981,19 +2056,38 @@ export async function startGatewayServer(
   // $VAR), autoConnect: bool }.
   const mcpClient = new McpClient();
   const mcpServersConfig = (config as { mcp?: { servers?: Array<Record<string, unknown>> } }).mcp?.servers ?? [];
+  // s128 cycle 86 — secret-reference resolver for MCP server config. Handles
+  // both $VAR (legacy, reads from process.env) AND vault://<id> (Vault).
+  // Vault refs are gateway-scoped here (no projectPath context); per-project
+  // servers below pass their own context.
+  const resolveSecretRef = async (raw: string | undefined): Promise<string | undefined> => {
+    if (raw === undefined) return undefined;
+    if (raw.startsWith("$")) return process.env[raw.slice(1)];
+    if (raw.startsWith("vault://")) {
+      try {
+        const resolved = await vaultResolver.resolve(raw);
+        return typeof resolved === "string" ? resolved : raw;
+      } catch (err) {
+        log.warn(`mcp: vault reference "${raw}" failed to resolve: ${err instanceof Error ? err.message : String(err)}`);
+        return undefined;
+      }
+    }
+    return raw;
+  };
+
   for (const serverCfg of mcpServersConfig) {
     try {
-      // Resolve $VAR-prefixed authToken via process.env so secrets stay
-      // out of gateway.json. {"authToken": "$TYNN_API_KEY"} → real token
-      // from process.env.TYNN_API_KEY at registration time.
-      const resolvedAuthToken = typeof serverCfg.authToken === "string" && serverCfg.authToken.startsWith("$")
-        ? process.env[serverCfg.authToken.slice(1)]
-        : (serverCfg.authToken as string | undefined);
-      // Resolve $VAR in env block too — `{"FOO": "$REAL_FOO"}` reads from process.env.
+      // Resolve authToken via $VAR + vault:// — the latter is the s128 t492-t498
+      // path that lets owners reference TPM2-sealed Vault entries from gateway
+      // config without putting plaintext into gateway.json.
+      const resolvedAuthToken = await resolveSecretRef(serverCfg.authToken as string | undefined);
+      // Resolve env values too (same dual-shape rule: $VAR or vault://).
       const resolvedEnv = typeof serverCfg.env === "object" && serverCfg.env !== null
         ? Object.fromEntries(
-            Object.entries(serverCfg.env as Record<string, string>).map(([k, v]) =>
-              [k, v.startsWith("$") ? (process.env[v.slice(1)] ?? "") : v],
+            await Promise.all(
+              Object.entries(serverCfg.env as Record<string, string>).map(async ([k, v]) =>
+                [k, (await resolveSecretRef(v)) ?? ""] as [string, string],
+              ),
             ),
           )
         : undefined;
@@ -2031,18 +2125,43 @@ export async function startGatewayServer(
           const projectServers = raw.mcp?.servers ?? [];
           if (projectServers.length === 0) continue;
           const projectEnv = readProjectEnv(fullPath);
+          // s128 cycle 86 — per-project secret resolver. $VAR reads from the
+          // project's .env (legacy); vault://<id> resolves through VaultResolver
+          // with the project's path as the scope context (so project-scoped
+          // entries stay scoped, gateway-scoped entries pass).
+          const resolveProjectSecretRef = async (raw: string | undefined): Promise<string | undefined> => {
+            if (raw === undefined) return undefined;
+            if (raw.startsWith("$")) return resolveDollarVars(raw, projectEnv);
+            if (raw.startsWith("vault://")) {
+              try {
+                const resolved = await vaultResolver.resolve(raw, { projectPath: fullPath });
+                return typeof resolved === "string" ? resolved : raw;
+              } catch (err) {
+                log.warn(`mcp: vault reference "${raw}" for project ${fullPath} failed to resolve: ${err instanceof Error ? err.message : String(err)}`);
+                return undefined;
+              }
+            }
+            return raw;
+          };
           for (const s of projectServers) {
             if (s.autoConnect === false) continue;
             try {
+              const projectEnvResolved = s.env !== undefined
+                ? Object.fromEntries(
+                    await Promise.all(
+                      Object.entries(s.env).map(async ([k, v]) => [k, (await resolveProjectSecretRef(v)) ?? ""] as [string, string]),
+                    ),
+                  )
+                : undefined;
               await mcpClient.registerServer({
                 id: `${pslug(fullPath)}:${s.id}`,
                 name: s.name,
                 transport: s.transport,
                 command: s.command,
-                env: resolveDollarVarsObject(s.env, projectEnv),
-                url: s.url ? resolveDollarVars(s.url, projectEnv) : undefined,
+                env: projectEnvResolved ?? resolveDollarVarsObject(s.env, projectEnv),
+                url: s.url ? (await resolveProjectSecretRef(s.url)) : undefined,
                 autoConnect: true,
-                authToken: s.authToken ? resolveDollarVars(s.authToken, projectEnv) : undefined,
+                authToken: s.authToken ? (await resolveProjectSecretRef(s.authToken)) : undefined,
               });
               log.info(`mcp: registered project-server "${pslug(fullPath)}:${s.id}" (project=${entry})`);
             } catch (err) {
@@ -2087,6 +2206,24 @@ export async function startGatewayServer(
     pmProvider = def.factory(pmProviderConfig) as PmProvider;
   }
   log.info(`pm provider resolved: id=${pmProviderId}, providerId=${pmProvider.providerId}`);
+
+  // s126 — Ops-mode tools (cross-project + infrastructure) registered after
+  // pmProvider is resolved. requiresProjectCategory: [ops, administration]
+  // hides them from non-ops projects via computeAvailableTools.
+  try {
+    const { registerOpsTools } = await import("./ops-tools.js");
+    const opsCount = registerOpsTools({
+      toolRegistry,
+      workspaceProjects: projectPaths,
+      projectConfigManager,
+      pmProvider,
+      hostingManager,
+      stackRegistry,
+    });
+    log.info(`registered ${String(opsCount)} ops-mode tools (gated on project.category in [ops, administration])`);
+  } catch (err) {
+    log.warn(`ops-mode tools registration failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   toolRegistry.register(
     {
@@ -2580,6 +2717,34 @@ export async function startGatewayServer(
           getConfig: () => config,
           logger: createComponentLogger(logger, "lemonade-api"),
         }),
+        // s128 t494 — Vault REST surface (private-network gated; project-
+        // scoping enforced via ?requestingProject= query parameter).
+        async (f) => {
+          const { registerVaultRoutes } = await import("./vault/api.js");
+          registerVaultRoutes(f, { vaultStorage });
+        },
+        // s124 t469 — serve iterative-work thumbnails. Files live in
+        // ~/.agi/thumbs/ written by captureProjectScreenshot. Strict
+        // filename allowlist (iter-<ulid>.png) prevents path traversal.
+        (f) => {
+          const thumbsDir = join(homedir(), ".agi", "thumbs");
+          f.get<{ Params: { filename: string } }>("/api/thumbs/:filename", async (request, reply) => {
+            const { filename } = request.params;
+            // Allowlist: iter-<ulid>.png. ULIDs are 26 chars; allow 20-32 to
+            // accommodate any future id shape. No `..`, no slashes.
+            if (!/^iter-[A-Z0-9]{20,32}\.png$/i.test(filename)) {
+              return reply.code(400).send({ error: "invalid thumbnail filename" });
+            }
+            const fullPath = join(thumbsDir, filename);
+            if (!existsSync(fullPath)) {
+              return reply.code(404).send({ error: "thumbnail not found" });
+            }
+            const buf = readFileSync(fullPath);
+            reply.header("Content-Type", "image/png");
+            reply.header("Cache-Control", "public, max-age=86400");
+            return reply.send(buf);
+          });
+        },
       ],
     },
     { host, port },

@@ -8,8 +8,10 @@
  */
 
 import { useState } from "react";
+import { Callout } from "@particle-academy/react-fancy";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
+import { Card } from "@/components/ui/card.js";
 import { cn } from "@/lib/utils.js";
 import type { OnboardingStepStatus } from "@/types.js";
 
@@ -73,9 +75,9 @@ export function FederationStep({ onNext, onSkip, status }: Props) {
       </div>
 
       {isCompleted && (
-        <div className="p-3 rounded-lg bg-green/5 border border-green/20 text-sm text-muted-foreground onboard-animate-in">
+        <Callout color="green" className="text-sm text-muted-foreground onboard-animate-in">
           Federation is already configured.
-        </div>
+        </Callout>
       )}
 
       {/* Enable/disable toggle */}
@@ -129,13 +131,13 @@ export function FederationStep({ onNext, onSkip, status }: Props) {
             </p>
           </div>
 
-          <div className="p-3 rounded-lg bg-card border border-border">
+          <Card className="p-3">
             <p className="text-xs text-muted-foreground">
               Your node will register with the HIVE-ID service at id.aionima.ai
               and receive a Global Entity ID (GEID). This ID is portable and
               cryptographically verifiable.
             </p>
-          </div>
+          </Card>
         </div>
       )}
 

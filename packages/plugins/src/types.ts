@@ -59,6 +59,27 @@ export function categoryToProvides(category?: string): ProvidesLabel[] {
 }
 
 // ---------------------------------------------------------------------------
+// ADF classification (s127 t487)
+// ---------------------------------------------------------------------------
+
+/** ADF (Agent Development Framework) elements a plugin extends. A plugin
+ *  may extend more than one element — e.g., the Tynn plugin extends 0UX
+ *  (the future Kanban MApp) AND 0AGENT (PM tool extensions for the agent
+ *  via the registered PmProvider).
+ *
+ *  Element semantics (per `agi/docs/human/adf.md`):
+ *  - `0UX`     — owner-facing UX surfaces (dashboard tabs, settings pages, MApps)
+ *  - `0AGENT`  — agent capability extensions (tools, prompt fragments, providers)
+ *  - `0FUNC`   — pure functional logic (reusable computations, validators)
+ *  - `0FLOW`   — workflow/state-machine extensions (state transitions, schedulers)
+ *  - `0ENV`    — environment/runtime extensions (services, containers, host integrations)
+ *
+ *  Used by the Plugin Marketplace UX to categorize + filter plugins by what
+ *  ADF surface they extend.
+ */
+export type AdfElement = "0UX" | "0AGENT" | "0FUNC" | "0FLOW" | "0ENV";
+
+// ---------------------------------------------------------------------------
 // Plugin Manifest
 // ---------------------------------------------------------------------------
 
@@ -75,6 +96,9 @@ export interface AionimaPluginManifest {
   category?: PluginCategory;
   /** Capability labels describing what this plugin provides. */
   provides?: ProvidesLabel[];
+  /** ADF elements this plugin extends — used by the Plugin Marketplace UX
+   *  to categorize plugins by ADF surface. See `AdfElement` above. */
+  adf?: AdfElement[];
   /** Plugin IDs this plugin depends on. */
   depends?: string[];
   /** Pre-installed from marketplace during onboarding. Cannot be uninstalled. */
@@ -329,6 +353,12 @@ export interface ProjectPanelDefinition {
   projectTypes: string[];
   widgets: PanelWidget[];
   position?: number;
+  /**
+   * Workspace mode this panel belongs to (s134 t517 — projects-ux-v2 mockup B).
+   * Determines which mode-bucket renders the panel's tab. Unset defaults to
+   * "coordinate" on the consumer side per the projects-ux-v2 README pre-pick rule.
+   */
+  mode?: "develop" | "operate" | "coordinate" | "insight";
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +610,42 @@ export interface PmProviderDefinition {
 }
 
 // ---------------------------------------------------------------------------
+// MCP server templates (s127 t489)
+//
+// Plugins register a per-server template that surfaces in the per-project
+// MCP-tab dropdown. The template carries a default command/URL + env shape
+// so the owner doesn't have to type the full server config from scratch.
+//
+// Server-side (gateway-core) merges plugin-registered templates with
+// the legacy built-in set; the dashboard's MCP-config form consumes the
+// combined list. As more MCP server providers move to plugins, the
+// built-in list shrinks; the plugin-registered list grows.
+// ---------------------------------------------------------------------------
+
+export interface McpServerTemplate {
+  /** Stable id used by project config (`mcp.servers.<id>`) and by the
+   *  dashboard's "select server" dropdown. Must not collide with
+   *  another plugin-registered template's id. */
+  id: string;
+  /** Human-readable name shown in the dropdown (e.g. "Tynn", "Linear"). */
+  name: string;
+  /** Markdown-friendly one-liner describing the server. */
+  description: string;
+  /** Wire transport — `stdio` for spawn-based local servers, `http`/
+   *  `websocket` for remote MCP endpoints. */
+  transport: "stdio" | "http" | "websocket";
+  /** Default command + args for stdio transport. Ignored for http/ws. */
+  defaultCommand?: string[];
+  /** Default env vars to seed when the owner installs the template. */
+  defaultEnv?: Record<string, string>;
+  /** Default endpoint URL for http/ws transports. Ignored for stdio. */
+  defaultUrl?: string;
+  /** Name of the env var that should hold the bearer/auth token (when
+   *  the server requires one). Drives the dashboard's secret-input UX. */
+  authTokenKey?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Settings page definitions (plugin-provided settings sub-pages)
 // ---------------------------------------------------------------------------
 
@@ -705,6 +771,11 @@ export interface AionimaPluginAPI {
   registerSubdomainRoute(def: SubdomainRouteDefinition): void;
   registerProvider(def: LLMProviderDefinition): void;
   registerPmProvider(def: PmProviderDefinition): void;
+  /** Register a per-project MCP server template. Surfaces in the per-project
+   *  MCP-tab dropdown alongside built-in templates. Plugin-registered
+   *  templates are appended after built-ins; later plugins do not override
+   *  earlier registrations of the same id. (s127 t489) */
+  registerMcpServerTemplate(def: McpServerTemplate): void;
   registerScanProvider(def: ScanProviderDefinition): void;
   registerWorker(def: WorkerDefinition): void;
   getChannelConfig(channelId: string): { enabled: boolean; config: Record<string, unknown> } | undefined;
