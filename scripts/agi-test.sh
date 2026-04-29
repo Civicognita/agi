@@ -126,9 +126,13 @@ preflight() {
     | tr -d '\r\n ')
   if [ -n "$host_version" ] && [ -n "$vm_version" ] && [ "$host_version" != "$vm_version" ]; then
     log "VM at v${vm_version}, host at v${host_version} — running services-align (set AGI_TEST_SKIP_ALIGN=1 to skip)"
-    bash "$VM_TEST_SCRIPT" services-align >/dev/null 2>&1 || {
+    # Keep stderr visible — silent failures hid a 30+ cycle build-skip bug
+    # (cycle 119 root cause). pipefail propagates the actual exit status.
+    set -o pipefail
+    if ! bash "$VM_TEST_SCRIPT" services-align 2>&1 | tail -8; then
       log "services-align failed; running tests against potentially stale VM"
-    }
+    fi
+    set +o pipefail
   fi
 }
 
