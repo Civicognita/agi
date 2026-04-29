@@ -739,11 +739,18 @@ export class AgentRouter implements LLMProvider {
       if (config.providers["lemonade"]) {
         return { provider: "lemonade", model: "default" };
       }
+      // Explicit owner choice via Settings → Provider takes priority
+      // over the config.providers["<id>"] check. Local runtimes
+      // (lemonade/ollama/hf-local/aion-micro) don't require API keys
+      // and may not have a `providers.<id>` block. Honor the owner's
+      // explicit defaultProvider regardless.
       if (
+        config.defaultProvider === "lemonade" ||
         config.defaultProvider === "ollama" ||
-        config.defaultProvider === "hf-local"
+        config.defaultProvider === "hf-local" ||
+        config.defaultProvider === "aion-micro"
       ) {
-        return { provider: config.defaultProvider, model: config.defaultModel };
+        return { provider: config.defaultProvider, model: config.defaultModel || "default" };
       }
       if (config.providers["ollama"]) {
         return { provider: "ollama", model: "default" };
