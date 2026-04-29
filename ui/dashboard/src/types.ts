@@ -420,6 +420,10 @@ export interface ProjectInfo {
    *  the project root. The Projects browser list view shows `⌗N` per row
    *  (s130 t516 slice 4). */
   repos?: { name: string; url: string; branch?: string }[];
+  /** Stacks attached to this project (postgres/redis/mysql/etc) — surfaced
+   *  from project.json's hosting.stacks[] field. Used by t516 slice 5
+   *  for the Stack badge column on the Projects list view. */
+  attachedStacks?: { stackId: string }[];
 }
 
 /** A single row returned by GET /api/dev/core-forks/status. */

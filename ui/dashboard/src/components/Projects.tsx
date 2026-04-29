@@ -308,6 +308,7 @@ export function Projects({
               <Table.Column label="Project" />
               <Table.Column label="Category" />
               <Table.Column label="Repos" />
+              <Table.Column label="Stacks" />
               <Table.Column label="Tags" />
               <Table.Column label="Activity (30d)" />
               <Table.Column label="Hosting" />
@@ -438,6 +439,34 @@ export function Projects({
                           >
                             ⌗{repoCount}
                           </span>
+                        );
+                      })()}
+                    </Table.Cell>
+                    <Table.Cell>
+                      {(() => {
+                        const stacks = p.attachedStacks ?? [];
+                        if (stacks.length === 0) {
+                          return <span className="text-[11px] text-muted-foreground/40">—</span>;
+                        }
+                        return (
+                          <div
+                            className="flex gap-1 flex-wrap"
+                            data-testid={`project-stacks-${projectSlug(p.path)}`}
+                          >
+                            {stacks.map((s) => {
+                              // Strip leading "stack-" prefix from id for compact display
+                              const label = s.stackId.replace(/^stack-/, "");
+                              return (
+                                <span
+                                  key={s.stackId}
+                                  className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 font-mono font-medium"
+                                  title={s.stackId}
+                                >
+                                  ▣ {label}
+                                </span>
+                              );
+                            })}
+                          </div>
                         );
                       })()}
                     </Table.Cell>
