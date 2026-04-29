@@ -176,10 +176,37 @@ export class ChatPersistence {
     }
   }
 
-  /** Load a session from disk. Returns null if not found or corrupt. */
-  load(sessionId: string): PersistedChatSession | null {
+  /** Load a session from disk. Returns null if not found or corrupt.
+   *
+   * **s130 t521 reader-flip slice (2026-04-29):** accepts optional
+   * `projectPath` hint. When set AND the project is s130-migrated
+   * (`<projectPath>/.agi/` exists), checks `<projectPath>/k/chat/<id>.json`
+   * FIRST and returns it if present. Falls back to the global dir on
+   * miss or when no hint is provided. This pairs with slice 2's
+   * dual-write: new sessions written for s130 projects land at both
+   * locations, so either path returns the same data; the per-project
+   * lookup is fast-path optimization for the post-flip world.
+   */
+  load(sessionId: string, projectPath?: string): PersistedChatSession | null {
     const safeId = sanitizeId(sessionId);
     if (safeId.length === 0) return null;
+
+    // Per-project fast-path when a project hint is provided.
+    const projectChatDir = resolveProjectChatDir(projectPath);
+    if (projectChatDir !== null) {
+      const projectFile = join(projectChatDir, `${safeId}.json`);
+      if (existsSync(projectFile)) {
+        try {
+          const raw = readFileSync(projectFile, "utf-8");
+          return JSON.parse(raw) as PersistedChatSession;
+        } catch {
+          // Corrupt per-project file — fall through to global.
+        }
+      }
+    }
+
+    // Global fallback (today's behavior preserved when no hint, no
+    // per-project copy, or per-project copy is corrupt).
     const filePath = join(this.dir, `${safeId}.json`);
     try {
       const raw = readFileSync(filePath, "utf-8");

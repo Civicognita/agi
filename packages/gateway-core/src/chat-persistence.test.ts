@@ -217,4 +217,69 @@ describe("ChatPersistence — s130 t518 slice 2 dual-write/delete", () => {
       expect(summaries.map((s) => s.id)).toEqual(["new", "mid", "old"]);
     });
   });
+
+  describe("load with projectPath hint (s130 t521 reader-flip slice 2)", () => {
+    it("returns global session when no projectPath hint", () => {
+      store.save(makeSession("g1", ""));
+      const loaded = store.load("g1");
+      expect(loaded?.id).toBe("g1");
+    });
+
+    it("prefers per-project copy when project is s130-migrated and hint provided", () => {
+      // Save with dual-write — both locations get a copy.
+      store.save(makeSession("d1", migratedProjectPath));
+
+      // Mutate the per-project copy so we can tell which one was loaded.
+      const projChat = join(migratedProjectPath, "k", "chat", "d1.json");
+      const proj = JSON.parse(readFileSync(projChat, "utf-8")) as { lastPreview: string };
+      proj.lastPreview = "from-per-project";
+      writeFileSync(projChat, JSON.stringify(proj), "utf-8");
+
+      const loaded = store.load("d1", migratedProjectPath);
+      expect(loaded?.lastPreview).toBe("from-per-project");
+    });
+
+    it("falls back to global when per-project copy missing", () => {
+      // Write only to global (simulate pre-slice-2 session).
+      writeFileSync(
+        join(globalDir, "g2.json"),
+        JSON.stringify(makeSession("g2", migratedProjectPath)),
+        "utf-8",
+      );
+      const loaded = store.load("g2", migratedProjectPath);
+      expect(loaded?.id).toBe("g2");
+    });
+
+    it("falls back to global when projectPath isn't s130-migrated (no .agi/)", () => {
+      // unmigratedProjectPath has no .agi/, so resolveProjectChatDir returns null
+      // and load falls back to global.
+      writeFileSync(
+        join(globalDir, "u1.json"),
+        JSON.stringify(makeSession("u1", unmigratedProjectPath)),
+        "utf-8",
+      );
+      const loaded = store.load("u1", unmigratedProjectPath);
+      expect(loaded?.id).toBe("u1");
+    });
+
+    it("falls through to global when per-project copy is corrupt", () => {
+      // Create both: corrupt per-project + valid global.
+      const projChat = join(migratedProjectPath, "k", "chat");
+      mkdirSync(projChat, { recursive: true });
+      writeFileSync(join(projChat, "c1.json"), "{not valid json", "utf-8");
+      writeFileSync(
+        join(globalDir, "c1.json"),
+        JSON.stringify(makeSession("c1", migratedProjectPath)),
+        "utf-8",
+      );
+
+      const loaded = store.load("c1", migratedProjectPath);
+      expect(loaded?.id).toBe("c1");
+    });
+
+    it("returns null when neither location has the session", () => {
+      const loaded = store.load("nonexistent", migratedProjectPath);
+      expect(loaded).toBeNull();
+    });
+  });
 });
