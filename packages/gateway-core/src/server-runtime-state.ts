@@ -5096,7 +5096,29 @@ export async function createGatewayRuntimeState(
   // -----------------------------------------------------------------------
 
   if (deps.chatPersistence !== undefined) {
-    registerChatHistoryRoutes(fastify, { chatPersistence: deps.chatPersistence, imageBlobStore: deps.imageBlobStore });
+    // s130 t521 server.ts wire-up (cycle 100 — production reader flip).
+    // perProjectChatDirs returns the list of `<projectPath>/k/chat/`
+    // dirs for s130-migrated projects in the workspace. Filtered by
+    // existsSync(<projectPath>/.agi) — projects without the s130 layout
+    // are skipped (today's behavior preserved for them). The list is
+    // computed FRESH on each call so newly-added/migrated projects
+    // surface without a gateway restart.
+    const perProjectChatDirs = (): string[] => {
+      const projects = deps.workspaceProjects ?? [];
+      const dirs: string[] = [];
+      for (const projectPath of projects) {
+        if (existsSync(join(projectPath, ".agi"))) {
+          const chatDir = join(projectPath, "k", "chat");
+          if (existsSync(chatDir)) dirs.push(chatDir);
+        }
+      }
+      return dirs;
+    };
+    registerChatHistoryRoutes(fastify, {
+      chatPersistence: deps.chatPersistence,
+      imageBlobStore: deps.imageBlobStore,
+      perProjectChatDirs,
+    });
   }
 
   // -----------------------------------------------------------------------
