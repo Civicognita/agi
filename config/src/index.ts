@@ -37,6 +37,7 @@ export {
   ProjectAiModelBindingSchema,
   ProjectAiDatasetBindingSchema,
   ProjectIterativeWorkSchema,
+  ProjectRepoSchema,
   type ProjectConfig,
   type ProjectHosting,
   type ProjectStackInstance,
@@ -44,6 +45,7 @@ export {
   type ProjectAiModelBinding,
   type ProjectAiDatasetBinding,
   type ProjectIterativeWork,
+  type ProjectRepo,
 } from "./project-schema.js";
 
 export {
