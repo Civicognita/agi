@@ -1467,6 +1467,115 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // GET /api/projects/activity-summary — daily activity counts (s130 t516 slice 2 prep)
+  // -----------------------------------------------------------------------
+  //
+  // Returns a per-day count array for the last N days (default 30) of
+  // project activity, sourced from git log + chat sessions. Used by the
+  // Projects browser list view to render an activity sparkline column
+  // (fancy-echarts) per row.
+  //
+  // Today: just commits + chat session updatedAt counts. Future:
+  // iterative-work fires, plan transitions, COA chain events.
+  //
+  // Security: uses execFileSync with array args (no shell), so the
+  // targetPath + days values can't escape into shell injection.
+
+  fastify.get("/api/projects/activity-summary", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    const daysParam = Number(query["days"] ?? "30");
+    const days = Number.isFinite(daysParam) && daysParam > 0 && daysParam <= 90 ? Math.floor(daysParam) : 30;
+    if (!pathParam) {
+      return reply.code(400).send({ error: "path query parameter is required" });
+    }
+    const targetPath = resolvePath(pathParam);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    if (!existsSync(targetPath) || !statSync(targetPath).isDirectory()) {
+      return reply.code(404).send({ error: "Project directory does not exist" });
+    }
+
+    // Build date keys for the last N days (oldest first → today last).
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const dayKeys: string[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(today);
+      d.setUTCDate(d.getUTCDate() - i);
+      dayKeys.push(d.toISOString().slice(0, 10));
+    }
+
+    const counts: Record<string, number> = {};
+    for (const k of dayKeys) counts[k] = 0;
+
+    // Git commits — count per day from `git log --since=<N> days
+    // --format=%ad --date=short`. execFileSync with array args (no
+    // shell) prevents injection — targetPath + days are safe even if
+    // the path contains shell metacharacters.
+    if (existsSync(join(targetPath, ".git"))) {
+      try {
+        const out = execFileSync(
+          "git",
+          [
+            "-C", targetPath,
+            "log",
+            `--since=${String(days)}.days`,
+            "--format=%ad",
+            "--date=short",
+          ],
+          { timeout: 5000, stdio: "pipe", encoding: "utf-8" },
+        ).trim();
+        if (out.length > 0) {
+          for (const line of out.split("\n")) {
+            const day = line.trim();
+            if (day in counts) counts[day] = (counts[day] ?? 0) + 1;
+          }
+        }
+      } catch { /* no git log; commits stay 0 */ }
+    }
+
+    // Chat sessions — count files in <projectPath>/k/chat/ whose
+    // updatedAt falls within each day. (s130 phase A.6 reader-flip
+    // landed cycle 100, so per-project chat dirs are populated for
+    // s130-migrated projects.)
+    const chatDir = join(targetPath, "k", "chat");
+    if (existsSync(chatDir)) {
+      try {
+        const files = readdirSync(chatDir).filter((f) => f.endsWith(".json"));
+        for (const file of files) {
+          try {
+            const raw = readFileSync(join(chatDir, file), "utf-8");
+            const session = JSON.parse(raw) as { updatedAt?: string };
+            if (typeof session.updatedAt === "string") {
+              const day = session.updatedAt.slice(0, 10);
+              if (day in counts) counts[day] = (counts[day] ?? 0) + 1;
+            }
+          } catch { /* skip corrupt session file */ }
+        }
+      } catch { /* unreadable chat dir; chat counts stay 0 */ }
+    }
+
+    const dailyCounts = dayKeys.map((k) => counts[k] ?? 0);
+    const total = dailyCounts.reduce((a, b) => a + b, 0);
+
+    return reply.send({
+      path: targetPath,
+      days,
+      total,
+      dailyCounts,
+      dayKeys,
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // GET /api/projects/iterative-work/status — per-project IW snapshot
   // (private network only)
   // -----------------------------------------------------------------------
