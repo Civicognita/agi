@@ -209,7 +209,7 @@ export interface RuntimeStateDeps {
     getRuntimeInstallers(): RuntimeInstaller[];
     getRuntimeInstaller(language: string): RuntimeInstaller | undefined;
     getActions(scope?: { type: string; projectType?: string }): { pluginId: string; action: { id: string; label: string; description?: string; icon?: string; scope: { type: string; projectTypes?: string[] }; handler: { kind: string; command?: string; endpoint?: string; hookName?: string }; confirm?: string; group?: string; destructive?: boolean } }[];
-    getPanels(projectType?: string): { pluginId: string; panel: { id: string; label: string; projectTypes: string[]; widgets: unknown[]; position?: number } }[];
+    getPanels(projectType?: string): { pluginId: string; panel: { id: string; label: string; projectTypes: string[]; widgets: unknown[]; position?: number; mode?: "develop" | "operate" | "coordinate" | "insight" } }[];
     getSettingsSections(): { pluginId: string; section: { id: string; label: string; description?: string; configPath: string; fields: unknown[]; position?: number } }[];
     getSidebarSections(): { pluginId: string; section: { id: string; title: string; items: { label: string; to: string; icon?: string; exact?: boolean }[]; position?: number } }[];
     getThemes(): { pluginId: string; theme: { id: string; name: string; description?: string; dark: boolean; properties: Record<string, string> } }[];

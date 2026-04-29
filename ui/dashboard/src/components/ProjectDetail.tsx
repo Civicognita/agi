@@ -145,7 +145,11 @@ export function ProjectDetail({
     "security": "insight",
   };
   const tabBelongsToMode = (tabId: string): boolean => {
-    if (tabId.startsWith("plugin-")) return currentMode === "coordinate";
+    if (tabId.startsWith("plugin-")) {
+      const panelId = tabId.slice("plugin-".length);
+      const panel = pluginPanels.find((p) => p.id === panelId);
+      return ((panel?.mode ?? "coordinate") as string) === currentMode;
+    }
     return TAB_MODES[tabId] === currentMode;
   };
   // Auto-switch activeTab when mode changes if the current tab is no
@@ -457,9 +461,11 @@ export function ProjectDetail({
           {!isCoreFork && tabBelongsToMode("mcp") && project.projectType?.hasCode && (
             <TabsTrigger value="mcp">MCP</TabsTrigger>
           )}
-          {!isCoreFork && currentMode === "coordinate" && pluginPanels.map((p) => (
-            <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
-          ))}
+          {!isCoreFork && pluginPanels
+            .filter((p) => (p.mode ?? "coordinate") === currentMode)
+            .map((p) => (
+              <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
+            ))}
           {!isCoreFork && tabBelongsToMode("security") && project.projectType?.hasCode && (
             <TabsTrigger value="security">Security</TabsTrigger>
           )}

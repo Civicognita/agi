@@ -1049,6 +1049,8 @@ export interface PluginPanel {
   projectTypes: string[];
   widgets: PanelWidget[];
   position?: number;
+  /** Workspace mode bucket (s134 t517). Unset defaults to "coordinate". */
+  mode?: "develop" | "operate" | "coordinate" | "insight";
 }
 
 export interface PluginSettingsSection {

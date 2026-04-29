@@ -353,6 +353,12 @@ export interface ProjectPanelDefinition {
   projectTypes: string[];
   widgets: PanelWidget[];
   position?: number;
+  /**
+   * Workspace mode this panel belongs to (s134 t517 — projects-ux-v2 mockup B).
+   * Determines which mode-bucket renders the panel's tab. Unset defaults to
+   * "coordinate" on the consumer side per the projects-ux-v2 README pre-pick rule.
+   */
+  mode?: "develop" | "operate" | "coordinate" | "insight";
 }
 
 // ---------------------------------------------------------------------------
