@@ -28,6 +28,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { migrateChatSessionsForProject } from "./chat-history-migration.js";
 
 /**
  * Convert an absolute project path to a filesystem-safe slug.
@@ -117,6 +118,10 @@ export function migrateProjectConfig(projectPath: string): {
   to: string;
   error?: string;
   scaffolded?: string[];
+  /** Count of chat sessions migrated from `~/.agi/chat-history/` to
+   *  `<projectPath>/k/chat/`. Populated only when project config
+   *  migration occurred (s130 t518 slice 1). */
+  chatSessionsMigrated?: number;
 } {
   const newPath = newProjectConfigPath(projectPath);
   const oldPath = legacyProjectConfigPath(projectPath);
@@ -129,7 +134,19 @@ export function migrateProjectConfig(projectPath: string): {
     // chat-history, knowledge index, etc.) always find their target
     // dirs ready.
     const { created } = scaffoldProjectFolders(projectPath);
-    return { migrated: true, from: oldPath, to: newPath, scaffolded: created };
+    // Migrate any project-scoped chat sessions from the global dir
+    // into the new <projectPath>/k/chat/. Idempotent — if this is a
+    // re-run, the chat helper skips already-copied sessions. Errors
+    // here are non-fatal — the project config migration already
+    // succeeded.
+    const chatResult = migrateChatSessionsForProject(projectPath);
+    return {
+      migrated: true,
+      from: oldPath,
+      to: newPath,
+      scaffolded: created,
+      chatSessionsMigrated: chatResult.migrated,
+    };
   } catch (e) {
     return {
       migrated: false,
