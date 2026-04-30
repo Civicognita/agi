@@ -103,4 +103,57 @@ test.describe("Project workspace mode picker (s134 t517)", () => {
     await expect(page.getByTestId("project-mode-insight")).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByTestId("project-mode-operate")).toHaveAttribute("aria-pressed", "false");
   });
+
+  // -----------------------------------------------------------------------
+  // Cycle 146 — slice 5b/5c shipped pieces verification.
+  // -----------------------------------------------------------------------
+
+  test("sub-surface label updates with active mode (slice 5a/5b)", async ({ page }) => {
+    const found = await navigateToFullModeProject(page);
+    test.skip(!found, "no full-mode project available");
+
+    // Default: develop mode → label reads "develop ›"
+    const label = page.getByTestId("project-sub-surface-label");
+    await expect(label).toBeVisible();
+    await expect(label).toHaveText(/develop/i);
+
+    // Switch to operate; label should update.
+    await page.getByTestId("project-mode-operate").click();
+    await expect(label).toHaveText(/operate/i);
+  });
+
+  test("Canvas section header reflects active sub-surface (slice 5c phase 1)", async ({ page }) => {
+    const found = await navigateToFullModeProject(page);
+    test.skip(!found, "no full-mode project available");
+
+    // Default tab in develop mode is one of: details/files/repository/environment.
+    // The Canvas header reads "Canvas · {Label}" — assert the label matches one
+    // of the develop-mode tab labels.
+    const header = page.getByTestId("project-canvas-header");
+    await expect(header).toBeVisible();
+    await expect(header).toHaveText(/Canvas · (Details|Editor|Repository|Environment)/);
+
+    // Click another tab (Repository) — header should update if Repository tab exists.
+    const repoTab = page.getByRole("tab", { name: "Repository" });
+    if (await repoTab.count() > 0) {
+      await repoTab.click();
+      await expect(header).toHaveText(/Canvas · Repository/);
+    }
+  });
+
+  test("flyout-shell wraps Canvas + Chat aside (slice 5c phase 2)", async ({ page }) => {
+    const found = await navigateToFullModeProject(page);
+    test.skip(!found, "no full-mode project available");
+
+    // The flyout-shell wrapper must be present.
+    await expect(page.getByTestId("project-flyout-shell")).toBeVisible();
+
+    // The chat aside is rendered (DOM-present); visibility depends on viewport
+    // width because of `hidden lg:flex`. Default Playwright viewport is 1280×720
+    // which is lg+, so the aside should be visible.
+    const aside = page.getByTestId("project-chat-aside");
+    await expect(aside).toBeAttached();
+    // Phase-2 placeholder copy mentions slice 5c phase 3.
+    await expect(aside).toContainText(/slice 5c phase 3/i);
+  });
 });
