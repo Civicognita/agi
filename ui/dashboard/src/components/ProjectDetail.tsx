@@ -60,6 +60,12 @@ export interface ProjectDetailProps {
   onOpenMagicApp?: (appId: string, projectPath: string) => Promise<void>;
 }
 
+// s134 t517 slice 5b — Sub-surface pill class. Overrides react-fancy
+// Tabs underline-variant defaults via tailwind-merge so the sub-surface
+// row matches mockup B's `.sub-surface .sub` styling. Active state is
+// driven by aria-selected which TabsTab sets on the underlying button.
+const SUB_PILL_CLASS = "border-b-0 px-2 py-1 text-[12px] font-medium normal-case rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-secondary/40 [&[aria-selected=true]]:bg-yellow [&[aria-selected=true]]:text-black [&[aria-selected=true]]:font-semibold [&[aria-selected=true]]:hover:bg-yellow [&[aria-selected=true]]:hover:text-black";
+
 export function ProjectDetail({
   projects, onUpdate, updating, onDelete, deleting, onRefresh, onOpenChat, theme,
   hostingStatus, onHostingConfigure, onHostingRestart,
@@ -487,54 +493,57 @@ export function ProjectDetail({
         );
       })()}
 
-      {/* Sub-surface picker (s134 t517 slice 5a — projects-ux-v2 mockup B
-          lines 138-145). Reads as subordinate to the mode picker via the
-          "<Mode> ›" prefix label, mirroring the mockup's visual
-          hierarchy: top-level mode picker → secondary sub-surface picker
-          → canvas content. The same filtered tab set as before; only the
-          chrome changes. Slice 5b will add Dependencies and reconsider
-          Details. */}
-      {!isCoreFork && (
-        <div className="flex items-center gap-2 mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">
-          <span className="font-semibold">{currentMode}</span>
-          <span>›</span>
-        </div>
-      )}
+      {/* s134 t517 slice 5b — Sub-surface pill restyle. Replaces the
+          underline TabsList chrome with the mockup B `.sub-surface` pill
+          row: 12px text, 4×8 padding, rounded-md, yellow active fill on
+          black, muted inactive. Label `<Mode> ›` lives inline (no longer
+          a separate row). Core forks fall back to the original
+          underline TabsList because they have no mode picker.
 
-      {/* Aionima core forks get a restricted tab set. No Details,
-          hosting, environment, or plugin tabs — those projects are
-          source trees users contribute PRs against, not deployables. */}
+          The active state styling uses tailwind arbitrary-attribute
+          variants `[&[aria-selected=true]]:...` to override the
+          react-fancy underline-variant defaults via tailwind-merge. */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
-        <TabsList variant="line">
-          {!isCoreFork && tabBelongsToMode("details") && <TabsTrigger value="details">Details</TabsTrigger>}
-          {(isCoreFork || tabBelongsToMode("files")) && <TabsTrigger value="files">Editor</TabsTrigger>}
-          {(isCoreFork || tabBelongsToMode("repository")) && <TabsTrigger value="repository">Repository</TabsTrigger>}
-          {!isCoreFork && tabBelongsToMode("hosting") && onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
-            <TabsTrigger value="hosting">Hosting</TabsTrigger>
-          )}
-          {!isCoreFork && tabBelongsToMode("environment") && project.projectType?.hasCode && (
-            <TabsTrigger value="environment">Environment</TabsTrigger>
-          )}
-          {!isCoreFork && tabBelongsToMode("magic-apps") && <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>}
-          {!isCoreFork && tabBelongsToMode("taskmaster") && <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>}
-          {!isCoreFork && tabBelongsToMode("iterative-work") && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
-            <TabsTrigger value="iterative-work">Iterative Work</TabsTrigger>
-          )}
-          {!isCoreFork && tabBelongsToMode("mcp") && project.projectType?.hasCode && (
-            <TabsTrigger value="mcp">MCP</TabsTrigger>
-          )}
-          {!isCoreFork && pluginPanels
-            .filter((p) => (p.mode ?? "coordinate") === currentMode)
-            .map((p) => (
-              <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
-            ))}
-          {!isCoreFork && tabBelongsToMode("security") && project.projectType?.hasCode && (
-            <TabsTrigger value="security">Security</TabsTrigger>
-          )}
-          {!isCoreFork && tabBelongsToMode("activity") && (
-            <TabsTrigger value="activity" data-testid="project-tab-activity">Activity</TabsTrigger>
-          )}
-        </TabsList>
+        {isCoreFork ? (
+          <TabsList>
+            <TabsTrigger value="files">Editor</TabsTrigger>
+            <TabsTrigger value="repository">Repository</TabsTrigger>
+          </TabsList>
+        ) : (
+          <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border flex-wrap" data-testid="project-sub-surface">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold whitespace-nowrap pr-1" data-testid="project-sub-surface-label">{currentMode} ›</span>
+            <TabsList className="border-b-0 gap-1 flex-wrap py-0">
+              {tabBelongsToMode("details") && <TabsTrigger value="details" className={SUB_PILL_CLASS}>Details</TabsTrigger>}
+              {tabBelongsToMode("files") && <TabsTrigger value="files" className={SUB_PILL_CLASS}>Editor</TabsTrigger>}
+              {tabBelongsToMode("repository") && <TabsTrigger value="repository" className={SUB_PILL_CLASS}>Repository</TabsTrigger>}
+              {tabBelongsToMode("hosting") && onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
+                <TabsTrigger value="hosting" className={SUB_PILL_CLASS}>Hosting</TabsTrigger>
+              )}
+              {tabBelongsToMode("environment") && project.projectType?.hasCode && (
+                <TabsTrigger value="environment" className={SUB_PILL_CLASS}>Environment</TabsTrigger>
+              )}
+              {tabBelongsToMode("magic-apps") && <TabsTrigger value="magic-apps" className={SUB_PILL_CLASS}>MagicApps</TabsTrigger>}
+              {tabBelongsToMode("taskmaster") && <TabsTrigger value="taskmaster" className={SUB_PILL_CLASS}>TaskMaster</TabsTrigger>}
+              {tabBelongsToMode("iterative-work") && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
+                <TabsTrigger value="iterative-work" className={SUB_PILL_CLASS}>Iterative Work</TabsTrigger>
+              )}
+              {tabBelongsToMode("mcp") && project.projectType?.hasCode && (
+                <TabsTrigger value="mcp" className={SUB_PILL_CLASS}>MCP</TabsTrigger>
+              )}
+              {pluginPanels
+                .filter((p) => (p.mode ?? "coordinate") === currentMode)
+                .map((p) => (
+                  <TabsTrigger key={p.id} value={`plugin-${p.id}`} className={SUB_PILL_CLASS}>{p.label}</TabsTrigger>
+                ))}
+              {tabBelongsToMode("security") && project.projectType?.hasCode && (
+                <TabsTrigger value="security" className={SUB_PILL_CLASS}>Security</TabsTrigger>
+              )}
+              {tabBelongsToMode("activity") && (
+                <TabsTrigger value="activity" className={SUB_PILL_CLASS} data-testid="project-tab-activity">Activity</TabsTrigger>
+              )}
+            </TabsList>
+          </div>
+        )}
 
         <TabsContent value="details" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <Card className="p-4">
