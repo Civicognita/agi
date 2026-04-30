@@ -62,7 +62,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Card } from "@/components/ui/card";
+import { Modal } from "@particle-academy/react-fancy";
 import { useConfig } from "@/hooks.js";
 import { cn } from "@/lib/utils";
 
@@ -292,7 +292,9 @@ function DevNotesModal() {
     if (index >= total) setIndex(total - 1);
   }, [total, index]);
 
-  // Keyboard navigation while modal is open.
+  // Arrow-key navigation while modal is open. Escape + focus-trap +
+  // backdrop-click are handled by the PAx Modal primitive (cycle 150
+  // refactor v0.4.428 — was hand-rolled before).
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
@@ -302,82 +304,55 @@ function DevNotesModal() {
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         setIndex((i) => (i < total - 1 ? i + 1 : 0));
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        ctx?.setOpen(false);
       }
     };
     window.addEventListener("keydown", handler);
     return () => { window.removeEventListener("keydown", handler); };
-  }, [open, total, ctx]);
+  }, [open, total]);
 
-  if (!ctx?.enabled || !open) return null;
-  const entry = ctx.entries[index];
-  if (!entry) return null;
+  if (!ctx?.enabled) return null;
+  const entry = total > 0 ? ctx.entries[index] : undefined;
 
   return (
-    <>
-      <div
-        aria-hidden="true"
-        className="fixed inset-0 z-[400] bg-black/40 backdrop-blur-sm"
-        onClick={() => { ctx.setOpen(false); }}
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="dev-notes-modal-title"
-        data-testid="dev-notes-modal"
-        className="fixed left-1/2 top-1/2 z-[401] -translate-x-1/2 -translate-y-1/2 w-[min(560px,92vw)] max-h-[80vh] overflow-hidden"
-        onClick={(e) => { e.stopPropagation(); }}
-      >
-        <Card className="p-0 shadow-2xl flex flex-col">
-          {/* Header */}
-          <div className="flex items-center justify-between gap-2 p-3 border-b border-border/50 bg-secondary/30">
-            <div className="flex items-center gap-2">
+    <Modal open={open && entry !== undefined} onClose={() => { ctx.setOpen(false); }} size="md">
+      {entry && (
+        <>
+          <Modal.Header>
+            <div className="flex items-center gap-2" data-testid="dev-notes-modal">
               <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-400 font-bold uppercase tracking-wider">
                 Dev Notes
               </span>
-              <h3 id="dev-notes-modal-title" className="text-[13px] font-semibold text-foreground">
+              <span className="text-[13px] font-semibold">
                 {index + 1} of {total}
                 {entry.scope && (
                   <span className="ml-2 text-muted-foreground font-normal">· {entry.scope}</span>
                 )}
-              </h3>
-            </div>
-            <button
-              type="button"
-              onClick={() => { ctx.setOpen(false); }}
-              aria-label="Close dev notes"
-              className="text-muted-foreground hover:text-foreground p-1 rounded cursor-pointer"
-              data-testid="dev-notes-modal-close"
-            >
-              <span aria-hidden="true">×</span>
-            </button>
-          </div>
-
-          {/* Body — current entry */}
-          <div
-            className={cn("p-4 border-l-4 flex-1 overflow-y-auto bg-secondary/10", KIND_ACCENT[entry.kind])}
-            data-testid="dev-notes-modal-entry"
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <span
-                className={cn(
-                  "text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider",
-                  KIND_LABEL_CLASS[entry.kind],
-                )}
-              >
-                {KIND_LABEL[entry.kind]}
               </span>
-              <span className="text-[14px] font-semibold text-foreground">{entry.heading}</span>
             </div>
-            <div className="text-[12px] text-muted-foreground leading-relaxed">
-              {entry.body}
-            </div>
-          </div>
+          </Modal.Header>
 
-          {/* Footer — nav */}
-          <div className="flex items-center justify-between gap-2 p-2 border-t border-border/50 bg-secondary/20 text-[11px]">
+          <Modal.Body
+            className={cn("p-4 border-l-4 max-h-[60vh] overflow-y-auto bg-secondary/10", KIND_ACCENT[entry.kind])}
+          >
+            <div data-testid="dev-notes-modal-entry">
+              <div className="flex items-center gap-2 mb-2">
+                <span
+                  className={cn(
+                    "text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider",
+                    KIND_LABEL_CLASS[entry.kind],
+                  )}
+                >
+                  {KIND_LABEL[entry.kind]}
+                </span>
+                <span className="text-[14px] font-semibold text-foreground">{entry.heading}</span>
+              </div>
+              <div className="text-[12px] text-muted-foreground leading-relaxed">
+                {entry.body}
+              </div>
+            </div>
+          </Modal.Body>
+
+          <Modal.Footer className="flex items-center justify-between gap-2 text-[11px]">
             <button
               type="button"
               onClick={() => { setIndex((i) => (i > 0 ? i - 1 : total - 1)); }}
@@ -399,10 +374,10 @@ function DevNotesModal() {
             >
               Next <span aria-hidden="true">→</span>
             </button>
-          </div>
-        </Card>
-      </div>
-    </>
+          </Modal.Footer>
+        </>
+      )}
+    </Modal>
   );
 }
 

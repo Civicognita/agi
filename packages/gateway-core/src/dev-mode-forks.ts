@@ -43,7 +43,8 @@ export interface CoreRepoSpec {
     | "react-fancy"
     | "fancy-code"
     | "fancy-sheets"
-    | "fancy-echarts";
+    | "fancy-echarts"
+    | "fancy-3d";
   /** Repo name on GitHub (NOT the slug — sometimes diverges, e.g. prime
    *  → aionima, id → agi-local-id). */
   upstream: string;
@@ -62,7 +63,8 @@ export interface CoreRepoSpec {
     | "reactFancyRepo"
     | "fancyCodeRepo"
     | "fancySheetsRepo"
-    | "fancyEchartsRepo";
+    | "fancyEchartsRepo"
+    | "fancy3dRepo";
 }
 
 export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
@@ -83,6 +85,7 @@ export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
   { slug: "fancy-code",    upstream: "fancy-code",    upstreamOrg: "Particle-Academy", displayName: "fancy-code",    configKey: "fancyCodeRepo" },
   { slug: "fancy-sheets",  upstream: "fancy-sheets",  upstreamOrg: "Particle-Academy", displayName: "fancy-sheets",  configKey: "fancySheetsRepo" },
   { slug: "fancy-echarts", upstream: "fancy-echarts", upstreamOrg: "Particle-Academy", displayName: "fancy-echarts", configKey: "fancyEchartsRepo" },
+  { slug: "fancy-3d",      upstream: "fancy-3d",      upstreamOrg: "Particle-Academy", displayName: "fancy-3d",      configKey: "fancy3dRepo" },
 ] as const);
 
 export interface ForkResolveResult {
