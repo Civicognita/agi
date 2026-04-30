@@ -18,6 +18,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import { Card } from "./ui/card.js";
 import { Button } from "./ui/button.js";
+import { DevNotes } from "./ui/dev-notes.js";
 import {
   fetchHFInstalledModels,
   fetchHFRunningModels,
@@ -146,7 +147,37 @@ export function ModelsTab() {
       <Card className="p-4 border-blue/30 bg-blue/5">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-[15px] font-semibold mb-1">Models</h2>
+            <div className="flex items-center gap-2 mb-1">
+              <h2 className="text-[15px] font-semibold">Models</h2>
+              <DevNotes title="Models tab — dev notes">
+                <DevNotes.Item kind="info" heading="Cycle 141 — By Provider section">
+                  Live per-provider model lists from `/api/providers/:id/models`. Per-provider fetch
+                  in parallel via Promise.all so a slow provider doesn't block siblings. Pill list
+                  capped at 12 with "+N more" overflow.
+                </DevNotes.Item>
+                <DevNotes.Item kind="info" heading="Cycle 142 — cloud REST /v1/models live">
+                  Anthropic + OpenAI now report live model lists when an API key is configured.
+                  OpenAI filtered to chat-capable id patterns (`gpt-*`/`o1-*`/`o3-*`/`o4-*`/`chatgpt-*`)
+                  to exclude whisper/dall-e/embeddings/tts/moderation.
+                </DevNotes.Item>
+                <DevNotes.Item kind="todo" heading="Cycle-129 sub-task 5 — plugin SDK adoption">
+                  Ollama + Lemonade providers should adopt the `defineProvider().fetchModels(fn)`
+                  SDK contract (cycle 139, v0.4.407). Currently the gateway has built-in switch
+                  logic for them in `getModelsForBuiltin`; moving to the plugin path generalizes
+                  to Linear/Jira-style PM providers in the future.
+                </DevNotes.Item>
+                <DevNotes.Item kind="todo" heading="Cycle-129 sub-task 6 — remove legacy per-runtime UIs">
+                  The old "load model" UI on the Ollama / Lemonade provider settings pages should
+                  redirect here once the plugin SDK adoption lands. Models tab becomes the single
+                  source of truth for model lifecycle.
+                </DevNotes.Item>
+                <DevNotes.Item kind="info" heading="HF marketplace stays separate">
+                  Discovery + initial download stays at `/hf-marketplace`; this tab manages the
+                  lifecycle of installed models (start/stop/uninstall) and shows what each
+                  Provider can serve.
+                </DevNotes.Item>
+              </DevNotes>
+            </div>
             <p className="text-[12px] text-muted-foreground leading-relaxed max-w-[60ch]">
               Single source of truth for installed local models. Download new models from the
               HF Marketplace; manage their lifecycle (start, stop, uninstall) here.

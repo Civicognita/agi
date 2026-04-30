@@ -15,6 +15,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, fetchIterativeWorkStatus, fetchIterativeWorkProgress } from "../api.js";
 import type { FileNode, IterativeWorkProjectStatus, IterativeWorkProgress } from "../api.js";
+import { DevNotes } from "@/components/ui/dev-notes";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
 import { RepoManager } from "./RepoManager.js";
@@ -373,6 +374,39 @@ export function ProjectDetail({
           return <span className={cn("inline-block w-2 h-2 rounded-full", cls)} title={`Container ${s}`} />;
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
+        <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="Cycles 144-148 — Canvas + Chat split (slice 5c phases 1-3)">
+            Mockup B's flyout-shell shape is in: Canvas section header reads `Canvas · {"{tab}"}`,
+            tabs sit on the left (flex-1), chat aside sits on the right (280px, lg+ only). The
+            aside shows iterative-work status (when eligible) + an Open chat CTA.
+          </DevNotes.Item>
+          <DevNotes.Item kind="todo" heading="Slice 5c phase 4 — chat content not yet in aside">
+            The actual chat thread + composer is still rendered inside the cycle-87 floating
+            ChatFlyout, NOT inside the workspace aside. Phase 4 moves that content into the
+            right panel and adds collapsible AccordionFlyout chrome.
+          </DevNotes.Item>
+          <DevNotes.Item kind="warning" heading="Chat panel close button desync (cycle 149 owner-flagged)">
+            Clicking X in the chat panel header collapses both AccordionFlyout sections to rail-only
+            but leaves the header chat-button highlighted as active. The two close triggers need
+            two-way binding via `onOpenChange`. Filed as comment on s134 t517.
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="Cycle 137 — sub-surface pill restyle (slice 5b)">
+            Mode picker pill row uses tailwind arbitrary-attribute variant
+            `[&[aria-selected=true]]` to override react-fancy underline-variant defaults via
+            tailwind-merge. Yellow active fill, muted hover inactive.
+          </DevNotes.Item>
+          <DevNotes.Item kind="todo" heading="Cage indicator (t517 item 6)">
+            Depends on s130 t515 phase B (chat-tool cage primitive — backlog). When chat is
+            project-bound, a small "Tools caged to this project" pill appears in the chat header.
+          </DevNotes.Item>
+          <DevNotes.Item kind="warning" heading="Project folder restructure incoming (s140)">
+            Each project will move to {"{k/, repos/, chat/, sandbox/}"} at the project root with a
+            single root `project.json` config (project- + repo-config combined). Stacks attach to
+            individual repos, not to the project. Multi-repo single-container hosting UI extends
+            with per-repo {"{config, start, dev, stack-actions}"} surfaces. Migration runs as a
+            dry-run report first; no file moves until owner sign-off.
+          </DevNotes.Item>
+        </DevNotes>
         {project.category && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground uppercase tracking-wider font-medium" title={`Category: ${project.category}`}>
             {project.category}

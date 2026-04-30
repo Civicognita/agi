@@ -11,6 +11,7 @@ import { Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DevNotes } from "@/components/ui/dev-notes";
 import { SACRED_PROJECTS, PAX_SACRED_PROJECTS, isSacredProject, isPaxProject, matchSacredProject, matchPaxProjects } from "@/lib/sacred-projects.js";
 import { Table } from "@particle-academy/react-fancy";
 import { fetchProjectActivitySummary, type ProjectActivitySummary } from "../api.js";
@@ -132,7 +133,40 @@ export function Projects({
     <div>
       {/* Header */}
       <div className="flex items-center justify-between mb-5">
-        <h2 className="text-xl font-bold text-foreground">Projects</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold text-foreground">Projects</h2>
+          <DevNotes title="Projects browser — dev notes">
+            <DevNotes.Item kind="info" heading="Cycle 136 — click-to-expand row tray (mockup B)">
+              Each row expands to a 4-quadrant grid (Repos / Stacks / Aion context / Knowledge) +
+              a 5-button action row (Open workspace / Open chat / Configure repos / Manage stacks /
+              Disable hosting). Click the chevron at the row end to expand.
+            </DevNotes.Item>
+            <DevNotes.Item kind="info" heading="Cycle 134 — Health column (✓ / ⚠ / —)">
+              Hosting health surfaced as a compact icon column. ✓ green = container running &
+              reachable. ⚠ amber = degraded. ⚠ red = error. — = not hosted.
+            </DevNotes.Item>
+            <DevNotes.Item kind="info" heading="Cycle 133 — Tynn column">
+              `open|doing` two-tone counts per project. **Currently shows `—` for all projects** —
+              backend population deferred to PM-Lite slice (s139 forthcoming). The reframe today
+              shifts this from a remote-tynn fetch to a local PM-Lite store read.
+            </DevNotes.Item>
+            <DevNotes.Item kind="todo" heading="PM-Lite kanban incoming (s139)">
+              The Tynn column in this browser will populate from the local PM-Lite store once
+              s139 ships. The PM-Lite kanban itself surfaces in the Operate tab inside each
+              project's workspace. Codename was tynn-lite; user-facing name is PM-Lite.
+            </DevNotes.Item>
+            <DevNotes.Item kind="warning" heading="Project folder structure migrating (s140)">
+              All non-sacred projects will be restructured to {"{k/, repos/, chat/, sandbox/}"} at
+              the project root with a single `project.json` config file at the root holding both
+              project- and per-repo-config. Migration runs as a dry-run report first; no file
+              moves until owner sign-off.
+            </DevNotes.Item>
+            <DevNotes.Item kind="deferred" heading="COA chain dots in Knowledge column">
+              Per cycle-128 audit, the Knowledge column should also show a small COA-chain
+              indicator (deferred until the COA aggregator lands).
+            </DevNotes.Item>
+          </DevNotes>
+        </div>
         <div className="flex gap-2 flex-wrap items-center">
           {/* s130 t516 slice 1 — list/grid view toggle */}
           <div className="inline-flex border border-border rounded-md overflow-hidden" data-testid="projects-view-toggle">
