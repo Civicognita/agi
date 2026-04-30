@@ -208,6 +208,10 @@ papa.ai.on {
     expect(projSection).toContain("503");
     expect(projSection).toContain("Container not running");
     expect(projSection).toContain("my-app");
+    // Content-Type header MUST be set inside handle @5xx — Caddy's
+    // `respond` defaults to text/plain, which renders the offline
+    // HTML as raw source. Cycle-122 owner-reported regression.
+    expect(projSection).toContain('header Content-Type "text/html; charset=utf-8"');
   });
 
   it("uses the provided name in the offline page when name differs from hostname", () => {

@@ -336,6 +336,10 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
     blocks.push(`    handle_errors {`);
     blocks.push(`        @5xx expression \`{http.error.status_code} >= 500\``);
     blocks.push(`        handle @5xx {`);
+    // `respond` defaults to text/plain, which renders the offline HTML
+    // as raw source in browsers (cycle-122 owner-reported bug). Set
+    // Content-Type explicitly so the styled card renders.
+    blocks.push(`            header Content-Type "text/html; charset=utf-8"`);
     blocks.push(`            respond \`${offlineHtml}\` 503`);
     blocks.push(`        }`);
     blocks.push(`    }`);
