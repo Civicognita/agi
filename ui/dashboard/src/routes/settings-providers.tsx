@@ -798,20 +798,6 @@ export default function SettingsProvidersPage() {
 
   return (
     <div className="space-y-6">
-      {/* Disclaimer banner — visual design discipline (mockup is layout, not contract) */}
-      <div className="px-4 py-3 rounded-lg border-l-4 border-amber-400 border border-amber-400/30 bg-amber-400/5 text-[12.5px] leading-relaxed">
-        <strong className="text-amber-400 uppercase tracking-wider text-[11px]">
-          ⚠ Implementation in progress
-        </strong>
-        <p className="mt-1 text-foreground">
-          This is the first slice of the Providers route. Catalog rendering, off-grid toggle, and
-          active-Provider highlight ship in v0.4.208. Mission Control hero, cost-mode dial,
-          Runtimes strip, decision feed, and what-if simulator land in follow-up cycles. See
-          <code className="bg-background px-1.5 py-0.5 rounded mx-1 text-[11px]">tynn s111</code>
-          for the task chain.
-        </p>
-      </div>
-
       {/* Page head */}
       <div className="flex items-end justify-between gap-8 flex-wrap">
         <div>
