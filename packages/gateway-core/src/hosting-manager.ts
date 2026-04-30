@@ -157,6 +157,13 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
   const CUSTOM_BEGIN = "# --- BEGIN CUSTOM ---";
   const CUSTOM_END = "# --- END CUSTOM ---";
 
+  // Caddy's `tls internal` defaults to ~12h cert lifetime. Owner directive
+  // 2026-04-29 cycle 124: bump local-CA cert lifetime to 7 days for less
+  // renewal churn during long-running development sessions. Caddy auto-renews
+  // when ~1/3 lifetime remains (~5 days post-issue) and on every reload —
+  // natural cadence accepted; no daily-reload timer needed.
+  const TLS_INTERNAL = `tls internal { lifetime 168h }`;
+
   // Extract the user-editable CUSTOM block from the existing Caddyfile.
   let customBlock = "";
   if (opts.existingCaddyfile) {
@@ -201,7 +208,7 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
   // Gateway (dashboard) — reached by Caddy-on-aionima via the host bridge.
   const gatewayDomains = [opts.baseDomain, ...(opts.domainAliases ?? [])].join(", ");
   blocks.push(`${gatewayDomains} {`);
-  blocks.push(`    tls internal`);
+  blocks.push(`    ${TLS_INTERNAL}`);
   blocks.push(`    reverse_proxy ${gw}`);
   blocks.push(`}\n`);
 
@@ -217,7 +224,7 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
     .map((d) => `https://${d} https://*.${d}`)
     .join(" ");
   blocks.push(`db.${opts.baseDomain} {`);
-  blocks.push(`    tls internal`);
+  blocks.push(`    ${TLS_INTERNAL}`);
   blocks.push(`    header -X-Frame-Options`);
   blocks.push(`    header -Content-Security-Policy`);
   blocks.push(`    header Content-Security-Policy "frame-ancestors 'self' ${whodbFrameOrigins}"`);
@@ -231,7 +238,7 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
     const idContainer = opts.idService.containerName ?? "agi-local-id";
     const idInternalPort = opts.idService.port ?? 3200;
     blocks.push(`${idSubdomain}.${opts.baseDomain} {`);
-    blocks.push(`    tls internal`);
+    blocks.push(`    ${TLS_INTERNAL}`);
     blocks.push(`    reverse_proxy ${idContainer}:${String(idInternalPort)}`);
     blocks.push(`}\n`);
   }
@@ -251,7 +258,7 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
       target = `host.containers.internal:${String(route.target)}`;
     }
     blocks.push(`${fqdn} {`);
-    blocks.push(`    tls internal`);
+    blocks.push(`    ${TLS_INTERNAL}`);
     blocks.push(`    reverse_proxy ${target}`);
     blocks.push(`}\n`);
   }
@@ -324,7 +331,7 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
       projectUpstream = `host.containers.internal:${String(project.port ?? 0)}`;
     }
     blocks.push(`${fqdn} {`);
-    blocks.push(`    tls internal`);
+    blocks.push(`    ${TLS_INTERNAL}`);
     blocks.push(`    reverse_proxy ${projectUpstream}`);
     // `handle_errors <status_codes...>` (filter form) needs Caddy 2.8+.
     // Plenty of deployments are still on 2.6.x which rejects that syntax

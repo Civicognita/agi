@@ -68,6 +68,24 @@ db.ai.on {
     expect(out).toContain("reverse_proxy agi-whodb:5050");
   });
 
+  it("emits 7-day TLS lifetime on every internal cert (s130 t515 B2 cycle 124)", () => {
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      idService: { enabled: true },
+      pluginSubdomainRoutes: [{ subdomain: "myplugin", target: 5000, containerName: "agi-myplugin" }],
+      projects: [{ hostname: "my-app", port: 4001, containerName: "agi-my-app", internalPort: 3000 }],
+    });
+    // Owner directive cycle 124: 7-day cert lifetime via `tls internal { lifetime 168h }`
+    // Default Caddy local-CA is ~12h; longer lifetime cuts renewal churn.
+    const lifetimeMatches = out.match(/tls internal \{ lifetime 168h \}/g) ?? [];
+    // gateway + db + id + plugin + project = 5 sites that emit `tls internal`
+    expect(lifetimeMatches.length).toBe(5);
+    // No leftover bare `tls internal` (without lifetime) — would mean a
+    // site forgot the constant.
+    expect(out).not.toMatch(/tls internal$\n/m);
+    expect(out).not.toMatch(/tls internal\s*$/m);
+  });
+
   it("honors a custom whodbContainerName when provided", () => {
     const out = buildCaddyfileContent({ ...baseOpts, whodbContainerName: "agi-whodb-dev" });
     expect(out).toContain("reverse_proxy agi-whodb-dev:8080");
