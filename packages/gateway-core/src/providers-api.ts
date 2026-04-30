@@ -250,6 +250,99 @@ function buildBaseCatalog(config: AionimaConfig): ProviderCatalogEntry[] {
   return entries.map((e) => ({ ...e, timeoutMultiplier: timeoutMultiplierForTier(e.tier) }));
 }
 
+/**
+ * Live-model-list shape returned by GET /api/providers/:id/models. Mirrors
+ * `ProviderModelInfo` from @agi/sdk (cycle 139 SDK contract). Built-in
+ * providers use the same shape so plugin-contributed providers and built-ins
+ * are interchangeable from the dashboard's perspective.
+ */
+export interface ProviderModelInfo {
+  id: string;
+  label?: string;
+  contextLength?: number;
+  capabilities?: { vision?: boolean; tools?: boolean; reasoning?: boolean };
+}
+
+/**
+ * Fetch the live model list for a built-in Provider. Returns null when the
+ * Provider is unreachable, unauthenticated, or doesn't expose a list endpoint
+ * (cycle 129 directive: "cloud Provider plugins need to provide a model list
+ * or subscription/endpoint to get the list" — same null-on-unavailable
+ * semantics as the SDK getModels contract).
+ *
+ * Must not throw — wrap network errors and return null. Cloud providers
+ * (anthropic, openai) currently return null until the cloud-provider list
+ * endpoints get wired (cycle 141+). The aion-micro entry returns its
+ * single fine-tuned LoRA-merged GGUF.
+ */
+export async function getModelsForBuiltin(
+  id: string,
+  config: AionimaConfig,
+): Promise<ProviderModelInfo[] | null> {
+  const cfgRoot = config as Record<string, unknown>;
+  const providers = (cfgRoot["providers"] as Record<string, unknown> | undefined) ?? {};
+
+  switch (id) {
+    case "aion-micro":
+      // aion-micro is served via Lemonade (Phase K.4) — its single model is
+      // wishborn/aion-micro-v1, the LoRA-merged GGUF on HuggingFace Hub.
+      return [{
+        id: "wishborn/aion-micro-v1",
+        label: "aion-micro v1",
+        capabilities: { tools: false, vision: false, reasoning: false },
+      }];
+
+    case "ollama": {
+      const ollamaCfg = (providers["ollama"] as { baseUrl?: string } | undefined) ?? {};
+      const base = ollamaCfg.baseUrl ?? "http://127.0.0.1:11434";
+      try {
+        const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(5_000) });
+        if (!res.ok) return null;
+        const json = await res.json() as { models?: Array<{ name?: string; size?: number }> };
+        if (!Array.isArray(json.models)) return null;
+        return json.models
+          .filter((m): m is { name: string; size?: number } => typeof m?.name === "string")
+          .map((m) => ({ id: m.name, label: m.name }));
+      } catch {
+        return null;
+      }
+    }
+
+    case "lemonade": {
+      const lemonadeCfg = (providers["lemonade"] as { baseUrl?: string } | undefined) ?? {};
+      const base = lemonadeCfg.baseUrl ?? "http://127.0.0.1:13305";
+      try {
+        const res = await fetch(`${base}/api/v1/models`, { signal: AbortSignal.timeout(5_000) });
+        if (!res.ok) return null;
+        const json = await res.json() as { data?: Array<{ id?: string }> };
+        if (!Array.isArray(json.data)) return null;
+        return json.data
+          .filter((m): m is { id: string } => typeof m?.id === "string")
+          .map((m) => ({ id: m.id, label: m.id }));
+      } catch {
+        return null;
+      }
+    }
+
+    case "huggingface":
+      // HF local models are surfaced via the HF API (/api/hf/models). Keep
+      // that as the dedicated path until cycle 142+ consolidation; surfacing
+      // here would require importing the model index reader and pulling in
+      // a circular dep. Returning null tells callers "use /api/hf/models".
+      return null;
+
+    case "anthropic":
+    case "openai":
+      // Cloud providers — null until cycle 141+ wires REST /v1/models calls
+      // with the configured API key. Static catalog still works; this
+      // endpoint just returns null so the Models tab knows to fall back.
+      return null;
+
+    default:
+      return null;
+  }
+}
+
 function getActiveState(config: AionimaConfig): ActiveProviderState {
   const cfgRoot = config as Record<string, unknown>;
   const agent = (cfgRoot["agent"] as Record<string, unknown> | undefined) ?? {};
@@ -417,6 +510,36 @@ export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApi
       return reply.code(404).send({ error: `unknown provider: ${req.params.id}` });
     }
     return entry;
+  });
+
+  /**
+   * GET /api/providers/:id/models — live model list for a Provider.
+   *
+   * Cycle 129 directive: cloud Providers must surface their model list
+   * dynamically so the Models tab on the Provider page is the single source
+   * of truth. Cycle 140 wires the local providers (Ollama, Lemonade,
+   * aion-micro) via this endpoint; cloud providers (anthropic, openai)
+   * follow in cycle 141+ when REST /v1/models calls land.
+   *
+   * Response shape:
+   *   { models: ProviderModelInfo[] | null }
+   *
+   * `null` means "Provider unreachable, unauthenticated, or doesn't expose a
+   * list endpoint" — caller should fall back to the static catalog
+   * `defaultModel` or display a "no models available" empty state.
+   *
+   * Returns 404 when the id isn't in the canonical catalog (typo guard).
+   */
+  app.get<{ Params: { id: string } }>("/api/providers/:id/models", async (req, reply) => {
+    const config = deps.readConfig();
+    if (!KNOWN_PROVIDER_IDS.has(req.params.id)) {
+      return reply.code(404).send({
+        error: `unknown provider: ${req.params.id}`,
+        validIds: Array.from(KNOWN_PROVIDER_IDS),
+      });
+    }
+    const models = await getModelsForBuiltin(req.params.id, config);
+    return { models };
   });
 
   /**

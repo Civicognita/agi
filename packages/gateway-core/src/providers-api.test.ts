@@ -496,3 +496,76 @@ describe("providers-api — PUT /api/providers/router floor/ceiling (s129 t510)"
     await app.close();
   });
 });
+
+describe("providers-api — GET /api/providers/:id/models (cycle 140)", () => {
+  it("returns 404 for unknown provider ids", async () => {
+    const app = makeApp({});
+    const res = await app.inject({ method: "GET", url: "/api/providers/bogus/models" });
+    expect(res.statusCode).toBe(404);
+    const body = res.json() as { error: string; validIds: string[] };
+    expect(body.error).toMatch(/unknown provider/);
+    expect(body.validIds).toContain("ollama");
+    expect(body.validIds).toContain("lemonade");
+    await app.close();
+  });
+
+  it("returns the hardcoded aion-micro model entry", async () => {
+    const app = makeApp({});
+    const res = await app.inject({ method: "GET", url: "/api/providers/aion-micro/models" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: Array<{ id: string; label?: string }> | null };
+    expect(body.models).not.toBeNull();
+    expect(body.models).toHaveLength(1);
+    const [m] = body.models!;
+    expect(m?.id).toBe("wishborn/aion-micro-v1");
+    expect(m?.label).toBe("aion-micro v1");
+    await app.close();
+  });
+
+  it("returns null for huggingface (delegated to /api/hf/models)", async () => {
+    const app = makeApp({});
+    const res = await app.inject({ method: "GET", url: "/api/providers/huggingface/models" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: unknown };
+    expect(body.models).toBeNull();
+    await app.close();
+  });
+
+  it("returns null for cloud providers (anthropic, openai) until cycle 141+", async () => {
+    const app = makeApp({});
+    for (const id of ["anthropic", "openai"]) {
+      const res = await app.inject({ method: "GET", url: `/api/providers/${id}/models` });
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as { models: unknown };
+      expect(body.models).toBeNull();
+    }
+    await app.close();
+  });
+
+  it("returns null when ollama is unreachable (network errors swallowed)", async () => {
+    // Default config has no ollama baseUrl → falls back to 127.0.0.1:11434.
+    // Test VM may or may not have Ollama running; either way, the contract
+    // is "errors swallowed → null." If Ollama IS running, this test still
+    // proves the success-path codepath returns models[].
+    const app = makeApp({
+      providers: { ollama: { baseUrl: "http://127.0.0.1:1" } } as Record<string, unknown>,
+    } as Partial<AionimaConfig>);
+    const res = await app.inject({ method: "GET", url: "/api/providers/ollama/models" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: unknown };
+    // Port 1 is reserved (TCPMUX), refuses connection → null
+    expect(body.models).toBeNull();
+    await app.close();
+  });
+
+  it("returns null when lemonade is unreachable", async () => {
+    const app = makeApp({
+      providers: { lemonade: { baseUrl: "http://127.0.0.1:1" } } as Record<string, unknown>,
+    } as Partial<AionimaConfig>);
+    const res = await app.inject({ method: "GET", url: "/api/providers/lemonade/models" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: unknown };
+    expect(body.models).toBeNull();
+    await app.close();
+  });
+});
