@@ -200,6 +200,23 @@ agi channels test <id>  # test a channel (future)
 
 ---
 
+### agi project-migrate
+
+Run a project-folder migration script for a specific story-id. Each migration is idempotent; defaults to dry-run mode (read-only audit) so the report can be reviewed before any irreversible operation.
+
+```bash
+agi project-migrate s140 --dry-run    # audit current state vs target shape
+agi project-migrate s140 --execute    # NOT YET implemented (will run the migration)
+```
+
+**Available migrations.**
+
+- **s140** — Project folder restructure. Each non-sacred project moves to a flat top-level layout: `k/` + `repos/` + `chat/` + `sandbox/` + a single `project.json` config at the project root holding both project- and per-repo configuration. Stacks attach to repos rather than to projects. Sacred projects (Aionima five + PAx four) are skipped.
+
+The dry-run reports per-project: folder-shape diff, per-repo git state (clean/dirty/unpushed), current stack attachments to remap, and the sacred skip list.
+
+---
+
 ### agi scan
 
 Run a security scan against a project path (or any directory) through the gateway's `/api/security` HTTP API. Polls the scan to completion, renders findings grouped by severity, and exits with a CI-friendly code based on what was found.

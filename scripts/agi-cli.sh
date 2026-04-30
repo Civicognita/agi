@@ -1926,6 +1926,9 @@ cmd_help() {
   echo "  scan PATH       Run a security scan on PATH (sast|sca|secrets|config),"
   echo "                  poll until done, render findings; CI-friendly exit codes."
   echo "                  Subcmds: list, view <id>, cancel <id>"
+  echo "  project-migrate <id> [--dry-run|--execute]"
+  echo "                  Run a project-folder migration script. Currently available:"
+  echo "                  s140 — k/+repos/+chat/+sandbox/ layout + root project.json"
   echo "  setup           Interactive configuration wizard"
   echo "  setup-prompts   Configure persona and heartbeat prompts"
   echo "  setup-claude-hooks"
@@ -1965,6 +1968,25 @@ case "${1:-help}" in
   ollama)   shift; cmd_ollama "$@" ;;
   test-vm)  shift; cmd_test_vm "$@" ;;
   test)     shift; bash "$DEPLOY_DIR/scripts/agi-test.sh" "$@" ;;
+  project-migrate)
+    shift
+    storyId="${1:-}"
+    shift 2>/dev/null || true
+    if [ -z "$storyId" ]; then
+      err "agi project-migrate: missing story id"
+      echo "Usage: agi project-migrate <story-id> [--dry-run|--execute]" >&2
+      echo "Available migrations:" >&2
+      echo "  s140   Project folder restructure (k/ + repos/ + chat/ + sandbox/ + project.json)" >&2
+      exit 1
+    fi
+    script="$DEPLOY_DIR/scripts/migrate-projects-${storyId}.sh"
+    if [ ! -f "$script" ]; then
+      err "no migration script for ${storyId} at $script"
+      echo "Available migrations: ls -1 $DEPLOY_DIR/scripts/migrate-projects-*.sh 2>/dev/null" >&2
+      exit 1
+    fi
+    bash "$script" "$@"
+    ;;
   bash)     shift; cmd_bash "$@" ;;
   setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;
   setup-prompts) node "$DEPLOY_DIR/cli/dist/index.js" setup-prompts ;;
