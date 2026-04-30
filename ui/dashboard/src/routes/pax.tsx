@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import { Card } from "../components/ui/card";
 import { useIsTestVm } from "../hooks/useRuntimeMode";
 import { PAX_SACRED_PROJECTS } from "../lib/sacred-projects.js";
+import { DevNote } from "../components/ui/dev-notes";
 
 interface CoreForkStatus {
   slug: string;
@@ -85,6 +86,15 @@ export default function PaxPage(): JSX.Element {
     <div className="h-full overflow-y-auto p-4 max-w-4xl space-y-6" data-testid="pax-page">
       <div>
         <h1 className="text-[16px] font-semibold mb-1">PAx · ADF UI Primitives</h1>
+        <DevNote heading="Cycle 131 — /pax route + card link fix" kind="info" scope="pax">
+          PAx card on /projects used to navigate to /settings/gateway by mistake; cycle 131 added this
+          dedicated /pax route that mirrors /aionima with PAX_SACRED_PROJECTS as the filtered fork set.
+        </DevNote>
+        <DevNote heading="Cycle 1.5 docs link — contributing-to-adf-packages" kind="info" scope="pax">
+          When you hit a bug in react-fancy, fancy-code, fancy-sheets, or fancy-echarts: file an issue
+          in the corresponding Particle-Academy/&lt;repo&gt; AND a tynn story under PAx. Don't hand-roll
+          a workaround locally first. Loop documented at agi/docs/agents/contributing-to-adf-packages.md.
+        </DevNote>
         <p className="text-[12px] text-muted-foreground">
           The four Particle-Academy packages consumed by the dashboard, plugins, MApps, and locally-hosted apps:
           react-fancy, fancy-code, fancy-sheets, fancy-echarts. Same maintenance loop as Aionima — file issues

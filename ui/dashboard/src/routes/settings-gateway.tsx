@@ -13,6 +13,7 @@ import { OwnerSettings } from "@/components/settings/OwnerSettings.js";
 import { DevSettings } from "@/components/settings/DevSettings.js";
 import { GatewayNetworkSettings } from "@/components/settings/GatewayNetworkSettings.js";
 import { IdentitySettings } from "@/components/settings/IdentitySettings.js";
+import { DevNote } from "@/components/ui/dev-notes";
 import type { AionimaConfig } from "../types.js";
 
 // s135 — the deprecated Providers tab has been removed. Canonical
@@ -65,6 +66,19 @@ export default function SettingsGatewayPage() {
 
   return (
     <div className="flex flex-col">
+      <DevNote heading="Cycle 135 — Providers tab removed" kind="info" scope="settings/gateway">
+        Deprecated Providers tab removed from this page. Canonical Providers UX lives at /settings/providers
+        (Mission Control hero, range dial, escalation triggers, provider catalog shelf, Models tab).
+      </DevNote>
+      <DevNote heading="Contributing/Dev Mode gates DevNotes visibility" kind="info" scope="settings/gateway">
+        Toggle "Contributing" tab → enable Dev Mode. Notes only render when this is on. Production users
+        running the gateway never see DevNotes; you (with Contributing on) see them on every page+tab.
+      </DevNote>
+      <DevNote heading="Project folder restructure incoming (s140)" kind="warning" scope="settings/gateway">
+        After running `agi project-migrate s140 --execute`, this page's project list reflects the new
+        layout: every project gets {"{k/, repos/, chat/, sandbox/, project.json}"} at root. Stacks attach
+        per-repo (s141 follow-up). Sacred projects (Aionima 5 + PAx 4) untouched.
+      </DevNote>
       <SettingsSaveBar
         dirty={dirty}
         saving={configHook.saving}

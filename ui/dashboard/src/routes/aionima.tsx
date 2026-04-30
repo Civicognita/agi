@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { useIsTestVm } from "../hooks/useRuntimeMode";
+import { DevNote } from "../components/ui/dev-notes";
 
 interface CoreForkStatus {
   slug: string;
@@ -92,6 +93,14 @@ export default function AionimaPage(): JSX.Element {
     <div className="h-full overflow-y-auto p-4 max-w-4xl space-y-6" data-testid="aionima-page">
       <div>
         <h1 className="text-[16px] font-semibold mb-1">Aionima Development</h1>
+        <DevNote heading="Cycle 131 — overflow + page-fit fix" kind="info" scope="aionima">
+          Outer div has `h-full overflow-y-auto` so the per-fork list scrolls independently of the
+          dashboard chrome (was clipped at viewport in v0.4.390 and earlier).
+        </DevNote>
+        <DevNote heading="Aionima-collection consolidates 5 core repos (s119)" kind="info" scope="aionima">
+          Replaces per-core-repo project tiles with this single rolled-up view. Upstream alignment +
+          PR submission + MINT impact for the five sacred repos. PAx packages (4 more) live at /pax.
+        </DevNote>
         <p className="text-[12px] text-muted-foreground">
           Single consolidated view for the Aionima platform's core forks. Tracking
           upstream-alignment, PR submission, and MINT impact across the five core

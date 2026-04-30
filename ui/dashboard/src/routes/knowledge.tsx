@@ -10,6 +10,7 @@ import { fetchFile, fetchFileTree, saveFile } from "@/api.js";
 import type { FileNode } from "@/api.js";
 import { useRootContext } from "./root.js";
 import { useIsMobile } from "@/hooks.js";
+import { DevNote } from "@/components/ui/dev-notes";
 
 type TreeNodeData = { id: string; label: string; type: "file" | "folder"; ext?: string; children?: TreeNodeData[] };
 function mapNode(n: FileNode): TreeNodeData {
@@ -148,6 +149,16 @@ export default function KnowledgePage() {
         overflow: "hidden",
       }}
     >
+      <DevNote heading="PRIME knowledge editor — careful with edits" kind="warning" scope="knowledge">
+        This page edits files in `~/.aionima/` directly. Save writes synchronously; no undo beyond
+        Discard while the buffer is dirty. PRIME corpus changes feed Aion's system prompt at next
+        invocation — verify edits against the prime.md doctrine before saving.
+      </DevNote>
+      <DevNote heading="Per-project chat history is separate (s130)" kind="info" scope="knowledge">
+        Project-bound chat sessions live at `&lt;projectPath&gt;/chat/` (cycle 143 boot-time mass
+        migration). The s140 layout completes the move. This Knowledge page only edits the global
+        PRIME corpus, not per-project files.
+      </DevNote>
       {/* Sidebar — file tree */}
       <div
         style={{

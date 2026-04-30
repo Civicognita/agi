@@ -35,6 +35,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ModelsTab } from "@/components/ModelsTab";
+import { DevNote } from "@/components/ui/dev-notes";
 import {
   fetchProvidersCatalog,
   fetchActiveProvider,
@@ -802,6 +803,26 @@ export default function SettingsProvidersPage() {
       <div className="flex items-end justify-between gap-8 flex-wrap">
         <div>
           <h1 className="text-[28px] font-semibold tracking-tight">Providers</h1>
+          <DevNote heading="Cycle 129 directive — model management consolidation" kind="info" scope="settings/providers">
+            Models tab (cycle 141) is now the single UI source of truth for what each Provider can serve.
+            Cloud REST /v1/models live for anthropic + openai (cycle 142, requires API key). Ollama + Lemonade
+            populate from their daemons. HF goes through /api/hf/models still.
+          </DevNote>
+          <DevNote heading="Cycle 142 — OpenAI chat-id filter" kind="info" scope="settings/providers">
+            OpenAI's /v1/models returns ~70 entries including whisper/dall-e/embeddings/tts/moderation.
+            Filtered to chat-capable id patterns: gpt-*, o1-*, o3-*, o4-*, chatgpt-*. Update the regex
+            in providers-api.ts isOpenAIChatModel() when OpenAI ships new chat families.
+          </DevNote>
+          <DevNote heading="Plugin SDK adoption pending (cycle-129 sub-task 5)" kind="todo" scope="settings/providers">
+            Ollama + Lemonade providers should adopt the SDK contract `defineProvider().fetchModels(fn)`
+            (cycle 139, v0.4.407). Currently the gateway has built-in switch logic for them in
+            getModelsForBuiltin. Moving to the plugin path generalizes to Linear/Jira-style PM providers.
+          </DevNote>
+          <DevNote heading="Legacy per-runtime model UIs to remove (cycle-129 sub-task 6)" kind="todo" scope="settings/providers">
+            The old "load model" UI on Ollama / Lemonade provider settings pages should redirect to
+            the Models tab once the plugin SDK adoption lands. Models tab becomes the single source of
+            truth for model lifecycle (start/stop/uninstall).
+          </DevNote>
           <p className="text-muted-foreground mt-1 max-w-[56ch] text-[13.5px]">
             Aion's available brains. Each Provider is a catalog of models. The Agent Router picks
             the right Provider + model for each turn — you tell it how to prefer cost vs capability,
