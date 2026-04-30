@@ -24,8 +24,18 @@ import {
   uninstallHFModel,
   startHFModel,
   stopHFModel,
+  fetchProvidersCatalog,
+  fetchProviderModels,
 } from "../api.js";
-import type { HFInstalledModel, HFRunningModel } from "../types.js";
+import type { HFInstalledModel, HFRunningModel, ProviderCatalogEntry } from "../types.js";
+import type { ProviderModelInfo } from "../api.js";
+
+/** Per-Provider live model list state. Null = unavailable; [] = empty; populated = live. */
+interface ProviderModels {
+  provider: ProviderCatalogEntry;
+  models: ProviderModelInfo[] | null;
+  loading: boolean;
+}
 
 function formatBytes(b: number): string {
   if (b < 1024) return `${b}B`;
@@ -40,6 +50,9 @@ export function ModelsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  // Cycle 141 — by-provider live model lists. Each entry tracks loading +
+  // result; null result means unavailable/unauth/no list endpoint.
+  const [providerModels, setProviderModels] = useState<ProviderModels[]>([]);
 
   const refresh = async () => {
     setLoading(true);
@@ -58,7 +71,35 @@ export function ModelsTab() {
     }
   };
 
-  useEffect(() => { void refresh(); }, []);
+  // Cycle 141 — fetch the canonical catalog then live models per provider in
+  // parallel. Per-provider failures don't block siblings (each promise resolves
+  // independently into its own ProviderModels entry).
+  const refreshProviderModels = async () => {
+    try {
+      const catalog = await fetchProvidersCatalog();
+      // Seed loading state immediately so the UI shows skeleton placeholders
+      // while each fetch is in flight.
+      setProviderModels(
+        catalog.providers.map((p) => ({ provider: p, models: null, loading: true })),
+      );
+      // Fetch all in parallel; update each entry as it resolves.
+      await Promise.all(
+        catalog.providers.map(async (p) => {
+          const models = await fetchProviderModels(p.id).catch(() => null);
+          setProviderModels((prev) =>
+            prev.map((entry) =>
+              entry.provider.id === p.id ? { ...entry, models, loading: false } : entry,
+            ),
+          );
+        }),
+      );
+    } catch {
+      // Catalog fetch failed — leave the section empty rather than blocking
+      // the HF installed-models view.
+    }
+  };
+
+  useEffect(() => { void refresh(); void refreshProviderModels(); }, []);
 
   const runningSet = new Set(running.map((r) => r.modelId));
 
@@ -195,13 +236,80 @@ export function ModelsTab() {
         )}
       </Card>
 
-      <Card className="p-4 border-amber-400/30 bg-amber-400/5">
-        <h3 className="text-[13px] font-semibold mb-2 text-amber-400 uppercase tracking-wider">Coming next</h3>
-        <ul className="text-[12px] text-muted-foreground space-y-1 list-disc pl-5">
-          <li>Cloud providers (OpenAI, Anthropic, etc.) report their model lists here via plugin API</li>
-          <li>Ollama and Lemonade UIs lose their per-runtime model-install paths — those redirect here</li>
-          <li>Per-model attach-to-Provider mapping (which Provider serves which model)</li>
-        </ul>
+      {/* Cycle 141 — By-provider live model lists. Reads from /api/providers/:id/models
+          (cycle 140 endpoint). Per-provider null state shown as "unavailable" with
+          the reason inferable from the provider's tier (cloud → "Cloud API not yet
+          wired"; local → "Provider unreachable"). */}
+      <Card className="p-4" data-testid="models-tab-by-provider">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold">By Provider</h3>
+          <span className="text-[11px] text-muted-foreground">
+            {providerModels.filter((p) => p.models !== null).length}/{providerModels.length} reporting
+          </span>
+        </div>
+        {providerModels.length === 0 && (
+          <div className="text-sm text-muted-foreground py-4 text-center">Loading providers…</div>
+        )}
+        {providerModels.length > 0 && (
+          <div className="space-y-3">
+            {providerModels.map((entry) => {
+              const { provider: p, models, loading: pLoading } = entry;
+              return (
+                <div key={p.id} className="border-b border-border/40 pb-2 last:border-b-0 last:pb-0" data-testid={`provider-models-${p.id}`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px] font-semibold">{p.name}</span>
+                      <span
+                        className={
+                          p.tier === "cloud"
+                            ? "text-[10px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-medium"
+                            : p.tier === "floor"
+                              ? "text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-medium"
+                              : "text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground font-medium"
+                        }
+                      >
+                        {p.tier}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-muted-foreground">
+                      {pLoading ? "…" : models === null ? "unavailable" : `${models.length} model${models.length === 1 ? "" : "s"}`}
+                    </span>
+                  </div>
+                  {!pLoading && models !== null && models.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {models.slice(0, 12).map((m) => (
+                        <span
+                          key={m.id}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-secondary/60 font-mono text-muted-foreground"
+                          title={m.label ?? m.id}
+                        >
+                          {m.label ?? m.id}
+                        </span>
+                      ))}
+                      {models.length > 12 && (
+                        <span className="text-[10px] px-1.5 py-0.5 text-muted-foreground italic">
+                          +{models.length - 12} more
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {!pLoading && models === null && (
+                    <div className="text-[11px] text-muted-foreground italic">
+                      {p.tier === "cloud"
+                        ? "Cloud REST /v1/models not yet wired (cycle 141+)"
+                        : p.health === "no-key"
+                          ? "Configure API key to see models"
+                          : "Provider unreachable or no list endpoint"}
+                    </div>
+                  )}
+                  {!pLoading && models !== null && models.length === 0 && (
+                    <div className="text-[11px] text-muted-foreground italic">No models loaded</div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </Card>
     </div>
   );

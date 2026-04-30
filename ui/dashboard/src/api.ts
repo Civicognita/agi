@@ -487,6 +487,27 @@ export async function fetchActiveProvider(): Promise<ActiveProviderState> {
   return res.json() as Promise<ActiveProviderState>;
 }
 
+/** Live model info returned by GET /api/providers/:id/models (cycle 140). */
+export interface ProviderModelInfo {
+  id: string;
+  label?: string;
+  contextLength?: number;
+  capabilities?: { vision?: boolean; tools?: boolean; reasoning?: boolean };
+}
+
+/**
+ * GET /api/providers/:id/models — live model list per Provider (cycle 140).
+ * Returns null when the provider is unreachable, unauthenticated, or doesn't
+ * expose a list endpoint (cloud providers today). UI treats null as "fall
+ * back to static catalog defaultModel" or shows a status indicator.
+ */
+export async function fetchProviderModels(providerId: string): Promise<ProviderModelInfo[] | null> {
+  const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/models`);
+  if (!res.ok) return null;
+  const body = await res.json() as { models: ProviderModelInfo[] | null };
+  return body.models;
+}
+
 /** s111 t419 wire shape — recent routing decisions from AgentRouter ring
  *  buffer. ts is optional because the field was added in t419 backend slice;
  *  pre-stamp records (if any survive in memory across deploy) lack it. */
