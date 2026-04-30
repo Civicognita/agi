@@ -244,6 +244,10 @@ export interface BuildCaddyfileOptions {
     containerName?: string | null;
     internalPort?: number | null;
     name?: string;
+    /** s130 t515 B5 — non-default repos with externalPath get their own
+     *  handle_path block. Only repos with both port + externalPath are
+     *  routed; default repo serves on `/` via the catch-all reverse_proxy. */
+    repos?: Array<{ name: string; port: number; externalPath: string }>;
   }>;
   existingCaddyfile: string;
 }
@@ -457,6 +461,24 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
     }
     blocks.push(`${fqdn} {`);
     blocks.push(`    ${TLS_INTERNAL}`);
+
+    // s130 t515 B5 — non-default repos with externalPath route via
+    // handle_path before the catch-all reverse_proxy. Each gets a
+    // path-prefix matcher; the default repo serves on `/` via the
+    // existing catch-all. handle_path strips the prefix before
+    // proxying (so /api/health → /health on the api container).
+    if (project.repos && project.repos.length > 0 && project.containerName) {
+      for (const repo of project.repos) {
+        // Skip malformed entries — schema enforces port+externalPath
+        // together but defensive guard for runtime shape.
+        if (!repo.externalPath || !repo.port) continue;
+        const path = repo.externalPath.startsWith("/") ? repo.externalPath : `/${repo.externalPath}`;
+        blocks.push(`    handle_path ${path}/* {`);
+        blocks.push(`        reverse_proxy ${project.containerName}:${String(repo.port)}`);
+        blocks.push(`    }`);
+      }
+    }
+
     blocks.push(`    reverse_proxy ${projectUpstream}`);
     // `handle_errors <status_codes...>` (filter form) needs Caddy 2.8+.
     // Plenty of deployments are still on 2.6.x which rejects that syntax
@@ -2489,12 +2511,28 @@ export class HostingManager {
       pluginSubdomainRoutes: this.pluginReg?.getSubdomainRoutes().map(({ route }) => route) ?? [],
       projects: Array.from(this.projects.values())
         .filter((p) => p.meta.enabled)
-        .map((p) => ({
-          hostname: p.meta.hostname,
-          port: p.meta.port,
-          containerName: p.containerName ?? (p.meta.hostname ? `agi-${p.meta.hostname}` : null),
-          internalPort: p.meta.internalPort,
-        })),
+        .map((p) => {
+          // s130 t515 B5 — pull non-default repos with externalPath from
+          // ProjectConfig so the Caddyfile generator can emit handle_path
+          // blocks for them. Skipped silently for projects without repos.
+          let repos: Array<{ name: string; port: number; externalPath: string }> | undefined;
+          if (this.configMgr) {
+            const cfg = this.configMgr.read(p.path);
+            if (cfg?.repos) {
+              repos = cfg.repos
+                .filter((r) => r.port !== undefined && r.externalPath !== undefined && !r.isDefault)
+                .map((r) => ({ name: r.name, port: r.port!, externalPath: r.externalPath! }));
+              if (repos.length === 0) repos = undefined;
+            }
+          }
+          return {
+            hostname: p.meta.hostname,
+            port: p.meta.port,
+            containerName: p.containerName ?? (p.meta.hostname ? `agi-${p.meta.hostname}` : null),
+            internalPort: p.meta.internalPort,
+            ...(repos ? { repos } : {}),
+          };
+        }),
       existingCaddyfile: existing,
     });
 

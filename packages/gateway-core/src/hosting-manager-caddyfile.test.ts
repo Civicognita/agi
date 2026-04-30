@@ -68,6 +68,67 @@ db.ai.on {
     expect(out).toContain("reverse_proxy agi-whodb:5050");
   });
 
+  it("emits handle_path blocks for non-default repos (s130 t515 B5)", () => {
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      projects: [{
+        hostname: "myapp",
+        port: 4001,
+        containerName: "agi-myapp",
+        internalPort: 5173, // default repo's port
+        repos: [
+          { name: "api", port: 8001, externalPath: "/api" },
+          { name: "admin", port: 8002, externalPath: "/admin" },
+        ],
+      }],
+    });
+    // Project's site block contains handle_path for each non-default repo
+    expect(out).toContain("handle_path /api/* {");
+    expect(out).toContain("reverse_proxy agi-myapp:8001");
+    expect(out).toContain("handle_path /admin/* {");
+    expect(out).toContain("reverse_proxy agi-myapp:8002");
+    // Default repo still has the catch-all reverse_proxy on the default port
+    expect(out).toContain("reverse_proxy agi-myapp:5173");
+    // handle_path blocks must appear BEFORE the catch-all reverse_proxy
+    // (Caddy matches in order; catch-all-first would shadow)
+    const apiIdx = out.indexOf("handle_path /api/*");
+    const catchAllIdx = out.indexOf("reverse_proxy agi-myapp:5173");
+    expect(apiIdx).toBeLessThan(catchAllIdx);
+  });
+
+  it("works without repos array (single-repo project unchanged)", () => {
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      projects: [{
+        hostname: "single",
+        port: 4001,
+        containerName: "agi-single",
+        internalPort: 3000,
+      }],
+    });
+    // No handle_path blocks
+    expect(out).not.toContain("handle_path");
+    // Plain reverse_proxy still emitted
+    expect(out).toContain("reverse_proxy agi-single:3000");
+  });
+
+  it("normalizes externalPath without leading slash", () => {
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      projects: [{
+        hostname: "myapp",
+        containerName: "agi-myapp",
+        internalPort: 5173,
+        repos: [
+          // Schema enforces leading-/, but defensive normalization
+          // handles operator-edited config that might omit it
+          { name: "api", port: 8001, externalPath: "api" },
+        ],
+      }],
+    });
+    expect(out).toContain("handle_path /api/* {");
+  });
+
   it("emits 7-day TLS lifetime on every internal cert (s130 t515 B2 cycle 124)", () => {
     const out = buildCaddyfileContent({
       ...baseOpts,
