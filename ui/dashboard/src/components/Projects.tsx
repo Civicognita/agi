@@ -316,60 +316,95 @@ export function Projects({
                 const slug = projectSlug(p.path);
                 const cat = p.category ?? p.projectType?.category;
                 const isOps = cat === "ops" || cat === "administration";
-                // s130 t516 slice 3 (cycle 104) — click-to-expand inline
-                // panel via Table.Row's tray prop. Shows path + description
-                // + type details + quick actions. Uses data already on
-                // ProjectInfo; no new endpoint needed.
+                // s130 t516 slice 3 — click-to-expand row tray. Restructured
+                // cycle 136 per projects-browser-v2.html mockup: 4 quadrant
+                // layout (Repos / Stacks / Aion context / Knowledge) + 5
+                // action buttons row. Uses data already on ProjectInfo;
+                // no new endpoint needed for this slice.
                 const tray = (
                   <div className="px-4 py-3 bg-secondary/20" data-testid={`project-tray-${slug}`}>
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-2 mb-3">
+                    <div className="text-[11px] text-muted-foreground mb-3">
+                      <span className="text-foreground font-semibold">{p.name}</span>
+                      {p.category && <span> · {p.category}</span>}
+                      <span> · {p.repos?.length ?? 1} {(p.repos?.length ?? 1) === 1 ? "repo" : "repos"}</span>
+                      {p.attachedStacks && p.attachedStacks.length > 0 && (
+                        <span> · stacks: {p.attachedStacks.map((s) => s.stackId.replace(/^stack-/, "")).join(" + ")}</span>
+                      )}
+                    </div>
+
+                    {/* 4-quadrant grid per mockup B */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-3">
+                      {/* Quadrant 1: Repos */}
                       <div>
-                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Path</div>
-                        <div className="text-[12px] font-mono text-foreground break-all">{p.path}</div>
-                      </div>
-                      {p.projectType?.label && (
-                        <div>
-                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Project Type</div>
-                          <div className="text-[12px] text-foreground">{p.projectType.label}</div>
-                        </div>
-                      )}
-                      {p.description && (
-                        <div className="col-span-2">
-                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Description</div>
-                          <div className="text-[12px] text-muted-foreground">{p.description}</div>
-                        </div>
-                      )}
-                      {p.magicApps && p.magicApps.length > 0 && (
-                        <div className="col-span-2">
-                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">MagicApps</div>
-                          <div className="flex gap-1 flex-wrap">
-                            {p.magicApps.map((id) => (
-                              <span key={id} className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 font-medium">
-                                {id}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {p.repos && p.repos.length > 0 && (
-                        <div className="col-span-2">
-                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Repos ({p.repos.length})</div>
-                          <div className="space-y-0.5">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5 font-semibold">Repos</div>
+                        {p.repos && p.repos.length > 0 ? (
+                          <div className="space-y-1">
                             {p.repos.map((r) => (
-                              <div key={r.name} className="flex items-center gap-2 text-[11px]">
-                                <span className="font-mono font-semibold text-foreground">{r.name}</span>
-                                <span className="text-muted-foreground font-mono">→</span>
-                                <span className="text-muted-foreground font-mono break-all">{r.url}</span>
-                                {r.branch && (
-                                  <span className="text-[10px] px-1 py-0.5 rounded bg-blue/15 text-blue font-mono">{r.branch}</span>
-                                )}
+                              <div key={r.name} className="text-[11px]">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-semibold text-foreground">{r.name}</span>
+                                  {r.branch && <span className="text-[10px] px-1 py-0.5 rounded bg-blue/15 text-blue font-mono">{r.branch}</span>}
+                                </div>
+                                <div className="text-muted-foreground font-mono break-all text-[10px]">{r.url}</div>
                               </div>
                             ))}
                           </div>
+                        ) : (
+                          <div className="text-[11px] text-muted-foreground/60 font-mono break-all">{p.path}</div>
+                        )}
+                      </div>
+
+                      {/* Quadrant 2: Stacks */}
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5 font-semibold">Stacks</div>
+                        {p.attachedStacks && p.attachedStacks.length > 0 ? (
+                          <div className="space-y-0.5">
+                            {p.attachedStacks.map((s) => (
+                              <div key={s.stackId} className="text-[11px] font-mono text-foreground">
+                                ▣ {s.stackId.replace(/^stack-/, "")}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-muted-foreground/60 italic">none attached</div>
+                        )}
+                      </div>
+
+                      {/* Quadrant 3: Aion context */}
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5 font-semibold">Aion context</div>
+                        <div className="space-y-0.5 text-[11px]">
+                          {p.iterativeWorkEligible && (
+                            <div className="text-foreground">Iterative-work eligible</div>
+                          )}
+                          {p.tynnToken !== null && (
+                            <div className="text-foreground">PM provider: <span className="text-blue">tynn</span></div>
+                          )}
+                          {p.magicApps && p.magicApps.length > 0 && (
+                            <div className="text-muted-foreground">MApps: {p.magicApps.join(", ")}</div>
+                          )}
+                          {!p.iterativeWorkEligible && p.tynnToken === null && (!p.magicApps || p.magicApps.length === 0) && (
+                            <div className="text-muted-foreground/60 italic">no agent context</div>
+                          )}
                         </div>
-                      )}
+                      </div>
+
+                      {/* Quadrant 4: Knowledge */}
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5 font-semibold">Knowledge</div>
+                        {p.knowledge ? (
+                          <div className="space-y-0.5 text-[11px]">
+                            <div className="text-foreground">▣ {p.knowledge.pages} pages</div>
+                            <div className="text-muted-foreground">{p.knowledge.plans} plans · {p.knowledge.chatSessions} sessions</div>
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-muted-foreground/60 italic">not s130-migrated</div>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex gap-2 flex-wrap">
+
+                    {/* 5-button action row per mockup B */}
+                    <div className="flex gap-2 flex-wrap pt-2 border-t border-border/40">
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); void navigate(`/projects/${slug}`); }}
@@ -384,6 +419,30 @@ export function Projects({
                       >
                         Open chat
                       </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); void navigate(`/projects/${slug}#repository`); }}
+                        className="text-[11px] px-2.5 py-1 rounded bg-secondary/60 text-secondary-foreground hover:bg-secondary/80 cursor-pointer font-medium"
+                      >
+                        Configure repos
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); void navigate(`/projects/${slug}#hosting`); }}
+                        className="text-[11px] px-2.5 py-1 rounded bg-secondary/60 text-secondary-foreground hover:bg-secondary/80 cursor-pointer font-medium"
+                      >
+                        Manage stacks
+                      </button>
+                      {p.hosting?.enabled && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); if (onHostingDisable) void onHostingDisable(p.path); }}
+                          className="text-[11px] px-2.5 py-1 rounded text-red-400 border border-red-500/30 hover:bg-red-500/10 cursor-pointer font-medium ml-auto"
+                          title="Disable hosting (stops the container)"
+                        >
+                          Disable hosting
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
