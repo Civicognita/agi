@@ -373,24 +373,42 @@ export function ProjectDetail({
           postgres + redis, so a cache-invalidation step is feasible").
           Skipped for core forks (aionima collection) since they're
           source trees, not deployable services. */}
-      {!isCoreFork && project.attachedStacks && project.attachedStacks.length > 0 && (
+      {!isCoreFork && project.projectType?.hasCode && (
         <div
           className="flex items-center gap-2 px-3 py-2 mb-3 rounded-md bg-indigo-500/5 border border-indigo-500/20"
           data-testid="project-stack-strip"
         >
           <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">Stack</span>
-          {project.attachedStacks.map((s) => {
-            const label = s.stackId.replace(/^stack-/, "");
-            return (
-              <span
-                key={s.stackId}
-                className="text-[11px] px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 font-mono font-medium"
-                title={s.stackId}
-              >
-                ▣ {label}
-              </span>
-            );
-          })}
+          {project.attachedStacks && project.attachedStacks.length > 0 ? (
+            project.attachedStacks.map((s) => {
+              const label = s.stackId.replace(/^stack-/, "");
+              return (
+                <span
+                  key={s.stackId}
+                  className="text-[11px] px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 font-mono font-medium"
+                  title={s.stackId}
+                >
+                  ▣ {label}
+                </span>
+              );
+            })
+          ) : (
+            <span className="text-[11px] text-muted-foreground/60 italic">
+              No stacks attached
+            </span>
+          )}
+          {/* + stack affordance per projects-ux-v2 mockup B (cycle 134).
+              Clicking jumps to the Hosting tab where StackManager lets
+              the owner attach a stack. */}
+          <button
+            type="button"
+            onClick={() => setActiveTab("hosting")}
+            className="text-[11px] px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300/80 hover:bg-indigo-500/20 hover:text-indigo-200 cursor-pointer transition-colors"
+            title="Add a stack (postgres / redis / etc) — jumps to Hosting tab"
+            data-testid="project-stack-add"
+          >
+            + stack
+          </button>
           <span className="text-[10px] text-muted-foreground/60 italic ml-auto">
             Aion's iterative-work + plan reasoning reads from here ↑
           </span>
