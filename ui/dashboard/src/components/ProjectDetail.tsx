@@ -66,6 +66,33 @@ export interface ProjectDetailProps {
 // driven by aria-selected which TabsTab sets on the underlying button.
 const SUB_PILL_CLASS = "border-b-0 px-2 py-1 text-[12px] font-medium normal-case rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-secondary/40 [&[aria-selected=true]]:bg-yellow [&[aria-selected=true]]:text-black [&[aria-selected=true]]:font-semibold [&[aria-selected=true]]:hover:bg-yellow [&[aria-selected=true]]:hover:text-black";
 
+// s134 t517 slice 5c starter — Map active tab id to human-readable canvas
+// section label. The Canvas header reads "Canvas · <label>" per mockup B
+// (e.g. "Canvas · Editor", "Canvas · Hosting"). Plugin panels show their
+// registered label; built-in tabs use the strip's display name.
+const CANVAS_LABELS: Record<string, string> = {
+  details: "Details",
+  files: "Editor",
+  repository: "Repository",
+  environment: "Environment",
+  hosting: "Hosting",
+  "iterative-work": "Iterative Work",
+  mcp: "MCP",
+  "magic-apps": "MagicApps",
+  taskmaster: "TaskMaster",
+  security: "Security",
+  activity: "Activity",
+};
+
+function tabIdToCanvasLabel(tabId: string, panels: PluginPanel[]): string {
+  if (tabId.startsWith("plugin-")) {
+    const panelId = tabId.slice("plugin-".length);
+    const panel = panels.find((p) => p.id === panelId);
+    return panel?.label ?? "Plugin";
+  }
+  return CANVAS_LABELS[tabId] ?? tabId;
+}
+
 export function ProjectDetail({
   projects, onUpdate, updating, onDelete, deleting, onRefresh, onOpenChat, theme,
   hostingStatus, onHostingConfigure, onHostingRestart,
@@ -543,6 +570,22 @@ export function ProjectDetail({
               )}
             </TabsList>
           </div>
+        )}
+
+        {/* s134 t517 slice 5c starter — Canvas section header per mockup B
+            (`<h2>Canvas · Editor</h2>`). Names the active sub-surface so the
+            owner reads the workspace as "I'm in the Canvas section, viewing
+            the Editor sub-surface" — establishes the canvas framing the rest
+            of slice 5c will fill in (chat panel right-side, full flyout-shell
+            chrome). Skipped for core forks (no mode/sub-surface picker → no
+            canvas framing). */}
+        {!isCoreFork && (
+          <h2
+            className="text-[12px] uppercase tracking-wider text-muted-foreground/80 font-semibold mt-3 mb-2 px-1"
+            data-testid="project-canvas-header"
+          >
+            Canvas · {tabIdToCanvasLabel(activeTab, pluginPanels)}
+          </h2>
         )}
 
         <TabsContent value="details" className="mt-4 flex-1 min-h-0 overflow-y-auto">
