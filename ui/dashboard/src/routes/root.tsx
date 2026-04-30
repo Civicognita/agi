@@ -28,6 +28,7 @@ import { ConnectionIndicator } from "@/components/ConnectionIndicator.js";
 import { NotificationBell } from "@/components/NotificationBell.js";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover.js";
 import { DevNotesIcon } from "@/components/ui/dev-notes.js";
+import { RouteDevNotes } from "@/lib/route-notes.js";
 import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
@@ -863,6 +864,11 @@ export default function RootLayout() {
           // Normal mode: content area with flyout overlays
           <>
             <main className="max-w-[1200px] w-full mx-auto flex-1 min-h-0 flex flex-col overflow-hidden">
+              {/* Route-default DevNote — registers a per-route default note
+                  to the global modal. Page components can embed inline
+                  <DevNote> instances for additional context; both stack into
+                  the same modal accessible from the header icon. */}
+              <RouteDevNotes />
               <Outlet context={ctx} />
             </main>
 
