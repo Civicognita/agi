@@ -15,6 +15,7 @@ import {
   migrateProjectConfig,
   projectConfigPath,
   scaffoldProjectFolders,
+  isSacredProjectPath,
   PROJECT_FOLDER_LAYOUT,
 } from "./project-config-path.js";
 
@@ -162,6 +163,57 @@ describe("project-config-path", () => {
       for (const rel of expected) {
         expect(PROJECT_FOLDER_LAYOUT).toContain(rel);
       }
+    });
+  });
+
+  describe("sacred-skip (cycle 150 hotfix v0.4.426)", () => {
+    it("isSacredProjectPath returns true for the 9 sacred names", () => {
+      const sacred = ["agi", "prime", "id", "marketplace", "mapp-marketplace",
+                      "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts"];
+      for (const name of sacred) {
+        expect(isSacredProjectPath(`/some/parent/${name}`)).toBe(true);
+        // Case-insensitive
+        expect(isSacredProjectPath(`/some/parent/${name.toUpperCase()}`)).toBe(true);
+      }
+    });
+
+    it("isSacredProjectPath returns false for arbitrary names", () => {
+      for (const name of ["myproject", "blackorchid_web", "kronos_trader", "_aionima"]) {
+        expect(isSacredProjectPath(`/some/parent/${name}`)).toBe(false);
+      }
+    });
+
+    it("migrateProjectConfig skips sacred repos (no scaffold, no file moves)", () => {
+      const sacredPath = join(tmpRoot, "agi");
+      mkdirSync(sacredPath, { recursive: true });
+      // Even if a legacy config exists, sacred-skip wins.
+      mkdirSync(join(sacredPath, ".agi"), { recursive: true });
+      writeFileSync(join(sacredPath, ".agi", "project.json"), JSON.stringify({ name: "agi" }), "utf-8");
+      const result = migrateProjectConfig(sacredPath);
+      expect(result.migrated).toBe(false);
+      expect(result.scaffolded).toBeUndefined();
+      // No new project.json at root
+      expect(existsSync(join(sacredPath, "project.json"))).toBe(false);
+      // No k/ scaffolded
+      expect(existsSync(join(sacredPath, "k"))).toBe(false);
+    });
+
+    it("scaffoldProjectFolders is a no-op for sacred repos", () => {
+      const sacredPath = join(tmpRoot, "fancy-code");
+      mkdirSync(sacredPath, { recursive: true });
+      const result = scaffoldProjectFolders(sacredPath);
+      expect(result.created).toEqual([]);
+      expect(existsSync(join(sacredPath, "k"))).toBe(false);
+    });
+
+    it("projectConfigPath does not auto-write for sacred repos", () => {
+      const sacredPath = join(tmpRoot, "prime");
+      mkdirSync(sacredPath, { recursive: true });
+      // No legacy config exists. Should return canonical path WITHOUT
+      // writing anything.
+      const cfgPath = projectConfigPath(sacredPath);
+      expect(cfgPath).toBe(join(sacredPath, "project.json"));
+      expect(existsSync(cfgPath)).toBe(false);
     });
   });
 

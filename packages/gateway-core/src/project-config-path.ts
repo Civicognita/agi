@@ -27,8 +27,33 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { migrateChatSessionsForProject } from "./chat-history-migration.js";
+
+/**
+ * Sacred project names — Aionima five (Civicognita-owned core) + PAx four
+ * (Particle-Academy ADF UI primitives). These are workspace-managed repos
+ * the gateway must NEVER auto-migrate to the s140 layout. They are source
+ * trees the owner contributes PRs against, not deployable projects.
+ *
+ * Mirrors SACRED_PROJECT_NAMES in server-runtime-state.ts + the union in
+ * scripts/migrate-projects-s140.sh. Kept in sync by being the same lower-
+ * cased basename set.
+ *
+ * Defense-in-depth: every code path that touches per-project config
+ * (migrateProjectConfig, scaffoldProjectFolders) checks this before
+ * scaffolding or moving files. Cycle 150 hotfix after the boot-time
+ * migration was observed creating .agi/project.json + project.json
+ * inside the agi repo itself.
+ */
+const SACRED_PROJECT_NAMES = new Set([
+  "agi", "prime", "id", "marketplace", "mapp-marketplace",
+  "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts",
+]);
+
+export function isSacredProjectPath(projectPath: string): boolean {
+  return SACRED_PROJECT_NAMES.has(basename(projectPath).toLowerCase());
+}
 
 /**
  * Convert an absolute project path to a filesystem-safe slug.
@@ -111,6 +136,10 @@ export const PROJECT_FOLDER_LAYOUT: readonly string[] = Object.freeze([
  * is a no-op when the dir exists.
  */
 export function scaffoldProjectFolders(projectPath: string): { created: string[] } {
+  // Sacred-skip — never scaffold inside a sacred repo.
+  if (isSacredProjectPath(projectPath)) {
+    return { created: [] };
+  }
   const created: string[] = [];
   for (const rel of PROJECT_FOLDER_LAYOUT) {
     const abs = join(projectPath, rel);
@@ -142,6 +171,15 @@ export function migrateProjectConfig(projectPath: string): {
    *  migration occurred (s130 t518 slice 1). */
   chatSessionsMigrated?: number;
 } {
+  // Sacred-skip: Aionima 5 + PAx 4 are source trees the owner contributes
+  // PRs against, not deployable projects. The gateway must never auto-
+  // migrate them to the s140 layout (no scaffold, no file moves).
+  // Cycle 150 hotfix after boot-time migration was observed creating
+  // .agi/project.json + project.json inside the agi repo itself.
+  if (isSacredProjectPath(projectPath)) {
+    return { migrated: false, to: newProjectConfigPath(projectPath) };
+  }
+
   const newPath = newProjectConfigPath(projectPath);                      // s140: <projectPath>/project.json
   const agiPath = legacyAgiProjectConfigPath(projectPath);                // s130: <projectPath>/.agi/project.json
   const oldPath = legacyProjectConfigPath(projectPath);                   // pre-s130: ~/.agi/{slug}/project.json
@@ -200,6 +238,16 @@ export function migrateProjectConfig(projectPath: string): {
  * is gateway-owned), but ensures we never lose the ability to read.
  */
 export function projectConfigPath(projectPath: string): string {
+  // Sacred-skip: never auto-write a project.json into a sacred repo. Reads
+  // still resolve via legacy fallback if a config happens to exist.
+  if (isSacredProjectPath(projectPath)) {
+    const agiPath = legacyAgiProjectConfigPath(projectPath);
+    const oldPath = legacyProjectConfigPath(projectPath);
+    if (existsSync(agiPath)) return agiPath;
+    if (existsSync(oldPath)) return oldPath;
+    return newProjectConfigPath(projectPath); // points at canonical, but no auto-create
+  }
+
   const newPath = newProjectConfigPath(projectPath);                      // s140: <projectPath>/project.json
   if (existsSync(newPath)) return newPath;
   const agiPath = legacyAgiProjectConfigPath(projectPath);                // s130: <projectPath>/.agi/project.json
