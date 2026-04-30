@@ -153,7 +153,9 @@ test.describe("Project workspace mode picker (s134 t517)", () => {
     // which is lg+, so the aside should be visible.
     const aside = page.getByTestId("project-chat-aside");
     await expect(aside).toBeAttached();
-    // Phase-2 placeholder copy mentions slice 5c phase 3.
-    await expect(aside).toContainText(/slice 5c phase 3/i);
+    // Aside has a "Chat" header (cycle 145) and an Open-chat affordance
+    // (cycle 147 phase-3 starter — kept across copy revisions).
+    await expect(aside).toContainText(/Chat/);
+    await expect(page.getByTestId("project-chat-aside-open")).toBeVisible();
   });
 });

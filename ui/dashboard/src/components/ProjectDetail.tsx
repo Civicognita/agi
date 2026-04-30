@@ -13,8 +13,8 @@ import { Select } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes } from "../api.js";
-import type { FileNode } from "../api.js";
+import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, fetchIterativeWorkStatus, fetchIterativeWorkProgress } from "../api.js";
+import type { FileNode, IterativeWorkProjectStatus, IterativeWorkProgress } from "../api.js";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
 import { RepoManager } from "./RepoManager.js";
@@ -1118,24 +1118,100 @@ export function ProjectDetail({
           data-testid="project-chat-aside"
           aria-label="Project chat panel"
         >
-          <h2 className="text-[12px] uppercase tracking-wider text-muted-foreground/80 font-semibold mt-3 mb-2">
-            Chat
-          </h2>
-          <Card className="p-4 flex-1 min-h-0 overflow-y-auto bg-secondary/10 border-dashed border-border/60">
-            <p className="text-[12px] text-muted-foreground leading-relaxed">
-              Project-scoped chat panel ships in slice 5c phase 3+. The canvas + chat split
-              shape (mockup B <code className="text-[11px] font-mono">flyout-shell</code>) lands
-              first; integration with the existing chat flyout follows.
-            </p>
-            <p className="text-[11px] text-muted-foreground/70 mt-3 leading-relaxed">
-              Until then, use the{" "}
-              <strong className="text-foreground">open chat</strong> button in the header to talk
-              about this project.
-            </p>
-          </Card>
+          <ProjectChatAside
+            project={project}
+            onOpenChat={() => onOpenChat(project.path)}
+          />
         </aside>
       )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Project chat aside (slice 5c phase 3 starter — cycle 147).
+ *
+ * Replaces the cycle-145 placeholder with useful project-scoped content
+ * pending the heavier ChatFlyout-into-aside integration. Shows:
+ *  - Iterative-work status (enabled / cron / next fire) when eligible
+ *  - Progress bar (done/total tasks) sourced from the PM provider
+ *  - "Open chat" CTA that mirrors the header button (talk about this project)
+ *
+ * Iterative-work data is fetched in parallel with progress; failures collapse
+ * to a "no status available" hint without breaking the aside chrome.
+ */
+function ProjectChatAside({
+  project,
+  onOpenChat,
+}: {
+  project: ProjectInfo;
+  onOpenChat: () => void;
+}) {
+  const eligible = (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) === true;
+  const [status, setStatus] = useState<IterativeWorkProjectStatus | null>(null);
+  const [progress, setProgress] = useState<IterativeWorkProgress | null>(null);
+
+  useEffect(() => {
+    if (!eligible) return;
+    let cancelled = false;
+    void Promise.all([
+      fetchIterativeWorkStatus(project.path).catch(() => null),
+      fetchIterativeWorkProgress(project.path).catch(() => null),
+    ]).then(([s, p]) => {
+      if (cancelled) return;
+      setStatus(s);
+      setProgress(p);
+    });
+    return () => { cancelled = true; };
+  }, [eligible, project.path]);
+
+  return (
+    <>
+      <h2 className="text-[12px] uppercase tracking-wider text-muted-foreground/80 font-semibold mt-3 mb-2">
+        Chat
+      </h2>
+
+      {eligible && (
+        <Card className="p-3 mb-2 bg-secondary/10" data-testid="project-chat-aside-iterative">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold mb-1">Iterative work</div>
+          <div className="text-[12px] text-foreground">
+            {status === null ? "Loading…" : status.enabled ? "Enabled" : "Disabled"}
+            {status?.inFlight && <span className="ml-1 text-yellow text-[10px]">· running</span>}
+          </div>
+          {status?.cron && (
+            <div className="text-[11px] text-muted-foreground font-mono mt-0.5">{status.cron}</div>
+          )}
+          {progress !== null && progress.totalTasks > 0 && (
+            <div className="mt-2">
+              <div className="text-[11px] text-muted-foreground mb-1">
+                {progress.doneTasks}/{progress.totalTasks} done · {progress.percentComplete}%
+              </div>
+              <div className="h-1.5 bg-secondary rounded overflow-hidden">
+                <div
+                  className="h-full bg-yellow transition-[width]"
+                  style={{ width: `${String(progress.percentComplete)}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+
+      <Card className="p-3 flex-1 min-h-0 overflow-y-auto bg-secondary/10 border-dashed border-border/60">
+        <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
+          Project-scoped chat panel — the heavy integration ships in slice 5c phase 4. Use Open chat to talk
+          about this project today.
+        </p>
+        <Button
+          size="sm"
+          className="mt-3 w-full"
+          onClick={onOpenChat}
+          data-testid="project-chat-aside-open"
+        >
+          Open chat
+        </Button>
+      </Card>
+    </>
   );
 }
