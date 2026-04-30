@@ -17,6 +17,7 @@ import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile,
 import type { FileNode } from "../api.js";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
+import { RepoManager } from "./RepoManager.js";
 import { CoreForkRepoPanel } from "./CoreForkRepoPanel.js";
 import { HostingPanel } from "./HostingPanel.js";
 import { EnvManager } from "./EnvManager.js";
@@ -835,6 +836,14 @@ export function ProjectDetail({
                   </Button>
                 </div>
                 <RepoPanel ref={repoPanelRef} projectPath={project.path} theme={theme} />
+                {/* s130 t515 B6c — multi-repo manager mounts below the
+                    primary RepoPanel. Hidden for core forks (above branch)
+                    and projects without a primary repo (below branch). */}
+                {!isCoreFork && (
+                  <div className="mt-4">
+                    <RepoManager projectPath={project.path} />
+                  </div>
+                )}
               </>
             ) : (
               <div className="p-3 rounded-lg border border-border bg-mantle">

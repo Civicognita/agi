@@ -3414,3 +3414,64 @@ export async function deleteVaultEntry(id: string, requestingProject?: string): 
   const data = await res.json() as { deleted: boolean };
   return data.deleted;
 }
+
+// s130 t515 B6 — repos[] CRUD for the dashboard RepoManager component.
+export interface ProjectRepo {
+  name: string;
+  url: string;
+  branch?: string;
+  path?: string;
+  writable?: boolean;
+  port?: number;
+  startCommand?: string;
+  isDefault?: boolean;
+  externalPath?: string;
+  env?: Record<string, string>;
+  autoRun?: boolean;
+}
+
+export async function fetchProjectRepos(projectPath: string): Promise<ProjectRepo[]> {
+  const url = `/api/projects/repos?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { repos: ProjectRepo[] };
+  return data.repos;
+}
+
+export async function addProjectRepo(projectPath: string, repo: ProjectRepo): Promise<void> {
+  const url = `/api/projects/repos?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(repo),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function updateProjectRepo(projectPath: string, name: string, patch: Partial<ProjectRepo>): Promise<void> {
+  const url = `/api/projects/repos/${encodeURIComponent(name)}?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function removeProjectRepo(projectPath: string, name: string): Promise<void> {
+  const url = `/api/projects/repos/${encodeURIComponent(name)}?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
