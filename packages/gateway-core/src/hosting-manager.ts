@@ -30,6 +30,7 @@ import {
   projectNetworkName,
   ensureProjectNetwork,
   connectCaddyToProjectNetwork,
+  destroyProjectNetwork,
 } from "./project-network.js";
 
 // ---------------------------------------------------------------------------
@@ -1275,6 +1276,13 @@ export class HostingManager {
     // Stop container
     this.stopContainer(hosted);
 
+    // s130 t515 B3c — tear down the per-project podman network now that
+    // the container is stopped + removed. Safe: destroyProjectNetwork
+    // refuses to remove if non-Caddy containers remain attached. Caddy
+    // gets disconnected best-effort. Idempotent — re-disabling a
+    // project is a no-op for the network.
+    this.tearDownProjectNetworkForHosted(hosted);
+
     // Release port
     if (hosted.meta.port !== null) {
       this.allocatedPorts.delete(hosted.meta.port);
@@ -1873,6 +1881,26 @@ export class HostingManager {
     if (legacyWrapped) args.push(...legacyWrapped);
 
     this.execContainerStart(hosted, containerName, args, "legacy");
+  }
+
+  /**
+   * s130 t515 B3c — tear down the per-project network when hosting is
+   * disabled. Refuses to remove if non-Caddy containers still attached
+   * (would orphan them). Logs the reason on skip. Best-effort — never
+   * throws to the caller; disable should succeed even if podman has
+   * a transient hiccup.
+   */
+  private tearDownProjectNetworkForHosted(hosted: HostedProject): void {
+    try {
+      const result = destroyProjectNetwork(this.podmanRunner, { hostname: hosted.meta.hostname });
+      if (result.destroyed) {
+        this.log.info(`[${hosted.meta.hostname}] removed project network: ${result.name}`);
+      } else if (result.reason) {
+        this.log.info(`[${hosted.meta.hostname}] kept project network ${result.name}: ${result.reason}`);
+      }
+    } catch (err) {
+      this.log.warn(`[${hosted.meta.hostname}] project-network teardown failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   /**
