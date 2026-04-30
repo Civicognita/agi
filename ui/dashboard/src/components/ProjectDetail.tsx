@@ -322,14 +322,41 @@ export function ProjectDetail({
               subtab. The host-level system terminal is now a global button in the dashboard
               header — see root.tsx. No Terminal button on the project page. */}
           <Button size="sm" data-testid="project-chat-button" onClick={() => onOpenChat(project.path)}>
-            Talk about this project
+            open chat
           </Button>
         </div>
       </div>
 
-      {/* Project heading */}
+      {/* Project heading — extended per projects-ux-v2 mockup B (cycle 134):
+          status dot + ⌗N repos count + category badge alongside the name. */}
       <div className="flex items-center gap-3 mb-6 shrink-0">
+        {/* Status dot — green when container running, amber when stopped/error,
+            grey when not hosting. */}
+        {(() => {
+          const s = project.hosting?.status;
+          const enabled = project.hosting?.enabled;
+          if (!enabled) return null;
+          const cls = s === "running" ? "bg-green" : s === "error" ? "bg-red" : "bg-yellow";
+          return <span className={cn("inline-block w-2 h-2 rounded-full", cls)} title={`Container ${s}`} />;
+        })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
+        {project.category && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground uppercase tracking-wider font-medium" title={`Category: ${project.category}`}>
+            {project.category}
+          </span>
+        )}
+        {(() => {
+          // ⌗N repos count — counts runtime repos + falls back to ⌗1 for
+          // single-repo projects (matches Projects browser column convention)
+          const repoCount = project.repos?.length ?? 0;
+          const display = repoCount === 0 ? "⌗1" : `⌗${repoCount}`;
+          const title = repoCount === 0 ? "Single-repo project" : `Multi-repo: ${(project.repos ?? []).map((r) => r.name).join(", ")}`;
+          return (
+            <span className="text-[11px] font-mono text-muted-foreground" title={title}>
+              {display}
+            </span>
+          );
+        })()}
         {isSacred && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">sacred</span>
         )}
