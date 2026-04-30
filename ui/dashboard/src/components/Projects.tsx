@@ -260,7 +260,7 @@ export function Projects({
                 provisioned otherwise). */}
             {isContributing && (
               <div
-                onClick={() => { void navigate("/settings/gateway"); }}
+                onClick={() => { void navigate("/pax"); }}
                 className={cn(
                   "rounded-xl border transition-colors duration-150 cursor-pointer hover:border-yellow",
                   "bg-indigo-50/70 border-indigo-200/80",
@@ -284,7 +284,7 @@ export function Projects({
                   <div className="text-[11px] text-muted-foreground">
                     ADF UI primitive maintenance portal — wraps the {PAX_SACRED_PROJECTS.length} Particle-Academy packages (react-fancy, fancy-code, fancy-sheets, fancy-echarts) consumed by the dashboard, plugins, MApps, and locally-hosted apps. File issues + open PRs via the maintenance loop at agi/docs/agents/contributing-to-adf-packages.md.
                   </div>
-                  <div className="text-[11px] text-yellow mt-2 font-medium">Open Contributing tab →</div>
+                  <div className="text-[11px] text-yellow mt-2 font-medium">Open PAx →</div>
                 </div>
               </div>
             )}

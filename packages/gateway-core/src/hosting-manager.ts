@@ -2081,6 +2081,98 @@ export class HostingManager {
   }
 
   /**
+   * s130 t515 B6b — start a single repo's process inside an already-running
+   * multi-repo container, without restarting the whole container. Useful
+   * for autoRun=false repos that owner wants to spin up on demand.
+   *
+   * Looks up the repo by name in the project's config, finds its
+   * startCommand, then runs `podman exec -d <container> bash -lc 'cd
+   * /srv/repos/<name> && <env> <startCommand>'`. The -d flag detaches
+   * so the gateway returns immediately; the process becomes a child
+   * of the container's existing concurrently parent OR of the container's
+   * init (dumb-init) — either way, the container's restart=always policy
+   * keeps it alive.
+   *
+   * Caveat: if the same repo is already running, this WILL spawn a
+   * duplicate. Caller should call stopRepoProcess first OR check
+   * status. Idempotency is the caller's responsibility.
+   */
+  async startRepoProcess(projectPath: string, repoName: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!this.configMgr) return { ok: false, error: "Project config manager not available" };
+    const cfg = this.configMgr.read(projectPath);
+    if (!cfg?.repos) return { ok: false, error: "Project has no repos[]" };
+    const repo = cfg.repos.find((r) => r.name === repoName);
+    if (!repo) return { ok: false, error: `Repo not found: ${repoName}` };
+    if (!repo.startCommand) return { ok: false, error: `Repo ${repoName} has no startCommand (code-only repo)` };
+
+    const hosted = this.projects.get(resolvePath(projectPath));
+    if (!hosted?.containerName) return { ok: false, error: "Project container is not running" };
+
+    const env = Object.entries(repo.env ?? {})
+      .map(([k, v]) => `${k}='${v.replace(/'/g, "'\\''")}'`)
+      .join(" ");
+    const envPrefix = env ? `${env} ` : "";
+    const cmd = `cd /srv/repos/${repoName} && ${envPrefix}${repo.startCommand}`;
+
+    try {
+      execFileSync("podman", ["exec", "-d", hosted.containerName, "bash", "-lc", cmd], {
+        stdio: "pipe",
+        timeout: 15_000,
+      });
+      this.log.info(`[${hosted.meta.hostname}] started repo process: ${repoName}`);
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `podman exec failed: ${msg}` };
+    }
+  }
+
+  /**
+   * s130 t515 B6b — stop a single repo's process inside the multi-repo
+   * container. Uses pkill -f against a fragment of the startCommand
+   * unique enough to identify it. Targets the container's PID namespace,
+   * not the host's, so it only affects that repo's process(es).
+   *
+   * Caveat: pkill matches by command line. If two repos share an
+   * identical startCommand fragment, this could kill both. The cwd-
+   * prefix `cd /srv/repos/<name> &&` is included in our generated
+   * concurrently invocation, so matching `/srv/repos/<name>` is unique.
+   */
+  async stopRepoProcess(projectPath: string, repoName: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!this.configMgr) return { ok: false, error: "Project config manager not available" };
+    const cfg = this.configMgr.read(projectPath);
+    if (!cfg?.repos) return { ok: false, error: "Project has no repos[]" };
+    const repo = cfg.repos.find((r) => r.name === repoName);
+    if (!repo) return { ok: false, error: `Repo not found: ${repoName}` };
+
+    const hosted = this.projects.get(resolvePath(projectPath));
+    if (!hosted?.containerName) return { ok: false, error: "Project container is not running" };
+
+    // Match the cwd path which is unique per repo: /srv/repos/<name>
+    const matcher = `/srv/repos/${repoName}`;
+
+    try {
+      // pkill returns 1 when no processes match — that's "already stopped",
+      // not an error. Use SIGTERM first; container's own supervisor (or
+      // concurrently with --restart-tries=10) may try to respawn but
+      // since we pkill the parent the chain dies cleanly within ~10s.
+      execFileSync("podman", ["exec", hosted.containerName, "pkill", "-TERM", "-f", matcher], {
+        stdio: "pipe",
+        timeout: 15_000,
+      });
+      this.log.info(`[${hosted.meta.hostname}] stopped repo process: ${repoName}`);
+      return { ok: true };
+    } catch (err) {
+      // pkill exit 1 = no match (already stopped); treat as success
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/exit code 1\b|status 1\b/.test(msg)) {
+        return { ok: true };
+      }
+      return { ok: false, error: `podman exec pkill failed: ${msg}` };
+    }
+  }
+
+  /**
    * s130 t515 B3c — tear down the per-project network when hosting is
    * disabled. Refuses to remove if non-Caddy containers still attached
    * (would orphan them). Logs the reason on skip. Best-effort — never
