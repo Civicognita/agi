@@ -77,6 +77,36 @@ test.describe("DevNotes universal modal (cycle 150)", () => {
     expect(back).toMatch(/^1 of \d+/);
   });
 
+  test("page does NOT infinite-loop when DevNotes have JSX bodies (v0.4.427 regression)", async ({ page }) => {
+    // Cycle 150 v0.4.426 → v0.4.427 hotfix:
+    //   Owner observed "results hung hard crash" when navigating to pages
+    //   with DevNotes that have JSX children. Root cause: `children` was
+    //   in the useEffect deps array; JSX with markup produced unstable
+    //   references, triggering register → setVersion → re-render → loop.
+    //   Fix: capture children into a ref outside the effect deps.
+    //
+    // This test catches the regression by mounting a page with DevNotes
+    // (Projects browser has 6 with JSX bodies) and checking that:
+    //   1. Page renders within reasonable time (no infinite loop)
+    //   2. Render didn't queue thousands of frames (cap on stable layout)
+    let renderTickCount = 0;
+    page.on("console", (msg) => {
+      if (msg.text().includes("Maximum update depth exceeded") || msg.text().includes("Too many re-renders")) {
+        renderTickCount = 9999; // sentinel — React caught the loop itself
+      }
+    });
+    const start = Date.now();
+    await page.goto("/projects", { timeout: 8_000 });
+    // Wait for the projects table to settle. If we're in an infinite loop,
+    // this either times out OR React emits a "Maximum update depth" error.
+    await page.waitForLoadState("networkidle", { timeout: 10_000 });
+    const elapsed = Date.now() - start;
+    expect(renderTickCount, "no React 'Maximum update depth' error during page load").toBeLessThan(9999);
+    expect(elapsed, `page load completed in ${String(elapsed)}ms (sub-10s sanity bound)`).toBeLessThan(10_000);
+    // Also verify the icon rendered — proves the provider didn't crash mid-flight.
+    await expect(page.getByTestId("dev-notes-icon")).toBeVisible({ timeout: 2_000 });
+  });
+
   test("ArrowRight + ArrowLeft keys navigate; Esc closes", async ({ page }) => {
     await page.goto("/projects");
     await page.getByTestId("dev-notes-icon").click();

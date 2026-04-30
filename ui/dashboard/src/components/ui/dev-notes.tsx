@@ -190,15 +190,25 @@ export function DevNote({ heading, kind = "info", scope, children }: DevNoteProp
   const ctx = useDevNotesContext();
   const id = useId();
 
+  // Cycle 150 hotfix v0.4.427 — `children` (the body) is captured into a
+  // ref instead of being a useEffect dep. JSX children with markup
+  // (`<DevNote>text <strong>x</strong></DevNote>`) produce a NEW array
+  // reference on every render, which would re-fire the effect, which
+  // calls register → setVersion → re-render → new children reference →
+  // infinite loop. Owner observed this as a "results hung hard crash"
+  // when multiple DevNote-bearing pages were open at once.
+  //
+  // The ref always points at the latest children; the effect reads it
+  // at mount time. If children ever needs to update post-mount, the
+  // caller can change `heading` or remount via `key` to force re-register.
+  const bodyRef = useRef<ReactNode>(children);
+  bodyRef.current = children;
+
   useEffect(() => {
     if (!ctx?.enabled) return;
-    ctx.register(id, { heading, kind, scope, body: children });
+    ctx.register(id, { heading, kind, scope, body: bodyRef.current });
     return () => { ctx.unregister(id); };
-    // We re-register whenever the displayed content changes. Heading/kind/scope
-    // changes are rare; children may carry component state but the comparison
-    // here is shallow on purpose — the register replaces the entry with the
-    // current children every render in the effect deps.
-  }, [ctx, id, heading, kind, scope, children]);
+  }, [ctx, id, heading, kind, scope]);
 
   return null;
 }
