@@ -451,8 +451,29 @@ export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApi
       }
       try {
         deps.patchConfig("agent.provider", providerId);
-        if (typeof body.model === "string" && body.model.length > 0) {
+        // CRITICAL: clear agent.baseUrl when switching providers. Without
+        // this, a stale baseUrl from a prior provider (e.g. Ollama's
+        // http://127.0.0.1:11434) overrides the new provider's per-type
+        // default in factory.ts (lemonade → :13305/v1, anthropic →
+        // api.anthropic.com, etc.). Symptom is "OpenAI API error: HTTP
+        // 404: 404 page not found" because the request hits the previous
+        // provider's port at the wrong path.
+        // (cycle 130 owner-Playwright-verified bug — agent.baseUrl was
+        // ":11434" from a previous Ollama session, switch to Lemonade
+        // routed every chat request to Ollama at the wrong path.)
+        deps.patchConfig("agent.baseUrl", "");
+        // Skip model patch when the catalog's defaultModel is the
+        // sentinel "default" — that's a Lemonade-internal placeholder
+        // ("whatever's loaded") that real Lemonade doesn't accept as a
+        // model name. Let factory.ts's per-provider defaultModel kick
+        // in instead. Same for any other obvious placeholder.
+        const SENTINEL_MODELS = new Set(["default", "auto", "<auto>", ""]);
+        if (typeof body.model === "string" && body.model.length > 0 && !SENTINEL_MODELS.has(body.model.toLowerCase())) {
           deps.patchConfig("agent.model", body.model);
+        } else {
+          // Clear any stale model from a previous provider so factory's
+          // per-provider default takes over.
+          deps.patchConfig("agent.model", "");
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
