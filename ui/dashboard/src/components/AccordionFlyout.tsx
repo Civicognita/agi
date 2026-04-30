@@ -121,17 +121,21 @@ export function AccordionFlyout({
   className,
   onOpenChange,
 }: AccordionFlyoutProps) {
-  // Mobile defaults to chat-only (canvas is opt-in on narrow viewports).
-  const initialOpen: AccordionFlyoutSectionId[] = defaultOpen
-    ?? (isMobile ? ["chat"] : ["canvas", "chat"]);
+  // Owner directive cycle 130: "the chat UI ... sized to scale". Default
+  // both desktop AND mobile to chat-only — canvas opens on-demand via
+  // its rail trigger. Previously desktop defaulted to ["canvas", "chat"]
+  // which gave each panel 50% of the flyout width, squeezing chat into
+  // ~33vw in overlay mode. Now chat dominates; canvas is opt-in.
+  const initialOpen: AccordionFlyoutSectionId[] = defaultOpen ?? ["chat"];
 
   const [openSections, setOpenSections] = useState<AccordionFlyoutSectionId[]>(initialOpen);
 
-  // If the mobile flag changes mid-session (window resize), re-honor the
-  // default. Avoids canvas being open on a phone that just rotated.
+  // If the mobile flag changes mid-session (window resize), keep chat-only
+  // as the safe default unless the caller passed an explicit defaultOpen.
   useEffect(() => {
-    setOpenSections(isMobile ? ["chat"] : ["canvas", "chat"]);
-  }, [isMobile]);
+    if (defaultOpen) return;
+    setOpenSections(["chat"]);
+  }, [isMobile, defaultOpen]);
 
   const handleValueChange: AccordionPanelProps["onValueChange"] = (next) => {
     const typed = next.filter((id): id is AccordionFlyoutSectionId =>
