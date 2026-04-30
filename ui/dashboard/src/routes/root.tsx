@@ -27,6 +27,7 @@ import { ActiveDownloads } from "@/components/ActiveDownloads.js";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator.js";
 import { NotificationBell } from "@/components/NotificationBell.js";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover.js";
+import { DevNotesIcon } from "@/components/ui/dev-notes.js";
 import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
@@ -743,6 +744,11 @@ export default function RootLayout() {
                 </svg>
               </button>
             </div>
+            {/* DevNotes universal trigger (cycle 150 refactor). Opens the
+                global modal with all currently-registered notes from the
+                rendered page+tab+visible-views. Hidden when no notes exist
+                or when Contributing/Dev Mode is off. */}
+            <DevNotesIcon />
             {/* s137 t529 — universal help button. Opens chat with a help-mode
                 context derived from the current pathname so the agent knows
                 what page the user is looking at. The route → context mapping
