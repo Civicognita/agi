@@ -54,6 +54,7 @@ export type {
   PmProviderFactory,
   McpServerTemplate,
   ProviderField,
+  ProviderModelInfo,
   CleanupResource,
   CleanupManifest,
   WorkerDomain,

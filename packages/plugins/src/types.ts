@@ -561,6 +561,36 @@ export interface ProviderField {
   step?: number;
 }
 
+/**
+ * Live model info returned by an LLMProviderDefinition.getModels() implementation.
+ * Cycle 129 directive: cloud providers must surface their model list dynamically
+ * so the Models tab on the Provider page is the single source of truth for what
+ * models are usable. Local providers (Ollama, Lemonade) populate this from their
+ * own daemon; cloud providers (Anthropic, OpenAI, Groq) populate from their REST
+ * API.
+ *
+ * Static `models?: string[]` on the definition is a fallback for providers that
+ * don't implement getModels() — used at boot before the live fetch resolves.
+ */
+export interface ProviderModelInfo {
+  /** Provider-native model id (e.g. "claude-sonnet-4-6", "gpt-4o", "llama3.1:70b") */
+  id: string;
+  /** Human-readable label; falls back to id if absent */
+  label?: string;
+  /** Maximum context-window size in tokens, when known */
+  contextLength?: number;
+  /**
+   * Coarse capability flags — reflects what the model can ingest/emit. Used by
+   * the agent-router to filter models by task requirements (vision input, tool
+   * calling, extended-reasoning blocks).
+   */
+  capabilities?: {
+    vision?: boolean;
+    tools?: boolean;
+    reasoning?: boolean;
+  };
+}
+
 export interface LLMProviderDefinition {
   id: string;           // "anthropic", "openai", "ollama", "groq"
   name: string;         // "Anthropic"
@@ -580,6 +610,18 @@ export interface LLMProviderDefinition {
    * Must not throw — wrap in try/catch at the call site.
    */
   checkBalance?: (config: Record<string, unknown>) => Promise<number | null>;
+  /**
+   * Fetch the live model list for this provider (cycle 129 cloud-provider SDK
+   * contract). Receives the provider's saved config (apiKey, baseUrl, etc.).
+   * Returns ProviderModelInfo[] on success or null when the provider is
+   * unreachable / unauthenticated / doesn't expose a list endpoint.
+   *
+   * Must not throw — wrap network errors and return null. Callers (Models tab,
+   * agent-router) treat null as "use static `models` if present, else empty
+   * list". Implementations should cache aggressively at the plugin level —
+   * `getModels` may be invoked frequently when the Models tab is open.
+   */
+  getModels?: (config: Record<string, unknown>) => Promise<ProviderModelInfo[] | null>;
 }
 
 // ---------------------------------------------------------------------------
