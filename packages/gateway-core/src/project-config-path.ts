@@ -125,8 +125,23 @@ export function migrateProjectConfig(projectPath: string): {
 } {
   const newPath = newProjectConfigPath(projectPath);
   const oldPath = legacyProjectConfigPath(projectPath);
-  if (existsSync(newPath)) return { migrated: false, to: newPath };
-  if (!existsSync(oldPath)) return { migrated: false, to: newPath };
+  // Already-migrated case: still ensure the s130 folder layout exists.
+  // Owner directive cycle 129: "all of the current projects need to be
+  // rearranged since they are still just single source folder."
+  // Projects whose config relocated earlier may still lack the
+  // k/, repos/, .trash/ siblings if scaffolding hasn't been forced.
+  if (existsSync(newPath)) {
+    const { created } = scaffoldProjectFolders(projectPath);
+    return { migrated: false, to: newPath, scaffolded: created.length > 0 ? created : undefined };
+  }
+  if (!existsSync(oldPath)) {
+    // No config either way — but if owner is asking us to scaffold a
+    // single-source-folder project that has nothing yet, create the
+    // layout. Useful when migrate-folders is invoked on workspace
+    // projects that were never explicitly enabled in hosting.
+    const { created } = scaffoldProjectFolders(projectPath);
+    return { migrated: false, to: newPath, scaffolded: created.length > 0 ? created : undefined };
+  }
   try {
     mkdirSync(dirname(newPath), { recursive: true });
     writeFileSync(newPath, readFileSync(oldPath, "utf-8"), "utf-8");

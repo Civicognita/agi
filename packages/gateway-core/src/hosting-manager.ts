@@ -16,7 +16,7 @@ import { join, resolve as resolvePath, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execSync, execFileSync, spawnSync, spawn, type ChildProcess } from "node:child_process";
 import { createComponentLogger } from "./logger.js";
-import { projectConfigPath, projectSlug } from "./project-config-path.js";
+import { projectConfigPath, projectSlug, migrateProjectConfig } from "./project-config-path.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 import type { ProjectTypeRegistry } from "./project-types.js";
 import type { PluginRegistry } from "@agi/plugins";
@@ -2302,6 +2302,69 @@ export class HostingManager {
     void this.startContainer(hosted);
     this.notifyStatusChange();
     return true;
+  }
+
+  /**
+   * s130 cycle 129 — scaffold the s130 folder layout (.agi/, k/{plans,
+   * knowledge,pm,memory,chat}/, repos/, .trash/) across every project
+   * in workspace.projects.
+   *
+   * This is the forced-migration counterpart to migrateProjectConfig's
+   * lazy "scaffold-on-read" behavior. Owner directive cycle 129: ensure
+   * all existing projects have the s130 layout, not just the ones that
+   * were read-after-upgrade.
+   *
+   * Idempotent: every call ensures the layout exists; already-present
+   * dirs are silently kept.
+   *
+   * Returns per-project + aggregate counts so the API + dashboard can
+   * surface what changed.
+   */
+  migrateAllProjectsToFolderLayout(): {
+    scanned: number;
+    scaffolded: number;
+    errors: number;
+    projects: Array<{ projectPath: string; created: string[]; error?: string }>;
+  } {
+    const projectDirs = this.workspaceProjects;
+    const out: Array<{ projectPath: string; created: string[]; error?: string }> = [];
+    let scaffolded = 0;
+    let errors = 0;
+    let scanned = 0;
+
+    for (const dir of projectDirs) {
+      let entries: string[];
+      try {
+        entries = readdirSync(dir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+          .map((d) => d.name);
+      } catch {
+        continue;
+      }
+
+      for (const slug of entries) {
+        const projectPath = resolvePath(dir, slug);
+        scanned++;
+        try {
+          const result = migrateProjectConfig(projectPath);
+          const created = result.scaffolded ?? [];
+          out.push({ projectPath, created });
+          if (created.length > 0) {
+            scaffolded++;
+            this.log.info(`[${slug}] scaffolded ${created.length} s130 layout dir(s)`);
+          }
+          if (result.error) {
+            errors++;
+            this.log.warn(`[${slug}] folder migration error: ${result.error}`);
+          }
+        } catch (err) {
+          errors++;
+          out.push({ projectPath, created: [], error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+    }
+
+    return { scanned, scaffolded, errors, projects: out };
   }
 
   /**
