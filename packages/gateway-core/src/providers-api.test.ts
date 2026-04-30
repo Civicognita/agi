@@ -531,16 +531,53 @@ describe("providers-api — GET /api/providers/:id/models (cycle 140)", () => {
     await app.close();
   });
 
-  it("returns null for cloud providers (anthropic, openai) until cycle 141+", async () => {
-    const app = makeApp({});
-    for (const id of ["anthropic", "openai"]) {
-      const res = await app.inject({ method: "GET", url: `/api/providers/${id}/models` });
-      expect(res.statusCode).toBe(200);
-      const body = res.json() as { models: unknown };
-      expect(body.models).toBeNull();
+  it("returns null for cloud providers without an API key (anthropic, openai)", async () => {
+    // Cycle 142: with no apiKey configured AND no env var, getModelsForBuiltin
+    // short-circuits to null before any fetch. We clear env vars defensively
+    // since the test runner may inherit them from the dev shell.
+    const prevAnth = process.env["ANTHROPIC_API_KEY"];
+    const prevOpenai = process.env["OPENAI_API_KEY"];
+    delete process.env["ANTHROPIC_API_KEY"];
+    delete process.env["OPENAI_API_KEY"];
+    try {
+      const app = makeApp({});
+      for (const id of ["anthropic", "openai"]) {
+        const res = await app.inject({ method: "GET", url: `/api/providers/${id}/models` });
+        expect(res.statusCode).toBe(200);
+        const body = res.json() as { models: unknown };
+        expect(body.models).toBeNull();
+      }
+      await app.close();
+    } finally {
+      if (prevAnth !== undefined) process.env["ANTHROPIC_API_KEY"] = prevAnth;
+      if (prevOpenai !== undefined) process.env["OPENAI_API_KEY"] = prevOpenai;
     }
-    await app.close();
   });
+
+  it("returns null when anthropic API rejects the key (401)", async () => {
+    // Cycle 142: with a clearly-bad key, the live REST call returns 401 →
+    // res.ok is false → we return null. No mocking needed; api.anthropic.com
+    // is reachable from the test VM with internet.
+    const app = makeApp({
+      providers: { anthropic: { apiKey: "sk-ant-invalid-test-key" } } as Record<string, unknown>,
+    } as Partial<AionimaConfig>);
+    const res = await app.inject({ method: "GET", url: "/api/providers/anthropic/models" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: unknown };
+    expect(body.models).toBeNull();
+    await app.close();
+  }, 15_000);
+
+  it("returns null when openai API rejects the key (401)", async () => {
+    const app = makeApp({
+      providers: { openai: { apiKey: "sk-invalid-test-key" } } as Record<string, unknown>,
+    } as Partial<AionimaConfig>);
+    const res = await app.inject({ method: "GET", url: "/api/providers/openai/models" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: unknown };
+    expect(body.models).toBeNull();
+    await app.close();
+  }, 15_000);
 
   it("returns null when ollama is unreachable (network errors swallowed)", async () => {
     // Default config has no ollama baseUrl → falls back to 127.0.0.1:11434.

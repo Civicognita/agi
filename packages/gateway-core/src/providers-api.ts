@@ -331,16 +331,97 @@ export async function getModelsForBuiltin(
       // a circular dep. Returning null tells callers "use /api/hf/models".
       return null;
 
-    case "anthropic":
-    case "openai":
-      // Cloud providers — null until cycle 141+ wires REST /v1/models calls
-      // with the configured API key. Static catalog still works; this
-      // endpoint just returns null so the Models tab knows to fall back.
-      return null;
+    case "anthropic": {
+      // Cycle 142 — REST /v1/models with x-api-key + anthropic-version.
+      // API key sourced from config.providers.anthropic.apiKey first,
+      // env ANTHROPIC_API_KEY second (mirrors factory.ts ENV_KEYS).
+      const cfg = (providers["anthropic"] as { apiKey?: string } | undefined) ?? {};
+      const apiKey = cfg.apiKey ?? process.env["ANTHROPIC_API_KEY"];
+      if (!apiKey) return null;
+      try {
+        const res = await fetch("https://api.anthropic.com/v1/models", {
+          headers: {
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) return null;
+        const json = await res.json() as { data?: Array<{ id?: string; display_name?: string }> };
+        if (!Array.isArray(json.data)) return null;
+        return json.data
+          .filter((m): m is { id: string; display_name?: string } => typeof m?.id === "string")
+          .map((m) => ({
+            id: m.id,
+            label: m.display_name ?? m.id,
+            capabilities: { tools: true, vision: true, reasoning: true },
+          }));
+      } catch {
+        return null;
+      }
+    }
+
+    case "openai": {
+      // Cycle 142 — REST /v1/models with Authorization: Bearer.
+      // OpenAI returns 70+ models including non-chat (whisper, dall-e,
+      // embeddings, tts, moderation). Filter to obviously chat-capable
+      // model ids so the Models tab stays focused on what the agent
+      // can actually use.
+      const cfg = (providers["openai"] as { apiKey?: string } | undefined) ?? {};
+      const apiKey = cfg.apiKey ?? process.env["OPENAI_API_KEY"];
+      if (!apiKey) return null;
+      try {
+        const res = await fetch("https://api.openai.com/v1/models", {
+          headers: { "Authorization": `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) return null;
+        const json = await res.json() as { data?: Array<{ id?: string }> };
+        if (!Array.isArray(json.data)) return null;
+        return json.data
+          .filter((m): m is { id: string } => typeof m?.id === "string")
+          .filter((m) => isOpenAIChatModel(m.id))
+          .map((m) => ({
+            id: m.id,
+            label: m.id,
+            capabilities: openaiCapabilitiesFor(m.id),
+          }));
+      } catch {
+        return null;
+      }
+    }
 
     default:
       return null;
   }
+}
+
+/**
+ * OpenAI's /v1/models endpoint returns ~70 models including non-chat
+ * surfaces (whisper, dall-e-*, tts-*, text-embedding-*, omni-moderation-*).
+ * The Models tab is a chat-focused surface, so we filter to model id prefixes
+ * known to support chat completions: gpt-*, o1-*, o3-*, o4-*, plus the
+ * special-cased "chatgpt-4o-latest". Update when OpenAI ships new families.
+ */
+function isOpenAIChatModel(id: string): boolean {
+  return /^(gpt-|o1-|o3-|o4-|chatgpt-)/.test(id);
+}
+
+/**
+ * Coarse capability mapping for OpenAI models. Most of OpenAI's chat-capable
+ * models support tools (function calling) since gpt-3.5-turbo. Vision arrived
+ * with gpt-4-vision and is now standard on gpt-4o variants. The o1/o3/o4
+ * series exposes extended reasoning blocks. This is best-effort — the Models
+ * tab uses these to filter by task, not for hard routing decisions.
+ */
+function openaiCapabilitiesFor(id: string): { vision: boolean; tools: boolean; reasoning: boolean } {
+  const isReasoning = /^o[134]-/.test(id);
+  const isVision = /(^|-)gpt-4o|gpt-4-(vision|turbo)/.test(id);
+  return {
+    vision: isVision,
+    tools: !isReasoning || /-2024|-2025|-2026/.test(id), // o1-preview lacked tools; later o1/o3/o4 dated revisions added them
+    reasoning: isReasoning,
+  };
 }
 
 function getActiveState(config: AionimaConfig): ActiveProviderState {
