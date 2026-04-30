@@ -429,6 +429,12 @@ export interface ProjectInfo {
    *  scaffolded (i.e. not yet s130-migrated). Used by t516 slice 6 for
    *  the Knowledge column on the Projects list view. */
   knowledge?: { pages: number; plans: number; chatSessions: number };
+  /** PM provider task counts (s130 t524 / t516 slice 7) — open + doing
+   *  task counts for the project, sourced from the configured PM
+   *  provider (Tynn baked-in default; full Tynn or other providers via
+   *  plugins). Undefined when no PM provider is configured / reachable.
+   *  Renders as the "Tynn" column on the Projects list view. */
+  tynnSlice?: { open: number; doing: number; storyId?: string };
 }
 
 /** A single row returned by GET /api/dev/core-forks/status. */

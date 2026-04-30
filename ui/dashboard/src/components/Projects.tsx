@@ -306,6 +306,7 @@ export function Projects({
               <Table.Column label="Repos" />
               <Table.Column label="Stacks" />
               <Table.Column label="Tags" />
+              <Table.Column label="Tynn" />
               <Table.Column label="Activity (30d)" />
               <Table.Column label="Knowledge" />
               <Table.Column label="Health" />
@@ -476,6 +477,30 @@ export function Projects({
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-semibold">tynn</span>
                         )}
                       </div>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {/* s130 t524 — Tynn column. Renders open|doing two-tone
+                          per projects-browser-v2.html mockup. Empty state
+                          when no PM provider is configured / reachable.
+                          Backend wiring of `tynnSlice` lands in a follow-up
+                          slice (PM provider client integration). */}
+                      {(() => {
+                        const t = p.tynnSlice;
+                        if (!t) {
+                          return <span className="text-[11px] text-muted-foreground/40">—</span>;
+                        }
+                        return (
+                          <span
+                            className="text-[11px] font-mono"
+                            title={t.storyId ? `Story ${t.storyId}` : undefined}
+                            data-testid={`project-tynn-${projectSlug(p.path)}`}
+                          >
+                            <span className="text-blue font-semibold">{t.open}</span>
+                            <span className="text-muted-foreground"> | </span>
+                            <span className="text-yellow font-semibold">{t.doing}</span>
+                          </span>
+                        );
+                      })()}
                     </Table.Cell>
                     <Table.Cell>
                       {(() => {
