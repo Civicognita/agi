@@ -108,11 +108,20 @@ Four test suites run in sequence:
 
 ### 3. UI End-to-End Tests (Playwright)
 
-Playwright tests run a real browser on the host against the gateway running inside the VM.
+Playwright tests run a real browser on the host against the gateway running inside the VM. Three modes — pick by intent:
 
 ```bash
-pnpm test:e2e:ui       # Run Playwright UI tests
+agi test --e2e <pattern>            # Headless (default for owner-watch + CI)
+agi test --e2e-ui <pattern>         # Interactive Playwright UI runner — driven by hand
+agi test --e2e-headed <pattern>     # Visible auto-running tests, no UI shell
 ```
+
+When to use which:
+- **`--e2e`** (headless): the right default. Faster, doesn't disrupt the desktop, same DOM extraction. Use for CI + most owner-driven runs.
+- **`--e2e-ui`** (interactive): the Playwright UI runner — a browser-based test runner with watch mode, run controls, traces, and debugging. Use when you want to drive the tests by hand or pause/inspect mid-run.
+- **`--e2e-headed`** (visible auto-run): like `--e2e` but the browser window is visible. Use when the goal is "watch the test execute" without needing the UI shell. Slower than headless; useful for owner-attended live verification of a single spec.
+
+Pattern arg matches against spec filename (case-insensitive substring); omit to run all specs.
 
 ### Run All Tiers
 
@@ -143,7 +152,7 @@ CI steps:
 | After changing `install.sh` or `upgrade.sh` | `pnpm test:e2e` |
 | After adding or modifying API endpoints | `pnpm test:e2e` |
 | After changing the onboarding flow | `pnpm test:e2e` |
-| After changing dashboard UI | `pnpm test:e2e:ui` |
+| After changing dashboard UI | `agi test --e2e <spec>` (headless); `--e2e-ui` to drive interactively |
 | After changing plugin image refs or stack dependencies | `pnpm test` (plugin tests) |
 | After changing `required-plugins.json` | `pnpm test` |
 | Before shipping a release | `pnpm test:all` |
@@ -156,7 +165,9 @@ CI steps:
 |---------|--------------|-------|
 | `pnpm test` | Unit tests (vitest in VM) | Seconds |
 | `pnpm test:e2e` | Full system on a clean VM (install, API, onboarding, plugins) | ~5 minutes |
-| `pnpm test:e2e:ui` | Dashboard UI in a browser against VM | ~1 minute |
+| `agi test --e2e <spec>` | Dashboard UI against VM (headless) | ~1 minute |
+| `agi test --e2e-ui <spec>` | Playwright UI runner (interactive) | persistent until you close it |
+| `agi test --e2e-headed <spec>` | Visible auto-run, no UI shell | ~1-2 minutes |
 | `pnpm test:all` | All three tiers | ~7 minutes |
 | `pnpm test:vm:create` | Create the test VM | ~2 minutes |
 | `pnpm test:vm:setup` | Install deps in the VM | ~3 minutes |

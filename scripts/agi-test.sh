@@ -8,8 +8,11 @@
 #
 # Kinds (flag):
 #   --unit        Vitest inside the test VM   (default)
-#   --e2e         Playwright against VM's :80 bridge
-#   --e2e-ui     Same as --e2e but uses the e2e:ui script (test.ai.on path)
+#   --e2e         Playwright headless against test.ai.on (the default for owner-watch)
+#   --e2e-ui      Playwright UI runner — interactive browser-based test runner
+#                 (watch mode, traces, run controls). Use when driving tests by hand.
+#   --e2e-headed  Playwright --headed — visible auto-running tests, no UI shell.
+#                 Use when the goal is "watch the test execute" without the runner UI.
 #   --spot <f>    Spot tests for feature <f> (hardware|marketplace|lemonade|project-types|all)
 #   --all         Run every tier in sequence
 #
@@ -18,15 +21,18 @@
 #   --help, -h    Print this usage
 #
 # Pattern (positional):
-#   Names a spec. For unit/e2e modes the pattern is matched against spec
-#   filenames first (case-insensitive substring), with content-grep as
-#   fallback. For spot mode the positional is the feature name.
+#   Names a spec. For unit/e2e/e2e-ui/e2e-headed modes the pattern is
+#   matched against spec filenames first (case-insensitive substring),
+#   with content-grep as fallback. For spot mode the positional is the
+#   feature name.
 #
 # Examples:
-#   agi test dashboard              Run packages/gateway-core/src/dashboard.test.ts
-#   agi test --e2e mapps-walk       Run e2e/walk/mapps-walk.spec.ts
-#   agi test --spot hardware        Run spot hardware feature test
-#   agi test --list                 Enumerate unit specs
+#   agi test dashboard                  Run packages/gateway-core/src/dashboard.test.ts
+#   agi test --e2e mapps-walk           Run e2e/walk/mapps-walk.spec.ts (headless)
+#   agi test --e2e-ui chat-workflow     Open Playwright UI runner with chat-workflow loaded
+#   agi test --e2e-headed mapps-walk    Run mapps-walk visibly (no UI shell)
+#   agi test --spot hardware            Run spot hardware feature test
+#   agi test --list                     Enumerate unit specs
 #
 # Exit codes:
 #   0 = all passed   1 = one or more failed
@@ -60,6 +66,7 @@ while [ $# -gt 0 ]; do
     --unit)    KIND="unit"; shift ;;
     --e2e)     KIND="e2e"; shift ;;
     --e2e-ui)  KIND="e2e-ui"; shift ;;
+    --e2e-headed) KIND="e2e-headed"; shift ;;
     --spot)    KIND="spot"; shift ;;
     --all)     KIND="all"; shift ;;
     --list)    LIST_MODE=1; shift ;;
@@ -205,8 +212,22 @@ run_e2e() {
 
 run_e2e_ui() {
   preflight
-  log "e2e-ui → test-run.sh e2e:ui (Playwright vs test.ai.on)"
-  bash "$TEST_RUN_SCRIPT" e2e:ui
+  log "e2e-ui → test-run.sh e2e:ui (Playwright UI runner vs test.ai.on)${PATTERN:+ pattern=$PATTERN}"
+  if [ -n "$PATTERN" ]; then
+    bash "$TEST_RUN_SCRIPT" e2e:ui "$PATTERN"
+  else
+    bash "$TEST_RUN_SCRIPT" e2e:ui
+  fi
+}
+
+run_e2e_headed() {
+  preflight
+  log "e2e-headed → test-run.sh e2e:headed (Playwright --headed vs test.ai.on)${PATTERN:+ pattern=$PATTERN}"
+  if [ -n "$PATTERN" ]; then
+    bash "$TEST_RUN_SCRIPT" e2e:headed "$PATTERN"
+  else
+    bash "$TEST_RUN_SCRIPT" e2e:headed
+  fi
 }
 
 run_spot() {
@@ -229,6 +250,7 @@ case "$KIND" in
   unit)   run_unit ;;
   e2e)    run_e2e ;;
   e2e-ui) run_e2e_ui ;;
+  e2e-headed) run_e2e_headed ;;
   spot)   run_spot ;;
   all)    run_all ;;
   *)      die "unknown kind: $KIND" ;;
