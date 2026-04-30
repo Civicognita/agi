@@ -1150,20 +1150,28 @@ export async function createGatewayRuntimeState(
         // each project's knowledge density at a glance.
         let knowledge: { pages: number; plans: number; chatSessions: number } | undefined;
         try {
-          const countJson = (subdir: string): number => {
-            const dir = join(fullPath, "k", subdir);
-            if (!existsSync(dir)) return 0;
-            try {
-              return readdirSync(dir).filter((f) => f.endsWith(".md") || f.endsWith(".json") || f.endsWith(".mdx")).length;
-            } catch { return 0; }
-          };
-          const pages = countJson("knowledge");
-          const plans = countJson("plans");
-          const chatSessions = countJson("chat");
-          if (pages > 0 || plans > 0 || chatSessions > 0) {
-            knowledge = { pages, plans, chatSessions };
+          // Cycle 135 fix: report knowledge counts whenever the k/
+          // scaffold exists (s130-migrated projects), even when the
+          // counts are all zero. Previously, only non-zero totals
+          // populated the field, which made it impossible to tell
+          // "not migrated" from "migrated but empty" in the dashboard.
+          // Now: presence of k/ dir → ▣ 0 for empty; absence → "—".
+          const kRoot = join(fullPath, "k");
+          if (existsSync(kRoot)) {
+            const countJson = (subdir: string): number => {
+              const dir = join(kRoot, subdir);
+              if (!existsSync(dir)) return 0;
+              try {
+                return readdirSync(dir).filter((f) => f.endsWith(".md") || f.endsWith(".json") || f.endsWith(".mdx")).length;
+              } catch { return 0; }
+            };
+            knowledge = {
+              pages: countJson("knowledge"),
+              plans: countJson("plans"),
+              chatSessions: countJson("chat"),
+            };
           }
-        } catch { /* k/ scaffold absent — not s130-migrated, knowledge stays undefined */ }
+        } catch { /* k/ scaffold read errored — knowledge stays undefined */ }
 
         projects.push({
           name: entryName,
