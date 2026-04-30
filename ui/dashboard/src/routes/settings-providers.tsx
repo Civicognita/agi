@@ -33,6 +33,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Card } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { ModelsTab } from "@/components/ModelsTab";
 import {
   fetchProvidersCatalog,
   fetchActiveProvider,
@@ -830,6 +832,19 @@ export default function SettingsProvidersPage() {
         )}
       </div>
 
+      {/* Owner directive cycle 129: split the page into two tabs.
+          - "Providers" keeps today's catalog + router + cards
+          - "Models" is the new consolidated entry point for installed
+            local models. HF Marketplace remains the discovery/download
+            flow; lifecycle (start/stop/uninstall) lives here. */}
+      <Tabs defaultValue="providers">
+        <TabsList variant="line">
+          <TabsTrigger value="providers" data-testid="providers-tab-providers">Providers</TabsTrigger>
+          <TabsTrigger value="models" data-testid="providers-tab-models">Models</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="providers" className="mt-4 space-y-6">
+
       {/* Mission Control hero — most recent routing decision (s111 t419).
           Hides when no decisions exist yet (fresh boot, no turns). */}
       {recentDecisions.length > 0 && (
@@ -890,6 +905,12 @@ export default function SettingsProvidersPage() {
           Last action failed: {error}
         </div>
       )}
+        </TabsContent>
+
+        <TabsContent value="models" className="mt-4">
+          <ModelsTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
