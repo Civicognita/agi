@@ -530,7 +530,16 @@ export function ProjectDetail({
           The active state styling uses tailwind arbitrary-attribute
           variants `[&[aria-selected=true]]:...` to override the
           react-fancy underline-variant defaults via tailwind-merge. */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
+      {/* s134 t517 slice 5c phase 2 — flyout-shell wrap. Per mockup B, the
+          workspace puts Canvas + Chat side-by-side. The chat panel renders
+          as a fixed-width aside on lg+ viewports; on smaller screens it's
+          hidden to keep the canvas usable. Phase 2 is a placeholder; the
+          actual chat integration (project-scoped session + composer +
+          history) lands in slice 5c phase 3+ when chat is moved out of
+          the floating ChatFlyout into the workspace right panel. Skipped
+          for core forks (no canvas/chat concept). */}
+      <div className={cn("flex flex-1 min-h-0", !isCoreFork && "lg:flex-row gap-3")} data-testid="project-flyout-shell">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-w-0 min-h-0 flex flex-col">
         {isCoreFork ? (
           <TabsList>
             <TabsTrigger value="files">Editor</TabsTrigger>
@@ -1103,6 +1112,30 @@ export function ProjectDetail({
           </TabsContent>
         )}
       </Tabs>
+      {!isCoreFork && (
+        <aside
+          className="w-[280px] hidden lg:flex flex-col border-l border-border pl-3"
+          data-testid="project-chat-aside"
+          aria-label="Project chat panel"
+        >
+          <h2 className="text-[12px] uppercase tracking-wider text-muted-foreground/80 font-semibold mt-3 mb-2">
+            Chat
+          </h2>
+          <Card className="p-4 flex-1 min-h-0 overflow-y-auto bg-secondary/10 border-dashed border-border/60">
+            <p className="text-[12px] text-muted-foreground leading-relaxed">
+              Project-scoped chat panel ships in slice 5c phase 3+. The canvas + chat split
+              shape (mockup B <code className="text-[11px] font-mono">flyout-shell</code>) lands
+              first; integration with the existing chat flyout follows.
+            </p>
+            <p className="text-[11px] text-muted-foreground/70 mt-3 leading-relaxed">
+              Until then, use the{" "}
+              <strong className="text-foreground">open chat</strong> button in the header to talk
+              about this project.
+            </p>
+          </Card>
+        </aside>
+      )}
+      </div>
     </div>
   );
 }
