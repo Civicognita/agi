@@ -293,5 +293,34 @@ describe("ProjectConfigSchema", () => {
       };
       expect(ProjectConfigSchema.safeParse(data).success).toBe(true);
     });
+
+    it("accepts autoRun=false to skip a repo from container boot", () => {
+      const data = {
+        name: "X",
+        repos: [
+          { name: "web", url: "u", port: 5173, startCommand: "pnpm dev", isDefault: true, autoRun: true },
+          { name: "ondemand", url: "u", port: 9000, startCommand: "pnpm cron", autoRun: false },
+        ],
+      };
+      const r = ProjectConfigSchema.safeParse(data);
+      expect(r.success).toBe(true);
+      if (r.success && r.data.repos) {
+        expect(r.data.repos[1]?.autoRun).toBe(false);
+      }
+    });
+
+    it("rejects autoRun set on a code-only repo (no port)", () => {
+      const data = {
+        name: "X",
+        repos: [
+          { name: "lib", url: "u", autoRun: true }, // no port — autoRun makes no sense
+        ],
+      };
+      const r = ProjectConfigSchema.safeParse(data);
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(r.error.issues.some((i) => i.message.includes("autoRun only applies"))).toBe(true);
+      }
+    });
   });
 });

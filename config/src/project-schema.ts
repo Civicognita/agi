@@ -263,6 +263,14 @@ export const ProjectRepoSchema = z
     /** Optional environment variables passed to this repo's process.
      *  Merged with project-level env. */
     env: z.record(z.string(), z.string()).optional(),
+
+    /** Whether this repo's process auto-starts when the project container
+     *  boots. Defaults to true when `port` and `startCommand` are set;
+     *  set explicitly false to skip the repo from the boot-time
+     *  concurrently invocation. Owner can still start it on-demand via
+     *  `podman exec` (or the dashboard's per-repo Start button).
+     *  Ignored for code-only repos (no port). */
+    autoRun: z.boolean().optional(),
   })
   .strict()
   .refine(
@@ -276,6 +284,10 @@ export const ProjectRepoSchema = z
   .refine(
     (r) => !r.isDefault || r.port,
     { message: "isDefault only applies to repos with a port set" },
+  )
+  .refine(
+    (r) => r.autoRun === undefined || r.port !== undefined,
+    { message: "autoRun only applies to repos with a port set" },
   );
 
 // ---------------------------------------------------------------------------
