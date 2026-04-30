@@ -181,4 +181,117 @@ describe("ProjectConfigSchema", () => {
       expect(ProjectConfigSchema.safeParse(data).success).toBe(false);
     });
   });
+
+  describe("ProjectRepoSchema runtime fields (s130 t515 cycle 123)", () => {
+    it("accepts a runnable repo with port + startCommand", () => {
+      const data = {
+        name: "Multi-repo App",
+        repos: [
+          { name: "web", url: "https://example.com/web.git", port: 5173, startCommand: "pnpm dev", isDefault: true },
+          { name: "api", url: "https://example.com/api.git", port: 8001, startCommand: "node dist/server.js", externalPath: "/api" },
+          { name: "sdk", url: "https://example.com/sdk.git" }, // code-only, no port
+        ],
+      };
+      const result = ProjectConfigSchema.safeParse(data);
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects port without startCommand", () => {
+      const data = {
+        name: "X",
+        repos: [{ name: "web", url: "u", port: 5173 }],
+      };
+      const r = ProjectConfigSchema.safeParse(data);
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(r.error.issues.some((i) => i.message.includes("startCommand is required"))).toBe(true);
+      }
+    });
+
+    it("rejects externalPath without port", () => {
+      const data = {
+        name: "X",
+        repos: [{ name: "web", url: "u", externalPath: "/api" }],
+      };
+      expect(ProjectConfigSchema.safeParse(data).success).toBe(false);
+    });
+
+    it("rejects isDefault without port", () => {
+      const data = {
+        name: "X",
+        repos: [{ name: "web", url: "u", isDefault: true }],
+      };
+      expect(ProjectConfigSchema.safeParse(data).success).toBe(false);
+    });
+
+    it("rejects two repos with isDefault: true", () => {
+      const data = {
+        name: "X",
+        repos: [
+          { name: "web", url: "u", port: 5173, startCommand: "pnpm dev", isDefault: true },
+          { name: "admin", url: "u", port: 5174, startCommand: "pnpm admin", isDefault: true },
+        ],
+      };
+      const r = ProjectConfigSchema.safeParse(data);
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(r.error.issues.some((i) => i.message.includes("at most one"))).toBe(true);
+      }
+    });
+
+    it("rejects two repos sharing the same port", () => {
+      const data = {
+        name: "X",
+        repos: [
+          { name: "web", url: "u", port: 5173, startCommand: "pnpm dev" },
+          { name: "admin", url: "u", port: 5173, startCommand: "pnpm admin" },
+        ],
+      };
+      const r = ProjectConfigSchema.safeParse(data);
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(r.error.issues.some((i) => i.message.includes("share the same port"))).toBe(true);
+      }
+    });
+
+    it("rejects two repos sharing the same externalPath", () => {
+      const data = {
+        name: "X",
+        repos: [
+          { name: "a", url: "u", port: 5173, startCommand: "pnpm a", externalPath: "/api" },
+          { name: "b", url: "u", port: 5174, startCommand: "pnpm b", externalPath: "/api" },
+        ],
+      };
+      expect(ProjectConfigSchema.safeParse(data).success).toBe(false);
+    });
+
+    it("rejects malformed externalPath (must start with / and use safe chars)", () => {
+      const data = {
+        name: "X",
+        repos: [{ name: "a", url: "u", port: 5173, startCommand: "pnpm a", externalPath: "api" }],
+      };
+      expect(ProjectConfigSchema.safeParse(data).success).toBe(false);
+    });
+
+    it("accepts internal-only repo (port + startCommand, no externalPath, no isDefault)", () => {
+      const data = {
+        name: "X",
+        repos: [
+          { name: "web", url: "u", port: 5173, startCommand: "pnpm dev", isDefault: true },
+          { name: "worker", url: "u", port: 7000, startCommand: "pnpm worker" }, // sibling-only, no external exposure
+        ],
+      };
+      expect(ProjectConfigSchema.safeParse(data).success).toBe(true);
+    });
+
+    it("accepts env vars on a repo", () => {
+      const data = {
+        name: "X",
+        repos: [
+          { name: "api", url: "u", port: 8001, startCommand: "node dist", env: { LOG_LEVEL: "info", DATABASE_URL: "postgres://..." } },
+        ],
+      };
+      expect(ProjectConfigSchema.safeParse(data).success).toBe(true);
+    });
+  });
 });
