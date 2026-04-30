@@ -2015,6 +2015,46 @@ export class HostingManager {
     return true;
   }
 
+  /**
+   * s130 t515 B3d — migrate every hosted project to its per-project
+   * podman network. Existing aionima-attached containers (started before
+   * B3b) keep running on aionima until restarted. This method walks all
+   * hosted projects + restarts each one — startContainer's
+   * ensureProjectNetworkForHosted (B3b) handles network creation +
+   * Caddy attachment + the new --network flag.
+   *
+   * Safe to re-run: projects already on per-project networks just
+   * get a brief restart. No data loss; container state is preserved
+   * by container image / volume mounts (whatever your project
+   * persists is unaffected).
+   *
+   * Best invoked after `agi upgrade` lands B3b on the production
+   * gateway. Call from a CLI command, an API endpoint, or the
+   * dashboard's "Migrate networks" action.
+   */
+  migrateAllProjectsToNetworks(): { migrated: number; failed: number; projects: Array<{ hostname: string; ok: boolean; error?: string }> } {
+    const results: Array<{ hostname: string; ok: boolean; error?: string }> = [];
+    let migrated = 0;
+    let failed = 0;
+    for (const hosted of this.projects.values()) {
+      const hostname = hosted.meta.hostname;
+      try {
+        this.stopContainer(hosted);
+        void this.startContainer(hosted);
+        results.push({ hostname, ok: true });
+        migrated++;
+        this.log.info(`[${hostname}] migrated to per-project network`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        results.push({ hostname, ok: false, error: msg });
+        failed++;
+        this.log.warn(`[${hostname}] migration failed: ${msg}`);
+      }
+    }
+    this.notifyStatusChange();
+    return { migrated, failed, projects: results };
+  }
+
   // -------------------------------------------------------------------------
   // Tunnel origin computation
   // -------------------------------------------------------------------------

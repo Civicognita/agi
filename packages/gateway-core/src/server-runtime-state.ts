@@ -1423,6 +1423,30 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // POST /api/hosting/migrate-networks — s130 t515 B3d
+  // Restarts every hosted project so existing aionima-network containers
+  // migrate to their per-project agi-net-<hostname> networks. Safe to
+  // re-run; idempotent. Private network only.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/hosting/migrate-networks", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Hosting API only allowed from private network" });
+    }
+    if (!deps.hostingManager) {
+      return reply.code(503).send({ error: "Hosting not enabled on this gateway" });
+    }
+    try {
+      const result = deps.hostingManager.migrateAllProjectsToNetworks();
+      return reply.send(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ error: `migrate-networks failed: ${msg}` });
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // GET /api/projects/info — git details for a project (private network only)
   // -----------------------------------------------------------------------
 
