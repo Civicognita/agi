@@ -40,6 +40,124 @@ import {
 /** Strip ANSI escape codes from command output for clean dashboard display. */
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07/g;
+
+/** Simple shell argument escaping — wraps in single quotes. Used by
+ *  buildMultiRepoContainerArgs to safely pass startCommand strings
+ *  through `bash -lc` to concurrently. */
+function shellEscape(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+export interface MultiRepoArgsInput {
+  hostname: string;
+  projectPath: string;
+  mode: "production" | "development";
+  containerName: string;
+  /** From ProjectConfigManager. When null, returns null. */
+  projectConfig: { repos?: Array<{
+    name: string;
+    url: string;
+    branch?: string;
+    path?: string;
+    writable?: boolean;
+    port?: number;
+    startCommand?: string;
+    isDefault?: boolean;
+    externalPath?: string;
+    env?: Record<string, string>;
+    autoRun?: boolean;
+  }> } | null;
+  aiBindingArgs: { envArgs: string[]; volumeArgs: string[] };
+  /** Optional tunnel hostname for HOSTNAME_ALLOWED_ORIGIN injection. */
+  tunnelOrigin?: string | null;
+  /** Per-project podman network name (s130 t515 B3b). */
+  networkName: string;
+  /** Image to use (default: agi-runtime:lamp from B4 prerequisite). */
+  image?: string;
+}
+
+export interface MultiRepoArgsResult {
+  args: string[];
+  /** The default repo's port — caller sets hosted.meta.internalPort to this. */
+  internalPort: number;
+}
+
+/**
+ * Pure helper. Builds podman run args for a multi-repo project, OR
+ * returns null when the project has no runtime repos (single-repo —
+ * caller falls back to existing branches).
+ */
+export function buildMultiRepoContainerArgsPure(input: MultiRepoArgsInput): MultiRepoArgsResult | null {
+  if (!input.projectConfig?.repos || input.projectConfig.repos.length === 0) return null;
+
+  const runtimeRepos = input.projectConfig.repos.filter((r) => r.port !== undefined);
+  if (runtimeRepos.length === 0) return null;
+
+  const defaultRepo = runtimeRepos.find((r) => r.isDefault) ?? runtimeRepos[0];
+  if (!defaultRepo || defaultRepo.port === undefined) return null;
+
+  const args: string[] = [
+    "run", "-d",
+    "--name", input.containerName,
+    "--restart=always",
+    "--label", "agi.managed=true",
+    "--label", `agi.hostname=${input.hostname}`,
+    "--label", `agi.project=${input.projectPath}`,
+    "--label", "agi.multi-repo=true",
+    `--network=${input.networkName}`,
+    "-w", `/srv/repos/${defaultRepo.name}`,
+  ];
+
+  // Bind-mount each repo at /srv/repos/<name>. :Z relabels for SELinux;
+  // ro on writable=false repos keeps them read-only inside the container
+  // (matches s130 Q-5 owner answer: write-on-explicit-action).
+  for (const repo of input.projectConfig.repos) {
+    const mode = repo.writable ? "Z" : "ro,Z";
+    const hostPath = repo.path ?? `${input.projectPath}/repos/${repo.name}`;
+    args.push("-v", `${hostPath}:/srv/repos/${repo.name}:${mode}`);
+  }
+
+  args.push("-e", `NODE_ENV=${input.mode}`);
+  args.push("-e", `AGI_PROJECT=${input.hostname}`);
+  args.push("-e", `AGI_DEFAULT_REPO=${defaultRepo.name}`);
+
+  if (input.tunnelOrigin) {
+    args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${input.tunnelOrigin}`);
+  }
+
+  args.push(...input.aiBindingArgs.volumeArgs, ...input.aiBindingArgs.envArgs);
+
+  args.push(input.image ?? "agi-runtime:lamp");
+
+  // concurrently invocation. autoRun=false repos are skipped from boot
+  // but still bind-mounted so siblings can reach them via filesystem
+  // (or owner can `podman exec` to start them manually).
+  const autoRunRepos = runtimeRepos
+    .filter((r) => r.autoRun !== false && r.startCommand)
+    .map((r) => {
+      const env = Object.entries(r.env ?? {})
+        .map(([k, v]) => `${k}=${shellEscape(v)}`)
+        .join(" ");
+      const envPrefix = env ? `${env} ` : "";
+      return {
+        name: r.name,
+        cmd: `cd /srv/repos/${r.name} && ${envPrefix}${r.startCommand}`,
+      };
+    });
+
+  if (autoRunRepos.length === 0) {
+    args.push("bash", "-lc", "echo 'multi-repo project with autoRun=false on all repos; exec into container to start manually'; sleep infinity");
+  } else {
+    const names = autoRunRepos.map((r) => r.name).join(",");
+    const cmds = autoRunRepos.map((r) => shellEscape(r.cmd)).join(" ");
+    args.push(
+      "bash", "-lc",
+      `exec npx -y concurrently --names ${shellEscape(names)} --prefix '[{name}]' --kill-others-on-fail=false --restart-tries=10 ${cmds}`,
+    );
+  }
+
+  return { args, internalPort: defaultRepo.port };
+}
 function stripAnsi(text: string): string { return text.replace(ANSI_RE, ""); }
 
 /**
@@ -1558,6 +1676,18 @@ export class HostingManager {
     const aiBindingArgs = await this.buildAiBindingArgs(hosted.path);
 
     // -----------------------------------------------------------------------
+    // s130 t515 B4 — multi-repo project? Build dedicated container args
+    // (agi-runtime:lamp + multi-bind + concurrently startup). Short-circuits
+    // the magic-app/stack/legacy branches below. Returns null when not
+    // multi-repo so the existing flow handles single-repo projects unchanged.
+    // -----------------------------------------------------------------------
+    const multiRepoArgs = this.buildMultiRepoContainerArgs(hosted, containerName, aiBindingArgs);
+    if (multiRepoArgs) {
+      this.execContainerStart(hosted, containerName, multiRepoArgs, "magic-app");
+      return;
+    }
+
+    // -----------------------------------------------------------------------
     // MagicApp path: resolve container config from registered MagicApps
     // (non-dev project types like literature/media use MagicApps, not stacks)
     // -----------------------------------------------------------------------
@@ -1881,6 +2011,51 @@ export class HostingManager {
     if (legacyWrapped) args.push(...legacyWrapped);
 
     this.execContainerStart(hosted, containerName, args, "legacy");
+  }
+
+  /**
+   * s130 t515 B4 — build podman run args for a multi-repo project.
+   *
+   * Returns null when the project has no runtime repos (no `port` set
+   * on any repo) — caller falls through to the existing branches for
+   * single-repo projects.
+   *
+   * Multi-repo projects host all of their repos in one shared container
+   * built on `agi-runtime:lamp` (PHP+Apache+Node+concurrently). Each
+   * repo's checkout is bind-mounted at `/srv/repos/<name>/`. Process
+   * supervision via `concurrently`: every repo with `autoRun !== false`
+   * + `port` set + `startCommand` is launched at container boot.
+   * Sibling repos reach each other via `localhost:<port>` inside the
+   * shared network namespace.
+   *
+   * Default repo (`isDefault: true`) is the one Caddy proxies to on
+   * `https://<project>.ai.on/`. Its port becomes the container's
+   * `internalPort` so the Caddyfile generator routes correctly.
+   * Non-default repos with `externalPath` set get their Caddy routing
+   * via slice B5 (separate slice — for now they're internal-only).
+   */
+  private buildMultiRepoContainerArgs(
+    hosted: HostedProject,
+    containerName: string,
+    aiBindingArgs: { envArgs: string[]; volumeArgs: string[] },
+  ): string[] | null {
+    if (!this.configMgr) return null;
+    const projectConfig = this.configMgr.read(hosted.path);
+    const result = buildMultiRepoContainerArgsPure({
+      hostname: hosted.meta.hostname,
+      projectPath: hosted.path,
+      mode: hosted.meta.mode,
+      containerName,
+      projectConfig,
+      aiBindingArgs,
+      tunnelOrigin: this.computeTunnelOrigin(hosted),
+      networkName: projectNetworkName(hosted.meta.hostname),
+    });
+    if (!result) return null;
+    // Set internalPort to the default repo's port so the Caddyfile
+    // generator's reverse_proxy lands on the right port.
+    hosted.meta.internalPort = result.internalPort;
+    return result.args;
   }
 
   /**
