@@ -1447,6 +1447,102 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // s130 t515 B6a — repos[] CRUD for the dashboard editor
+  //
+  // GET    /api/projects/repos?path=     — list repos for a project
+  // POST   /api/projects/repos?path=     — add a new repo (clones via provisionRepos)
+  // PUT    /api/projects/repos/:name?path= — update an existing repo
+  // DELETE /api/projects/repos/:name?path= — remove + soft-delete to .trash/
+  //
+  // All four are private-network-only (matches existing /api/projects/* gates).
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/projects/repos", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const repos = deps.projectConfigManager.getRepos(targetPath);
+    return reply.send({ repos });
+  });
+
+  fastify.post("/api/projects/repos", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const body = request.body as Record<string, unknown>;
+    if (!body || typeof body !== "object") return reply.code(400).send({ error: "request body must be a repo spec" });
+
+    try {
+      const updated = await deps.projectConfigManager.addRepo(targetPath, body as Parameters<typeof deps.projectConfigManager.addRepo>[1]);
+      return reply.send({ ok: true, config: updated });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ error: `addRepo failed: ${msg}` });
+    }
+  });
+
+  fastify.put<{ Params: { name: string } }>("/api/projects/repos/:name", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const { name } = request.params;
+    const body = request.body as Record<string, unknown>;
+    if (!body || typeof body !== "object") return reply.code(400).send({ error: "request body must be a repo patch" });
+
+    try {
+      const updated = await deps.projectConfigManager.updateRepo(targetPath, name, body as Parameters<typeof deps.projectConfigManager.updateRepo>[2]);
+      return reply.send({ ok: true, config: updated });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("not found") ? 404 : 400;
+      return reply.code(code).send({ error: `updateRepo failed: ${msg}` });
+    }
+  });
+
+  fastify.delete<{ Params: { name: string } }>("/api/projects/repos/:name", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const { name } = request.params;
+    try {
+      const updated = await deps.projectConfigManager.removeRepo(targetPath, name);
+      return reply.send({ ok: true, config: updated });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("not found") ? 404 : 400;
+      return reply.code(code).send({ error: `removeRepo failed: ${msg}` });
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // GET /api/projects/info — git details for a project (private network only)
   // -----------------------------------------------------------------------
 

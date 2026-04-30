@@ -12,13 +12,14 @@
  */
 
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import {
   ProjectConfigSchema,
   type ProjectConfig,
   type ProjectHosting,
   type ProjectStackInstance,
+  type ProjectRepo,
 } from "@agi/config";
 import { projectConfigPath } from "./project-config-path.js";
 import { createComponentLogger } from "./logger.js";
@@ -204,6 +205,109 @@ export class ProjectConfigManager extends EventEmitter {
       }
     }
     return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // s130 t515 B6a — repos[] CRUD for the dashboard editor + API surface
+  // -------------------------------------------------------------------------
+
+  /**
+   * Add a new repo to the project's `repos[]`. Validates against the
+   * full ProjectConfigSchema (which enforces uniqueness of name/port/
+   * externalPath + at-most-one-isDefault), then optionally clones via
+   * provisionRepos when `options.provision` is true (default).
+   *
+   * Throws when:
+   *   - Project config doesn't exist
+   *   - Schema validation fails (caller surfaces the zod error)
+   *
+   * Atomic via `update()`'s per-path lock.
+   */
+  async addRepo(projectPath: string, repo: ProjectRepo, options: { provision?: boolean; cloneFn?: CloneFn } = {}): Promise<ProjectConfig> {
+    const resolved = resolvePath(projectPath);
+    const existing = this.read(resolved);
+    if (!existing) throw new Error(`Project config not found at ${resolved}`);
+
+    const repos = [...(existing.repos ?? []), repo];
+    const updated = await this.update(resolved, { repos });
+
+    if (options.provision !== false) {
+      this.provisionRepos(resolved, options.cloneFn ? { cloneFn: options.cloneFn } : {});
+    }
+
+    return updated;
+  }
+
+  /**
+   * Update fields on an existing repo (looked up by name). Patch is
+   * merged into the matching entry; full ProjectConfig validates after.
+   * Returns the updated config.
+   *
+   * Throws when:
+   *   - Project config doesn't exist
+   *   - No repo with the given name exists
+   *   - Schema validation fails after merge
+   */
+  async updateRepo(projectPath: string, name: string, patch: Partial<ProjectRepo>): Promise<ProjectConfig> {
+    const resolved = resolvePath(projectPath);
+    const existing = this.read(resolved);
+    if (!existing) throw new Error(`Project config not found at ${resolved}`);
+
+    const repos = existing.repos ?? [];
+    const idx = repos.findIndex((r) => r.name === name);
+    if (idx === -1) throw new Error(`Repo not found: ${name}`);
+
+    const merged = { ...repos[idx], ...patch } as ProjectRepo;
+    const newRepos = [...repos];
+    newRepos[idx] = merged;
+
+    return this.update(resolved, { repos: newRepos });
+  }
+
+  /**
+   * Remove a repo from the project's `repos[]`. The repo's checkout
+   * directory at `<projectPath>/repos/<name>/` is moved to
+   * `<projectPath>/.trash/repos-<name>-<timestamp>/` per s130's
+   * soft-delete convention. Owner can recover or purge later.
+   *
+   * Throws when:
+   *   - Project config doesn't exist
+   *   - No repo with the given name exists
+   */
+  async removeRepo(projectPath: string, name: string): Promise<ProjectConfig> {
+    const resolved = resolvePath(projectPath);
+    const existing = this.read(resolved);
+    if (!existing) throw new Error(`Project config not found at ${resolved}`);
+
+    const repos = existing.repos ?? [];
+    const repo = repos.find((r) => r.name === name);
+    if (!repo) throw new Error(`Repo not found: ${name}`);
+
+    // Remove from config
+    const newRepos = repos.filter((r) => r.name !== name);
+    const updated = await this.update(resolved, { repos: newRepos });
+
+    // Soft-delete the checkout dir (best effort — config update already
+    // succeeded; failing the move shouldn't block).
+    try {
+      const checkoutPath = repo.path ?? `${resolved}/repos/${name}`;
+      if (existsSync(checkoutPath)) {
+        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        const trashPath = `${resolved}/.trash/repos-${name}-${ts}`;
+        mkdirSync(dirname(trashPath), { recursive: true });
+        renameSync(checkoutPath, trashPath);
+        this.log.info(`repo ${name} moved to ${trashPath}`);
+      }
+    } catch (err) {
+      this.log.warn(`failed to soft-delete repo ${name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return updated;
+  }
+
+  /** Read just the repos[] array for a project — convenience for the API surface. */
+  getRepos(projectPath: string): ProjectRepo[] {
+    return this.read(projectPath)?.repos ?? [];
   }
 
   // -------------------------------------------------------------------------
