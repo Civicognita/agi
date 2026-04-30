@@ -1153,6 +1153,10 @@ function ProjectChatAside({
   const [progress, setProgress] = useState<IterativeWorkProgress | null>(null);
 
   useEffect(() => {
+    // Cycle 148 — reset state on project change so we don't briefly show
+    // the previous project's status/progress while the new fetch lands.
+    setStatus(null);
+    setProgress(null);
     if (!eligible) return;
     let cancelled = false;
     void Promise.all([
