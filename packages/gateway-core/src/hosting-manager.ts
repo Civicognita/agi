@@ -25,6 +25,12 @@ import type { SharedContainerManager } from "./shared-container-manager.js";
 import type { ProjectStackInstance, StackContainerContext, StackDefinition, StackContainerConfig } from "./stack-types.js";
 import type { ProjectConfigManager } from "./project-config-manager.js";
 import type { MagicAppContainerConfig, MagicAppContainerContext } from "./magic-app-types.js";
+import {
+  type PodmanRunner,
+  projectNetworkName,
+  ensureProjectNetwork,
+  connectCaddyToProjectNetwork,
+} from "./project-network.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -618,6 +624,17 @@ export class HostingManager {
   private eventsProcess: ChildProcess | null = null;
   /** HuggingFace model runtime deps — set via setModelDeps() after Step 5i. */
   private modelDeps: HostingManagerModelDeps | null = null;
+
+  /**
+   * PodmanRunner backing the per-project network helpers (s130 t515 B3).
+   * Wraps execFileSync + array args so the network helpers can stay pure
+   * + dep-injection-testable while production calls hit real podman.
+   */
+  private readonly podmanRunner: PodmanRunner = {
+    run: (args: string[]): string => {
+      return execFileSync("podman", args, { stdio: "pipe", timeout: 30_000 }).toString();
+    },
+  };
 
   constructor(deps: HostingManagerDeps) {
     this.config = deps.config;
@@ -1558,10 +1575,12 @@ export class HostingManager {
         "--label", "agi.managed=true",
         "--label", `agi.hostname=${hosted.meta.hostname}`,
         "--label", `agi.project=${hosted.path}`,
-        // Story #100 — only AGI binds host ports. Project containers live on
-        // the aionima network and are reached by Caddy-on-aionima via
-        // podman DNS (`${containerName}:${internalPort}`). No `-p` mapping.
-        "--network=aionima",
+        // s130 t515 B3b — per-project podman network for isolation.
+        // Each project gets its own `agi-net-<hostname>` network; Caddy
+        // joins via ensureProjectNetworkForHosted (called from
+        // execContainerStart). Cross-project reachability blocked.
+        // No `-p` mapping — only AGI binds host ports.
+        `--network=${projectNetworkName(hosted.meta.hostname)}`,
       ];
 
       for (const vol of magicAppConfig.volumeMounts(ctx)) {
@@ -1622,8 +1641,11 @@ export class HostingManager {
         "--label", "agi.managed=true",
         "--label", `agi.hostname=${hosted.meta.hostname}`,
         "--label", `agi.project=${hosted.path}`,
-        // Story #100 — aionima network, no host port binding.
-        "--network=aionima",
+        // s130 t515 B3b — per-project network. Stack containers (e.g.
+        // per-project postgres) live alongside the project's repo
+        // container, reached via container DNS within the same isolated
+        // network.
+        `--network=${projectNetworkName(hosted.meta.hostname)}`,
       ];
 
       for (const vol of stackConfig.volumeMounts(ctx)) {
@@ -1732,8 +1754,9 @@ export class HostingManager {
       "--label", "agi.managed=true",
       "--label", `agi.hostname=${hosted.meta.hostname}`,
       "--label", `agi.project=${hosted.path}`,
-      // Story #100 — legacy-path project container joins aionima.
-      "--network=aionima",
+      // s130 t515 B3b — per-project network. Legacy-path container
+      // joins agi-net-<hostname> for isolation from sibling projects.
+      `--network=${projectNetworkName(hosted.meta.hostname)}`,
     ];
 
     // Collected across branches: the user-level command tokens (post-image).
@@ -1852,6 +1875,29 @@ export class HostingManager {
     this.execContainerStart(hosted, containerName, args, "legacy");
   }
 
+  /**
+   * s130 t515 B3b — ensure the per-project podman network exists +
+   * Caddy is connected to it, before the project container starts.
+   * Idempotent. Errors are logged but don't block container start;
+   * the container will still come up on the network (containers can
+   * create their own network if needed) and Caddy may not reach it
+   * cleanly until the operator intervenes.
+   */
+  private ensureProjectNetworkForHosted(hosted: HostedProject): void {
+    try {
+      const ensured = ensureProjectNetwork(this.podmanRunner, { hostname: hosted.meta.hostname });
+      if (ensured.created) {
+        this.log.info(`[${hosted.meta.hostname}] created project network: ${ensured.name}`);
+      }
+      const connected = connectCaddyToProjectNetwork(this.podmanRunner, { hostname: hosted.meta.hostname });
+      if (connected.connected) {
+        this.log.info(`[${hosted.meta.hostname}] connected agi-caddy to ${connected.name}`);
+      }
+    } catch (err) {
+      this.log.warn(`[${hosted.meta.hostname}] project-network setup failed (continuing anyway): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   /** Execute podman run and update hosted project state. */
   private execContainerStart(
     hosted: HostedProject,
@@ -1859,6 +1905,10 @@ export class HostingManager {
     args: string[],
     source: "stack" | "legacy" | "magic-app",
   ): void {
+    // Ensure the per-project network + Caddy attachment exist before
+    // the container joins it. Idempotent; safe to call on every start.
+    this.ensureProjectNetworkForHosted(hosted);
+
     try {
       const result = execFileSync("podman", args, {
         stdio: "pipe",
