@@ -743,6 +743,27 @@ export default function RootLayout() {
                 </svg>
               </button>
             </div>
+            {/* s137 t529 — universal help button. Opens chat with a help-mode
+                context derived from the current pathname so the agent knows
+                what page the user is looking at. The route → context mapping
+                is the next slice (t530); for now the raw pathname suffices
+                as the agent can read it. */}
+            <button
+              onClick={() => {
+                setChatContext(`help:${location.pathname}`);
+                setChatOpen(true);
+              }}
+              className="p-2 rounded-lg transition-colors text-subtext0 hover:bg-surface0 hover:text-text"
+              title="Get help with this page"
+              data-testid="header-help-button"
+              aria-label="Open help chat"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+            </button>
             <button
               onClick={() => setChatOpen((p) => !p)}
               className={cn(
