@@ -15,7 +15,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { Card } from "./ui/card.js";
 import { Button } from "./ui/button.js";
 import {
