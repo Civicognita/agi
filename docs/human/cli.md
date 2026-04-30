@@ -211,7 +211,7 @@ agi project-migrate s140 --execute    # NOT YET implemented (will run the migrat
 
 **Available migrations.**
 
-- **s140** — Project folder restructure. Each non-sacred project moves to a flat top-level layout: `k/` + `repos/` + `chat/` + `sandbox/` + a single `project.json` config at the project root holding both project- and per-repo configuration. Stacks attach to repos rather than to projects. Sacred projects (Aionima five + PAx four) are skipped.
+- **s140** — Project folder restructure. Each non-sacred project moves to a flat top-level layout: `k/` (with `plans/`, `knowledge/`, `pm/`, `memory/`, `chat/` subfolders) + `repos/` + `sandbox/` (new) + a single `project.json` config at the project root holding both project- and per-repo configuration. Stacks attach to repos rather than to projects. Sacred projects (Aionima five + PAx four) are skipped.
 
 The dry-run reports per-project: folder-shape diff, per-repo git state (clean/dirty/unpushed), current stack attachments to remap, and the sacred skip list.
 

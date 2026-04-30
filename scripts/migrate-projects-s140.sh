@@ -6,7 +6,7 @@
 #   Each project gets a flat top-level layout:
 #     <projectPath>/k/         (knowledge: plans, knowledge, pm, memory)
 #     <projectPath>/repos/     (multi-repo working trees)
-#     <projectPath>/chat/      (per-project chat sessions, was k/chat/)
+#     <projectPath>/k/chat/    (per-project chat sessions — stays at k/chat)
 #     <projectPath>/sandbox/   (NEW — agent scratch space scoped to project)
 #     <projectPath>/project.json    (root config, NOT .agi/project.json;
 #                                    holds project- AND per-repo-config)
@@ -21,7 +21,7 @@
 #
 # Diffs to migrate:
 #   1. .agi/project.json → project.json  (move config to root)
-#   2. k/chat/           → chat/         (move chat out of k/)
+#   2. k/chat/ stays at k/chat/ (owner clarified chat is a sub-folder of k)
 #   3. (create)          → sandbox/      (new empty dir)
 #   4. project-level attachedStacks → per-repo stack attachments
 #
@@ -121,11 +121,10 @@ report_folder_shape() {
     creates+=("project.json (no current config — synthesize from defaults)")
   fi
 
-  # 2. k/chat/ → chat/
-  if [ -d "${projectPath}/k/chat" ] && [ ! -d "${projectPath}/chat" ]; then
-    moves+=("k/chat/ → chat/")
-  elif [ ! -d "${projectPath}/chat" ]; then
-    creates+=("chat/ (empty)")
+  # 2. k/chat/ stays at k/chat/ (owner clarification: chat is a sub-folder of k).
+  #    No move needed; just ensure it exists.
+  if [ ! -d "${projectPath}/k/chat" ]; then
+    creates+=("k/chat/ (empty)")
   fi
 
   # 3. sandbox/ create
@@ -167,7 +166,7 @@ report_repos_git_state() {
   #   (B) Single-repo flat (legacy):  <projectPath>/.git/
   # Most projects today are (B) because s130 t515 phase B is still backlog.
   # The s140 migration needs to move (B) projects into repos/<name>/ before
-  # applying the layout changes (chat/ split, sandbox/, project.json).
+  # applying the layout changes (sandbox/, project.json move).
 
   local foundMulti=0
   if [ -d "$reposRoot" ]; then
@@ -241,9 +240,8 @@ echo "  s140 — Project folder restructure dry-run report"
 echo "==================================================================="
 echo ""
 echo "Target layout per project:"
-echo "  <projectPath>/k/         (knowledge — plans, knowledge, pm, memory)"
+echo "  <projectPath>/k/         (knowledge — plans, knowledge, pm, memory, chat)"
 echo "  <projectPath>/repos/     (multi-repo working trees)"
-echo "  <projectPath>/chat/      (per-project chat sessions)"
 echo "  <projectPath>/sandbox/   (NEW — agent scratch space)"
 echo "  <projectPath>/project.json (root config, project + per-repo combined)"
 echo ""
@@ -365,7 +363,7 @@ fi
 #   2. Layout migration:
 #        - Single-repo flat → repos/<projectName>/ (move contents)
 #        - .agi/project.json → project.json (root)
-#        - k/chat/ → chat/
+#        - k/chat/ stays at k/chat/ (sub-folder of k)
 #        - mkdir sandbox/
 #
 #   3. Config update:
@@ -486,7 +484,7 @@ migrate_one_project() {
       local b
       b=$(basename "$entry")
       case "$b" in
-        repos|k|chat|sandbox|.agi|.trash|project.json) continue ;;
+        repos|k|sandbox|.agi|.trash|project.json) continue ;;
       esac
       mv "$entry" "${projectPath}/repos/${projectName}/" 2>&1 | sed 's/^/        /' || true
     done
@@ -499,10 +497,11 @@ migrate_one_project() {
     mv "${projectPath}/.agi/project.json" "${projectPath}/project.json"
   fi
 
-  # 2c. k/chat/ → chat/
-  if [ -d "${projectPath}/k/chat" ] && [ ! -d "${projectPath}/chat" ]; then
-    echo "      moving k/chat/ → chat/"
-    mv "${projectPath}/k/chat" "${projectPath}/chat"
+  # 2c. k/chat/ stays at k/chat/ — ensure it exists (owner clarification:
+  #     chat is a sub-folder of k, not top-level).
+  if [ ! -d "${projectPath}/k/chat" ]; then
+    echo "      creating k/chat/"
+    mkdir -p "${projectPath}/k/chat"
   fi
 
   # 2d. mkdir sandbox/
@@ -563,7 +562,7 @@ migrate_one_project() {
   [ -f "${projectPath}/project.json" ] || { echo "      ✗ project.json missing"; ok=0; }
   [ -d "${projectPath}/k" ] || { echo "      ✗ k/ missing"; ok=0; }
   [ -d "${projectPath}/repos" ] || { echo "      ✗ repos/ missing"; ok=0; }
-  [ -d "${projectPath}/chat" ] || { echo "      ✗ chat/ missing"; ok=0; }
+  [ -d "${projectPath}/k/chat" ] || { echo "      ✗ k/chat/ missing"; ok=0; }
   [ -d "${projectPath}/sandbox" ] || { echo "      ✗ sandbox/ missing"; ok=0; }
 
   if [ "$ok" = "1" ]; then

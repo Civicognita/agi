@@ -400,7 +400,7 @@ export function ProjectDetail({
             project-bound, a small "Tools caged to this project" pill appears in the chat header.
           </DevNotes.Item>
           <DevNotes.Item kind="warning" heading="Project folder restructure incoming (s140)">
-            Each project will move to {"{k/, repos/, chat/, sandbox/}"} at the project root with a
+            Each project will move to {"{k/, repos/, sandbox/}"} (with chat at k/chat/) at the project root with a
             single root `project.json` config (project- + repo-config combined). Stacks attach to
             individual repos, not to the project. Multi-repo single-container hosting UI extends
             with per-repo {"{config, start, dev, stack-actions}"} surfaces. Migration runs as a

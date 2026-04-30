@@ -156,10 +156,10 @@ export function Projects({
               project's workspace. Codename was tynn-lite; user-facing name is PM-Lite.
             </DevNotes.Item>
             <DevNotes.Item kind="warning" heading="Project folder structure migrating (s140)">
-              All non-sacred projects will be restructured to {"{k/, repos/, chat/, sandbox/}"} at
-              the project root with a single `project.json` config file at the root holding both
-              project- and per-repo-config. Migration runs as a dry-run report first; no file
-              moves until owner sign-off.
+              All non-sacred projects will be restructured to {"{k/, repos/, sandbox/}"} at
+              the project root (chat stays at k/chat/) with a single `project.json` config file at
+              the root holding both project- and per-repo-config. Migration runs as a dry-run
+              report first; no file moves until owner sign-off.
             </DevNotes.Item>
             <DevNotes.Item kind="deferred" heading="COA chain dots in Knowledge column">
               Per cycle-128 audit, the Knowledge column should also show a small COA-chain

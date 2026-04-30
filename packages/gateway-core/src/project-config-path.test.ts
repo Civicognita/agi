@@ -54,8 +54,8 @@ describe("project-config-path", () => {
   });
 
   describe("newProjectConfigPath / legacyProjectConfigPath", () => {
-    it("newProjectConfigPath joins projectPath/.agi/project.json", () => {
-      expect(newProjectConfigPath(projectPath)).toBe(join(projectPath, ".agi", "project.json"));
+    it("newProjectConfigPath joins projectPath/project.json (s140 root)", () => {
+      expect(newProjectConfigPath(projectPath)).toBe(join(projectPath, "project.json"));
     });
 
     it("legacyProjectConfigPath uses ~/.agi/{slug}/project.json", () => {
@@ -122,16 +122,13 @@ describe("project-config-path", () => {
       expect(result.scaffolded).toBeDefined();
       // After migration, all eight s130 layout dirs must exist. The
       // `scaffolded` count may be less than 8 because `.agi/` was
-      // already created by the file-copy step (mkdirSync(dirname(newPath)))
-      // before scaffoldProjectFolders ran — so .agi/ is "pre-existing"
-      // from scaffold's perspective. The contract that matters is
-      // that every layout dir exists, not who created it.
+      // s140: project.json lives at root (no .agi/ needed for the
+      // file-copy step). All layout dirs are scaffolded fresh by
+      // migrateProjectConfig.
       for (const rel of PROJECT_FOLDER_LAYOUT) {
         expect(existsSync(join(projectPath, rel))).toBe(true);
       }
-      // .agi was created by the file-copy step, so 7 of 8 are reported
-      // as scaffold-created (the rest are post-copy).
-      expect(result.scaffolded).toHaveLength(PROJECT_FOLDER_LAYOUT.length - 1);
+      expect(result.scaffolded).toHaveLength(PROJECT_FOLDER_LAYOUT.length);
     });
   });
 
@@ -152,11 +149,12 @@ describe("project-config-path", () => {
 
     it("creates only missing dirs when some exist", () => {
       // Pre-create one dir; scaffold should create the remaining N-1.
-      mkdirSync(join(projectPath, ".agi"), { recursive: true });
+      // s140: pick `repos` since `.agi` is no longer in the layout.
+      mkdirSync(join(projectPath, "repos"), { recursive: true });
       const result = scaffoldProjectFolders(projectPath);
       expect(result.created).toHaveLength(PROJECT_FOLDER_LAYOUT.length - 1);
-      // .agi was pre-existing, so it shouldn't be in the created list
-      expect(result.created.some((p) => p.endsWith(".agi"))).toBe(false);
+      // repos was pre-existing, so it shouldn't be in the created list
+      expect(result.created.some((p) => p.endsWith("/repos"))).toBe(false);
     });
 
     it("layout includes all five k/ subfolders per Q-3 owner answer", () => {

@@ -76,7 +76,7 @@ export default function SettingsGatewayPage() {
       </DevNote>
       <DevNote heading="Project folder restructure incoming (s140)" kind="warning" scope="settings/gateway">
         After running `agi project-migrate s140 --execute`, this page's project list reflects the new
-        layout: every project gets {"{k/, repos/, chat/, sandbox/, project.json}"} at root. Stacks attach
+        layout: every project gets {"{k/, repos/, sandbox/, project.json}"} at root (chat stays at k/chat/). Stacks attach
         per-repo (s141 follow-up). Sacred projects (Aionima 5 + PAx 4) untouched.
       </DevNote>
       <SettingsSaveBar

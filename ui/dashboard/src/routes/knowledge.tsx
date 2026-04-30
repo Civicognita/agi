@@ -155,9 +155,9 @@ export default function KnowledgePage() {
         invocation — verify edits against the prime.md doctrine before saving.
       </DevNote>
       <DevNote heading="Per-project chat history is separate (s130)" kind="info" scope="knowledge">
-        Project-bound chat sessions live at `&lt;projectPath&gt;/chat/` (cycle 143 boot-time mass
-        migration). The s140 layout completes the move. This Knowledge page only edits the global
-        PRIME corpus, not per-project files.
+        Project-bound chat sessions live at `&lt;projectPath&gt;/k/chat/` (cycle 143 boot-time mass
+        migration). chat/ stays under k/ in the s140 layout. This Knowledge page only edits the
+        global PRIME corpus, not per-project files.
       </DevNote>
       {/* Sidebar — file tree */}
       <div

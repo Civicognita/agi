@@ -27,7 +27,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { migrateChatSessionsForProject } from "./chat-history-migration.js";
 
 /**
@@ -43,10 +43,24 @@ export function projectSlug(projectPath: string): string {
 }
 
 /**
- * Path under `<projectPath>/.agi/project.json` — the s130-canonical
- * location.
+ * Path under `<projectPath>/project.json` — the s140-canonical location
+ * (root of the project folder).
+ *
+ * Owner directive 2026-04-30: "all config for projects and repos is in the
+ * root of the project folder in the project.json file." Per-repo config
+ * lives inside this single file under `repos[name]`.
  */
 export function newProjectConfigPath(projectPath: string): string {
+  return join(projectPath, "project.json");
+}
+
+/**
+ * Path under `<projectPath>/.agi/project.json` — the s130 transitional
+ * location (cycles 88-91, before the s140 reframe). Kept exported so
+ * migrateProjectConfig + projectConfigPath can transparently flip
+ * existing projects from this to the s140 root location.
+ */
+export function legacyAgiProjectConfigPath(projectPath: string): string {
   return join(projectPath, ".agi", "project.json");
 }
 
@@ -59,30 +73,35 @@ export function legacyProjectConfigPath(projectPath: string): string {
 }
 
 /**
- * Per-project folder layout per s130 (Q-3 owner answer 2026-04-28):
+ * Per-project folder layout per s140 (owner clarifications 2026-04-30):
  *
  *   <projectPath>/
- *   ├── .agi/                # runtime config (project.json + future)
+ *   ├── project.json         # ROOT runtime config (project + per-repo combined)
  *   ├── k/                   # knowledge layer
  *   │   ├── plans/           # per-project plans (replaces _plans/_next/)
  *   │   ├── knowledge/       # markdown notes, design docs, references
- *   │   ├── pm/              # PM provider config (Tynn token, etc)
+ *   │   ├── pm/              # PM-Lite kanban data (s139)
  *   │   ├── memory/          # per-project Aion memory
- *   │   └── chat/            # per-project chat history
+ *   │   └── chat/            # per-project chat sessions
  *   ├── repos/               # bind-mounted git checkouts (multi-repo)
- *   └── .trash/              # soft-delete buffer
+ *   ├── sandbox/             # agent scratch space (NEW in s140 — keeps chat-tool
+ *   │                          cage primitive from writing into repos/ or k/)
+ *   └── .trash/              # soft-delete buffer (kept for back-compat)
+ *
+ * Diffs from the s130 layout: project.json moves to root (was .agi/),
+ * sandbox/ added. chat/ stays at k/chat/.
  *
  * Subfolders ordered for deterministic creation logging.
  */
 export const PROJECT_FOLDER_LAYOUT: readonly string[] = Object.freeze([
-  ".agi",
   "k/plans",
   "k/knowledge",
   "k/pm",
   "k/memory",
   "k/chat",
-  ".trash",
   "repos",
+  "sandbox",
+  ".trash",
 ]);
 
 /**
@@ -123,41 +142,37 @@ export function migrateProjectConfig(projectPath: string): {
    *  migration occurred (s130 t518 slice 1). */
   chatSessionsMigrated?: number;
 } {
-  const newPath = newProjectConfigPath(projectPath);
-  const oldPath = legacyProjectConfigPath(projectPath);
-  // Already-migrated case: still ensure the s130 folder layout exists.
-  // Owner directive cycle 129: "all of the current projects need to be
-  // rearranged since they are still just single source folder."
-  // Projects whose config relocated earlier may still lack the
-  // k/, repos/, .trash/ siblings if scaffolding hasn't been forced.
+  const newPath = newProjectConfigPath(projectPath);                      // s140: <projectPath>/project.json
+  const agiPath = legacyAgiProjectConfigPath(projectPath);                // s130: <projectPath>/.agi/project.json
+  const oldPath = legacyProjectConfigPath(projectPath);                   // pre-s130: ~/.agi/{slug}/project.json
+
+  // Already-migrated case: still ensure the s140 folder layout exists.
   if (existsSync(newPath)) {
     const { created } = scaffoldProjectFolders(projectPath);
     return { migrated: false, to: newPath, scaffolded: created.length > 0 ? created : undefined };
   }
-  if (!existsSync(oldPath)) {
-    // No config either way — but if owner is asking us to scaffold a
-    // single-source-folder project that has nothing yet, create the
-    // layout. Useful when migrate-folders is invoked on workspace
-    // projects that were never explicitly enabled in hosting.
+
+  // Choose the latest available legacy source (s130 .agi/project.json
+  // takes precedence over the older ~/.agi one if both exist).
+  const sourcePath = existsSync(agiPath) ? agiPath : (existsSync(oldPath) ? oldPath : null);
+
+  if (sourcePath === null) {
+    // No config either way — scaffold the layout for a fresh project.
     const { created } = scaffoldProjectFolders(projectPath);
     return { migrated: false, to: newPath, scaffolded: created.length > 0 ? created : undefined };
   }
+
   try {
-    mkdirSync(dirname(newPath), { recursive: true });
-    writeFileSync(newPath, readFileSync(oldPath, "utf-8"), "utf-8");
-    // Scaffold the s130 folder layout so consumers (plan-store,
-    // chat-history, knowledge index, etc.) always find their target
-    // dirs ready.
+    // s140: project.json lives at the root, so no .agi/ mkdir needed.
+    writeFileSync(newPath, readFileSync(sourcePath, "utf-8"), "utf-8");
+    // Scaffold the s140 folder layout (k/, repos/, chat/, sandbox/, .trash/).
     const { created } = scaffoldProjectFolders(projectPath);
-    // Migrate any project-scoped chat sessions from the global dir
-    // into the new <projectPath>/k/chat/. Idempotent — if this is a
-    // re-run, the chat helper skips already-copied sessions. Errors
-    // here are non-fatal — the project config migration already
-    // succeeded.
+    // Migrate project-scoped chat sessions into <projectPath>/k/chat/.
+    // Idempotent — re-runs skip already-copied sessions.
     const chatResult = migrateChatSessionsForProject(projectPath);
     return {
       migrated: true,
-      from: oldPath,
+      from: sourcePath,
       to: newPath,
       scaffolded: created,
       chatSessionsMigrated: chatResult.migrated,
@@ -185,22 +200,22 @@ export function migrateProjectConfig(projectPath: string): {
  * is gateway-owned), but ensures we never lose the ability to read.
  */
 export function projectConfigPath(projectPath: string): string {
-  const newPath = newProjectConfigPath(projectPath);
+  const newPath = newProjectConfigPath(projectPath);                      // s140: <projectPath>/project.json
   if (existsSync(newPath)) return newPath;
-  const oldPath = legacyProjectConfigPath(projectPath);
-  if (!existsSync(oldPath)) {
-    // Neither exists — return the new path so writers create it
-    // canonically.
+  const agiPath = legacyAgiProjectConfigPath(projectPath);                // s130: <projectPath>/.agi/project.json
+  const oldPath = legacyProjectConfigPath(projectPath);                   // pre-s130: ~/.agi/{slug}/project.json
+  // Pick the latest existing legacy source. Empty string when neither.
+  const sourcePath = existsSync(agiPath) ? agiPath : (existsSync(oldPath) ? oldPath : "");
+  if (sourcePath === "") {
+    // Neither exists — return the new path so writers create it canonically.
     return newPath;
   }
-  // Legacy exists, new doesn't — migrate transparently. Idempotent
-  // because of the `existsSync(newPath)` early-exit at the top.
+  // Legacy exists, new doesn't — migrate transparently to root.
   try {
-    mkdirSync(dirname(newPath), { recursive: true });
-    writeFileSync(newPath, readFileSync(oldPath, "utf-8"), "utf-8");
+    writeFileSync(newPath, readFileSync(sourcePath, "utf-8"), "utf-8");
     return newPath;
   } catch {
-    // Migration failed — fall back to legacy so reads still work.
-    return oldPath;
+    // Migration failed — fall back to whatever legacy worked so reads still succeed.
+    return sourcePath;
   }
 }
