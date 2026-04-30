@@ -308,7 +308,7 @@ export function Projects({
               <Table.Column label="Tags" />
               <Table.Column label="Activity (30d)" />
               <Table.Column label="Knowledge" />
-              <Table.Column label="Hosting" />
+              <Table.Column label="Health" />
             </Table.Head>
             <Table.Body>
               {visibleProjects.map((p) => {
@@ -514,31 +514,45 @@ export function Projects({
                       })()}
                     </Table.Cell>
                     <Table.Cell>
-                      {p.hosting ? (
-                        <div className="flex items-center gap-2">
-                          <span className={cn(
-                            "text-[10px] px-1.5 py-0.5 rounded font-semibold",
-                            p.hosting.status === "running" ? "bg-green/15 text-green" :
-                            p.hosting.status === "error" ? "bg-red/15 text-red" :
-                            "bg-muted-foreground/15 text-muted-foreground",
-                          )}>
-                            {p.hosting.status}
-                          </span>
-                          {p.hosting.hostname && (
-                            <a
-                              href={`https://${p.hosting.hostname}.${hostingStatus?.baseDomain ?? "ai.on"}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-[11px] text-blue underline"
+                      {(() => {
+                        // Health column per projects-browser-v2 mockup:
+                        // ✓ green = running healthy
+                        // ⚠ amber = configured but stopped or in error state
+                        // ─ idle  = not hosting OR unconfigured
+                        if (!p.hosting || !p.hosting.enabled || p.hosting.status === "unconfigured") {
+                          return <span className="text-[11px] text-muted-foreground" title="Not hosting">— idle</span>;
+                        }
+                        if (p.hosting.status === "running") {
+                          return (
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] text-green font-semibold" title="Running">✓ green</span>
+                              {p.hosting.hostname && (
+                                <a
+                                  href={`https://${p.hosting.hostname}.${hostingStatus?.baseDomain ?? "ai.on"}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-[10px] text-blue underline"
+                                >
+                                  {p.hosting.hostname}
+                                </a>
+                              )}
+                            </div>
+                          );
+                        }
+                        if (p.hosting.status === "error") {
+                          return (
+                            <span
+                              className="text-[11px] text-red font-semibold"
+                              title={p.hosting.error ?? "Container error"}
                             >
-                              {p.hosting.hostname}.{hostingStatus?.baseDomain ?? "ai.on"}
-                            </a>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-[11px] text-muted-foreground">—</span>
-                      )}
+                              ⚠ error
+                            </span>
+                          );
+                        }
+                        // status = "stopped" but enabled = true → amber
+                        return <span className="text-[11px] text-yellow font-semibold" title="Stopped (configured)">⚠ amber</span>;
+                      })()}
                     </Table.Cell>
                   </Table.Row>
                 );
