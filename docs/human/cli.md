@@ -102,6 +102,24 @@ Checks: Node.js version, pnpm, deploy directory, config file, Caddy, Podman (roo
 
 Exits with the issue count as a one-line summary at the bottom.
 
+#### agi doctor schema
+
+Walk every on-disk config file the gateway reads at boot and validate each
+against its Zod schema. Catches the class of failure that crash-looped the
+gateway in cycle 150 (project.json shape drift after the s140 layout
+migration; unhandled ZodError in fire-and-forget addStack). Run this BEFORE
+attempting upgrade or restart whenever schema validation might fail.
+
+```bash
+agi doctor schema           # human-readable report
+agi doctor schema --json    # machine-readable for scripting / CI
+```
+
+Currently validates: `~/.agi/gateway.json` (AionimaConfigSchema) plus every
+discovered `<workspace>/<project>/project.json` (ProjectConfigSchema). Exits
+with code 1 when any error is found. Plugin manifests are validated in a
+follow-up slice once their schema lands.
+
 ---
 
 ### agi config

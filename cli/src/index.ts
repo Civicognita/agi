@@ -15,6 +15,7 @@ import { Command } from "commander";
 import { registerRunCommand } from "./commands/run.js";
 import { registerSetupCommand } from "./commands/setup.js";
 import { registerChannelsCommand } from "./commands/channels.js";
+import { registerSchemaCommand } from "./commands/schema.js";
 
 const program = new Command();
 
@@ -31,5 +32,6 @@ program
 registerRunCommand(program);
 registerSetupCommand(program);
 registerChannelsCommand(program);
+registerSchemaCommand(program);
 
 program.parse();

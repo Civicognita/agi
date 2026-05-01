@@ -1955,7 +1955,22 @@ case "${1:-help}" in
   restart)  cmd_restart ;;
   start)    cmd_start ;;
   stop)     cmd_stop ;;
-  doctor)   cmd_doctor ;;
+  doctor)
+    case "${2:-}" in
+      schema)
+        # s144 t575 — schema validation diagnostic. Walks every on-disk
+        # config file the gateway reads at boot and runs each through
+        # its Zod schema. Catches the cycle-150 class of failures
+        # (project.json shape drift, gateway.json schema regression)
+        # BEFORE attempting upgrade or restart.
+        shift; shift
+        cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts schema validate "$@"
+        ;;
+      *)
+        cmd_doctor
+        ;;
+    esac
+    ;;
   safemode) shift; cmd_safemode "$@" ;;
   incidents) shift; cmd_incidents "$@" ;;
   scan) shift; cmd_scan "$@" ;;
