@@ -25,9 +25,9 @@
  * new location is stable across a few upgrades.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, copyFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, resolve as resolvePath } from "node:path";
 import { migrateChatSessionsForProject } from "./chat-history-migration.js";
 
 /**
@@ -105,7 +105,8 @@ export function legacyProjectConfigPath(projectPath: string): string {
 }
 
 /**
- * Per-project folder layout per s140 (owner clarifications 2026-04-30):
+ * Per-project folder layout per s140 (owner clarifications 2026-04-30 +
+ * cycle 156 morning: skeleton lives at `templates/.new/`):
  *
  *   <projectPath>/
  *   ├── project.json         # ROOT runtime config (project + per-repo combined)
@@ -116,16 +117,16 @@ export function legacyProjectConfigPath(projectPath: string): string {
  *   │   ├── memory/          # per-project Aion memory
  *   │   └── chat/            # per-project chat sessions
  *   ├── repos/               # bind-mounted git checkouts (multi-repo)
- *   ├── sandbox/             # agent scratch space (NEW in s140 — keeps chat-tool
- *   │                          cage primitive from writing into repos/ or k/)
- *   └── .trash/              # soft-delete buffer (kept for back-compat)
+ *   ├── sandbox/             # agent scratch space — keeps chat-tool cage
+ *   │                          primitive from writing into repos/ or k/
+ *   └── .trash/              # soft-delete buffer
  *
- * Diffs from the s130 layout: project.json moves to root (was .agi/),
- * sandbox/ added. chat/ stays at k/chat/.
- *
- * Subfolders ordered for deterministic creation logging.
+ * Source of truth: `<gatewayCwd>/templates/.new/`. Adding a new folder is
+ * `mkdir templates/.new/<thing>/.gitkeep` — no code change. The list
+ * below is a fallback used when the skeleton can't be located at runtime
+ * (e.g. running inside a test fixture without the templates tree).
  */
-export const PROJECT_FOLDER_LAYOUT: readonly string[] = Object.freeze([
+const PROJECT_FOLDER_LAYOUT_FALLBACK: readonly string[] = Object.freeze([
   "k/plans",
   "k/knowledge",
   "k/pm",
@@ -137,18 +138,88 @@ export const PROJECT_FOLDER_LAYOUT: readonly string[] = Object.freeze([
 ]);
 
 /**
- * Idempotently scaffold the s130 per-project folder layout. Returns
- * the list of dirs newly created (empty when everything already
- * existed). Safe to call repeatedly — `mkdirSync` with `recursive: true`
- * is a no-op when the dir exists.
+ * @deprecated Prefer the skeleton at `templates/.new/`. This export is
+ * kept for backwards compatibility with any callers that referenced it
+ * from earlier slices; new code should not consume it.
+ */
+export const PROJECT_FOLDER_LAYOUT = PROJECT_FOLDER_LAYOUT_FALLBACK;
+
+/**
+ * Resolve the on-disk skeleton root. The gateway's cwd is the agi source
+ * tree (set by the systemd unit / `agi run` wrapper), so the skeleton
+ * sits one directory away. Returns null when not findable so callers can
+ * fall through to the hardcoded layout list.
+ */
+function findProjectSkeletonRoot(): string | null {
+  const candidates = [
+    resolvePath(process.cwd(), "templates/.new"),
+    // Walk up from this module location too, in case cwd is somewhere
+    // else (test fixtures, ad-hoc tooling). Two levels: src/ → packages/
+    // → repo root, then templates/.new.
+    resolvePath(__dirname, "../../../templates/.new"),
+  ];
+  for (const c of candidates) {
+    if (existsSync(c) && statSync(c).isDirectory()) return c;
+  }
+  return null;
+}
+
+/**
+ * Recursively copy the skeleton's directory structure into `targetPath`.
+ * Idempotent: existing files and directories are left untouched. Returns
+ * the absolute paths of newly-created entries (dirs + files).
+ *
+ * Skips `.gitkeep` files in the skeleton — those exist only so the empty
+ * dirs survive git tracking; copying them into runtime projects adds
+ * noise.
+ */
+function copySkeletonInto(skeletonRoot: string, targetPath: string): string[] {
+  const created: string[] = [];
+  const stack: { src: string; dst: string }[] = [{ src: skeletonRoot, dst: targetPath }];
+  while (stack.length > 0) {
+    const { src, dst } = stack.pop()!;
+    if (!existsSync(dst)) {
+      mkdirSync(dst, { recursive: true });
+      created.push(dst);
+    }
+    const entries = readdirSync(src, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcChild = join(src, entry.name);
+      const dstChild = join(dst, entry.name);
+      if (entry.isDirectory()) {
+        stack.push({ src: srcChild, dst: dstChild });
+      } else if (entry.isFile() && entry.name !== ".gitkeep") {
+        if (!existsSync(dstChild)) {
+          copyFileSync(srcChild, dstChild);
+          created.push(dstChild);
+        }
+      }
+    }
+  }
+  return created;
+}
+
+/**
+ * Idempotently scaffold the per-project folder layout from the skeleton
+ * at `templates/.new/`. Returns the list of paths newly created. Safe to
+ * call repeatedly — existing entries are skipped.
+ *
+ * When the skeleton can't be located (test fixtures, broken installs),
+ * falls back to the hardcoded directory list so existing migrations
+ * don't break. The fallback path does NOT copy a starter project.json.
  */
 export function scaffoldProjectFolders(projectPath: string): { created: string[] } {
   // Sacred-skip — never scaffold inside a sacred repo.
   if (isSacredProjectPath(projectPath)) {
     return { created: [] };
   }
+  const skeletonRoot = findProjectSkeletonRoot();
+  if (skeletonRoot) {
+    return { created: copySkeletonInto(skeletonRoot, projectPath) };
+  }
+  // Fallback: hardcoded layout.
   const created: string[] = [];
-  for (const rel of PROJECT_FOLDER_LAYOUT) {
+  for (const rel of PROJECT_FOLDER_LAYOUT_FALLBACK) {
     const abs = join(projectPath, rel);
     if (!existsSync(abs)) {
       mkdirSync(abs, { recursive: true });
