@@ -129,29 +129,38 @@ db.ai.on {
     expect(out).toContain("handle_path /api/* {");
   });
 
-  it("emits 7-day TLS lifetime as a multi-line block on every internal cert (s130 t515 B2 cycle 124, s141 cycle 152 multi-line for Caddy 2.7+)", () => {
+  it("emits 7-day TLS lifetime as the long-form tls block on every internal cert (s130 t515 B2 cycle 124, s141 cycle 152 long-form for Caddy lexer + 'lifetime' semantic)", () => {
     const out = buildCaddyfileContent({
       ...baseOpts,
       idService: { enabled: true },
       pluginSubdomainRoutes: [{ subdomain: "myplugin", target: 5000, containerName: "agi-myplugin" }],
       projects: [{ hostname: "my-app", port: 4001, containerName: "agi-my-app", internalPort: 3000 }],
     });
-    // Owner directive cycle 124: 7-day cert lifetime via `tls internal {…}`.
-    // Cycle 152: emit as a multi-line block — Caddy 2.7+ rejects the
-    // one-liner `tls internal { lifetime 168h }` with "Unexpected next
-    // token after '{' on same line", which broke `caddy reload` on
-    // production after a Caddy upgrade.
+    // Owner directive cycle 124: 7-day cert lifetime.
+    // Cycle 152: must use the long-form `tls { issuer internal { lifetime
+    // 168h } }`. The shorthand `tls internal { lifetime 168h }` failed in
+    // Caddy two different ways — the one-liner tripped the lexer
+    // ("Unexpected next token after '{' on same line"), and the
+    // multi-line variant of the same shorthand tripped the parser
+    // ("unknown subdirective: lifetime"). `lifetime` is a subdirective of
+    // the `internal` issuer, not of the `tls internal` shorthand.
     //
     // Regex matches the indented multi-line form:
-    //     tls internal {
-    //         lifetime 168h
+    //     tls {
+    //         issuer internal {
+    //             lifetime 168h
+    //         }
     //     }
-    const lifetimeMatches = out.match(/tls internal \{\n\s+lifetime 168h\n\s+\}/g) ?? [];
+    const lifetimeMatches =
+      out.match(/tls \{\n\s+issuer internal \{\n\s+lifetime 168h\n\s+\}\n\s+\}/g) ?? [];
     // gateway + db + id + plugin + project = 5 sites that emit `tls internal`
     expect(lifetimeMatches.length).toBe(5);
-    // Hard guard: the old broken one-liner must NEVER reappear.
+    // Hard regression guards: neither broken shape can silently reappear.
+    // (a) one-liner shorthand
     expect(out).not.toMatch(/tls internal \{[^\n]*lifetime/);
-    // No leftover bare `tls internal` (without lifetime) — would mean a
+    // (b) multi-line shorthand still has lifetime as a child of `tls internal`
+    expect(out).not.toMatch(/tls internal \{\n\s+lifetime/);
+    // No leftover bare `tls internal` (without issuer block) — would mean a
     // site forgot the constant.
     expect(out).not.toMatch(/tls internal$\n/m);
     expect(out).not.toMatch(/tls internal\s*$/m);

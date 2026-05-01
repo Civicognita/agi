@@ -335,12 +335,22 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
   // when ~1/3 lifetime remains (~5 days post-issue) and on every reload —
   // natural cadence accepted; no daily-reload timer needed.
   //
-  // s141 (cycle 152) — Caddy 2.7+ rejects one-liner directive blocks like
-  // `tls internal { lifetime 168h }` with "Unexpected next token after '{'
-  // on same line". Emit the lifetime subdirective on its own line. The
-  // surrounding interpolation `blocks.push(\`    ${TLS_INTERNAL}\`)`
-  // produces correctly indented multi-line output once joined with "\n".
-  const TLS_INTERNAL = "tls internal {\n        lifetime 168h\n    }";
+  // s141 (cycle 152) — original cycle-124 syntax `tls internal { lifetime
+  // 168h }` was emitted but never accepted by Caddy: it tripped both the
+  // "Unexpected next token after '{' on same line" lexer error AND the
+  // "unknown subdirective: lifetime" semantic error (lifetime is not a
+  // subdirective of the `tls internal` shorthand). The shorthand is just
+  // `tls { issuer internal }` — to customize the internal issuer's
+  // settings, use the long form. The surrounding interpolation
+  // `blocks.push(\`    ${TLS_INTERNAL}\`)` produces correctly indented
+  // multi-line output once joined with "\n":
+  //     tls {
+  //         issuer internal {
+  //             lifetime 168h
+  //         }
+  //     }
+  const TLS_INTERNAL =
+    "tls {\n        issuer internal {\n            lifetime 168h\n        }\n    }";
 
   // Extract the user-editable CUSTOM block from the existing Caddyfile.
   let customBlock = "";
