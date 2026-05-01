@@ -44,6 +44,32 @@ read -r -d '' MIGRATIONS_SQL <<'SQL' || true
 -- v0.4.96 — Phase M aliases column on plugins_marketplace
 ALTER TABLE IF EXISTS plugins_marketplace
   ADD COLUMN IF NOT EXISTS aliases jsonb;
+
+-- v0.4.433 (cycle 150) — cost_records table for the cost ledger
+-- (packages/db-schema/src/cost-ledger.ts). The schema-was-defined-but-
+-- table-never-created gap surfaced when /api/providers/cost/today
+-- 500'd against the missing relation. CREATE TABLE IF NOT EXISTS makes
+-- this idempotent across upgrades.
+CREATE TABLE IF NOT EXISTS cost_records (
+  id text PRIMARY KEY,
+  ts timestamptz NOT NULL DEFAULT now(),
+  entity_id text,
+  provider text NOT NULL,
+  model text NOT NULL,
+  cost_mode text NOT NULL,
+  complexity text NOT NULL,
+  input_tokens integer NOT NULL,
+  output_tokens integer NOT NULL,
+  cpu_watts_observed real,
+  gpu_watts_observed real,
+  dollar_cost real,
+  escalated boolean NOT NULL DEFAULT false,
+  turn_duration_ms integer NOT NULL,
+  routing_reason text NOT NULL
+);
+CREATE INDEX IF NOT EXISTS cost_records_ts_idx ON cost_records (ts);
+CREATE INDEX IF NOT EXISTS cost_records_provider_idx ON cost_records (provider);
+CREATE INDEX IF NOT EXISTS cost_records_entity_ts_idx ON cost_records (entity_id, ts);
 SQL
 
 echo "[migrate-db] applying $(echo "$MIGRATIONS_SQL" | grep -cE '^[A-Z]') statement(s) idempotently"
