@@ -2375,10 +2375,19 @@ export class HostingManager {
       hosted.error = undefined;
 
       this.log.info(`[${hosted.meta.hostname}] container started: ${containerName} (port ${String(hosted.meta.port)}) [${source}]`);
+      // s143 t568 — record container-start success so any prior breaker
+      // state for this project gets cleared. The boot-loop's recordSuccess
+      // covers enableProject's success path, but startContainer is fire-
+      // and-forget from there, so its outcome lives or dies here.
+      this.circuitBreaker?.recordSuccess(`hosting:${hosted.path}`);
     } catch (err) {
       hosted.status = "error";
       hosted.error = err instanceof Error ? err.message : String(err);
       this.log.error(`[${hosted.meta.hostname}] failed to start container: ${hosted.error}`);
+      // s143 t568 — record the failure so consecutive container-start
+      // failures eventually trip the breaker and the next boot skips
+      // this project entirely.
+      this.circuitBreaker?.recordFailure(`hosting:${hosted.path}`, err);
     }
   }
 
