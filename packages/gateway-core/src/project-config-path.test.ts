@@ -167,9 +167,12 @@ describe("project-config-path", () => {
   });
 
   describe("sacred-skip (cycle 150 hotfix v0.4.426)", () => {
-    it("isSacredProjectPath returns true for the 9 sacred names", () => {
-      const sacred = ["agi", "prime", "id", "marketplace", "mapp-marketplace",
-                      "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts"];
+    it("isSacredProjectPath returns true for the 11 sacred names", () => {
+      const sacred = [
+        "_aionima",  // workspace-grouping container (cycle 150)
+        "agi", "prime", "id", "marketplace", "mapp-marketplace",
+        "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d",
+      ];
       for (const name of sacred) {
         expect(isSacredProjectPath(`/some/parent/${name}`)).toBe(true);
         // Case-insensitive
@@ -177,8 +180,16 @@ describe("project-config-path", () => {
       }
     });
 
+    it("_aionima container is sacred — owner clarified cycle 150", () => {
+      // The /home/wishborn/_projects/_aionima/ dir holds the 5 Aionima cores
+      // + 4-soon-5 PAx packages. The container itself must never be migrated.
+      expect(isSacredProjectPath("/home/wishborn/_projects/_aionima")).toBe(true);
+      // With trailing slash too
+      expect(isSacredProjectPath("/home/wishborn/_projects/_aionima/")).toBe(true);
+    });
+
     it("isSacredProjectPath returns false for arbitrary names", () => {
-      for (const name of ["myproject", "blackorchid_web", "kronos_trader", "_aionima"]) {
+      for (const name of ["myproject", "blackorchid_web", "kronos_trader", "ra_web"]) {
         expect(isSacredProjectPath(`/some/parent/${name}`)).toBe(false);
       }
     });

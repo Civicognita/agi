@@ -57,8 +57,9 @@ BACKUP_ROOT="${HOME}/.agi/migrations/s140-pre"
 
 # Sacred lists — kept in sync with packages/gateway-core/src/server-runtime-state.ts
 # (SACRED_PROJECT_NAMES) and ui/dashboard/src/lib/sacred-projects.ts (PAX_SACRED_PROJECTS).
-SACRED_NAMES=("agi" "prime" "id" "marketplace" "mapp-marketplace" \
-              "react-fancy" "fancy-code" "fancy-sheets" "fancy-echarts")
+SACRED_NAMES=("_aionima" \
+              "agi" "prime" "id" "marketplace" "mapp-marketplace" \
+              "react-fancy" "fancy-code" "fancy-sheets" "fancy-echarts" "fancy-3d")
 
 is_sacred() {
   local name

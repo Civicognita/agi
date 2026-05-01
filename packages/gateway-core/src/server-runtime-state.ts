@@ -86,7 +86,15 @@ import type { PmProvider } from "@agi/sdk";
 // Types
 // ---------------------------------------------------------------------------
 
-const SACRED_PROJECT_NAMES = new Set(["agi", "prime", "id", "marketplace", "mapp-marketplace"]);
+// Sacred-project basenames — the gateway never treats these as user projects.
+// Keep in sync with project-config-path.ts and scripts/migrate-projects-s140.sh.
+// Includes (a) the workspace-grouping `_aionima/` container per cycle 150,
+// (b) the Civicognita core 5, (c) the Particle-Academy 4 (5 with fancy-3d).
+const SACRED_PROJECT_NAMES = new Set([
+  "_aionima",
+  "agi", "prime", "id", "marketplace", "mapp-marketplace",
+  "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d",
+]);
 
 function isSacredProjectPath(pathStr: string): boolean {
   return SACRED_PROJECT_NAMES.has(basename(pathStr).toLowerCase());

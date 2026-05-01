@@ -47,8 +47,15 @@ import { migrateChatSessionsForProject } from "./chat-history-migration.js";
  * inside the agi repo itself.
  */
 const SACRED_PROJECT_NAMES = new Set([
+  // Workspace-grouping container (cycle 150 owner clarification): the
+  // _aionima/ dir at the root of the workspace holds the 5 Aionima cores
+  // + 4-soon-5 PAx packages. The container ITSELF is sacred — it should
+  // never be auto-migrated to the s140 layout.
+  "_aionima",
+  // Civicognita-owned core five
   "agi", "prime", "id", "marketplace", "mapp-marketplace",
-  "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts",
+  // Particle-Academy ADF UI primitives
+  "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d",
 ]);
 
 export function isSacredProjectPath(projectPath: string): boolean {
