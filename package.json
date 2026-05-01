@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.430",
+  "version": "0.4.431",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",

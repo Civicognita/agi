@@ -1086,7 +1086,31 @@ export class HostingManager {
             }
           }
 
-          await this.enableProject(fullPath, meta);
+          // Service circuit-breaker (cycle 150 v0.4.431 hotfix):
+          //   Owner-flagged: "every project is trying to start up but failing
+          //   and it's taking a long time for agi to come up". The await on
+          //   enableProject was blocking boot — a single slow/broken project
+          //   could hang the gateway.
+          // Defense: 15s per-project timeout + try/catch so a failure logs
+          // and the loop continues to the next project. Persistent
+          // circuit-breaker state (failures > N → open, manual reset via
+          // dashboard) ships in a follow-up; this is the boot-unblock.
+          try {
+            const slug = this.slugFromPath(fullPath);
+            await Promise.race([
+              this.enableProject(fullPath, meta),
+              new Promise<never>((_, reject) => setTimeout(
+                () => reject(new Error(`enableProject timeout (15s) — gateway continues without ${slug}`)),
+                15_000,
+              )),
+            ]);
+          } catch (err) {
+            const slug = this.slugFromPath(fullPath);
+            this.log.warn(
+              `[${slug}] enableProject failed during boot — skipping: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            // Continue to next project; don't let one bad project block the whole gateway boot.
+          }
 
           if (!isCodeType) {
             // Non-code projects: auto-set viewer to first matching MagicApp
