@@ -1085,8 +1085,20 @@ export async function createGatewayRuntimeState(
                 const childEntries = readdirSync(fullPath, { withFileTypes: true });
                 for (const ce of childEntries) {
                   if (!ce.isDirectory() || ce.name.startsWith(".")) continue;
+                  // Positive identification: only list children that look
+                  // like projects — either they have a project.json (the
+                  // post-s140 marker) OR a .git/ directory (a git repo,
+                  // which the core-fork members all are). This filters
+                  // out stray scaffold dirs (e.g. _aionima/k, /repos,
+                  // /sandbox) that an older migration script accidentally
+                  // created inside the collection before SACRED was set.
+                  const childPath = resolvePath(fullPath, ce.name);
+                  const looksLikeProject =
+                    existsSync(join(childPath, "project.json")) ||
+                    existsSync(join(childPath, ".git"));
+                  if (!looksLikeProject) continue;
                   expanded.push({
-                    fullPath: resolvePath(fullPath, ce.name),
+                    fullPath: childPath,
                     name: ce.name,
                     coreCollection: "aionima",
                     coreForkSlug: ce.name,
