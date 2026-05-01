@@ -620,19 +620,17 @@ export function ProjectDetail({
           </div>
         )}
 
-        {/* s134 t517 slice 5c starter — Canvas section header per mockup B
-            (`<h2>Canvas · Editor</h2>`). Names the active sub-surface so the
-            owner reads the workspace as "I'm in the Canvas section, viewing
-            the Editor sub-surface" — establishes the canvas framing the rest
-            of slice 5c will fill in (chat panel right-side, full flyout-shell
-            chrome). Skipped for core forks (no mode/sub-surface picker → no
-            canvas framing). */}
+        {/* Active sub-surface label. Was 'Canvas · {label}' per mockup B —
+            owner clarified (cycle 157): there's only ONE Canvas (the
+            AgentCanvas that opens with chat), so the 'Canvas · ' prefix
+            is misleading on every project sub-tab. Drop the prefix; keep
+            the label so owners still see which sub-surface is active. */}
         {!isCoreFork && (
           <h2
             className="text-[12px] uppercase tracking-wider text-muted-foreground/80 font-semibold mt-3 mb-2 px-1"
             data-testid="project-canvas-header"
           >
-            Canvas · {tabIdToCanvasLabel(activeTab, pluginPanels)}
+            {tabIdToCanvasLabel(activeTab, pluginPanels)}
           </h2>
         )}
 

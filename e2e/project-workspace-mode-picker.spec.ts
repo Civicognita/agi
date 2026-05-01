@@ -122,22 +122,26 @@ test.describe("Project workspace mode picker (s134 t517)", () => {
     await expect(label).toHaveText(/operate/i);
   });
 
-  test("Canvas section header reflects active sub-surface (slice 5c phase 1)", async ({ page }) => {
+  test("Sub-surface header reflects active tab (slice 5c phase 1, cycle 157 prefix-drop)", async ({ page }) => {
     const found = await navigateToFullModeProject(page);
     test.skip(!found, "no full-mode project available");
 
     // Default tab in develop mode is one of: details/files/repository/environment.
-    // The Canvas header reads "Canvas · {Label}" — assert the label matches one
-    // of the develop-mode tab labels.
+    // Owner directive cycle 157: drop the 'Canvas · ' prefix — there's only
+    // one Canvas (the AgentCanvas that opens with chat), so the prefix on
+    // every project sub-tab was misleading. Header now shows just the
+    // sub-surface label.
     const header = page.getByTestId("project-canvas-header");
     await expect(header).toBeVisible();
-    await expect(header).toHaveText(/Canvas · (Details|Editor|Repository|Environment)/);
+    await expect(header).toHaveText(/^(Details|Editor|Repository|Environment)$/);
+    // Hard regression guard: the deprecated prefix must NEVER reappear.
+    await expect(header).not.toHaveText(/Canvas\s*·/);
 
     // Click another tab (Repository) — header should update if Repository tab exists.
     const repoTab = page.getByRole("tab", { name: "Repository" });
     if (await repoTab.count() > 0) {
       await repoTab.click();
-      await expect(header).toHaveText(/Canvas · Repository/);
+      await expect(header).toHaveText(/^Repository$/);
     }
   });
 
