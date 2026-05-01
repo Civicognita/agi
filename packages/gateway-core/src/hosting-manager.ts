@@ -2813,13 +2813,45 @@ export class HostingManager {
       return;
     }
 
-    // Reload Caddy
+    // Reload Caddy. s141 (cycle 152) — Caddy now lives in the rootless
+    // `agi-caddy` podman container (story #100), and the host caddy
+    // binary's `caddy reload` tries to push to localhost:2019 which is
+    // not exposed from the container — gives "connect: connection
+    // refused". Reload from INSIDE the container instead, where the
+    // admin endpoint binds locally and the same Caddyfile is mounted at
+    // /etc/caddy/Caddyfile.
+    //
+    // Fallback to host caddy when the container isn't present (degraded
+    // dev environments, fresh installs, or operators running caddy as a
+    // host service for some reason). Both paths share the same
+    // /etc/caddy/Caddyfile that we just regenerated.
     try {
-      execSync("sudo caddy reload --config /etc/caddy/Caddyfile", {
-        stdio: "pipe",
-        timeout: 10_000,
-      });
-      this.log.info("Caddy reloaded");
+      let containerExists = false;
+      try {
+        const containerCheck = execFileSync(
+          "podman",
+          ["ps", "--filter", "name=^agi-caddy$", "--format", "{{.Names}}"],
+          { stdio: "pipe", timeout: 5_000 },
+        ).toString().trim();
+        containerExists = containerCheck === "agi-caddy";
+      } catch {
+        // podman missing or rootless socket unavailable — fall through to host caddy
+      }
+      if (containerExists) {
+        execFileSync(
+          "podman",
+          ["exec", "agi-caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"],
+          { stdio: "pipe", timeout: 10_000 },
+        );
+        this.log.info("Caddy reloaded via agi-caddy container");
+      } else {
+        execFileSync(
+          "sudo",
+          ["caddy", "reload", "--config", "/etc/caddy/Caddyfile"],
+          { stdio: "pipe", timeout: 10_000 },
+        );
+        this.log.info("Caddy reloaded via host caddy");
+      }
     } catch (err) {
       this.log.error(`failed to reload Caddy: ${err instanceof Error ? err.message : String(err)}`);
     }
