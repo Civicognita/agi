@@ -77,6 +77,34 @@ test.describe("DevNotes universal modal (cycle 150)", () => {
     expect(back).toMatch(/^1 of \d+/);
   });
 
+  test("navigation between routes is fast — no DevNotes register-cascade (v0.4.434 regression)", async ({ page }) => {
+    // Cycle 150 v0.4.434 hotfix: the original single-context provider
+    // churned its value identity on every register/unregister, which
+    // re-fired every mounted DevNote's useEffect (ctx was in deps),
+    // which called register again → cascade. Even with v0.4.427 child-
+    // ref fix, navigation between routes was slow because mount/unmount
+    // wiggled the context value. Fix: split into Actions (stable) +
+    // State (changing) contexts so DevNote consumers don't churn.
+    //
+    // This test catches the regression by navigating between several
+    // routes rapidly and ensuring each navigation completes within a
+    // sane bound. If the cascade comes back, navigation hangs.
+    await page.goto("/projects");
+    const start = Date.now();
+    // Navigate through 4 routes — each one mounts/unmounts DevNote
+    // instances. The cascade would compound across navigations.
+    await page.goto("/settings/providers");
+    await page.waitForLoadState("networkidle", { timeout: 8_000 });
+    await page.goto("/projects");
+    await page.waitForLoadState("networkidle", { timeout: 8_000 });
+    await page.goto("/aionima");
+    await page.waitForLoadState("networkidle", { timeout: 8_000 });
+    await page.goto("/projects");
+    await page.waitForLoadState("networkidle", { timeout: 8_000 });
+    const elapsed = Date.now() - start;
+    expect(elapsed, `4-route navigation completed in ${String(elapsed)}ms (sub-30s sanity bound)`).toBeLessThan(30_000);
+  });
+
   test("page does NOT infinite-loop when DevNotes have JSX bodies (v0.4.427 regression)", async ({ page }) => {
     // Cycle 150 v0.4.426 → v0.4.427 hotfix:
     //   Owner observed "results hung hard crash" when navigating to pages

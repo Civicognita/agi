@@ -80,13 +80,30 @@ interface DevNoteEntry {
   body: ReactNode;
 }
 
-interface DevNotesContextShape {
+// Cycle 150 hotfix v0.4.434 — split into TWO contexts so <DevNote>
+// consumers never re-render on entries/open changes. The original single
+// context churned its value identity on every register/unregister, which
+// re-fired every mounted DevNote's useEffect (ctx was in deps), which
+// called register again → churn cascade. Even with the v0.4.427 children-
+// ref fix, every navigation triggered the cascade because mounting/
+// unmounting a single DevNote wiggled the context value.
+//
+// Split: Actions context holds STABLE callbacks + enabled flag (never
+// changes identity except when dev-mode toggles). State context holds
+// the changing entries/open. <DevNote> only consumes Actions — its
+// useEffect deps stay stable across the whole session. Icon + Modal
+// consume both.
+
+interface DevNotesActionsShape {
   enabled: boolean;
+  register: (id: string, entry: Omit<DevNoteEntry, "id">) => void;
+  unregister: (id: string) => void;
+}
+
+interface DevNotesStateShape {
   count: number;
   open: boolean;
   setOpen: (open: boolean) => void;
-  register: (id: string, entry: Omit<DevNoteEntry, "id">) => void;
-  unregister: (id: string) => void;
   entries: DevNoteEntry[];
 }
 
@@ -115,10 +132,15 @@ const KIND_LABEL_CLASS: Record<DevNoteKind, string> = {
 // Context
 // ----------------------------------------------------------------------
 
-const DevNotesContext = createContext<DevNotesContextShape | null>(null);
+const DevNotesActionsContext = createContext<DevNotesActionsShape | null>(null);
+const DevNotesStateContext = createContext<DevNotesStateShape | null>(null);
 
-function useDevNotesContext(): DevNotesContextShape | null {
-  return useContext(DevNotesContext);
+function useDevNotesActions(): DevNotesActionsShape | null {
+  return useContext(DevNotesActionsContext);
+}
+
+function useDevNotesState(): DevNotesStateShape | null {
+  return useContext(DevNotesStateContext);
 }
 
 // ----------------------------------------------------------------------
@@ -154,24 +176,30 @@ export function DevNotesProvider({ children }: { children: ReactNode }) {
     return Array.from(entriesRef.current.values());
   }, [version]);
 
-  const value: DevNotesContextShape = useMemo(
-    () => ({
-      enabled,
-      count: entries.length,
-      open,
-      setOpen,
-      register,
-      unregister,
-      entries,
-    }),
-    [enabled, entries, open, register, unregister],
+  // Actions context: identity stable across the session except when
+  // dev-mode toggles. <DevNote> consumes ONLY this; its useEffect deps
+  // stay stable so registering/unregistering siblings doesn't re-fire
+  // its effect. Cascade closed.
+  const actions: DevNotesActionsShape = useMemo(
+    () => ({ enabled, register, unregister }),
+    [enabled, register, unregister],
+  );
+
+  // State context: changes on every register/unregister + open toggle.
+  // Icon + Modal consume this; their re-renders are bounded by the count
+  // and open state, not by individual DevNote lifecycle.
+  const state: DevNotesStateShape = useMemo(
+    () => ({ count: entries.length, open, setOpen, entries }),
+    [entries, open],
   );
 
   return (
-    <DevNotesContext.Provider value={value}>
-      {children}
-      <DevNotesModal />
-    </DevNotesContext.Provider>
+    <DevNotesActionsContext.Provider value={actions}>
+      <DevNotesStateContext.Provider value={state}>
+        {children}
+        <DevNotesModal />
+      </DevNotesStateContext.Provider>
+    </DevNotesActionsContext.Provider>
   );
 }
 
@@ -187,28 +215,22 @@ interface DevNoteProps {
 }
 
 export function DevNote({ heading, kind = "info", scope, children }: DevNoteProps) {
-  const ctx = useDevNotesContext();
+  const actions = useDevNotesActions();
   const id = useId();
 
-  // Cycle 150 hotfix v0.4.427 — `children` (the body) is captured into a
-  // ref instead of being a useEffect dep. JSX children with markup
-  // (`<DevNote>text <strong>x</strong></DevNote>`) produce a NEW array
-  // reference on every render, which would re-fire the effect, which
-  // calls register → setVersion → re-render → new children reference →
-  // infinite loop. Owner observed this as a "results hung hard crash"
-  // when multiple DevNote-bearing pages were open at once.
-  //
-  // The ref always points at the latest children; the effect reads it
-  // at mount time. If children ever needs to update post-mount, the
-  // caller can change `heading` or remount via `key` to force re-register.
+  // Cycle 150 hotfix v0.4.434 — children captured into a ref (v0.4.427)
+  // AND consumes Actions-only context (v0.4.434). Actions identity is
+  // stable across the session; State changes don't re-render this
+  // component. The useEffect deps are now genuinely stable so register
+  // fires once on mount + once on unmount — no cascade.
   const bodyRef = useRef<ReactNode>(children);
   bodyRef.current = children;
 
   useEffect(() => {
-    if (!ctx?.enabled) return;
-    ctx.register(id, { heading, kind, scope, body: bodyRef.current });
-    return () => { ctx.unregister(id); };
-  }, [ctx, id, heading, kind, scope]);
+    if (!actions?.enabled) return;
+    actions.register(id, { heading, kind, scope, body: bodyRef.current });
+    return () => { actions.unregister(id); };
+  }, [actions, id, heading, kind, scope]);
 
   return null;
 }
@@ -225,16 +247,17 @@ interface DevNotesIconProps {
 }
 
 export function DevNotesIcon({ className, title }: DevNotesIconProps) {
-  const ctx = useDevNotesContext();
-  if (!ctx?.enabled) return null;
-  if (ctx.count === 0) return null;
+  const actions = useDevNotesActions();
+  const state = useDevNotesState();
+  if (!actions?.enabled) return null;
+  if (!state || state.count === 0) return null;
 
-  const label = title ?? `Dev notes (${ctx.count})`;
+  const label = title ?? `Dev notes (${state.count})`;
 
   return (
     <button
       type="button"
-      onClick={() => { ctx.setOpen(true); }}
+      onClick={() => { state.setOpen(true); }}
       aria-label={label}
       title={label}
       data-testid="dev-notes-icon"
@@ -258,14 +281,12 @@ export function DevNotesIcon({ className, title }: DevNotesIconProps) {
         <path d="M3 2v12" />
         <path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" />
       </svg>
-      {ctx.count > 0 && (
-        <span
-          className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-1 rounded-full bg-amber-400 text-black text-[9px] font-bold flex items-center justify-center"
-          data-testid="dev-notes-count-badge"
-        >
-          {ctx.count}
-        </span>
-      )}
+      <span
+        className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-1 rounded-full bg-amber-400 text-black text-[9px] font-bold flex items-center justify-center"
+        data-testid="dev-notes-count-badge"
+      >
+        {state.count}
+      </span>
     </button>
   );
 }
@@ -276,11 +297,12 @@ export function DevNotesIcon({ className, title }: DevNotesIconProps) {
 // ----------------------------------------------------------------------
 
 function DevNotesModal() {
-  const ctx = useDevNotesContext();
+  const actions = useDevNotesActions();
+  const state = useDevNotesState();
   const [index, setIndex] = useState(0);
 
-  const total = ctx?.entries.length ?? 0;
-  const open = Boolean(ctx?.open && total > 0);
+  const total = state?.entries.length ?? 0;
+  const open = Boolean(state?.open && total > 0);
 
   // Clamp the index when entries change (e.g. a page navigates and
   // registrations swap out underneath).
@@ -310,11 +332,11 @@ function DevNotesModal() {
     return () => { window.removeEventListener("keydown", handler); };
   }, [open, total]);
 
-  if (!ctx?.enabled) return null;
-  const entry = total > 0 ? ctx.entries[index] : undefined;
+  if (!actions?.enabled || !state) return null;
+  const entry = total > 0 ? state.entries[index] : undefined;
 
   return (
-    <Modal open={open && entry !== undefined} onClose={() => { ctx.setOpen(false); }} size="md">
+    <Modal open={open && entry !== undefined} onClose={() => { state.setOpen(false); }} size="md">
       {entry && (
         <>
           <Modal.Header>
