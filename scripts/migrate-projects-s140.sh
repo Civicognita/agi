@@ -523,35 +523,80 @@ migrate_one_project() {
 
       // Discover repo names under <projectPath>/repos/
       const reposDir = path.join(projPath, 'repos');
-      const repos = fs.existsSync(reposDir)
+      const repoNames = fs.existsSync(reposDir)
         ? fs.readdirSync(reposDir).filter(n => fs.statSync(path.join(reposDir, n)).isDirectory())
         : [];
+
+      // Discover repo url from <projectPath>/repos/<name>/.git/config (single-repo
+      // flat reshape produces a real .git/config; empty-repos/ projects get '').
+      function discoverUrl(repoName) {
+        try {
+          const gitConfig = fs.readFileSync(
+            path.join(projPath, 'repos', repoName, '.git', 'config'),
+            'utf-8',
+          );
+          // Take the first remote.url match (typically origin)
+          const match = gitConfig.match(/url\\s*=\\s*(.+)/);
+          return match ? match[1].trim() : '';
+        } catch {
+          return '';
+        }
+      }
 
       // Collect existing project-level stacks (legacy field)
       const projectStacks = cfg.attachedStacks || cfg.hosting?.stacks || [];
 
-      // Initialize repos[] entries — each gets {name, attachedStacks: []}
-      cfg.repos = cfg.repos || {};
-      for (const r of repos) {
-        if (!cfg.repos[r]) cfg.repos[r] = { attachedStacks: [] };
+      // Normalize cfg.repos to an array (project-schema.ts:332 expects
+      // z.array(ProjectRepoSchema)). Earlier execute runs (v0.4.421-429)
+      // wrote an object — convert preserving per-name fields (especially
+      // attachedStacks already migrated by the bad run).
+      if (cfg.repos && !Array.isArray(cfg.repos) && typeof cfg.repos === 'object') {
+        const obj = cfg.repos;
+        cfg.repos = Object.keys(obj).map(name => ({ name, ...obj[name] }));
+      } else if (!Array.isArray(cfg.repos)) {
+        cfg.repos = [];
       }
+
+      // Add a repo entry per discovered repos/<name>/ dir, preserving any
+      // existing entry's fields (matched by name).
+      for (const name of repoNames) {
+        let existing = cfg.repos.find(r => r && r.name === name);
+        if (!existing) {
+          existing = { name, attachedStacks: [] };
+          cfg.repos.push(existing);
+        }
+        // Discover url from .git/config when missing (schema requires it).
+        if (!existing.url) {
+          const url = discoverUrl(name);
+          if (url) existing.url = url;
+        }
+      }
+
+      // Drop entries without a url (schema requires url; better to remove
+      // than fail validation). Owner can re-add via dashboard once s141
+      // hosting UI ships.
+      cfg.repos = cfg.repos.filter(r => r && typeof r.url === 'string' && r.url.length > 0);
 
       // Migrate stacks: single-repo → all on it; multi-repo → first repo
       // (owner re-distributes via hosting UI later).
-      if (projectStacks.length > 0 && repos.length > 0) {
-        const target = repos[0];
-        const existing = cfg.repos[target].attachedStacks || [];
-        const existingIds = new Set(existing.map(s => s.stackId));
+      if (projectStacks.length > 0 && cfg.repos.length > 0) {
+        const target = cfg.repos[0];
+        if (!Array.isArray(target.attachedStacks)) target.attachedStacks = [];
+        const existingIds = new Set(target.attachedStacks.map(s => s.stackId));
         for (const s of projectStacks) {
           if (!existingIds.has(s.stackId)) {
-            existing.push(s);
+            target.attachedStacks.push(s);
           }
         }
-        cfg.repos[target].attachedStacks = existing;
         // Remove project-level field
         delete cfg.attachedStacks;
         if (cfg.hosting) delete cfg.hosting.stacks;
       }
+
+      // If cfg.repos is empty (no discoverable repos AND nothing to migrate),
+      // drop the field entirely so the schema's optional() applies. Empty
+      // arrays still validate but are misleading; missing is cleaner.
+      if (cfg.repos.length === 0) delete cfg.repos;
 
       fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
     " "${projectPath}/project.json" "$projectPath"
