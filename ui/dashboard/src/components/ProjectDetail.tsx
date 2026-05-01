@@ -786,7 +786,7 @@ export function ProjectDetail({
         </TabsContent>
 
         <TabsContent value="files" className="mt-4 flex-1 min-h-0 overflow-hidden">
-          <Card className="overflow-hidden">
+          <Card className="overflow-hidden h-full flex flex-col">
             {/* Toolbar — s140 scope pills surface the canonical project
                 subtrees (k/, repos/, sandbox/) as first-class views. 'All'
                 shows the whole tree; the others narrow to one subtree. */}
@@ -831,8 +831,12 @@ export function ProjectDetail({
                 </Button>
               </div>
             </div>
-            {/* Panes — CSS grid with fixed height; both columns always visible */}
-            <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "calc(100vh - 280px)", minHeight: "400px" }}>
+            {/* Panes — CSS grid that fills the remaining flex space.
+                Parent Card is now h-full flex-col, so 'flex: 1' here
+                inherits the real available height instead of fighting
+                against a fixed 100vh-N calc that didn't match the
+                actual viewport-constrained tab content area. */}
+            <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", flex: 1, minHeight: 0 }}>
               {/* TreeNav pane with context menu */}
               <div style={{ overflow: "auto", borderRight: "1px solid var(--border)" }}>
                 <ContextMenu>
@@ -995,7 +999,6 @@ export function ProjectDetail({
                       >
                         <CodeEditor.Toolbar />
                         <CodeEditor.Panel />
-                        <CodeEditor.StatusBar />
                       </CodeEditor>
                     )}
                   </div>
