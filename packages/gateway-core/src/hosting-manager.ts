@@ -158,6 +158,49 @@ export function buildMultiRepoContainerArgsPure(input: MultiRepoArgsInput): Mult
 
   return { args, internalPort: defaultRepo.port };
 }
+
+/**
+ * s141 t552 — resolve the on-host base directory for the LEGACY single-mount
+ * branch when a project follows the post-s140 layout.
+ *
+ * Why: the legacy branch in startContainer mounts `${hosted.path}` as the
+ * project root for static / php / node / default cases. That worked when
+ * project content lived directly at `<projectPath>/...`, but s140 moved
+ * content into `<projectPath>/repos/<repoName>/...`. Without this rebase,
+ * `existsSync(<projectPath>/dist)` always fails (statfs ENOENT) and Apache
+ * mounts an empty directory instead of the actual checkout.
+ *
+ * Behavior:
+ *   - If `projectConfig.repos[]` is non-empty, return `<projectPath>/repos/<defaultRepo.name>`
+ *     (or the repo's explicit `path` override). The default repo is the one
+ *     marked `isDefault`, falling back to the first repo.
+ *   - If `projectConfig` is null or `repos[]` is empty, return `projectPath`
+ *     unchanged — preserves behavior for projects that haven't been migrated.
+ *
+ * Multi-repo projects with at least one runtime repo (port set) take the
+ * dedicated `buildMultiRepoContainerArgsPure` branch above and never reach
+ * this helper. This is for the static-only / single-runtime-repo case where
+ * the container only needs to see one repo at the conventional mount path.
+ */
+export interface ResolveLegacyMountBaseInput {
+  projectPath: string;
+  projectConfig: { repos?: Array<{ name: string; path?: string; isDefault?: boolean }> } | null;
+}
+export interface ResolveLegacyMountBaseResult {
+  base: string;
+  repoName: string | null;
+}
+export function resolveLegacyMountBasePure(input: ResolveLegacyMountBaseInput): ResolveLegacyMountBaseResult {
+  const repos = input.projectConfig?.repos;
+  if (!repos || repos.length === 0) {
+    return { base: input.projectPath, repoName: null };
+  }
+  const defaultRepo = repos.find((r) => r.isDefault) ?? repos[0];
+  if (!defaultRepo) return { base: input.projectPath, repoName: null };
+  const base = defaultRepo.path ?? `${input.projectPath}/repos/${defaultRepo.name}`;
+  return { base, repoName: defaultRepo.name };
+}
+
 function stripAnsi(text: string): string { return text.replace(ANSI_RE, ""); }
 
 /**
@@ -1947,9 +1990,23 @@ export class HostingManager {
     // Resilience-wrapped once at the end so every legacy path survives failure.
     let legacyCmdTokens: string[] | null = null;
 
+    // s141 t552 — rebase mounts onto the default repo when the project follows
+    // the post-s140 layout. Projects with `repos[]` populated keep their
+    // content under `<projectPath>/repos/<repoName>/`; legacy projects
+    // (empty repos[]) keep mounting the project root unchanged.
+    const legacyContentBase = resolveLegacyMountBasePure({
+      projectPath: hosted.path,
+      projectConfig: this.configMgr?.read(hosted.path) ?? null,
+    });
+    if (legacyContentBase.repoName) {
+      this.log.info(
+        `[${hosted.meta.hostname}] legacy mount rebased onto repo "${legacyContentBase.repoName}" — base: ${legacyContentBase.base}`,
+      );
+    }
+
     if (typeDef?.containerConfig) {
       const cfg = typeDef.containerConfig;
-      const volumes = cfg.volumeMounts(hosted.path, hosted.meta);
+      const volumes = cfg.volumeMounts(legacyContentBase.base, hosted.meta);
       for (const vol of volumes) {
         args.push("-v", vol);
       }
@@ -1976,7 +2033,7 @@ export class HostingManager {
       switch (hosted.meta.type) {
         case "static": {
           const docRoot = hosted.meta.docRoot ?? "dist";
-          const hostPath = join(hosted.path, docRoot);
+          const hostPath = join(legacyContentBase.base, docRoot);
           // Pre-flight: nginx mounts hostPath read-only; if the directory
           // doesn't exist on the host, podman aborts with `statfs ENOENT`
           // and the project lands in an "exited" state with a cryptic
@@ -1998,7 +2055,7 @@ export class HostingManager {
         }
         case "php": {
           const docRoot = hosted.meta.docRoot ?? "public";
-          args.push("-v", `${hosted.path}:/var/www/html:Z`);
+          args.push("-v", `${legacyContentBase.base}:/var/www/html:Z`);
           // Inject AI model env vars and dataset volume mounts
           args.push(...aiBindingArgs.volumeArgs);
           args.push(...aiBindingArgs.envArgs);
@@ -2015,7 +2072,7 @@ export class HostingManager {
             hosted.error = "Missing startCommand for Node.js project";
             return;
           }
-          args.push("-v", `${hosted.path}:/app:Z`);
+          args.push("-v", `${legacyContentBase.base}:/app:Z`);
           args.push("-w", "/app");
           args.push("-e", `PORT=${String(internalPort)}`);
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
@@ -2035,7 +2092,7 @@ export class HostingManager {
             hosted.error = `No container configuration for project type "${hosted.meta.type}". Add a stack or set a start command.`;
             return;
           }
-          args.push("-v", `${hosted.path}:/app:Z`);
+          args.push("-v", `${legacyContentBase.base}:/app:Z`);
           args.push("-w", "/app");
           args.push("-e", `PORT=${String(internalPort)}`);
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
