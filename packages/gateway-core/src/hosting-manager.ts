@@ -1188,7 +1188,13 @@ export class HostingManager {
                   15_000,
                 )),
               ]);
-              this.circuitBreaker?.recordSuccess(serviceId);
+              // Note: we do NOT call recordSuccess here. enableProject calls
+              // startContainer with `void` (fire-and-forget), so by the time
+              // enableProject resolves the container hasn't actually started
+              // yet — premature success would clear the failure that
+              // execContainerStart's catch block writes a few hundred ms
+              // later. Container-start success/failure drives the breaker;
+              // the boot-loop only records pre-container failures here.
             } catch (err) {
               this.log.warn(
                 `[${slug}] enableProject failed during boot — skipping: ${err instanceof Error ? err.message : String(err)}`,
