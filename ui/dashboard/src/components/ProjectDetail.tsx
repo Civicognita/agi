@@ -128,6 +128,11 @@ export function ProjectDetail({
   const [currentMode, setCurrentMode] = useState<"develop" | "operate" | "coordinate" | "insight">("develop");
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
+  // s140 (cycle 156) — scope filter for the file tree. Owner asked to
+  // surface k/, repos/, sandbox/ prominently in the project UX. Default
+  // 'all' keeps the existing whole-tree view; the three pills above the
+  // tree narrow the view to just one of the canonical s140 subtrees.
+  const [treeScope, setTreeScope] = useState<"all" | "k" | "repos" | "sandbox">("all");
   const [pluginPanels, setPluginPanels] = useState<PluginPanel[]>([]);
   const [pluginActions, setPluginActions] = useState<PluginAction[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -782,9 +787,35 @@ export function ProjectDetail({
 
         <TabsContent value="files" className="mt-4 flex-1 min-h-0 overflow-hidden">
           <Card className="overflow-hidden">
-            {/* Toolbar */}
+            {/* Toolbar — s140 scope pills surface the canonical project
+                subtrees (k/, repos/, sandbox/) as first-class views. 'All'
+                shows the whole tree; the others narrow to one subtree. */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-              <span className="text-[11px] font-semibold text-muted-foreground">Editor</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-semibold text-muted-foreground">Editor</span>
+                <div className="flex items-center gap-1 ml-2">
+                  {([
+                    { id: "all", label: "All" },
+                    { id: "k", label: "Knowledge" },
+                    { id: "repos", label: "Repos" },
+                    { id: "sandbox", label: "Sandbox" },
+                  ] as const).map((scope) => (
+                    <button
+                      key={scope.id}
+                      type="button"
+                      onClick={() => setTreeScope(scope.id)}
+                      className={cn(
+                        "text-[11px] h-6 px-2 rounded-full border transition-colors",
+                        treeScope === scope.id
+                          ? "bg-primary/10 border-primary/40 text-foreground"
+                          : "border-border text-muted-foreground hover:bg-accent/40",
+                      )}
+                    >
+                      {scope.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
                   <input
@@ -806,13 +837,29 @@ export function ProjectDetail({
               <div style={{ overflow: "auto", borderRight: "1px solid var(--border)" }}>
                 <ContextMenu>
                   <ContextMenu.Trigger className="w-full min-h-full">
-                    {treeLoading ? (
-                      <div className="text-[12px] text-muted-foreground p-4">Loading files...</div>
-                    ) : fileTree.length === 0 ? (
-                      <div className="text-[12px] text-muted-foreground p-4">No files found.</div>
-                    ) : (
+                    {(() => {
+                      // s140 (cycle 156) — narrow the tree to the selected
+                      // scope. 'all' passes through unchanged. The others
+                      // pull just the matching top-level subtree's
+                      // children up so the tree renders rooted at that
+                      // scope (saves owner a click + keeps the visible
+                      // tree focused).
+                      const scopedTree = treeScope === "all"
+                        ? fileTree
+                        : (fileTree.find((n) => n.name === treeScope)?.children ?? []);
+                      if (treeLoading) {
+                        return <div className="text-[12px] text-muted-foreground p-4">Loading files...</div>;
+                      }
+                      if (scopedTree.length === 0) {
+                        return (
+                          <div className="text-[12px] text-muted-foreground p-4">
+                            {treeScope === "all" ? "No files found." : `No files in ${treeScope}/ yet.`}
+                          </div>
+                        );
+                      }
+                      return (
                       <TreeNav
-                        nodes={fileTree.map(function mapNode(n: FileNode): { id: string; label: string; type: "file" | "folder"; ext?: string; children?: { id: string; label: string; type: "file" | "folder"; ext?: string; children?: unknown[] }[] } {
+                        nodes={scopedTree.map(function mapNode(n: FileNode): { id: string; label: string; type: "file" | "folder"; ext?: string; children?: { id: string; label: string; type: "file" | "folder"; ext?: string; children?: unknown[] }[] } {
                           return { id: n.path.startsWith(project.path) ? n.path.slice(project.path.length + 1) : n.path, label: n.name, type: n.type === "dir" ? "folder" : "file", ext: n.ext, children: n.children?.map(mapNode) };
                         }) as never}
                         selectedId={openFilePath ? openFilePath.replace(`${project.path}/`, "") : undefined}
@@ -825,7 +872,8 @@ export function ProjectDetail({
                         showIcons
                         indentSize={14}
                       />
-                    )}
+                      );
+                    })()}
                   </ContextMenu.Trigger>
                   <ContextMenu.Content>
                     <ContextMenu.Item onClick={() => {

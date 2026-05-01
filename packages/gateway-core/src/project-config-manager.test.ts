@@ -57,9 +57,10 @@ describe("ProjectConfigManager", () => {
 
   it("read() preserves plugin passthrough keys", () => {
     mgr.create(projectPath, "Test");
-    // Manually add a plugin key. Per t514 slice 1, config lives at
-    // <projectPath>/.agi/project.json (NOT ~/.agi/{slug}/ as before).
-    const filePath = join(projectPath, ".agi", "project.json");
+    // Per s140 (cycle 150 reframe), config lives at the project root —
+    // <projectPath>/project.json — not under .agi/ (the s130 transitional
+    // location) and not under ~/.agi/{slug}/ (the pre-s130 location).
+    const filePath = join(projectPath, "project.json");
     const data = JSON.parse(readFileSync(filePath, "utf-8"));
     data.customPlugin = { setting: true };
     writeFileSync(filePath, JSON.stringify(data));
@@ -69,8 +70,8 @@ describe("ProjectConfigManager", () => {
   });
 
   it("write() creates parent directories", () => {
-    // Per t514 slice 1, config lives at <projectPath>/.agi/ — write() needs
-    // to create that subdir. Use a tmpDir-based path with a real parent.
+    // Per s140, config lives at <projectPath>/project.json — write() needs
+    // the parent dir to exist. Use a tmpDir-based path with a real parent.
     const deepPath = join(tmpDir, "deep", "nested", "project");
     mkdirSync(deepPath, { recursive: true });
     mgr.write(deepPath, { name: "Deep", createdAt: new Date().toISOString() });
