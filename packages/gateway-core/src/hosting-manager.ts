@@ -334,7 +334,13 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
   // renewal churn during long-running development sessions. Caddy auto-renews
   // when ~1/3 lifetime remains (~5 days post-issue) and on every reload —
   // natural cadence accepted; no daily-reload timer needed.
-  const TLS_INTERNAL = `tls internal { lifetime 168h }`;
+  //
+  // s141 (cycle 152) — Caddy 2.7+ rejects one-liner directive blocks like
+  // `tls internal { lifetime 168h }` with "Unexpected next token after '{'
+  // on same line". Emit the lifetime subdirective on its own line. The
+  // surrounding interpolation `blocks.push(\`    ${TLS_INTERNAL}\`)`
+  // produces correctly indented multi-line output once joined with "\n".
+  const TLS_INTERNAL = "tls internal {\n        lifetime 168h\n    }";
 
   // Extract the user-editable CUSTOM block from the existing Caddyfile.
   let customBlock = "";
