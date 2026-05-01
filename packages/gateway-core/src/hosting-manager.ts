@@ -719,6 +719,9 @@ export interface HostingManagerDeps {
   sharedContainerManager?: SharedContainerManager;
   projectConfigManager?: ProjectConfigManager;
   mappRegistry?: import("./mapp-registry.js").MAppRegistry;
+  /** s143 t568 — persistent circuit-breaker tracker. Optional so existing
+   * tests can construct a HostingManager without wiring breaker state. */
+  circuitBreaker?: import("./circuit-breaker.js").CircuitBreakerTracker;
   logger?: Logger;
 }
 
@@ -818,6 +821,8 @@ export class HostingManager {
   private readonly tunnelProcesses = new Map<string, ChildProcess>();
   private readonly tunnelMode: "quick" | "named";
   private readonly tunnelDomain: string | undefined;
+  /** s143 t568 — persistent circuit-breaker tracker; null when not wired. */
+  private readonly circuitBreaker: import("./circuit-breaker.js").CircuitBreakerTracker | null = null;
   private loginProcess: ChildProcess | null = null;
   private onStatusChange: (() => void) | null = null;
   private statusPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -847,6 +852,7 @@ export class HostingManager {
     this.sharedContainers = deps.sharedContainerManager ?? null;
     this.configMgr = deps.projectConfigManager ?? null;
     this.mappReg = deps.mappRegistry ?? null;
+    this.circuitBreaker = deps.circuitBreaker ?? null;
     this.log = createComponentLogger(deps.logger, "hosting");
   }
 
@@ -1145,30 +1151,51 @@ export class HostingManager {
             }
           }
 
-          // Service circuit-breaker (cycle 150 v0.4.431 hotfix):
-          //   Owner-flagged: "every project is trying to start up but failing
-          //   and it's taking a long time for agi to come up". The await on
-          //   enableProject was blocking boot — a single slow/broken project
-          //   could hang the gateway.
-          // Defense: 15s per-project timeout + try/catch so a failure logs
-          // and the loop continues to the next project. Persistent
-          // circuit-breaker state (failures > N → open, manual reset via
-          // dashboard) ships in a follow-up; this is the boot-unblock.
-          try {
+          // Service circuit-breaker (s143 cycle 153 — replaces v0.4.431 local
+          // try/catch hotfix with persistent tracking).
+          //
+          // Three layers of defense:
+          //   1. shouldSkip — if this project has tripped the breaker on
+          //      previous boots, skip it entirely (no 15s timeout burned).
+          //   2. 15s race — bounds a single attempt so one slow boot can't
+          //      hang the gateway even before the breaker trips.
+          //   3. recordFailure / recordSuccess — persists outcome so the
+          //      breaker can transition (closed → open after threshold,
+          //      open → half-open after cool-down, half-open → closed/open
+          //      based on next attempt).
+          //
+          // The v0.4.431 fallback path (try/catch with no tracker) still
+          // applies when circuitBreaker isn't wired — keeps existing tests
+          // and fresh-install paths working unchanged.
+          {
             const slug = this.slugFromPath(fullPath);
-            await Promise.race([
-              this.enableProject(fullPath, meta),
-              new Promise<never>((_, reject) => setTimeout(
-                () => reject(new Error(`enableProject timeout (15s) — gateway continues without ${slug}`)),
-                15_000,
-              )),
-            ]);
-          } catch (err) {
-            const slug = this.slugFromPath(fullPath);
-            this.log.warn(
-              `[${slug}] enableProject failed during boot — skipping: ${err instanceof Error ? err.message : String(err)}`,
-            );
-            // Continue to next project; don't let one bad project block the whole gateway boot.
+            const serviceId = `hosting:${fullPath}`;
+            if (this.circuitBreaker) {
+              const decision = this.circuitBreaker.shouldSkip(serviceId);
+              if (decision.skip) {
+                this.log.warn(`[${slug}] circuit-open — skipping enableProject (${decision.reason ?? "no reason"})`);
+                continue;
+              }
+              if (decision.transitionedTo) {
+                this.log.info(`[${slug}] breaker transitioned to ${decision.transitionedTo} — attempting boot`);
+              }
+            }
+            try {
+              await Promise.race([
+                this.enableProject(fullPath, meta),
+                new Promise<never>((_, reject) => setTimeout(
+                  () => reject(new Error(`enableProject timeout (15s) — gateway continues without ${slug}`)),
+                  15_000,
+                )),
+              ]);
+              this.circuitBreaker?.recordSuccess(serviceId);
+            } catch (err) {
+              this.log.warn(
+                `[${slug}] enableProject failed during boot — skipping: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              this.circuitBreaker?.recordFailure(serviceId, err);
+              // Continue to next project; don't let one bad project block the whole gateway boot.
+            }
           }
 
           if (!isCodeType) {

@@ -132,6 +132,7 @@ import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import { listProjectsWithConfig } from "./iterative-work/list-projects.js";
 import { projectSlug } from "./project-config-path.js";
 import { SystemConfigService } from "./system-config-service.js";
+import { CircuitBreakerTracker } from "./circuit-breaker.js";
 import { createProjectTypeRegistry } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { discoverPlugins, getDefaultSearchPaths, loadPlugins, tryLoadManifest, PluginRegistry, HookBus } from "@agi/plugins";
@@ -1723,6 +1724,15 @@ export async function startGatewayServer(
     }
   }
 
+  // s143 t567/t568 — persistent circuit-breaker tracker for boot-time service
+  // failures. Wired in only when SystemConfigService is available (i.e. we
+  // know where gateway.json lives); otherwise the v0.4.431 try/catch fallback
+  // path keeps the gateway from hanging on a broken project even without
+  // persistence.
+  const circuitBreakerTracker = systemConfigService
+    ? new CircuitBreakerTracker({ configService: systemConfigService, logger })
+    : undefined;
+
   const hostingManager = new HostingManager({
     config: {
       enabled: hostingConfig?.enabled ?? false,
@@ -1751,6 +1761,7 @@ export async function startGatewayServer(
     sharedContainerManager,
     projectConfigManager,
     mappRegistry,
+    circuitBreaker: circuitBreakerTracker,
     logger,
   });
 

@@ -27,6 +27,9 @@ export {
   type HfConfig,
   type RouterConfig,
   type CostMode,
+  type ServicesConfig,
+  type CircuitBreakerConfig,
+  type CircuitBreakerState,
 } from "./schema.js";
 
 export {
