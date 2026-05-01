@@ -3900,7 +3900,17 @@ export class HostingManager {
   private writeStackInstance(projectPath: string, instance: ProjectStackInstance): void {
     // Delegate to ProjectConfigManager when available
     if (this.configMgr) {
-      void this.configMgr.addStack(projectPath, instance);
+      // Cycle 150 hotfix v0.4.432: catch the rejection so a config-validation
+      // failure (e.g. schema rejecting a key) doesn't propagate as an
+      // unhandled rejection and kill the gateway. Owner directive: "Bad code
+      // in a container should not crash the whole agi system." Same applies
+      // to bad config — log and continue.
+      this.configMgr.addStack(projectPath, instance).catch((err) => {
+        const slug = this.slugFromPath(projectPath);
+        this.log.warn(
+          `[${slug}] addStack failed (project config rejected): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
       return;
     }
 

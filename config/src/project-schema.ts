@@ -271,6 +271,14 @@ export const ProjectRepoSchema = z
      *  `podman exec` (or the dashboard's per-repo Start button).
      *  Ignored for code-only repos (no port). */
     autoRun: z.boolean().optional(),
+
+    /** Stacks attached to this specific repo (s141 — per-repo stack
+     *  attachment per owner directive cycle 150: "Stacks now attach to
+     *  project repos, not to projects themselves"). Multi-stack-per-repo
+     *  is supported (e.g. nextjs + tailwind + fancy-ui all on one repo).
+     *  When migrating from the legacy project-level attachedStacks, the
+     *  s140 --execute step lands stacks on the first repo by default. */
+    attachedStacks: z.array(ProjectStackInstanceSchema).optional(),
   })
   .strict()
   .refine(

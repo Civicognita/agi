@@ -268,6 +268,34 @@ export async function startGatewayServer(
   const logger: Logger = createLogger(config.logging);
   const log = createComponentLogger(logger, "server");
 
+  // ---------------------------------------------------------------------
+  // Cycle 150 hotfix v0.4.432: process-level safety net.
+  // Owner directive: "Bad code in a container should not crash the whole
+  // agi system." Same applies to bad config / fire-and-forget rejections.
+  //
+  // Default Node behavior on unhandled promise rejection is exit-with-1
+  // (in Node 24+). One uncaught Zod validation in a fire-and-forget call
+  // killed the gateway service via systemd (the "fuse popping"). This
+  // listener logs + swallows so the gateway stays up; specific bugs get
+  // fixed at the call site over time.
+  //
+  // Note: this is the LAST-resort net. Caller-side `.catch()` at every
+  // fire-and-forget is still the right pattern — see hosting-manager
+  // writeStackInstance for the v0.4.432 fix in that path.
+  // ---------------------------------------------------------------------
+  process.on("unhandledRejection", (reason) => {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    const stack = reason instanceof Error ? reason.stack : undefined;
+    log.warn(
+      `unhandled promise rejection (caught by safety net — gateway continues): ${message}${stack ? "\n" + stack : ""}`,
+    );
+  });
+  process.on("uncaughtException", (err) => {
+    log.warn(
+      `uncaught exception (caught by safety net — gateway continues): ${err.message}\n${err.stack ?? ""}`,
+    );
+  });
+
   // -------------------------------------------------------------------------
   // Step 1b2: Boot-recovery — detect crash vs graceful shutdown
   //
