@@ -1764,6 +1764,26 @@ export class HostingManager {
     // These are injected into every code path (magic-app, stack, legacy) before the image token.
     const aiBindingArgs = await this.buildAiBindingArgs(hosted.path);
 
+    // s141 t552 — resolve the on-host content base ONCE here, then feed it
+    // to every single-mount branch (magic-app, stack, legacy). For projects
+    // following the post-s140 layout (`repos[]` populated), this rebases
+    // the mount source from `<projectPath>/...` to
+    // `<projectPath>/repos/<defaultRepo.name>/...`. For legacy/empty-repos
+    // projects it returns the project root unchanged.
+    //
+    // Multi-repo projects (any repo with `port` set) take the dedicated
+    // buildMultiRepoContainerArgsPure branch below and never reach this
+    // — that path already rebases each repo at /srv/repos/<name>/.
+    const contentBase = resolveLegacyMountBasePure({
+      projectPath: hosted.path,
+      projectConfig: this.configMgr?.read(hosted.path) ?? null,
+    });
+    if (contentBase.repoName) {
+      this.log.info(
+        `[${hosted.meta.hostname}] mount rebased onto repo "${contentBase.repoName}" — base: ${contentBase.base}`,
+      );
+    }
+
     // -----------------------------------------------------------------------
     // s130 t515 B4 — multi-repo project? Build dedicated container args
     // (agi-runtime:lamp + multi-bind + concurrently startup). Short-circuits
@@ -1784,7 +1804,10 @@ export class HostingManager {
     const magicAppConfig = this.resolveMagicAppContainerConfig(hosted);
     if (magicAppConfig) {
       const ctx: MagicAppContainerContext = {
-        projectPath: hosted.path,
+        // s141 t552 — feed the rebased content path so MagicApp volumeMounts
+        // and {projectPath} template substitutions resolve into
+        // <projectPath>/repos/<repoName> when repos[] is populated.
+        projectPath: contentBase.base,
         projectHostname: hosted.meta.hostname,
         allocatedPort: hosted.meta.port,
         mode: hosted.meta.mode,
@@ -1853,7 +1876,11 @@ export class HostingManager {
     const stackConfig = this.resolveStackContainerConfig(hosted);
     if (stackConfig) {
       const ctx: StackContainerContext = {
-        projectPath: hosted.path,
+        // s141 t552 — feed the rebased content path so stack plugins'
+        // volumeMounts callbacks (e.g. stack-static-hosting's
+        // `${ctx.projectPath}/dist`) resolve into the per-repo checkout
+        // when projects follow the post-s140 layout.
+        projectPath: contentBase.base,
         projectHostname: hosted.meta.hostname,
         allocatedPort: hosted.meta.port,
         mode: hosted.meta.mode,
@@ -1990,23 +2017,9 @@ export class HostingManager {
     // Resilience-wrapped once at the end so every legacy path survives failure.
     let legacyCmdTokens: string[] | null = null;
 
-    // s141 t552 — rebase mounts onto the default repo when the project follows
-    // the post-s140 layout. Projects with `repos[]` populated keep their
-    // content under `<projectPath>/repos/<repoName>/`; legacy projects
-    // (empty repos[]) keep mounting the project root unchanged.
-    const legacyContentBase = resolveLegacyMountBasePure({
-      projectPath: hosted.path,
-      projectConfig: this.configMgr?.read(hosted.path) ?? null,
-    });
-    if (legacyContentBase.repoName) {
-      this.log.info(
-        `[${hosted.meta.hostname}] legacy mount rebased onto repo "${legacyContentBase.repoName}" — base: ${legacyContentBase.base}`,
-      );
-    }
-
     if (typeDef?.containerConfig) {
       const cfg = typeDef.containerConfig;
-      const volumes = cfg.volumeMounts(legacyContentBase.base, hosted.meta);
+      const volumes = cfg.volumeMounts(contentBase.base, hosted.meta);
       for (const vol of volumes) {
         args.push("-v", vol);
       }
@@ -2033,7 +2046,7 @@ export class HostingManager {
       switch (hosted.meta.type) {
         case "static": {
           const docRoot = hosted.meta.docRoot ?? "dist";
-          const hostPath = join(legacyContentBase.base, docRoot);
+          const hostPath = join(contentBase.base, docRoot);
           // Pre-flight: nginx mounts hostPath read-only; if the directory
           // doesn't exist on the host, podman aborts with `statfs ENOENT`
           // and the project lands in an "exited" state with a cryptic
@@ -2055,7 +2068,7 @@ export class HostingManager {
         }
         case "php": {
           const docRoot = hosted.meta.docRoot ?? "public";
-          args.push("-v", `${legacyContentBase.base}:/var/www/html:Z`);
+          args.push("-v", `${contentBase.base}:/var/www/html:Z`);
           // Inject AI model env vars and dataset volume mounts
           args.push(...aiBindingArgs.volumeArgs);
           args.push(...aiBindingArgs.envArgs);
@@ -2072,7 +2085,7 @@ export class HostingManager {
             hosted.error = "Missing startCommand for Node.js project";
             return;
           }
-          args.push("-v", `${legacyContentBase.base}:/app:Z`);
+          args.push("-v", `${contentBase.base}:/app:Z`);
           args.push("-w", "/app");
           args.push("-e", `PORT=${String(internalPort)}`);
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
@@ -2092,7 +2105,7 @@ export class HostingManager {
             hosted.error = `No container configuration for project type "${hosted.meta.type}". Add a stack or set a start command.`;
             return;
           }
-          args.push("-v", `${legacyContentBase.base}:/app:Z`);
+          args.push("-v", `${contentBase.base}:/app:Z`);
           args.push("-w", "/app");
           args.push("-e", `PORT=${String(internalPort)}`);
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
