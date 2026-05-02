@@ -1146,7 +1146,7 @@ export class AgentInvoker extends EventEmitter {
       this.emit("invocation_complete", {
         entityId: entity.id,
         model: result.model,
-        provider: result.model.startsWith("claude") ? "anthropic" : result.model.startsWith("gpt") ? "openai" : "ollama",
+        provider: typeof result.model === "string" && result.model.startsWith("claude") ? "anthropic" : typeof result.model === "string" && result.model.startsWith("gpt") ? "openai" : "ollama",
         usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
         toolsUsed,
         toolCount: toolsUsed.length,
@@ -1176,7 +1176,7 @@ export class AgentInvoker extends EventEmitter {
         coaFingerprint: outboundFingerprint,
         taskmasterEmissions: emissions.map((e) => e.description),
         model: result.model,
-        provider: result.model.startsWith("claude") ? "anthropic" : result.model.startsWith("gpt") ? "openai" : "ollama",
+        provider: typeof result.model === "string" && result.model.startsWith("claude") ? "anthropic" : typeof result.model === "string" && result.model.startsWith("gpt") ? "openai" : "ollama",
         usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
         toolCount: toolsUsed.length,
         loopCount,
