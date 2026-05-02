@@ -33,18 +33,18 @@ const snapshotsDir = path.join(walkDir, "snapshots");
 fs.mkdirSync(snapshotsDir, { recursive: true });
 
 test.describe("services page — circuit-breaker UI (s143 t571)", () => {
-  test("/services renders without pageerrors", async ({ page }) => {
+  test("/system/services renders without pageerrors", async ({ page }) => {
     const pageErrors: string[] = [];
     page.on("pageerror", (e) => pageErrors.push(e.message));
 
-    await page.goto("/services");
+    await page.goto("/system/services");
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
     await page.screenshot({
       path: path.join(snapshotsDir, "services-page.png"),
       fullPage: true,
     });
 
-    expect(pageErrors, `pageerrors on /services: ${pageErrors.join(" | ")}`).toEqual([]);
+    expect(pageErrors, `pageerrors on /system/services: ${pageErrors.join(" | ")}`).toEqual([]);
   });
 
   test("CircuitBreakerSection renders + each row has status pill + kind badge + Reset", async ({ page, request }) => {
@@ -62,7 +62,7 @@ test.describe("services page — circuit-breaker UI (s143 t571)", () => {
 
     test.skip(apiBody.totalCount === 0, "no breakers tracked — section is correctly hidden");
 
-    await page.goto("/services");
+    await page.goto("/system/services");
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
     // The section root is keyed by data-testid="circuit-breakers-section".
