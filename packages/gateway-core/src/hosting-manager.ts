@@ -2732,6 +2732,16 @@ export class HostingManager {
       });
       const stdout = result.stdout?.toString() ?? "";
       const stderr = result.stderr?.toString() ?? "";
+
+      // s140 cycle-176 — when the container doesn't exist (circuit-open
+      // meta-only state from v0.4.484, OR a fresh project that hasn't
+      // started yet), podman exits non-zero with "no such container" on
+      // stderr. Returning that string as "logs" surfaces a confusing
+      // raw podman error in the dashboard. Detect the case and return a
+      // domain-aware message instead.
+      if (result.status !== 0 && /no (such|container with name)/i.test(stderr)) {
+        return "(no container running yet — start the container or reset the circuit breaker to populate logs)";
+      }
       return (stdout + stderr).trim();
     } catch {
       return null;
