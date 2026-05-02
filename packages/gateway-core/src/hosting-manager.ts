@@ -31,6 +31,7 @@ import {
   resolveMAppHostDir,
   resolveMAppTiles,
   writeMAppDesktopHtml,
+  writePerMAppStandaloneHtml,
 } from "./hosting-manager-mapp.js";
 import {
   type PodmanRunner,
@@ -1896,6 +1897,12 @@ export class HostingManager {
       const hostDir = resolveMAppHostDir(hosted.meta.hostname);
       writeMAppDesktopHtml(hostDir, html);
 
+      // s145 t589 — write per-MApp standalone placeholder pages so tile
+      // clicks resolve to a useful "not installed yet" page instead of
+      // nginx's generic 404. Real MApps with manifests skip the
+      // placeholder write — their bundled content stays intact.
+      const placeholderIds = writePerMAppStandaloneHtml(hostDir, tiles);
+
       // Set internalPort so the Caddyfile generator routes via podman DNS
       // (`agi-<hostname>:80`) instead of falling through to
       // `host.containers.internal:<allocatedPort>`. MApp containers run
@@ -1916,7 +1923,9 @@ export class HostingManager {
       this.log.info(
         `[${hosted.meta.hostname}] MApp container start: ${tiles.length} tiles ` +
         `(${tiles.filter((t) => t.installed).length} installed, ` +
-        `${tiles.filter((t) => !t.installed).length} placeholder). image=${result.image}`,
+        `${tiles.filter((t) => !t.installed).length} placeholder). ` +
+        `wrote ${placeholderIds.length} per-MApp placeholder pages. ` +
+        `image=${result.image}`,
       );
       this.execContainerStart(hosted, containerName, result.args, "magic-app");
       return;

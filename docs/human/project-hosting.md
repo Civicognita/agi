@@ -168,9 +168,22 @@ When the gateway boots the container, it:
    read-only at `/usr/share/nginx/html`. The MApp Desktop is served at
    `https://<hostname>.ai.on/`.
 
-Standalone per-MApp routing (`https://<hostname>.ai.on/<mappId>/` showing
-a single MApp full-screen) is a follow-up task — tile clicks currently
-404 until that lands.
+### Per-MApp standalone routing
+
+Tile clicks on the MApp Desktop resolve to `https://<hostname>.ai.on/<mappId>/`.
+The gateway writes one of two things to that slot during dispatch:
+
+- **Installed MApp** — the gateway leaves `<hostHtmlDir>/<mappId>/`
+  alone, so the MApp's bundled HTML/JS/assets serve directly. (When
+  the MApp Marketplace populates entries with bundles, that's where
+  they go.)
+- **Uninstalled MApp** — the gateway writes a per-MApp "not installed
+  yet" placeholder page at `<hostHtmlDir>/<mappId>/index.html`. Tile
+  clicks resolve to a project-aware install-CTA page instead of
+  nginx's generic 404.
+
+The placeholder page links back to `/` (the MApp Desktop) so the
+operator can return without the browser back button.
 
 ### Dashboard Controls
 

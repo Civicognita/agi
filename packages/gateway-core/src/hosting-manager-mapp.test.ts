@@ -5,9 +5,11 @@ import { tmpdir } from "node:os";
 import {
   buildMAppContainerArgsPure,
   generateMAppDesktopHtml,
+  generateMAppPlaceholderHtml,
   resolveMAppHostDir,
   resolveMAppTiles,
   writeMAppDesktopHtml,
+  writePerMAppStandaloneHtml,
   type MAppTile,
 } from "./hosting-manager-mapp.js";
 
@@ -241,5 +243,84 @@ describe("resolveMAppHostDir + writeMAppDesktopHtml (s145 t586)", () => {
     writeMAppDesktopHtml(dir, "v2");
     const fs = require("node:fs");
     expect(fs.readFileSync(join(dir, "index.html"), "utf-8")).toBe("v2");
+  });
+});
+
+describe("generateMAppPlaceholderHtml (s145 t589)", () => {
+  it("renders a not-installed page with the MApp id + hostname", () => {
+    const html = generateMAppPlaceholderHtml({ mappId: "budget-tracker", hostname: "ops" });
+    expect(html).toContain("Not installed yet");
+    expect(html).toContain("budget-tracker");
+    expect(html).toContain("ops");
+    expect(html).toContain('href="/"');
+  });
+
+  it("escapes HTML special characters in mappId + hostname (XSS guard)", () => {
+    const html = generateMAppPlaceholderHtml({
+      mappId: "<script>",
+      hostname: "ops<img src=x>",
+    });
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("<img src=x>");
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("ops&lt;img src=x&gt;");
+  });
+});
+
+describe("writePerMAppStandaloneHtml (s145 t589)", () => {
+  let hostDir: string;
+
+  beforeEach(() => {
+    hostDir = join(tmpdir(), `mapp-standalone-test-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`, "ops");
+  });
+
+  afterEach(() => {
+    const root = join(hostDir, "..");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("writes one /<id>/index.html per uninstalled tile", () => {
+    const tiles: MAppTile[] = [
+      { id: "alpha", name: "A", description: "", icon: "📦", installed: false },
+      { id: "beta", name: "B", description: "", icon: "📦", installed: false },
+    ];
+    const written = writePerMAppStandaloneHtml(hostDir, tiles);
+    expect(written).toEqual(["alpha", "beta"]);
+    const fs = require("node:fs");
+    expect(fs.existsSync(join(hostDir, "alpha", "index.html"))).toBe(true);
+    expect(fs.existsSync(join(hostDir, "beta", "index.html"))).toBe(true);
+    expect(fs.readFileSync(join(hostDir, "alpha", "index.html"), "utf-8")).toContain("alpha");
+    expect(fs.readFileSync(join(hostDir, "alpha", "index.html"), "utf-8")).toContain("Not installed yet");
+  });
+
+  it("skips installed tiles — leaves their slot untouched", () => {
+    const tiles: MAppTile[] = [
+      { id: "installed-mapp", name: "Real", description: "Real MApp", icon: "💰", installed: true },
+      { id: "placeholder-mapp", name: "ph", description: "", icon: "📦", installed: false },
+    ];
+    const written = writePerMAppStandaloneHtml(hostDir, tiles);
+    expect(written).toEqual(["placeholder-mapp"]);
+    const fs = require("node:fs");
+    expect(fs.existsSync(join(hostDir, "installed-mapp"))).toBe(false);
+    expect(fs.existsSync(join(hostDir, "placeholder-mapp", "index.html"))).toBe(true);
+  });
+
+  it("is idempotent — re-writing overwrites the same file cleanly", () => {
+    const tiles: MAppTile[] = [
+      { id: "alpha", name: "A", description: "", icon: "📦", installed: false },
+    ];
+    writePerMAppStandaloneHtml(hostDir, tiles);
+    writePerMAppStandaloneHtml(hostDir, tiles);
+    const fs = require("node:fs");
+    const html = fs.readFileSync(join(hostDir, "alpha", "index.html"), "utf-8");
+    expect(html).toContain("alpha");
+  });
+
+  it("returns an empty list when no tiles are uninstalled", () => {
+    const tiles: MAppTile[] = [
+      { id: "real-1", name: "R1", description: "", icon: "💰", installed: true },
+    ];
+    const written = writePerMAppStandaloneHtml(hostDir, tiles);
+    expect(written).toEqual([]);
   });
 });

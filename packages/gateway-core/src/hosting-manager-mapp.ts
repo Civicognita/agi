@@ -283,3 +283,90 @@ export function writeMAppDesktopHtml(hostDir: string, html: string): void {
   }
   writeFileSync(join(hostDir, "index.html"), html, "utf-8");
 }
+
+// ---------------------------------------------------------------------------
+// Per-MApp standalone placeholder (s145 t589)
+// ---------------------------------------------------------------------------
+
+/**
+ * Render the standalone "this MApp isn't installed yet" page that the
+ * project's nginx container serves at `/<mappId>/`. When the operator
+ * clicks a placeholder tile on the MApp Desktop, this is what they see
+ * — a project-aware install-CTA page instead of nginx's generic 404.
+ *
+ * When real MApps are installed in the marketplace cache, the writer
+ * (writePerMAppStandaloneHtml below) skips overwriting their slot — so
+ * the real MApp's bundled HTML/JS/assets stay intact. This placeholder
+ * is strictly the "not installed yet" surface.
+ *
+ * The page is intentionally small. It's plain HTML+CSS, dark theme to
+ * match the MApp Desktop, and includes a back-link to `/`.
+ */
+export function generateMAppPlaceholderHtml(input: {
+  mappId: string;
+  hostname: string;
+}): string {
+  const { mappId, hostname } = input;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(mappId)} — Not installed · ${escapeHtml(hostname)}</title>
+  <style>
+    :root { color-scheme: dark; --bg: #0a0a0a; --card: #161616; --border: #2a2a2a; --fg: #e6e6e6; --muted: #888; --accent: #4a9eff; --pending: #d97706; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px; font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 48px; max-width: 480px; width: 100%; text-align: center; }
+    .badge { display: inline-block; padding: 4px 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--pending); border: 1px solid var(--pending); border-radius: 4px; margin-bottom: 16px; }
+    h1 { margin: 0 0 8px 0; font-size: 20px; font-weight: 600; }
+    h1 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 18px; color: var(--accent); }
+    p { margin: 0 0 16px 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .back { display: inline-block; margin-top: 16px; padding: 8px 20px; color: var(--fg); text-decoration: none; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+    .back:hover { border-color: var(--accent); }
+    code.path { padding: 2px 6px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">Not installed yet</span>
+    <h1><code>${escapeHtml(mappId)}</code></h1>
+    <p>This MApp is configured for <strong>${escapeHtml(hostname)}</strong> but isn't installed in the MApp Marketplace cache yet.</p>
+    <p>Install it from the MApp Marketplace and the gateway will populate <code class="path">~/.agi/mapps/cache/${escapeHtml(mappId)}/</code> on the next dispatch.</p>
+    <a class="back" href="/">← Back to MApp Desktop</a>
+  </div>
+</body>
+</html>
+`;
+}
+
+/**
+ * Write per-MApp standalone HTML pages into the host directory.
+ *
+ * For each tile: if installed (manifest found), SKIP — leave the real
+ * MApp's bundle in place. If placeholder (no manifest), write a
+ * "not installed yet" page at `${hostDir}/${mappId}/index.html`.
+ *
+ * Returns the list of mappIds that got placeholder pages written. Used
+ * by callers for logging + e2e assertions.
+ */
+export function writePerMAppStandaloneHtml(
+  hostDir: string,
+  tiles: ReadonlyArray<MAppTile>,
+): string[] {
+  const written: string[] = [];
+  for (const tile of tiles) {
+    if (tile.installed) continue;
+    const mappDir = join(hostDir, tile.id);
+    if (!existsSync(mappDir)) {
+      mkdirSync(mappDir, { recursive: true });
+    }
+    const html = generateMAppPlaceholderHtml({
+      mappId: tile.id,
+      hostname: hostDir.split("/").pop() ?? "project",
+    });
+    writeFileSync(join(mappDir, "index.html"), html, "utf-8");
+    written.push(tile.id);
+  }
+  return written;
+}
