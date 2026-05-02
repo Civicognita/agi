@@ -1876,6 +1876,13 @@ export class HostingManager {
       const hostDir = resolveMAppHostDir(hosted.meta.hostname);
       writeMAppDesktopHtml(hostDir, html);
 
+      // Set internalPort so the Caddyfile generator routes via podman DNS
+      // (`agi-<hostname>:80`) instead of falling through to
+      // `host.containers.internal:<allocatedPort>`. MApp containers run
+      // nginx:alpine which listens on 80 inside, and project containers
+      // publish nothing on the host (per per-project network design).
+      hosted.meta.internalPort = hosted.meta.internalPort ?? 80;
+
       const result = buildMAppContainerArgsPure({
         hostname: hosted.meta.hostname,
         projectPath: hosted.path,
