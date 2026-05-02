@@ -122,6 +122,11 @@ export function ProjectDetail({
   const [repoSetupBusy, setRepoSetupBusy] = useState(false);
   const [repoSetupError, setRepoSetupError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("details");
+  // s140 t592 cycle-176 — Details sub-tab (Identity / Configuration /
+  // Lifecycle). Owner-chosen UX shape: tabbed sub-pages inside the
+  // outer Details tab. Default to identity since that's the most-
+  // common landing (rename, glance at path, see sacred state).
+  const [detailsSubTab, setDetailsSubTab] = useState<"identity" | "configuration" | "lifecycle">("identity");
   // s134 t517 slice 2 (cycle 112) — workspace mode shell. The 4 modes
   // group the existing 11 tabs per the projects-ux-v2/project-workspace-
   // v2.html mockup. Default "develop" matches Editor as the most-common
@@ -667,148 +672,207 @@ export function ProjectDetail({
         )}
 
         <TabsContent value="details" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <Card className="p-4">
-            {/*
-              s140 cycle-169 t591 SECURITY (owner-clarified): the Tynn
-              token is not shown in the dashboard Details page at all.
-              Token configuration is owned by the Tynn MCP server's
-              settings plugin UX — that's the single source of truth.
-              Removed the project-level Tynn Token input + indicator
-              from this tab. The project.tynnToken field on disk is
-              kept for backward-compat reads only; new tokens go via
-              the MCP plugin.
-            */}
-            <div className="mb-3">
-              <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Name</label>
-              <Input
-                type="text"
-                value={name}
-                onChange={(e) => setEditName(e.target.value)}
-                data-testid="project-name-input"
-                disabled={isSacred}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <div>
-                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Purpose</label>
-                <Select
-                  className="text-[13px]"
-                  list={[
-                    { value: "", label: "Auto-detect" },
-                    { value: "literature", label: "Literature" },
-                    { value: "app", label: "App" },
-                    { value: "web", label: "Web" },
-                    { value: "media", label: "Media" },
-                    { value: "administration", label: "Administration" },
-                  ]}
-                  value={category}
-                  onValueChange={setEditCategory}
-                  disabled={isSacred}
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Project Type</label>
-                <Select
-                  className="text-[13px]"
-                  list={(() => {
-                    const items = [];
-                    if (project.projectType && !projectTypes.some((t) => t.id === project.projectType?.id)) {
-                      items.push({ value: project.projectType.id, label: `${project.projectType.label} (detected)` });
-                    }
-                    for (const pt of projectTypes) {
-                      items.push({ value: pt.id, label: `${pt.label}${pt.id === project.projectType?.id ? " (detected)" : ""}` });
-                    }
-                    return items;
-                  })()}
-                  value={editProjectType ?? project.projectType?.id ?? ""}
-                  onValueChange={(v) => setEditProjectType(v || null)}
-                  disabled={isSacred}
-                />
-              </div>
-            </div>
-            <div className="text-[11px] text-muted-foreground font-mono mb-3">{project.path}</div>
-            {isSacred && (
-              <div className="text-[11px] text-muted-foreground mb-3">
-                Sacred projects are managed by the system. Metadata edits are disabled.
-              </div>
-            )}
-            <Button
-              size="sm"
-              onClick={() => void handleSave()}
-              disabled={saving || updating || isSacred}
-              variant={saving || updating || isSacred ? "secondary" : "default"}
-            >
-              {saving || updating ? "Saving..." : isSacred ? "Locked" : "Save"}
-            </Button>
-          </Card>
+          {/*
+            s140 t592 cycle-176 — Tabbed sub-pages: Identity /
+            Configuration / Lifecycle. Owner-chosen shape (Q-14).
+            Owner principle (cycle-176 clarification): "the details
+            tab should not show stuff that other tabs are showing".
+            So this tab carries the project-level metadata that
+            doesn't fit into Editor (files), Repository (git), Hosting
+            (container kind), Environment (env vars), MCP (servers),
+            etc. Identity = name + path + sacred state. Configuration =
+            project type + category (drives behavior). Lifecycle = the
+            two destructive/structural actions (Save metadata + Delete).
+          */}
+          <div className="flex gap-1 mb-3 border-b border-border" data-testid="details-sub-tabs">
+            {(["identity", "configuration", "lifecycle"] as const).map((sub) => (
+              <button
+                key={sub}
+                type="button"
+                data-testid={`details-sub-tab-${sub}`}
+                onClick={() => setDetailsSubTab(sub)}
+                className={cn(
+                  "text-[12px] px-3 py-1.5 -mb-px border-b-2 transition-colors",
+                  detailsSubTab === sub
+                    ? "border-primary text-foreground font-semibold"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {sub === "identity" ? "Identity" : sub === "configuration" ? "Configuration" : "Lifecycle"}
+              </button>
+            ))}
+          </div>
 
-          {/* Danger Zone */}
-          {!isSacred ? (
-            <>
-              <Callout color="red" className="mt-6">
-                <h3 className="text-[13px] font-bold text-red mb-1">Danger Zone</h3>
-                <p className="text-[11px] text-muted-foreground mb-3">
-                  Permanently delete this project and all its files. This action cannot be undone.
-                </p>
+          {/* Identity sub-tab — the name + where it lives + sacred banner */}
+          {detailsSubTab === "identity" && (
+            <Card className="p-4" data-testid="details-sub-pane-identity">
+              <div className="mb-3">
+                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Name</label>
+                <Input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setEditName(e.target.value)}
+                  data-testid="project-name-input"
+                  disabled={isSacred}
+                />
+              </div>
+              <div className="mb-3">
+                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Project path</label>
+                <div className="text-[11px] text-muted-foreground font-mono select-all" data-testid="project-path-display">
+                  {project.path}
+                </div>
+              </div>
+              {isSacred && (
+                <Callout color="amber" className="mt-3">
+                  <h3 className="text-[13px] font-bold text-yellow mb-1">Sacred Project</h3>
+                  <p className="text-[11px] text-muted-foreground">
+                    Sacred projects are managed by the system — metadata edits + deletion are disabled.
+                  </p>
+                </Callout>
+              )}
+              <div className="mt-3">
                 <Button
                   size="sm"
-                  variant="destructive"
-                  onClick={() => { setDeleteConfirmName(""); setDeleteDialogOpen(true); }}
-                  disabled={deleting}
+                  onClick={() => void handleSave()}
+                  disabled={saving || updating || isSacred}
+                  variant={saving || updating || isSacred ? "secondary" : "default"}
+                  data-testid="details-identity-save"
                 >
-                  {deleting ? "Deleting..." : "Delete Project"}
+                  {saving || updating ? "Saving..." : isSacred ? "Locked" : "Save"}
                 </Button>
-              </Callout>
+              </div>
+            </Card>
+          )}
 
-              {/* Delete confirmation dialog */}
-              <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Delete {project.name}?</DialogTitle>
-                    <DialogDescription>
-                      This will permanently delete the project directory at{" "}
-                      <code className="text-[11px] bg-surface1 px-1 py-0.5 rounded">{project.path}</code>{" "}
-                      and all its contents. If hosting is enabled, it will be stopped first.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
-                      Type <span className="text-foreground">{project.name}</span> to confirm
-                    </label>
-                    <Input
-                      type="text"
-                      value={deleteConfirmName}
-                      onChange={(e) => setDeleteConfirmName(e.target.value)}
-                      placeholder={project.name}
-                      autoFocus
-                    />
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
-                      Cancel
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      disabled={deleteConfirmName !== project.name || deleting}
-                      onClick={() => {
-                        void onDelete({ path: project.path, confirm: true }).then(() => {
-                          setDeleteDialogOpen(false);
-                        });
-                      }}
-                    >
-                      {deleting ? "Deleting..." : "Delete"}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </>
-          ) : (
-            <Callout color="amber" className="mt-6">
-              <h3 className="text-[13px] font-bold text-yellow mb-1">Sacred Project</h3>
-              <p className="text-[11px] text-muted-foreground">
-                Sacred projects are immutable and cannot be deleted.
+          {/* Configuration sub-tab — project type + purpose drive other-tab behavior */}
+          {detailsSubTab === "configuration" && (
+            <Card className="p-4" data-testid="details-sub-pane-configuration">
+              <p className="text-[11px] text-muted-foreground mb-3">
+                These settings control how Aion treats the project. Hosting, MCP servers, and
+                environment vars live in their own tabs.
               </p>
-            </Callout>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Purpose</label>
+                  <Select
+                    className="text-[13px]"
+                    list={[
+                      { value: "", label: "Auto-detect" },
+                      { value: "literature", label: "Literature" },
+                      { value: "app", label: "App" },
+                      { value: "web", label: "Web" },
+                      { value: "media", label: "Media" },
+                      { value: "administration", label: "Administration" },
+                    ]}
+                    value={category}
+                    onValueChange={setEditCategory}
+                    disabled={isSacred}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Project Type</label>
+                  <Select
+                    className="text-[13px]"
+                    list={(() => {
+                      const items = [];
+                      if (project.projectType && !projectTypes.some((t) => t.id === project.projectType?.id)) {
+                        items.push({ value: project.projectType.id, label: `${project.projectType.label} (detected)` });
+                      }
+                      for (const pt of projectTypes) {
+                        items.push({ value: pt.id, label: `${pt.label}${pt.id === project.projectType?.id ? " (detected)" : ""}` });
+                      }
+                      return items;
+                    })()}
+                    value={editProjectType ?? project.projectType?.id ?? ""}
+                    onValueChange={(v) => setEditProjectType(v || null)}
+                    disabled={isSacred}
+                  />
+                </div>
+              </div>
+              <Button
+                size="sm"
+                onClick={() => void handleSave()}
+                disabled={saving || updating || isSacred}
+                variant={saving || updating || isSacred ? "secondary" : "default"}
+                data-testid="details-configuration-save"
+              >
+                {saving || updating ? "Saving..." : isSacred ? "Locked" : "Save"}
+              </Button>
+            </Card>
+          )}
+
+          {/* Lifecycle sub-tab — destructive / structural actions */}
+          {detailsSubTab === "lifecycle" && (
+            <div data-testid="details-sub-pane-lifecycle">
+              {!isSacred ? (
+                <>
+                  <Callout color="red">
+                    <h3 className="text-[13px] font-bold text-red mb-1">Danger Zone</h3>
+                    <p className="text-[11px] text-muted-foreground mb-3">
+                      Permanently delete this project and all its files. This action cannot be undone.
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => { setDeleteConfirmName(""); setDeleteDialogOpen(true); }}
+                      disabled={deleting}
+                      data-testid="details-lifecycle-delete"
+                    >
+                      {deleting ? "Deleting..." : "Delete Project"}
+                    </Button>
+                  </Callout>
+
+                  {/* Delete confirmation dialog */}
+                  <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Delete {project.name}?</DialogTitle>
+                        <DialogDescription>
+                          This will permanently delete the project directory at{" "}
+                          <code className="text-[11px] bg-surface1 px-1 py-0.5 rounded">{project.path}</code>{" "}
+                          and all its contents. If hosting is enabled, it will be stopped first.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                          Type <span className="text-foreground">{project.name}</span> to confirm
+                        </label>
+                        <Input
+                          type="text"
+                          value={deleteConfirmName}
+                          onChange={(e) => setDeleteConfirmName(e.target.value)}
+                          placeholder={project.name}
+                          autoFocus
+                        />
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+                          Cancel
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          disabled={deleteConfirmName !== project.name || deleting}
+                          onClick={() => {
+                            void onDelete({ path: project.path, confirm: true }).then(() => {
+                              setDeleteDialogOpen(false);
+                            });
+                          }}
+                        >
+                          {deleting ? "Deleting..." : "Delete"}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </>
+              ) : (
+                <Callout color="amber">
+                  <h3 className="text-[13px] font-bold text-yellow mb-1">Sacred Project</h3>
+                  <p className="text-[11px] text-muted-foreground">
+                    Sacred projects are immutable and cannot be deleted.
+                  </p>
+                </Callout>
+              )}
+            </div>
           )}
         </TabsContent>
 
