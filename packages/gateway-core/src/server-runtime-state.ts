@@ -38,6 +38,7 @@ import { appRouter, type AppContext } from "@agi/trpc-api";
 import type { HostingManager } from "./hosting-manager.js";
 import { registerHostingRoutes } from "./hosting-api.js";
 import { registerStackRoutes } from "./stack-api.js";
+import { registerMAppStorageRoutes } from "./mapp-storage-routes.js";
 import { safemodeState } from "./safemode-state.js";
 import type { RouteHandler, RuntimeDefinition, RuntimeInstaller, HostingExtension } from "@agi/plugins";
 import { categoryToProvides } from "@agi/plugins";
@@ -4581,6 +4582,19 @@ export async function createGatewayRuntimeState(
       });
     }
   }
+
+  // -----------------------------------------------------------------------
+  // MApp storage API (s140 t599 phase 3)
+  // -----------------------------------------------------------------------
+  // Per-project, per-MApp scoped CRUD under
+  //   /api/projects/<slug>/k/mapps/<id>/...        (persistent)
+  //   /api/projects/<slug>/sandbox/mapps/<id>/...  (generated/temporary)
+  // Required for any MApp that wants to persist user content. Same-origin
+  // sandboxed iframes can call directly via fetch; phase 3.5 will add a
+  // postMessage IPC mediation layer for cross-origin / restricted MApps.
+  registerMAppStorageRoutes(fastify, {
+    workspaceProjects: deps.workspaceProjects ?? [],
+  });
 
   // -----------------------------------------------------------------------
   // Plugin extensibility API — declarative plugin data for dashboard
