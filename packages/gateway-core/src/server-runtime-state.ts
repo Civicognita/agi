@@ -1124,7 +1124,6 @@ export async function createGatewayRuntimeState(
 
     for (const { fullPath, name: entryName, coreCollection, coreForkSlug } of expanded) {
       try {
-        const hasGit = existsSync(join(fullPath, ".git"));
         let tynnToken: string | null = null;
         let metaType: string | null = null;
         let metaCategory: string | null = null;
@@ -1145,6 +1144,18 @@ export async function createGatewayRuntimeState(
             metaAttachedStacks = meta.hosting?.stacks;
           } catch { /* ignore malformed metadata */ }
         }
+        // s140 layout: repos live at <projectPath>/repos/<repoName>/.git/.
+        // Pre-s140 (legacy): repos lived at <projectPath>/.git/. Detect
+        // BOTH so existing projects + new s140-shape projects render as
+        // "has git" in the dashboard. Without the repos[] check the
+        // Repository tab shows the empty-state ("Add Repository / Clone
+        // / Init") even when the repos array is populated — owner-
+        // reported drift cycle 168.
+        const hasGitAtRoot = existsSync(join(fullPath, ".git"));
+        const hasGitInRepos = (metaRepos ?? []).some((r) =>
+          existsSync(join(fullPath, "repos", r.name, ".git")),
+        );
+        const hasGit = hasGitAtRoot || hasGitInRepos;
         const hosting = deps.hostingManager
           ? deps.hostingManager.getProjectHostingInfo(fullPath)
           : { enabled: false, type: "static", hostname: entryName.toLowerCase().replace(/[^a-z0-9]+/g, "-"), docRoot: null, startCommand: null, port: null, mode: "production" as const, internalPort: null, status: "unconfigured" as const, url: null };
