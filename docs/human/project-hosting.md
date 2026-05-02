@@ -146,6 +146,31 @@ The project is then accessible at `http://myapp.ai.on` on your LAN.
 | `docRoot` | Document root for static file serving |
 | `internalPort` | Port the app listens on inside the container |
 | `runtimeId` | Plugin runtime ID (e.g. `node-22`, `php-8.5`) |
+| `containerKind` | Override dispatch — `"static"`, `"code"`, or `"mapp"`. Leave unset for the project-type default. |
+| `mapps` | List of MApp IDs to render on the MApp Desktop when `containerKind = "mapp"` |
+
+### MApp Container Kind
+
+Operations / media / literature projects often have no codebase to run and no
+custom UI to host — what they need is a curated set of MApps (a Budget MApp,
+a Whitepaper Brainstorming MApp, a Model Training MApp, etc.). For those
+projects, set `hosting.containerKind = "mapp"` and list the MApp IDs in
+`hosting.mapps[]`.
+
+When the gateway boots the container, it:
+
+1. Reads each MApp's `manifest.json` from `~/.agi/mapps/cache/<mappId>/`.
+   IDs without a manifest still render as **placeholder tiles** so the
+   operator sees the configured layout even before the MApp is installed.
+2. Generates an `index.html` in `~/.agi/mapps/host/<hostname>/` with one
+   tile per configured MApp.
+3. Starts an `nginx:alpine` container with the host directory bind-mounted
+   read-only at `/usr/share/nginx/html`. The MApp Desktop is served at
+   `https://<hostname>.ai.on/`.
+
+Standalone per-MApp routing (`https://<hostname>.ai.on/<mappId>/` showing
+a single MApp full-screen) is a follow-up task — tile clicks currently
+404 until that lands.
 
 ### Dashboard Controls
 

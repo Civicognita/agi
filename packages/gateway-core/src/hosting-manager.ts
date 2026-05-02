@@ -26,6 +26,13 @@ import type { ProjectStackInstance, StackContainerContext, StackDefinition, Stac
 import type { ProjectConfigManager } from "./project-config-manager.js";
 import type { MagicAppContainerConfig, MagicAppContainerContext } from "./magic-app-types.js";
 import {
+  buildMAppContainerArgsPure,
+  generateMAppDesktopHtml,
+  resolveMAppHostDir,
+  resolveMAppTiles,
+  writeMAppDesktopHtml,
+} from "./hosting-manager-mapp.js";
+import {
   type PodmanRunner,
   projectNetworkName,
   ensureProjectNetwork,
@@ -1853,27 +1860,38 @@ export class HostingManager {
     }
 
     // -----------------------------------------------------------------------
-    // s145 t584 — MApp container kind. When the project's hosting config
-    // sets containerKind === "mapp", route to the MApp host container
-    // branch BEFORE any other dispatch. The MApp host bundle is a light
-    // static-served Caddy + MApp viewer (no nginx-with-dist, no app
-    // server) — used for ops/media/literature projects whose primary
-    // surface is one or more MApps from the marketplace, not custom code.
-    //
-    // FOUNDATION SLICE: dispatch is recognized; the actual buildMApp-
-    // ContainerArgs implementation lands in a follow-up task. For now,
-    // log + skip cleanly so projects flagged containerKind=mapp don't
-    // accidentally fall through to the static/stack branches and try to
-    // mount empty repos/<n>/dist directories.
+    // s145 t586 — MApp container kind dispatch. Replaces the t584 stub
+    // with a real container: nginx:alpine serving a generated MApp
+    // Desktop index.html. Tiles render from hosting.mapps[]; unknown
+    // IDs surface as "not installed" placeholders so the operator sees
+    // the configured set even before MApps are populated in the
+    // marketplace cache. Standalone per-MApp routing (each MApp at
+    // /<mappId>/) is a follow-up task — for now the Desktop tiles link
+    // there and resolve to 404 until that lands.
     // -----------------------------------------------------------------------
     if (hosted.meta.containerKind === "mapp") {
-      this.log.warn(
-        `[${hosted.meta.hostname}] MApp container kind not yet implemented — ` +
-        `skipping container start (s145 t584 stub). MApps configured: ` +
-        `${(hosted.meta.mapps ?? []).join(", ") || "(none)"}`,
+      const mappIds = hosted.meta.mapps ?? [];
+      const tiles = resolveMAppTiles(mappIds);
+      const html = generateMAppDesktopHtml({ hostname: hosted.meta.hostname, tiles });
+      const hostDir = resolveMAppHostDir(hosted.meta.hostname);
+      writeMAppDesktopHtml(hostDir, html);
+
+      const result = buildMAppContainerArgsPure({
+        hostname: hosted.meta.hostname,
+        projectPath: hosted.path,
+        containerName,
+        mappIds,
+        hostHtmlDir: hostDir,
+        networkName: projectNetworkName(hosted.meta.hostname),
+        tunnelOrigin: this.computeTunnelOrigin(hosted),
+      });
+
+      this.log.info(
+        `[${hosted.meta.hostname}] MApp container start: ${tiles.length} tiles ` +
+        `(${tiles.filter((t) => t.installed).length} installed, ` +
+        `${tiles.filter((t) => !t.installed).length} placeholder). image=${result.image}`,
       );
-      hosted.status = "stopped";
-      hosted.error = "MApp container kind dispatch — implementation pending (s145)";
+      this.execContainerStart(hosted, containerName, result.args, "magic-app");
       return;
     }
 
