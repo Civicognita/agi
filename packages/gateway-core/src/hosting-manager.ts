@@ -1186,11 +1186,19 @@ export class HostingManager {
           {
             const slug = this.slugFromPath(fullPath);
             const serviceId = `hosting:${fullPath}`;
+            let circuitSkipStart = false;
             if (this.circuitBreaker) {
               const decision = this.circuitBreaker.shouldSkip(serviceId);
               if (decision.skip) {
-                this.log.warn(`[${slug}] circuit-open — skipping enableProject (${decision.reason ?? "no reason"})`);
-                continue;
+                // s140 cycle-176 — register meta without starting the
+                // container so Caddy gets a route + cert for the hostname
+                // and serves the "Container not running" offline page
+                // (instead of TLS handshake internal-error from no route).
+                // The container won't start until the breaker is reset
+                // (Reset button in the Services page) or the underlying
+                // failure is fixed.
+                this.log.warn(`[${slug}] circuit-open — registering meta only, skipping container start (${decision.reason ?? "no reason"})`);
+                circuitSkipStart = true;
               }
               if (decision.transitionedTo) {
                 this.log.info(`[${slug}] breaker transitioned to ${decision.transitionedTo} — attempting boot`);
@@ -1198,7 +1206,7 @@ export class HostingManager {
             }
             try {
               await Promise.race([
-                this.enableProject(fullPath, meta),
+                this.enableProject(fullPath, meta, { skipContainerStart: circuitSkipStart }),
                 new Promise<never>((_, reject) => setTimeout(
                   () => reject(new Error(`enableProject timeout (15s) — gateway continues without ${slug}`)),
                   15_000,
@@ -1473,6 +1481,7 @@ export class HostingManager {
   async enableProject(
     projectPath: string,
     meta: ProjectHostingMeta,
+    opts: { skipContainerStart?: boolean } = {},
   ): Promise<HostedProject> {
     const resolved = resolvePath(projectPath);
 
@@ -1530,6 +1539,19 @@ export class HostingManager {
       hosted.status = "running";
       this._runningContainers.delete(resolved);
       this.log.info(`[${meta.hostname}] reconnected to running container ${existing.name}`);
+    } else if (opts.skipContainerStart) {
+      // s140 cycle-176 — meta-only registration path. Used by the boot
+      // loop when the circuit-breaker is open: the start would just fail
+      // again, but the project still needs a Caddyfile entry so the
+      // hostname resolves with TLS + serves the "Container not running"
+      // offline page (the existing 5xx handler in the Caddyfile route)
+      // instead of triggering a TLS handshake internal-error from Caddy
+      // having no route at all. status stays "stopped".
+      if (existing) {
+        try { execFileSync("podman", ["rm", "-f", existing.name], { stdio: "pipe", timeout: 15_000 }); } catch { /* ignore */ }
+        this._runningContainers.delete(resolved);
+      }
+      this.log.info(`[${meta.hostname}] meta registered without container start (caller opted out — circuit-open path)`);
     } else {
       // No running container — clean up stale one if exists, start fresh
       if (existing) {
