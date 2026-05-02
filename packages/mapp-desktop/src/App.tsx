@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { DesktopMessage, DesktopWindow, MAppEntry } from "./types.js";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type {
+  DesktopMessage,
+  DesktopWindow,
+  MAppEntry,
+  StorageReqPayload,
+  StorageReplyPayload,
+} from "./types.js";
 import { CategoryGrid } from "./components/CategoryGrid.js";
 import { Window } from "./components/Window.js";
 import { Taskbar } from "./components/Taskbar.js";
@@ -57,32 +63,179 @@ export function App(): React.ReactElement {
     return m;
   }, []);
 
+  // s140 t599 phase 3.5 — derive the project slug from location.hostname
+  // so storage routes can be addressed without the iframe needing to know
+  // it. "civicognita-ops.ai.on" → "civicognita_ops" (dashes back to
+  // underscores to match the on-disk dir basename used by the gateway's
+  // slug resolver). Memoized so a hostname change (rare) re-runs once.
+  const projectSlug = useMemo(() => {
+    const host = typeof window !== "undefined" ? window.location.hostname : "";
+    const head = host.split(".")[0] ?? "";
+    return head.replace(/-/g, "_");
+  }, []);
+
+  // s140 t599 phase 3.5 — bound-mappId resolution. When a postMessage
+  // arrives, e.source is the iframe's contentWindow but tells us
+  // nothing about *which* MApp it represents. We resolve it by matching
+  // against the iframe DOM (Window.tsx tags each iframe with
+  // data-mapp-id). Trusting this DOM-side binding — not the envelope's
+  // mappId field — is what stops a hostile MApp from impersonating
+  // another to read its storage. Cached in a ref so the lookup doesn't
+  // re-run for every message.
+  const iframeRefMap = useRef<Map<Window, string>>(new Map());
+
+  function resolveBoundMappId(source: MessageEventSource | null): string | null {
+    if (source === null) return null;
+    const cached = iframeRefMap.current.get(source as Window);
+    if (cached !== undefined) return cached;
+    // Cache miss — sweep the DOM for iframe[data-mapp-id] and find a
+    // contentWindow match. Refreshes on every miss; the map cleans
+    // itself on iframe close because the contentWindow ref becomes
+    // detached from the DOM. (Map keys are weak only via WeakMap; for
+    // typical desktop sessions with <20 open windows the leak is
+    // bounded.)
+    const iframes = document.querySelectorAll<HTMLIFrameElement>("iframe[data-mapp-id]");
+    for (const el of Array.from(iframes)) {
+      if (el.contentWindow === source) {
+        const id = el.dataset["mappId"] ?? null;
+        if (id !== null) {
+          iframeRefMap.current.set(source as Window, id);
+          return id;
+        }
+      }
+    }
+    return null;
+  }
+
+  async function dispatchStorageVerb(
+    verb: "GET" | "PUT" | "DELETE",
+    req: StorageReqPayload,
+    boundMappId: string,
+  ): Promise<StorageReplyPayload> {
+    if (req.area !== "k" && req.area !== "sandbox") {
+      return { ok: false, status: 0, error: `invalid area: ${String(req.area)}` };
+    }
+    const filepath = req.filepath ?? "";
+    const segs = filepath.split("/").filter((s) => s.length > 0);
+    for (const seg of segs) {
+      if (seg === "." || seg === ".." || seg.includes("\\") || seg.includes("\0")) {
+        return { ok: false, status: 0, error: `unsafe filepath segment: ${seg}` };
+      }
+    }
+    // Bare-dir read forces the trailing slash (the gateway's list route).
+    const tail = segs.length === 0 ? "/" : `/${segs.join("/")}`;
+    const url = `/api/projects/${projectSlug}/${req.area}/mapps/${boundMappId}${tail}`;
+
+    try {
+      const init: RequestInit =
+        verb === "PUT"
+          ? {
+              method: "PUT",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(req.body ?? null),
+            }
+          : { method: verb };
+      const res = await fetch(url, init);
+      let data: unknown;
+      // Try JSON first; fall back to text. The gateway returns
+      // application/octet-stream for file reads, JSON for everything
+      // else.
+      const ct = res.headers.get("content-type") ?? "";
+      if (ct.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = text;
+        }
+      }
+      if (!res.ok) {
+        const errMsg =
+          typeof data === "object" && data !== null && "error" in data
+            ? String((data as { error: unknown }).error)
+            : `HTTP ${String(res.status)}`;
+        return { ok: false, status: res.status, error: errMsg };
+      }
+      return { ok: true, status: res.status, data };
+    } catch (err) {
+      return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   // s140 t599 phase 2 — postMessage IPC primitive. Iframe MApps send
-  // { protocol, mappId, type, payload } envelopes. Runtime echoes a
-  // pong for ping (sanity probe) and ignores anything that doesn't
-  // match the protocol field. Future phases route storage / chat
-  // requests via the same channel.
+  // { protocol, mappId, type, payload, requestId? } envelopes. Runtime
+  // echoes a pong for ping (sanity probe). Phase 3.5 adds storage-{read,
+  // write,list,delete} ops mediated through the parent runtime — runtime
+  // ignores the envelope's mappId and uses the iframe's bound mappId
+  // (resolved via DOM lookup) to scope every gateway call.
   useEffect(() => {
+    function postReply(
+      source: MessageEventSource,
+      type: string,
+      mappId: string,
+      requestId: string | undefined,
+      payload: unknown,
+    ): void {
+      const reply: DesktopMessage = {
+        protocol: "mapp-desktop/1",
+        mappId,
+        type,
+        ...(requestId !== undefined ? { requestId } : {}),
+        payload,
+      };
+      (source as Window).postMessage(reply, "*");
+    }
+
     function onMessage(e: MessageEvent): void {
       const data = e.data as Partial<DesktopMessage> | null;
       if (!data || data.protocol !== "mapp-desktop/1") return;
-      if (data.type === "ping" && e.source && "postMessage" in e.source) {
-        const reply: DesktopMessage = {
-          protocol: "mapp-desktop/1",
-          mappId: data.mappId ?? "(unknown)",
-          type: "pong",
-          payload: { now: new Date().toISOString() },
-        };
-        // Reply to the specific iframe that sent the ping. Origin "*"
-        // is acceptable here because the runtime intentionally
-        // doesn't restrict which origin the iframe loaded from
-        // (sandbox + CSP do that work).
-        (e.source as Window).postMessage(reply, "*");
+      const source = e.source;
+      if (!source || !("postMessage" in source)) return;
+
+      // Phase 2 — ping/pong sanity probe. Doesn't require bound mappId.
+      if (data.type === "ping") {
+        postReply(source, "pong", data.mappId ?? "(unknown)", data.requestId, {
+          now: new Date().toISOString(),
+        });
+        return;
+      }
+
+      // Phase 3.5 — storage ops. Resolve the iframe's BOUND mappId from
+      // the DOM and use that for the gateway scope; the envelope's
+      // claimed mappId is informational only.
+      if (
+        data.type === "storage-read" ||
+        data.type === "storage-write" ||
+        data.type === "storage-list" ||
+        data.type === "storage-delete"
+      ) {
+        const boundMappId = resolveBoundMappId(source);
+        if (boundMappId === null) {
+          postReply(source, `${data.type}-reply`, data.mappId ?? "(unknown)", data.requestId, {
+            ok: false,
+            status: 0,
+            error: "iframe is not a registered MApp window",
+          } satisfies StorageReplyPayload);
+          return;
+        }
+        const req = (data.payload as StorageReqPayload | undefined) ?? { area: "sandbox" };
+        const verb: "GET" | "PUT" | "DELETE" =
+          data.type === "storage-write" ? "PUT" : data.type === "storage-delete" ? "DELETE" : "GET";
+        // Fire-and-forget; the async reply arrives via postMessage.
+        // Capturing the source narrowing in the closure prevents lint
+        // from complaining about `e` outliving the handler.
+        const replySource = source;
+        void dispatchStorageVerb(verb, req, boundMappId).then((result) => {
+          postReply(replySource, `${data.type}-reply`, boundMappId, data.requestId, result);
+        });
       }
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectSlug]);
 
   const openMApp = useCallback((mapp: MAppEntry) => {
     setTopZ((z) => z + 1);

@@ -29,6 +29,15 @@ export interface MAppEntry {
  * is the trusted parent; MApp iframes are untrusted children. Each
  * message carries its origin mappId so the runtime can route per-MApp
  * state correctly.
+ *
+ * Phase 2: `ping` / `pong` for liveness sanity probes.
+ * Phase 3.5: `storage-read`/`storage-write`/`storage-list`/`storage-delete`
+ *   for the runtime to mediate gateway storage CRUD on behalf of the
+ *   iframe. The runtime trusts the iframe's BOUND mappId (set when the
+ *   parent constructed the Window) — not the envelope's mappId field —
+ *   so a hostile iframe can't request data from another MApp's
+ *   namespace. Reply envelopes echo `requestId` so a child can correlate
+ *   responses to in-flight requests.
  */
 export interface DesktopMessage {
   /** Identifies this as a MApp Desktop message (vs other postMessage
@@ -39,7 +48,35 @@ export interface DesktopMessage {
    *  decisions, but echoes it for symmetry. */
   mappId: string;
   type: string;
+  /** Optional client-supplied correlation id, echoed in the reply.
+   *  Iframe MApps that need to make multiple concurrent storage ops set
+   *  this so they can match the correct reply to the right caller. */
+  requestId?: string;
   payload?: unknown;
+}
+
+/**
+ * Storage operation envelope payloads. All four ops carry `area` +
+ * `filepath`; write also carries `body` (JSON-serializable).
+ */
+export interface StorageReqPayload {
+  area: "k" | "sandbox";
+  filepath?: string; // omitted means list the bare mapp dir
+  body?: unknown;    // for storage-write only
+}
+
+/**
+ * Reply envelope for storage ops. `ok` is the success bit; `data` is
+ * the response (parsed JSON for read; entries[] for list; ack object
+ * for write/delete) when ok=true; `error` is the error string when
+ * ok=false. `status` is the HTTP status from the gateway (or 0 if the
+ * fetch itself failed).
+ */
+export interface StorageReplyPayload {
+  ok: boolean;
+  status: number;
+  data?: unknown;
+  error?: string;
 }
 
 export interface DesktopWindow {
