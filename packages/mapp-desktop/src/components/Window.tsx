@@ -2,20 +2,45 @@ import { useCallback, useRef, useState } from "react";
 import type { DesktopWindow } from "../types.js";
 
 /**
- * A draggable, focusable window. Phase 1: header drag (mouse), close +
- * minimize buttons, focus on click anywhere. Body is a placeholder
- * until phase 2 lands the iframe MApp loader.
+ * A draggable, focusable window. Phase 1: header drag, close +
+ * minimize, focus on click. Phase 2: iframe MApp loader with sandbox
+ * attribute + postMessage IPC. Body is the iframe when the MApp
+ * carries a panelUrl; otherwise a placeholder for missing/uninstalled
+ * MApps.
  */
+
+/**
+ * Iframe sandbox flags — restrictive by default. MApps run in a
+ * sandboxed origin with no parent access. Specific capabilities the
+ * MApp needs get re-granted via opt-in flags below:
+ *   - allow-scripts: required for any interactive MApp
+ *   - allow-same-origin: required for MApps that fetch from /api/...
+ *     under the runtime's hostname (project-scoped storage endpoints
+ *     in phase 3). Without it the iframe gets a null origin and
+ *     CORS-blocks all credentialed fetches.
+ *   - allow-forms: needed for MApps that submit forms (e.g. an editor
+ *     POST on save).
+ *   - allow-popups: opens links in new tabs without breaking targeted
+ *     anchor clicks.
+ *
+ * Deliberately omitted (would break the security model):
+ *   - allow-top-navigation: MApp should NOT be able to redirect the
+ *     parent runtime away.
+ *   - allow-modals: prevents alert()/confirm() dialogs that block the
+ *     parent.
+ */
+const IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups";
 
 interface WindowProps {
   window: DesktopWindow;
+  panelUrl?: string;
   onFocus: () => void;
   onMove: (x: number, y: number) => void;
   onClose: () => void;
   onMinimize: () => void;
 }
 
-export function Window({ window: w, onFocus, onMove, onClose, onMinimize }: WindowProps): React.ReactElement {
+export function Window({ window: w, panelUrl, onFocus, onMove, onClose, onMinimize }: WindowProps): React.ReactElement {
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const [, force] = useState(0);
 
@@ -78,14 +103,26 @@ export function Window({ window: w, onFocus, onMove, onClose, onMinimize }: Wind
         </button>
       </header>
 
-      {/* Body — phase-1 placeholder. Phase 2: <iframe src={panelUrl} /> */}
-      <div className="flex-1 flex items-center justify-center text-muted text-sm">
-        <div className="text-center">
-          <div className="text-[48px] mb-2">{w.icon}</div>
-          <div className="text-[14px] font-medium text-fg mb-1">{w.title}</div>
-          <div className="text-[11px]">MApp content loads in phase 2 (iframe + IPC)</div>
+      {/* Body — phase 2: iframe when panelUrl present, placeholder
+          when MApp has no panel (uninstalled / missing bundle). */}
+      {panelUrl ? (
+        <iframe
+          src={panelUrl}
+          title={w.title}
+          sandbox={IFRAME_SANDBOX}
+          className="flex-1 w-full bg-bg border-0"
+          data-testid={`window-iframe-${w.id}`}
+          data-mapp-id={w.mappId}
+        />
+      ) : (
+        <div className="flex-1 flex items-center justify-center text-muted text-sm">
+          <div className="text-center">
+            <div className="text-[48px] mb-2">{w.icon}</div>
+            <div className="text-[14px] font-medium text-fg mb-1">{w.title}</div>
+            <div className="text-[11px]">No panel URL — MApp not installed yet</div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

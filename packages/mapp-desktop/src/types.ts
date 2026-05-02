@@ -16,8 +16,30 @@ export interface MAppEntry {
   description: string;
   icon: string;
   category: MAppCategory;
-  /** Where the MApp's UI lives. Phase 2 will load this in an iframe. */
+  /** Where the MApp's UI lives. Loaded into a sandboxed iframe by the
+   *  Window component. When undefined, Window renders the phase-1
+   *  placeholder body so a missing/uninstalled MApp still opens
+   *  cleanly with a useful "not installed" message instead of a
+   *  broken iframe. */
   panelUrl?: string;
+}
+
+/**
+ * Inter-app message envelope passed via window.postMessage. The runtime
+ * is the trusted parent; MApp iframes are untrusted children. Each
+ * message carries its origin mappId so the runtime can route per-MApp
+ * state correctly.
+ */
+export interface DesktopMessage {
+  /** Identifies this as a MApp Desktop message (vs other postMessage
+   *  traffic that may share the channel). */
+  protocol: "mapp-desktop/1";
+  /** Originating MApp id. Set by the iframe child; runtime trusts the
+   *  iframe's bound mappId rather than this value for security
+   *  decisions, but echoes it for symmetry. */
+  mappId: string;
+  type: string;
+  payload?: unknown;
 }
 
 export interface DesktopWindow {
