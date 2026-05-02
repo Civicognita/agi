@@ -181,6 +181,10 @@ export interface RuntimeStateDeps {
   dashboardQueries?: DashboardQueries;
   /** HostingManager — manages Caddy + Node.js process lifecycle for hosted projects. */
   hostingManager?: HostingManager;
+  /** s143 t570 — CircuitBreakerTracker for the /api/services/circuit-breakers
+   *  endpoints. Optional: when omitted, the breaker routes return empty
+   *  state + 503 on reset attempts. */
+  circuitBreaker?: import("./circuit-breaker.js").CircuitBreakerTracker;
   /** IterativeWorkScheduler — exposes status + receives config changes for the
    *  iterative-work API surface. Optional: when omitted, the iterative-work
    *  routes return 503. */
@@ -5898,6 +5902,69 @@ export async function createGatewayRuntimeState(
       log.error(`service restart "${request.params.id}" failed: ${msg}`);
       return reply.code(500).send({ error: msg });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // s143 t570 — Circuit-breaker visibility + reset endpoints.
+  //
+  // The CircuitBreakerTracker (cycle 153) records per-service failures
+  // into gateway.json under services.circuitBreaker.states[serviceId].
+  // Cycle 155-157 saw four projects trip to status=open and stay there
+  // because their build dirs don't exist. The operator's only way to
+  // see + reset breakers today is jq + manual file edit, which violates
+  // the dashboard-UI-only discipline (cycle 156 owner directive).
+  //
+  // These routes surface the same data the dashboard's Services page
+  // (t572) consumes, plus reset affordances. All gated to private
+  // network like the rest of the services API.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/services/circuit-breakers", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Services API only allowed from private network" });
+    }
+    if (!deps.circuitBreaker) {
+      return reply.send({ states: {}, openCount: 0, halfOpenCount: 0, totalCount: 0 });
+    }
+    const states = deps.circuitBreaker.listStates();
+    const entries = Object.values(states);
+    return reply.send({
+      states,
+      openCount: entries.filter((s) => s.status === "open").length,
+      halfOpenCount: entries.filter((s) => s.status === "half-open").length,
+      totalCount: entries.length,
+    });
+  });
+
+  fastify.post<{ Params: { id: string } }>("/api/services/circuit-breakers/:id/reset", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Services API only allowed from private network" });
+    }
+    if (!deps.circuitBreaker) {
+      return reply.code(503).send({ error: "Circuit breaker tracker not wired" });
+    }
+    // The serviceId from the URL contains slashes (e.g. hosting:/home/...)
+    // — fastify's :id captures only one segment. Read the full path from
+    // request.url instead so colons + slashes survive routing.
+    const url = request.url; // e.g. /api/services/circuit-breakers/hosting:%2Fhome%2F.../reset
+    const match = /\/api\/services\/circuit-breakers\/(.+)\/reset$/.exec(url);
+    const serviceId = match ? decodeURIComponent(match[1]!) : request.params.id;
+    deps.circuitBreaker.reset(serviceId);
+    return reply.send({ ok: true, serviceId });
+  });
+
+  fastify.post("/api/services/circuit-breakers/reset-all", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Services API only allowed from private network" });
+    }
+    if (!deps.circuitBreaker) {
+      return reply.code(503).send({ error: "Circuit breaker tracker not wired" });
+    }
+    const count = deps.circuitBreaker.resetAll();
+    return reply.send({ ok: true, count });
   });
 
   // -----------------------------------------------------------------------

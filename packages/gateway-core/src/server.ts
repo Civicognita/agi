@@ -2567,6 +2567,7 @@ export async function startGatewayServer(
       webhookSecret: config.workspace?.webhookSecret,
       logger,
       hostingManager,
+      circuitBreaker: circuitBreakerTracker,
       iterativeWorkScheduler,
       projectConfigManager,
       pmProvider,

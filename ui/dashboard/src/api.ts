@@ -1580,6 +1580,52 @@ export async function restartService(id: string): Promise<{ ok: boolean }> {
 }
 
 // ---------------------------------------------------------------------------
+// Circuit-breaker API — /api/services/circuit-breakers (s143 t570)
+// ---------------------------------------------------------------------------
+
+export interface CircuitBreakerStateInfo {
+  failures: number;
+  lastFailureAt?: string;
+  lastError?: string;
+  status: "closed" | "half-open" | "open";
+  lastResetAt?: string;
+}
+
+export interface CircuitBreakersResponse {
+  states: Record<string, CircuitBreakerStateInfo>;
+  openCount: number;
+  halfOpenCount: number;
+  totalCount: number;
+}
+
+export async function fetchCircuitBreakers(): Promise<CircuitBreakersResponse> {
+  const res = await fetch("/api/services/circuit-breakers");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<CircuitBreakersResponse>;
+}
+
+export async function resetCircuitBreaker(serviceId: string): Promise<{ ok: boolean; serviceId: string }> {
+  const res = await fetch(`/api/services/circuit-breakers/${encodeURIComponent(serviceId)}/reset`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean; serviceId: string }>;
+}
+
+export async function resetAllCircuitBreakers(): Promise<{ ok: boolean; count: number }> {
+  const res = await fetch("/api/services/circuit-breakers/reset-all", { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean; count: number }>;
+}
+
+// ---------------------------------------------------------------------------
 // Runtimes API — /api/runtimes
 // ---------------------------------------------------------------------------
 
