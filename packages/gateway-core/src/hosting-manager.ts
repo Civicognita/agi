@@ -291,6 +291,13 @@ export interface BuildCaddyfileOptions {
    */
   projects: Array<{
     hostname: string;
+    /** s140 t597 cycle-176 — absolute project path on host. When set,
+     *  emit the `/sandbox/*` handle_path block that file_servers
+     *  `<projectPath>/sandbox/`. Caddy must have read access to this
+     *  path (agi-caddy.service bind-mounts $HOME/_projects:ro). When
+     *  omitted (legacy callers / unit tests), the sandbox block is
+     *  skipped. */
+    path?: string;
     port?: number | null;
     containerName?: string | null;
     internalPort?: number | null;
@@ -528,6 +535,27 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
     }
     blocks.push(`${fqdn} {`);
     blocks.push(`    ${TLS_INTERNAL}`);
+
+    // s140 t597 cycle-176 — sandbox auto-route. Every project's
+    // <projectPath>/sandbox/ is browseable at https://<host>/sandbox/.
+    // Owner directive: "Every project needs to expose its sandbox via
+    // an auto route to the sandbox folder for that project. Sandboxes
+    // are used for building and testing any content that does not
+    // require an engine to serve it (meaning I can just open it in
+    // the browser)". Caddy file_server with `browse` lets owner
+    // navigate the directory; encode gzip is a small bandwidth win
+    // for HTML/CSS/JS. The agi-caddy container bind-mounts $HOME/_projects:ro
+    // so this `root` directive resolves correctly. handle_path strips
+    // /sandbox before file_server resolves (so /sandbox/foo.html →
+    // <projectPath>/sandbox/foo.html). Skipped when path is undefined
+    // (legacy callers / unit tests).
+    if (project.path) {
+      blocks.push(`    handle_path /sandbox/* {`);
+      blocks.push(`        root * ${project.path}/sandbox`);
+      blocks.push(`        file_server browse`);
+      blocks.push(`        encode gzip`);
+      blocks.push(`    }`);
+    }
 
     // s130 t515 B5 — non-default repos with externalPath route via
     // handle_path before the catch-all reverse_proxy. Each gets a
@@ -2964,6 +2992,7 @@ export class HostingManager {
           }
           return {
             hostname: p.meta.hostname,
+            path: p.path, // s140 t597 — for the /sandbox/* handle_path block
             port: p.meta.port,
             containerName: p.containerName ?? (p.meta.hostname ? `agi-${p.meta.hostname}` : null),
             internalPort: p.meta.internalPort,
