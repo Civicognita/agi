@@ -214,6 +214,65 @@ resolve_e2e_spec() {
 }
 
 # ---------------------------------------------------------------------------
+# Dashboard bundle freshness (s146 t603 cycle 188)
+# ---------------------------------------------------------------------------
+#
+# The test VM mounts dev source live but the dashboard is a Vite-built
+# static bundle, not source. When `services-align` is auto-skipped (cycle
+# 186 t602 logic for dev-ahead-of-host), the bundle stays at whatever was
+# last built — typically days behind dev source after a /loop session.
+#
+# Cycle 187 ate ~15 min of cycle budget rediscovering this from a
+# Playwright timeout. This helper detects the staleness via mtime
+# comparison + auto-rebuilds inside the VM before `run_e2e` runs.
+#
+# Bypass: AGI_TEST_SKIP_BUILD=1 skips the freshness check + auto-build.
+# Useful when iterating on a known-fresh bundle or when the build itself
+# is the problem under test.
+ensure_dashboard_bundle_fresh() {
+  if [ "${AGI_TEST_SKIP_BUILD:-0}" = "1" ]; then
+    return 0
+  fi
+
+  # The VM bind-mount path is /mnt/agi (per scripts/test-vm.sh
+  # multipass mount setup). We compare mtimes inside the VM to avoid
+  # any host/VM clock skew issues — a single shell process sees both.
+  local mtime_check
+  mtime_check="$(multipass exec "$VM_NAME" -- bash -c '
+    set -uo pipefail
+    cd /mnt/agi || { echo "missing-mount"; exit 0; }
+    bundle="ui/dashboard/dist/index.html"
+    if [ ! -f "$bundle" ]; then echo "no-bundle"; exit 0; fi
+    bundle_mtime=$(stat -c %Y "$bundle" 2>/dev/null || echo 0)
+    # Newest src mtime under ui/dashboard/src — covers tsx + ts + css + html.
+    src_mtime=$(find ui/dashboard/src -type f \( -name "*.tsx" -o -name "*.ts" -o -name "*.css" -o -name "*.html" \) \
+      -printf "%T@\n" 2>/dev/null | sort -n | tail -1 | cut -d. -f1)
+    if [ -z "$src_mtime" ] || [ "$src_mtime" = "0" ]; then echo "no-src"; exit 0; fi
+    if [ "$src_mtime" -gt "$bundle_mtime" ]; then
+      echo "stale src=$src_mtime bundle=$bundle_mtime"
+    else
+      echo "fresh"
+    fi
+  ' 2>/dev/null)"
+
+  case "$mtime_check" in
+    fresh)
+      return 0 ;;
+    missing-mount|no-bundle|no-src)
+      log "dashboard bundle freshness: $mtime_check (skipping check)"
+      return 0 ;;
+    stale*)
+      log "dashboard bundle stale ($mtime_check) — rebuilding (set AGI_TEST_SKIP_BUILD=1 to skip)"
+      if ! multipass exec "$VM_NAME" -- bash -lc "cd /mnt/agi && pnpm --filter @agi/dashboard build 2>&1 | tail -5"; then
+        log "dashboard build failed — running tests against potentially stale bundle"
+      fi
+      ;;
+    *)
+      log "dashboard freshness check returned unexpected output: '$mtime_check' (skipping)" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Runners
 # ---------------------------------------------------------------------------
 run_unit() {
@@ -232,6 +291,7 @@ run_unit() {
 
 run_e2e() {
   preflight
+  ensure_dashboard_bundle_fresh
   if [ -z "$PATTERN" ]; then die "e2e: missing <pattern>. Use 'agi test --e2e --list' to see candidates." 2; fi
   local spec
   spec="$(resolve_e2e_spec "$PATTERN")" || die "no e2e specs matched '$PATTERN'" 2
@@ -255,6 +315,7 @@ run_e2e() {
 
 run_e2e_ui() {
   preflight
+  ensure_dashboard_bundle_fresh
   log "e2e-ui → test-run.sh e2e:ui (Playwright UI runner vs test.ai.on)${PATTERN:+ pattern=$PATTERN}"
   if [ -n "$PATTERN" ]; then
     bash "$TEST_RUN_SCRIPT" e2e:ui "$PATTERN"
@@ -265,6 +326,7 @@ run_e2e_ui() {
 
 run_e2e_headed() {
   preflight
+  ensure_dashboard_bundle_fresh
   log "e2e-headed → test-run.sh e2e:headed (Playwright --headed vs test.ai.on)${PATTERN:+ pattern=$PATTERN}"
   if [ -n "$PATTERN" ]; then
     bash "$TEST_RUN_SCRIPT" e2e:headed "$PATTERN"

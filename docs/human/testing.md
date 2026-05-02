@@ -139,6 +139,14 @@ The wrapper validates the path (must be a directory + contain `package.json`); f
 
 When the test VM is at a newer version than `/opt/agi/` (typical mid-/loop), the wrapper auto-skips `services-align` rather than downgrading the VM. To force alignment regardless, set `AGI_TEST_SKIP_ALIGN=0` and run `agi test-vm services-align` manually. To skip alignment entirely (e.g. iterating on a known-fresh VM), set `AGI_TEST_SKIP_ALIGN=1`.
 
+#### Auto-rebuild dashboard bundle — `AGI_TEST_SKIP_BUILD`
+
+The test VM mounts dev source live but the dashboard is a Vite-built static bundle, not source. When `services-align` is auto-skipped (above), the bundle stays at whatever was last built — typically days behind dev source after a /loop session. Symptom: Playwright timeouts on `getByText` for elements your dev source clearly defines, because the served HTML is from an older build.
+
+Before each `--e2e` / `--e2e-ui` / `--e2e-headed` run, the wrapper compares the mtime of `ui/dashboard/dist/index.html` against the newest mtime under `ui/dashboard/src/` (`.tsx` / `.ts` / `.css` / `.html`). When src is newer, runs `pnpm --filter @agi/dashboard build` inside the VM before launching Playwright.
+
+Set `AGI_TEST_SKIP_BUILD=1` to bypass — useful when iterating on a known-fresh bundle or when the build itself is the problem under test.
+
 ### Run All Tiers
 
 ```bash
