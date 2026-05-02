@@ -119,6 +119,8 @@ export type {
   MAppTool, MAppFieldType, MAppField, MAppFormula, MAppConstant,
   MAppCondition, MAppPage, MAppPageType, MAppOutput,
   MAppModelDependency, MAppModelInferenceConfig,
+  MAppScreen, MAppScreenElement, MAppScreenInput,
+  MAppScreenInputType, MAppScreenInputQualifier, MAppScreenInputSource,
 } from "./mapp-schema.js";
 
 // ADF UI Component Catalog
