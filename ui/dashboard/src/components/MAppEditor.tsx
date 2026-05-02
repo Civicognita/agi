@@ -466,6 +466,18 @@ function PagesStep({ state, update }: { state: EditorState; update: <K extends k
 
   return (
     <div>
+      <DevNote
+        kind="warning"
+        scope="mapp-editor:pages"
+        heading="Field reorder silently retargets formulas"
+      >
+        Reordering a field re-assigns its A-column cell ref in place
+        (<code>A1</code>, <code>A2</code>, …). Any formula that referenced
+        the old cell will silently retarget to whatever now sits there.
+        Move-field shows a `window.confirm` listing affected formulas
+        (story #101 task #315) — confirm-or-cancel guard, not a fix. The
+        proper fix needs a formula parser that rewrites refs on reorder.
+      </DevNote>
       {/* Page tabs */}
       <div className="flex items-center gap-0 border-b border-border mb-4">
         {state.pages.map((p, i) => (
@@ -961,6 +973,29 @@ function OutputStep({ state, update }: { state: EditorState; update: <K extends 
 
   return (
     <div className="space-y-5">
+      <DevNote
+        kind="todo"
+        scope="mapp-editor:output"
+        heading="Available variables ignores screens[*].inputs[*]"
+      >
+        `allFieldKeys` aggregates from `state.pages[*].fields` only; the
+        s146 phase A.2 screens primitive ships with its own typed input
+        props (<code>state.screens[*].inputs[*].key</code>). The Available
+        variables hint should surface those too once Phase D runtime
+        renderer wires the substitution. Until then, screens-shaped MApp
+        authors won{"\u2019"}t see their input keys listed here.
+      </DevNote>
+      <DevNote
+        kind="todo"
+        scope="mapp-editor:output"
+        heading="Tool Analysis Analyze button is a placeholder"
+      >
+        Clicking the {"\u2728"} Analyze button currently does nothing.
+        Intended to surface complexity / quality metrics for the
+        authored MApp (cf. AGI{"\u2019"}s code-analyzer or model-runtime
+        tooling). Either wire it to a real analyzer or remove the
+        affordance.
+      </DevNote>
       <div>
         <h3 className="text-[14px] font-semibold text-foreground">Output Configuration</h3>
         <p className="text-[11px] text-muted-foreground">Review your tool's workflow and define the final processing prompt.</p>
@@ -1008,17 +1043,33 @@ function SimulatorStep({ state }: { state: EditorState }) {
   const def = useMemo(() => stateToDefinition(state), [state]);
   const pages = (def.pages ?? []) as Array<{ key: string; title: string; pageType: string; visibility: string; fields?: Array<Record<string, unknown>>; formulas?: Array<Record<string, unknown>> }>;
 
-  if (pages.length === 0) return <div className="text-center text-muted-foreground py-8">No pages to simulate. Add fields in the Pages step.</div>;
-
   return (
-    <div className="border border-border rounded-lg p-4 bg-mantle">
-      <h4 className="text-[12px] font-semibold text-foreground mb-3">Live Preview</h4>
-      <MAppFormRenderer
-        pages={pages as import("./MAppFormRenderer.js").MAppFormRendererProps["pages"]}
-        constants={(def.constants ?? []) as import("./MAppFormRenderer.js").MAppFormRendererProps["constants"]}
-        onSubmit={(values, formulas) => { console.log("Simulator:", { values, formulas }); }}
-      />
-    </div>
+    <>
+      <DevNote
+        kind="deferred"
+        scope="mapp-editor:simulator"
+        heading="Screens-shaped MApps don't render in the Simulator yet (Phase D)"
+      >
+        The Simulator preview only renders `pages` via
+        <code>MAppFormRenderer</code> (legacy form-and-formula path). The
+        s146 phase A.2 screens primitive needs Phase D{"’"}s runtime
+        renderer to draw PAx components from <code>state.screens[*].elements</code>.
+        Until Phase D ships, screens-shaped MApps authored in step 4 are
+        invisible here. Pairs naturally with `mapp-editor:output` notes.
+      </DevNote>
+      {pages.length === 0 ? (
+        <div className="text-center text-muted-foreground py-8">No pages to simulate. Add fields in the Pages step.</div>
+      ) : (
+        <div className="border border-border rounded-lg p-4 bg-mantle">
+          <h4 className="text-[12px] font-semibold text-foreground mb-3">Live Preview</h4>
+          <MAppFormRenderer
+            pages={pages as import("./MAppFormRenderer.js").MAppFormRendererProps["pages"]}
+            constants={(def.constants ?? []) as import("./MAppFormRenderer.js").MAppFormRendererProps["constants"]}
+            onSubmit={(values, formulas) => { console.log("Simulator:", { values, formulas }); }}
+          />
+        </div>
+      )}
+    </>
   );
 }
 
