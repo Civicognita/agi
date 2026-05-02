@@ -484,7 +484,17 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   const lastPongAtRef = useRef<number>(Date.now());
   const HEARTBEAT_INTERVAL_MS = 15_000;
   const HEARTBEAT_TIMEOUT_MS = 25_000;
-  const STALL_MS = 120_000;
+  // Stall-timer threshold — fires when the chat WS goes silent for this long
+  // mid-turn. Bumped 120s → 600s in cycle 158 because 2-minute cap clipped
+  // local-model agent loops mid-tool-call: Gemma-4-E2B on Lemonade takes
+  // 60-90s per turn (10K-token prompt × 2 turns + tool-call generation),
+  // putting a 2-tool flow right at the edge of the 120s deadline. Per
+  // `feedback_local_provider_relaxed_timeouts`, local providers need the
+  // 6x timeout multiplier across the chat path. 600s = 5x BASE — gives
+  // Gemma headroom for read→modify→write loops without making cloud-side
+  // stall detection useless. Provider-aware multiplier (cloud=120s,
+  // local=720s) is the proper follow-up.
+  const STALL_MS = 600_000;
 
   const clearStallTimer = useCallback(() => {
     if (stallTimerRef.current) {
