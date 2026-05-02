@@ -376,7 +376,18 @@ export function ProjectDetail({
           const enabled = project.hosting?.enabled;
           if (!enabled) return null;
           const cls = s === "running" ? "bg-green" : s === "error" ? "bg-red" : "bg-yellow";
-          return <span className={cn("inline-block w-2 h-2 rounded-full", cls)} title={`Container ${s}`} />;
+          // s140 cycle-172 t594 — aria-label not title. title doesn't show
+          // on touch devices and is inconsistently announced by screen
+          // readers. aria-label is the durable a11y primitive for an
+          // icon-only pill. role="status" so AT users perceive it as a
+          // live state indicator, not a generic span.
+          return (
+            <span
+              className={cn("inline-block w-2 h-2 rounded-full", cls)}
+              role="status"
+              aria-label={`Container ${s}`}
+            />
+          );
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">

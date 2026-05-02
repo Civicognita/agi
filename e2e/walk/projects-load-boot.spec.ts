@@ -87,17 +87,16 @@ test.describe("projects load + boot walk (s140 t550)", () => {
       await expect(page.getByRole("tab", { name: /^Details$/ }), `Details tab on /projects/${proj.slug}`)
         .toBeVisible({ timeout: 10_000 });
 
-      // The hosting status renders as an icon-only pill with a `title`
-      // tooltip (e.g. `<span title="Container running">…</span>`). It's
-      // not a text node and not aria-label — `getByTitle` is the right
-      // matcher. (The fact that this is `title` rather than `aria-label`
-      // is a minor a11y drift item — `title` doesn't show on touch
-      // devices and is inconsistently announced by screen readers.)
+      // The hosting status renders as an icon-only pill with an
+      // `aria-label="Container <status>"` + role="status" (s140 t594
+      // cycle-172 fix — was `title=` pre-fix, switched for a11y on
+      // touch devices + screen-reader announce). getByRole is the
+      // strongest matcher; falls back to getByLabel if needed.
       await page.waitForLoadState("domcontentloaded", { timeout: 5_000 }).catch(() => {});
       const statusCount = await page
-        .getByTitle(/Container (running|stopped|unconfigured|error)/i)
+        .getByRole("status", { name: /Container (running|stopped|unconfigured|error)/i })
         .count();
-      expect(statusCount, `hosting status indicator on /projects/${proj.slug} (title count)`)
+      expect(statusCount, `hosting status indicator on /projects/${proj.slug} (role=status + aria-label count)`)
         .toBeGreaterThan(0);
 
       expect(pageErrors, `pageerrors on /projects/${proj.slug}: ${pageErrors.join(" | ")}`)
