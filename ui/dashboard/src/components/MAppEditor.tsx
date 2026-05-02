@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { Select } from "@/components/ui/select.js";
 import { Card } from "@/components/ui/card.js";
+import { DevNote } from "@/components/ui/dev-notes.js";
 import { EmojiSelect, Textarea, Callout } from "@particle-academy/react-fancy";
 import { MAppFormRenderer } from "./MAppFormRenderer.js";
 import { cn } from "@/lib/utils";
@@ -756,18 +757,62 @@ function ScreensStep({ state, update }: { state: EditorState; update: <K extends
     updateScreen({ elements: screen.elements.filter((_, j) => j !== idx) });
   };
 
+  // Contributor-facing DevNotes — register the deferred / TODO items on this
+  // step's scope so dev-mode users can browse them via the global modal.
+  // Embedded outside the conditional return so they register regardless of
+  // whether the empty-state or the populated-state renders.
+  const screensStepDevNotes = (
+    <>
+      <DevNote
+        kind="deferred"
+        scope="mapp-editor:screens"
+        heading="Per-screen mini-agent authoring (s146 phase C)"
+      >
+        Each screen runs a hybrid agentic-typed mini-agent with special
+        agentic tools (owner primitive, cycle 181). The Editor surface for
+        authoring it is gated on s146 open question 1: what configures the
+        mini-agent (prompt, tool list, intent description) and what tool
+        set does it have access to?
+      </DevNote>
+      <DevNote
+        kind="todo"
+        scope="mapp-editor:screens"
+        heading="Per-component prop schema introspection (Phase E+)"
+      >
+        Today element props are authored as raw JSON. Phase E will
+        introspect each PAx component{"’"}s prop types and render a typed
+        form per component. Until then, the JSON textarea is the surface.
+      </DevNote>
+      <DevNote
+        kind="todo"
+        scope="mapp-editor:screens"
+        heading="Drag-drop reorder of inputs + elements"
+      >
+        Currently authors remove + re-add to change order. Add up/down
+        buttons or HTML5 DnD. Polish, not core to the primitive.
+      </DevNote>
+      <DevNote
+        kind="deferred"
+        scope="mapp-editor:screens"
+        heading="Live screen preview (Phase D pairing)"
+      >
+        The Simulator step today renders only legacy form-and-formula
+        MApps via MAppFormRenderer. Screens-shaped MApp preview pairs
+        with Phase D (runtime renderer) — same JSON definition, both the
+        Simulator and the deployed mapp-desktop runtime consume it.
+      </DevNote>
+    </>
+  );
+
   if (state.screens.length === 0) {
     return (
       <div className="space-y-3">
+        {screensStepDevNotes}
         <div className="text-[12px] text-muted-foreground">
           A MApp can be authored as a legacy form-and-formula MApp (Pages step) OR
           as a screens-shaped MApp (this step) OR both. Screens are composed from
           PAx components with typed input props that accept values from user or
           agent.
-        </div>
-        <div className="text-[11px] text-muted-foreground italic">
-          Per-screen mini-agent authoring isn{"’"}t available yet — gated on
-          owner clarification of the agentic-tool surface.
         </div>
         <Button size="sm" onClick={addScreen} data-testid="mapp-editor-add-screen">+ Add screen</Button>
       </div>
@@ -776,6 +821,7 @@ function ScreensStep({ state, update }: { state: EditorState; update: <K extends
 
   return (
     <div className="space-y-4" data-testid="mapp-editor-screens-step">
+      {screensStepDevNotes}
       <div className="flex items-center gap-2 flex-wrap">
         {state.screens.map((s, i) => (
           <button
