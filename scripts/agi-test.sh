@@ -41,7 +41,23 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Default REPO_DIR is the script's parent (the deployed /opt/agi/ tree).
+# AGI_TEST_DEV_REPO_DIR (s146 t602): override to point at the dev tree
+# (typically ~/temp_core/agi). Closes the spec-discovery gap that blocked
+# /loop verification of brand-new specs across cycles 178/179/183/185 —
+# the test VM already mounts dev source live so the runtime target
+# matches; only this script's `find e2e -iname ...` step needed to know
+# about the dev path. Validated below; falls back to default if the
+# override is set but invalid.
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [ -n "${AGI_TEST_DEV_REPO_DIR:-}" ]; then
+  if [ -d "$AGI_TEST_DEV_REPO_DIR" ] && [ -f "$AGI_TEST_DEV_REPO_DIR/package.json" ]; then
+    REPO_DIR="$(cd "$AGI_TEST_DEV_REPO_DIR" && pwd)"
+    echo "[agi test] AGI_TEST_DEV_REPO_DIR set; resolving specs from $REPO_DIR" >&2
+  else
+    echo "[agi test] AGI_TEST_DEV_REPO_DIR='$AGI_TEST_DEV_REPO_DIR' invalid (not a dir or missing package.json); using default $REPO_DIR" >&2
+  fi
+fi
 VM_NAME="agi-test"
 VM_TEST_SCRIPT="$SCRIPT_DIR/test-vm.sh"
 TEST_RUN_SCRIPT="$SCRIPT_DIR/test-run.sh"
@@ -132,6 +148,19 @@ preflight() {
     | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
     | tr -d '\r\n ')
   if [ -n "$host_version" ] && [ -n "$vm_version" ] && [ "$host_version" != "$vm_version" ]; then
+    # s146 t602 cycle 186: detect VM-ahead-of-host and auto-skip the align.
+    # /loop sessions naturally race the dev tree ahead of /opt/agi/ between
+    # owner-triggered upgrades. "Aligning" downgrades the VM to host's
+    # version, which is the wrong direction during dev iteration AND was
+    # observed to leave services stopped (cycle 185). Use sort -V to
+    # compare semver-ish strings; if VM > host, log + skip.
+    local newer
+    newer="$(printf '%s\n%s\n' "$host_version" "$vm_version" | sort -V | tail -1)"
+    if [ "$newer" = "$vm_version" ] && [ "$vm_version" != "$host_version" ]; then
+      log "VM at v${vm_version} > host at v${host_version} (dev ahead of /opt/agi/) — skipping services-align (auto)"
+      log "set AGI_TEST_DEV_REPO_DIR to resolve specs from your dev tree (e.g. ~/temp_core/agi)"
+      return 0
+    fi
     log "VM at v${vm_version}, host at v${host_version} — running services-align (set AGI_TEST_SKIP_ALIGN=1 to skip)"
     # Keep stderr visible — silent failures hid a 30+ cycle build-skip bug
     # (cycle 119 root cause). pipefail propagates the actual exit status.
@@ -152,6 +181,14 @@ resolve_unit_spec() {
     echo "$pat"; return 0
   fi
   local found
+  # s146 t602 cycle 186: handle patterns containing `/` (e.g.
+  # "gateway-core/mapp-storage-routes"). -iname matches basenames only,
+  # so a `/` in the pattern always misses. Try -iwholename first when
+  # pattern contains a slash; fall back to -iname for plain names.
+  if [[ "$pat" == */* ]]; then
+    found="$(cd "$REPO_DIR" && find packages cli config -type f -iwholename "*${pat// /*}*.test.ts" 2>/dev/null | sort | head -1)"
+    if [ -n "$found" ]; then echo "$found"; return 0; fi
+  fi
   found="$(cd "$REPO_DIR" && find packages cli config -type f -iname "*${pat// /*}*.test.ts" 2>/dev/null | sort | head -1)"
   if [ -n "$found" ]; then echo "$found"; return 0; fi
   found="$(cd "$REPO_DIR" && find packages cli config -type f -name "*.test.ts" -exec grep -l -iE "$pat" {} \; 2>/dev/null | sort | head -1)"
@@ -165,6 +202,12 @@ resolve_e2e_spec() {
     echo "$pat"; return 0
   fi
   local found
+  # s146 t602 cycle 186: see resolve_unit_spec — same fix for `/` in
+  # patterns like "walk/mapp-editor-screens-step".
+  if [[ "$pat" == */* ]]; then
+    found="$(cd "$REPO_DIR" && find e2e -type f -iwholename "*${pat// /*}*.spec.ts" 2>/dev/null | sort | head -1)"
+    if [ -n "$found" ]; then echo "$found"; return 0; fi
+  fi
   found="$(cd "$REPO_DIR" && find e2e -type f -iname "*${pat// /*}*.spec.ts" 2>/dev/null | sort | head -1)"
   if [ -n "$found" ]; then echo "$found"; return 0; fi
   return 1

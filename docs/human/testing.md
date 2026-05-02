@@ -123,6 +123,22 @@ When to use which:
 
 Pattern arg matches against spec filename (case-insensitive substring); omit to run all specs.
 
+#### Dev-side spec discovery — `AGI_TEST_DEV_REPO_DIR`
+
+`agi test --e2e <pattern>` resolves specs against `/opt/agi/` by default (where `agi-cli.sh` lives). During /loop sessions where the dev tree at `~/temp_core/agi/` runs ahead of `/opt/agi/` between owner-triggered upgrades, brand-new specs added on dev source are invisible to the wrapper.
+
+Set `AGI_TEST_DEV_REPO_DIR` to point at the dev tree to make `find e2e -iname …` resolve from there:
+
+```bash
+AGI_TEST_DEV_REPO_DIR=$HOME/temp_core/agi agi test --e2e walk/my-new-spec
+```
+
+The wrapper validates the path (must be a directory + contain `package.json`); falls back to the default if invalid. The test VM mounts dev source live, so the runtime target already matches dev — only the spec-discovery path needed the override. Same env var works for unit specs (`--unit`) too.
+
+#### Auto-skip when VM > host
+
+When the test VM is at a newer version than `/opt/agi/` (typical mid-/loop), the wrapper auto-skips `services-align` rather than downgrading the VM. To force alignment regardless, set `AGI_TEST_SKIP_ALIGN=0` and run `agi test-vm services-align` manually. To skip alignment entirely (e.g. iterating on a known-fresh VM), set `AGI_TEST_SKIP_ALIGN=1`.
+
 ### Run All Tiers
 
 ```bash
