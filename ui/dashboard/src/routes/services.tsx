@@ -238,12 +238,26 @@ function CircuitBreakerSection(): React.ReactElement | null {
             : state.status === "half-open"
               ? "bg-yellow/15 text-yellow"
               : "bg-green/15 text-green";
+          // s143 t571 — derive a "kind" badge from the service id prefix
+          // (the id shape is `<kind>:<subject>`, e.g.
+          // `hosting:/home/.../proj`, `channel:slack-mainline`, etc.). The
+          // kind badge surfaces which subsystem the breaker is gating so
+          // the operator can scan a mixed list (hosting + channels +
+          // runtimes) and triage by category. Falls back to "service" when
+          // the id doesn't have a prefix.
+          const kindFromId = id.includes(":") ? id.split(":", 1)[0] ?? "service" : "service";
           return (
             <div key={id} className="rounded-lg border border-border bg-background p-3 flex items-start gap-3" data-testid={`circuit-breaker-${id}`}>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <span className={cn("text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded", statusPillClass)}>
                     {state.status}
+                  </span>
+                  <span
+                    className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
+                    data-testid={`circuit-breaker-kind-${id}`}
+                  >
+                    {kindFromId}
                   </span>
                   <code className="text-[11px] font-mono text-foreground truncate">{id}</code>
                   <span className="text-[10px] text-muted-foreground ml-auto shrink-0">
