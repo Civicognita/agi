@@ -20,6 +20,7 @@
  * response shape.
  */
 
+import { resolve as resolvePath } from "node:path";
 import { isPathInCage, type Cage } from "../agent-cage.js";
 
 export interface PathGateConfig {
@@ -27,6 +28,40 @@ export interface PathGateConfig {
   /** Per-invocation cage provider. See agent-cage.ts for semantics.
    *  Optional — when undefined, only workspaceRoot is checked. */
   cageProvider?: () => Cage | null;
+}
+
+/**
+ * Resolve a tool input path to an absolute path.
+ *
+ * **s140 t590 cycle-170:** when a project cage is active, relative paths
+ * resolve against the project root — not against the gateway's
+ * workspaceRoot (which is "/" by default and gives every tool full
+ * machine access). Without this, an Aion chat in a project context
+ * would call `dir_list path="repos/<repo>/src"` and the tool would
+ * try to read `/repos/<repo>/src` (filesystem root), returning "not
+ * found". The cage's first allowedPrefix is the project root (per
+ * agent-cage.ts PROJECT_CAGE_DIRS — the empty-string entry resolves
+ * to projectPath itself), so we use it as the resolution base.
+ *
+ * Absolute paths bypass the resolution base (resolvePath honors them
+ * as-is). Relative paths get the project-root prefix when caged,
+ * falling back to workspaceRoot when uncaged.
+ *
+ * Returns the absolute path. The caller is expected to gate it with
+ * `gatePath` before any fs operation.
+ */
+export function resolveCagedPath(config: PathGateConfig, inputPath: string): string {
+  if (config.cageProvider !== undefined) {
+    const cage = config.cageProvider();
+    if (cage !== null && cage.allowedPrefixes.length > 0) {
+      // First allowedPrefix is always the project root (PROJECT_CAGE_DIRS
+      // in agent-cage.ts puts empty-string first). Use it as the
+      // resolution base for relative paths.
+      const projectRoot = cage.allowedPrefixes[0]!;
+      return resolvePath(projectRoot, inputPath);
+    }
+  }
+  return resolvePath(config.workspaceRoot, inputPath);
 }
 
 /** Check whether a tool may operate on the given absolute path. Returns
