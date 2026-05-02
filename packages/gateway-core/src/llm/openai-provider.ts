@@ -204,7 +204,17 @@ export function toOpenAIToolMessages(results: LLMToolResult[]): OpenAIChatMessag
 export function fromOpenAICompletion(
   completion: OpenAICompletion,
 ): LLMResponse {
-  const choice = completion.choices[0];
+  // Defensive: OpenAI-compatible servers (e.g. Lemonade) sometimes return
+  // a completion envelope with a missing or non-array `choices` key,
+  // which would throw "Cannot read properties of undefined (reading '0')"
+  // on the bare `completion.choices[0]` access — the guard below catches
+  // an empty array but NOT an absent key. Optional-chain so the
+  // `choice === undefined` branch returns a clean empty response and
+  // the chat surfaces "no completion" instead of crashing the agent
+  // invocation pipeline. Reproduced cycle 157 morning when civicognita_ops
+  // chat hit Lemonade/Gemma and the response envelope shape didn't carry
+  // a choices array.
+  const choice = completion.choices?.[0];
   if (choice === undefined) {
     return {
       text: "",
@@ -445,6 +455,6 @@ export class OpenAIProvider implements LLMProvider {
       1024,
     );
 
-    return completion.choices[0]?.message.content ?? "";
+    return completion.choices?.[0]?.message.content ?? "";
   }
 }
