@@ -1070,7 +1070,12 @@ export async function createGatewayRuntimeState(
     // `tynnToken` field is kept for backward-compat callers but is always
     // null. PUT /api/projects/<path> still accepts a `tynnToken` body field
     // for setting / clearing the secret.
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; tynnTokenSet: boolean; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string }[]; attachedStacks?: { stackId: string }[]; knowledge?: { pages: number; plans: number; chatSessions: number } }[] = [];
+    // s140 cycle-176 t597 — repos[] includes isDefault + port so the
+    // Configuration sub-tab can render its primary-repo selector without
+    // a second roundtrip. Both fields are optional in the schema; a
+    // missing isDefault means "no explicit primary" (dispatch falls
+    // back to repos[0]).
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; tynnTokenSet: boolean; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string; isDefault?: boolean; port?: number }[]; attachedStacks?: { stackId: string }[]; knowledge?: { pages: number; plans: number; chatSessions: number } }[] = [];
 
     // Expand top-level entries into (fullPath, coreCollection, coreForkSlug) triples.
     // A directory that contains a `collection.json` with

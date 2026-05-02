@@ -213,13 +213,26 @@ export default function MagicAppsAdminPage() {
                 const app = entry.definition;
                 const isInstalled = installedIds.has(app.id);
                 const isInstalling = installing === app.id;
+                // s140 cycle-176 — fallback when the catalog source ships
+                // without `name`. Humanize the id (admin-editor → Admin
+                // Editor) so cards always have a title. The proper fix
+                // (name in MAppCatalog source + DB schema + API response)
+                // is filed as a separate task — this is the immediate
+                // owner-visible improvement.
+                const displayName = (app.name && app.name.trim().length > 0)
+                  ? app.name
+                  : app.id
+                      .split(/[-_]/)
+                      .filter(Boolean)
+                      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+                      .join(" ");
                 return (
                   <Card key={app.id}>
                     <CardHeader className="pb-2">
                       <CardTitle className="flex items-center gap-2 text-sm">
                         <span className="text-xl">{app.icon ?? "✨"}</span>
                         <div className="flex-1 min-w-0">
-                          <div className="truncate">{app.name}</div>
+                          <div className="truncate" data-testid={`mapp-card-name-${app.id}`}>{displayName}</div>
                           <div className="text-[10px] text-muted-foreground font-normal">{app.author} · v{app.version}</div>
                         </div>
                         {isInstalled ? (
