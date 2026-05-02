@@ -13,7 +13,7 @@ import { Select } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, fetchIterativeWorkStatus, fetchIterativeWorkProgress } from "../api.js";
+import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, fetchIterativeWorkStatus, fetchIterativeWorkProgress, updateProjectRepo } from "../api.js";
 import type { FileNode, IterativeWorkProjectStatus, IterativeWorkProgress } from "../api.js";
 import { DevNotes } from "@/components/ui/dev-notes";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
@@ -127,6 +127,12 @@ export function ProjectDetail({
   // outer Details tab. Default to identity since that's the most-
   // common landing (rename, glance at path, see sacred state).
   const [detailsSubTab, setDetailsSubTab] = useState<"identity" | "configuration" | "lifecycle">("identity");
+  // s140 t597 cycle-176 — primary repo selector (multi-repo projects only).
+  // Owner: "selection for primary repo that is served on port 80 of that
+  // container. If only 1 repo is found, don't show the select. And don't
+  // show this for project types that don't serve repos."
+  const [editPrimaryRepo, setEditPrimaryRepo] = useState<string | null>(null);
+  const [savingPrimaryRepo, setSavingPrimaryRepo] = useState(false);
   // s134 t517 slice 2 (cycle 112) — workspace mode shell. The 4 modes
   // group the existing 11 tabs per the projects-ux-v2/project-workspace-
   // v2.html mockup. Default "develop" matches Editor as the most-common
@@ -789,6 +795,93 @@ export function ProjectDetail({
                   />
                 </div>
               </div>
+
+              {/*
+                s140 t597 cycle-176 — Primary repo selector. Owner:
+                "selection for primary repo that is served on port 80
+                of that container. If only 1 repo is found, don't show
+                the select. And don't show this for project types that
+                don't serve repos."
+
+                Render gates:
+                  - project.projectType?.hasCode === true (project type
+                    actually serves repos)
+                  - (project.repos ?? []).length > 1 (more than one repo)
+
+                The schema (config/src/project-schema.ts:310) requires
+                a port to be set before isDefault can be true. We
+                expose ALL repos in the select but mark port-less ones
+                as not-eligible — picking one without a port would
+                fail the schema validation, so the disabled flag
+                prevents a doomed PUT.
+              */}
+              {project.projectType?.hasCode && (project.repos ?? []).length > 1 && (
+                <div className="mb-3" data-testid="primary-repo-select-wrapper">
+                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                    Primary repo (served on port 80)
+                  </label>
+                  <Select
+                    className="text-[13px]"
+                    list={(project.repos ?? []).map((r) => ({
+                      value: r.name,
+                      label: r.port
+                        ? `${r.name}${r.isDefault ? " (current)" : ""} — port ${String(r.port)}`
+                        : `${r.name} — port not set (cannot be primary)`,
+                    }))}
+                    value={
+                      editPrimaryRepo ??
+                      (project.repos ?? []).find((r) => r.isDefault)?.name ??
+                      ""
+                    }
+                    onValueChange={(v) => setEditPrimaryRepo(v || null)}
+                    disabled={isSacred || savingPrimaryRepo}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-[11px] h-7 mt-2"
+                    data-testid="primary-repo-save"
+                    disabled={
+                      isSacred ||
+                      savingPrimaryRepo ||
+                      editPrimaryRepo === null ||
+                      editPrimaryRepo === (project.repos ?? []).find((r) => r.isDefault)?.name
+                    }
+                    onClick={async () => {
+                      if (!editPrimaryRepo) return;
+                      const chosen = (project.repos ?? []).find((r) => r.name === editPrimaryRepo);
+                      if (!chosen?.port) {
+                        // Schema would reject this — surface as a no-op
+                        // instead of letting a 400 bubble up. Owner can
+                        // set a port for the repo via the Repository
+                        // tab first.
+                        return;
+                      }
+                      setSavingPrimaryRepo(true);
+                      try {
+                        // Set isDefault on each repo: true for the
+                        // chosen one, false for the rest. Sequential
+                        // (not parallel) so we don't briefly violate
+                        // the "at most one isDefault=true" constraint.
+                        for (const r of project.repos ?? []) {
+                          if (r.name === editPrimaryRepo) continue;
+                          if (r.isDefault) {
+                            await updateProjectRepo(project.path, r.name, { isDefault: false });
+                          }
+                        }
+                        await updateProjectRepo(project.path, editPrimaryRepo, { isDefault: true });
+                        setEditPrimaryRepo(null);
+                        onRefresh();
+                      } finally {
+                        setSavingPrimaryRepo(false);
+                      }
+                    }}
+                  >
+                    {savingPrimaryRepo ? "Setting primary..." : "Set as primary"}
+                  </Button>
+                </div>
+              )}
+
               <Button
                 size="sm"
                 onClick={() => void handleSave()}

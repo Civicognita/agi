@@ -427,11 +427,15 @@ export interface ProjectInfo {
    *  `/api/dev/core-forks/:slug/merge` endpoint without parsing the path. */
   coreForkSlug?: string;
   /** Multi-repo projects (s130 phase B / t515 slice 1) — list of sub-repos
-   *  declared in <projectPath>/.agi/project.json's repos[] field. When
+   *  declared in <projectPath>/project.json's repos[] field. s140 cycle-176
+   *  t597 — `isDefault` marks the primary repo (the one served on port 80
+   *  of the project container when multiple repos run via the lamp runtime).
+   *  `port` is the per-repo internal port (only present when set in config;
+   *  required to mark a repo as isDefault). When
    *  empty/undefined, the project is single-repo and its source lives at
    *  the project root. The Projects browser list view shows `⌗N` per row
    *  (s130 t516 slice 4). */
-  repos?: { name: string; url: string; branch?: string }[];
+  repos?: { name: string; url: string; branch?: string; isDefault?: boolean; port?: number }[];
   /** Stacks attached to this project (postgres/redis/mysql/etc) — surfaced
    *  from project.json's hosting.stacks[] field. Used by t516 slice 5
    *  for the Stack badge column on the Projects list view. */
