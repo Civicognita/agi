@@ -1325,6 +1325,10 @@ export class HostingManager {
         ...(meta.runtimeId != null ? { runtimeId: meta.runtimeId } : {}),
         ...(meta.tunnelUrl != null ? { tunnelUrl: meta.tunnelUrl } : {}),
         ...(meta.tunnelId != null ? { tunnelId: meta.tunnelId } : {}),
+        // s145 t585 — persist MApp container kind + selected MApps so the
+        // dashboard toggle survives restarts.
+        ...(meta.containerKind !== undefined ? { containerKind: meta.containerKind } : {}),
+        ...(meta.mapps !== undefined ? { mapps: meta.mapps } : {}),
       });
       return;
     }
@@ -1601,6 +1605,10 @@ export class HostingManager {
     if (updates.mode !== undefined) hosted.meta.mode = updates.mode;
     if (updates.internalPort !== undefined) hosted.meta.internalPort = updates.internalPort;
     if (updates.runtimeId !== undefined) hosted.meta.runtimeId = updates.runtimeId;
+    // s145 t585 — propagate MApp container fields so the toggle UI flips
+    // dispatch routing on next startContainer call.
+    if (updates.containerKind !== undefined) hosted.meta.containerKind = updates.containerKind;
+    if (updates.mapps !== undefined) hosted.meta.mapps = updates.mapps;
 
     // Restart container with new config
     if (hadContainer) {
@@ -3014,6 +3022,9 @@ export class HostingManager {
     error?: string;
     url: string | null;
     viewer?: string;
+    /** s145 t585 — surface containerKind + mapps to dashboard. */
+    containerKind?: "static" | "code" | "mapp";
+    mapps?: string[];
   } {
     const resolved = resolvePath(projectPath);
     const hosted = this.projects.get(resolved);
@@ -3044,6 +3055,8 @@ export class HostingManager {
         ...(resolvedImage ? { image: resolvedImage } : {}),
         ...(hosted.error !== undefined ? { error: hosted.error } : {}),
         ...(hosted.meta.viewer ? { viewer: hosted.meta.viewer } : {}),
+        ...(hosted.meta.containerKind !== undefined ? { containerKind: hosted.meta.containerKind } : {}),
+        ...(hosted.meta.mapps !== undefined ? { mapps: hosted.meta.mapps } : {}),
         url: hosted.status === "running"
           ? `https://${hosted.meta.hostname}.${this.config.baseDomain}`
           : null,
@@ -3064,6 +3077,8 @@ export class HostingManager {
         internalPort: meta.internalPort,
         runtimeId: meta.runtimeId ?? null,
         ...(meta.viewer ? { viewer: meta.viewer } : {}),
+        ...(meta.containerKind !== undefined ? { containerKind: meta.containerKind } : {}),
+        ...(meta.mapps !== undefined ? { mapps: meta.mapps } : {}),
         status: "unconfigured",
         url: null,
       };

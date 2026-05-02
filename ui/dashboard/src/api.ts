@@ -913,6 +913,10 @@ export async function configureHosting(params: {
   mode?: "production" | "development";
   internalPort?: number;
   runtimeId?: string;
+  /** s145 t585 — flip container kind from the dashboard. */
+  containerKind?: "static" | "code" | "mapp";
+  /** s145 t585 — list of MApp IDs (only used when containerKind === "mapp"). */
+  mapps?: string[];
 }): Promise<{ ok: boolean; hosting: unknown }> {
   const res = await fetch("/api/hosting/configure", {
     method: "PUT",

@@ -38,6 +38,10 @@ export interface HostingPanelProps {
     mode?: "production" | "development";
     internalPort?: number;
     runtimeId?: string;
+    /** s145 t585 — flip container kind from the dashboard. */
+    containerKind?: "static" | "code" | "mapp";
+    /** s145 t585 — list of MApp IDs installed when containerKind=mapp. */
+    mapps?: string[];
   }) => Promise<unknown>;
   onRestart: (path: string) => Promise<unknown>;
   onTunnelEnable?: (path: string) => Promise<unknown>;
@@ -73,6 +77,12 @@ export function HostingPanel({
   const [type, setType] = useState<string>(hosting.type ?? detectedHosting?.projectType ?? "static-site");
   const [hostname, setHostname] = useState(hosting.hostname);
   const [docRoot, setDocRoot] = useState(hosting.docRoot ?? detectedHosting?.docRoot ?? "");
+  // s145 t585 — container-kind selector + mapps[] entries. Default reads
+  // from server; user toggle persists via configureHosting.
+  const [containerKind, setContainerKind] = useState<"static" | "code" | "mapp" | "">(
+    hosting.containerKind ?? "",
+  );
+  const [mappsInput, setMappsInput] = useState<string>((hosting.mapps ?? []).join(", "));
   const [startCommand, setStartCommand] = useState(hosting.startCommand ?? detectedHosting?.startCommand ?? "");
   const [mode, setMode] = useState<"production" | "development">(hosting.mode ?? "production");
   const [internalPort, setInternalPort] = useState(
@@ -97,6 +107,8 @@ export function HostingPanel({
     setStartCommand(hosting.startCommand ?? detectedHosting?.startCommand ?? "");
     setMode(hosting.mode ?? "production");
     setInternalPort(hosting.internalPort !== null ? String(hosting.internalPort) : "");
+    setContainerKind(hosting.containerKind ?? "");
+    setMappsInput((hosting.mapps ?? []).join(", "));
   }, [hosting, detectedHosting]);
 
   // Track errors: capture from hosting prop, clear only when status becomes "running"
@@ -134,6 +146,11 @@ export function HostingPanel({
     setSaving(true);
     try {
       const portNum = internalPort ? Number(internalPort) : undefined;
+      // s145 t585 — split the comma-separated MApps input into a deduped
+      // array. Empty input + non-mapp kinds → undefined (clears mapps[]).
+      const parsedMapps = containerKind === "mapp"
+        ? Array.from(new Set(mappsInput.split(",").map((s) => s.trim()).filter((s) => s.length > 0)))
+        : undefined;
       await onConfigure({
         path: projectPath,
         type,
@@ -147,11 +164,15 @@ export function HostingPanel({
         startCommand: startCommand,
         mode,
         internalPort: portNum && !isNaN(portNum) ? portNum : undefined,
+        // Only emit containerKind when set — undefined means "leave unchanged",
+        // so existing back-compat projects keep their type-driven kind.
+        containerKind: containerKind === "" ? undefined : containerKind,
+        mapps: parsedMapps,
       });
     } catch { /* error handled by caller */ } finally {
       setSaving(false);
     }
-  }, [projectPath, type, hostname, docRoot, startCommand, mode, internalPort, onConfigure]);
+  }, [projectPath, type, hostname, docRoot, startCommand, mode, internalPort, containerKind, mappsInput, onConfigure]);
 
   // Derive the set of compatible languages from installed stacks.
   // If any installed stack declares compatibleLanguages, restrict the runtime
@@ -282,6 +303,46 @@ export function HostingPanel({
             <span className="text-[10px] text-muted-foreground whitespace-nowrap">.{baseDomain}</span>
           </div>
         </div>
+        {/* s145 t585 — Container kind selector. Default ('Auto') leaves the
+            field undefined so HostingManager dispatches based on type +
+            stacks (existing behavior). 'MApp' flips dispatch to the MApp
+            host container branch (currently a stub via t584; t586 will
+            replace it with the real bundle). */}
+        <div data-testid="hosting-container-kind-row">
+          <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
+            Container Kind
+          </label>
+          <Select
+            className="text-[12px]"
+            list={[
+              { value: "", label: "Auto (type-driven)" },
+              { value: "static", label: "Static" },
+              { value: "code", label: "Code" },
+              { value: "mapp", label: "MApp Container" },
+            ]}
+            value={containerKind}
+            onValueChange={(v) => setContainerKind(v as "" | "static" | "code" | "mapp")}
+          />
+        </div>
+        {containerKind === "mapp" && (
+          <div className="col-span-2" data-testid="hosting-mapps-row">
+            <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
+              MApps <span className="font-normal italic opacity-70">(comma-separated IDs from MApp Marketplace)</span>
+            </label>
+            <Input
+              type="text"
+              value={mappsInput}
+              onChange={(e) => setMappsInput(e.target.value)}
+              disabled={busy}
+              placeholder="budget-tracker, whitepaper-canvas, prime-explorer"
+              className="text-[12px] h-8"
+              data-testid="hosting-mapps-input"
+            />
+            <p className="mt-0.5 text-[10px] text-muted-foreground leading-tight">
+              s145 t586 implementation pending — for now, flagging this kind sets project status to <code>stopped</code> with a clear reason; the gateway logs the configured MApps.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-2 mb-2">

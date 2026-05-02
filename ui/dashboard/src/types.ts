@@ -328,6 +328,11 @@ export interface ProjectHostingInfo {
   url: string | null;
   /** MagicApp ID used as the content viewer for this project's *.ai.on URL. */
   viewer?: string;
+  /** s145 t585 — container kind. When 'mapp', the dashboard surfaces the
+   *  MApps multi-input + the MApp container kind status pill. */
+  containerKind?: "static" | "code" | "mapp";
+  /** s145 t585 — installed MApp IDs for the MApp container kind. */
+  mapps?: string[];
 }
 
 /** Tool definition from project type registry. */
