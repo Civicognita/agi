@@ -1617,6 +1617,16 @@ export class HostingManager {
     if (updates.containerKind !== undefined) hosted.meta.containerKind = updates.containerKind;
     if (updates.mapps !== undefined) hosted.meta.mapps = updates.mapps;
 
+    // s145 t586 — when flipping into MApp mode, stamp internalPort=80 here
+    // (synchronously, before startContainer fires async) so the regenerated
+    // Caddyfile routes via container DNS `agi-<hostname>:80` instead of
+    // falling through to `host.containers.internal:<port>`. Project
+    // containers don't publish ports — only AGI binds host ports — so the
+    // host.containers.internal fallback always 503s for the MApp branch.
+    if (hosted.meta.containerKind === "mapp" && hosted.meta.internalPort == null) {
+      hosted.meta.internalPort = 80;
+    }
+
     // Restart container with new config
     if (hadContainer) {
       this.stopContainer(hosted);
