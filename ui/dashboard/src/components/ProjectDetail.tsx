@@ -441,6 +441,27 @@ export function ProjectDetail({
         {project.hosting?.enabled && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">hosted</span>
         )}
+        {/*
+          s140 cycle-171 t593 — header-level Restart affordance for ALL
+          hosted projects, not just hasCode types. Pre-fix the only
+          Restart button lived inside HostingPanel which is gated on
+          project.projectType.hasCode — so MApp containers (hasCode=false)
+          and ops projects had no way to nudge a stuck container without
+          re-saving config. This button always renders when hosting is
+          enabled + onHostingRestart is wired (i.e. when the dashboard
+          is connected to a real gateway).
+        */}
+        {project.hosting?.enabled && onHostingRestart && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-[10px] h-6 px-2"
+            data-testid="project-header-restart"
+            onClick={() => { void onHostingRestart(project.path).catch(() => { /* surfaced via toast */ }); }}
+          >
+            Restart
+          </Button>
+        )}
         {project.hosting?.enabled && project.hosting.url && project.hosting.status === "running" && (
           <a
             href={project.hosting.url}
