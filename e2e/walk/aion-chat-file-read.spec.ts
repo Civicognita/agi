@@ -74,9 +74,11 @@ test.describe("Aion chat — file-read in project context (s140 t590)", () => {
     await expect(sendBtn, "send button must be enabled").toBeEnabled({ timeout: 3_000 });
     await sendBtn.click();
 
-    // Wait for an AION speaker label (assistant turn rendered).
+    // Wait for an assistant speaker label (assistant turn rendered).
+    // s140 cycle-173 t595: target by chat-message-speaker-assistant
+    // testid rather than the brittle "AION<digit>" regex.
     await expect(
-      page.getByText(/^AION\d/i).first(),
+      page.getByTestId("chat-message-speaker-assistant").first(),
       "assistant turn must render",
     ).toBeVisible({ timeout: 180_000 });
 

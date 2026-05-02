@@ -1378,11 +1378,16 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                     <div
                       key={`thought-${msg.timestamp}-${String(idx)}`}
                       data-role="thought"
+                      data-testid={`chat-message-thought-${String(idx)}`}
                       className="flex flex-col items-start gap-1"
                     >
+                      {/* s140 cycle-173 t595 — split speaker label from timestamp
+                          + add data-testid so e2e specs can target by stable
+                          attribute, not the brittle "AION<digit>" regex pattern
+                          that breaks if the timestamp format ever changes. */}
                       <div className="text-[9px] font-semibold uppercase tracking-wider px-1 text-muted-foreground">
-                        {agentLabel}
-                        <span className="ml-2 font-normal opacity-60">
+                        <span data-testid="chat-message-speaker-thought">{agentLabel}</span>
+                        <span className="ml-2 font-normal opacity-60" data-testid="chat-message-timestamp">
                           {new Date(msg.timestamp).toLocaleTimeString()}
                         </span>
                       </div>
@@ -1395,16 +1400,25 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
 
                 // User and assistant messages
                 const isUser = msg.role === "user";
+                const roleKey = isUser ? "user" : "assistant";
                 return (
                   <div
                     key={`${msg.timestamp}-${String(idx)}`}
-                    data-role={isUser ? "user" : "assistant"}
+                    data-role={roleKey}
+                    data-testid={`chat-message-${roleKey}-${String(idx)}`}
                     className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}
                   >
-                    {/* Role label */}
+                    {/* Role label — s140 cycle-173 t595: split speaker from
+                        timestamp + add data-testid so e2e specs can target
+                        by stable attribute. The pre-fix concatenated text
+                        ("AION12:34:56 PM") forced regex matchers like
+                        getByText(/^AION\d/i) which break if the timestamp
+                        format ever changes. */}
                     <div className={cn("text-[9px] font-semibold uppercase tracking-wider px-1", isUser ? "text-primary/60" : "text-muted-foreground")}>
-                      {isUser ? userLabel : agentLabel}
-                      <span className="ml-2 font-normal opacity-60">
+                      <span data-testid={`chat-message-speaker-${roleKey}`}>
+                        {isUser ? userLabel : agentLabel}
+                      </span>
+                      <span className="ml-2 font-normal opacity-60" data-testid="chat-message-timestamp">
                         {new Date(msg.timestamp).toLocaleTimeString()}
                       </span>
                     </div>

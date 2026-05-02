@@ -118,16 +118,16 @@ test.describe("Aion chat — project context (s140 t587 + t588)", () => {
         `${proj.slug} user message must echo into the conversation`,
       ).toBeVisible({ timeout: 5_000 });
 
-      // Wait for an "AION" speaker label to appear — that's how the chat
-      // surface marks an assistant turn. The label text is concatenated
-      // with the timestamp in a single text node (e.g. "AION11:29:55 PM"),
-      // so we use a starts-with regex without end-anchor. We don't assert
-      // specific reply content — local-model output is non-deterministic.
-      // 120s timeout for Lemonade Gemma-4 on CPU (first request after
-      // boot can need a model warm-up).
+      // Wait for an assistant speaker label to appear — that's how the
+      // chat surface marks an assistant turn. s140 cycle-173 t595: the
+      // chat surface now wraps the speaker label in
+      // data-testid="chat-message-speaker-assistant", so we target by
+      // testid (durable across timestamp format / locale changes) rather
+      // than the brittle "AION<digit>" regex. 120s timeout for Lemonade
+      // Gemma-4 on CPU (first request after boot needs model warm-up).
       await expect(
-        page.getByText(/^AION\d/i).first(),
-        `${proj.slug} assistant turn must render (AION speaker label)`,
+        page.getByTestId("chat-message-speaker-assistant").first(),
+        `${proj.slug} assistant turn must render (chat-message-speaker-assistant testid)`,
       ).toBeVisible({ timeout: 120_000 });
 
       await page.screenshot({
