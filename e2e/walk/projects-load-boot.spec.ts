@@ -33,14 +33,21 @@ const walkDir = path.dirname(fileURLToPath(import.meta.url));
 const snapshotsDir = path.join(walkDir, "snapshots");
 fs.mkdirSync(snapshotsDir, { recursive: true });
 
+// Project URLs use hyphenated slug form (`/projects/civicognita-web`)
+// but the project NAME rendered in the list uses underscores
+// (`civicognita_web` — that's the disk-level project folder name).
+// listSearchText matches the underscored form which is durable across
+// hosting state changes; slug is used for direct URL navigation.
 const PROOF_PROJECTS = [
   {
     slug: "civicognita-web",
+    listSearchText: "civicognita_web",
     label: "Civicognita Web",
     expectMAppDesktop: false,
   },
   {
     slug: "civicognita-ops",
+    listSearchText: "civicognita_ops",
     label: "Civicognita Ops",
     expectMAppDesktop: true,
   },
@@ -58,11 +65,14 @@ test.describe("projects load + boot walk (s140 t550)", () => {
     await page.screenshot({ path: path.join(snapshotsDir, "projects-list.png"), fullPage: true });
 
     // Both proofing projects must appear in the rendered list. We match
-    // on the project slug because that's the stable key — display labels
-    // can drift (e.g. "Civicognita Ops" → "Civicognita Operations").
+    // on the underscored project NAME (the disk-level folder name —
+    // the stable form rendered in the list). Hyphenated hostnames also
+    // appear when projects are running but they vary (e.g.
+    // civicognita_web's hostname is civicognita-website not
+    // civicognita-web), so listSearchText is the durable matcher.
     for (const proj of PROOF_PROJECTS) {
-      const locator = page.getByText(proj.slug, { exact: false }).first();
-      await expect(locator, `${proj.slug} should appear in /projects`).toBeVisible({ timeout: 10_000 });
+      const locator = page.getByText(proj.listSearchText, { exact: false }).first();
+      await expect(locator, `${proj.listSearchText} should appear in /projects`).toBeVisible({ timeout: 10_000 });
     }
 
     // No pageerrors during list render — pageerrors are unhandled exceptions
