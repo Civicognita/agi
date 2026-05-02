@@ -1317,10 +1317,13 @@ export class HostingManager {
     }
   }
 
-  private writeHostingMeta(projectPath: string, meta: ProjectHostingMeta): void {
-    // Delegate to ProjectConfigManager when available
+  private async writeHostingMeta(projectPath: string, meta: ProjectHostingMeta): Promise<void> {
+    // Delegate to ProjectConfigManager when available. Now async-awaited so
+    // callers like configureProject can sequence the write before
+    // startContainer's safety re-read (line 1822) — fire-and-forget
+    // raced with the disk re-sync and clobbered in-memory updates.
     if (this.configMgr) {
-      void this.configMgr.updateHosting(projectPath, {
+      await this.configMgr.updateHosting(projectPath, {
         enabled: meta.enabled,
         type: meta.type,
         hostname: meta.hostname,
@@ -1627,13 +1630,20 @@ export class HostingManager {
       hosted.meta.internalPort = 80;
     }
 
-    // Restart container with new config
+    // Persist meta to disk BEFORE restarting the container. startContainer's
+    // safety re-read (line ~1822) re-loads the meta from disk to honor any
+    // user-side edits to project.json. If we wrote fire-and-forget, the
+    // re-read could fire before the write completed and clobber the new
+    // in-memory updates with stale disk values — exactly what happened to
+    // mapps[] + internalPort during the v0.4.461→v0.4.463 ship.
+    await this.writeHostingMeta(resolved, hosted.meta);
+
+    // Restart container with new config (now reads the freshly-persisted meta).
     if (hadContainer) {
       this.stopContainer(hosted);
     }
     void this.startContainer(hosted);
 
-    this.writeHostingMeta(resolved, hosted.meta);
     this.regenerateCaddyfile();
     this.notifyStatusChange();
 
