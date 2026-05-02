@@ -1,25 +1,21 @@
 /**
- * Project tynnToken redaction walk (s140 t591 — SECURITY).
+ * Project tynnToken — API redaction + Details tab non-presence (s140 t591).
  *
- * Locks in the cycle-168 owner-flagged security fix: the Tynn private
- * key never leaves the gateway disk. /api/projects always returns
- * tynnToken=null with a sibling tynnTokenSet=boolean. The dashboard
- * Details tab token input is type="password" with a "Configured
- * (redacted)" indicator when the token is set.
+ * Owner directive cycle 169 (clarified): "the tynn token is set by the
+ * tynn mcp server settings plugin ux ... tynn token is not shown in
+ * the dashboard details page at all". The Details tab does NOT show
+ * the Tynn token field — token configuration is owned by the Tynn MCP
+ * plugin settings UX, single source of truth.
  *
  * Pass criteria:
- *   - /api/projects: every project's tynnToken is null
- *   - /api/projects: at least one project has tynnTokenSet=true (proves
- *     the boolean is actually flipping for projects with a configured
- *     token; a blanket null-with-no-boolean would also pass the first
- *     assertion but is a regression)
- *   - The Details tab token input is type="password" (so the value, if
- *     any DOM attribute did leak it, is dotted-out)
- *   - When a project has tynnTokenSet=true, the "Configured (redacted)"
- *     indicator renders
- *   - The token input is empty on initial render (the redacted null
- *     from the API doesn't pre-fill it; user-typed value would, but
- *     this spec doesn't type)
+ *   - /api/projects: every project's tynnToken is null (the secret
+ *     never leaves disk)
+ *   - /api/projects: at least one project has tynnTokenSet=true
+ *     (proves the flag actually flips for configured projects)
+ *   - The Details tab does NOT render the project-token-input testid
+ *     (the input was removed in v0.4.476 per owner clarification)
+ *   - The Details tab does NOT render the configured-indicator testid
+ *     (no token presence is hinted at on the Details tab at all)
  *
  * Run via:
  *   agi test --e2e walk/project-tynntoken-redaction
@@ -27,7 +23,7 @@
 
 import { test, expect } from "@playwright/test";
 
-test.describe("project Tynn token — API redaction + dashboard masking (s140 t591)", () => {
+test.describe("project Tynn token — API redaction + Details tab non-presence (s140 t591)", () => {
   test("/api/projects redacts tynnToken (always null) + ships tynnTokenSet", async ({ request }) => {
     const res = await request.get("/api/projects");
     expect(res.status()).toBeLessThan(300);
@@ -53,30 +49,32 @@ test.describe("project Tynn token — API redaction + dashboard masking (s140 t5
     ).toBe(true);
   });
 
-  test("Details tab token input is type=password + shows configured indicator when set", async ({ page }) => {
+  test("Details tab does NOT render the Tynn token input or indicator", async ({ page }) => {
     await page.goto("/projects/civicognita-web");
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
 
-    // The token input is on the Details tab (the default).
-    const tokenInput = page.getByTestId("project-token-input");
-    await expect(tokenInput, "project-token-input must render").toBeVisible({ timeout: 10_000 });
-
-    // Type must be password — the visible-leak fix.
+    // The Details tab is the default — assert it's loaded by checking
+    // the project-name-input testid that DOES render here.
     await expect(
-      tokenInput,
-      "token input must be type=password to mask the value visually",
-    ).toHaveAttribute("type", "password");
+      page.getByTestId("project-name-input"),
+      "Details tab must be the active tab (project-name-input is its anchor)",
+    ).toBeVisible({ timeout: 10_000 });
 
-    // Initial value must be empty — the redacted null doesn't pre-fill it.
-    await expect(
-      tokenInput,
-      "token input must start empty (the API redaction returns null, no pre-fill)",
-    ).toHaveValue("");
+    // The Tynn token input must NOT render on this page anymore.
+    // Owner: "tynn token is not shown in the dashboard details page
+    // at all". Token configuration moved to the Tynn MCP plugin UX.
+    const tokenInputCount = await page.getByTestId("project-token-input").count();
+    expect(
+      tokenInputCount,
+      "project-token-input must NOT render on Details tab (owner cycle-169 clarification)",
+    ).toBe(0);
 
-    // civicognita_web has a token configured → indicator renders.
-    await expect(
-      page.getByTestId("project-token-configured-indicator"),
-      "configured indicator must render when project.tynnTokenSet is true",
-    ).toBeVisible({ timeout: 5_000 });
+    // The "Configured (redacted)" indicator from the prior shape also
+    // must not render — the entire token block is gone.
+    const indicatorCount = await page.getByTestId("project-token-configured-indicator").count();
+    expect(
+      indicatorCount,
+      "project-token-configured-indicator must NOT render (whole token block removed)",
+    ).toBe(0);
   });
 });

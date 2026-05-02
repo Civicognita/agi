@@ -112,7 +112,8 @@ export function ProjectDetail({
   const isCoreFork = project?.coreCollection === "aionima" || project?.projectType?.id === "aionima";
 
   const [editName, setEditName] = useState<string | null>(null);
-  const [editTynnToken, setEditTynnToken] = useState<string | null>(null);
+  // s140 cycle-169 t591 — Tynn token state removed; token now lives in
+  // the Tynn MCP plugin settings UX, not on the project Details tab.
   const [editCategory, setEditCategory] = useState<string | null>(null);
   const [editProjectType, setEditProjectType] = useState<string | null>(null);
   const [projectTypes, setProjectTypes] = useState<Array<{ id: string; label: string }>>([]);
@@ -254,20 +255,19 @@ export function ProjectDetail({
 
   // Initialize edit fields when project loads
   const name = editName ?? project?.name ?? "";
-  const tynnToken = editTynnToken ?? project?.tynnToken ?? "";
   const category = editCategory ?? project?.category ?? project?.projectType?.category ?? "";
 
   const handleSave = useCallback(async () => {
     if (!project) return;
     setSaving(true);
     try {
-      const params: { path: string; name?: string; tynnToken?: string | null; category?: string; type?: string } = { path: project.path };
+      // s140 cycle-169 t591 — params.tynnToken removed; token configuration
+      // owned by the Tynn MCP plugin settings UX. The PUT route still
+      // accepts a tynnToken body for back-compat callers, but the Details
+      // tab no longer exposes it.
+      const params: { path: string; name?: string; category?: string; type?: string } = { path: project.path };
       const trimmedName = name.trim();
       if (trimmedName && trimmedName !== project.name) params.name = trimmedName;
-      const trimmedToken = tynnToken.trim();
-      if (trimmedToken !== (project.tynnToken ?? "")) {
-        params.tynnToken = trimmedToken.length > 0 ? trimmedToken : null;
-      }
       if (category && category !== (project.category ?? project.projectType?.category ?? "")) {
         params.category = category;
       }
@@ -284,7 +284,7 @@ export function ProjectDetail({
     } catch { /* error shown via hook */ } finally {
       setSaving(false);
     }
-  }, [project, name, tynnToken, category, editProjectType, onUpdate]);
+  }, [project, name, category, editProjectType, onUpdate]);
 
   const handleFileSave = useCallback(async () => {
     if (!openFilePath || !fileDirty) return;
@@ -636,47 +636,25 @@ export function ProjectDetail({
 
         <TabsContent value="details" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <Card className="p-4">
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <div>
-                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Name</label>
-                <Input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setEditName(e.target.value)}
-                  data-testid="project-name-input"
-                  disabled={isSacred}
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
-                  Tynn Token
-                  {project?.tynnTokenSet && (
-                    <span className="ml-2 text-[10px] font-normal text-green" data-testid="project-token-configured-indicator">
-                      ✓ Configured (redacted)
-                    </span>
-                  )}
-                </label>
-                {/*
-                  s140 cycle-168 t591 SECURITY — type="password" so the
-                  token is never visible to a screenshot / shoulder-surf.
-                  The API now redacts the value (always returns null) so
-                  the input starts empty even when a token IS configured.
-                  Owner can paste a new value to replace; leaving blank
-                  keeps the existing token (the diff check at handleSave
-                  treats empty-against-null as no-op). Clearing the token
-                  needs a separate "Clear" button — deferred to t592
-                  (broader Details tab redesign).
-                */}
-                <Input
-                  type="password"
-                  value={tynnToken}
-                  onChange={(e) => setEditTynnToken(e.target.value)}
-                  placeholder={project?.tynnTokenSet ? "•••••••• (paste new token to replace)" : "rpk_..."}
-                  data-testid="project-token-input"
-                  autoComplete="new-password"
-                  disabled={isSacred}
-                />
-              </div>
+            {/*
+              s140 cycle-169 t591 SECURITY (owner-clarified): the Tynn
+              token is not shown in the dashboard Details page at all.
+              Token configuration is owned by the Tynn MCP server's
+              settings plugin UX — that's the single source of truth.
+              Removed the project-level Tynn Token input + indicator
+              from this tab. The project.tynnToken field on disk is
+              kept for backward-compat reads only; new tokens go via
+              the MCP plugin.
+            */}
+            <div className="mb-3">
+              <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Name</label>
+              <Input
+                type="text"
+                value={name}
+                onChange={(e) => setEditName(e.target.value)}
+                data-testid="project-name-input"
+                disabled={isSacred}
+              />
             </div>
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
