@@ -395,7 +395,14 @@ export interface ProjectInfo {
   name: string;
   path: string;
   hasGit: boolean;
+  /**
+   * s140 cycle-168 t591 SECURITY — always null in API responses now;
+   * the actual token never leaves disk. Use `tynnTokenSet` to check
+   * whether a token is configured. The PUT body still accepts a
+   * `tynnToken` string field for setting / clearing the secret.
+   */
   tynnToken: string | null;
+  tynnTokenSet?: boolean;
   hosting: ProjectHostingInfo;
   detectedHosting?: {
     projectType: string;

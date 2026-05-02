@@ -435,7 +435,7 @@ export function ProjectDetail({
         {project.hasGit && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">git</span>
         )}
-        {project.tynnToken !== null && (
+        {project.tynnTokenSet && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-semibold">tynn</span>
         )}
         {project.hosting?.enabled && (
@@ -648,13 +648,32 @@ export function ProjectDetail({
                 />
               </div>
               <div>
-                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Tynn Token</label>
+                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                  Tynn Token
+                  {project?.tynnTokenSet && (
+                    <span className="ml-2 text-[10px] font-normal text-green" data-testid="project-token-configured-indicator">
+                      ✓ Configured (redacted)
+                    </span>
+                  )}
+                </label>
+                {/*
+                  s140 cycle-168 t591 SECURITY — type="password" so the
+                  token is never visible to a screenshot / shoulder-surf.
+                  The API now redacts the value (always returns null) so
+                  the input starts empty even when a token IS configured.
+                  Owner can paste a new value to replace; leaving blank
+                  keeps the existing token (the diff check at handleSave
+                  treats empty-against-null as no-op). Clearing the token
+                  needs a separate "Clear" button — deferred to t592
+                  (broader Details tab redesign).
+                */}
                 <Input
-                  type="text"
+                  type="password"
                   value={tynnToken}
                   onChange={(e) => setEditTynnToken(e.target.value)}
-                  placeholder="rpk_..."
+                  placeholder={project?.tynnTokenSet ? "•••••••• (paste new token to replace)" : "rpk_..."}
                   data-testid="project-token-input"
+                  autoComplete="new-password"
                   disabled={isSacred}
                 />
               </div>

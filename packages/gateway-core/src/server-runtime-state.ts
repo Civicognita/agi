@@ -1064,7 +1064,13 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Projects API only allowed from private network" });
     }
     const projectDirs = deps.workspaceProjects ?? [];
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string }[]; attachedStacks?: { stackId: string }[]; knowledge?: { pages: number; plans: number; chatSessions: number } }[] = [];
+    // s140 cycle-168 t591 SECURITY — tynnToken is REDACTED in this response.
+    // The actual secret never leaves disk. Dashboard consumers should read
+    // `tynnTokenSet` (boolean) for "is the token configured" checks; the
+    // `tynnToken` field is kept for backward-compat callers but is always
+    // null. PUT /api/projects/<path> still accepts a `tynnToken` body field
+    // for setting / clearing the secret.
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; tynnTokenSet: boolean; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string }[]; attachedStacks?: { stackId: string }[]; knowledge?: { pages: number; plans: number; chatSessions: number } }[] = [];
 
     // Expand top-level entries into (fullPath, coreCollection, coreForkSlug) triples.
     // A directory that contains a `collection.json` with
@@ -1212,7 +1218,12 @@ export async function createGatewayRuntimeState(
           name: entryName,
           path: fullPath,
           hasGit,
-          tynnToken,
+          // s140 cycle-168 t591 SECURITY — never ship the raw token to
+          // the client. `tynnToken: null` is intentional; the real value
+          // stays on disk in project.json. Use `tynnTokenSet` for "is
+          // configured" checks.
+          tynnToken: null,
+          tynnTokenSet: tynnToken !== null,
           hosting,
           detectedHosting,
           projectType,

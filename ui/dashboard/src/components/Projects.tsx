@@ -411,13 +411,13 @@ export function Projects({
                           {p.iterativeWorkEligible && (
                             <div className="text-foreground">Iterative-work eligible</div>
                           )}
-                          {p.tynnToken !== null && (
+                          {p.tynnTokenSet && (
                             <div className="text-foreground">PM provider: <span className="text-blue">tynn</span></div>
                           )}
                           {p.magicApps && p.magicApps.length > 0 && (
                             <div className="text-muted-foreground">MApps: {p.magicApps.join(", ")}</div>
                           )}
-                          {!p.iterativeWorkEligible && p.tynnToken === null && (!p.magicApps || p.magicApps.length === 0) && (
+                          {!p.iterativeWorkEligible && !p.tynnTokenSet && (!p.magicApps || p.magicApps.length === 0) && (
                             <div className="text-muted-foreground/60 italic">no agent context</div>
                           )}
                         </div>
@@ -566,7 +566,7 @@ export function Projects({
                         {p.hasGit && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">git</span>
                         )}
-                        {p.tynnToken !== null && (
+                        {p.tynnTokenSet && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-semibold">tynn</span>
                         )}
                       </div>
@@ -706,7 +706,7 @@ export function Projects({
                       git
                     </span>
                   )}
-                  {p.tynnToken !== null && (
+                  {p.tynnTokenSet && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-semibold">
                       tynn
                     </span>
