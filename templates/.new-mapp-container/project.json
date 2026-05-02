@@ -1,0 +1,21 @@
+{
+  "name": "",
+  "createdAt": "",
+  "type": null,
+  "category": null,
+  "description": "",
+  "hosting": {
+    "enabled": false,
+    "type": "mapp-container",
+    "hostname": "",
+    "docRoot": null,
+    "startCommand": null,
+    "port": null,
+    "mode": "production",
+    "internalPort": null,
+    "stacks": [],
+    "containerKind": "mapp",
+    "mapps": []
+  },
+  "tynnToken": null
+}

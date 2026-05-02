@@ -690,6 +690,14 @@ export interface ProjectHostingMeta {
   tunnelId?: string | null;
   /** MagicApp ID used as the content viewer for this project's *.ai.on URL. */
   viewer?: string | null;
+  /**
+   * s145 t584 — Container kind. When set to "mapp", HostingManager routes
+   * to the MApp host container branch (no nginx/app, just MApp viewer).
+   * Mirrors hosting.containerKind in project.json.
+   */
+  containerKind?: "static" | "code" | "mapp";
+  /** s145 t584 — Installed MApp IDs for the MApp container kind. */
+  mapps?: string[];
 }
 
 export interface HostedProject {
@@ -1269,6 +1277,9 @@ export class HostingManager {
         tunnelUrl: hosting.tunnelUrl ?? null,
         tunnelId: hosting.tunnelId ?? null,
         viewer: hosting.viewer ?? null,
+        // s145 t584 — propagate the new MApp container fields.
+        ...(hosting.containerKind !== undefined ? { containerKind: hosting.containerKind } : {}),
+        ...(hosting.mapps !== undefined ? { mapps: hosting.mapps } : {}),
       };
     }
 
@@ -1831,6 +1842,31 @@ export class HostingManager {
       this.log.info(
         `[${hosted.meta.hostname}] mount rebased onto repo "${contentBase.repoName}" — base: ${contentBase.base}`,
       );
+    }
+
+    // -----------------------------------------------------------------------
+    // s145 t584 — MApp container kind. When the project's hosting config
+    // sets containerKind === "mapp", route to the MApp host container
+    // branch BEFORE any other dispatch. The MApp host bundle is a light
+    // static-served Caddy + MApp viewer (no nginx-with-dist, no app
+    // server) — used for ops/media/literature projects whose primary
+    // surface is one or more MApps from the marketplace, not custom code.
+    //
+    // FOUNDATION SLICE: dispatch is recognized; the actual buildMApp-
+    // ContainerArgs implementation lands in a follow-up task. For now,
+    // log + skip cleanly so projects flagged containerKind=mapp don't
+    // accidentally fall through to the static/stack branches and try to
+    // mount empty repos/<n>/dist directories.
+    // -----------------------------------------------------------------------
+    if (hosted.meta.containerKind === "mapp") {
+      this.log.warn(
+        `[${hosted.meta.hostname}] MApp container kind not yet implemented — ` +
+        `skipping container start (s145 t584 stub). MApps configured: ` +
+        `${(hosted.meta.mapps ?? []).join(", ") || "(none)"}`,
+      );
+      hosted.status = "stopped";
+      hosted.error = "MApp container kind dispatch — implementation pending (s145)";
+      return;
     }
 
     // -----------------------------------------------------------------------

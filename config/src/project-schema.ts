@@ -77,6 +77,23 @@ export const ProjectHostingSchema = z
     stacks: z.array(ProjectStackInstanceSchema).default([]),
     /** MagicApp ID used as the viewer for this project's *.ai.on URL. */
     viewer: z.string().optional(),
+    /**
+     * s145 t584 — Container kind. Default undefined preserves existing
+     * behavior: HostingManager dispatches based on project type + stacks.
+     * When set to "mapp", HostingManager routes to the MApp host container
+     * branch (light Caddy + static MApp host bundle, no nginx + no app
+     * server). Used by ops/media/literature projects whose primary surface
+     * is one or more MApps from the marketplace, not custom UI/API code.
+     */
+    containerKind: z.enum(["static", "code", "mapp"]).optional(),
+    /**
+     * s145 t584 — list of MApp IDs installed in this project's container.
+     * Only meaningful when containerKind === "mapp". Each id resolves to a
+     * MApp definition from the MApp Marketplace. The first id (or the one
+     * marked default in MApp config) is what loads at the project root URL;
+     * each MApp is also addressable at <project>.ai.on/<mappId>/.
+     */
+    mapps: z.array(z.string()).optional(),
   })
   .strict();
 
