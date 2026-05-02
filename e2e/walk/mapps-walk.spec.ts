@@ -37,7 +37,7 @@ test.describe("MApps walk", () => {
     }
   });
 
-  test("editor wizard — all 5 steps reachable", async ({ page }) => {
+  test("editor wizard — all 6 steps reachable (s146 phase A.2 added Screens)", async ({ page }) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
     page.on("console", (m) => { if (m.type() === "error") consoleErrors.push(m.text()); });
@@ -46,9 +46,10 @@ test.describe("MApps walk", () => {
     await openNetworkIdle(page, "/magic-apps/editor");
     await page.screenshot({ path: path.join(snapshotsDir, "mapp-editor-step1.png"), fullPage: true });
 
-    // The 5 wizard step labels should be visible as nav buttons / tabs.
-    // Looking at MAppEditor.tsx step labels are: Basics, Constants, Pages, Output, Simulator.
-    const steps = ["Basics", "Constants", "Pages", "Output", "Simulator"];
+    // The 6 wizard step labels should be visible as nav buttons / tabs.
+    // Step order: Basics, Constants, Pages, Screens (s146 phase A.2),
+    // Output, Simulator. See MAppEditor.tsx STEPS const.
+    const steps = ["Basics", "Constants", "Pages", "Screens", "Output", "Simulator"];
     const seen: Record<string, boolean> = {};
     for (const label of steps) {
       // The editor renders step triggers as "N. Label" (e.g. "1. Basics").
@@ -70,10 +71,10 @@ test.describe("MApps walk", () => {
       contentType: "application/json",
     });
 
-    // Pass criteria: no pageerrors + at least 4 of 5 step labels visible.
+    // Pass criteria: no pageerrors + at least 5 of 6 step labels visible.
     expect(pageErrors).toEqual([]);
     const visibleCount = Object.values(seen).filter(Boolean).length;
-    expect(visibleCount, `wizard steps visible: ${JSON.stringify(seen)}`).toBeGreaterThanOrEqual(4);
+    expect(visibleCount, `wizard steps visible: ${JSON.stringify(seen)}`).toBeGreaterThanOrEqual(5);
   });
 
   test("MApps grid — 11 installed, 3 categories", async ({ page }) => {
