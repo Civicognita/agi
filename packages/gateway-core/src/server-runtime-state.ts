@@ -280,7 +280,7 @@ export interface RuntimeStateDeps {
     addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number };
     removeSource(id: number): void;
     syncSource(id: number): Promise<{ ok: boolean; error?: string; mappCount?: number }>;
-    getCatalogWithInstalled(): Promise<Array<{ id: string; sourceId: number; author: string; description?: string; category?: string; version?: string; sourcePath: string; installed: boolean }>>;
+    getCatalogWithInstalled(): Promise<Array<{ id: string; sourceId: number; author: string; name?: string; description?: string; category?: string; version?: string; sourcePath: string; installed: boolean }>>;
     install(appId: string, sourceId: number): Promise<{ ok: boolean; error?: string }>;
     uninstall(appId: string, author: string): { ok: boolean; error?: string };
     syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
@@ -6719,8 +6719,12 @@ export async function createGatewayRuntimeState(
     fastify.get("/api/mapp-marketplace/catalog", async (_request, reply) => {
       const catalog = await mappMp.getCatalogWithInstalled();
       // Wrap in { apps } for backward compatibility with dashboard
+      // s145 t598: include `name` from the catalog row when present so
+      // dashboard cards show "Admin Editor" rather than the humanize-id
+      // fallback. Older catalog rows have name=null; dashboard's
+      // humanize-fallback (cycle 176) covers those.
       return reply.send({ apps: catalog.map((entry) => ({
-        definition: { id: entry.id, author: entry.author, description: entry.description, category: entry.category, version: entry.version, source: entry.sourcePath },
+        definition: { id: entry.id, name: entry.name, author: entry.author, description: entry.description, category: entry.category, version: entry.version, source: entry.sourcePath },
         source: entry.sourcePath,
         installed: entry.installed,
         sourceId: entry.sourceId,
