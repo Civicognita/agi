@@ -562,6 +562,10 @@ const DevConfigSchema = z
     fancySheetsRepo: z.string().default("git@github.com:wishborn/fancy-sheets.git"),
     /** Git remote URL for fancy-echarts fork. */
     fancyEchartsRepo: z.string().default("git@github.com:wishborn/fancy-echarts.git"),
+    /** Git remote URL for fancy-3d fork. */
+    fancy3dRepo: z.string().default("git@github.com:wishborn/fancy-3d.git"),
+    /** Git remote URL for fancy-screens fork (s146 t604 cycle 199 — 6th PAx package). */
+    fancyScreensRepo: z.string().default("git@github.com:wishborn/fancy-screens.git"),
   })
   .strict();
 

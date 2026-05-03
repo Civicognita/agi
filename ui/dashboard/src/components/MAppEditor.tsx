@@ -49,6 +49,12 @@ const PAX_COMPONENT_REFS = [
   "fancy-echarts:Chart",
   // fancy-3d
   "fancy-3d:Scene",
+  // fancy-screens (s146 t604 cycle 199 — 6th PAx package; the canonical
+  // primitive MApps compose against. Per @particle-academy/fancy-screens
+  // 0.2.0 exports: Screen + ScreenSystem are the main components; hooks
+  // are useScreen / useScreenPort / useScreens / useScreenSystem.)
+  "fancy-screens:Screen",
+  "fancy-screens:ScreenSystem",
 ] as const;
 
 const FIELD_TYPES = [
