@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.375",
+  "version": "0.4.515",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -14,6 +14,7 @@
     "migrate:agi_data": "tsx scripts/migrate-to-agi_data.ts",
     "migrate:agi_data:dry": "tsx scripts/migrate-to-agi_data.ts --dry-run",
     "build:dashboard": "pnpm --filter @agi/dashboard build",
+    "runtime:build:lamp": "bash scripts/runtime-images/lamp/build.sh",
     "start": "tsx cli/src/index.ts run",
     "cli": "tsx cli/src/index.ts",
     "dev": "tsx watch cli/src/index.ts run",
@@ -55,7 +56,6 @@
     "@agi/db-schema": "workspace:*",
     "@types/pg": "^8.20.0",
     "ansi-to-html": "^0.7.2",
-    "better-sqlite3": "^11.0.0",
     "drizzle-kit": "^0.30.4",
     "drizzle-orm": "^0.45.2",
     "node-pty": "^1.1.0",
@@ -74,7 +74,6 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "better-sqlite3",
       "electron",
       "esbuild",
       "node-pty"

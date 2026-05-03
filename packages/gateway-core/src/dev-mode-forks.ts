@@ -43,7 +43,9 @@ export interface CoreRepoSpec {
     | "react-fancy"
     | "fancy-code"
     | "fancy-sheets"
-    | "fancy-echarts";
+    | "fancy-echarts"
+    | "fancy-3d"
+    | "fancy-screens";
   /** Repo name on GitHub (NOT the slug — sometimes diverges, e.g. prime
    *  → aionima, id → agi-local-id). */
   upstream: string;
@@ -62,7 +64,9 @@ export interface CoreRepoSpec {
     | "reactFancyRepo"
     | "fancyCodeRepo"
     | "fancySheetsRepo"
-    | "fancyEchartsRepo";
+    | "fancyEchartsRepo"
+    | "fancy3dRepo"
+    | "fancyScreensRepo";
 }
 
 export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
@@ -83,6 +87,13 @@ export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
   { slug: "fancy-code",    upstream: "fancy-code",    upstreamOrg: "Particle-Academy", displayName: "fancy-code",    configKey: "fancyCodeRepo" },
   { slug: "fancy-sheets",  upstream: "fancy-sheets",  upstreamOrg: "Particle-Academy", displayName: "fancy-sheets",  configKey: "fancySheetsRepo" },
   { slug: "fancy-echarts", upstream: "fancy-echarts", upstreamOrg: "Particle-Academy", displayName: "fancy-echarts", configKey: "fancyEchartsRepo" },
+  { slug: "fancy-3d",      upstream: "fancy-3d",      upstreamOrg: "Particle-Academy", displayName: "fancy-3d",      configKey: "fancy3dRepo" },
+  // s146 t604 cycle 199 — fancy-screens added to PAx (6th package).
+  // Owner-confirmed 2026-05-03: @particle-academy/fancy-screens@0.2.0
+  // is the Screen primitive MApps compose against. Containerized
+  // application surface with scoped state, typed ports, hibernation,
+  // schema-driven rendering, agent-introspectable registry.
+  { slug: "fancy-screens", upstream: "fancy-screens", upstreamOrg: "Particle-Academy", displayName: "fancy-screens", configKey: "fancyScreensRepo" },
 ] as const);
 
 export interface ForkResolveResult {

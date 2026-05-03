@@ -132,6 +132,7 @@ import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import { listProjectsWithConfig } from "./iterative-work/list-projects.js";
 import { projectSlug } from "./project-config-path.js";
 import { SystemConfigService } from "./system-config-service.js";
+import { CircuitBreakerTracker } from "./circuit-breaker.js";
 import { createProjectTypeRegistry } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { discoverPlugins, getDefaultSearchPaths, loadPlugins, tryLoadManifest, PluginRegistry, HookBus } from "@agi/plugins";
@@ -267,6 +268,34 @@ export async function startGatewayServer(
 
   const logger: Logger = createLogger(config.logging);
   const log = createComponentLogger(logger, "server");
+
+  // ---------------------------------------------------------------------
+  // Cycle 150 hotfix v0.4.432: process-level safety net.
+  // Owner directive: "Bad code in a container should not crash the whole
+  // agi system." Same applies to bad config / fire-and-forget rejections.
+  //
+  // Default Node behavior on unhandled promise rejection is exit-with-1
+  // (in Node 24+). One uncaught Zod validation in a fire-and-forget call
+  // killed the gateway service via systemd (the "fuse popping"). This
+  // listener logs + swallows so the gateway stays up; specific bugs get
+  // fixed at the call site over time.
+  //
+  // Note: this is the LAST-resort net. Caller-side `.catch()` at every
+  // fire-and-forget is still the right pattern — see hosting-manager
+  // writeStackInstance for the v0.4.432 fix in that path.
+  // ---------------------------------------------------------------------
+  process.on("unhandledRejection", (reason) => {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    const stack = reason instanceof Error ? reason.stack : undefined;
+    log.warn(
+      `unhandled promise rejection (caught by safety net — gateway continues): ${message}${stack ? "\n" + stack : ""}`,
+    );
+  });
+  process.on("uncaughtException", (err) => {
+    log.warn(
+      `uncaught exception (caught by safety net — gateway continues): ${err.message}\n${err.stack ?? ""}`,
+    );
+  });
 
   // -------------------------------------------------------------------------
   // Step 1b2: Boot-recovery — detect crash vs graceful shutdown
@@ -1695,6 +1724,15 @@ export async function startGatewayServer(
     }
   }
 
+  // s143 t567/t568 — persistent circuit-breaker tracker for boot-time service
+  // failures. Wired in only when SystemConfigService is available (i.e. we
+  // know where gateway.json lives); otherwise the v0.4.431 try/catch fallback
+  // path keeps the gateway from hanging on a broken project even without
+  // persistence.
+  const circuitBreakerTracker = systemConfigService
+    ? new CircuitBreakerTracker({ configService: systemConfigService, logger })
+    : undefined;
+
   const hostingManager = new HostingManager({
     config: {
       enabled: hostingConfig?.enabled ?? false,
@@ -1723,6 +1761,7 @@ export async function startGatewayServer(
     sharedContainerManager,
     projectConfigManager,
     mappRegistry,
+    circuitBreaker: circuitBreakerTracker,
     logger,
   });
 
@@ -1731,6 +1770,30 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   hostingManager.regenerateSystemDomains();
+
+  // s130 t523 — boot-time mass migration of project configs + chat-history.
+  // Walks workspace.projects, calls migrateProjectConfig (which scaffolds the
+  // s130 layout AND chains migrateChatSessionsForProject) for each. Idempotent:
+  // already-migrated projects are silent no-ops. Front-loads what's currently
+  // lazy (per-call) so a fresh-booted gateway has uniform layout.
+  //
+  // Logged inline so the boot log shows the migration outcome alongside other
+  // step phases. Errors are non-fatal — boot continues even if some projects
+  // fail to migrate (the lazy per-call path remains the safety net).
+  try {
+    const result = hostingManager.migrateAllProjectsToFolderLayout();
+    if (result.scaffolded > 0 || result.errors > 0) {
+      logger.info(
+        "migrate",
+        `boot-time s130 sweep: ${String(result.scanned)} project(s) scanned, ${String(result.scaffolded)} scaffolded, ${String(result.errors)} error(s)`,
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      "migrate",
+      `boot-time s130 sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   // Populate late-bound refs so project tools can access hosting/stack/mapp data
   hostingManagerRef.current = hostingManager;
@@ -2504,6 +2567,7 @@ export async function startGatewayServer(
       webhookSecret: config.workspace?.webhookSecret,
       logger,
       hostingManager,
+      circuitBreaker: circuitBreakerTracker,
       iterativeWorkScheduler,
       projectConfigManager,
       pmProvider,

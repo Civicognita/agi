@@ -16,12 +16,46 @@ import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { Select } from "@/components/ui/select.js";
 import { Card } from "@/components/ui/card.js";
+import { DevNote } from "@/components/ui/dev-notes.js";
 import { EmojiSelect, Textarea, Callout } from "@particle-academy/react-fancy";
 import { MAppFormRenderer } from "./MAppFormRenderer.js";
 import { cn } from "@/lib/utils";
 
-const STEPS = ["Basics", "Constants", "Pages", "Output", "Simulator"] as const;
+const STEPS = ["Basics", "Constants", "Pages", "Screens", "Output", "Simulator"] as const;
 const DRAFT_KEY = "mapp-editor-draft";
+
+/**
+ * Curated PAx component list for the Screens step's componentRef autocomplete
+ * (s146 Phase A.2). Author can still type any "<package>:<ComponentName>"
+ * value that matches the schema's regex; this list just makes the common
+ * choices discoverable. Sourced from the ADF UI primitive cheatsheet in
+ * `agi/docs/human/adf.md`.
+ */
+const PAX_COMPONENT_REFS = [
+  // react-fancy
+  "react-fancy:Card", "react-fancy:Tabs", "react-fancy:Action", "react-fancy:Field",
+  "react-fancy:Input", "react-fancy:Select", "react-fancy:Textarea", "react-fancy:Modal",
+  "react-fancy:Toast", "react-fancy:Sidebar", "react-fancy:Menu", "react-fancy:Dropdown",
+  "react-fancy:ContentRenderer", "react-fancy:Editor", "react-fancy:Canvas",
+  "react-fancy:Diagram", "react-fancy:Chart", "react-fancy:Calendar", "react-fancy:FileUpload",
+  "react-fancy:Kanban", "react-fancy:Timeline", "react-fancy:Pagination",
+  "react-fancy:Pillbox", "react-fancy:Skeleton", "react-fancy:Tooltip",
+  "react-fancy:TreeNav", "react-fancy:Table",
+  // fancy-sheets
+  "fancy-sheets:Sheet",
+  // fancy-code
+  "fancy-code:Editor",
+  // fancy-echarts
+  "fancy-echarts:Chart",
+  // fancy-3d
+  "fancy-3d:Scene",
+  // fancy-screens (s146 t604 cycle 199 — 6th PAx package; the canonical
+  // primitive MApps compose against. Per @particle-academy/fancy-screens
+  // 0.2.0 exports: Screen + ScreenSystem are the main components; hooks
+  // are useScreen / useScreenPort / useScreens / useScreenSystem.)
+  "fancy-screens:Screen",
+  "fancy-screens:ScreenSystem",
+] as const;
 
 const FIELD_TYPES = [
   "text", "textarea", "number", "int", "currency", "percentage",
@@ -53,12 +87,56 @@ interface EditorPage {
   processPage?: string;
 }
 
+// s146 Phase A.2 — Editor types for the screens primitive (cycle 183).
+// Mirror the on-wire shapes from MAppScreenSchema in config/src/mapp-schema.ts;
+// stateToDefinition / definitionToState bridge between EditorScreen* and
+// the typed JSON the Zod schema validates.
+interface EditorScreenInput {
+  key: string;
+  label: string;
+  type: "string" | "text" | "number" | "boolean" | "date" | "select" | "object";
+  qualifier: "required" | "prefilled" | "optional";
+  source: "user" | "agent" | "either";
+  default?: string;        // serialized as JSON (the wire schema accepts unknown)
+  description?: string;
+  options?: string;        // comma-separated in editor; split on save
+}
+
+interface EditorScreenElement {
+  id: string;
+  componentRef: string;    // free text in editor; validated on save
+  propsJson: string;       // raw JSON in editor; parsed on save
+}
+
+// s146 phase C cycle 191 — Hybrid mini-agent shape (owner-confirmed). Each
+// screen optionally runs a per-screen mini-agent with intent + tool-set
+// configuration. Editor stores tools as comma-separated string; serializer
+// splits on save.
+interface EditorScreenMiniAgent {
+  intent: string;
+  toolMode: "auto" | "whitelist" | "blacklist";
+  toolsCsv: string; // comma-separated; serializer splits + filters empties
+}
+
+interface EditorScreen {
+  id: string;
+  label: string;
+  interface: "static" | "dynamic";
+  inputs: EditorScreenInput[];
+  elements: EditorScreenElement[];
+  miniAgent: EditorScreenMiniAgent | null;
+}
+
 interface EditorState {
   id: string; name: string; author: string; version: string;
   description: string; category: string; icon: string;
   permissions: Array<{ id: string; reason: string; required: boolean }>;
   constants: EditorConstant[];
   pages: EditorPage[];
+  /** s146 Phase A.2 — owner-confirmed primitive: PAx-composed screens
+   *  with typed input props (required/prefilled/optional, user/agent
+   *  source). */
+  screens: EditorScreen[];
   processingPrompt: string;
   panelWidgets: Array<Record<string, unknown>>;
 }
@@ -70,6 +148,7 @@ function emptyState(): EditorState {
     permissions: [],
     constants: [],
     pages: [{ key: "page1", title: "Step 1", pageType: "standard", visibility: "always", fields: [], formulas: [] }],
+    screens: [],
     processingPrompt: "",
     panelWidgets: [],
   };
@@ -155,8 +234,9 @@ export function MAppEditor({ initialDefinition, onSave, onClose }: MAppEditorPro
           {step === 0 && <BasicsStep state={state} update={update} />}
           {step === 1 && <ConstantsStep state={state} update={update} />}
           {step === 2 && <PagesStep state={state} update={update} />}
-          {step === 3 && <OutputStep state={state} update={update} />}
-          {step === 4 && <SimulatorStep state={state} />}
+          {step === 3 && <ScreensStep state={state} update={update} />}
+          {step === 4 && <OutputStep state={state} update={update} />}
+          {step === 5 && <SimulatorStep state={state} />}
         </div>
 
         {/* Footer */}
@@ -172,7 +252,7 @@ export function MAppEditor({ initialDefinition, onSave, onClose }: MAppEditorPro
                 {validationErrors.length} error{validationErrors.length === 1 ? "" : "s"}
               </span>
             )}
-            {step < 4 && <Button size="sm" variant="outline" onClick={() => setStep((s) => s + 1)}>Next</Button>}
+            {step < 5 && <Button size="sm" variant="outline" onClick={() => setStep((s) => s + 1)}>Next</Button>}
             <Button
               size="sm"
               onClick={handleSave}
@@ -403,6 +483,18 @@ function PagesStep({ state, update }: { state: EditorState; update: <K extends k
 
   return (
     <div>
+      <DevNote
+        kind="warning"
+        scope="mapp-editor:pages"
+        heading="Field reorder silently retargets formulas"
+      >
+        Reordering a field re-assigns its A-column cell ref in place
+        (<code>A1</code>, <code>A2</code>, …). Any formula that referenced
+        the old cell will silently retarget to whatever now sits there.
+        Move-field shows a `window.confirm` listing affected formulas
+        (story #101 task #315) — confirm-or-cancel guard, not a fix. The
+        proper fix needs a formula parser that rewrites refs on reorder.
+      </DevNote>
       {/* Page tabs */}
       <div className="flex items-center gap-0 border-b border-border mb-4">
         {state.pages.map((p, i) => (
@@ -615,7 +707,344 @@ function PagesStep({ state, update }: { state: EditorState; update: <K extends k
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Output — matches reference screenshot
+// Step 4 (new): Screens — owner-confirmed primitive (s146 Phase A.2)
+// ---------------------------------------------------------------------------
+//
+// Authors compose screens from PAx components (every component in the five
+// @particle-academy packages). Each screen has typed input props with
+// required/prefilled/optional qualifiers and user/agent/either source. The
+// per-screen mini-agent shape is gated on owner judgment (s146 open question
+// 1) and is NOT authored from this step yet.
+
+function ScreensStep({ state, update }: { state: EditorState; update: <K extends keyof EditorState>(k: K, v: EditorState[K]) => void }) {
+  const [activeScreen, setActiveScreen] = useState(0);
+  const screen = state.screens[activeScreen];
+
+  const addScreen = () => {
+    const idx = state.screens.length + 1;
+    update("screens", [
+      ...state.screens,
+      { id: `screen${String(idx)}`, label: `Screen ${String(idx)}`, interface: "static", inputs: [], elements: [], miniAgent: null },
+    ]);
+    setActiveScreen(state.screens.length);
+  };
+
+  const removeScreen = (idx: number) => {
+    update("screens", state.screens.filter((_, j) => j !== idx));
+    if (activeScreen >= state.screens.length - 1) setActiveScreen(Math.max(0, state.screens.length - 2));
+  };
+
+  const updateScreen = (patch: Partial<EditorScreen>) => {
+    if (!screen) return;
+    const screens = [...state.screens];
+    screens[activeScreen] = { ...screen, ...patch };
+    update("screens", screens);
+  };
+
+  const addInput = () => {
+    if (!screen) return;
+    const idx = screen.inputs.length + 1;
+    updateScreen({
+      inputs: [...screen.inputs, {
+        key: `input_${String(idx)}`, label: `Input ${String(idx)}`,
+        type: "string", qualifier: "optional", source: "either",
+      }],
+    });
+  };
+
+  const updateInput = (idx: number, patch: Partial<EditorScreenInput>) => {
+    if (!screen) return;
+    const inputs = [...screen.inputs];
+    inputs[idx] = { ...inputs[idx]!, ...patch };
+    updateScreen({ inputs });
+  };
+
+  const removeInput = (idx: number) => {
+    if (!screen) return;
+    updateScreen({ inputs: screen.inputs.filter((_, j) => j !== idx) });
+  };
+
+  const addElement = () => {
+    if (!screen) return;
+    const idx = screen.elements.length + 1;
+    updateScreen({
+      elements: [...screen.elements, {
+        id: `el_${String(idx)}`, componentRef: "react-fancy:Card", propsJson: "",
+      }],
+    });
+  };
+
+  const updateElement = (idx: number, patch: Partial<EditorScreenElement>) => {
+    if (!screen) return;
+    const elements = [...screen.elements];
+    elements[idx] = { ...elements[idx]!, ...patch };
+    updateScreen({ elements });
+  };
+
+  const removeElement = (idx: number) => {
+    if (!screen) return;
+    updateScreen({ elements: screen.elements.filter((_, j) => j !== idx) });
+  };
+
+  // Contributor-facing DevNotes — register the deferred / TODO items on this
+  // step's scope so dev-mode users can browse them via the global modal.
+  // Embedded outside the conditional return so they register regardless of
+  // whether the empty-state or the populated-state renders.
+  const screensStepDevNotes = (
+    <>
+      <DevNote
+        kind="info"
+        scope="mapp-editor:screens"
+        heading="Mini-agent authoring landed (s146 phase C, Hybrid shape)"
+      >
+        Each screen optionally runs a hybrid agentic-typed mini-agent
+        (owner cycle 190 confirmed Hybrid). Author writes natural-language
+        intent + picks toolMode (auto / whitelist / blacklist) + tool list.
+        The runtime invocation half (calling agent-invoker with intent +
+        scoped tool set on screen-mount or input-change) lands in Phase D
+        alongside the renderer. PAx Screen alignment (t604) is independent —
+        when PAx Screen ships upstream, miniAgent may move into Screen{"’"}s
+        own props slot rather than a top-level MAppScreen field.
+      </DevNote>
+      <DevNote
+        kind="todo"
+        scope="mapp-editor:screens"
+        heading="Per-component prop schema introspection (Phase E+)"
+      >
+        Today element props are authored as raw JSON. Phase E will
+        introspect each PAx component{"’"}s prop types and render a typed
+        form per component. Until then, the JSON textarea is the surface.
+      </DevNote>
+      <DevNote
+        kind="todo"
+        scope="mapp-editor:screens"
+        heading="Drag-drop reorder of inputs + elements"
+      >
+        Currently authors remove + re-add to change order. Add up/down
+        buttons or HTML5 DnD. Polish, not core to the primitive.
+      </DevNote>
+      <DevNote
+        kind="deferred"
+        scope="mapp-editor:screens"
+        heading="Live screen preview (Phase D pairing)"
+      >
+        The Simulator step today renders only legacy form-and-formula
+        MApps via MAppFormRenderer. Screens-shaped MApp preview pairs
+        with Phase D (runtime renderer) — same JSON definition, both the
+        Simulator and the deployed mapp-desktop runtime consume it.
+      </DevNote>
+    </>
+  );
+
+  if (state.screens.length === 0) {
+    return (
+      <div className="space-y-3">
+        {screensStepDevNotes}
+        <div className="text-[12px] text-muted-foreground">
+          A MApp can be authored as a legacy form-and-formula MApp (Pages step) OR
+          as a screens-shaped MApp (this step) OR both. Screens are composed from
+          PAx components with typed input props that accept values from user or
+          agent.
+        </div>
+        <Button size="sm" onClick={addScreen} data-testid="mapp-editor-add-screen">+ Add screen</Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4" data-testid="mapp-editor-screens-step">
+      {screensStepDevNotes}
+      <div className="flex items-center gap-2 flex-wrap">
+        {state.screens.map((s, i) => (
+          <button
+            key={i}
+            onClick={() => setActiveScreen(i)}
+            data-testid={`mapp-editor-screen-tab-${String(i)}`}
+            className={cn(
+              "px-2.5 py-1 text-[11px] rounded border",
+              i === activeScreen ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {s.label || s.id || `Screen ${String(i + 1)}`}
+          </button>
+        ))}
+        <Button size="sm" variant="outline" onClick={addScreen} data-testid="mapp-editor-add-screen">+ Screen</Button>
+      </div>
+
+      {screen && (
+        <Card className="p-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Screen ID</label>
+              <Input
+                value={screen.id}
+                onChange={(e) => updateScreen({ id: e.target.value })}
+                placeholder="main"
+                className="font-mono text-[12px]"
+                data-testid="mapp-editor-screen-id"
+              />
+              <div className="text-[10px] text-muted-foreground mt-1">
+                Lowercase, alphanumeric, underscore/hyphen ok. No spaces.
+              </div>
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Label</label>
+              <Input
+                value={screen.label}
+                onChange={(e) => updateScreen({ label: e.target.value })}
+                placeholder="Main"
+                data-testid="mapp-editor-screen-label"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Interface</label>
+            <Select
+              className="text-[12px]"
+              list={[
+                { value: "static", label: "Static — composition fixed at author time" },
+                { value: "dynamic", label: "Dynamic — composition adapts at runtime" },
+              ]}
+              value={screen.interface}
+              onValueChange={(v) => updateScreen({ interface: v as "static" | "dynamic" })}
+            />
+          </div>
+
+          {/* Inputs sublist */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-[12px] font-semibold">Input props ({screen.inputs.length})</h4>
+              <Button size="sm" variant="outline" onClick={addInput} data-testid="mapp-editor-add-input">+ Input</Button>
+            </div>
+            {screen.inputs.length === 0 && (
+              <div className="text-[11px] text-muted-foreground italic">
+                No inputs yet. Add a typed prop (string/number/select/...) with a qualifier (required/prefilled/optional) and a source (user/agent/either).
+              </div>
+            )}
+            {screen.inputs.map((inp, i) => (
+              <div key={i} className="grid grid-cols-12 gap-2 items-start p-2 bg-bg/50 rounded border border-border">
+                <Input className="col-span-2 text-[11px] font-mono" value={inp.key} onChange={(e) => updateInput(i, { key: e.target.value })} placeholder="key" />
+                <Input className="col-span-2 text-[11px]" value={inp.label} onChange={(e) => updateInput(i, { label: e.target.value })} placeholder="Label" />
+                <Select className="col-span-2 text-[11px]" list={["string","text","number","boolean","date","select","object"].map((v) => ({ value: v, label: v }))} value={inp.type} onValueChange={(v) => updateInput(i, { type: v as EditorScreenInput["type"] })} />
+                <Select className="col-span-2 text-[11px]" list={["required","prefilled","optional"].map((v) => ({ value: v, label: v }))} value={inp.qualifier} onValueChange={(v) => updateInput(i, { qualifier: v as EditorScreenInput["qualifier"] })} />
+                <Select className="col-span-2 text-[11px]" list={["user","agent","either"].map((v) => ({ value: v, label: v }))} value={inp.source} onValueChange={(v) => updateInput(i, { source: v as EditorScreenInput["source"] })} />
+                <Input className="col-span-1 text-[11px]" value={inp.default ?? ""} onChange={(e) => updateInput(i, { default: e.target.value })} placeholder="default" title="Default value (JSON for non-strings)" />
+                <button onClick={() => removeInput(i)} className="col-span-1 text-[14px] text-muted-foreground hover:text-red" data-testid={`mapp-editor-remove-input-${String(i)}`}>{"✕"}</button>
+              </div>
+            ))}
+          </div>
+
+          {/* Elements sublist */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-[12px] font-semibold">Elements ({screen.elements.length})</h4>
+              <Button size="sm" variant="outline" onClick={addElement} data-testid="mapp-editor-add-element">+ Element</Button>
+            </div>
+            {screen.elements.length === 0 && (
+              <div className="text-[11px] text-muted-foreground italic">
+                Drop a PAx component (e.g. <code>react-fancy:Card</code>, <code>fancy-code:Editor</code>) and configure its props as JSON.
+              </div>
+            )}
+            <datalist id="pax-component-refs">
+              {PAX_COMPONENT_REFS.map((ref) => <option key={ref} value={ref} />)}
+            </datalist>
+            {screen.elements.map((el, i) => (
+              <div key={i} className="space-y-2 p-2 bg-bg/50 rounded border border-border">
+                <div className="grid grid-cols-12 gap-2 items-center">
+                  <Input className="col-span-3 text-[11px] font-mono" value={el.id} onChange={(e) => updateElement(i, { id: e.target.value })} placeholder="element-id" />
+                  <input
+                    list="pax-component-refs"
+                    className="col-span-7 text-[11px] font-mono px-2 py-1.5 bg-bg border border-border rounded"
+                    value={el.componentRef}
+                    onChange={(e) => updateElement(i, { componentRef: e.target.value })}
+                    placeholder="react-fancy:Card"
+                    data-testid={`mapp-editor-element-componentref-${String(i)}`}
+                  />
+                  <button onClick={() => removeElement(i)} className="col-span-2 text-[14px] text-muted-foreground hover:text-red" data-testid={`mapp-editor-remove-element-${String(i)}`}>{"✕"}</button>
+                </div>
+                <Textarea
+                  className="text-[11px] font-mono"
+                  rows={3}
+                  value={el.propsJson}
+                  onChange={(e) => updateElement(i, { propsJson: e.target.value })}
+                  placeholder='{"title": "Hello", "value": "$input.userInput"}'
+                />
+              </div>
+            ))}
+          </div>
+
+          {/* Mini-agent (s146 phase C, Hybrid shape) */}
+          <div className="space-y-2 border-t border-border pt-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-[12px] font-semibold">Mini-agent {screen.miniAgent ? "" : <span className="text-[10px] text-muted-foreground italic">(none — screen renders without agentic processing)</span>}</h4>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => updateScreen({
+                  miniAgent: screen.miniAgent ? null : { intent: "", toolMode: "auto", toolsCsv: "" },
+                })}
+                data-testid="mapp-editor-toggle-mini-agent"
+              >
+                {screen.miniAgent ? "Remove" : "+ Add"}
+              </Button>
+            </div>
+            {screen.miniAgent && (
+              <>
+                <div>
+                  <label className="block text-[10px] font-semibold text-muted-foreground mb-1">Intent</label>
+                  <Textarea
+                    value={screen.miniAgent.intent}
+                    onChange={(e) => updateScreen({ miniAgent: { ...screen.miniAgent!, intent: e.target.value } })}
+                    rows={3}
+                    placeholder="Help the user draft policy documents based on the inputs they provide. Suggest edits, validate references, generate boilerplate sections."
+                    className="text-[12px]"
+                    data-testid="mapp-editor-mini-agent-intent"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-muted-foreground mb-1">Tool mode</label>
+                    <Select
+                      className="text-[11px]"
+                      list={[
+                        { value: "auto", label: "Auto — runtime picks from project tools" },
+                        { value: "whitelist", label: "Whitelist — only listed tools" },
+                        { value: "blacklist", label: "Blacklist — all except listed" },
+                      ]}
+                      value={screen.miniAgent.toolMode}
+                      onValueChange={(v) => updateScreen({ miniAgent: { ...screen.miniAgent!, toolMode: v as "auto" | "whitelist" | "blacklist" } })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-muted-foreground mb-1">
+                      Tools{screen.miniAgent.toolMode === "auto" ? <span className="text-[9px] ml-1 italic">(ignored when mode=auto)</span> : ""}
+                    </label>
+                    <Input
+                      value={screen.miniAgent.toolsCsv}
+                      onChange={(e) => updateScreen({ miniAgent: { ...screen.miniAgent!, toolsCsv: e.target.value } })}
+                      placeholder="mcp:project-grep, mcp:web-search"
+                      className="text-[11px] font-mono"
+                      data-testid="mapp-editor-mini-agent-tools"
+                      disabled={screen.miniAgent.toolMode === "auto"}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="flex justify-end pt-2 border-t border-border">
+            <Button size="sm" variant="ghost" onClick={() => removeScreen(activeScreen)} data-testid="mapp-editor-remove-screen">Remove screen</Button>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 4 (legacy index): Output — matches reference screenshot
 // ---------------------------------------------------------------------------
 
 function OutputStep({ state, update }: { state: EditorState; update: <K extends keyof EditorState>(k: K, v: EditorState[K]) => void }) {
@@ -624,6 +1053,29 @@ function OutputStep({ state, update }: { state: EditorState; update: <K extends 
 
   return (
     <div className="space-y-5">
+      <DevNote
+        kind="todo"
+        scope="mapp-editor:output"
+        heading="Available variables ignores screens[*].inputs[*]"
+      >
+        `allFieldKeys` aggregates from `state.pages[*].fields` only; the
+        s146 phase A.2 screens primitive ships with its own typed input
+        props (<code>state.screens[*].inputs[*].key</code>). The Available
+        variables hint should surface those too once Phase D runtime
+        renderer wires the substitution. Until then, screens-shaped MApp
+        authors won{"\u2019"}t see their input keys listed here.
+      </DevNote>
+      <DevNote
+        kind="todo"
+        scope="mapp-editor:output"
+        heading="Tool Analysis Analyze button is a placeholder"
+      >
+        Clicking the {"\u2728"} Analyze button currently does nothing.
+        Intended to surface complexity / quality metrics for the
+        authored MApp (cf. AGI{"\u2019"}s code-analyzer or model-runtime
+        tooling). Either wire it to a real analyzer or remove the
+        affordance.
+      </DevNote>
       <div>
         <h3 className="text-[14px] font-semibold text-foreground">Output Configuration</h3>
         <p className="text-[11px] text-muted-foreground">Review your tool's workflow and define the final processing prompt.</p>
@@ -671,17 +1123,33 @@ function SimulatorStep({ state }: { state: EditorState }) {
   const def = useMemo(() => stateToDefinition(state), [state]);
   const pages = (def.pages ?? []) as Array<{ key: string; title: string; pageType: string; visibility: string; fields?: Array<Record<string, unknown>>; formulas?: Array<Record<string, unknown>> }>;
 
-  if (pages.length === 0) return <div className="text-center text-muted-foreground py-8">No pages to simulate. Add fields in the Pages step.</div>;
-
   return (
-    <div className="border border-border rounded-lg p-4 bg-mantle">
-      <h4 className="text-[12px] font-semibold text-foreground mb-3">Live Preview</h4>
-      <MAppFormRenderer
-        pages={pages as import("./MAppFormRenderer.js").MAppFormRendererProps["pages"]}
-        constants={(def.constants ?? []) as import("./MAppFormRenderer.js").MAppFormRendererProps["constants"]}
-        onSubmit={(values, formulas) => { console.log("Simulator:", { values, formulas }); }}
-      />
-    </div>
+    <>
+      <DevNote
+        kind="deferred"
+        scope="mapp-editor:simulator"
+        heading="Screens-shaped MApps don't render in the Simulator yet (Phase D)"
+      >
+        The Simulator preview only renders `pages` via
+        <code>MAppFormRenderer</code> (legacy form-and-formula path). The
+        s146 phase A.2 screens primitive needs Phase D{"’"}s runtime
+        renderer to draw PAx components from <code>state.screens[*].elements</code>.
+        Until Phase D ships, screens-shaped MApps authored in step 4 are
+        invisible here. Pairs naturally with `mapp-editor:output` notes.
+      </DevNote>
+      {pages.length === 0 ? (
+        <div className="text-center text-muted-foreground py-8">No pages to simulate. Add fields in the Pages step.</div>
+      ) : (
+        <div className="border border-border rounded-lg p-4 bg-mantle">
+          <h4 className="text-[12px] font-semibold text-foreground mb-3">Live Preview</h4>
+          <MAppFormRenderer
+            pages={pages as import("./MAppFormRenderer.js").MAppFormRendererProps["pages"]}
+            constants={(def.constants ?? []) as import("./MAppFormRenderer.js").MAppFormRendererProps["constants"]}
+            onSubmit={(values, formulas) => { console.log("Simulator:", { values, formulas }); }}
+          />
+        </div>
+      )}
+    </>
   );
 }
 
@@ -700,10 +1168,87 @@ function stateToDefinition(state: EditorState): Record<string, unknown> {
   if (state.pages.length > 0 && state.pages.some((p) => p.fields.length > 0 || p.formulas.length > 0)) def.pages = state.pages;
   if (state.constants.length > 0) def.constants = state.constants;
   if (state.processingPrompt) def.output = { processingPrompt: state.processingPrompt };
+  // s146 Phase A.2 — emit screens when authored. Editor stores defaults and
+  // props as text/JSON strings for editing; this serializer parses them out.
+  // s146 Phase C cycle 191 — also serialize miniAgent when present, splitting
+  // toolsCsv into tools[] (filter empty entries).
+  if (state.screens.length > 0) {
+    def.screens = state.screens.map((s) => ({
+      id: s.id,
+      label: s.label,
+      interface: s.interface,
+      ...(s.miniAgent ? {
+        miniAgent: {
+          intent: s.miniAgent.intent,
+          toolMode: s.miniAgent.toolMode,
+          ...(s.miniAgent.toolsCsv && s.miniAgent.toolMode !== "auto" ? {
+            tools: s.miniAgent.toolsCsv.split(",").map((t) => t.trim()).filter((t) => t.length > 0),
+          } : {}),
+        },
+      } : {}),
+      ...(s.inputs.length > 0 ? {
+        inputs: s.inputs.map((i) => {
+          const out: Record<string, unknown> = {
+            key: i.key, label: i.label, type: i.type,
+            qualifier: i.qualifier, source: i.source,
+          };
+          if (i.description) out.description = i.description;
+          if (i.options !== undefined && i.options !== "") {
+            out.options = i.options.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+          }
+          if (i.default !== undefined && i.default !== "") {
+            try { out.default = JSON.parse(i.default); }
+            catch { out.default = i.default; }
+          }
+          return out;
+        }),
+      } : {}),
+      elements: s.elements.map((el) => {
+        const out: Record<string, unknown> = { id: el.id, componentRef: el.componentRef };
+        if (el.propsJson && el.propsJson.trim().length > 0) {
+          try { out.props = JSON.parse(el.propsJson); }
+          catch { /* invalid JSON drops props — Save validation surfaces error elsewhere */ }
+        }
+        return out;
+      }),
+    }));
+  }
   return def;
 }
 
 function definitionToState(def: Record<string, unknown>): EditorState {
+  // s146 Phase A.2 — round-trip screens. Inputs/elements come back as typed
+  // JSON; the Editor stores defaults + props as serialized text for editing.
+  const rawScreens = (def.screens as Array<Record<string, unknown>> | undefined) ?? [];
+  const screens: EditorScreen[] = rawScreens.map((s) => {
+    const ma = s.miniAgent as Record<string, unknown> | undefined;
+    return {
+      id: String(s.id ?? ""),
+      label: String(s.label ?? ""),
+      interface: (s.interface === "dynamic" ? "dynamic" : "static") as "static" | "dynamic",
+      inputs: (s.inputs as Array<Record<string, unknown>> | undefined ?? []).map((i) => ({
+        key: String(i.key ?? ""),
+        label: String(i.label ?? ""),
+        type: String(i.type ?? "string") as EditorScreenInput["type"],
+        qualifier: String(i.qualifier ?? "optional") as EditorScreenInput["qualifier"],
+        source: String(i.source ?? "either") as EditorScreenInput["source"],
+        default: i.default !== undefined ? JSON.stringify(i.default) : "",
+        description: typeof i.description === "string" ? i.description : "",
+        options: Array.isArray(i.options) ? (i.options as string[]).join(",") : "",
+      })),
+      elements: (s.elements as Array<Record<string, unknown>> | undefined ?? []).map((el) => ({
+        id: String(el.id ?? ""),
+        componentRef: String(el.componentRef ?? ""),
+        propsJson: el.props !== undefined ? JSON.stringify(el.props, null, 2) : "",
+      })),
+      miniAgent: ma ? {
+        intent: String(ma.intent ?? ""),
+        toolMode: ((ma.toolMode === "whitelist" || ma.toolMode === "blacklist") ? ma.toolMode : "auto") as "auto" | "whitelist" | "blacklist",
+        toolsCsv: Array.isArray(ma.tools) ? (ma.tools as string[]).join(", ") : "",
+      } : null,
+    };
+  });
+
   return {
     id: String(def.id ?? ""), name: String(def.name ?? ""), author: String(def.author ?? ""),
     version: String(def.version ?? "1.0.0"), description: String(def.description ?? ""),
@@ -711,6 +1256,7 @@ function definitionToState(def: Record<string, unknown>): EditorState {
     permissions: (def.permissions as EditorState["permissions"]) ?? [],
     constants: (def.constants as EditorState["constants"]) ?? [],
     pages: (def.pages as EditorState["pages"]) ?? [{ key: "page1", title: "Step 1", pageType: "standard", visibility: "always", fields: [], formulas: [] }],
+    screens,
     processingPrompt: ((def.output as Record<string, unknown>)?.processingPrompt as string) ?? "",
     panelWidgets: ((def.panel as Record<string, unknown>)?.widgets as Array<Record<string, unknown>>) ?? [],
   };

@@ -23,7 +23,7 @@
  *   command is enough to block it.
  */
 import { execSync, spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { resolveCagedPath } from "./cage-gate.js";
 import type { ToolHandler } from "../tool-registry.js";
 
 // One-shot probe at module load: does the live `agi` binary on PATH
@@ -121,9 +121,13 @@ export function createShellExecHandler(config: ShellExecConfig): ToolHandler {
       Number(input.timeout_ms ?? DEFAULT_TIMEOUT_MS),
       MAX_TIMEOUT_MS,
     );
+    // s140 t590 cycle-170 — when a project cage is active, relative cwd
+    // resolves against the project root, not the gateway-wide
+    // workspaceRoot ("/"). The default cwd (no input.cwd) is the
+    // project root when caged; legacy workspaceRoot otherwise.
     const cwd = input.cwd
-      ? resolve(config.workspaceRoot, String(input.cwd))
-      : config.workspaceRoot;
+      ? resolveCagedPath(config, String(input.cwd))
+      : resolveCagedPath(config, ".");
 
     // s130 t515 slice 6 — chat tool caging. When a cage provider is set
     // AND returns a non-null cage (the chat session has projectContext),

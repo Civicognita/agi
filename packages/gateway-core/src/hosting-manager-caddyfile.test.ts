@@ -68,6 +68,104 @@ db.ai.on {
     expect(out).toContain("reverse_proxy agi-whodb:5050");
   });
 
+  it("emits handle_path blocks for non-default repos (s130 t515 B5)", () => {
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      projects: [{
+        hostname: "myapp",
+        port: 4001,
+        containerName: "agi-myapp",
+        internalPort: 5173, // default repo's port
+        repos: [
+          { name: "api", port: 8001, externalPath: "/api" },
+          { name: "admin", port: 8002, externalPath: "/admin" },
+        ],
+      }],
+    });
+    // Project's site block contains handle_path for each non-default repo
+    expect(out).toContain("handle_path /api/* {");
+    expect(out).toContain("reverse_proxy agi-myapp:8001");
+    expect(out).toContain("handle_path /admin/* {");
+    expect(out).toContain("reverse_proxy agi-myapp:8002");
+    // Default repo still has the catch-all reverse_proxy on the default port
+    expect(out).toContain("reverse_proxy agi-myapp:5173");
+    // handle_path blocks must appear BEFORE the catch-all reverse_proxy
+    // (Caddy matches in order; catch-all-first would shadow)
+    const apiIdx = out.indexOf("handle_path /api/*");
+    const catchAllIdx = out.indexOf("reverse_proxy agi-myapp:5173");
+    expect(apiIdx).toBeLessThan(catchAllIdx);
+  });
+
+  it("works without repos array (single-repo project unchanged)", () => {
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      projects: [{
+        hostname: "single",
+        port: 4001,
+        containerName: "agi-single",
+        internalPort: 3000,
+      }],
+    });
+    // No handle_path blocks
+    expect(out).not.toContain("handle_path");
+    // Plain reverse_proxy still emitted
+    expect(out).toContain("reverse_proxy agi-single:3000");
+  });
+
+  it("normalizes externalPath without leading slash", () => {
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      projects: [{
+        hostname: "myapp",
+        containerName: "agi-myapp",
+        internalPort: 5173,
+        repos: [
+          // Schema enforces leading-/, but defensive normalization
+          // handles operator-edited config that might omit it
+          { name: "api", port: 8001, externalPath: "api" },
+        ],
+      }],
+    });
+    expect(out).toContain("handle_path /api/* {");
+  });
+
+  it("emits 7-day TLS lifetime as the long-form tls block on every internal cert (s130 t515 B2 cycle 124, s141 cycle 152 long-form for Caddy lexer + 'lifetime' semantic)", () => {
+    const out = buildCaddyfileContent({
+      ...baseOpts,
+      idService: { enabled: true },
+      pluginSubdomainRoutes: [{ subdomain: "myplugin", target: 5000, containerName: "agi-myplugin" }],
+      projects: [{ hostname: "my-app", port: 4001, containerName: "agi-my-app", internalPort: 3000 }],
+    });
+    // Owner directive cycle 124: 7-day cert lifetime.
+    // Cycle 152: must use the long-form `tls { issuer internal { lifetime
+    // 168h } }`. The shorthand `tls internal { lifetime 168h }` failed in
+    // Caddy two different ways — the one-liner tripped the lexer
+    // ("Unexpected next token after '{' on same line"), and the
+    // multi-line variant of the same shorthand tripped the parser
+    // ("unknown subdirective: lifetime"). `lifetime` is a subdirective of
+    // the `internal` issuer, not of the `tls internal` shorthand.
+    //
+    // Regex matches the indented multi-line form:
+    //     tls {
+    //         issuer internal {
+    //             lifetime 168h
+    //         }
+    //     }
+    const lifetimeMatches =
+      out.match(/tls \{\n\s+issuer internal \{\n\s+lifetime 168h\n\s+\}\n\s+\}/g) ?? [];
+    // gateway + db + id + plugin + project = 5 sites that emit `tls internal`
+    expect(lifetimeMatches.length).toBe(5);
+    // Hard regression guards: neither broken shape can silently reappear.
+    // (a) one-liner shorthand
+    expect(out).not.toMatch(/tls internal \{[^\n]*lifetime/);
+    // (b) multi-line shorthand still has lifetime as a child of `tls internal`
+    expect(out).not.toMatch(/tls internal \{\n\s+lifetime/);
+    // No leftover bare `tls internal` (without issuer block) — would mean a
+    // site forgot the constant.
+    expect(out).not.toMatch(/tls internal$\n/m);
+    expect(out).not.toMatch(/tls internal\s*$/m);
+  });
+
   it("honors a custom whodbContainerName when provided", () => {
     const out = buildCaddyfileContent({ ...baseOpts, whodbContainerName: "agi-whodb-dev" });
     expect(out).toContain("reverse_proxy agi-whodb-dev:8080");
@@ -208,6 +306,10 @@ papa.ai.on {
     expect(projSection).toContain("503");
     expect(projSection).toContain("Container not running");
     expect(projSection).toContain("my-app");
+    // Content-Type header MUST be set inside handle @5xx — Caddy's
+    // `respond` defaults to text/plain, which renders the offline
+    // HTML as raw source. Cycle-122 owner-reported regression.
+    expect(projSection).toContain('header Content-Type "text/html; charset=utf-8"');
   });
 
   it("uses the provided name in the offline page when name differs from hostname", () => {

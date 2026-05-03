@@ -102,6 +102,24 @@ Checks: Node.js version, pnpm, deploy directory, config file, Caddy, Podman (roo
 
 Exits with the issue count as a one-line summary at the bottom.
 
+#### agi doctor schema
+
+Walk every on-disk config file the gateway reads at boot and validate each
+against its Zod schema. Catches the class of failure that crash-looped the
+gateway in cycle 150 (project.json shape drift after the s140 layout
+migration; unhandled ZodError in fire-and-forget addStack). Run this BEFORE
+attempting upgrade or restart whenever schema validation might fail.
+
+```bash
+agi doctor schema           # human-readable report
+agi doctor schema --json    # machine-readable for scripting / CI
+```
+
+Currently validates: `~/.agi/gateway.json` (AionimaConfigSchema) plus every
+discovered `<workspace>/<project>/project.json` (ProjectConfigSchema). Exits
+with code 1 when any error is found. Plugin manifests are validated in a
+follow-up slice once their schema lands.
+
 ---
 
 ### agi config
@@ -197,6 +215,23 @@ Manage channel adapters.
 agi channels list     # list configured channels
 agi channels test <id>  # test a channel (future)
 ```
+
+---
+
+### agi project-migrate
+
+Run a project-folder migration script for a specific story-id. Each migration is idempotent; defaults to dry-run mode (read-only audit) so the report can be reviewed before any irreversible operation.
+
+```bash
+agi project-migrate s140 --dry-run    # audit current state vs target shape
+agi project-migrate s140 --execute    # NOT YET implemented (will run the migration)
+```
+
+**Available migrations.**
+
+- **s140** — Project folder restructure. Each non-sacred project moves to a flat top-level layout: `k/` (with `plans/`, `knowledge/`, `pm/`, `memory/`, `chat/` subfolders) + `repos/` + `sandbox/` (new) + a single `project.json` config at the project root holding both project- and per-repo configuration. Stacks attach to repos rather than to projects. Sacred projects (Aionima five + PAx four) are skipped.
+
+The dry-run reports per-project: folder-shape diff, per-repo git state (clean/dirty/unpushed), current stack attachments to remap, and the sacred skip list.
 
 ---
 

@@ -27,6 +27,8 @@ import { ActiveDownloads } from "@/components/ActiveDownloads.js";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator.js";
 import { NotificationBell } from "@/components/NotificationBell.js";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover.js";
+import { DevNotesIcon } from "@/components/ui/dev-notes.js";
+import { RouteDevNotes } from "@/lib/route-notes.js";
 import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
@@ -743,6 +745,32 @@ export default function RootLayout() {
                 </svg>
               </button>
             </div>
+            {/* DevNotes universal trigger (cycle 150 refactor). Opens the
+                global modal with all currently-registered notes from the
+                rendered page+tab+visible-views. Hidden when no notes exist
+                or when Contributing/Dev Mode is off. */}
+            <DevNotesIcon />
+            {/* s137 t529 — universal help button. Opens chat with a help-mode
+                context derived from the current pathname so the agent knows
+                what page the user is looking at. The route → context mapping
+                is the next slice (t530); for now the raw pathname suffices
+                as the agent can read it. */}
+            <button
+              onClick={() => {
+                setChatContext(`help:${location.pathname}`);
+                setChatOpen(true);
+              }}
+              className="p-2 rounded-lg transition-colors text-subtext0 hover:bg-surface0 hover:text-text"
+              title="Get help with this page"
+              data-testid="header-help-button"
+              aria-label="Open help chat"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+            </button>
             <button
               onClick={() => setChatOpen((p) => !p)}
               className={cn(
@@ -836,6 +864,11 @@ export default function RootLayout() {
           // Normal mode: content area with flyout overlays
           <>
             <main className="max-w-[1200px] w-full mx-auto flex-1 min-h-0 flex flex-col overflow-hidden">
+              {/* Route-default DevNote — registers a per-route default note
+                  to the global modal. Page components can embed inline
+                  <DevNote> instances for additional context; both stack into
+                  the same modal accessible from the header icon. */}
+              <RouteDevNotes />
               <Outlet context={ctx} />
             </main>
 

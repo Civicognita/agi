@@ -264,6 +264,9 @@ export function registerHostingRoutes(
       mode?: "production" | "development";
       internalPort?: number;
       runtimeId?: string;
+      // s145 t585 — containerKind + mapps[] flow through hosting config.
+      containerKind?: "static" | "code" | "mapp";
+      mapps?: string[];
     };
 
     if (!body.path || typeof body.path !== "string") {
@@ -287,6 +290,8 @@ export function registerHostingRoutes(
     if (body.mode !== undefined) updates.mode = body.mode;
     if (body.internalPort !== undefined) updates.internalPort = body.internalPort;
     if (body.runtimeId !== undefined) updates.runtimeId = body.runtimeId;
+    if (body.containerKind !== undefined) updates.containerKind = body.containerKind;
+    if (body.mapps !== undefined) updates.mapps = body.mapps;
 
     try {
       const hosted = await hostingManager.configureProject(body.path, updates);

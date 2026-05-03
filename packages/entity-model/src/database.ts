@@ -316,9 +316,24 @@ export async function createDatabaseAdapter(
   if (options.backend === "sqlite") {
     const path = options.sqlitePath ?? ":memory:";
 
-    // Dynamic import to avoid bundling better-sqlite3 for Postgres deployments
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const BetterSqlite3Module = await import("better-sqlite3" as any);
+    // Dynamic import — better-sqlite3 was removed from agi's direct deps
+    // in v0.4.425 to drop the 10-20s native compile from every upgrade.
+    // The SQLite backend remains as a fallback for tests + legacy code
+    // paths; install ad-hoc with `pnpm add -D better-sqlite3` if you
+    // need it. Postgres is the canonical backend (memory feedback_single
+    // _source_of_truth_db).
+    let BetterSqlite3Module: { default: new (p: string) => unknown };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      BetterSqlite3Module = await import("better-sqlite3" as any);
+    } catch (err) {
+      throw new Error(
+        "SQLite backend requires better-sqlite3 — install ad-hoc with " +
+        "`pnpm add -D better-sqlite3` (removed from agi direct deps in v0.4.425). " +
+        "Postgres is the canonical backend; switch with backend: 'postgresql'. " +
+        "Original error: " + (err instanceof Error ? err.message : String(err)),
+      );
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const BetterSqlite3Constructor: new (p: string) => any = BetterSqlite3Module.default;
     const db = new BetterSqlite3Constructor(path);

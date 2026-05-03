@@ -487,6 +487,27 @@ export async function fetchActiveProvider(): Promise<ActiveProviderState> {
   return res.json() as Promise<ActiveProviderState>;
 }
 
+/** Live model info returned by GET /api/providers/:id/models (cycle 140). */
+export interface ProviderModelInfo {
+  id: string;
+  label?: string;
+  contextLength?: number;
+  capabilities?: { vision?: boolean; tools?: boolean; reasoning?: boolean };
+}
+
+/**
+ * GET /api/providers/:id/models — live model list per Provider (cycle 140).
+ * Returns null when the provider is unreachable, unauthenticated, or doesn't
+ * expose a list endpoint (cloud providers today). UI treats null as "fall
+ * back to static catalog defaultModel" or shows a status indicator.
+ */
+export async function fetchProviderModels(providerId: string): Promise<ProviderModelInfo[] | null> {
+  const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/models`);
+  if (!res.ok) return null;
+  const body = await res.json() as { models: ProviderModelInfo[] | null };
+  return body.models;
+}
+
 /** s111 t419 wire shape — recent routing decisions from AgentRouter ring
  *  buffer. ts is optional because the field was added in t419 backend slice;
  *  pre-stamp records (if any survive in memory across deploy) lack it. */
@@ -892,6 +913,10 @@ export async function configureHosting(params: {
   mode?: "production" | "development";
   internalPort?: number;
   runtimeId?: string;
+  /** s145 t585 — flip container kind from the dashboard. */
+  containerKind?: "static" | "code" | "mapp";
+  /** s145 t585 — list of MApp IDs (only used when containerKind === "mapp"). */
+  mapps?: string[];
 }): Promise<{ ok: boolean; hosting: unknown }> {
   const res = await fetch("/api/hosting/configure", {
     method: "PUT",
@@ -1556,6 +1581,52 @@ export async function restartService(id: string): Promise<{ ok: boolean }> {
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<{ ok: boolean }>;
+}
+
+// ---------------------------------------------------------------------------
+// Circuit-breaker API — /api/services/circuit-breakers (s143 t570)
+// ---------------------------------------------------------------------------
+
+export interface CircuitBreakerStateInfo {
+  failures: number;
+  lastFailureAt?: string;
+  lastError?: string;
+  status: "closed" | "half-open" | "open";
+  lastResetAt?: string;
+}
+
+export interface CircuitBreakersResponse {
+  states: Record<string, CircuitBreakerStateInfo>;
+  openCount: number;
+  halfOpenCount: number;
+  totalCount: number;
+}
+
+export async function fetchCircuitBreakers(): Promise<CircuitBreakersResponse> {
+  const res = await fetch("/api/services/circuit-breakers");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<CircuitBreakersResponse>;
+}
+
+export async function resetCircuitBreaker(serviceId: string): Promise<{ ok: boolean; serviceId: string }> {
+  const res = await fetch(`/api/services/circuit-breakers/${encodeURIComponent(serviceId)}/reset`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean; serviceId: string }>;
+}
+
+export async function resetAllCircuitBreakers(): Promise<{ ok: boolean; count: number }> {
+  const res = await fetch("/api/services/circuit-breakers/reset-all", { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean; count: number }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -3413,4 +3484,65 @@ export async function deleteVaultEntry(id: string, requestingProject?: string): 
   }
   const data = await res.json() as { deleted: boolean };
   return data.deleted;
+}
+
+// s130 t515 B6 — repos[] CRUD for the dashboard RepoManager component.
+export interface ProjectRepo {
+  name: string;
+  url: string;
+  branch?: string;
+  path?: string;
+  writable?: boolean;
+  port?: number;
+  startCommand?: string;
+  isDefault?: boolean;
+  externalPath?: string;
+  env?: Record<string, string>;
+  autoRun?: boolean;
+}
+
+export async function fetchProjectRepos(projectPath: string): Promise<ProjectRepo[]> {
+  const url = `/api/projects/repos?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { repos: ProjectRepo[] };
+  return data.repos;
+}
+
+export async function addProjectRepo(projectPath: string, repo: ProjectRepo): Promise<void> {
+  const url = `/api/projects/repos?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(repo),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function updateProjectRepo(projectPath: string, name: string, patch: Partial<ProjectRepo>): Promise<void> {
+  const url = `/api/projects/repos/${encodeURIComponent(name)}?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function removeProjectRepo(projectPath: string, name: string): Promise<void> {
+  const url = `/api/projects/repos/${encodeURIComponent(name)}?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
 }

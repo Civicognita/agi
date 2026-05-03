@@ -245,10 +245,21 @@ async function migrateSqliteSources(
   destPool: Pool,
   counts: TransferCounts,
 ): Promise<void> {
-  // better-sqlite3 is not a direct dep of AGI any more, but the host usually
-  // has it installed from the plugin sandbox dep tree. Fail hard if missing —
-  // cutover can't proceed without reading the legacy .db files.
-  const { default: Database } = await import("better-sqlite3");
+  // better-sqlite3 was removed from agi/package.json in v0.4.425 to drop
+  // the 10-20s native compile from every upgrade. This one-shot legacy
+  // migration script needs it to read the .db files; install it ad-hoc
+  // before running:
+  //   pnpm add -D better-sqlite3
+  let Database: typeof import("better-sqlite3").default;
+  try {
+    const mod = await import("better-sqlite3");
+    Database = mod.default;
+  } catch (err) {
+    throw new Error(
+      "migrateSqliteSources requires better-sqlite3. Install it ad-hoc with `pnpm add -D better-sqlite3` " +
+      "before running the migration. Original error: " + (err instanceof Error ? err.message : String(err)),
+    );
+  }
 
   // entities.db — splits into many tables. The entity-store historically
   // owned coa_chains, impact, audits, compliance, comms, usage, and more.

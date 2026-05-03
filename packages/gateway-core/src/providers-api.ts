@@ -250,6 +250,180 @@ function buildBaseCatalog(config: AionimaConfig): ProviderCatalogEntry[] {
   return entries.map((e) => ({ ...e, timeoutMultiplier: timeoutMultiplierForTier(e.tier) }));
 }
 
+/**
+ * Live-model-list shape returned by GET /api/providers/:id/models. Mirrors
+ * `ProviderModelInfo` from @agi/sdk (cycle 139 SDK contract). Built-in
+ * providers use the same shape so plugin-contributed providers and built-ins
+ * are interchangeable from the dashboard's perspective.
+ */
+export interface ProviderModelInfo {
+  id: string;
+  label?: string;
+  contextLength?: number;
+  capabilities?: { vision?: boolean; tools?: boolean; reasoning?: boolean };
+}
+
+/**
+ * Fetch the live model list for a built-in Provider. Returns null when the
+ * Provider is unreachable, unauthenticated, or doesn't expose a list endpoint
+ * (cycle 129 directive: "cloud Provider plugins need to provide a model list
+ * or subscription/endpoint to get the list" — same null-on-unavailable
+ * semantics as the SDK getModels contract).
+ *
+ * Must not throw — wrap network errors and return null. Cloud providers
+ * (anthropic, openai) currently return null until the cloud-provider list
+ * endpoints get wired (cycle 141+). The aion-micro entry returns its
+ * single fine-tuned LoRA-merged GGUF.
+ */
+export async function getModelsForBuiltin(
+  id: string,
+  config: AionimaConfig,
+): Promise<ProviderModelInfo[] | null> {
+  const cfgRoot = config as Record<string, unknown>;
+  const providers = (cfgRoot["providers"] as Record<string, unknown> | undefined) ?? {};
+
+  switch (id) {
+    case "aion-micro":
+      // aion-micro is served via Lemonade (Phase K.4) — its single model is
+      // wishborn/aion-micro-v1, the LoRA-merged GGUF on HuggingFace Hub.
+      return [{
+        id: "wishborn/aion-micro-v1",
+        label: "aion-micro v1",
+        capabilities: { tools: false, vision: false, reasoning: false },
+      }];
+
+    case "ollama": {
+      const ollamaCfg = (providers["ollama"] as { baseUrl?: string } | undefined) ?? {};
+      const base = ollamaCfg.baseUrl ?? "http://127.0.0.1:11434";
+      try {
+        const res = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(5_000) });
+        if (!res.ok) return null;
+        const json = await res.json() as { models?: Array<{ name?: string; size?: number }> };
+        if (!Array.isArray(json.models)) return null;
+        return json.models
+          .filter((m): m is { name: string; size?: number } => typeof m?.name === "string")
+          .map((m) => ({ id: m.name, label: m.name }));
+      } catch {
+        return null;
+      }
+    }
+
+    case "lemonade": {
+      const lemonadeCfg = (providers["lemonade"] as { baseUrl?: string } | undefined) ?? {};
+      const base = lemonadeCfg.baseUrl ?? "http://127.0.0.1:13305";
+      try {
+        const res = await fetch(`${base}/api/v1/models`, { signal: AbortSignal.timeout(5_000) });
+        if (!res.ok) return null;
+        const json = await res.json() as { data?: Array<{ id?: string }> };
+        if (!Array.isArray(json.data)) return null;
+        return json.data
+          .filter((m): m is { id: string } => typeof m?.id === "string")
+          .map((m) => ({ id: m.id, label: m.id }));
+      } catch {
+        return null;
+      }
+    }
+
+    case "huggingface":
+      // HF local models are surfaced via the HF API (/api/hf/models). Keep
+      // that as the dedicated path until cycle 142+ consolidation; surfacing
+      // here would require importing the model index reader and pulling in
+      // a circular dep. Returning null tells callers "use /api/hf/models".
+      return null;
+
+    case "anthropic": {
+      // Cycle 142 — REST /v1/models with x-api-key + anthropic-version.
+      // API key sourced from config.providers.anthropic.apiKey first,
+      // env ANTHROPIC_API_KEY second (mirrors factory.ts ENV_KEYS).
+      const cfg = (providers["anthropic"] as { apiKey?: string } | undefined) ?? {};
+      const apiKey = cfg.apiKey ?? process.env["ANTHROPIC_API_KEY"];
+      if (!apiKey) return null;
+      try {
+        const res = await fetch("https://api.anthropic.com/v1/models", {
+          headers: {
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) return null;
+        const json = await res.json() as { data?: Array<{ id?: string; display_name?: string }> };
+        if (!Array.isArray(json.data)) return null;
+        return json.data
+          .filter((m): m is { id: string; display_name?: string } => typeof m?.id === "string")
+          .map((m) => ({
+            id: m.id,
+            label: m.display_name ?? m.id,
+            capabilities: { tools: true, vision: true, reasoning: true },
+          }));
+      } catch {
+        return null;
+      }
+    }
+
+    case "openai": {
+      // Cycle 142 — REST /v1/models with Authorization: Bearer.
+      // OpenAI returns 70+ models including non-chat (whisper, dall-e,
+      // embeddings, tts, moderation). Filter to obviously chat-capable
+      // model ids so the Models tab stays focused on what the agent
+      // can actually use.
+      const cfg = (providers["openai"] as { apiKey?: string } | undefined) ?? {};
+      const apiKey = cfg.apiKey ?? process.env["OPENAI_API_KEY"];
+      if (!apiKey) return null;
+      try {
+        const res = await fetch("https://api.openai.com/v1/models", {
+          headers: { "Authorization": `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) return null;
+        const json = await res.json() as { data?: Array<{ id?: string }> };
+        if (!Array.isArray(json.data)) return null;
+        return json.data
+          .filter((m): m is { id: string } => typeof m?.id === "string")
+          .filter((m) => isOpenAIChatModel(m.id))
+          .map((m) => ({
+            id: m.id,
+            label: m.id,
+            capabilities: openaiCapabilitiesFor(m.id),
+          }));
+      } catch {
+        return null;
+      }
+    }
+
+    default:
+      return null;
+  }
+}
+
+/**
+ * OpenAI's /v1/models endpoint returns ~70 models including non-chat
+ * surfaces (whisper, dall-e-*, tts-*, text-embedding-*, omni-moderation-*).
+ * The Models tab is a chat-focused surface, so we filter to model id prefixes
+ * known to support chat completions: gpt-*, o1-*, o3-*, o4-*, plus the
+ * special-cased "chatgpt-4o-latest". Update when OpenAI ships new families.
+ */
+function isOpenAIChatModel(id: string): boolean {
+  return /^(gpt-|o1-|o3-|o4-|chatgpt-)/.test(id);
+}
+
+/**
+ * Coarse capability mapping for OpenAI models. Most of OpenAI's chat-capable
+ * models support tools (function calling) since gpt-3.5-turbo. Vision arrived
+ * with gpt-4-vision and is now standard on gpt-4o variants. The o1/o3/o4
+ * series exposes extended reasoning blocks. This is best-effort — the Models
+ * tab uses these to filter by task, not for hard routing decisions.
+ */
+function openaiCapabilitiesFor(id: string): { vision: boolean; tools: boolean; reasoning: boolean } {
+  const isReasoning = /^o[134]-/.test(id);
+  const isVision = /(^|-)gpt-4o|gpt-4-(vision|turbo)/.test(id);
+  return {
+    vision: isVision,
+    tools: !isReasoning || /-2024|-2025|-2026/.test(id), // o1-preview lacked tools; later o1/o3/o4 dated revisions added them
+    reasoning: isReasoning,
+  };
+}
+
 function getActiveState(config: AionimaConfig): ActiveProviderState {
   const cfgRoot = config as Record<string, unknown>;
   const agent = (cfgRoot["agent"] as Record<string, unknown> | undefined) ?? {};
@@ -420,6 +594,36 @@ export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApi
   });
 
   /**
+   * GET /api/providers/:id/models — live model list for a Provider.
+   *
+   * Cycle 129 directive: cloud Providers must surface their model list
+   * dynamically so the Models tab on the Provider page is the single source
+   * of truth. Cycle 140 wires the local providers (Ollama, Lemonade,
+   * aion-micro) via this endpoint; cloud providers (anthropic, openai)
+   * follow in cycle 141+ when REST /v1/models calls land.
+   *
+   * Response shape:
+   *   { models: ProviderModelInfo[] | null }
+   *
+   * `null` means "Provider unreachable, unauthenticated, or doesn't expose a
+   * list endpoint" — caller should fall back to the static catalog
+   * `defaultModel` or display a "no models available" empty state.
+   *
+   * Returns 404 when the id isn't in the canonical catalog (typo guard).
+   */
+  app.get<{ Params: { id: string } }>("/api/providers/:id/models", async (req, reply) => {
+    const config = deps.readConfig();
+    if (!KNOWN_PROVIDER_IDS.has(req.params.id)) {
+      return reply.code(404).send({
+        error: `unknown provider: ${req.params.id}`,
+        validIds: Array.from(KNOWN_PROVIDER_IDS),
+      });
+    }
+    const models = await getModelsForBuiltin(req.params.id, config);
+    return { models };
+  });
+
+  /**
    * PUT /api/providers/active — switch the active Provider (and optionally the
    * model). Owner-driven, hot-reloaded — the agent-router picks up the new
    * Provider on the next invocation without a gateway restart.
@@ -451,8 +655,29 @@ export function registerProvidersRoutes(app: FastifyInstance, deps: ProvidersApi
       }
       try {
         deps.patchConfig("agent.provider", providerId);
-        if (typeof body.model === "string" && body.model.length > 0) {
+        // CRITICAL: clear agent.baseUrl when switching providers. Without
+        // this, a stale baseUrl from a prior provider (e.g. Ollama's
+        // http://127.0.0.1:11434) overrides the new provider's per-type
+        // default in factory.ts (lemonade → :13305/v1, anthropic →
+        // api.anthropic.com, etc.). Symptom is "OpenAI API error: HTTP
+        // 404: 404 page not found" because the request hits the previous
+        // provider's port at the wrong path.
+        // (cycle 130 owner-Playwright-verified bug — agent.baseUrl was
+        // ":11434" from a previous Ollama session, switch to Lemonade
+        // routed every chat request to Ollama at the wrong path.)
+        deps.patchConfig("agent.baseUrl", "");
+        // Skip model patch when the catalog's defaultModel is the
+        // sentinel "default" — that's a Lemonade-internal placeholder
+        // ("whatever's loaded") that real Lemonade doesn't accept as a
+        // model name. Let factory.ts's per-provider defaultModel kick
+        // in instead. Same for any other obvious placeholder.
+        const SENTINEL_MODELS = new Set(["default", "auto", "<auto>", ""]);
+        if (typeof body.model === "string" && body.model.length > 0 && !SENTINEL_MODELS.has(body.model.toLowerCase())) {
           deps.patchConfig("agent.model", body.model);
+        } else {
+          // Clear any stale model from a previous provider so factory's
+          // per-provider default takes over.
+          deps.patchConfig("agent.model", "");
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

@@ -471,10 +471,45 @@ const ServiceOverrideSchema = z
   })
   .strict();
 
+/**
+ * s143 t566 — circuit-breaker state per service. Keyed by stable service id
+ * (e.g. "hosting:/home/wishborn/_projects/blackorchid_web", "channel:slack",
+ * "plugin:reader-media", "service:agi-finetune"). Status drives the gateway's
+ * boot-time decision to attempt or skip a service:
+ *   - closed     → boot normally (the default)
+ *   - open       → skip on boot; only re-enabled by manual reset OR after
+ *                  cool-down elapses, which moves it to half-open
+ *   - half-open  → boot is allowed once; success closes the breaker, failure
+ *                  re-opens it
+ */
+const CircuitBreakerStateSchema = z
+  .object({
+    failures: z.number().int().min(0).default(0),
+    lastFailureAt: z.string().optional(),
+    lastError: z.string().optional(),
+    status: z.enum(["closed", "half-open", "open"]).default("closed"),
+    /** ISO timestamp when the breaker was last manually reset. */
+    lastResetAt: z.string().optional(),
+  })
+  .strict();
+
+const CircuitBreakerConfigSchema = z
+  .object({
+    /** Consecutive failures before flipping a breaker to "open". */
+    threshold: z.number().int().min(1).default(3),
+    /** Hours after lastFailureAt before an "open" breaker becomes "half-open". */
+    coolDownHours: z.number().int().min(1).default(24),
+    /** Per-service runtime state, keyed by service id. */
+    states: z.record(z.string(), CircuitBreakerStateSchema).optional(),
+  })
+  .strict();
+
 const ServicesConfigSchema = z
   .object({
     /** Per-service overrides keyed by service ID. */
     overrides: z.record(z.string(), ServiceOverrideSchema).optional(),
+    /** s143 — persistent circuit-breaker state + config. */
+    circuitBreaker: CircuitBreakerConfigSchema.optional(),
   })
   .strict();
 
@@ -527,6 +562,10 @@ const DevConfigSchema = z
     fancySheetsRepo: z.string().default("git@github.com:wishborn/fancy-sheets.git"),
     /** Git remote URL for fancy-echarts fork. */
     fancyEchartsRepo: z.string().default("git@github.com:wishborn/fancy-echarts.git"),
+    /** Git remote URL for fancy-3d fork. */
+    fancy3dRepo: z.string().default("git@github.com:wishborn/fancy-3d.git"),
+    /** Git remote URL for fancy-screens fork (s146 t604 cycle 199 — 6th PAx package). */
+    fancyScreensRepo: z.string().default("git@github.com:wishborn/fancy-screens.git"),
   })
   .strict();
 
@@ -797,6 +836,8 @@ export type ProviderCredential = z.infer<typeof ProviderCredentialSchema>;
 export type PluginPreference = z.infer<typeof PluginPreferenceSchema>;
 export type ServiceOverride = z.infer<typeof ServiceOverrideSchema>;
 export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;
+export type CircuitBreakerConfig = z.infer<typeof CircuitBreakerConfigSchema>;
+export type CircuitBreakerState = z.infer<typeof CircuitBreakerStateSchema>;
 export type WorkersConfig = z.infer<typeof WorkersConfigSchema>;
 export type MarketplaceConfig = z.infer<typeof MarketplaceConfigSchema>;
 export type DevConfig = z.infer<typeof DevConfigSchema>;

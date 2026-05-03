@@ -103,4 +103,63 @@ test.describe("Project workspace mode picker (s134 t517)", () => {
     await expect(page.getByTestId("project-mode-insight")).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByTestId("project-mode-operate")).toHaveAttribute("aria-pressed", "false");
   });
+
+  // -----------------------------------------------------------------------
+  // Cycle 146 — slice 5b/5c shipped pieces verification.
+  // -----------------------------------------------------------------------
+
+  test("sub-surface label updates with active mode (slice 5a/5b)", async ({ page }) => {
+    const found = await navigateToFullModeProject(page);
+    test.skip(!found, "no full-mode project available");
+
+    // Default: develop mode → label reads "develop ›"
+    const label = page.getByTestId("project-sub-surface-label");
+    await expect(label).toBeVisible();
+    await expect(label).toHaveText(/develop/i);
+
+    // Switch to operate; label should update.
+    await page.getByTestId("project-mode-operate").click();
+    await expect(label).toHaveText(/operate/i);
+  });
+
+  test("Sub-surface header reflects active tab (slice 5c phase 1, cycle 157 prefix-drop)", async ({ page }) => {
+    const found = await navigateToFullModeProject(page);
+    test.skip(!found, "no full-mode project available");
+
+    // Default tab in develop mode is one of: details/files/repository/environment.
+    // Owner directive cycle 157: drop the 'Canvas · ' prefix — there's only
+    // one Canvas (the AgentCanvas that opens with chat), so the prefix on
+    // every project sub-tab was misleading. Header now shows just the
+    // sub-surface label.
+    const header = page.getByTestId("project-canvas-header");
+    await expect(header).toBeVisible();
+    await expect(header).toHaveText(/^(Details|Editor|Repository|Environment)$/);
+    // Hard regression guard: the deprecated prefix must NEVER reappear.
+    await expect(header).not.toHaveText(/Canvas\s*·/);
+
+    // Click another tab (Repository) — header should update if Repository tab exists.
+    const repoTab = page.getByRole("tab", { name: "Repository" });
+    if (await repoTab.count() > 0) {
+      await repoTab.click();
+      await expect(header).toHaveText(/^Repository$/);
+    }
+  });
+
+  test("flyout-shell wraps Canvas + Chat aside (slice 5c phase 2)", async ({ page }) => {
+    const found = await navigateToFullModeProject(page);
+    test.skip(!found, "no full-mode project available");
+
+    // The flyout-shell wrapper must be present.
+    await expect(page.getByTestId("project-flyout-shell")).toBeVisible();
+
+    // The chat aside is rendered (DOM-present); visibility depends on viewport
+    // width because of `hidden lg:flex`. Default Playwright viewport is 1280×720
+    // which is lg+, so the aside should be visible.
+    const aside = page.getByTestId("project-chat-aside");
+    await expect(aside).toBeAttached();
+    // Aside has a "Chat" header (cycle 145) and an Open-chat affordance
+    // (cycle 147 phase-3 starter — kept across copy revisions).
+    await expect(aside).toContainText(/Chat/);
+    await expect(page.getByTestId("project-chat-aside-open")).toBeVisible();
+  });
 });

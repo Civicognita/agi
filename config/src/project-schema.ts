@@ -77,6 +77,23 @@ export const ProjectHostingSchema = z
     stacks: z.array(ProjectStackInstanceSchema).default([]),
     /** MagicApp ID used as the viewer for this project's *.ai.on URL. */
     viewer: z.string().optional(),
+    /**
+     * s145 t584 — Container kind. Default undefined preserves existing
+     * behavior: HostingManager dispatches based on project type + stacks.
+     * When set to "mapp", HostingManager routes to the MApp host container
+     * branch (light Caddy + static MApp host bundle, no nginx + no app
+     * server). Used by ops/media/literature projects whose primary surface
+     * is one or more MApps from the marketplace, not custom UI/API code.
+     */
+    containerKind: z.enum(["static", "code", "mapp"]).optional(),
+    /**
+     * s145 t584 — list of MApp IDs installed in this project's container.
+     * Only meaningful when containerKind === "mapp". Each id resolves to a
+     * MApp definition from the MApp Marketplace. The first id (or the one
+     * marked default in MApp config) is what loads at the project root URL;
+     * each MApp is also addressable at <project>.ai.on/<mappId>/.
+     */
+    mapps: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -217,8 +234,86 @@ export const ProjectRepoSchema = z
      *  Defaults to false — clones are read-only by default per
      *  s130 Q-5 (write-on-explicit-action). */
     writable: z.boolean().default(false),
+
+    // ---- Runtime fields (s130 t515 cycle 123 — multi-repo single-container hosting) ----
+    //
+    // Owner spec 2026-04-29: "This UX should allow users to have multiple
+    // programs/repos running in its container... most often used for
+    // monorepo projects that have a client and server and need to serve
+    // multiple vite servers that are accessible through a single secured
+    // proxy via the network url."
+    //
+    // All repos with `port` set live as processes inside the SAME project
+    // container (single shared container per project). They reach each
+    // other via container localhost. The host enforces no port binding —
+    // Caddy routes external traffic via the podman aionima network.
+
+    /** Internal port this repo's process listens on inside the container.
+     *  Required when the repo runs a server (vite, fastify, express, etc.).
+     *  Sibling repos in the same container reach this port via localhost.
+     *  When unset, the repo is treated as a code-only checkout (library,
+     *  static asset bundle) — not started as a process. */
+    port: z.number().int().min(1).max(65535).optional(),
+
+    /** Command that starts this repo's process. Run inside the container
+     *  with cwd = the repo's checkout path. Examples:
+     *    "pnpm dev"
+     *    "node dist/server.js"
+     *    "uvicorn app:main --host 0.0.0.0 --port 8001"
+     *  Required when `port` is set. */
+    startCommand: z.string().optional(),
+
+    /** Marks this repo as the default served on `https://<project>.ai.on/`.
+     *  At most one repo per project may set this true (enforced via
+     *  ProjectConfigSchema.refine). When no repo is marked default, the
+     *  project root acts as the default (single-repo behavior). */
+    isDefault: z.boolean().optional(),
+
+    /** Caddy path prefix that routes to this repo's port externally
+     *  (e.g., "/api" → `https://<project>.ai.on/api/*` proxies to this
+     *  repo's `port`). When unset AND `port` is set, the repo is
+     *  internal-only — accessible to sibling repos via container
+     *  localhost but NOT exposed via Caddy. Default repo (isDefault=true)
+     *  ignores this field — it serves at "/" by definition. */
+    externalPath: z.string().regex(/^\/[a-zA-Z0-9_/-]*$/, "externalPath must start with / and contain only safe URL chars").optional(),
+
+    /** Optional environment variables passed to this repo's process.
+     *  Merged with project-level env. */
+    env: z.record(z.string(), z.string()).optional(),
+
+    /** Whether this repo's process auto-starts when the project container
+     *  boots. Defaults to true when `port` and `startCommand` are set;
+     *  set explicitly false to skip the repo from the boot-time
+     *  concurrently invocation. Owner can still start it on-demand via
+     *  `podman exec` (or the dashboard's per-repo Start button).
+     *  Ignored for code-only repos (no port). */
+    autoRun: z.boolean().optional(),
+
+    /** Stacks attached to this specific repo (s141 — per-repo stack
+     *  attachment per owner directive cycle 150: "Stacks now attach to
+     *  project repos, not to projects themselves"). Multi-stack-per-repo
+     *  is supported (e.g. nextjs + tailwind + fancy-ui all on one repo).
+     *  When migrating from the legacy project-level attachedStacks, the
+     *  s140 --execute step lands stacks on the first repo by default. */
+    attachedStacks: z.array(ProjectStackInstanceSchema).optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (r) => !r.port || r.startCommand,
+    { message: "startCommand is required when port is set" },
+  )
+  .refine(
+    (r) => !r.externalPath || r.port,
+    { message: "externalPath only applies to repos with a port set" },
+  )
+  .refine(
+    (r) => !r.isDefault || r.port,
+    { message: "isDefault only applies to repos with a port set" },
+  )
+  .refine(
+    (r) => r.autoRun === undefined || r.port !== undefined,
+    { message: "autoRun only applies to repos with a port set" },
+  );
 
 // ---------------------------------------------------------------------------
 // Root project config — the full <projectPath>/.agi/project.json shape
@@ -254,10 +349,37 @@ export const ProjectConfigSchema = z
      *  Each entry clones into `<projectPath>/repos/<name>/`. Used by
      *  multi-repo projects (e.g. app projects hosting web + api + sdk
      *  in one container). When empty/undefined, the project is
-     *  single-repo and its source lives at the root. */
+     *  single-repo and its source lives at the root.
+     *
+     *  Each repo with `port` set becomes a process inside the shared
+     *  project container, reaching siblings via localhost. At most one
+     *  repo may set `isDefault: true` (the one served on `/`). */
     repos: z.array(ProjectRepoSchema).optional(),
   })
-  .passthrough(); // Plugins can store custom keys at the root level
+  .passthrough() // Plugins can store custom keys at the root level
+  .refine(
+    (cfg) => !cfg.repos || cfg.repos.filter((r) => r.isDefault).length <= 1,
+    { message: "at most one repo may be marked isDefault: true" },
+  )
+  .refine(
+    (cfg) => {
+      if (!cfg.repos) return true;
+      // No two repos can share the same internal port (collision in
+      // the shared container's localhost namespace).
+      const ports = cfg.repos.filter((r) => r.port).map((r) => r.port);
+      return new Set(ports).size === ports.length;
+    },
+    { message: "two or more repos share the same port — each repo's port must be unique inside the project's container" },
+  )
+  .refine(
+    (cfg) => {
+      if (!cfg.repos) return true;
+      // No two repos can share the same externalPath.
+      const paths = cfg.repos.filter((r) => r.externalPath).map((r) => r.externalPath);
+      return new Set(paths).size === paths.length;
+    },
+    { message: "two or more repos share the same externalPath" },
+  );
 
 // ---------------------------------------------------------------------------
 // Inferred types

@@ -38,8 +38,9 @@ import { appRouter, type AppContext } from "@agi/trpc-api";
 import type { HostingManager } from "./hosting-manager.js";
 import { registerHostingRoutes } from "./hosting-api.js";
 import { registerStackRoutes } from "./stack-api.js";
+import { registerMAppStorageRoutes } from "./mapp-storage-routes.js";
 import { safemodeState } from "./safemode-state.js";
-import type { RouteHandler, RuntimeDefinition, RuntimeInstaller, HostingExtension } from "@agi/plugins";
+import type { RouteHandler, RuntimeDefinition } from "@agi/plugins";
 import { categoryToProvides } from "@agi/plugins";
 import type { ServiceManager } from "./service-manager.js";
 import { registerCommsRoutes } from "./comms-api.js";
@@ -86,7 +87,15 @@ import type { PmProvider } from "@agi/sdk";
 // Types
 // ---------------------------------------------------------------------------
 
-const SACRED_PROJECT_NAMES = new Set(["agi", "prime", "id", "marketplace", "mapp-marketplace"]);
+// Sacred-project basenames — the gateway never treats these as user projects.
+// Keep in sync with project-config-path.ts and scripts/migrate-projects-s140.sh.
+// Includes (a) the workspace-grouping `_aionima/` container per cycle 150,
+// (b) the Civicognita core 5, (c) the Particle-Academy 4 (5 with fancy-3d).
+const SACRED_PROJECT_NAMES = new Set([
+  "_aionima",
+  "agi", "prime", "id", "marketplace", "mapp-marketplace",
+  "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d",
+]);
 
 function isSacredProjectPath(pathStr: string): boolean {
   return SACRED_PROJECT_NAMES.has(basename(pathStr).toLowerCase());
@@ -173,6 +182,10 @@ export interface RuntimeStateDeps {
   dashboardQueries?: DashboardQueries;
   /** HostingManager — manages Caddy + Node.js process lifecycle for hosted projects. */
   hostingManager?: HostingManager;
+  /** s143 t570 — CircuitBreakerTracker for the /api/services/circuit-breakers
+   *  endpoints. Optional: when omitted, the breaker routes return empty
+   *  state + 503 on reset attempts. */
+  circuitBreaker?: import("./circuit-breaker.js").CircuitBreakerTracker;
   /** IterativeWorkScheduler — exposes status + receives config changes for the
    *  iterative-work API surface. Optional: when omitted, the iterative-work
    *  routes return 503. */
@@ -198,36 +211,11 @@ export interface RuntimeStateDeps {
   chatPersistence?: ChatPersistence;
   /** ImageBlobStore — file-backed image storage for chat sessions. */
   imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
-  /** PluginRegistry — loaded plugin instances (for GET /api/plugins + HTTP route mounting). */
-  pluginRegistry?: {
-    getAll(): { manifest: { id: string; name: string; version: string; description: string; author?: string; permissions: string[]; category?: string; bakedIn?: boolean; disableable?: boolean }; basePath: string }[];
-    get(id: string): { manifest: { id: string }; instance: { cleanup?(): Promise<{ resources: { id: string; type: string; label: string; removeCommand: string; shared?: boolean }[] }> } } | undefined;
-    getRoutes(): { pluginId: string; method: string; path: string; handler: RouteHandler }[];
-    getRuntimes(): RuntimeDefinition[];
-    getRuntimesForType(projectType: string): RuntimeDefinition[];
-    getHostingExtensions(): HostingExtension[];
-    getRuntimeInstallers(): RuntimeInstaller[];
-    getRuntimeInstaller(language: string): RuntimeInstaller | undefined;
-    getActions(scope?: { type: string; projectType?: string }): { pluginId: string; action: { id: string; label: string; description?: string; icon?: string; scope: { type: string; projectTypes?: string[] }; handler: { kind: string; command?: string; endpoint?: string; hookName?: string }; confirm?: string; group?: string; destructive?: boolean } }[];
-    getPanels(projectType?: string): { pluginId: string; panel: { id: string; label: string; projectTypes: string[]; widgets: unknown[]; position?: number; mode?: "develop" | "operate" | "coordinate" | "insight" } }[];
-    getSettingsSections(): { pluginId: string; section: { id: string; label: string; description?: string; configPath: string; fields: unknown[]; position?: number } }[];
-    getSidebarSections(): { pluginId: string; section: { id: string; title: string; items: { label: string; to: string; icon?: string; exact?: boolean }[]; position?: number } }[];
-    getThemes(): { pluginId: string; theme: { id: string; name: string; description?: string; dark: boolean; properties: Record<string, string> } }[];
-    getSystemServices(): { pluginId: string; service: { id: string; name: string; description?: string; statusCommand?: string; unitName?: string; startCommand?: string; stopCommand?: string; restartCommand?: string; installCommand?: string; installedCheck?: string; agentAware?: boolean } }[];
-    getScheduledTasks(): { pluginId: string; task: { id: string; name: string; description?: string; cron?: string; intervalMs?: number; enabled?: boolean } }[];
-    getSkills(): { pluginId: string; skill: { name: string; description?: string; domain: string; triggers: string[]; content: string } }[];
-    getKnowledge(): { pluginId: string; namespace: { id: string; label: string; description?: string; contentDir: string; topics: { title: string; path: string; description?: string }[] } }[];
-    getAgentTools(): { pluginId: string; tool: { name: string; description: string; inputSchema: Record<string, unknown>; handler: (input: Record<string, unknown>, context: { sessionId: string; entityId: string }) => Promise<unknown> } }[];
-    getWorkflows(): { pluginId: string; workflow: { id: string; name: string; description?: string; trigger: string; steps: unknown[] } }[];
-    getSettingsPages(): { pluginId: string; page: { id: string; label: string; description?: string; icon?: string; position?: number; sections: unknown[] } }[];
-    getDashboardPages(domain?: string): { pluginId: string; page: { id: string; label: string; description?: string; icon?: string; domain: string; routePath: string; widgets: unknown[]; position?: number } }[];
-    getDashboardDomains(): { pluginId: string; domain: { id: string; title: string; description?: string; icon?: string; routePrefix: string; position?: number; pages: { id: string; label: string; routePath: string; icon?: string; widgets: unknown[]; isIndex?: boolean; position?: number }[] } }[];
-    getStacks(): { pluginId: string; stack: import("./stack-types.js").StackDefinition }[];
-    getServices(): { id: string; name: string; description: string; containerImage: string; defaultPort: number }[];
-    getPluginProvides(pluginId: string): string[];
-    getAllPluginProvides(): Map<string, string[]>;
-    getProviders(): { pluginId: string; provider: { id: string; name: string; description?: string; requiresApiKey: boolean; fields?: { id: string; label: string; type: string; placeholder?: string; description?: string; options?: { value: string; label: string }[]; min?: number; max?: number; step?: number }[]; checkBalance?: (config: Record<string, unknown>) => Promise<number | null> } }[];
-  };
+  /** PluginRegistry — loaded plugin instances (for GET /api/plugins + HTTP route mounting).
+   *  s101 t606 cycle 195 — replaced 29-line inline structural type with the
+   *  imported class type from @agi/plugins. Same hidden-drift risk as the
+   *  cycle-194 marketplace sweep — typecheck surfaces consumer mismatches. */
+  pluginRegistry?: import("@agi/plugins").PluginRegistry;
   /** All discovered plugins (including disabled ones) — for showing full list in GET /api/plugins. */
   discoveredPlugins?: {
     id: string;
@@ -262,16 +250,11 @@ export interface RuntimeStateDeps {
   inferenceGateway?: import("@agi/model-runtime").InferenceGateway;
   /** ModelStore — used for model dependency status checks. */
   modelStore?: import("@agi/model-runtime").ModelStore;
-  mappMarketplaceManager?: {
-    getSources(): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number }[];
-    addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number };
-    removeSource(id: number): void;
-    syncSource(id: number): Promise<{ ok: boolean; error?: string; mappCount?: number }>;
-    getCatalogWithInstalled(): Promise<Array<{ id: string; sourceId: number; author: string; description?: string; category?: string; version?: string; sourcePath: string; installed: boolean }>>;
-    install(appId: string, sourceId: number): Promise<{ ok: boolean; error?: string }>;
-    uninstall(appId: string, author: string): { ok: boolean; error?: string };
-    syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
-  };
+  /** s140 t599 cycle 194 — replaced 10-line inline structural type with the
+   *  imported class type from @agi/marketplace. Keeps the dep in sync with
+   *  the source-of-truth API. Cycle-189 t598 spotted this drift; cycle-194
+   *  closes it. */
+  mappMarketplaceManager?: import("@agi/marketplace").MAppMarketplaceManager;
   /** MagicAppStateStore — persistent MApp instance state. */
   magicAppStateStore?: import("./magic-app-state-store.js").MagicAppStateStore;
 
@@ -285,25 +268,10 @@ export interface RuntimeStateDeps {
   aionMicro?: import("./aion-micro-manager.js").AionMicroManager;
   /** Resolved prime directory path. */
   primeDir?: string;
-  /** MarketplaceManager — Claude Code-compatible plugin marketplace. */
-  marketplaceManager?: {
-    getSources(): { id: number; ref: string; sourceType: string; name: string; description?: string; lastSyncedAt: string | null; pluginCount: number }[];
-    addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string };
-    removeSource(id: number): void;
-    syncSource(id: number): Promise<{ ok: boolean; error?: string; pluginCount?: number }>;
-    searchCatalog(params: { q?: string; type?: string; category?: string; provides?: string }): Promise<{ name: string; sourceId: number; installed: boolean; description?: string; type?: string; version?: string; author?: { name: string; email?: string }; category?: string; provides?: string[]; depends?: string[]; tags?: string[]; keywords?: string[]; license?: string; homepage?: string; source: unknown }[]>;
-    install(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; missingDeps?: string[]; autoInstalled?: string[] }>;
-    uninstall(pluginName: string, force?: boolean): Promise<{ ok: boolean; error?: string; dependents?: string[] }>;
-    getInstalled(): Promise<{ name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }[]>;
-    checkUpdates(): Promise<{ updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[]; newInMarketplace: { pluginName: string; version: string; description: string }[] }>;
-    syncLocalCatalog(marketplaceDir: string): Promise<{ ok: boolean; error?: string; pluginCount?: number }>;
-    reconcileInstalled(marketplaceDir: string): Promise<{ updated: string[]; errors: string[] }>;
-    syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
-    backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): Promise<void>;
-    updatePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }>;
-    rebuildPlugin(name: string): Promise<void>;
-    rebuildAll(): Promise<{ rebuilt: string[]; failed: string[] }>;
-  };
+  /** MarketplaceManager — Claude Code-compatible plugin marketplace.
+   *  s140 t599 cycle 194 — replaced 17-line inline structural type with
+   *  the imported class type from @agi/marketplace. */
+  marketplaceManager?: import("@agi/marketplace").MarketplaceManager;
   /** Callback to hot-load a newly installed plugin (discover, activate, bridge). */
   onPluginInstalled?: (installPath: string) => Promise<{ loaded: boolean; pluginId?: string; error?: string }>;
   /** Callback to hot-reload an updated plugin (with ESM cache busting). */
@@ -1052,7 +1020,18 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Projects API only allowed from private network" });
     }
     const projectDirs = deps.workspaceProjects ?? [];
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string }[]; attachedStacks?: { stackId: string }[]; knowledge?: { pages: number; plans: number; chatSessions: number } }[] = [];
+    // s140 cycle-168 t591 SECURITY — tynnToken is REDACTED in this response.
+    // The actual secret never leaves disk. Dashboard consumers should read
+    // `tynnTokenSet` (boolean) for "is the token configured" checks; the
+    // `tynnToken` field is kept for backward-compat callers but is always
+    // null. PUT /api/projects/<path> still accepts a `tynnToken` body field
+    // for setting / clearing the secret.
+    // s140 cycle-176 t597 — repos[] includes isDefault + port so the
+    // Configuration sub-tab can render its primary-repo selector without
+    // a second roundtrip. Both fields are optional in the schema; a
+    // missing isDefault means "no explicit primary" (dispatch falls
+    // back to repos[0]).
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; tynnTokenSet: boolean; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string; isDefault?: boolean; port?: number }[]; attachedStacks?: { stackId: string }[]; knowledge?: { pages: number; plans: number; chatSessions: number } }[] = [];
 
     // Expand top-level entries into (fullPath, coreCollection, coreForkSlug) triples.
     // A directory that contains a `collection.json` with
@@ -1077,8 +1056,20 @@ export async function createGatewayRuntimeState(
                 const childEntries = readdirSync(fullPath, { withFileTypes: true });
                 for (const ce of childEntries) {
                   if (!ce.isDirectory() || ce.name.startsWith(".")) continue;
+                  // Positive identification: only list children that look
+                  // like projects — either they have a project.json (the
+                  // post-s140 marker) OR a .git/ directory (a git repo,
+                  // which the core-fork members all are). This filters
+                  // out stray scaffold dirs (e.g. _aionima/k, /repos,
+                  // /sandbox) that an older migration script accidentally
+                  // created inside the collection before SACRED was set.
+                  const childPath = resolvePath(fullPath, ce.name);
+                  const looksLikeProject =
+                    existsSync(join(childPath, "project.json")) ||
+                    existsSync(join(childPath, ".git"));
+                  if (!looksLikeProject) continue;
                   expanded.push({
-                    fullPath: resolvePath(fullPath, ce.name),
+                    fullPath: childPath,
                     name: ce.name,
                     coreCollection: "aionima",
                     coreForkSlug: ce.name,
@@ -1100,7 +1091,6 @@ export async function createGatewayRuntimeState(
 
     for (const { fullPath, name: entryName, coreCollection, coreForkSlug } of expanded) {
       try {
-        const hasGit = existsSync(join(fullPath, ".git"));
         let tynnToken: string | null = null;
         let metaType: string | null = null;
         let metaCategory: string | null = null;
@@ -1121,6 +1111,18 @@ export async function createGatewayRuntimeState(
             metaAttachedStacks = meta.hosting?.stacks;
           } catch { /* ignore malformed metadata */ }
         }
+        // s140 layout: repos live at <projectPath>/repos/<repoName>/.git/.
+        // Pre-s140 (legacy): repos lived at <projectPath>/.git/. Detect
+        // BOTH so existing projects + new s140-shape projects render as
+        // "has git" in the dashboard. Without the repos[] check the
+        // Repository tab shows the empty-state ("Add Repository / Clone
+        // / Init") even when the repos array is populated — owner-
+        // reported drift cycle 168.
+        const hasGitAtRoot = existsSync(join(fullPath, ".git"));
+        const hasGitInRepos = (metaRepos ?? []).some((r) =>
+          existsSync(join(fullPath, "repos", r.name, ".git")),
+        );
+        const hasGit = hasGitAtRoot || hasGitInRepos;
         const hosting = deps.hostingManager
           ? deps.hostingManager.getProjectHostingInfo(fullPath)
           : { enabled: false, type: "static", hostname: entryName.toLowerCase().replace(/[^a-z0-9]+/g, "-"), docRoot: null, startCommand: null, port: null, mode: "production" as const, internalPort: null, status: "unconfigured" as const, url: null };
@@ -1150,26 +1152,39 @@ export async function createGatewayRuntimeState(
         // each project's knowledge density at a glance.
         let knowledge: { pages: number; plans: number; chatSessions: number } | undefined;
         try {
-          const countJson = (subdir: string): number => {
-            const dir = join(fullPath, "k", subdir);
-            if (!existsSync(dir)) return 0;
-            try {
-              return readdirSync(dir).filter((f) => f.endsWith(".md") || f.endsWith(".json") || f.endsWith(".mdx")).length;
-            } catch { return 0; }
-          };
-          const pages = countJson("knowledge");
-          const plans = countJson("plans");
-          const chatSessions = countJson("chat");
-          if (pages > 0 || plans > 0 || chatSessions > 0) {
-            knowledge = { pages, plans, chatSessions };
+          // Cycle 135 fix: report knowledge counts whenever the k/
+          // scaffold exists (s130-migrated projects), even when the
+          // counts are all zero. Previously, only non-zero totals
+          // populated the field, which made it impossible to tell
+          // "not migrated" from "migrated but empty" in the dashboard.
+          // Now: presence of k/ dir → ▣ 0 for empty; absence → "—".
+          const kRoot = join(fullPath, "k");
+          if (existsSync(kRoot)) {
+            const countJson = (subdir: string): number => {
+              const dir = join(kRoot, subdir);
+              if (!existsSync(dir)) return 0;
+              try {
+                return readdirSync(dir).filter((f) => f.endsWith(".md") || f.endsWith(".json") || f.endsWith(".mdx")).length;
+              } catch { return 0; }
+            };
+            knowledge = {
+              pages: countJson("knowledge"),
+              plans: countJson("plans"),
+              chatSessions: countJson("chat"),
+            };
           }
-        } catch { /* k/ scaffold absent — not s130-migrated, knowledge stays undefined */ }
+        } catch { /* k/ scaffold read errored — knowledge stays undefined */ }
 
         projects.push({
           name: entryName,
           path: fullPath,
           hasGit,
-          tynnToken,
+          // s140 cycle-168 t591 SECURITY — never ship the raw token to
+          // the client. `tynnToken: null` is intentional; the real value
+          // stays on disk in project.json. Use `tynnTokenSet` for "is
+          // configured" checks.
+          tynnToken: null,
+          tynnTokenSet: tynnToken !== null,
           hosting,
           detectedHosting,
           projectType,
@@ -1420,6 +1435,151 @@ export async function createGatewayRuntimeState(
     rmSync(targetPath, { recursive: true, force: true });
     log.info(`project deleted: ${targetPath}`);
     return reply.send({ ok: true, path: targetPath, name: projectName });
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/hosting/migrate-folders — s130 cycle 129
+  // Forces every project in workspace.projects to have the s130 folder
+  // layout scaffolded (.agi/, k/{plans,knowledge,pm,memory,chat}/,
+  // repos/, .trash/). Idempotent — already-scaffolded dirs preserved.
+  // Private network only.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/hosting/migrate-folders", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Hosting API only allowed from private network" });
+    }
+    if (!deps.hostingManager) {
+      return reply.code(503).send({ error: "Hosting not enabled on this gateway" });
+    }
+    try {
+      const result = deps.hostingManager.migrateAllProjectsToFolderLayout();
+      return reply.send(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ error: `migrate-folders failed: ${msg}` });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/hosting/migrate-networks — s130 t515 B3d
+  // Restarts every hosted project so existing aionima-network containers
+  // migrate to their per-project agi-net-<hostname> networks. Safe to
+  // re-run; idempotent. Private network only.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/hosting/migrate-networks", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Hosting API only allowed from private network" });
+    }
+    if (!deps.hostingManager) {
+      return reply.code(503).send({ error: "Hosting not enabled on this gateway" });
+    }
+    try {
+      const result = deps.hostingManager.migrateAllProjectsToNetworks();
+      return reply.send(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ error: `migrate-networks failed: ${msg}` });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // s130 t515 B6a — repos[] CRUD for the dashboard editor
+  //
+  // GET    /api/projects/repos?path=     — list repos for a project
+  // POST   /api/projects/repos?path=     — add a new repo (clones via provisionRepos)
+  // PUT    /api/projects/repos/:name?path= — update an existing repo
+  // DELETE /api/projects/repos/:name?path= — remove + soft-delete to .trash/
+  //
+  // All four are private-network-only (matches existing /api/projects/* gates).
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/projects/repos", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const repos = deps.projectConfigManager.getRepos(targetPath);
+    return reply.send({ repos });
+  });
+
+  fastify.post("/api/projects/repos", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const body = request.body as Record<string, unknown>;
+    if (!body || typeof body !== "object") return reply.code(400).send({ error: "request body must be a repo spec" });
+
+    try {
+      const updated = await deps.projectConfigManager.addRepo(targetPath, body as Parameters<typeof deps.projectConfigManager.addRepo>[1]);
+      return reply.send({ ok: true, config: updated });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ error: `addRepo failed: ${msg}` });
+    }
+  });
+
+  fastify.put<{ Params: { name: string } }>("/api/projects/repos/:name", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const { name } = request.params;
+    const body = request.body as Record<string, unknown>;
+    if (!body || typeof body !== "object") return reply.code(400).send({ error: "request body must be a repo patch" });
+
+    try {
+      const updated = await deps.projectConfigManager.updateRepo(targetPath, name, body as Parameters<typeof deps.projectConfigManager.updateRepo>[2]);
+      return reply.send({ ok: true, config: updated });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("not found") ? 404 : 400;
+      return reply.code(code).send({ error: `updateRepo failed: ${msg}` });
+    }
+  });
+
+  fastify.delete<{ Params: { name: string } }>("/api/projects/repos/:name", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const { name } = request.params;
+    try {
+      const updated = await deps.projectConfigManager.removeRepo(targetPath, name);
+      return reply.send({ ok: true, config: updated });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("not found") ? 404 : 400;
+      return reply.code(code).send({ error: `removeRepo failed: ${msg}` });
+    }
   });
 
   // -----------------------------------------------------------------------
@@ -4155,7 +4315,11 @@ export async function createGatewayRuntimeState(
           const sources = mp.getSources();
           Promise.all(sources.map((s) => mp.syncSource(s.id)))
             .then((results) => {
-              const total = results.reduce((n, r) => n + (r.pluginCount ?? 0), 0);
+              // s140 cycle 194 — was r.pluginCount under the inline structural
+               // type; the real CatalogDiff exposes `total` instead. Fix
+               // surfaced when the inline type was replaced with the imported
+               // class type.
+               const total = results.reduce((n, r) => n + (r.diff?.total ?? 0), 0);
               broadcastUpgrade("complete", `Marketplace synced (${total} plugins)`, "marketplace-sync", "ok");
               broadcastUpgrade("complete", "Deploy complete", "complete", "done");
             })
@@ -4377,6 +4541,19 @@ export async function createGatewayRuntimeState(
       });
     }
   }
+
+  // -----------------------------------------------------------------------
+  // MApp storage API (s140 t599 phase 3)
+  // -----------------------------------------------------------------------
+  // Per-project, per-MApp scoped CRUD under
+  //   /api/projects/<slug>/k/mapps/<id>/...        (persistent)
+  //   /api/projects/<slug>/sandbox/mapps/<id>/...  (generated/temporary)
+  // Required for any MApp that wants to persist user content. Same-origin
+  // sandboxed iframes can call directly via fetch; phase 3.5 will add a
+  // postMessage IPC mediation layer for cross-origin / restricted MApps.
+  registerMAppStorageRoutes(fastify, {
+    workspaceProjects: deps.workspaceProjects ?? [],
+  });
 
   // -----------------------------------------------------------------------
   // Plugin extensibility API — declarative plugin data for dashboard
@@ -5728,6 +5905,69 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // s143 t570 — Circuit-breaker visibility + reset endpoints.
+  //
+  // The CircuitBreakerTracker (cycle 153) records per-service failures
+  // into gateway.json under services.circuitBreaker.states[serviceId].
+  // Cycle 155-157 saw four projects trip to status=open and stay there
+  // because their build dirs don't exist. The operator's only way to
+  // see + reset breakers today is jq + manual file edit, which violates
+  // the dashboard-UI-only discipline (cycle 156 owner directive).
+  //
+  // These routes surface the same data the dashboard's Services page
+  // (t572) consumes, plus reset affordances. All gated to private
+  // network like the rest of the services API.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/services/circuit-breakers", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Services API only allowed from private network" });
+    }
+    if (!deps.circuitBreaker) {
+      return reply.send({ states: {}, openCount: 0, halfOpenCount: 0, totalCount: 0 });
+    }
+    const states = deps.circuitBreaker.listStates();
+    const entries = Object.values(states);
+    return reply.send({
+      states,
+      openCount: entries.filter((s) => s.status === "open").length,
+      halfOpenCount: entries.filter((s) => s.status === "half-open").length,
+      totalCount: entries.length,
+    });
+  });
+
+  fastify.post<{ Params: { id: string } }>("/api/services/circuit-breakers/:id/reset", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Services API only allowed from private network" });
+    }
+    if (!deps.circuitBreaker) {
+      return reply.code(503).send({ error: "Circuit breaker tracker not wired" });
+    }
+    // The serviceId from the URL contains slashes (e.g. hosting:/home/...)
+    // — fastify's :id captures only one segment. Read the full path from
+    // request.url instead so colons + slashes survive routing.
+    const url = request.url; // e.g. /api/services/circuit-breakers/hosting:%2Fhome%2F.../reset
+    const match = /\/api\/services\/circuit-breakers\/(.+)\/reset$/.exec(url);
+    const serviceId = match ? decodeURIComponent(match[1]!) : request.params.id;
+    deps.circuitBreaker.reset(serviceId);
+    return reply.send({ ok: true, serviceId });
+  });
+
+  fastify.post("/api/services/circuit-breakers/reset-all", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Services API only allowed from private network" });
+    }
+    if (!deps.circuitBreaker) {
+      return reply.code(503).send({ error: "Circuit breaker tracker not wired" });
+    }
+    const count = deps.circuitBreaker.resetAll();
+    return reply.send({ ok: true, count });
+  });
+
+  // -----------------------------------------------------------------------
   // Federation & Identity routes
   // -----------------------------------------------------------------------
 
@@ -6438,8 +6678,12 @@ export async function createGatewayRuntimeState(
     fastify.get("/api/mapp-marketplace/catalog", async (_request, reply) => {
       const catalog = await mappMp.getCatalogWithInstalled();
       // Wrap in { apps } for backward compatibility with dashboard
+      // s145 t598: include `name` from the catalog row when present so
+      // dashboard cards show "Admin Editor" rather than the humanize-id
+      // fallback. Older catalog rows have name=null; dashboard's
+      // humanize-fallback (cycle 176) covers those.
       return reply.send({ apps: catalog.map((entry) => ({
-        definition: { id: entry.id, author: entry.author, description: entry.description, category: entry.category, version: entry.version, source: entry.sourcePath },
+        definition: { id: entry.id, name: entry.name, author: entry.author, description: entry.description, category: entry.category, version: entry.version, source: entry.sourcePath },
         source: entry.sourcePath,
         installed: entry.installed,
         sourceId: entry.sourceId,

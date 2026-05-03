@@ -4,9 +4,9 @@
  * s130 t515 slice 6c: gates path access via the shared cage-gate helper.
  */
 import { readdir, readFile } from "node:fs/promises";
-import { resolve, relative, join } from "node:path";
+import { relative, join } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
-import { gatePath, type PathGateConfig } from "./cage-gate.js";
+import { gatePath, resolveCagedPath, type PathGateConfig } from "./cage-gate.js";
 
 const DEFAULT_MAX_RESULTS = 50;
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".next", ".cache"]);
@@ -88,7 +88,7 @@ export function createGrepSearchHandler(config: GrepSearchConfig): ToolHandler {
       return JSON.stringify({ error: "Pattern rejected: nested quantifiers may cause excessive backtracking" });
     }
 
-    const absPath = resolve(config.workspaceRoot, searchPath);
+    const absPath = resolveCagedPath(config, searchPath);
 
     const denial = gatePath(config, absPath);
     if (denial !== null) {

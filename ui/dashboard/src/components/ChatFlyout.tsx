@@ -484,7 +484,17 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   const lastPongAtRef = useRef<number>(Date.now());
   const HEARTBEAT_INTERVAL_MS = 15_000;
   const HEARTBEAT_TIMEOUT_MS = 25_000;
-  const STALL_MS = 120_000;
+  // Stall-timer threshold — fires when the chat WS goes silent for this long
+  // mid-turn. Bumped 120s → 600s in cycle 158 because 2-minute cap clipped
+  // local-model agent loops mid-tool-call: Gemma-4-E2B on Lemonade takes
+  // 60-90s per turn (10K-token prompt × 2 turns + tool-call generation),
+  // putting a 2-tool flow right at the edge of the 120s deadline. Per
+  // `feedback_local_provider_relaxed_timeouts`, local providers need the
+  // 6x timeout multiplier across the chat path. 600s = 5x BASE — gives
+  // Gemma headroom for read→modify→write loops without making cloud-side
+  // stall detection useless. Provider-aware multiplier (cloud=120s,
+  // local=720s) is the proper follow-up.
+  const STALL_MS = 600_000;
 
   const clearStallTimer = useCallback(() => {
     if (stallTimerRef.current) {
@@ -1368,11 +1378,16 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                     <div
                       key={`thought-${msg.timestamp}-${String(idx)}`}
                       data-role="thought"
+                      data-testid={`chat-message-thought-${String(idx)}`}
                       className="flex flex-col items-start gap-1"
                     >
+                      {/* s140 cycle-173 t595 — split speaker label from timestamp
+                          + add data-testid so e2e specs can target by stable
+                          attribute, not the brittle "AION<digit>" regex pattern
+                          that breaks if the timestamp format ever changes. */}
                       <div className="text-[9px] font-semibold uppercase tracking-wider px-1 text-muted-foreground">
-                        {agentLabel}
-                        <span className="ml-2 font-normal opacity-60">
+                        <span data-testid="chat-message-speaker-thought">{agentLabel}</span>
+                        <span className="ml-2 font-normal opacity-60" data-testid="chat-message-timestamp">
                           {new Date(msg.timestamp).toLocaleTimeString()}
                         </span>
                       </div>
@@ -1385,16 +1400,25 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
 
                 // User and assistant messages
                 const isUser = msg.role === "user";
+                const roleKey = isUser ? "user" : "assistant";
                 return (
                   <div
                     key={`${msg.timestamp}-${String(idx)}`}
-                    data-role={isUser ? "user" : "assistant"}
+                    data-role={roleKey}
+                    data-testid={`chat-message-${roleKey}-${String(idx)}`}
                     className={cn("flex flex-col gap-1", isUser ? "items-end" : "items-start")}
                   >
-                    {/* Role label */}
+                    {/* Role label — s140 cycle-173 t595: split speaker from
+                        timestamp + add data-testid so e2e specs can target
+                        by stable attribute. The pre-fix concatenated text
+                        ("AION12:34:56 PM") forced regex matchers like
+                        getByText(/^AION\d/i) which break if the timestamp
+                        format ever changes. */}
                     <div className={cn("text-[9px] font-semibold uppercase tracking-wider px-1", isUser ? "text-primary/60" : "text-muted-foreground")}>
-                      {isUser ? userLabel : agentLabel}
-                      <span className="ml-2 font-normal opacity-60">
+                      <span data-testid={`chat-message-speaker-${roleKey}`}>
+                        {isUser ? userLabel : agentLabel}
+                      </span>
+                      <span className="ml-2 font-normal opacity-60" data-testid="chat-message-timestamp">
                         {new Date(msg.timestamp).toLocaleTimeString()}
                       </span>
                     </div>

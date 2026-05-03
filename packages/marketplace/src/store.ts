@@ -92,6 +92,10 @@ function rowToMAppEntry(
     id: row.mappId,
     sourceId: 0, // legacy field
     author: row.author,
+    // s145 t598: human-readable name from manifest. Nullable column —
+    // legacy catalog rows return undefined, dashboard's humanize-fallback
+    // covers the gap.
+    name: row.name ?? undefined,
     description: row.description ?? undefined,
     category: row.category ?? undefined,
     version: row.version,
@@ -325,6 +329,7 @@ export class MarketplaceStore {
     sourceRef: string,
     mapps: Array<{
       id: string;
+      name?: string;
       author?: string;
       description?: string;
       category?: string;
@@ -349,6 +354,11 @@ export class MarketplaceStore {
               source: (isOfficial ? "official" : "third-party") as typeof mappsMarketplace.$inferInsert["source"],
               sourceRef,
               author,
+              // s145 t598: persist human-readable name from manifest when
+              // catalog provides it. Marketplace-repo can ship updated
+              // marketplace.json with name on each entry; older catalogs
+              // remain valid (column is nullable).
+              name: m.name ?? null,
               description: m.description ?? null,
               category: m.category ?? null,
               version: m.version ?? "",

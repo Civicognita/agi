@@ -57,6 +57,15 @@ interface OpenAIChoice {
   message: {
     role: string;
     content: string | null;
+    /**
+     * Reasoning trace emitted by some OpenAI-compatible servers (notably
+     * llama.cpp / Lemonade) when the model produces a chain-of-thought
+     * before its visible answer. NOT in the standard OpenAI schema, but
+     * common enough in local-model land that ignoring it leaks "[No
+     * response]" UX when the model spent its budget thinking. Cycle 157
+     * — Gemma-4-E2B on Lemonade behaves this way.
+     */
+    reasoning_content?: string | null;
     tool_calls?: OpenAIToolCall[];
   };
   finish_reason: string | null;
@@ -204,7 +213,17 @@ export function toOpenAIToolMessages(results: LLMToolResult[]): OpenAIChatMessag
 export function fromOpenAICompletion(
   completion: OpenAICompletion,
 ): LLMResponse {
-  const choice = completion.choices[0];
+  // Defensive: OpenAI-compatible servers (e.g. Lemonade) sometimes return
+  // a completion envelope with a missing or non-array `choices` key,
+  // which would throw "Cannot read properties of undefined (reading '0')"
+  // on the bare `completion.choices[0]` access — the guard below catches
+  // an empty array but NOT an absent key. Optional-chain so the
+  // `choice === undefined` branch returns a clean empty response and
+  // the chat surfaces "no completion" instead of crashing the agent
+  // invocation pipeline. Reproduced cycle 157 morning when civicognita_ops
+  // chat hit Lemonade/Gemma and the response envelope shape didn't carry
+  // a choices array.
+  const choice = completion.choices?.[0];
   if (choice === undefined) {
     return {
       text: "",
@@ -217,7 +236,24 @@ export function fromOpenAICompletion(
     };
   }
 
-  const rawContent = choice.message.content ?? "";
+  // Cycle 157 — some OpenAI-compatible servers (Lemonade/llama.cpp with
+  // reasoning models like Gemma) split the model output into:
+  //   - message.content: the user-visible answer (often empty when the
+  //     model spent its budget thinking, or stops before producing the
+  //     answer)
+  //   - message.reasoning_content: the chain-of-thought trace that
+  //     preceded the answer
+  // Our LLMResponse contract represents thinking via thinkingBlocks
+  // (Anthropic-shaped) and visible text via .text. Map reasoning_content
+  // into a thinkingBlock so callers can surface it as a foldable trace,
+  // and fall back to using it AS the visible text when content is empty
+  // — better than showing the user "[No response]" while the model
+  // actually thought through the question.
+  const rawReasoning = choice.message.reasoning_content ?? "";
+  let rawContent = choice.message.content ?? "";
+  if (rawContent.length === 0 && rawReasoning.length > 0) {
+    rawContent = rawReasoning;
+  }
   const rawToolCalls = choice.message.tool_calls ?? [];
 
   const toolCalls: LLMToolCall[] = rawToolCalls.map((tc) => ({
@@ -252,17 +288,25 @@ export function fromOpenAICompletion(
   else if (choice.finish_reason === "length") stopReason = "max_tokens";
   else if (choice.finish_reason !== null) stopReason = choice.finish_reason;
 
+  // Always preserve the reasoning trace (when present) as a thinking
+  // block — orthogonal to the content/empty-fallback above. Lets the
+  // dashboard render it as a foldable trace AND keeps the content
+  // surface clean when the model produced both.
+  const thinkingBlocks = rawReasoning.length > 0
+    ? [{ thinking: rawReasoning, signature: "" }]
+    : [];
+
   return {
     text: rawContent,
     toolCalls,
     contentBlocks,
     stopReason,
+    thinkingBlocks,
     usage: {
       inputTokens: completion.usage?.prompt_tokens ?? 0,
       outputTokens: completion.usage?.completion_tokens ?? 0,
     },
     model: completion.model,
-    thinkingBlocks: [],
   };
 }
 
@@ -445,6 +489,6 @@ export class OpenAIProvider implements LLMProvider {
       1024,
     );
 
-    return completion.choices[0]?.message.content ?? "";
+    return completion.choices?.[0]?.message.content ?? "";
   }
 }

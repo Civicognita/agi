@@ -389,6 +389,92 @@ export interface MAppOutput {
  * }
  * ```
  */
+// ---------------------------------------------------------------------------
+// Screens primitive (s146 Phase A.1, owner-confirmed cycle 181)
+// ---------------------------------------------------------------------------
+
+/** Coarse type for a screen's input prop. */
+export type MAppScreenInputType =
+  | "string"
+  | "text"
+  | "number"
+  | "boolean"
+  | "date"
+  | "select"
+  | "object";
+
+/** Filled-state qualifier — owner's primitive 2026-05-02. */
+export type MAppScreenInputQualifier = "required" | "prefilled" | "optional";
+
+/** Where input values can come from. Symmetric — user OR agent OR either. */
+export type MAppScreenInputSource = "user" | "agent" | "either";
+
+/** A typed input prop on a screen. */
+export interface MAppScreenInput {
+  /** Stable identifier (referenced as `$input.key` in element bindings). */
+  key: string;
+  /** Display label. */
+  label: string;
+  /** Coarse type. */
+  type: MAppScreenInputType;
+  /** Filled-state qualifier. */
+  qualifier: MAppScreenInputQualifier;
+  /** Where values can come from. Defaults to "either". */
+  source?: MAppScreenInputSource;
+  /** Default value. Required when qualifier="prefilled". */
+  default?: unknown;
+  /** Description shown to user OR included in agent context. */
+  description?: string;
+  /** Allowed options when type="select". */
+  options?: string[];
+}
+
+/** A PAx component placement on a screen. */
+export interface MAppScreenElement {
+  /** Stable identifier within the screen (used by wirings to target it). */
+  id: string;
+  /** Reference to a PAx component as "<package>:<ComponentName>" — e.g.
+   *  "react-fancy:Card", "fancy-code:Editor", "fancy-echarts:Chart". */
+  componentRef: string;
+  /** Component-specific props. Forwarded to the PAx component verbatim. */
+  props?: Record<string, unknown>;
+  /** Nested children for container components (Card, Tabs, etc.). */
+  children?: unknown[];
+}
+
+/** Per-screen mini-agent — Hybrid shape (s146 phase C, owner cycle 190). */
+export type MAppScreenMiniAgentToolMode = "auto" | "whitelist" | "blacklist";
+
+export interface MAppScreenMiniAgent {
+  /** Natural-language intent. Sent to agent-invoker at evaluation time
+   *  alongside the screen's current input values. */
+  intent: string;
+  /** How the tool set is determined. Default "auto" — runtime picks. */
+  toolMode?: MAppScreenMiniAgentToolMode;
+  /** Tool ids, when toolMode is "whitelist" or "blacklist". */
+  tools?: string[];
+}
+
+/** A screen in a MApp. */
+export interface MAppScreen {
+  /** Stable identifier within the MApp. Pattern: `^[a-z0-9][a-z0-9_-]*$`. */
+  id: string;
+  /** Display label. */
+  label: string;
+  /** Static = composition fixed at author time; dynamic = composition can
+   *  change at runtime (Phase D defines the mechanism). Default static. */
+  interface?: "static" | "dynamic";
+  /** Typed input props consumed by the screen's elements + mini-agent. */
+  inputs?: MAppScreenInput[];
+  /** Composed elements drawn from PAx components. */
+  elements: MAppScreenElement[];
+  /** Optional per-screen mini-agent (s146 phase C). When omitted, screen
+   *  renders without agentic processing — purely declarative. */
+  miniAgent?: MAppScreenMiniAgent;
+}
+
+// ---------------------------------------------------------------------------
+
 export interface MAppDefinition {
   /** Schema version. Must be "mapp/1.0". */
   $schema: typeof MAPP_SCHEMA_VERSION;
@@ -436,6 +522,13 @@ export interface MAppDefinition {
   // --- Forms ---
   /** Multi-step form pages (for tool/suite MApps). */
   pages?: MAppPage[];
+  /** Screens primitive (s146 Phase A.1, owner-confirmed cycle 181) — coexists
+   *  with `pages` for legacy form-and-formula MApps. New iframe-rendered
+   *  MApps use this: each screen is a PAx-component composition with typed
+   *  input props (required/prefilled/optional, user/agent source) and a
+   *  per-screen mini-agent (mini-agent shape gated on owner judgment, see
+   *  s146 open questions). */
+  screens?: MAppScreen[];
   /** Constants used in formulas (C-column). */
   constants?: MAppConstant[];
   /** Output configuration (what happens after form submission). */

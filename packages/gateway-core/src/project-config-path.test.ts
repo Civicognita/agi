@@ -15,6 +15,7 @@ import {
   migrateProjectConfig,
   projectConfigPath,
   scaffoldProjectFolders,
+  isSacredProjectPath,
   PROJECT_FOLDER_LAYOUT,
 } from "./project-config-path.js";
 
@@ -54,8 +55,8 @@ describe("project-config-path", () => {
   });
 
   describe("newProjectConfigPath / legacyProjectConfigPath", () => {
-    it("newProjectConfigPath joins projectPath/.agi/project.json", () => {
-      expect(newProjectConfigPath(projectPath)).toBe(join(projectPath, ".agi", "project.json"));
+    it("newProjectConfigPath joins projectPath/project.json (s140 root)", () => {
+      expect(newProjectConfigPath(projectPath)).toBe(join(projectPath, "project.json"));
     });
 
     it("legacyProjectConfigPath uses ~/.agi/{slug}/project.json", () => {
@@ -122,16 +123,13 @@ describe("project-config-path", () => {
       expect(result.scaffolded).toBeDefined();
       // After migration, all eight s130 layout dirs must exist. The
       // `scaffolded` count may be less than 8 because `.agi/` was
-      // already created by the file-copy step (mkdirSync(dirname(newPath)))
-      // before scaffoldProjectFolders ran — so .agi/ is "pre-existing"
-      // from scaffold's perspective. The contract that matters is
-      // that every layout dir exists, not who created it.
+      // s140: project.json lives at root (no .agi/ needed for the
+      // file-copy step). All layout dirs are scaffolded fresh by
+      // migrateProjectConfig.
       for (const rel of PROJECT_FOLDER_LAYOUT) {
         expect(existsSync(join(projectPath, rel))).toBe(true);
       }
-      // .agi was created by the file-copy step, so 7 of 8 are reported
-      // as scaffold-created (the rest are post-copy).
-      expect(result.scaffolded).toHaveLength(PROJECT_FOLDER_LAYOUT.length - 1);
+      expect(result.scaffolded).toHaveLength(PROJECT_FOLDER_LAYOUT.length);
     });
   });
 
@@ -152,11 +150,12 @@ describe("project-config-path", () => {
 
     it("creates only missing dirs when some exist", () => {
       // Pre-create one dir; scaffold should create the remaining N-1.
-      mkdirSync(join(projectPath, ".agi"), { recursive: true });
+      // s140: pick `repos` since `.agi` is no longer in the layout.
+      mkdirSync(join(projectPath, "repos"), { recursive: true });
       const result = scaffoldProjectFolders(projectPath);
       expect(result.created).toHaveLength(PROJECT_FOLDER_LAYOUT.length - 1);
-      // .agi was pre-existing, so it shouldn't be in the created list
-      expect(result.created.some((p) => p.endsWith(".agi"))).toBe(false);
+      // repos was pre-existing, so it shouldn't be in the created list
+      expect(result.created.some((p) => p.endsWith("/repos"))).toBe(false);
     });
 
     it("layout includes all five k/ subfolders per Q-3 owner answer", () => {
@@ -164,6 +163,68 @@ describe("project-config-path", () => {
       for (const rel of expected) {
         expect(PROJECT_FOLDER_LAYOUT).toContain(rel);
       }
+    });
+  });
+
+  describe("sacred-skip (cycle 150 hotfix v0.4.426)", () => {
+    it("isSacredProjectPath returns true for the 11 sacred names", () => {
+      const sacred = [
+        "_aionima",  // workspace-grouping container (cycle 150)
+        "agi", "prime", "id", "marketplace", "mapp-marketplace",
+        "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d",
+      ];
+      for (const name of sacred) {
+        expect(isSacredProjectPath(`/some/parent/${name}`)).toBe(true);
+        // Case-insensitive
+        expect(isSacredProjectPath(`/some/parent/${name.toUpperCase()}`)).toBe(true);
+      }
+    });
+
+    it("_aionima container is sacred — owner clarified cycle 150", () => {
+      // The /home/wishborn/_projects/_aionima/ dir holds the 5 Aionima cores
+      // + 4-soon-5 PAx packages. The container itself must never be migrated.
+      expect(isSacredProjectPath("/home/wishborn/_projects/_aionima")).toBe(true);
+      // With trailing slash too
+      expect(isSacredProjectPath("/home/wishborn/_projects/_aionima/")).toBe(true);
+    });
+
+    it("isSacredProjectPath returns false for arbitrary names", () => {
+      for (const name of ["myproject", "blackorchid_web", "kronos_trader", "ra_web"]) {
+        expect(isSacredProjectPath(`/some/parent/${name}`)).toBe(false);
+      }
+    });
+
+    it("migrateProjectConfig skips sacred repos (no scaffold, no file moves)", () => {
+      const sacredPath = join(tmpRoot, "agi");
+      mkdirSync(sacredPath, { recursive: true });
+      // Even if a legacy config exists, sacred-skip wins.
+      mkdirSync(join(sacredPath, ".agi"), { recursive: true });
+      writeFileSync(join(sacredPath, ".agi", "project.json"), JSON.stringify({ name: "agi" }), "utf-8");
+      const result = migrateProjectConfig(sacredPath);
+      expect(result.migrated).toBe(false);
+      expect(result.scaffolded).toBeUndefined();
+      // No new project.json at root
+      expect(existsSync(join(sacredPath, "project.json"))).toBe(false);
+      // No k/ scaffolded
+      expect(existsSync(join(sacredPath, "k"))).toBe(false);
+    });
+
+    it("scaffoldProjectFolders is a no-op for sacred repos", () => {
+      const sacredPath = join(tmpRoot, "fancy-code");
+      mkdirSync(sacredPath, { recursive: true });
+      const result = scaffoldProjectFolders(sacredPath);
+      expect(result.created).toEqual([]);
+      expect(existsSync(join(sacredPath, "k"))).toBe(false);
+    });
+
+    it("projectConfigPath does not auto-write for sacred repos", () => {
+      const sacredPath = join(tmpRoot, "prime");
+      mkdirSync(sacredPath, { recursive: true });
+      // No legacy config exists. Should return canonical path WITHOUT
+      // writing anything.
+      const cfgPath = projectConfigPath(sacredPath);
+      expect(cfgPath).toBe(join(sacredPath, "project.json"));
+      expect(existsSync(cfgPath)).toBe(false);
     });
   });
 

@@ -33,6 +33,9 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Card } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { ModelsTab } from "@/components/ModelsTab";
+import { DevNote } from "@/components/ui/dev-notes";
 import {
   fetchProvidersCatalog,
   fetchActiveProvider,
@@ -796,24 +799,30 @@ export default function SettingsProvidersPage() {
 
   return (
     <div className="space-y-6">
-      {/* Disclaimer banner — visual design discipline (mockup is layout, not contract) */}
-      <div className="px-4 py-3 rounded-lg border-l-4 border-amber-400 border border-amber-400/30 bg-amber-400/5 text-[12.5px] leading-relaxed">
-        <strong className="text-amber-400 uppercase tracking-wider text-[11px]">
-          ⚠ Implementation in progress
-        </strong>
-        <p className="mt-1 text-foreground">
-          This is the first slice of the Providers route. Catalog rendering, off-grid toggle, and
-          active-Provider highlight ship in v0.4.208. Mission Control hero, cost-mode dial,
-          Runtimes strip, decision feed, and what-if simulator land in follow-up cycles. See
-          <code className="bg-background px-1.5 py-0.5 rounded mx-1 text-[11px]">tynn s111</code>
-          for the task chain.
-        </p>
-      </div>
-
       {/* Page head */}
       <div className="flex items-end justify-between gap-8 flex-wrap">
         <div>
           <h1 className="text-[28px] font-semibold tracking-tight">Providers</h1>
+          <DevNote heading="Cycle 129 directive — model management consolidation" kind="info" scope="settings/providers">
+            Models tab (cycle 141) is now the single UI source of truth for what each Provider can serve.
+            Cloud REST /v1/models live for anthropic + openai (cycle 142, requires API key). Ollama + Lemonade
+            populate from their daemons. HF goes through /api/hf/models still.
+          </DevNote>
+          <DevNote heading="Cycle 142 — OpenAI chat-id filter" kind="info" scope="settings/providers">
+            OpenAI's /v1/models returns ~70 entries including whisper/dall-e/embeddings/tts/moderation.
+            Filtered to chat-capable id patterns: gpt-*, o1-*, o3-*, o4-*, chatgpt-*. Update the regex
+            in providers-api.ts isOpenAIChatModel() when OpenAI ships new chat families.
+          </DevNote>
+          <DevNote heading="Plugin SDK adoption pending (cycle-129 sub-task 5)" kind="todo" scope="settings/providers">
+            Ollama + Lemonade providers should adopt the SDK contract `defineProvider().fetchModels(fn)`
+            (cycle 139, v0.4.407). Currently the gateway has built-in switch logic for them in
+            getModelsForBuiltin. Moving to the plugin path generalizes to Linear/Jira-style PM providers.
+          </DevNote>
+          <DevNote heading="Legacy per-runtime model UIs to remove (cycle-129 sub-task 6)" kind="todo" scope="settings/providers">
+            The old "load model" UI on Ollama / Lemonade provider settings pages should redirect to
+            the Models tab once the plugin SDK adoption lands. Models tab becomes the single source of
+            truth for model lifecycle (start/stop/uninstall).
+          </DevNote>
           <p className="text-muted-foreground mt-1 max-w-[56ch] text-[13.5px]">
             Aion's available brains. Each Provider is a catalog of models. The Agent Router picks
             the right Provider + model for each turn — you tell it how to prefer cost vs capability,
@@ -829,6 +838,19 @@ export default function SettingsProvidersPage() {
           />
         )}
       </div>
+
+      {/* Owner directive cycle 129: split the page into two tabs.
+          - "Providers" keeps today's catalog + router + cards
+          - "Models" is the new consolidated entry point for installed
+            local models. HF Marketplace remains the discovery/download
+            flow; lifecycle (start/stop/uninstall) lives here. */}
+      <Tabs defaultValue="providers">
+        <TabsList variant="line">
+          <TabsTrigger value="providers" data-testid="providers-tab-providers">Providers</TabsTrigger>
+          <TabsTrigger value="models" data-testid="providers-tab-models">Models</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="providers" className="mt-4 space-y-6">
 
       {/* Mission Control hero — most recent routing decision (s111 t419).
           Hides when no decisions exist yet (fresh boot, no turns). */}
@@ -890,6 +912,12 @@ export default function SettingsProvidersPage() {
           Last action failed: {error}
         </div>
       )}
+        </TabsContent>
+
+        <TabsContent value="models" className="mt-4">
+          <ModelsTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

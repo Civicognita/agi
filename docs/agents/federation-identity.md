@@ -146,6 +146,127 @@ Functions in `entity-map.ts`: `generateEntityMap()`, `verifyEntityMap()`, `isEnt
 | POST | `/mycelium/ring/announce` | Ring announce (trust >= 1) |
 | GET | `/mycelium/identity/map/:geid` | Fetch EntityMap (trust >= 1) |
 
+## Third-party broker pattern (GitHub, Plaid, …)
+
+Local-ID is the canonical home for any third-party API that consumes
+**user-bound credentials** — the OAuth flow and token storage live there;
+agi consumes brokered tokens via private-network HTTP. Per memory rule
+`feedback_third_party_oauth_lives_in_localid` and CLAUDE.md § 7.
+
+The GitHub flow (RFC 8628 device flow) and the Plaid flow (Plaid Link
+browser-side widget) implement different OAuth shapes but expose the
+**same broker contract** to agi:
+
+```
+GET https://id.ai.on/api/auth/<provider>-flow/token
+  ?provider=<provider>&role=<role>
+→ { provider, role, accountLabel, accessToken, tokenType, tokenExpiresAt, scopes }
+```
+
+Plaid uses route prefix `plaid-link` (not `plaid-flow`) since Plaid Link
+is OAuth 2.0 redirect-style, not RFC 8628 device flow. Owner's choice
+cycle 211 to keep the route name accurate.
+
+### Plaid integration (s147 t611 + t614 + t615 + t616)
+
+Plaid is **system-level for Aion** (registered globally to the agent's
+tool palette so Aion can read bank accounts directly), with MApps as
+secondary consumers via mini-agent auto-discovery. End-to-end across
+three repos:
+
+```
+┌──────────────────────────────────────┐                ┌──────────────────────┐
+│  Owner browser                        │                │ Plaid                │
+│  https://id.ai.on/dashboard           │  Plaid Link    │ (api.plaid.com)      │
+│  "Connect Bank Account"               │ ◄──widget────► │                      │
+└────────────┬─────────────────────────┘                └──────────┬───────────┘
+              │ POST /api/auth/plaid-link/{create-link-token,             ▲
+              │   exchange-public-token, items/<id>/remove}                │
+              ▼                                                            │
+┌──────────────────────────────────────┐                                   │ /link/token/create
+│  Local-ID  (id.ai.on)                 │                                   │ /item/public_token/exchange
+│  Postgres connections row              │ ─────reads PLAID creds via Vault─┤ /accounts/get
+│  role="plaid-item:<itemId>"            │                                   │ /transactions/get
+│  accessToken encrypted (AES-256-GCM)   │                                   │ /accounts/balance/get
+└────────────┬─────────────────────────┘                                   │ /identity/get
+              │  GET /api/auth/plaid-link/token                              │ /item/remove
+              │     ?provider=plaid&role=plaid-item:<id>                     │
+              ▼                                                              │
+┌──────────────────────────────────────┐  reads vault://… in-process    ┌──┴───────────────┐
+│  agi gateway                          │ ◄────────────────────────────► │ agi Vault        │
+│  plugin-plaid-api (4 tools)           │   GET /api/vault/<entry-id>    │ ~/.agi/secrets/  │
+│  registered globally to ToolRegistry  │                                │   vault/*.cred   │
+└──────────────────────────────────────┘                                └──────────────────┘
+```
+
+#### Local-ID routes (`agi-local-id/src/routes/plaid-link.ts`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/auth/plaid-link/create-link-token` | Issue Plaid `link_token` to browser (used by widget) |
+| POST | `/api/auth/plaid-link/exchange-public-token` | Exchange `public_token` → encrypted `access_token` |
+| GET | `/api/auth/plaid-link/token?provider=plaid&role=plaid-item:<id>` | Broker — returns decrypted access_token to private-network owner |
+| POST | `/api/auth/plaid-link/items/:itemId/remove` | Plaid `/item/remove` + drop local row |
+| GET | `/api/auth/plaid-link/items` | List linked items (no tokens) for dashboard rendering |
+
+CSRF middleware is intentionally exempt for `/api/auth/plaid-link/*` —
+mirrors the device-flow exemption. The private-network owner gate
+(`isPrivateNetwork()` + `identity.isOwner`) is the credential.
+
+#### Multi-bank support: role-encoding
+
+The `connections` table's existing unique index is
+`(user_id, provider, role)`. For Plaid, we encode the Plaid item id into
+the `role` field as `plaid-item:<itemId>`. One linked bank per row;
+unlimited banks per user. **No schema migration needed.**
+
+#### Secrets — Vault is Single Source of Truth
+
+`PLAID_CLIENT_ID` + `PLAID_SECRET` live as gateway-scoped Vault entries.
+Both Local-ID (during OAuth) and the agi-side plugin (during tool calls)
+resolve them at runtime via the gateway's Vault HTTP API
+(`GET /api/vault/<id>`). Vault entry IDs are owner-set via env vars
+(`PLAID_CLIENT_ID_VAULT_REF` + `PLAID_SECRET_VAULT_REF`), not hardcoded
+in source. Per memory rule
+`feedback_localid_private_be_careful_what_ships_in_agi`.
+
+#### agi-side caller pattern (`plugin-plaid-api`)
+
+```ts
+async function getPlaidToken(itemId: string): Promise<string> {
+  const base = process.env.LOCAL_ID_BASE_URL ?? "https://id.ai.on";
+  const url = `${base}/api/auth/plaid-link/token?provider=plaid&role=plaid-item:${encodeURIComponent(itemId)}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(5_000) });
+  // …error handling that points the user at https://id.ai.on/dashboard
+  return (await res.json()).accessToken;
+}
+```
+
+Mirrors the GitHub broker caller in `dev-mode-auth.ts:43-66` — same
+shape, swapped path. Plugins for future third-party APIs (Stripe,
+Twilio, Google, …) follow the same pattern: route prefix in Local-ID
+under `/api/auth/<provider>-link` (or `<provider>-flow` for
+device-flow-style providers), broker route `GET …/token`, agi-side
+plugin reads via fetch.
+
+#### Plaid-specific behaviors
+
+- **`/item/remove` cleanup on disconnect** — Plaid requires server-side
+  notification when a bank is unlinked, unlike GitHub which has no
+  equivalent. Local-ID's `POST /items/:itemId/remove` calls Plaid then
+  deletes the local row. Cleanup is best-effort: if Vault is unreachable
+  or the network call fails, the local row is dropped anyway and the
+  owner can manually revoke at Plaid's dashboard.
+- **Webhooks (future scope)** — Plaid pushes events
+  (`TRANSACTIONS_UPDATED`, `ITEM_LOGIN_REQUIRED`, etc.) to a configured
+  URL. Production-grade integration adds a Local-ID webhook endpoint with
+  Plaid signature verification. Not blocking sandbox-mode operation; not
+  shipped in s147.
+- **Reauth flow UI (future scope)** — when an item gets
+  `ITEM_LOGIN_REQUIRED`, the dashboard should surface a reauth prompt.
+  Mirrors the GitHub equivalent which doesn't fully exist yet either;
+  track as a separate Local-ID enhancement.
+
 ## Server Wiring
 
 Federation components are initialized in `server.ts` (Step 3f) when `federation.enabled` is true:

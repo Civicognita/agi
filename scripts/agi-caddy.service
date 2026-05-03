@@ -28,6 +28,7 @@ ExecStart=/usr/bin/podman run \
 	-v /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
 	-v %h/.local/share/agi-caddy/data:/data \
 	-v %h/.local/share/agi-caddy/config:/config \
+	-v %h/_projects:%h/_projects:ro \
 	-p 80:80 \
 	-p 443:443 \
 	docker.io/caddy:2.8-alpine

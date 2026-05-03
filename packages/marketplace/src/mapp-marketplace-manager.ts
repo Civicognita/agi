@@ -208,12 +208,12 @@ export class MAppMarketplaceManager {
   // Private helpers
   // -------------------------------------------------------------------------
 
-  private async fetchCatalogFromSource(ref: string): Promise<{ ok: boolean; mapps: Array<{ id: string; author?: string; description?: string; category?: string; version?: string; source?: string }>; error?: string }> {
+  private async fetchCatalogFromSource(ref: string): Promise<{ ok: boolean; mapps: Array<{ id: string; name?: string; author?: string; description?: string; category?: string; version?: string; source?: string }>; error?: string }> {
     const result = await this.fetchFileFromSource(ref, "marketplace.json");
     if (!result.ok) return { ok: false, mapps: [], error: result.error };
     const data = result.data as { mapps?: unknown[] };
     if (!Array.isArray(data.mapps)) return { ok: false, mapps: [], error: "marketplace.json missing mapps array" };
-    return { ok: true, mapps: data.mapps as Array<{ id: string; author?: string; description?: string; category?: string; version?: string; source?: string }> };
+    return { ok: true, mapps: data.mapps as Array<{ id: string; name?: string; author?: string; description?: string; category?: string; version?: string; source?: string }> };
   }
 
   private async fetchFileFromSource(ref: string, path: string): Promise<{ ok: boolean; data?: unknown; error?: string }> {

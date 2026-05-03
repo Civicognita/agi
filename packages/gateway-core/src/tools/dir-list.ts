@@ -4,9 +4,9 @@
  * s130 t515 slice 6c: gates path access via the shared cage-gate helper.
  */
 import { readdir } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { join } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
-import { gatePath, type PathGateConfig } from "./cage-gate.js";
+import { gatePath, resolveCagedPath, type PathGateConfig } from "./cage-gate.js";
 
 export interface DirListConfig extends PathGateConfig {}
 
@@ -15,7 +15,7 @@ export function createDirListHandler(config: DirListConfig): ToolHandler {
     const dirPath = String(input.path ?? ".");
     const pattern = input.pattern ? String(input.pattern) : undefined;
 
-    const absPath = resolve(config.workspaceRoot, dirPath);
+    const absPath = resolveCagedPath(config, dirPath);
 
     const denial = gatePath(config, absPath);
     if (denial !== null) {

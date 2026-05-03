@@ -184,6 +184,9 @@ export interface MAppCatalogEntry {
   id: string;
   sourceId: number;
   author: string;
+  /** Human-readable display name from the MApp manifest (s145 t598). When
+   *  absent, dashboard humanizes the id as a fallback. */
+  name?: string;
   description?: string;
   category?: string;
   version?: string;
@@ -193,6 +196,10 @@ export interface MAppCatalogEntry {
 export interface MAppCatalog {
   mapps: Array<{
     id: string;
+    /** Human-readable display name (s145 t598). Optional in the catalog
+     *  payload so older marketplace.json files stay valid; when present,
+     *  stored on the catalog row + surfaced in the dashboard cards. */
+    name?: string;
     author?: string;
     description?: string;
     category?: string;

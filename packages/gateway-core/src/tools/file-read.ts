@@ -6,9 +6,8 @@
  * absent or null, falls back to the workspaceRoot boundary check.
  */
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
-import { gatePath, type PathGateConfig } from "./cage-gate.js";
+import { gatePath, resolveCagedPath, type PathGateConfig } from "./cage-gate.js";
 
 const DEFAULT_LINE_LIMIT = 2000;
 
@@ -20,7 +19,7 @@ export function createFileReadHandler(config: FileReadConfig): ToolHandler {
     const offset = Number(input.offset ?? 0);
     const limit = Number(input.limit ?? DEFAULT_LINE_LIMIT);
 
-    const absPath = resolve(config.workspaceRoot, filePath);
+    const absPath = resolveCagedPath(config, filePath);
 
     const denial = gatePath(config, absPath);
     if (denial !== null) {

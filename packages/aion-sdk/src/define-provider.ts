@@ -26,13 +26,14 @@
  * ```
  */
 
-import type { LLMProviderDefinition, LLMProviderFactory, ProviderField } from "@agi/plugins";
-export type { ProviderField };
+import type { LLMProviderDefinition, LLMProviderFactory, ProviderField, ProviderModelInfo } from "@agi/plugins";
+export type { ProviderField, ProviderModelInfo };
 
 class ProviderBuilder {
   private def: Partial<LLMProviderDefinition> & { id: string; name: string };
   private _fields: ProviderField[] = [];
   private _checkBalance?: (config: Record<string, unknown>) => Promise<number | null>;
+  private _getModels?: (config: Record<string, unknown>) => Promise<ProviderModelInfo[] | null>;
 
   constructor(id: string, name: string) {
     this.def = { id, name, requiresApiKey: true, models: [] };
@@ -89,6 +90,26 @@ class ProviderBuilder {
     return this;
   }
 
+  /**
+   * Register a function that returns the live list of models the provider can
+   * serve (cycle 129 cloud-provider SDK contract). The function receives the
+   * provider's saved config (apiKey, baseUrl, etc.) and returns
+   * ProviderModelInfo[] on success or null when the provider is unreachable /
+   * unauthenticated / has no list endpoint.
+   *
+   * The function must not throw — wrap network errors and return null. The
+   * Models tab and agent-router use this to populate dropdowns; cache
+   * aggressively in the plugin since this may be called frequently while the
+   * tab is open.
+   *
+   * Local providers (Ollama, Lemonade) populate from their own daemon; cloud
+   * providers (Anthropic, OpenAI, Groq) populate from their REST API.
+   */
+  fetchModels(fn: (config: Record<string, unknown>) => Promise<ProviderModelInfo[] | null>): this {
+    this._getModels = fn;
+    return this;
+  }
+
   build(): LLMProviderDefinition {
     if (!this.def.defaultModel) throw new Error("LLMProviderDefinition requires a defaultModel");
     if (!this.def.factory) throw new Error("LLMProviderDefinition requires a factory");
@@ -98,6 +119,7 @@ class ProviderBuilder {
     if (!this.def.envKey) this.def.envKey = "";
     if (this._fields.length > 0) this.def.fields = this._fields;
     if (this._checkBalance) this.def.checkBalance = this._checkBalance;
+    if (this._getModels) this.def.getModels = this._getModels;
     return this.def as LLMProviderDefinition;
   }
 }

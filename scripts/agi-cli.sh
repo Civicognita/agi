@@ -1914,9 +1914,11 @@ cmd_help() {
   echo "  test-vm CMD     Manage test VM (status|create|destroy|provision|setup|"
   echo "                  services-setup|services-start|services-stop|services-restart|"
   echo "                  services-status|services-version|services-align|test|test-ui|remount)"
-  echo "  test [KIND] PAT Run the test suite (--unit|--e2e|--e2e-ui|--spot|--all|--list)"
+  echo "  test [KIND] PAT Run the test suite (--unit|--e2e|--e2e-ui|--e2e-headed|--spot|--all|--list)"
   echo "                  agi test dashboard            — unit (default)"
-  echo "                  agi test --e2e mapps-walk     — Playwright against VM"
+  echo "                  agi test --e2e mapps-walk     — Playwright against VM (headless)"
+  echo "                  agi test --e2e-ui chat-workflow — open Playwright UI runner"
+  echo "                  agi test --e2e-headed mapps-walk — visible auto-run, no UI shell"
   echo "                  agi test --spot hardware      — spot feature test"
   echo "  bash CMD...     Run a shell command through Aion's secure entryway"
   echo "                  (logged to ~/.agi/logs/agi-bash-*.jsonl with caller"
@@ -1924,6 +1926,9 @@ cmd_help() {
   echo "  scan PATH       Run a security scan on PATH (sast|sca|secrets|config),"
   echo "                  poll until done, render findings; CI-friendly exit codes."
   echo "                  Subcmds: list, view <id>, cancel <id>"
+  echo "  project-migrate <id> [--dry-run|--execute]"
+  echo "                  Run a project-folder migration script. Currently available:"
+  echo "                  s140 — k/+repos/+chat/+sandbox/ layout + root project.json"
   echo "  setup           Interactive configuration wizard"
   echo "  setup-prompts   Configure persona and heartbeat prompts"
   echo "  setup-claude-hooks"
@@ -1950,7 +1955,22 @@ case "${1:-help}" in
   restart)  cmd_restart ;;
   start)    cmd_start ;;
   stop)     cmd_stop ;;
-  doctor)   cmd_doctor ;;
+  doctor)
+    case "${2:-}" in
+      schema)
+        # s144 t575 — schema validation diagnostic. Walks every on-disk
+        # config file the gateway reads at boot and runs each through
+        # its Zod schema. Catches the cycle-150 class of failures
+        # (project.json shape drift, gateway.json schema regression)
+        # BEFORE attempting upgrade or restart.
+        shift; shift
+        cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts schema validate "$@"
+        ;;
+      *)
+        cmd_doctor
+        ;;
+    esac
+    ;;
   safemode) shift; cmd_safemode "$@" ;;
   incidents) shift; cmd_incidents "$@" ;;
   scan) shift; cmd_scan "$@" ;;
@@ -1963,6 +1983,25 @@ case "${1:-help}" in
   ollama)   shift; cmd_ollama "$@" ;;
   test-vm)  shift; cmd_test_vm "$@" ;;
   test)     shift; bash "$DEPLOY_DIR/scripts/agi-test.sh" "$@" ;;
+  project-migrate)
+    shift
+    storyId="${1:-}"
+    shift 2>/dev/null || true
+    if [ -z "$storyId" ]; then
+      err "agi project-migrate: missing story id"
+      echo "Usage: agi project-migrate <story-id> [--dry-run|--execute]" >&2
+      echo "Available migrations:" >&2
+      echo "  s140   Project folder restructure (k/ + repos/ + chat/ + sandbox/ + project.json)" >&2
+      exit 1
+    fi
+    script="$DEPLOY_DIR/scripts/migrate-projects-${storyId}.sh"
+    if [ ! -f "$script" ]; then
+      err "no migration script for ${storyId} at $script"
+      echo "Available migrations: ls -1 $DEPLOY_DIR/scripts/migrate-projects-*.sh 2>/dev/null" >&2
+      exit 1
+    fi
+    bash "$script" "$@"
+    ;;
   bash)     shift; cmd_bash "$@" ;;
   setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;
   setup-prompts) node "$DEPLOY_DIR/cli/dist/index.js" setup-prompts ;;

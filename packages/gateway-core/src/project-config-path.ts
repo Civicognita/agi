@@ -25,10 +25,42 @@
  * new location is stable across a few upgrades.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, copyFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, join, resolve as resolvePath } from "node:path";
 import { migrateChatSessionsForProject } from "./chat-history-migration.js";
+
+/**
+ * Sacred project names — Aionima five (Civicognita-owned core) + PAx four
+ * (Particle-Academy ADF UI primitives). These are workspace-managed repos
+ * the gateway must NEVER auto-migrate to the s140 layout. They are source
+ * trees the owner contributes PRs against, not deployable projects.
+ *
+ * Mirrors SACRED_PROJECT_NAMES in server-runtime-state.ts + the union in
+ * scripts/migrate-projects-s140.sh. Kept in sync by being the same lower-
+ * cased basename set.
+ *
+ * Defense-in-depth: every code path that touches per-project config
+ * (migrateProjectConfig, scaffoldProjectFolders) checks this before
+ * scaffolding or moving files. Cycle 150 hotfix after the boot-time
+ * migration was observed creating .agi/project.json + project.json
+ * inside the agi repo itself.
+ */
+const SACRED_PROJECT_NAMES = new Set([
+  // Workspace-grouping container (cycle 150 owner clarification): the
+  // _aionima/ dir at the root of the workspace holds the 5 Aionima cores
+  // + 4-soon-5 PAx packages. The container ITSELF is sacred — it should
+  // never be auto-migrated to the s140 layout.
+  "_aionima",
+  // Civicognita-owned core five
+  "agi", "prime", "id", "marketplace", "mapp-marketplace",
+  // Particle-Academy ADF UI primitives
+  "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d",
+]);
+
+export function isSacredProjectPath(projectPath: string): boolean {
+  return SACRED_PROJECT_NAMES.has(basename(projectPath).toLowerCase());
+}
 
 /**
  * Convert an absolute project path to a filesystem-safe slug.
@@ -43,10 +75,24 @@ export function projectSlug(projectPath: string): string {
 }
 
 /**
- * Path under `<projectPath>/.agi/project.json` — the s130-canonical
- * location.
+ * Path under `<projectPath>/project.json` — the s140-canonical location
+ * (root of the project folder).
+ *
+ * Owner directive 2026-04-30: "all config for projects and repos is in the
+ * root of the project folder in the project.json file." Per-repo config
+ * lives inside this single file under `repos[name]`.
  */
 export function newProjectConfigPath(projectPath: string): string {
+  return join(projectPath, "project.json");
+}
+
+/**
+ * Path under `<projectPath>/.agi/project.json` — the s130 transitional
+ * location (cycles 88-91, before the s140 reframe). Kept exported so
+ * migrateProjectConfig + projectConfigPath can transparently flip
+ * existing projects from this to the s140 root location.
+ */
+export function legacyAgiProjectConfigPath(projectPath: string): string {
   return join(projectPath, ".agi", "project.json");
 }
 
@@ -59,41 +105,121 @@ export function legacyProjectConfigPath(projectPath: string): string {
 }
 
 /**
- * Per-project folder layout per s130 (Q-3 owner answer 2026-04-28):
+ * Per-project folder layout per s140 (owner clarifications 2026-04-30 +
+ * cycle 156 morning: skeleton lives at `templates/.new/`):
  *
  *   <projectPath>/
- *   ├── .agi/                # runtime config (project.json + future)
+ *   ├── project.json         # ROOT runtime config (project + per-repo combined)
  *   ├── k/                   # knowledge layer
  *   │   ├── plans/           # per-project plans (replaces _plans/_next/)
  *   │   ├── knowledge/       # markdown notes, design docs, references
- *   │   ├── pm/              # PM provider config (Tynn token, etc)
+ *   │   ├── pm/              # PM-Lite kanban data (s139)
  *   │   ├── memory/          # per-project Aion memory
- *   │   └── chat/            # per-project chat history
+ *   │   └── chat/            # per-project chat sessions
  *   ├── repos/               # bind-mounted git checkouts (multi-repo)
+ *   ├── sandbox/             # agent scratch space — keeps chat-tool cage
+ *   │                          primitive from writing into repos/ or k/
  *   └── .trash/              # soft-delete buffer
  *
- * Subfolders ordered for deterministic creation logging.
+ * Source of truth: `<gatewayCwd>/templates/.new/`. Adding a new folder is
+ * `mkdir templates/.new/<thing>/.gitkeep` — no code change. The list
+ * below is a fallback used when the skeleton can't be located at runtime
+ * (e.g. running inside a test fixture without the templates tree).
  */
-export const PROJECT_FOLDER_LAYOUT: readonly string[] = Object.freeze([
-  ".agi",
+const PROJECT_FOLDER_LAYOUT_FALLBACK: readonly string[] = Object.freeze([
   "k/plans",
   "k/knowledge",
   "k/pm",
   "k/memory",
   "k/chat",
-  ".trash",
   "repos",
+  "sandbox",
+  ".trash",
 ]);
 
 /**
- * Idempotently scaffold the s130 per-project folder layout. Returns
- * the list of dirs newly created (empty when everything already
- * existed). Safe to call repeatedly — `mkdirSync` with `recursive: true`
- * is a no-op when the dir exists.
+ * @deprecated Prefer the skeleton at `templates/.new/`. This export is
+ * kept for backwards compatibility with any callers that referenced it
+ * from earlier slices; new code should not consume it.
+ */
+export const PROJECT_FOLDER_LAYOUT = PROJECT_FOLDER_LAYOUT_FALLBACK;
+
+/**
+ * Resolve the on-disk skeleton root. The gateway's cwd is the agi source
+ * tree (set by the systemd unit / `agi run` wrapper), so the skeleton
+ * sits one directory away. Returns null when not findable so callers can
+ * fall through to the hardcoded layout list.
+ */
+function findProjectSkeletonRoot(): string | null {
+  const candidates = [
+    resolvePath(process.cwd(), "templates/.new"),
+    // Walk up from this module location too, in case cwd is somewhere
+    // else (test fixtures, ad-hoc tooling). Two levels: src/ → packages/
+    // → repo root, then templates/.new.
+    resolvePath(__dirname, "../../../templates/.new"),
+  ];
+  for (const c of candidates) {
+    if (existsSync(c) && statSync(c).isDirectory()) return c;
+  }
+  return null;
+}
+
+/**
+ * Recursively copy the skeleton's directory structure into `targetPath`.
+ * Idempotent: existing files and directories are left untouched. Returns
+ * the absolute paths of newly-created entries (dirs + files).
+ *
+ * Skips `.gitkeep` files in the skeleton — those exist only so the empty
+ * dirs survive git tracking; copying them into runtime projects adds
+ * noise.
+ */
+function copySkeletonInto(skeletonRoot: string, targetPath: string): string[] {
+  const created: string[] = [];
+  const stack: { src: string; dst: string }[] = [{ src: skeletonRoot, dst: targetPath }];
+  while (stack.length > 0) {
+    const { src, dst } = stack.pop()!;
+    if (!existsSync(dst)) {
+      mkdirSync(dst, { recursive: true });
+      created.push(dst);
+    }
+    const entries = readdirSync(src, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcChild = join(src, entry.name);
+      const dstChild = join(dst, entry.name);
+      if (entry.isDirectory()) {
+        stack.push({ src: srcChild, dst: dstChild });
+      } else if (entry.isFile() && entry.name !== ".gitkeep") {
+        if (!existsSync(dstChild)) {
+          copyFileSync(srcChild, dstChild);
+          created.push(dstChild);
+        }
+      }
+    }
+  }
+  return created;
+}
+
+/**
+ * Idempotently scaffold the per-project folder layout from the skeleton
+ * at `templates/.new/`. Returns the list of paths newly created. Safe to
+ * call repeatedly — existing entries are skipped.
+ *
+ * When the skeleton can't be located (test fixtures, broken installs),
+ * falls back to the hardcoded directory list so existing migrations
+ * don't break. The fallback path does NOT copy a starter project.json.
  */
 export function scaffoldProjectFolders(projectPath: string): { created: string[] } {
+  // Sacred-skip — never scaffold inside a sacred repo.
+  if (isSacredProjectPath(projectPath)) {
+    return { created: [] };
+  }
+  const skeletonRoot = findProjectSkeletonRoot();
+  if (skeletonRoot) {
+    return { created: copySkeletonInto(skeletonRoot, projectPath) };
+  }
+  // Fallback: hardcoded layout.
   const created: string[] = [];
-  for (const rel of PROJECT_FOLDER_LAYOUT) {
+  for (const rel of PROJECT_FOLDER_LAYOUT_FALLBACK) {
     const abs = join(projectPath, rel);
     if (!existsSync(abs)) {
       mkdirSync(abs, { recursive: true });
@@ -123,26 +249,46 @@ export function migrateProjectConfig(projectPath: string): {
    *  migration occurred (s130 t518 slice 1). */
   chatSessionsMigrated?: number;
 } {
-  const newPath = newProjectConfigPath(projectPath);
-  const oldPath = legacyProjectConfigPath(projectPath);
-  if (existsSync(newPath)) return { migrated: false, to: newPath };
-  if (!existsSync(oldPath)) return { migrated: false, to: newPath };
-  try {
-    mkdirSync(dirname(newPath), { recursive: true });
-    writeFileSync(newPath, readFileSync(oldPath, "utf-8"), "utf-8");
-    // Scaffold the s130 folder layout so consumers (plan-store,
-    // chat-history, knowledge index, etc.) always find their target
-    // dirs ready.
+  // Sacred-skip: Aionima 5 + PAx 4 are source trees the owner contributes
+  // PRs against, not deployable projects. The gateway must never auto-
+  // migrate them to the s140 layout (no scaffold, no file moves).
+  // Cycle 150 hotfix after boot-time migration was observed creating
+  // .agi/project.json + project.json inside the agi repo itself.
+  if (isSacredProjectPath(projectPath)) {
+    return { migrated: false, to: newProjectConfigPath(projectPath) };
+  }
+
+  const newPath = newProjectConfigPath(projectPath);                      // s140: <projectPath>/project.json
+  const agiPath = legacyAgiProjectConfigPath(projectPath);                // s130: <projectPath>/.agi/project.json
+  const oldPath = legacyProjectConfigPath(projectPath);                   // pre-s130: ~/.agi/{slug}/project.json
+
+  // Already-migrated case: still ensure the s140 folder layout exists.
+  if (existsSync(newPath)) {
     const { created } = scaffoldProjectFolders(projectPath);
-    // Migrate any project-scoped chat sessions from the global dir
-    // into the new <projectPath>/k/chat/. Idempotent — if this is a
-    // re-run, the chat helper skips already-copied sessions. Errors
-    // here are non-fatal — the project config migration already
-    // succeeded.
+    return { migrated: false, to: newPath, scaffolded: created.length > 0 ? created : undefined };
+  }
+
+  // Choose the latest available legacy source (s130 .agi/project.json
+  // takes precedence over the older ~/.agi one if both exist).
+  const sourcePath = existsSync(agiPath) ? agiPath : (existsSync(oldPath) ? oldPath : null);
+
+  if (sourcePath === null) {
+    // No config either way — scaffold the layout for a fresh project.
+    const { created } = scaffoldProjectFolders(projectPath);
+    return { migrated: false, to: newPath, scaffolded: created.length > 0 ? created : undefined };
+  }
+
+  try {
+    // s140: project.json lives at the root, so no .agi/ mkdir needed.
+    writeFileSync(newPath, readFileSync(sourcePath, "utf-8"), "utf-8");
+    // Scaffold the s140 folder layout (k/, repos/, chat/, sandbox/, .trash/).
+    const { created } = scaffoldProjectFolders(projectPath);
+    // Migrate project-scoped chat sessions into <projectPath>/k/chat/.
+    // Idempotent — re-runs skip already-copied sessions.
     const chatResult = migrateChatSessionsForProject(projectPath);
     return {
       migrated: true,
-      from: oldPath,
+      from: sourcePath,
       to: newPath,
       scaffolded: created,
       chatSessionsMigrated: chatResult.migrated,
@@ -170,22 +316,32 @@ export function migrateProjectConfig(projectPath: string): {
  * is gateway-owned), but ensures we never lose the ability to read.
  */
 export function projectConfigPath(projectPath: string): string {
-  const newPath = newProjectConfigPath(projectPath);
+  // Sacred-skip: never auto-write a project.json into a sacred repo. Reads
+  // still resolve via legacy fallback if a config happens to exist.
+  if (isSacredProjectPath(projectPath)) {
+    const agiPath = legacyAgiProjectConfigPath(projectPath);
+    const oldPath = legacyProjectConfigPath(projectPath);
+    if (existsSync(agiPath)) return agiPath;
+    if (existsSync(oldPath)) return oldPath;
+    return newProjectConfigPath(projectPath); // points at canonical, but no auto-create
+  }
+
+  const newPath = newProjectConfigPath(projectPath);                      // s140: <projectPath>/project.json
   if (existsSync(newPath)) return newPath;
-  const oldPath = legacyProjectConfigPath(projectPath);
-  if (!existsSync(oldPath)) {
-    // Neither exists — return the new path so writers create it
-    // canonically.
+  const agiPath = legacyAgiProjectConfigPath(projectPath);                // s130: <projectPath>/.agi/project.json
+  const oldPath = legacyProjectConfigPath(projectPath);                   // pre-s130: ~/.agi/{slug}/project.json
+  // Pick the latest existing legacy source. Empty string when neither.
+  const sourcePath = existsSync(agiPath) ? agiPath : (existsSync(oldPath) ? oldPath : "");
+  if (sourcePath === "") {
+    // Neither exists — return the new path so writers create it canonically.
     return newPath;
   }
-  // Legacy exists, new doesn't — migrate transparently. Idempotent
-  // because of the `existsSync(newPath)` early-exit at the top.
+  // Legacy exists, new doesn't — migrate transparently to root.
   try {
-    mkdirSync(dirname(newPath), { recursive: true });
-    writeFileSync(newPath, readFileSync(oldPath, "utf-8"), "utf-8");
+    writeFileSync(newPath, readFileSync(sourcePath, "utf-8"), "utf-8");
     return newPath;
   } catch {
-    // Migration failed — fall back to legacy so reads still work.
-    return oldPath;
+    // Migration failed — fall back to whatever legacy worked so reads still succeed.
+    return sourcePath;
   }
 }

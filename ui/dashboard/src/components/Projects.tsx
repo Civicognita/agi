@@ -11,6 +11,7 @@ import { Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DevNotes } from "@/components/ui/dev-notes";
 import { SACRED_PROJECTS, PAX_SACRED_PROJECTS, isSacredProject, isPaxProject, matchSacredProject, matchPaxProjects } from "@/lib/sacred-projects.js";
 import { Table } from "@particle-academy/react-fancy";
 import { fetchProjectActivitySummary, type ProjectActivitySummary } from "../api.js";
@@ -132,7 +133,40 @@ export function Projects({
     <div>
       {/* Header */}
       <div className="flex items-center justify-between mb-5">
-        <h2 className="text-xl font-bold text-foreground">Projects</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-xl font-bold text-foreground">Projects</h2>
+          <DevNotes title="Projects browser — dev notes">
+            <DevNotes.Item kind="info" heading="Cycle 136 — click-to-expand row tray (mockup B)">
+              Each row expands to a 4-quadrant grid (Repos / Stacks / Aion context / Knowledge) +
+              a 5-button action row (Open workspace / Open chat / Configure repos / Manage stacks /
+              Disable hosting). Click the chevron at the row end to expand.
+            </DevNotes.Item>
+            <DevNotes.Item kind="info" heading="Cycle 134 — Health column (✓ / ⚠ / —)">
+              Hosting health surfaced as a compact icon column. ✓ green = container running &
+              reachable. ⚠ amber = degraded. ⚠ red = error. — = not hosted.
+            </DevNotes.Item>
+            <DevNotes.Item kind="info" heading="Cycle 133 — Tynn column">
+              `open|doing` two-tone counts per project. **Currently shows `—` for all projects** —
+              backend population deferred to PM-Lite slice (s139 forthcoming). The reframe today
+              shifts this from a remote-tynn fetch to a local PM-Lite store read.
+            </DevNotes.Item>
+            <DevNotes.Item kind="todo" heading="PM-Lite kanban incoming (s139)">
+              The Tynn column in this browser will populate from the local PM-Lite store once
+              s139 ships. The PM-Lite kanban itself surfaces in the Operate tab inside each
+              project's workspace. Codename was tynn-lite; user-facing name is PM-Lite.
+            </DevNotes.Item>
+            <DevNotes.Item kind="warning" heading="Project folder structure migrating (s140)">
+              All non-sacred projects will be restructured to {"{k/, repos/, sandbox/}"} at
+              the project root (chat stays at k/chat/) with a single `project.json` config file at
+              the root holding both project- and per-repo-config. Migration runs as a dry-run
+              report first; no file moves until owner sign-off.
+            </DevNotes.Item>
+            <DevNotes.Item kind="deferred" heading="COA chain dots in Knowledge column">
+              Per cycle-128 audit, the Knowledge column should also show a small COA-chain
+              indicator (deferred until the COA aggregator lands).
+            </DevNotes.Item>
+          </DevNotes>
+        </div>
         <div className="flex gap-2 flex-wrap items-center">
           {/* s130 t516 slice 1 — list/grid view toggle */}
           <div className="inline-flex border border-border rounded-md overflow-hidden" data-testid="projects-view-toggle">
@@ -217,10 +251,17 @@ export function Projects({
           consolidated /aionima view (upstream alignment + PR + MINT).
           Impactium-blockchain COA<>COI ties back to THIS single entry. */}
       {isContributing && (
+        // Aionima + PAx render in a single Sacred row (owner directive
+        // 2026-04-29 cycle ~121): the two consolidation cards belong on
+        // the same row, not stacked. The auto-fill grid degrades to 1
+        // column at narrow widths and pairs them side-by-side at wider
+        // widths. Each card self-identifies via its name + badge so the
+        // per-section h3 ("Aionima", "PAx · ADF UI primitives") is
+        // dropped in favor of one shared "Sacred" header.
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-3">
             <Star className="h-4 w-4 text-yellow" />
-            <h3 className="text-[13px] font-semibold text-foreground">Aionima</h3>
+            <h3 className="text-[13px] font-semibold text-foreground">Sacred</h3>
           </div>
           <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
             <div
@@ -246,52 +287,41 @@ export function Projects({
                 <div className="text-[11px] text-yellow mt-2 font-medium">Open Aionima Development →</div>
               </div>
             </div>
-          </div>
-        </div>
-      )}
 
-      {/* PAx — Particle-Academy ADF UI primitives sacred card (s136 t522).
-          Mirrors the Aionima consolidation pattern: instead of 4 separate
-          tiles for react-fancy/fancy-code/fancy-sheets/fancy-echarts, one
-          portal card that drills into Settings > Gateway > Contributing
-          where t512's grouped Repository Status panel shows each fork's
-          state. Only renders in contributing-mode (forks aren't provisioned
-          otherwise). */}
-      {isContributing && (
-        <div className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Star className="h-4 w-4 text-yellow" />
-            <h3 className="text-[13px] font-semibold text-foreground">PAx · ADF UI primitives</h3>
-          </div>
-          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-            <div
-              onClick={() => { void navigate("/settings/gateway"); }}
-              className={cn(
-                "rounded-xl border transition-colors duration-150 cursor-pointer hover:border-yellow",
-                "bg-indigo-50/70 border-indigo-200/80",
-                "dark:bg-indigo-950/40 dark:border-indigo-700/60",
-              )}
-              data-testid="project-card-pax"
-            >
-              <div className="p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Star className="h-4 w-4 text-yellow" />
-                  <span className="text-[15px] font-semibold text-card-foreground">PAx</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">
-                    primitives
-                  </span>
-                  {paxProjects.length > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">
-                      {paxProjects.length}/{PAX_SACRED_PROJECTS.length} provisioned
+            {/* PAx — Particle-Academy ADF UI primitives sacred card
+                (s136 t522). Mirrors the Aionima consolidation pattern.
+                Only renders in contributing-mode (forks aren't
+                provisioned otherwise). */}
+            {isContributing && (
+              <div
+                onClick={() => { void navigate("/pax"); }}
+                className={cn(
+                  "rounded-xl border transition-colors duration-150 cursor-pointer hover:border-yellow",
+                  "bg-indigo-50/70 border-indigo-200/80",
+                  "dark:bg-indigo-950/40 dark:border-indigo-700/60",
+                )}
+                data-testid="project-card-pax"
+              >
+                <div className="p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Star className="h-4 w-4 text-yellow" />
+                    <span className="text-[15px] font-semibold text-card-foreground">PAx</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">
+                      primitives
                     </span>
-                  )}
+                    {paxProjects.length > 0 && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">
+                        {paxProjects.length}/{PAX_SACRED_PROJECTS.length} provisioned
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    ADF UI primitive maintenance portal — wraps the {PAX_SACRED_PROJECTS.length} Particle-Academy packages (react-fancy, fancy-code, fancy-sheets, fancy-echarts) consumed by the dashboard, plugins, MApps, and locally-hosted apps. File issues + open PRs via the maintenance loop at agi/docs/agents/contributing-to-adf-packages.md.
+                  </div>
+                  <div className="text-[11px] text-yellow mt-2 font-medium">Open PAx →</div>
                 </div>
-                <div className="text-[11px] text-muted-foreground">
-                  ADF UI primitive maintenance portal — wraps the {PAX_SACRED_PROJECTS.length} Particle-Academy packages (react-fancy, fancy-code, fancy-sheets, fancy-echarts) consumed by the dashboard, plugins, MApps, and locally-hosted apps. File issues + open PRs via the maintenance loop at agi/docs/agents/contributing-to-adf-packages.md.
-                </div>
-                <div className="text-[11px] text-yellow mt-2 font-medium">Open Contributing tab →</div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -310,69 +340,105 @@ export function Projects({
               <Table.Column label="Repos" />
               <Table.Column label="Stacks" />
               <Table.Column label="Tags" />
+              <Table.Column label="Tynn" />
               <Table.Column label="Activity (30d)" />
               <Table.Column label="Knowledge" />
-              <Table.Column label="Hosting" />
+              <Table.Column label="Health" />
             </Table.Head>
             <Table.Body>
               {visibleProjects.map((p) => {
                 const slug = projectSlug(p.path);
                 const cat = p.category ?? p.projectType?.category;
                 const isOps = cat === "ops" || cat === "administration";
-                // s130 t516 slice 3 (cycle 104) — click-to-expand inline
-                // panel via Table.Row's tray prop. Shows path + description
-                // + type details + quick actions. Uses data already on
-                // ProjectInfo; no new endpoint needed.
+                // s130 t516 slice 3 — click-to-expand row tray. Restructured
+                // cycle 136 per projects-browser-v2.html mockup: 4 quadrant
+                // layout (Repos / Stacks / Aion context / Knowledge) + 5
+                // action buttons row. Uses data already on ProjectInfo;
+                // no new endpoint needed for this slice.
                 const tray = (
                   <div className="px-4 py-3 bg-secondary/20" data-testid={`project-tray-${slug}`}>
-                    <div className="grid grid-cols-2 gap-x-6 gap-y-2 mb-3">
+                    <div className="text-[11px] text-muted-foreground mb-3">
+                      <span className="text-foreground font-semibold">{p.name}</span>
+                      {p.category && <span> · {p.category}</span>}
+                      <span> · {p.repos?.length ?? 1} {(p.repos?.length ?? 1) === 1 ? "repo" : "repos"}</span>
+                      {p.attachedStacks && p.attachedStacks.length > 0 && (
+                        <span> · stacks: {p.attachedStacks.map((s) => s.stackId.replace(/^stack-/, "")).join(" + ")}</span>
+                      )}
+                    </div>
+
+                    {/* 4-quadrant grid per mockup B */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-3">
+                      {/* Quadrant 1: Repos */}
                       <div>
-                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Path</div>
-                        <div className="text-[12px] font-mono text-foreground break-all">{p.path}</div>
-                      </div>
-                      {p.projectType?.label && (
-                        <div>
-                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Project Type</div>
-                          <div className="text-[12px] text-foreground">{p.projectType.label}</div>
-                        </div>
-                      )}
-                      {p.description && (
-                        <div className="col-span-2">
-                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Description</div>
-                          <div className="text-[12px] text-muted-foreground">{p.description}</div>
-                        </div>
-                      )}
-                      {p.magicApps && p.magicApps.length > 0 && (
-                        <div className="col-span-2">
-                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">MagicApps</div>
-                          <div className="flex gap-1 flex-wrap">
-                            {p.magicApps.map((id) => (
-                              <span key={id} className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-400 font-medium">
-                                {id}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {p.repos && p.repos.length > 0 && (
-                        <div className="col-span-2">
-                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-0.5">Repos ({p.repos.length})</div>
-                          <div className="space-y-0.5">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5 font-semibold">Repos</div>
+                        {p.repos && p.repos.length > 0 ? (
+                          <div className="space-y-1">
                             {p.repos.map((r) => (
-                              <div key={r.name} className="flex items-center gap-2 text-[11px]">
-                                <span className="font-mono font-semibold text-foreground">{r.name}</span>
-                                <span className="text-muted-foreground font-mono">→</span>
-                                <span className="text-muted-foreground font-mono break-all">{r.url}</span>
-                                {r.branch && (
-                                  <span className="text-[10px] px-1 py-0.5 rounded bg-blue/15 text-blue font-mono">{r.branch}</span>
-                                )}
+                              <div key={r.name} className="text-[11px]">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-semibold text-foreground">{r.name}</span>
+                                  {r.branch && <span className="text-[10px] px-1 py-0.5 rounded bg-blue/15 text-blue font-mono">{r.branch}</span>}
+                                </div>
+                                <div className="text-muted-foreground font-mono break-all text-[10px]">{r.url}</div>
                               </div>
                             ))}
                           </div>
+                        ) : (
+                          <div className="text-[11px] text-muted-foreground/60 font-mono break-all">{p.path}</div>
+                        )}
+                      </div>
+
+                      {/* Quadrant 2: Stacks */}
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5 font-semibold">Stacks</div>
+                        {p.attachedStacks && p.attachedStacks.length > 0 ? (
+                          <div className="space-y-0.5">
+                            {p.attachedStacks.map((s) => (
+                              <div key={s.stackId} className="text-[11px] font-mono text-foreground">
+                                ▣ {s.stackId.replace(/^stack-/, "")}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-muted-foreground/60 italic">none attached</div>
+                        )}
+                      </div>
+
+                      {/* Quadrant 3: Aion context */}
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5 font-semibold">Aion context</div>
+                        <div className="space-y-0.5 text-[11px]">
+                          {p.iterativeWorkEligible && (
+                            <div className="text-foreground">Iterative-work eligible</div>
+                          )}
+                          {p.tynnTokenSet && (
+                            <div className="text-foreground">PM provider: <span className="text-blue">tynn</span></div>
+                          )}
+                          {p.magicApps && p.magicApps.length > 0 && (
+                            <div className="text-muted-foreground">MApps: {p.magicApps.join(", ")}</div>
+                          )}
+                          {!p.iterativeWorkEligible && !p.tynnTokenSet && (!p.magicApps || p.magicApps.length === 0) && (
+                            <div className="text-muted-foreground/60 italic">no agent context</div>
+                          )}
                         </div>
-                      )}
+                      </div>
+
+                      {/* Quadrant 4: Knowledge */}
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5 font-semibold">Knowledge</div>
+                        {p.knowledge ? (
+                          <div className="space-y-0.5 text-[11px]">
+                            <div className="text-foreground">▣ {p.knowledge.pages} pages</div>
+                            <div className="text-muted-foreground">{p.knowledge.plans} plans · {p.knowledge.chatSessions} sessions</div>
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-muted-foreground/60 italic">not s130-migrated</div>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex gap-2 flex-wrap">
+
+                    {/* 5-button action row per mockup B */}
+                    <div className="flex gap-2 flex-wrap pt-2 border-t border-border/40">
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); void navigate(`/projects/${slug}`); }}
@@ -387,6 +453,30 @@ export function Projects({
                       >
                         Open chat
                       </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); void navigate(`/projects/${slug}#repository`); }}
+                        className="text-[11px] px-2.5 py-1 rounded bg-secondary/60 text-secondary-foreground hover:bg-secondary/80 cursor-pointer font-medium"
+                      >
+                        Configure repos
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); void navigate(`/projects/${slug}#hosting`); }}
+                        className="text-[11px] px-2.5 py-1 rounded bg-secondary/60 text-secondary-foreground hover:bg-secondary/80 cursor-pointer font-medium"
+                      >
+                        Manage stacks
+                      </button>
+                      {p.hosting?.enabled && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); if (onHostingDisable) void onHostingDisable(p.path); }}
+                          className="text-[11px] px-2.5 py-1 rounded text-red-400 border border-red-500/30 hover:bg-red-500/10 cursor-pointer font-medium ml-auto"
+                          title="Disable hosting (stops the container)"
+                        >
+                          Disable hosting
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -476,10 +566,34 @@ export function Projects({
                         {p.hasGit && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">git</span>
                         )}
-                        {p.tynnToken !== null && (
+                        {p.tynnTokenSet && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-semibold">tynn</span>
                         )}
                       </div>
+                    </Table.Cell>
+                    <Table.Cell>
+                      {/* s130 t524 — Tynn column. Renders open|doing two-tone
+                          per projects-browser-v2.html mockup. Empty state
+                          when no PM provider is configured / reachable.
+                          Backend wiring of `tynnSlice` lands in a follow-up
+                          slice (PM provider client integration). */}
+                      {(() => {
+                        const t = p.tynnSlice;
+                        if (!t) {
+                          return <span className="text-[11px] text-muted-foreground/40">—</span>;
+                        }
+                        return (
+                          <span
+                            className="text-[11px] font-mono"
+                            title={t.storyId ? `Story ${t.storyId}` : undefined}
+                            data-testid={`project-tynn-${projectSlug(p.path)}`}
+                          >
+                            <span className="text-blue font-semibold">{t.open}</span>
+                            <span className="text-muted-foreground"> | </span>
+                            <span className="text-yellow font-semibold">{t.doing}</span>
+                          </span>
+                        );
+                      })()}
                     </Table.Cell>
                     <Table.Cell>
                       {(() => {
@@ -518,31 +632,45 @@ export function Projects({
                       })()}
                     </Table.Cell>
                     <Table.Cell>
-                      {p.hosting ? (
-                        <div className="flex items-center gap-2">
-                          <span className={cn(
-                            "text-[10px] px-1.5 py-0.5 rounded font-semibold",
-                            p.hosting.status === "running" ? "bg-green/15 text-green" :
-                            p.hosting.status === "error" ? "bg-red/15 text-red" :
-                            "bg-muted-foreground/15 text-muted-foreground",
-                          )}>
-                            {p.hosting.status}
-                          </span>
-                          {p.hosting.hostname && (
-                            <a
-                              href={`https://${p.hosting.hostname}.${hostingStatus?.baseDomain ?? "ai.on"}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="text-[11px] text-blue underline"
+                      {(() => {
+                        // Health column per projects-browser-v2 mockup:
+                        // ✓ green = running healthy
+                        // ⚠ amber = configured but stopped or in error state
+                        // ─ idle  = not hosting OR unconfigured
+                        if (!p.hosting || !p.hosting.enabled || p.hosting.status === "unconfigured") {
+                          return <span className="text-[11px] text-muted-foreground" title="Not hosting">— idle</span>;
+                        }
+                        if (p.hosting.status === "running") {
+                          return (
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] text-green font-semibold" title="Running">✓ green</span>
+                              {p.hosting.hostname && (
+                                <a
+                                  href={`https://${p.hosting.hostname}.${hostingStatus?.baseDomain ?? "ai.on"}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-[10px] text-blue underline"
+                                >
+                                  {p.hosting.hostname}
+                                </a>
+                              )}
+                            </div>
+                          );
+                        }
+                        if (p.hosting.status === "error") {
+                          return (
+                            <span
+                              className="text-[11px] text-red font-semibold"
+                              title={p.hosting.error ?? "Container error"}
                             >
-                              {p.hosting.hostname}.{hostingStatus?.baseDomain ?? "ai.on"}
-                            </a>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-[11px] text-muted-foreground">—</span>
-                      )}
+                              ⚠ error
+                            </span>
+                          );
+                        }
+                        // status = "stopped" but enabled = true → amber
+                        return <span className="text-[11px] text-yellow font-semibold" title="Stopped (configured)">⚠ amber</span>;
+                      })()}
                     </Table.Cell>
                   </Table.Row>
                 );
@@ -578,7 +706,7 @@ export function Projects({
                       git
                     </span>
                   )}
-                  {p.tynnToken !== null && (
+                  {p.tynnTokenSet && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-semibold">
                       tynn
                     </span>

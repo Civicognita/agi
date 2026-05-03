@@ -13,10 +13,12 @@ import { Select } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes } from "../api.js";
-import type { FileNode } from "../api.js";
+import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, fetchIterativeWorkStatus, fetchIterativeWorkProgress, updateProjectRepo } from "../api.js";
+import type { FileNode, IterativeWorkProjectStatus, IterativeWorkProgress } from "../api.js";
+import { DevNotes } from "@/components/ui/dev-notes";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
+import { RepoManager } from "./RepoManager.js";
 import { CoreForkRepoPanel } from "./CoreForkRepoPanel.js";
 import { HostingPanel } from "./HostingPanel.js";
 import { EnvManager } from "./EnvManager.js";
@@ -59,6 +61,39 @@ export interface ProjectDetailProps {
   onOpenMagicApp?: (appId: string, projectPath: string) => Promise<void>;
 }
 
+// s134 t517 slice 5b — Sub-surface pill class. Overrides react-fancy
+// Tabs underline-variant defaults via tailwind-merge so the sub-surface
+// row matches mockup B's `.sub-surface .sub` styling. Active state is
+// driven by aria-selected which TabsTab sets on the underlying button.
+const SUB_PILL_CLASS = "border-b-0 px-2 py-1 text-[12px] font-medium normal-case rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-secondary/40 [&[aria-selected=true]]:bg-yellow [&[aria-selected=true]]:text-black [&[aria-selected=true]]:font-semibold [&[aria-selected=true]]:hover:bg-yellow [&[aria-selected=true]]:hover:text-black";
+
+// s134 t517 slice 5c starter — Map active tab id to human-readable canvas
+// section label. The Canvas header reads "Canvas · <label>" per mockup B
+// (e.g. "Canvas · Editor", "Canvas · Hosting"). Plugin panels show their
+// registered label; built-in tabs use the strip's display name.
+const CANVAS_LABELS: Record<string, string> = {
+  details: "Details",
+  files: "Editor",
+  repository: "Repository",
+  environment: "Environment",
+  hosting: "Hosting",
+  "iterative-work": "Iterative Work",
+  mcp: "MCP",
+  "magic-apps": "MagicApps",
+  taskmaster: "TaskMaster",
+  security: "Security",
+  activity: "Activity",
+};
+
+function tabIdToCanvasLabel(tabId: string, panels: PluginPanel[]): string {
+  if (tabId.startsWith("plugin-")) {
+    const panelId = tabId.slice("plugin-".length);
+    const panel = panels.find((p) => p.id === panelId);
+    return panel?.label ?? "Plugin";
+  }
+  return CANVAS_LABELS[tabId] ?? tabId;
+}
+
 export function ProjectDetail({
   projects, onUpdate, updating, onDelete, deleting, onRefresh, onOpenChat, theme,
   hostingStatus, onHostingConfigure, onHostingRestart,
@@ -77,7 +112,8 @@ export function ProjectDetail({
   const isCoreFork = project?.coreCollection === "aionima" || project?.projectType?.id === "aionima";
 
   const [editName, setEditName] = useState<string | null>(null);
-  const [editTynnToken, setEditTynnToken] = useState<string | null>(null);
+  // s140 cycle-169 t591 — Tynn token state removed; token now lives in
+  // the Tynn MCP plugin settings UX, not on the project Details tab.
   const [editCategory, setEditCategory] = useState<string | null>(null);
   const [editProjectType, setEditProjectType] = useState<string | null>(null);
   const [projectTypes, setProjectTypes] = useState<Array<{ id: string; label: string }>>([]);
@@ -86,6 +122,17 @@ export function ProjectDetail({
   const [repoSetupBusy, setRepoSetupBusy] = useState(false);
   const [repoSetupError, setRepoSetupError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("details");
+  // s140 t592 cycle-176 — Details sub-tab (Identity / Configuration /
+  // Lifecycle). Owner-chosen UX shape: tabbed sub-pages inside the
+  // outer Details tab. Default to identity since that's the most-
+  // common landing (rename, glance at path, see sacred state).
+  const [detailsSubTab, setDetailsSubTab] = useState<"identity" | "configuration" | "lifecycle">("identity");
+  // s140 t597 cycle-176 — primary repo selector (multi-repo projects only).
+  // Owner: "selection for primary repo that is served on port 80 of that
+  // container. If only 1 repo is found, don't show the select. And don't
+  // show this for project types that don't serve repos."
+  const [editPrimaryRepo, setEditPrimaryRepo] = useState<string | null>(null);
+  const [savingPrimaryRepo, setSavingPrimaryRepo] = useState(false);
   // s134 t517 slice 2 (cycle 112) — workspace mode shell. The 4 modes
   // group the existing 11 tabs per the projects-ux-v2/project-workspace-
   // v2.html mockup. Default "develop" matches Editor as the most-common
@@ -93,6 +140,11 @@ export function ProjectDetail({
   const [currentMode, setCurrentMode] = useState<"develop" | "operate" | "coordinate" | "insight">("develop");
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
   const [treeLoading, setTreeLoading] = useState(false);
+  // s140 (cycle 156) — scope filter for the file tree. Owner asked to
+  // surface k/, repos/, sandbox/ prominently in the project UX. Default
+  // 'all' keeps the existing whole-tree view; the three pills above the
+  // tree narrow the view to just one of the canonical s140 subtrees.
+  const [treeScope, setTreeScope] = useState<"all" | "k" | "repos" | "sandbox">("all");
   const [pluginPanels, setPluginPanels] = useState<PluginPanel[]>([]);
   const [pluginActions, setPluginActions] = useState<PluginAction[]>([]);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -214,20 +266,19 @@ export function ProjectDetail({
 
   // Initialize edit fields when project loads
   const name = editName ?? project?.name ?? "";
-  const tynnToken = editTynnToken ?? project?.tynnToken ?? "";
   const category = editCategory ?? project?.category ?? project?.projectType?.category ?? "";
 
   const handleSave = useCallback(async () => {
     if (!project) return;
     setSaving(true);
     try {
-      const params: { path: string; name?: string; tynnToken?: string | null; category?: string; type?: string } = { path: project.path };
+      // s140 cycle-169 t591 — params.tynnToken removed; token configuration
+      // owned by the Tynn MCP plugin settings UX. The PUT route still
+      // accepts a tynnToken body for back-compat callers, but the Details
+      // tab no longer exposes it.
+      const params: { path: string; name?: string; category?: string; type?: string } = { path: project.path };
       const trimmedName = name.trim();
       if (trimmedName && trimmedName !== project.name) params.name = trimmedName;
-      const trimmedToken = tynnToken.trim();
-      if (trimmedToken !== (project.tynnToken ?? "")) {
-        params.tynnToken = trimmedToken.length > 0 ? trimmedToken : null;
-      }
       if (category && category !== (project.category ?? project.projectType?.category ?? "")) {
         params.category = category;
       }
@@ -244,7 +295,7 @@ export function ProjectDetail({
     } catch { /* error shown via hook */ } finally {
       setSaving(false);
     }
-  }, [project, name, tynnToken, category, editProjectType, onUpdate]);
+  }, [project, name, category, editProjectType, onUpdate]);
 
   const handleFileSave = useCallback(async () => {
     if (!openFilePath || !fileDirty) return;
@@ -321,25 +372,117 @@ export function ProjectDetail({
               subtab. The host-level system terminal is now a global button in the dashboard
               header — see root.tsx. No Terminal button on the project page. */}
           <Button size="sm" data-testid="project-chat-button" onClick={() => onOpenChat(project.path)}>
-            Talk about this project
+            open chat
           </Button>
         </div>
       </div>
 
-      {/* Project heading */}
+      {/* Project heading — extended per projects-ux-v2 mockup B (cycle 134):
+          status dot + ⌗N repos count + category badge alongside the name. */}
       <div className="flex items-center gap-3 mb-6 shrink-0">
+        {/* Status dot — green when container running, amber when stopped/error,
+            grey when not hosting. */}
+        {(() => {
+          const s = project.hosting?.status;
+          const enabled = project.hosting?.enabled;
+          if (!enabled) return null;
+          const cls = s === "running" ? "bg-green" : s === "error" ? "bg-red" : "bg-yellow";
+          // s140 cycle-172 t594 — aria-label not title. title doesn't show
+          // on touch devices and is inconsistently announced by screen
+          // readers. aria-label is the durable a11y primitive for an
+          // icon-only pill. role="status" so AT users perceive it as a
+          // live state indicator, not a generic span.
+          return (
+            <span
+              className={cn("inline-block w-2 h-2 rounded-full", cls)}
+              role="status"
+              aria-label={`Container ${s}`}
+            />
+          );
+        })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
+        <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="Cycles 144-148 — Canvas + Chat split (slice 5c phases 1-3)">
+            Mockup B's flyout-shell shape is in: Canvas section header reads `Canvas · {"{tab}"}`,
+            tabs sit on the left (flex-1), chat aside sits on the right (280px, lg+ only). The
+            aside shows iterative-work status (when eligible) + an Open chat CTA.
+          </DevNotes.Item>
+          <DevNotes.Item kind="todo" heading="Slice 5c phase 4 — chat content not yet in aside">
+            The actual chat thread + composer is still rendered inside the cycle-87 floating
+            ChatFlyout, NOT inside the workspace aside. Phase 4 moves that content into the
+            right panel and adds collapsible AccordionFlyout chrome.
+          </DevNotes.Item>
+          <DevNotes.Item kind="warning" heading="Chat panel close button desync (cycle 149 owner-flagged)">
+            Clicking X in the chat panel header collapses both AccordionFlyout sections to rail-only
+            but leaves the header chat-button highlighted as active. The two close triggers need
+            two-way binding via `onOpenChange`. Filed as comment on s134 t517.
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="Cycle 137 — sub-surface pill restyle (slice 5b)">
+            Mode picker pill row uses tailwind arbitrary-attribute variant
+            `[&[aria-selected=true]]` to override react-fancy underline-variant defaults via
+            tailwind-merge. Yellow active fill, muted hover inactive.
+          </DevNotes.Item>
+          <DevNotes.Item kind="todo" heading="Cage indicator (t517 item 6)">
+            Depends on s130 t515 phase B (chat-tool cage primitive — backlog). When chat is
+            project-bound, a small "Tools caged to this project" pill appears in the chat header.
+          </DevNotes.Item>
+          <DevNotes.Item kind="warning" heading="Project folder restructure incoming (s140)">
+            Each project will move to {"{k/, repos/, sandbox/}"} (with chat at k/chat/) at the project root with a
+            single root `project.json` config (project- + repo-config combined). Stacks attach to
+            individual repos, not to the project. Multi-repo single-container hosting UI extends
+            with per-repo {"{config, start, dev, stack-actions}"} surfaces. Migration runs as a
+            dry-run report first; no file moves until owner sign-off.
+          </DevNotes.Item>
+        </DevNotes>
+        {project.category && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground uppercase tracking-wider font-medium" title={`Category: ${project.category}`}>
+            {project.category}
+          </span>
+        )}
+        {(() => {
+          // ⌗N repos count — counts runtime repos + falls back to ⌗1 for
+          // single-repo projects (matches Projects browser column convention)
+          const repoCount = project.repos?.length ?? 0;
+          const display = repoCount === 0 ? "⌗1" : `⌗${repoCount}`;
+          const title = repoCount === 0 ? "Single-repo project" : `Multi-repo: ${(project.repos ?? []).map((r) => r.name).join(", ")}`;
+          return (
+            <span className="text-[11px] font-mono text-muted-foreground" title={title}>
+              {display}
+            </span>
+          );
+        })()}
         {isSacred && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">sacred</span>
         )}
         {project.hasGit && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">git</span>
         )}
-        {project.tynnToken !== null && (
+        {project.tynnTokenSet && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue/15 text-blue font-semibold">tynn</span>
         )}
         {project.hosting?.enabled && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">hosted</span>
+        )}
+        {/*
+          s140 cycle-171 t593 — header-level Restart affordance for ALL
+          hosted projects, not just hasCode types. Pre-fix the only
+          Restart button lived inside HostingPanel which is gated on
+          project.projectType.hasCode — so MApp containers (hasCode=false)
+          and ops projects had no way to nudge a stuck container without
+          re-saving config. This button always renders when hosting is
+          enabled + onHostingRestart is wired (i.e. when the dashboard
+          is connected to a real gateway).
+        */}
+        {project.hosting?.enabled && onHostingRestart && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-[10px] h-6 px-2"
+            data-testid="project-header-restart"
+            onClick={() => { void onHostingRestart(project.path).catch(() => { /* surfaced via toast */ }); }}
+          >
+            Restart
+          </Button>
         )}
         {project.hosting?.enabled && project.hosting.url && project.hosting.status === "running" && (
           <a
@@ -372,24 +515,42 @@ export function ProjectDetail({
           postgres + redis, so a cache-invalidation step is feasible").
           Skipped for core forks (aionima collection) since they're
           source trees, not deployable services. */}
-      {!isCoreFork && project.attachedStacks && project.attachedStacks.length > 0 && (
+      {!isCoreFork && project.projectType?.hasCode && (
         <div
           className="flex items-center gap-2 px-3 py-2 mb-3 rounded-md bg-indigo-500/5 border border-indigo-500/20"
           data-testid="project-stack-strip"
         >
           <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-400">Stack</span>
-          {project.attachedStacks.map((s) => {
-            const label = s.stackId.replace(/^stack-/, "");
-            return (
-              <span
-                key={s.stackId}
-                className="text-[11px] px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 font-mono font-medium"
-                title={s.stackId}
-              >
-                ▣ {label}
-              </span>
-            );
-          })}
+          {project.attachedStacks && project.attachedStacks.length > 0 ? (
+            project.attachedStacks.map((s) => {
+              const label = s.stackId.replace(/^stack-/, "");
+              return (
+                <span
+                  key={s.stackId}
+                  className="text-[11px] px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 font-mono font-medium"
+                  title={s.stackId}
+                >
+                  ▣ {label}
+                </span>
+              );
+            })
+          ) : (
+            <span className="text-[11px] text-muted-foreground/60 italic">
+              No stacks attached
+            </span>
+          )}
+          {/* + stack affordance per projects-ux-v2 mockup B (cycle 134).
+              Clicking jumps to the Hosting tab where StackManager lets
+              the owner attach a stack. */}
+          <button
+            type="button"
+            onClick={() => setActiveTab("hosting")}
+            className="text-[11px] px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300/80 hover:bg-indigo-500/20 hover:text-indigo-200 cursor-pointer transition-colors"
+            title="Add a stack (postgres / redis / etc) — jumps to Hosting tab"
+            data-testid="project-stack-add"
+          >
+            + stack
+          </button>
           <span className="text-[10px] text-muted-foreground/60 italic ml-auto">
             Aion's iterative-work + plan reasoning reads from here ↑
           </span>
@@ -441,45 +602,117 @@ export function ProjectDetail({
         );
       })()}
 
-      {/* Aionima core forks get a restricted tab set. No Details,
-          hosting, environment, or plugin tabs — those projects are
-          source trees users contribute PRs against, not deployables. */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-h-0 flex flex-col">
-        <TabsList variant="line">
-          {!isCoreFork && tabBelongsToMode("details") && <TabsTrigger value="details">Details</TabsTrigger>}
-          {(isCoreFork || tabBelongsToMode("files")) && <TabsTrigger value="files">Editor</TabsTrigger>}
-          {(isCoreFork || tabBelongsToMode("repository")) && <TabsTrigger value="repository">Repository</TabsTrigger>}
-          {!isCoreFork && tabBelongsToMode("hosting") && onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
-            <TabsTrigger value="hosting">Development</TabsTrigger>
-          )}
-          {!isCoreFork && tabBelongsToMode("environment") && project.projectType?.hasCode && (
-            <TabsTrigger value="environment">Environment</TabsTrigger>
-          )}
-          {!isCoreFork && tabBelongsToMode("magic-apps") && <TabsTrigger value="magic-apps">MagicApps</TabsTrigger>}
-          {!isCoreFork && tabBelongsToMode("taskmaster") && <TabsTrigger value="taskmaster">TaskMaster</TabsTrigger>}
-          {!isCoreFork && tabBelongsToMode("iterative-work") && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
-            <TabsTrigger value="iterative-work">Iterative Work</TabsTrigger>
-          )}
-          {!isCoreFork && tabBelongsToMode("mcp") && project.projectType?.hasCode && (
-            <TabsTrigger value="mcp">MCP</TabsTrigger>
-          )}
-          {!isCoreFork && pluginPanels
-            .filter((p) => (p.mode ?? "coordinate") === currentMode)
-            .map((p) => (
-              <TabsTrigger key={p.id} value={`plugin-${p.id}`}>{p.label}</TabsTrigger>
-            ))}
-          {!isCoreFork && tabBelongsToMode("security") && project.projectType?.hasCode && (
-            <TabsTrigger value="security">Security</TabsTrigger>
-          )}
-          {!isCoreFork && tabBelongsToMode("activity") && (
-            <TabsTrigger value="activity" data-testid="project-tab-activity">Activity</TabsTrigger>
-          )}
-        </TabsList>
+      {/* s134 t517 slice 5b — Sub-surface pill restyle. Replaces the
+          underline TabsList chrome with the mockup B `.sub-surface` pill
+          row: 12px text, 4×8 padding, rounded-md, yellow active fill on
+          black, muted inactive. Label `<Mode> ›` lives inline (no longer
+          a separate row). Core forks fall back to the original
+          underline TabsList because they have no mode picker.
+
+          The active state styling uses tailwind arbitrary-attribute
+          variants `[&[aria-selected=true]]:...` to override the
+          react-fancy underline-variant defaults via tailwind-merge. */}
+      {/* s134 t517 slice 5c phase 2 — flyout-shell wrap. Per mockup B, the
+          workspace puts Canvas + Chat side-by-side. The chat panel renders
+          as a fixed-width aside on lg+ viewports; on smaller screens it's
+          hidden to keep the canvas usable. Phase 2 is a placeholder; the
+          actual chat integration (project-scoped session + composer +
+          history) lands in slice 5c phase 3+ when chat is moved out of
+          the floating ChatFlyout into the workspace right panel. Skipped
+          for core forks (no canvas/chat concept). */}
+      <div className={cn("flex flex-1 min-h-0", !isCoreFork && "lg:flex-row gap-3")} data-testid="project-flyout-shell">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 min-w-0 min-h-0 flex flex-col">
+        {isCoreFork ? (
+          <TabsList>
+            <TabsTrigger value="files">Editor</TabsTrigger>
+            <TabsTrigger value="repository">Repository</TabsTrigger>
+          </TabsList>
+        ) : (
+          <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border flex-wrap" data-testid="project-sub-surface">
+            <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold whitespace-nowrap pr-1" data-testid="project-sub-surface-label">{currentMode} ›</span>
+            <TabsList className="border-b-0 gap-1 flex-wrap py-0">
+              {tabBelongsToMode("details") && <TabsTrigger value="details" className={SUB_PILL_CLASS}>Details</TabsTrigger>}
+              {tabBelongsToMode("files") && <TabsTrigger value="files" className={SUB_PILL_CLASS}>Editor</TabsTrigger>}
+              {tabBelongsToMode("repository") && <TabsTrigger value="repository" className={SUB_PILL_CLASS}>Repository</TabsTrigger>}
+              {tabBelongsToMode("hosting") && onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
+                <TabsTrigger value="hosting" className={SUB_PILL_CLASS}>Hosting</TabsTrigger>
+              )}
+              {tabBelongsToMode("environment") && project.projectType?.hasCode && (
+                <TabsTrigger value="environment" className={SUB_PILL_CLASS}>Environment</TabsTrigger>
+              )}
+              {tabBelongsToMode("magic-apps") && <TabsTrigger value="magic-apps" className={SUB_PILL_CLASS}>MagicApps</TabsTrigger>}
+              {tabBelongsToMode("taskmaster") && <TabsTrigger value="taskmaster" className={SUB_PILL_CLASS}>TaskMaster</TabsTrigger>}
+              {tabBelongsToMode("iterative-work") && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
+                <TabsTrigger value="iterative-work" className={SUB_PILL_CLASS}>Iterative Work</TabsTrigger>
+              )}
+              {tabBelongsToMode("mcp") && project.projectType?.hasCode && (
+                <TabsTrigger value="mcp" className={SUB_PILL_CLASS}>MCP</TabsTrigger>
+              )}
+              {pluginPanels
+                .filter((p) => (p.mode ?? "coordinate") === currentMode)
+                .map((p) => (
+                  <TabsTrigger key={p.id} value={`plugin-${p.id}`} className={SUB_PILL_CLASS}>{p.label}</TabsTrigger>
+                ))}
+              {tabBelongsToMode("security") && project.projectType?.hasCode && (
+                <TabsTrigger value="security" className={SUB_PILL_CLASS}>Security</TabsTrigger>
+              )}
+              {tabBelongsToMode("activity") && (
+                <TabsTrigger value="activity" className={SUB_PILL_CLASS} data-testid="project-tab-activity">Activity</TabsTrigger>
+              )}
+            </TabsList>
+          </div>
+        )}
+
+        {/* Active sub-surface label. Was 'Canvas · {label}' per mockup B —
+            owner clarified (cycle 157): there's only ONE Canvas (the
+            AgentCanvas that opens with chat), so the 'Canvas · ' prefix
+            is misleading on every project sub-tab. Drop the prefix; keep
+            the label so owners still see which sub-surface is active. */}
+        {!isCoreFork && (
+          <h2
+            className="text-[12px] uppercase tracking-wider text-muted-foreground/80 font-semibold mt-3 mb-2 px-1"
+            data-testid="project-canvas-header"
+          >
+            {tabIdToCanvasLabel(activeTab, pluginPanels)}
+          </h2>
+        )}
 
         <TabsContent value="details" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <Card className="p-4">
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <div>
+          {/*
+            s140 t592 cycle-176 — Tabbed sub-pages: Identity /
+            Configuration / Lifecycle. Owner-chosen shape (Q-14).
+            Owner principle (cycle-176 clarification): "the details
+            tab should not show stuff that other tabs are showing".
+            So this tab carries the project-level metadata that
+            doesn't fit into Editor (files), Repository (git), Hosting
+            (container kind), Environment (env vars), MCP (servers),
+            etc. Identity = name + path + sacred state. Configuration =
+            project type + category (drives behavior). Lifecycle = the
+            two destructive/structural actions (Save metadata + Delete).
+          */}
+          <div className="flex gap-1 mb-3 border-b border-border" data-testid="details-sub-tabs">
+            {(["identity", "configuration", "lifecycle"] as const).map((sub) => (
+              <button
+                key={sub}
+                type="button"
+                data-testid={`details-sub-tab-${sub}`}
+                onClick={() => setDetailsSubTab(sub)}
+                className={cn(
+                  "text-[12px] px-3 py-1.5 -mb-px border-b-2 transition-colors",
+                  detailsSubTab === sub
+                    ? "border-primary text-foreground font-semibold"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {sub === "identity" ? "Identity" : sub === "configuration" ? "Configuration" : "Lifecycle"}
+              </button>
+            ))}
+          </div>
+
+          {/* Identity sub-tab — the name + where it lives + sacred banner */}
+          {detailsSubTab === "identity" && (
+            <Card className="p-4" data-testid="details-sub-pane-identity">
+              <div className="mb-3">
                 <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Name</label>
                 <Input
                   type="text"
@@ -489,147 +722,284 @@ export function ProjectDetail({
                   disabled={isSacred}
                 />
               </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Tynn Token</label>
-                <Input
-                  type="text"
-                  value={tynnToken}
-                  onChange={(e) => setEditTynnToken(e.target.value)}
-                  placeholder="rpk_..."
-                  data-testid="project-token-input"
-                  disabled={isSacred}
-                />
+              <div className="mb-3">
+                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Project path</label>
+                <div className="text-[11px] text-muted-foreground font-mono select-all" data-testid="project-path-display">
+                  {project.path}
+                </div>
               </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3 mb-3">
-              <div>
-                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Purpose</label>
-                <Select
-                  className="text-[13px]"
-                  list={[
-                    { value: "", label: "Auto-detect" },
-                    { value: "literature", label: "Literature" },
-                    { value: "app", label: "App" },
-                    { value: "web", label: "Web" },
-                    { value: "media", label: "Media" },
-                    { value: "administration", label: "Administration" },
-                  ]}
-                  value={category}
-                  onValueChange={setEditCategory}
-                  disabled={isSacred}
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Project Type</label>
-                <Select
-                  className="text-[13px]"
-                  list={(() => {
-                    const items = [];
-                    if (project.projectType && !projectTypes.some((t) => t.id === project.projectType?.id)) {
-                      items.push({ value: project.projectType.id, label: `${project.projectType.label} (detected)` });
-                    }
-                    for (const pt of projectTypes) {
-                      items.push({ value: pt.id, label: `${pt.label}${pt.id === project.projectType?.id ? " (detected)" : ""}` });
-                    }
-                    return items;
-                  })()}
-                  value={editProjectType ?? project.projectType?.id ?? ""}
-                  onValueChange={(v) => setEditProjectType(v || null)}
-                  disabled={isSacred}
-                />
-              </div>
-            </div>
-            <div className="text-[11px] text-muted-foreground font-mono mb-3">{project.path}</div>
-            {isSacred && (
-              <div className="text-[11px] text-muted-foreground mb-3">
-                Sacred projects are managed by the system. Metadata edits are disabled.
-              </div>
-            )}
-            <Button
-              size="sm"
-              onClick={() => void handleSave()}
-              disabled={saving || updating || isSacred}
-              variant={saving || updating || isSacred ? "secondary" : "default"}
-            >
-              {saving || updating ? "Saving..." : isSacred ? "Locked" : "Save"}
-            </Button>
-          </Card>
-
-          {/* Danger Zone */}
-          {!isSacred ? (
-            <>
-              <Callout color="red" className="mt-6">
-                <h3 className="text-[13px] font-bold text-red mb-1">Danger Zone</h3>
-                <p className="text-[11px] text-muted-foreground mb-3">
-                  Permanently delete this project and all its files. This action cannot be undone.
-                </p>
+              {isSacred && (
+                <Callout color="amber" className="mt-3">
+                  <h3 className="text-[13px] font-bold text-yellow mb-1">Sacred Project</h3>
+                  <p className="text-[11px] text-muted-foreground">
+                    Sacred projects are managed by the system — metadata edits + deletion are disabled.
+                  </p>
+                </Callout>
+              )}
+              <div className="mt-3">
                 <Button
                   size="sm"
-                  variant="destructive"
-                  onClick={() => { setDeleteConfirmName(""); setDeleteDialogOpen(true); }}
-                  disabled={deleting}
+                  onClick={() => void handleSave()}
+                  disabled={saving || updating || isSacred}
+                  variant={saving || updating || isSacred ? "secondary" : "default"}
+                  data-testid="details-identity-save"
                 >
-                  {deleting ? "Deleting..." : "Delete Project"}
+                  {saving || updating ? "Saving..." : isSacred ? "Locked" : "Save"}
                 </Button>
-              </Callout>
+              </div>
+            </Card>
+          )}
 
-              {/* Delete confirmation dialog */}
-              <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Delete {project.name}?</DialogTitle>
-                    <DialogDescription>
-                      This will permanently delete the project directory at{" "}
-                      <code className="text-[11px] bg-surface1 px-1 py-0.5 rounded">{project.path}</code>{" "}
-                      and all its contents. If hosting is enabled, it will be stopped first.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
-                      Type <span className="text-foreground">{project.name}</span> to confirm
-                    </label>
-                    <Input
-                      type="text"
-                      value={deleteConfirmName}
-                      onChange={(e) => setDeleteConfirmName(e.target.value)}
-                      placeholder={project.name}
-                      autoFocus
-                    />
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
-                      Cancel
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      disabled={deleteConfirmName !== project.name || deleting}
-                      onClick={() => {
-                        void onDelete({ path: project.path, confirm: true }).then(() => {
-                          setDeleteDialogOpen(false);
-                        });
-                      }}
-                    >
-                      {deleting ? "Deleting..." : "Delete"}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </>
-          ) : (
-            <Callout color="amber" className="mt-6">
-              <h3 className="text-[13px] font-bold text-yellow mb-1">Sacred Project</h3>
-              <p className="text-[11px] text-muted-foreground">
-                Sacred projects are immutable and cannot be deleted.
+          {/* Configuration sub-tab — project type + purpose drive other-tab behavior */}
+          {detailsSubTab === "configuration" && (
+            <Card className="p-4" data-testid="details-sub-pane-configuration">
+              <p className="text-[11px] text-muted-foreground mb-3">
+                These settings control how Aion treats the project. Hosting, MCP servers, and
+                environment vars live in their own tabs.
               </p>
-            </Callout>
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Purpose</label>
+                  <Select
+                    className="text-[13px]"
+                    list={[
+                      { value: "", label: "Auto-detect" },
+                      { value: "literature", label: "Literature" },
+                      { value: "app", label: "App" },
+                      { value: "web", label: "Web" },
+                      { value: "media", label: "Media" },
+                      { value: "administration", label: "Administration" },
+                    ]}
+                    value={category}
+                    onValueChange={setEditCategory}
+                    disabled={isSacred}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Project Type</label>
+                  <Select
+                    className="text-[13px]"
+                    list={(() => {
+                      const items = [];
+                      if (project.projectType && !projectTypes.some((t) => t.id === project.projectType?.id)) {
+                        items.push({ value: project.projectType.id, label: `${project.projectType.label} (detected)` });
+                      }
+                      for (const pt of projectTypes) {
+                        items.push({ value: pt.id, label: `${pt.label}${pt.id === project.projectType?.id ? " (detected)" : ""}` });
+                      }
+                      return items;
+                    })()}
+                    value={editProjectType ?? project.projectType?.id ?? ""}
+                    onValueChange={(v) => setEditProjectType(v || null)}
+                    disabled={isSacred}
+                  />
+                </div>
+              </div>
+
+              {/*
+                s140 t597 cycle-176 — Primary repo selector. Owner:
+                "selection for primary repo that is served on port 80
+                of that container. If only 1 repo is found, don't show
+                the select. And don't show this for project types that
+                don't serve repos."
+
+                Render gates:
+                  - project.projectType?.hasCode === true (project type
+                    actually serves repos)
+                  - (project.repos ?? []).length > 1 (more than one repo)
+
+                The schema (config/src/project-schema.ts:310) requires
+                a port to be set before isDefault can be true. We
+                expose ALL repos in the select but mark port-less ones
+                as not-eligible — picking one without a port would
+                fail the schema validation, so the disabled flag
+                prevents a doomed PUT.
+              */}
+              {project.projectType?.hasCode && (project.repos ?? []).length > 1 && (
+                <div className="mb-3" data-testid="primary-repo-select-wrapper">
+                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                    Primary repo (served on port 80)
+                  </label>
+                  <Select
+                    className="text-[13px]"
+                    list={(project.repos ?? []).map((r) => ({
+                      value: r.name,
+                      label: r.port
+                        ? `${r.name}${r.isDefault ? " (current)" : ""} — port ${String(r.port)}`
+                        : `${r.name} — port not set (cannot be primary)`,
+                    }))}
+                    value={
+                      editPrimaryRepo ??
+                      (project.repos ?? []).find((r) => r.isDefault)?.name ??
+                      ""
+                    }
+                    onValueChange={(v) => setEditPrimaryRepo(v || null)}
+                    disabled={isSacred || savingPrimaryRepo}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-[11px] h-7 mt-2"
+                    data-testid="primary-repo-save"
+                    disabled={
+                      isSacred ||
+                      savingPrimaryRepo ||
+                      editPrimaryRepo === null ||
+                      editPrimaryRepo === (project.repos ?? []).find((r) => r.isDefault)?.name
+                    }
+                    onClick={async () => {
+                      if (!editPrimaryRepo) return;
+                      const chosen = (project.repos ?? []).find((r) => r.name === editPrimaryRepo);
+                      if (!chosen?.port) {
+                        // Schema would reject this — surface as a no-op
+                        // instead of letting a 400 bubble up. Owner can
+                        // set a port for the repo via the Repository
+                        // tab first.
+                        return;
+                      }
+                      setSavingPrimaryRepo(true);
+                      try {
+                        // Set isDefault on each repo: true for the
+                        // chosen one, false for the rest. Sequential
+                        // (not parallel) so we don't briefly violate
+                        // the "at most one isDefault=true" constraint.
+                        for (const r of project.repos ?? []) {
+                          if (r.name === editPrimaryRepo) continue;
+                          if (r.isDefault) {
+                            await updateProjectRepo(project.path, r.name, { isDefault: false });
+                          }
+                        }
+                        await updateProjectRepo(project.path, editPrimaryRepo, { isDefault: true });
+                        setEditPrimaryRepo(null);
+                        onRefresh();
+                      } finally {
+                        setSavingPrimaryRepo(false);
+                      }
+                    }}
+                  >
+                    {savingPrimaryRepo ? "Setting primary..." : "Set as primary"}
+                  </Button>
+                </div>
+              )}
+
+              <Button
+                size="sm"
+                onClick={() => void handleSave()}
+                disabled={saving || updating || isSacred}
+                variant={saving || updating || isSacred ? "secondary" : "default"}
+                data-testid="details-configuration-save"
+              >
+                {saving || updating ? "Saving..." : isSacred ? "Locked" : "Save"}
+              </Button>
+            </Card>
+          )}
+
+          {/* Lifecycle sub-tab — destructive / structural actions */}
+          {detailsSubTab === "lifecycle" && (
+            <div data-testid="details-sub-pane-lifecycle">
+              {!isSacred ? (
+                <>
+                  <Callout color="red">
+                    <h3 className="text-[13px] font-bold text-red mb-1">Danger Zone</h3>
+                    <p className="text-[11px] text-muted-foreground mb-3">
+                      Permanently delete this project and all its files. This action cannot be undone.
+                    </p>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => { setDeleteConfirmName(""); setDeleteDialogOpen(true); }}
+                      disabled={deleting}
+                      data-testid="details-lifecycle-delete"
+                    >
+                      {deleting ? "Deleting..." : "Delete Project"}
+                    </Button>
+                  </Callout>
+
+                  {/* Delete confirmation dialog */}
+                  <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Delete {project.name}?</DialogTitle>
+                        <DialogDescription>
+                          This will permanently delete the project directory at{" "}
+                          <code className="text-[11px] bg-surface1 px-1 py-0.5 rounded">{project.path}</code>{" "}
+                          and all its contents. If hosting is enabled, it will be stopped first.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                          Type <span className="text-foreground">{project.name}</span> to confirm
+                        </label>
+                        <Input
+                          type="text"
+                          value={deleteConfirmName}
+                          onChange={(e) => setDeleteConfirmName(e.target.value)}
+                          placeholder={project.name}
+                          autoFocus
+                        />
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+                          Cancel
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          disabled={deleteConfirmName !== project.name || deleting}
+                          onClick={() => {
+                            void onDelete({ path: project.path, confirm: true }).then(() => {
+                              setDeleteDialogOpen(false);
+                            });
+                          }}
+                        >
+                          {deleting ? "Deleting..." : "Delete"}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </>
+              ) : (
+                <Callout color="amber">
+                  <h3 className="text-[13px] font-bold text-yellow mb-1">Sacred Project</h3>
+                  <p className="text-[11px] text-muted-foreground">
+                    Sacred projects are immutable and cannot be deleted.
+                  </p>
+                </Callout>
+              )}
+            </div>
           )}
         </TabsContent>
 
         <TabsContent value="files" className="mt-4 flex-1 min-h-0 overflow-hidden">
-          <Card className="overflow-hidden">
-            {/* Toolbar */}
+          <Card className="overflow-hidden h-full flex flex-col">
+            {/* Toolbar — s140 scope pills surface the canonical project
+                subtrees (k/, repos/, sandbox/) as first-class views. 'All'
+                shows the whole tree; the others narrow to one subtree. */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-              <span className="text-[11px] font-semibold text-muted-foreground">Editor</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-semibold text-muted-foreground">Editor</span>
+                <div className="flex items-center gap-1 ml-2">
+                  {([
+                    { id: "all", label: "All" },
+                    { id: "k", label: "Knowledge" },
+                    { id: "repos", label: "Repos" },
+                    { id: "sandbox", label: "Sandbox" },
+                  ] as const).map((scope) => (
+                    <button
+                      key={scope.id}
+                      type="button"
+                      onClick={() => setTreeScope(scope.id)}
+                      className={cn(
+                        "text-[11px] h-6 px-2 rounded-full border transition-colors",
+                        treeScope === scope.id
+                          ? "bg-primary/10 border-primary/40 text-foreground"
+                          : "border-border text-muted-foreground hover:bg-accent/40",
+                      )}
+                    >
+                      {scope.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
                   <input
@@ -645,19 +1015,39 @@ export function ProjectDetail({
                 </Button>
               </div>
             </div>
-            {/* Panes — CSS grid with fixed height; both columns always visible */}
-            <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", height: "calc(100vh - 280px)", minHeight: "400px" }}>
+            {/* Panes — CSS grid that fills the remaining flex space.
+                Parent Card is now h-full flex-col, so 'flex: 1' here
+                inherits the real available height instead of fighting
+                against a fixed 100vh-N calc that didn't match the
+                actual viewport-constrained tab content area. */}
+            <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", flex: 1, minHeight: 0 }}>
               {/* TreeNav pane with context menu */}
               <div style={{ overflow: "auto", borderRight: "1px solid var(--border)" }}>
                 <ContextMenu>
                   <ContextMenu.Trigger className="w-full min-h-full">
-                    {treeLoading ? (
-                      <div className="text-[12px] text-muted-foreground p-4">Loading files...</div>
-                    ) : fileTree.length === 0 ? (
-                      <div className="text-[12px] text-muted-foreground p-4">No files found.</div>
-                    ) : (
+                    {(() => {
+                      // s140 (cycle 156) — narrow the tree to the selected
+                      // scope. 'all' passes through unchanged. The others
+                      // pull just the matching top-level subtree's
+                      // children up so the tree renders rooted at that
+                      // scope (saves owner a click + keeps the visible
+                      // tree focused).
+                      const scopedTree = treeScope === "all"
+                        ? fileTree
+                        : (fileTree.find((n) => n.name === treeScope)?.children ?? []);
+                      if (treeLoading) {
+                        return <div className="text-[12px] text-muted-foreground p-4">Loading files...</div>;
+                      }
+                      if (scopedTree.length === 0) {
+                        return (
+                          <div className="text-[12px] text-muted-foreground p-4">
+                            {treeScope === "all" ? "No files found." : `No files in ${treeScope}/ yet.`}
+                          </div>
+                        );
+                      }
+                      return (
                       <TreeNav
-                        nodes={fileTree.map(function mapNode(n: FileNode): { id: string; label: string; type: "file" | "folder"; ext?: string; children?: { id: string; label: string; type: "file" | "folder"; ext?: string; children?: unknown[] }[] } {
+                        nodes={scopedTree.map(function mapNode(n: FileNode): { id: string; label: string; type: "file" | "folder"; ext?: string; children?: { id: string; label: string; type: "file" | "folder"; ext?: string; children?: unknown[] }[] } {
                           return { id: n.path.startsWith(project.path) ? n.path.slice(project.path.length + 1) : n.path, label: n.name, type: n.type === "dir" ? "folder" : "file", ext: n.ext, children: n.children?.map(mapNode) };
                         }) as never}
                         selectedId={openFilePath ? openFilePath.replace(`${project.path}/`, "") : undefined}
@@ -670,7 +1060,8 @@ export function ProjectDetail({
                         showIcons
                         indentSize={14}
                       />
-                    )}
+                      );
+                    })()}
                   </ContextMenu.Trigger>
                   <ContextMenu.Content>
                     <ContextMenu.Item onClick={() => {
@@ -792,7 +1183,6 @@ export function ProjectDetail({
                       >
                         <CodeEditor.Toolbar />
                         <CodeEditor.Panel />
-                        <CodeEditor.StatusBar />
                       </CodeEditor>
                     )}
                   </div>
@@ -821,6 +1211,14 @@ export function ProjectDetail({
                   </Button>
                 </div>
                 <RepoPanel ref={repoPanelRef} projectPath={project.path} theme={theme} />
+                {/* s130 t515 B6c — multi-repo manager mounts below the
+                    primary RepoPanel. Hidden for core forks (above branch)
+                    and projects without a primary repo (below branch). */}
+                {!isCoreFork && (
+                  <div className="mt-4">
+                    <RepoManager projectPath={project.path} />
+                  </div>
+                )}
               </>
             ) : (
               <div className="p-3 rounded-lg border border-border bg-mantle">
@@ -914,7 +1312,7 @@ export function ProjectDetail({
                 tools={project.projectType?.tools}
                 onToolExecute={onToolExecute}
                 projectCategory={project.category}
-                tabLabel="Development"
+                tabLabel="Hosting"
                 availableTypes={projectTypes}
               />
             </Card>
@@ -983,6 +1381,110 @@ export function ProjectDetail({
           </TabsContent>
         )}
       </Tabs>
+      {!isCoreFork && (
+        <aside
+          className="w-[280px] hidden lg:flex flex-col border-l border-border pl-3"
+          data-testid="project-chat-aside"
+          aria-label="Project chat panel"
+        >
+          <ProjectChatAside
+            project={project}
+            onOpenChat={() => onOpenChat(project.path)}
+          />
+        </aside>
+      )}
+      </div>
     </div>
+  );
+}
+
+/**
+ * Project chat aside (slice 5c phase 3 starter — cycle 147).
+ *
+ * Replaces the cycle-145 placeholder with useful project-scoped content
+ * pending the heavier ChatFlyout-into-aside integration. Shows:
+ *  - Iterative-work status (enabled / cron / next fire) when eligible
+ *  - Progress bar (done/total tasks) sourced from the PM provider
+ *  - "Open chat" CTA that mirrors the header button (talk about this project)
+ *
+ * Iterative-work data is fetched in parallel with progress; failures collapse
+ * to a "no status available" hint without breaking the aside chrome.
+ */
+function ProjectChatAside({
+  project,
+  onOpenChat,
+}: {
+  project: ProjectInfo;
+  onOpenChat: () => void;
+}) {
+  const eligible = (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) === true;
+  const [status, setStatus] = useState<IterativeWorkProjectStatus | null>(null);
+  const [progress, setProgress] = useState<IterativeWorkProgress | null>(null);
+
+  useEffect(() => {
+    // Cycle 148 — reset state on project change so we don't briefly show
+    // the previous project's status/progress while the new fetch lands.
+    setStatus(null);
+    setProgress(null);
+    if (!eligible) return;
+    let cancelled = false;
+    void Promise.all([
+      fetchIterativeWorkStatus(project.path).catch(() => null),
+      fetchIterativeWorkProgress(project.path).catch(() => null),
+    ]).then(([s, p]) => {
+      if (cancelled) return;
+      setStatus(s);
+      setProgress(p);
+    });
+    return () => { cancelled = true; };
+  }, [eligible, project.path]);
+
+  return (
+    <>
+      <h2 className="text-[12px] uppercase tracking-wider text-muted-foreground/80 font-semibold mt-3 mb-2">
+        Chat
+      </h2>
+
+      {eligible && (
+        <Card className="p-3 mb-2 bg-secondary/10" data-testid="project-chat-aside-iterative">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold mb-1">Iterative work</div>
+          <div className="text-[12px] text-foreground">
+            {status === null ? "Loading…" : status.enabled ? "Enabled" : "Disabled"}
+            {status?.inFlight && <span className="ml-1 text-yellow text-[10px]">· running</span>}
+          </div>
+          {status?.cron && (
+            <div className="text-[11px] text-muted-foreground font-mono mt-0.5">{status.cron}</div>
+          )}
+          {progress !== null && progress.totalTasks > 0 && (
+            <div className="mt-2">
+              <div className="text-[11px] text-muted-foreground mb-1">
+                {progress.doneTasks}/{progress.totalTasks} done · {progress.percentComplete}%
+              </div>
+              <div className="h-1.5 bg-secondary rounded overflow-hidden">
+                <div
+                  className="h-full bg-yellow transition-[width]"
+                  style={{ width: `${String(progress.percentComplete)}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+
+      <Card className="p-3 flex-1 min-h-0 overflow-y-auto bg-secondary/10 border-dashed border-border/60">
+        <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
+          Project-scoped chat panel — the heavy integration ships in slice 5c phase 4. Use Open chat to talk
+          about this project today.
+        </p>
+        <Button
+          size="sm"
+          className="mt-3 w-full"
+          onClick={onOpenChat}
+          data-testid="project-chat-aside-open"
+        >
+          Open chat
+        </Button>
+      </Card>
+    </>
   );
 }

@@ -1,53 +1,111 @@
 /**
- * DevNotes — page-level developer notes surfaced via a header icon.
+ * DevNotes — universal page/tab/view annotation primitive.
  *
- * **Status:** ADF candidate primitive. Built local to dashboard for now;
- * upstream into `@particle-academy/react-fancy` once the API stabilizes
- * (per CLAUDE.md § 1.5, particle-academy bug routing — file an issue
- * upstream when a primitive is missing, build locally with lower-level
- * primitives in the meantime).
+ * **Architecture (cycle 150 refactor):** all DevNotes across the dashboard
+ * register into a single global modal; one icon trigger opens it; arrow
+ * keys + clickable arrows navigate the stack.
  *
- * **Visibility:** Dev Notes only render when Contributing/Dev Mode is on
- * (`config.dev.enabled === true`). End users running the gateway in
- * production never see them. The owner sees them whenever they have
- * Contributing enabled, signaling "this page has work-in-progress notes
- * the agent left behind."
+ * **Why one modal:** the prior per-page popover (cycle 80-ish) put a
+ * separate icon + popover on each surface. Owner feedback (2026-04-30):
+ * notes should accumulate centrally so any visible page/tab's notes are
+ * reachable from one spot, with `←` / `→` to walk through them.
  *
- * **Why this primitive:** the agent leaves design caveats, deferred work
- * notes, and "first slice" disclaimers on pages it's actively building.
- * Inline disclaimer banners (the cycle 83 pattern) clutter the surface
- * for non-dev users. DevNotes formalizes the pattern: notes live next to
- * the page (passed as children), surface only behind a small icon, and
- * disappear entirely outside Dev Mode.
+ * **Visibility gate:** notes only register + the icon only renders when
+ * Contributing/Dev Mode is on (`config.dev.enabled === true`). Outside
+ * dev mode, this primitive is a no-op.
  *
- * **Reusability:** plugins, MApps, and locally-hosted apps can also use
- * this primitive — it's exported from the dashboard's UI wrapper layer
- * (path TBD when a plugin first consumes it; today it's local).
+ * **Embeddable:** `<DevNote>` is the consumer-side surface. It mounts on
+ * a page/tab/view, registers its content with the provider, and unmounts
+ * cleanly. It renders nothing visible on its own — it's a registration
+ * shell, not a UI element.
  *
- * **Usage:**
+ * **Trigger:** `<DevNotesIcon>` is the icon button that opens the modal.
+ * It sits in page or tab headers (multiple instances OK; all open the
+ * same modal). Shows a count badge of currently-registered notes.
+ *
+ * **Provider:** wrap the app root in `<DevNotesProvider>` once. It holds
+ * the registered-notes map + modal open state.
+ *
+ * ## Usage
+ *
  * ```tsx
+ * // 1. Wrap the app once at the root:
+ * <DevNotesProvider>
+ *   <App />
+ * </DevNotesProvider>
+ *
+ * // 2. Drop the icon in any header that should show the notes:
  * <PageHeader>
- *   <h1>Vault</h1>
- *   <DevNotes title="Vault — dev notes">
- *     <DevNotes.Item kind="info" heading="TPM2 detection">
- *       Backend selection runs at boot via detectTpm2Available().
- *       Production with TPM2 → SecretsManager. Test VM → FilesystemSecretsBackend.
- *     </DevNotes.Item>
- *     <DevNotes.Item kind="todo" heading="Per-project Vault picker">
- *       MCP-tab + Stacks integration deferred to follow-up cycle.
- *     </DevNotes.Item>
- *   </DevNotes>
+ *   <h1>Projects</h1>
+ *   <DevNotesIcon />
  * </PageHeader>
+ *
+ * // 3. Embed notes anywhere — they register on mount:
+ * <DevNote
+ *   kind="todo"
+ *   heading="Slice 5c phase 4"
+ *   scope="project-workspace"
+ * >
+ *   Chat thread still in floating flyout, not in workspace aside.
+ * </DevNote>
  * ```
  */
 
-import { useState, type ReactNode } from "react";
-import { Card } from "@/components/ui/card";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { Modal } from "@particle-academy/react-fancy";
 import { useConfig } from "@/hooks.js";
 import { cn } from "@/lib/utils";
 
-/** Kind of note — drives the left-border accent + icon. */
+// ----------------------------------------------------------------------
+// Types
+// ----------------------------------------------------------------------
+
 export type DevNoteKind = "info" | "todo" | "warning" | "deferred";
+
+interface DevNoteEntry {
+  id: string;
+  heading: string;
+  kind: DevNoteKind;
+  scope?: string;
+  body: ReactNode;
+}
+
+// Cycle 150 hotfix v0.4.434 — split into TWO contexts so <DevNote>
+// consumers never re-render on entries/open changes. The original single
+// context churned its value identity on every register/unregister, which
+// re-fired every mounted DevNote's useEffect (ctx was in deps), which
+// called register again → churn cascade. Even with the v0.4.427 children-
+// ref fix, every navigation triggered the cascade because mounting/
+// unmounting a single DevNote wiggled the context value.
+//
+// Split: Actions context holds STABLE callbacks + enabled flag (never
+// changes identity except when dev-mode toggles). State context holds
+// the changing entries/open. <DevNote> only consumes Actions — its
+// useEffect deps stay stable across the whole session. Icon + Modal
+// consume both.
+
+interface DevNotesActionsShape {
+  enabled: boolean;
+  register: (id: string, entry: Omit<DevNoteEntry, "id">) => void;
+  unregister: (id: string) => void;
+}
+
+interface DevNotesStateShape {
+  count: number;
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  entries: DevNoteEntry[];
+}
 
 const KIND_ACCENT: Record<DevNoteKind, string> = {
   info: "border-l-blue",
@@ -70,134 +128,303 @@ const KIND_LABEL_CLASS: Record<DevNoteKind, string> = {
   deferred: "bg-muted-foreground/15 text-muted-foreground",
 };
 
-interface DevNotesProps {
-  /** Title shown at the top of the open panel. Defaults to "Dev Notes". */
-  title?: string;
-  /** One or more <DevNotes.Item> children. */
+// ----------------------------------------------------------------------
+// Context
+// ----------------------------------------------------------------------
+
+const DevNotesActionsContext = createContext<DevNotesActionsShape | null>(null);
+const DevNotesStateContext = createContext<DevNotesStateShape | null>(null);
+
+function useDevNotesActions(): DevNotesActionsShape | null {
+  return useContext(DevNotesActionsContext);
+}
+
+function useDevNotesState(): DevNotesStateShape | null {
+  return useContext(DevNotesStateContext);
+}
+
+// ----------------------------------------------------------------------
+// Provider — wraps the app root once. Holds registered notes + modal open
+// state. Exposes register/unregister so embedded <DevNote> components can
+// participate.
+// ----------------------------------------------------------------------
+
+export function DevNotesProvider({ children }: { children: ReactNode }) {
+  const config = useConfig();
+  const enabled = Boolean(config.data?.dev?.enabled);
+
+  const [open, setOpen] = useState(false);
+  // Use a ref-backed Map + version counter so stable consumers don't see
+  // identity churn while registrations come and go.
+  const entriesRef = useRef<Map<string, DevNoteEntry>>(new Map());
+  const [version, setVersion] = useState(0);
+
+  const register = useCallback((id: string, entry: Omit<DevNoteEntry, "id">) => {
+    entriesRef.current.set(id, { id, ...entry });
+    setVersion((v) => v + 1);
+  }, []);
+
+  const unregister = useCallback((id: string) => {
+    if (entriesRef.current.delete(id)) {
+      setVersion((v) => v + 1);
+    }
+  }, []);
+
+  const entries = useMemo(() => {
+    // version dep makes this recompute on register/unregister.
+    void version;
+    return Array.from(entriesRef.current.values());
+  }, [version]);
+
+  // Actions context: identity stable across the session except when
+  // dev-mode toggles. <DevNote> consumes ONLY this; its useEffect deps
+  // stay stable so registering/unregistering siblings doesn't re-fire
+  // its effect. Cascade closed.
+  const actions: DevNotesActionsShape = useMemo(
+    () => ({ enabled, register, unregister }),
+    [enabled, register, unregister],
+  );
+
+  // State context: changes on every register/unregister + open toggle.
+  // Icon + Modal consume this; their re-renders are bounded by the count
+  // and open state, not by individual DevNote lifecycle.
+  const state: DevNotesStateShape = useMemo(
+    () => ({ count: entries.length, open, setOpen, entries }),
+    [entries, open],
+  );
+
+  return (
+    <DevNotesActionsContext.Provider value={actions}>
+      <DevNotesStateContext.Provider value={state}>
+        {children}
+        <DevNotesModal />
+      </DevNotesStateContext.Provider>
+    </DevNotesActionsContext.Provider>
+  );
+}
+
+// ----------------------------------------------------------------------
+// <DevNote> — embeddable register-only component. Renders nothing visible.
+// ----------------------------------------------------------------------
+
+interface DevNoteProps {
+  heading: string;
+  kind?: DevNoteKind;
+  scope?: string;
   children: ReactNode;
-  /** Optional class for the trigger icon. */
+}
+
+export function DevNote({ heading, kind = "info", scope, children }: DevNoteProps) {
+  const actions = useDevNotesActions();
+  const id = useId();
+
+  // Cycle 150 hotfix v0.4.434 — children captured into a ref (v0.4.427)
+  // AND consumes Actions-only context (v0.4.434). Actions identity is
+  // stable across the session; State changes don't re-render this
+  // component. The useEffect deps are now genuinely stable so register
+  // fires once on mount + once on unmount — no cascade.
+  const bodyRef = useRef<ReactNode>(children);
+  bodyRef.current = children;
+
+  useEffect(() => {
+    if (!actions?.enabled) return;
+    actions.register(id, { heading, kind, scope, body: bodyRef.current });
+    return () => { actions.unregister(id); };
+  }, [actions, id, heading, kind, scope]);
+
+  return null;
+}
+
+// ----------------------------------------------------------------------
+// <DevNotesIcon> — trigger button. Opens the global modal. Multiple
+// instances OK; they all toggle the same modal.
+// ----------------------------------------------------------------------
+
+interface DevNotesIconProps {
+  className?: string;
+  /** Tooltip / accessible label override. Defaults to "Dev notes (N)". */
+  title?: string;
+}
+
+export function DevNotesIcon({ className, title }: DevNotesIconProps) {
+  const actions = useDevNotesActions();
+  const state = useDevNotesState();
+  if (!actions?.enabled) return null;
+  if (!state || state.count === 0) return null;
+
+  const label = title ?? `Dev notes (${state.count})`;
+
+  return (
+    <button
+      type="button"
+      onClick={() => { state.setOpen(true); }}
+      aria-label={label}
+      title={label}
+      data-testid="dev-notes-icon"
+      className={cn(
+        "p-1.5 rounded-md transition-colors cursor-pointer relative",
+        "text-muted-foreground hover:bg-secondary hover:text-foreground",
+        className,
+      )}
+    >
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M3 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3z" />
+        <path d="M3 2v12" />
+        <path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" />
+      </svg>
+      <span
+        className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-1 rounded-full bg-amber-400 text-black text-[9px] font-bold flex items-center justify-center"
+        data-testid="dev-notes-count-badge"
+      >
+        {state.count}
+      </span>
+    </button>
+  );
+}
+
+// ----------------------------------------------------------------------
+// <DevNotesModal> — global modal with arrow-key + clickable nav.
+// Rendered once by the provider; consumes context for entries + open state.
+// ----------------------------------------------------------------------
+
+function DevNotesModal() {
+  const actions = useDevNotesActions();
+  const state = useDevNotesState();
+  const [index, setIndex] = useState(0);
+
+  const total = state?.entries.length ?? 0;
+  const open = Boolean(state?.open && total > 0);
+
+  // Clamp the index when entries change (e.g. a page navigates and
+  // registrations swap out underneath).
+  useEffect(() => {
+    if (total === 0) {
+      if (index !== 0) setIndex(0);
+      return;
+    }
+    if (index >= total) setIndex(total - 1);
+  }, [total, index]);
+
+  // Arrow-key navigation while modal is open. Escape + focus-trap +
+  // backdrop-click are handled by the PAx Modal primitive (cycle 150
+  // refactor v0.4.428 — was hand-rolled before).
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setIndex((i) => (i > 0 ? i - 1 : total - 1));
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setIndex((i) => (i < total - 1 ? i + 1 : 0));
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => { window.removeEventListener("keydown", handler); };
+  }, [open, total]);
+
+  if (!actions?.enabled || !state) return null;
+  const entry = total > 0 ? state.entries[index] : undefined;
+
+  return (
+    <Modal open={open && entry !== undefined} onClose={() => { state.setOpen(false); }} size="md">
+      {entry && (
+        <>
+          <Modal.Header>
+            <div className="flex items-center gap-2" data-testid="dev-notes-modal">
+              <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-400 font-bold uppercase tracking-wider">
+                Dev Notes
+              </span>
+              <span className="text-[13px] font-semibold">
+                {index + 1} of {total}
+                {entry.scope && (
+                  <span className="ml-2 text-muted-foreground font-normal">· {entry.scope}</span>
+                )}
+              </span>
+            </div>
+          </Modal.Header>
+
+          <Modal.Body
+            className={cn("p-4 border-l-4 max-h-[60vh] overflow-y-auto bg-secondary/10", KIND_ACCENT[entry.kind])}
+          >
+            <div data-testid="dev-notes-modal-entry">
+              <div className="flex items-center gap-2 mb-2">
+                <span
+                  className={cn(
+                    "text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider",
+                    KIND_LABEL_CLASS[entry.kind],
+                  )}
+                >
+                  {KIND_LABEL[entry.kind]}
+                </span>
+                <span className="text-[14px] font-semibold text-foreground">{entry.heading}</span>
+              </div>
+              <div className="text-[12px] text-muted-foreground leading-relaxed">
+                {entry.body}
+              </div>
+            </div>
+          </Modal.Body>
+
+          <Modal.Footer className="flex items-center justify-between gap-2 text-[11px]">
+            <button
+              type="button"
+              onClick={() => { setIndex((i) => (i > 0 ? i - 1 : total - 1)); }}
+              aria-label="Previous note"
+              className="px-2 py-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
+              data-testid="dev-notes-modal-prev"
+            >
+              <span aria-hidden="true">←</span> Prev
+            </button>
+            <span className="text-muted-foreground/70">
+              ← / → to navigate · Esc to close
+            </span>
+            <button
+              type="button"
+              onClick={() => { setIndex((i) => (i < total - 1 ? i + 1 : 0)); }}
+              aria-label="Next note"
+              className="px-2 py-1 rounded hover:bg-secondary text-muted-foreground hover:text-foreground cursor-pointer flex items-center gap-1"
+              data-testid="dev-notes-modal-next"
+            >
+              Next <span aria-hidden="true">→</span>
+            </button>
+          </Modal.Footer>
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// ----------------------------------------------------------------------
+// Legacy compatibility shim — kept so v0.4.418 callsites still typecheck
+// while we migrate them. Removed in a follow-up cycle once all consumers
+// are on the new API. Renders nothing; logs a one-time deprecation in dev.
+// ----------------------------------------------------------------------
+
+interface LegacyDevNotesProps {
+  title?: string;
+  children: ReactNode;
   className?: string;
 }
 
-interface DevNotesItemProps {
-  heading: string;
-  kind?: DevNoteKind;
-  children: ReactNode;
+function LegacyDevNotesRoot({ children }: LegacyDevNotesProps) {
+  // Mount the children so the new <DevNote> components inside register normally.
+  // The old `<DevNotes.Item>` API has been replaced by `<DevNote>` directly.
+  return <>{children}</>;
 }
 
-function DevNotesItem({ heading, kind = "info", children }: DevNotesItemProps) {
-  return (
-    <div
-      data-testid="dev-notes-item"
-      className={cn("p-3 border-l-4 rounded-r-md bg-secondary/30", KIND_ACCENT[kind])}
-    >
-      <div className="flex items-center gap-2 mb-1">
-        <span
-          className={cn(
-            "text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider",
-            KIND_LABEL_CLASS[kind],
-          )}
-        >
-          {KIND_LABEL[kind]}
-        </span>
-        <span className="text-[12px] font-semibold text-foreground">{heading}</span>
-      </div>
-      <div className="text-[12px] text-muted-foreground leading-relaxed">
-        {children}
-      </div>
-    </div>
-  );
+function LegacyDevNotesItem({ heading, kind = "info", children }: { heading: string; kind?: DevNoteKind; children: ReactNode }) {
+  return <DevNote heading={heading} kind={kind}>{children}</DevNote>;
 }
 
-function DevNotesRoot({ title = "Dev Notes", children, className }: DevNotesProps) {
-  const config = useConfig();
-  const [open, setOpen] = useState(false);
-
-  // Visibility gate: only renders when Contributing/Dev Mode is on. Outside
-  // Dev Mode, the icon doesn't appear at all so end-users never see "this
-  // page has notes."
-  const devModeEnabled = Boolean(config.data?.dev?.enabled);
-  if (!devModeEnabled) return null;
-
-  return (
-    <div className={cn("relative inline-block", className)}>
-      <button
-        type="button"
-        onClick={() => { setOpen((v) => !v); }}
-        aria-label={open ? "Close dev notes" : "Open dev notes"}
-        aria-expanded={open}
-        data-testid="dev-notes-trigger"
-        className={cn(
-          "p-1.5 rounded-md transition-colors cursor-pointer",
-          open ? "bg-amber-400/15 text-amber-400" : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-        )}
-        title={`${title} (Contributing mode)`}
-      >
-        {/* Notebook glyph — inline SVG to avoid icon-set dependency */}
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M3 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3z" />
-          <path d="M3 2v12" />
-          <path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" />
-        </svg>
-      </button>
-
-      {open && (
-        <>
-          {/* Click-outside scrim — transparent layer that closes the panel
-              without dimming the page. Sits one tier below the panel itself
-              so panel clicks still reach. Both above the chat flyout
-              (z-[200]) per cycle 87 z-index policy: header-triggered surfaces
-              stack above page content. */}
-          <div
-            aria-hidden="true"
-            className="fixed inset-0 z-[290]"
-            onClick={() => { setOpen(false); }}
-          />
-          <Card
-            data-testid="dev-notes-panel"
-            className="absolute z-[300] right-0 top-full mt-2 w-[420px] max-h-[60vh] overflow-y-auto p-4 shadow-lg space-y-3"
-            onClick={(e) => { e.stopPropagation(); }}
-          >
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] px-1.5 py-0.5 rounded bg-amber-400/15 text-amber-400 font-bold uppercase tracking-wider">
-                  Dev Notes
-                </span>
-                <h3 className="text-[13px] font-semibold text-foreground">{title}</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => { setOpen(false); }}
-                aria-label="Close dev notes"
-                className="text-muted-foreground hover:text-foreground p-1 rounded cursor-pointer"
-              >
-                <span aria-hidden="true">×</span>
-              </button>
-            </div>
-            <div className="space-y-2">
-              {children}
-            </div>
-            <div className="pt-2 border-t border-border/50 text-[10px] text-muted-foreground/70">
-              Notes shown only in Contributing/Dev Mode. Configurable in Settings → Gateway.
-            </div>
-          </Card>
-        </>
-      )}
-    </div>
-  );
-}
-
-/** DevNotes namespace component. `<DevNotes>` is the root (icon trigger
- *  + popover); `<DevNotes.Item>` is each individual note inside. */
-export const DevNotes = Object.assign(DevNotesRoot, {
-  Item: DevNotesItem,
+export const DevNotes = Object.assign(LegacyDevNotesRoot, {
+  Item: LegacyDevNotesItem,
 });

@@ -210,15 +210,42 @@ run_spot() {
 # Tier: E2E UI tests (Playwright from host against VM)
 # ---------------------------------------------------------------------------
 run_e2e_ui() {
+  # s138 t525 — `--ui` opens the interactive Playwright UI (browser-
+  # based test runner with watch mode, run controls, traces). Forwarded
+  # pattern args narrow which spec(s) load. Owner watches + drives.
+  local pattern="${1:-}"
   echo ""
   echo "================================================================"
-  echo "  E2E UI Tests (Playwright → test.ai.on)"
+  echo "  E2E UI Mode (Playwright UI runner → test.ai.on)"
   echo "================================================================"
   echo ""
-
-  echo "Running Playwright against test.ai.on..."
+  echo "Opening Playwright UI runner against test.ai.on..."
+  if [ -n "$pattern" ]; then echo "  pattern: $pattern"; fi
   cd "$REPO_DIR"
-  BASE_URL="https://test.ai.on" npx playwright test
+  if [ -n "$pattern" ]; then
+    BASE_URL="https://test.ai.on" npx playwright test --ui "$pattern"
+  else
+    BASE_URL="https://test.ai.on" npx playwright test --ui
+  fi
+}
+
+# s138 t526 — visible auto-running tests, no UI shell. Use this when
+# the goal is "watch the test execute" rather than "drive the runner."
+run_e2e_headed() {
+  local pattern="${1:-}"
+  echo ""
+  echo "================================================================"
+  echo "  E2E Headed (Playwright --headed → test.ai.on)"
+  echo "================================================================"
+  echo ""
+  echo "Running Playwright headed against test.ai.on..."
+  if [ -n "$pattern" ]; then echo "  pattern: $pattern"; fi
+  cd "$REPO_DIR"
+  if [ -n "$pattern" ]; then
+    BASE_URL="https://test.ai.on" npx playwright test --headed "$pattern"
+  else
+    BASE_URL="https://test.ai.on" npx playwright test --headed
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -238,7 +265,13 @@ case "$TIER" in
     ;;
   e2e:ui)
     preflight
-    run_e2e_ui
+    shift
+    run_e2e_ui "$@"
+    ;;
+  e2e:headed)
+    preflight
+    shift
+    run_e2e_headed "$@"
     ;;
   spot)
     preflight
