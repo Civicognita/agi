@@ -275,16 +275,11 @@ export interface RuntimeStateDeps {
   inferenceGateway?: import("@agi/model-runtime").InferenceGateway;
   /** ModelStore — used for model dependency status checks. */
   modelStore?: import("@agi/model-runtime").ModelStore;
-  mappMarketplaceManager?: {
-    getSources(): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number }[];
-    addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number };
-    removeSource(id: number): void;
-    syncSource(id: number): Promise<{ ok: boolean; error?: string; mappCount?: number }>;
-    getCatalogWithInstalled(): Promise<Array<{ id: string; sourceId: number; author: string; name?: string; description?: string; category?: string; version?: string; sourcePath: string; installed: boolean }>>;
-    install(appId: string, sourceId: number): Promise<{ ok: boolean; error?: string }>;
-    uninstall(appId: string, author: string): { ok: boolean; error?: string };
-    syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
-  };
+  /** s140 t599 cycle 194 — replaced 10-line inline structural type with the
+   *  imported class type from @agi/marketplace. Keeps the dep in sync with
+   *  the source-of-truth API. Cycle-189 t598 spotted this drift; cycle-194
+   *  closes it. */
+  mappMarketplaceManager?: import("@agi/marketplace").MAppMarketplaceManager;
   /** MagicAppStateStore — persistent MApp instance state. */
   magicAppStateStore?: import("./magic-app-state-store.js").MagicAppStateStore;
 
@@ -298,25 +293,10 @@ export interface RuntimeStateDeps {
   aionMicro?: import("./aion-micro-manager.js").AionMicroManager;
   /** Resolved prime directory path. */
   primeDir?: string;
-  /** MarketplaceManager — Claude Code-compatible plugin marketplace. */
-  marketplaceManager?: {
-    getSources(): { id: number; ref: string; sourceType: string; name: string; description?: string; lastSyncedAt: string | null; pluginCount: number }[];
-    addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string };
-    removeSource(id: number): void;
-    syncSource(id: number): Promise<{ ok: boolean; error?: string; pluginCount?: number }>;
-    searchCatalog(params: { q?: string; type?: string; category?: string; provides?: string }): Promise<{ name: string; sourceId: number; installed: boolean; description?: string; type?: string; version?: string; author?: { name: string; email?: string }; category?: string; provides?: string[]; depends?: string[]; tags?: string[]; keywords?: string[]; license?: string; homepage?: string; source: unknown }[]>;
-    install(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; missingDeps?: string[]; autoInstalled?: string[] }>;
-    uninstall(pluginName: string, force?: boolean): Promise<{ ok: boolean; error?: string; dependents?: string[] }>;
-    getInstalled(): Promise<{ name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }[]>;
-    checkUpdates(): Promise<{ updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[]; newInMarketplace: { pluginName: string; version: string; description: string }[] }>;
-    syncLocalCatalog(marketplaceDir: string): Promise<{ ok: boolean; error?: string; pluginCount?: number }>;
-    reconcileInstalled(marketplaceDir: string): Promise<{ updated: string[]; errors: string[] }>;
-    syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
-    backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): Promise<void>;
-    updatePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }>;
-    rebuildPlugin(name: string): Promise<void>;
-    rebuildAll(): Promise<{ rebuilt: string[]; failed: string[] }>;
-  };
+  /** MarketplaceManager — Claude Code-compatible plugin marketplace.
+   *  s140 t599 cycle 194 — replaced 17-line inline structural type with
+   *  the imported class type from @agi/marketplace. */
+  marketplaceManager?: import("@agi/marketplace").MarketplaceManager;
   /** Callback to hot-load a newly installed plugin (discover, activate, bridge). */
   onPluginInstalled?: (installPath: string) => Promise<{ loaded: boolean; pluginId?: string; error?: string }>;
   /** Callback to hot-reload an updated plugin (with ESM cache busting). */
@@ -4360,7 +4340,11 @@ export async function createGatewayRuntimeState(
           const sources = mp.getSources();
           Promise.all(sources.map((s) => mp.syncSource(s.id)))
             .then((results) => {
-              const total = results.reduce((n, r) => n + (r.pluginCount ?? 0), 0);
+              // s140 cycle 194 — was r.pluginCount under the inline structural
+               // type; the real CatalogDiff exposes `total` instead. Fix
+               // surfaced when the inline type was replaced with the imported
+               // class type.
+               const total = results.reduce((n, r) => n + (r.diff?.total ?? 0), 0);
               broadcastUpgrade("complete", `Marketplace synced (${total} plugins)`, "marketplace-sync", "ok");
               broadcastUpgrade("complete", "Deploy complete", "complete", "done");
             })
