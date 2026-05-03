@@ -49,9 +49,58 @@ const MOCK_MAPPS: MAppEntry[] = [
   { id: "runbook-editor", name: "Runbook Editor", description: "Step-by-step procedures + playbooks.", icon: "📋", category: "production", panelUrl: "/sandbox/mapps/runbook-editor/index.html" },
 ];
 
+// s140 t599 phase 4 cycle 193 — localStorage key for window-state
+// persistence. Per-project so multiple projects don't trample each
+// other's open MApps.
+function persistedStateKey(): string {
+  const host = typeof window !== "undefined" ? window.location.hostname : "default";
+  return `mapp-desktop-windows::${host}`;
+}
+
+function loadPersistedWindows(): DesktopWindow[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(persistedStateKey());
+    if (raw === null) return [];
+    const parsed = JSON.parse(raw) as DesktopWindow[];
+    if (!Array.isArray(parsed)) return [];
+    // Re-resolve icon + title from MOCK_MAPPS in case the catalog has
+    // changed since persistence (icon/name are display-only; persisted
+    // x/y/w/h/minimized are the load-bearing state).
+    return parsed
+      .map((w) => {
+        const mapp = MOCK_MAPPS.find((m) => m.id === w.mappId);
+        if (mapp === undefined) return null; // MApp uninstalled — drop
+        return { ...w, title: mapp.name, icon: mapp.icon };
+      })
+      .filter((w): w is DesktopWindow => w !== null);
+  } catch {
+    return [];
+  }
+}
+
 export function App(): React.ReactElement {
-  const [windows, setWindows] = useState<DesktopWindow[]>([]);
-  const [topZ, setTopZ] = useState(10);
+  const [windows, setWindows] = useState<DesktopWindow[]>(() => loadPersistedWindows());
+  const [topZ, setTopZ] = useState(() => {
+    // Hydrate topZ from the highest persisted z so newly-opened windows
+    // sit above hydrated ones, not below.
+    const initial = loadPersistedWindows();
+    return initial.length === 0 ? 10 : Math.max(10, ...initial.map((w) => w.z));
+  });
+
+  // s140 t599 phase 4 cycle 193 — persist window state to localStorage.
+  // Debounced via React's natural batching; no explicit timer needed
+  // since localStorage.setItem is synchronous + cheap. Empty windows[]
+  // writes "[]" which clears stale state when user closes everything.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(persistedStateKey(), JSON.stringify(windows));
+    } catch {
+      // Quota exceeded or storage disabled — ignore. State stays in
+      // memory; persistence is opportunistic.
+    }
+  }, [windows]);
 
   // s140 t599 phase 2 — panelUrl lookup. Derived at render time so a
   // future catalog refresh updates open windows without re-keying.
@@ -306,7 +355,7 @@ export function App(): React.ReactElement {
       ))}
 
       {/* Taskbar */}
-      <Taskbar windows={windows} onFocus={focusWindow} onClose={closeWindow} />
+      <Taskbar windows={windows} onFocus={focusWindow} onClose={closeWindow} onMinimize={minimizeWindow} />
     </div>
   );
 }
