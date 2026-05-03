@@ -47,6 +47,50 @@ A test config fixture at `test/fixtures/gateway-test.json` points to these VM mo
 
 If mounts become stale (e.g., after a host reboot), the VM scripts detect and re-mount automatically.
 
+### Marketplace seeder — `installed: <plugins> / <mapps>`
+
+When `agi test-vm services-start` runs, the seeder pulls Plugin
+Marketplace and MApp Marketplace catalogs and reports a count line:
+
+```
+==> Seeding official MApps from marketplace...
+    installed: 60 / 11
+```
+
+That count reflects what was available **at the time the test VM
+seeder snapshot was published**. The seeder fetches from the
+upstream `Civicognita/main` HEAD of each marketplace repo, **not**
+from the dev forks where day-to-day work lives (`wishborn/dev` for
+agents working in this workspace).
+
+#### qa → DONE merge dependency
+
+This shapes the `qa → DONE` pathway for any task that ships a
+catalog entry:
+
+1. Agent ships to `wishborn/agi-marketplace:dev` or
+   `wishborn/agi-mapp-marketplace:dev` and walks the tynn task to
+   `qa` with the verification plan.
+2. The qa-batch surfaces in test VM only after a cross-repo PR
+   merges `wishborn/<repo>:dev → Civicognita/<repo>:main`. That
+   merge is **owner-only** per the
+   `feedback_never_push_upstream` rule.
+3. Once merged, the next `services-start` (or full
+   `test-vm setup`) reseeds the marketplace catalogs and the new
+   entries become installable.
+4. Owner verifies per the test plan and walks tasks to `done` /
+   `finished` in tynn.
+
+> **Owner upgrade isn't just verification — it's also the merge
+> mechanism.** The autonomous loop can drive catalog ships to
+> `qa` but cannot drive them to `done` because the merge step is
+> owner-only by policy.
+
+This is structural, not a loop-discipline failure. Tasks that
+land catalog content correctly belong in qa with explicit owner
+test plans (per `feedback_qa_filing_must_include_test_plan_for_owner`)
+until the merge step happens.
+
 ---
 
 ## Test Tiers
