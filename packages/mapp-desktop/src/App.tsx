@@ -47,6 +47,36 @@ const MOCK_MAPPS: MAppEntry[] = [
   { id: "code-analyzer", name: "Code Analyzer", description: "Dependency audit + complexity metrics.", icon: "🧪", category: "tool", panelUrl: "/sandbox/mapps/code-analyzer/index.html" },
   { id: "ereader", name: "E-reader", description: "Book-style layout for literature projects.", icon: "📚", category: "viewer", panelUrl: "/sandbox/mapps/ereader/index.html" },
   { id: "runbook-editor", name: "Runbook Editor", description: "Step-by-step procedures + playbooks.", icon: "📋", category: "production", panelUrl: "/sandbox/mapps/runbook-editor/index.html" },
+  // s146 t612 cycle 202 — screens-demo MApp exercises the cycle-200
+  // ScreenRenderer dispatch path. NO panelUrl, so Window's 3-path
+  // precedence falls through to screens[]. ScreenRenderer wraps the
+  // elements in fancy-screens ScreenSystem + Screen; the empty
+  // children mean Screen renders its own default chrome (id + title
+  // header). Proves the dispatch path end-to-end without depending
+  // on the broader PAx component registry (cycle-202 verifies the
+  // pipeline; richer compositions land when MApp authors compose
+  // Screen.Body + Screen.Port via the MAppEditor surface).
+  {
+    id: "screens-demo",
+    name: "Screens Demo",
+    description: "Demonstrates Phase D ScreenRenderer dispatching fancy-screens primitives.",
+    icon: "🖼️",
+    category: "tool",
+    screens: [
+      {
+        id: "main",
+        label: "Phase D Demo Screen",
+        interface: "static",
+        elements: [
+          {
+            id: "screen-root",
+            componentRef: "fancy-screens:Screen",
+            props: { id: "demo-screen", title: "Phase D Demo" },
+          },
+        ],
+      },
+    ],
+  },
 ];
 
 // s140 t599 phase 4 cycle 193 — localStorage key for window-state
@@ -108,6 +138,18 @@ export function App(): React.ReactElement {
     const m = new Map<string, string>();
     for (const e of MOCK_MAPPS) {
       if (e.panelUrl) m.set(e.id, e.panelUrl);
+    }
+    return m;
+  }, []);
+
+  // s146 t612 cycle 202 — parallel screens lookup. Window's 3-path render
+  // precedence (panelUrl > screens > fallback) means screens only fires
+  // when the MApp didn't declare a panelUrl. Coexists cleanly with the
+  // legacy iframe path.
+  const screensByMappId = useMemo(() => {
+    const m = new Map<string, NonNullable<MAppEntry["screens"]>>();
+    for (const e of MOCK_MAPPS) {
+      if (e.screens) m.set(e.id, e.screens);
     }
     return m;
   }, []);
@@ -396,6 +438,7 @@ export function App(): React.ReactElement {
             key={w.id}
             window={w}
             panelUrl={panelUrlByMappId.get(w.mappId)}
+            screens={screensByMappId.get(w.mappId)}
             onFocus={() => focusWindow(w.id)}
             onMove={(x, y) => moveWindow(w.id, x, y)}
             onClose={() => closeWindow(w.id)}
