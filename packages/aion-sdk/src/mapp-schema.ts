@@ -442,6 +442,19 @@ export interface MAppScreenElement {
   children?: unknown[];
 }
 
+/** Per-screen mini-agent — Hybrid shape (s146 phase C, owner cycle 190). */
+export type MAppScreenMiniAgentToolMode = "auto" | "whitelist" | "blacklist";
+
+export interface MAppScreenMiniAgent {
+  /** Natural-language intent. Sent to agent-invoker at evaluation time
+   *  alongside the screen's current input values. */
+  intent: string;
+  /** How the tool set is determined. Default "auto" — runtime picks. */
+  toolMode?: MAppScreenMiniAgentToolMode;
+  /** Tool ids, when toolMode is "whitelist" or "blacklist". */
+  tools?: string[];
+}
+
 /** A screen in a MApp. */
 export interface MAppScreen {
   /** Stable identifier within the MApp. Pattern: `^[a-z0-9][a-z0-9_-]*$`. */
@@ -455,6 +468,9 @@ export interface MAppScreen {
   inputs?: MAppScreenInput[];
   /** Composed elements drawn from PAx components. */
   elements: MAppScreenElement[];
+  /** Optional per-screen mini-agent (s146 phase C). When omitted, screen
+   *  renders without agentic processing — purely declarative. */
+  miniAgent?: MAppScreenMiniAgent;
 }
 
 // ---------------------------------------------------------------------------

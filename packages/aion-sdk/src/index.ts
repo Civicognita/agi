@@ -121,6 +121,7 @@ export type {
   MAppModelDependency, MAppModelInferenceConfig,
   MAppScreen, MAppScreenElement, MAppScreenInput,
   MAppScreenInputType, MAppScreenInputQualifier, MAppScreenInputSource,
+  MAppScreenMiniAgent, MAppScreenMiniAgentToolMode,
 } from "./mapp-schema.js";
 
 // ADF UI Component Catalog

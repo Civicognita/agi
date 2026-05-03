@@ -102,12 +102,23 @@ interface EditorScreenElement {
   propsJson: string;       // raw JSON in editor; parsed on save
 }
 
+// s146 phase C cycle 191 — Hybrid mini-agent shape (owner-confirmed). Each
+// screen optionally runs a per-screen mini-agent with intent + tool-set
+// configuration. Editor stores tools as comma-separated string; serializer
+// splits on save.
+interface EditorScreenMiniAgent {
+  intent: string;
+  toolMode: "auto" | "whitelist" | "blacklist";
+  toolsCsv: string; // comma-separated; serializer splits + filters empties
+}
+
 interface EditorScreen {
   id: string;
   label: string;
   interface: "static" | "dynamic";
   inputs: EditorScreenInput[];
   elements: EditorScreenElement[];
+  miniAgent: EditorScreenMiniAgent | null;
 }
 
 interface EditorState {
@@ -707,7 +718,7 @@ function ScreensStep({ state, update }: { state: EditorState; update: <K extends
     const idx = state.screens.length + 1;
     update("screens", [
       ...state.screens,
-      { id: `screen${String(idx)}`, label: `Screen ${String(idx)}`, interface: "static", inputs: [], elements: [] },
+      { id: `screen${String(idx)}`, label: `Screen ${String(idx)}`, interface: "static", inputs: [], elements: [], miniAgent: null },
     ]);
     setActiveScreen(state.screens.length);
   };
@@ -776,15 +787,18 @@ function ScreensStep({ state, update }: { state: EditorState; update: <K extends
   const screensStepDevNotes = (
     <>
       <DevNote
-        kind="deferred"
+        kind="info"
         scope="mapp-editor:screens"
-        heading="Per-screen mini-agent authoring (s146 phase C)"
+        heading="Mini-agent authoring landed (s146 phase C, Hybrid shape)"
       >
-        Each screen runs a hybrid agentic-typed mini-agent with special
-        agentic tools (owner primitive, cycle 181). The Editor surface for
-        authoring it is gated on s146 open question 1: what configures the
-        mini-agent (prompt, tool list, intent description) and what tool
-        set does it have access to?
+        Each screen optionally runs a hybrid agentic-typed mini-agent
+        (owner cycle 190 confirmed Hybrid). Author writes natural-language
+        intent + picks toolMode (auto / whitelist / blacklist) + tool list.
+        The runtime invocation half (calling agent-invoker with intent +
+        scoped tool set on screen-mount or input-change) lands in Phase D
+        alongside the renderer. PAx Screen alignment (t604) is independent —
+        when PAx Screen ships upstream, miniAgent may move into Screen{"’"}s
+        own props slot rather than a top-level MAppScreen field.
       </DevNote>
       <DevNote
         kind="todo"
@@ -954,6 +968,66 @@ function ScreensStep({ state, update }: { state: EditorState; update: <K extends
             ))}
           </div>
 
+          {/* Mini-agent (s146 phase C, Hybrid shape) */}
+          <div className="space-y-2 border-t border-border pt-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-[12px] font-semibold">Mini-agent {screen.miniAgent ? "" : <span className="text-[10px] text-muted-foreground italic">(none — screen renders without agentic processing)</span>}</h4>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => updateScreen({
+                  miniAgent: screen.miniAgent ? null : { intent: "", toolMode: "auto", toolsCsv: "" },
+                })}
+                data-testid="mapp-editor-toggle-mini-agent"
+              >
+                {screen.miniAgent ? "Remove" : "+ Add"}
+              </Button>
+            </div>
+            {screen.miniAgent && (
+              <>
+                <div>
+                  <label className="block text-[10px] font-semibold text-muted-foreground mb-1">Intent</label>
+                  <Textarea
+                    value={screen.miniAgent.intent}
+                    onChange={(e) => updateScreen({ miniAgent: { ...screen.miniAgent!, intent: e.target.value } })}
+                    rows={3}
+                    placeholder="Help the user draft policy documents based on the inputs they provide. Suggest edits, validate references, generate boilerplate sections."
+                    className="text-[12px]"
+                    data-testid="mapp-editor-mini-agent-intent"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-muted-foreground mb-1">Tool mode</label>
+                    <Select
+                      className="text-[11px]"
+                      list={[
+                        { value: "auto", label: "Auto — runtime picks from project tools" },
+                        { value: "whitelist", label: "Whitelist — only listed tools" },
+                        { value: "blacklist", label: "Blacklist — all except listed" },
+                      ]}
+                      value={screen.miniAgent.toolMode}
+                      onValueChange={(v) => updateScreen({ miniAgent: { ...screen.miniAgent!, toolMode: v as "auto" | "whitelist" | "blacklist" } })}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-muted-foreground mb-1">
+                      Tools{screen.miniAgent.toolMode === "auto" ? <span className="text-[9px] ml-1 italic">(ignored when mode=auto)</span> : ""}
+                    </label>
+                    <Input
+                      value={screen.miniAgent.toolsCsv}
+                      onChange={(e) => updateScreen({ miniAgent: { ...screen.miniAgent!, toolsCsv: e.target.value } })}
+                      placeholder="mcp:project-grep, mcp:web-search"
+                      className="text-[11px] font-mono"
+                      data-testid="mapp-editor-mini-agent-tools"
+                      disabled={screen.miniAgent.toolMode === "auto"}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
           <div className="flex justify-end pt-2 border-t border-border">
             <Button size="sm" variant="ghost" onClick={() => removeScreen(activeScreen)} data-testid="mapp-editor-remove-screen">Remove screen</Button>
           </div>
@@ -1090,11 +1164,22 @@ function stateToDefinition(state: EditorState): Record<string, unknown> {
   if (state.processingPrompt) def.output = { processingPrompt: state.processingPrompt };
   // s146 Phase A.2 — emit screens when authored. Editor stores defaults and
   // props as text/JSON strings for editing; this serializer parses them out.
+  // s146 Phase C cycle 191 — also serialize miniAgent when present, splitting
+  // toolsCsv into tools[] (filter empty entries).
   if (state.screens.length > 0) {
     def.screens = state.screens.map((s) => ({
       id: s.id,
       label: s.label,
       interface: s.interface,
+      ...(s.miniAgent ? {
+        miniAgent: {
+          intent: s.miniAgent.intent,
+          toolMode: s.miniAgent.toolMode,
+          ...(s.miniAgent.toolsCsv && s.miniAgent.toolMode !== "auto" ? {
+            tools: s.miniAgent.toolsCsv.split(",").map((t) => t.trim()).filter((t) => t.length > 0),
+          } : {}),
+        },
+      } : {}),
       ...(s.inputs.length > 0 ? {
         inputs: s.inputs.map((i) => {
           const out: Record<string, unknown> = {
@@ -1129,26 +1214,34 @@ function definitionToState(def: Record<string, unknown>): EditorState {
   // s146 Phase A.2 — round-trip screens. Inputs/elements come back as typed
   // JSON; the Editor stores defaults + props as serialized text for editing.
   const rawScreens = (def.screens as Array<Record<string, unknown>> | undefined) ?? [];
-  const screens: EditorScreen[] = rawScreens.map((s) => ({
-    id: String(s.id ?? ""),
-    label: String(s.label ?? ""),
-    interface: (s.interface === "dynamic" ? "dynamic" : "static") as "static" | "dynamic",
-    inputs: (s.inputs as Array<Record<string, unknown>> | undefined ?? []).map((i) => ({
-      key: String(i.key ?? ""),
-      label: String(i.label ?? ""),
-      type: String(i.type ?? "string") as EditorScreenInput["type"],
-      qualifier: String(i.qualifier ?? "optional") as EditorScreenInput["qualifier"],
-      source: String(i.source ?? "either") as EditorScreenInput["source"],
-      default: i.default !== undefined ? JSON.stringify(i.default) : "",
-      description: typeof i.description === "string" ? i.description : "",
-      options: Array.isArray(i.options) ? (i.options as string[]).join(",") : "",
-    })),
-    elements: (s.elements as Array<Record<string, unknown>> | undefined ?? []).map((el) => ({
-      id: String(el.id ?? ""),
-      componentRef: String(el.componentRef ?? ""),
-      propsJson: el.props !== undefined ? JSON.stringify(el.props, null, 2) : "",
-    })),
-  }));
+  const screens: EditorScreen[] = rawScreens.map((s) => {
+    const ma = s.miniAgent as Record<string, unknown> | undefined;
+    return {
+      id: String(s.id ?? ""),
+      label: String(s.label ?? ""),
+      interface: (s.interface === "dynamic" ? "dynamic" : "static") as "static" | "dynamic",
+      inputs: (s.inputs as Array<Record<string, unknown>> | undefined ?? []).map((i) => ({
+        key: String(i.key ?? ""),
+        label: String(i.label ?? ""),
+        type: String(i.type ?? "string") as EditorScreenInput["type"],
+        qualifier: String(i.qualifier ?? "optional") as EditorScreenInput["qualifier"],
+        source: String(i.source ?? "either") as EditorScreenInput["source"],
+        default: i.default !== undefined ? JSON.stringify(i.default) : "",
+        description: typeof i.description === "string" ? i.description : "",
+        options: Array.isArray(i.options) ? (i.options as string[]).join(",") : "",
+      })),
+      elements: (s.elements as Array<Record<string, unknown>> | undefined ?? []).map((el) => ({
+        id: String(el.id ?? ""),
+        componentRef: String(el.componentRef ?? ""),
+        propsJson: el.props !== undefined ? JSON.stringify(el.props, null, 2) : "",
+      })),
+      miniAgent: ma ? {
+        intent: String(ma.intent ?? ""),
+        toolMode: ((ma.toolMode === "whitelist" || ma.toolMode === "blacklist") ? ma.toolMode : "auto") as "auto" | "whitelist" | "blacklist",
+        toolsCsv: Array.isArray(ma.tools) ? (ma.tools as string[]).join(", ") : "",
+      } : null,
+    };
+  });
 
   return {
     id: String(def.id ?? ""), name: String(def.name ?? ""), author: String(def.author ?? ""),

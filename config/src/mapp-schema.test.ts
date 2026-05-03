@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAppDefinitionSchema, MAppScreenSchema, MAppScreenInputSchema } from "./mapp-schema.js";
+import { MAppDefinitionSchema, MAppScreenSchema, MAppScreenInputSchema, MAppScreenMiniAgentSchema } from "./mapp-schema.js";
 
 /**
  * Unit tests for s146 Phase A.1 — MApp screens primitive schema landing.
@@ -145,5 +145,46 @@ describe("MAppScreenSchema — element + id safety", () => {
     });
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.interface).toBe("static");
+  });
+
+  it("accepts a screen with miniAgent (s146 phase C, Hybrid shape)", () => {
+    const result = MAppScreenSchema.safeParse({
+      id: "main", label: "Main", elements: [],
+      miniAgent: {
+        intent: "Help the user draft policy documents based on inputs.",
+        toolMode: "whitelist",
+        tools: ["mcp:project-grep", "mcp:web-search"],
+      },
+    });
+    expect(result.success, result.success ? undefined : JSON.stringify(result.error.format(), null, 2)).toBe(true);
+  });
+});
+
+describe("MAppScreenMiniAgentSchema — Hybrid mini-agent shape (s146 phase C)", () => {
+  it("requires non-empty intent", () => {
+    const result = MAppScreenMiniAgentSchema.safeParse({ intent: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("defaults toolMode to 'auto' when omitted", () => {
+    const result = MAppScreenMiniAgentSchema.safeParse({ intent: "do the thing" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.toolMode).toBe("auto");
+  });
+
+  it("rejects invalid toolMode value", () => {
+    const result = MAppScreenMiniAgentSchema.safeParse({
+      intent: "x", toolMode: "manual",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts whitelist + blacklist + auto with tool list", () => {
+    for (const mode of ["whitelist", "blacklist", "auto"] as const) {
+      const result = MAppScreenMiniAgentSchema.safeParse({
+        intent: "do the thing", toolMode: mode, tools: ["a", "b"],
+      });
+      expect(result.success, `mode=${mode}`).toBe(true);
+    }
   });
 });

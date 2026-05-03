@@ -210,9 +210,28 @@ export const MAppScreenElementSchema = z.object({
   children: z.array(z.unknown()).optional(), // recursive — typed as unknown to avoid Zod cycle
 }).strict();
 
-/** A screen in a MApp. Has elements + typed input props. The screen-level
- *  mini-agent shape is gated on owner clarification (s146 open question 1)
- *  and not part of this schema yet. */
+/** Per-screen mini-agent (s146 phase C, owner-confirmed cycle 190 Hybrid).
+ *  Author writes intent; runtime auto-selects tools from project context
+ *  unless author whitelists or blacklists specific ones. Default mode is
+ *  "auto" so authors get sensible behavior without picking tools per
+ *  screen. */
+export const MAppScreenMiniAgentSchema = z.object({
+  /** Natural-language description of what the agent should do on this
+   *  screen. Sent as the agent prompt at runtime alongside current input
+   *  values. */
+  intent: z.string().min(1),
+  /** How the tool set is determined. */
+  toolMode: z.enum(["auto", "whitelist", "blacklist"]).default("auto"),
+  /** Tool ids; only consulted when toolMode is "whitelist" or "blacklist".
+   *  Source: project's MCP tools + plugin actions + MApp built-ins as
+   *  surfaced by the Editor at design time. */
+  tools: z.array(z.string()).optional(),
+}).strict();
+
+/** A screen in a MApp. Has elements + typed input props + an optional
+ *  hybrid agentic-typed mini-agent. Per owner cycle 190 SDK answer: PAx
+ *  Screen component is upstream-in-progress; this schema is provisional
+ *  and will align tighter when PAx Screen lands (see s146 t604). */
 export const MAppScreenSchema = z.object({
   /** Stable identifier within the MApp. */
   id: z.string().min(1).regex(/^[a-z0-9][a-z0-9_-]*$/),
@@ -226,6 +245,9 @@ export const MAppScreenSchema = z.object({
   inputs: z.array(MAppScreenInputSchema).optional(),
   /** Composed elements drawn from PAx components. */
   elements: z.array(MAppScreenElementSchema),
+  /** Optional per-screen mini-agent. When omitted, screen renders without
+   *  agentic processing — purely declarative. */
+  miniAgent: MAppScreenMiniAgentSchema.optional(),
 }).strict();
 
 // ---------------------------------------------------------------------------
