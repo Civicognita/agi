@@ -40,7 +40,7 @@ import { registerHostingRoutes } from "./hosting-api.js";
 import { registerStackRoutes } from "./stack-api.js";
 import { registerMAppStorageRoutes } from "./mapp-storage-routes.js";
 import { safemodeState } from "./safemode-state.js";
-import type { RouteHandler, RuntimeDefinition, RuntimeInstaller, HostingExtension } from "@agi/plugins";
+import type { RouteHandler, RuntimeDefinition } from "@agi/plugins";
 import { categoryToProvides } from "@agi/plugins";
 import type { ServiceManager } from "./service-manager.js";
 import { registerCommsRoutes } from "./comms-api.js";
@@ -211,36 +211,11 @@ export interface RuntimeStateDeps {
   chatPersistence?: ChatPersistence;
   /** ImageBlobStore — file-backed image storage for chat sessions. */
   imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
-  /** PluginRegistry — loaded plugin instances (for GET /api/plugins + HTTP route mounting). */
-  pluginRegistry?: {
-    getAll(): { manifest: { id: string; name: string; version: string; description: string; author?: string; permissions: string[]; category?: string; bakedIn?: boolean; disableable?: boolean }; basePath: string }[];
-    get(id: string): { manifest: { id: string }; instance: { cleanup?(): Promise<{ resources: { id: string; type: string; label: string; removeCommand: string; shared?: boolean }[] }> } } | undefined;
-    getRoutes(): { pluginId: string; method: string; path: string; handler: RouteHandler }[];
-    getRuntimes(): RuntimeDefinition[];
-    getRuntimesForType(projectType: string): RuntimeDefinition[];
-    getHostingExtensions(): HostingExtension[];
-    getRuntimeInstallers(): RuntimeInstaller[];
-    getRuntimeInstaller(language: string): RuntimeInstaller | undefined;
-    getActions(scope?: { type: string; projectType?: string }): { pluginId: string; action: { id: string; label: string; description?: string; icon?: string; scope: { type: string; projectTypes?: string[] }; handler: { kind: string; command?: string; endpoint?: string; hookName?: string }; confirm?: string; group?: string; destructive?: boolean } }[];
-    getPanels(projectType?: string): { pluginId: string; panel: { id: string; label: string; projectTypes: string[]; widgets: unknown[]; position?: number; mode?: "develop" | "operate" | "coordinate" | "insight" } }[];
-    getSettingsSections(): { pluginId: string; section: { id: string; label: string; description?: string; configPath: string; fields: unknown[]; position?: number } }[];
-    getSidebarSections(): { pluginId: string; section: { id: string; title: string; items: { label: string; to: string; icon?: string; exact?: boolean }[]; position?: number } }[];
-    getThemes(): { pluginId: string; theme: { id: string; name: string; description?: string; dark: boolean; properties: Record<string, string> } }[];
-    getSystemServices(): { pluginId: string; service: { id: string; name: string; description?: string; statusCommand?: string; unitName?: string; startCommand?: string; stopCommand?: string; restartCommand?: string; installCommand?: string; installedCheck?: string; agentAware?: boolean } }[];
-    getScheduledTasks(): { pluginId: string; task: { id: string; name: string; description?: string; cron?: string; intervalMs?: number; enabled?: boolean } }[];
-    getSkills(): { pluginId: string; skill: { name: string; description?: string; domain: string; triggers: string[]; content: string } }[];
-    getKnowledge(): { pluginId: string; namespace: { id: string; label: string; description?: string; contentDir: string; topics: { title: string; path: string; description?: string }[] } }[];
-    getAgentTools(): { pluginId: string; tool: { name: string; description: string; inputSchema: Record<string, unknown>; handler: (input: Record<string, unknown>, context: { sessionId: string; entityId: string }) => Promise<unknown> } }[];
-    getWorkflows(): { pluginId: string; workflow: { id: string; name: string; description?: string; trigger: string; steps: unknown[] } }[];
-    getSettingsPages(): { pluginId: string; page: { id: string; label: string; description?: string; icon?: string; position?: number; sections: unknown[] } }[];
-    getDashboardPages(domain?: string): { pluginId: string; page: { id: string; label: string; description?: string; icon?: string; domain: string; routePath: string; widgets: unknown[]; position?: number } }[];
-    getDashboardDomains(): { pluginId: string; domain: { id: string; title: string; description?: string; icon?: string; routePrefix: string; position?: number; pages: { id: string; label: string; routePath: string; icon?: string; widgets: unknown[]; isIndex?: boolean; position?: number }[] } }[];
-    getStacks(): { pluginId: string; stack: import("./stack-types.js").StackDefinition }[];
-    getServices(): { id: string; name: string; description: string; containerImage: string; defaultPort: number }[];
-    getPluginProvides(pluginId: string): string[];
-    getAllPluginProvides(): Map<string, string[]>;
-    getProviders(): { pluginId: string; provider: { id: string; name: string; description?: string; requiresApiKey: boolean; fields?: { id: string; label: string; type: string; placeholder?: string; description?: string; options?: { value: string; label: string }[]; min?: number; max?: number; step?: number }[]; checkBalance?: (config: Record<string, unknown>) => Promise<number | null> } }[];
-  };
+  /** PluginRegistry — loaded plugin instances (for GET /api/plugins + HTTP route mounting).
+   *  s101 t606 cycle 195 — replaced 29-line inline structural type with the
+   *  imported class type from @agi/plugins. Same hidden-drift risk as the
+   *  cycle-194 marketplace sweep — typecheck surfaces consumer mismatches. */
+  pluginRegistry?: import("@agi/plugins").PluginRegistry;
   /** All discovered plugins (including disabled ones) — for showing full list in GET /api/plugins. */
   discoveredPlugins?: {
     id: string;
