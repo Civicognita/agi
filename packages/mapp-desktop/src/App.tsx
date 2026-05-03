@@ -326,6 +326,56 @@ export function App(): React.ReactElement {
     setWindows((ws) => ws.map((w) => (w.id === id ? { ...w, minimized: true } : w)));
   }, []);
 
+  // s140 t599 phase 4 cycle 196 — keyboard shortcuts on the desktop
+  // chrome (NOT inside iframes; iframes own their own key events).
+  // Esc: close the currently-focused window (highest z, non-minimized).
+  // Ctrl/Cmd+Tab: cycle focus to the next non-minimized window in z
+  // order (newest-first ring), restoring it if minimized.
+  //
+  // Targeting only desktop chrome: when document.activeElement is INSIDE
+  // an iframe, browser sets activeElement to the iframe element itself.
+  // We skip the handler in that case so a MApp's own ESC binding (e.g.
+  // closing a modal inside the iframe) takes priority.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent): void {
+      const focused = document.activeElement;
+      const isInIframe = focused?.tagName === "IFRAME";
+      if (isInIframe) return;
+
+      if (e.key === "Escape") {
+        const visible = windows.filter((w) => !w.minimized);
+        if (visible.length === 0) return;
+        const top = visible.reduce((a, b) => (a.z >= b.z ? a : b));
+        e.preventDefault();
+        closeWindow(top.id);
+        return;
+      }
+
+      // Ctrl+Tab on Win/Linux + Cmd+Tab on Mac. Browser intercepts
+      // Cmd+Tab on Mac (OS-level app switcher), so the binding only
+      // really fires on Ctrl+Tab. Both modifiers are accepted for
+      // consistency.
+      if (e.key === "Tab" && (e.ctrlKey || e.metaKey)) {
+        if (windows.length === 0) return;
+        // Ring through non-minimized windows in ascending z order; if
+        // the topmost is the only visible one, falls through to itself.
+        const visible = windows.filter((w) => !w.minimized).sort((a, b) => a.z - b.z);
+        if (visible.length <= 1) return;
+        e.preventDefault();
+        const top = visible[visible.length - 1]!;
+        const next = visible[0]!; // bottom-most non-minimized — bring it up
+        // Don't ring back to the same window when there's only one
+        // non-minimized choice; already filtered above.
+        focusWindow(next.id);
+        // Suppress unused warning — top is informational; debug
+        // tooling could surface "ringing past <top.title>".
+        void top;
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [windows, closeWindow, focusWindow]);
+
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-bg" data-testid="mapp-desktop">
       {/* Header */}
