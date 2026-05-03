@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { DesktopWindow } from "../types.js";
+import { ScreenRenderer, type MAppScreenLike } from "./ScreenRenderer.js";
 
 /**
  * A draggable, focusable window. Phase 1: header drag, close +
@@ -34,13 +35,18 @@ const IFRAME_SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups
 interface WindowProps {
   window: DesktopWindow;
   panelUrl?: string;
+  /** s146 Phase D / t612 cycle 200 — when manifest declares screens[]
+   *  AND no panelUrl, render via ScreenRenderer (fancy-screens). Coexists
+   *  with the cycle-177 iframe path: panelUrl wins when both are set so
+   *  legacy MApps stay on iframe. */
+  screens?: MAppScreenLike[];
   onFocus: () => void;
   onMove: (x: number, y: number) => void;
   onClose: () => void;
   onMinimize: () => void;
 }
 
-export function Window({ window: w, panelUrl, onFocus, onMove, onClose, onMinimize }: WindowProps): React.ReactElement {
+export function Window({ window: w, panelUrl, screens, onFocus, onMove, onClose, onMinimize }: WindowProps): React.ReactElement {
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const [, force] = useState(0);
 
@@ -103,8 +109,11 @@ export function Window({ window: w, panelUrl, onFocus, onMove, onClose, onMinimi
         </button>
       </header>
 
-      {/* Body — phase 2: iframe when panelUrl present, placeholder
-          when MApp has no panel (uninstalled / missing bundle). */}
+      {/* Body — three render paths in precedence order:
+          1. panelUrl (cycle 177 phase 2): iframe — sandboxed HTML MApps
+          2. screens[] (cycle 200 phase D): ScreenRenderer — PAx-composed
+             MApps using fancy-screens primitives
+          3. fallback placeholder when MApp has neither panel surface */}
       {panelUrl ? (
         <iframe
           src={panelUrl}
@@ -114,12 +123,14 @@ export function Window({ window: w, panelUrl, onFocus, onMove, onClose, onMinimi
           data-testid={`window-iframe-${w.id}`}
           data-mapp-id={w.mappId}
         />
+      ) : screens !== undefined && screens.length > 0 ? (
+        <ScreenRenderer screens={screens} mappId={w.mappId} />
       ) : (
         <div className="flex-1 flex items-center justify-center text-muted text-sm">
           <div className="text-center">
             <div className="text-[48px] mb-2">{w.icon}</div>
             <div className="text-[14px] font-medium text-fg mb-1">{w.title}</div>
-            <div className="text-[11px]">No panel URL — MApp not installed yet</div>
+            <div className="text-[11px]">No panel URL or screens — MApp not installed yet</div>
           </div>
         </div>
       )}

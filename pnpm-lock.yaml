@@ -412,6 +412,9 @@ importers:
 
   packages/mapp-desktop:
     dependencies:
+      '@particle-academy/fancy-screens':
+        specifier: ^0.2.0
+        version: 0.2.0(@particle-academy/react-fancy@2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@particle-academy/react-fancy':
         specifier: ^2.9.0
         version: 2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
@@ -2154,6 +2157,16 @@ packages:
       '@particle-academy/react-fancy': ^2.0.0
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
+
+  '@particle-academy/fancy-screens@0.2.0':
+    resolution: {integrity: sha512-GEw5XHjzn7DDOMovL7v7zI+yHbR1oMInviPTc/1yjkvV42gmDw90Oz0cVWUgCyAhTB+AKOOmB7xtZvFEjUurTA==}
+    peerDependencies:
+      '@particle-academy/react-fancy': ^3.0.0
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
+    peerDependenciesMeta:
+      '@particle-academy/react-fancy':
+        optional: true
 
   '@particle-academy/fancy-sheets@0.7.2':
     resolution: {integrity: sha512-4WvJWhLzOwnn+qboR9eFPTuxNs5HHPszX94qZZ7AEHQsWTMV6lrsXLeeVAM4x29UtZiFJ9HK1bAal4Q9Vqt+HQ==}
@@ -9479,6 +9492,13 @@ snapshots:
       '@particle-academy/react-fancy': 2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
+
+  '@particle-academy/fancy-screens@0.2.0(@particle-academy/react-fancy@2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+    dependencies:
+      react: 19.2.4
+      react-dom: 19.2.4(react@19.2.4)
+    optionalDependencies:
+      '@particle-academy/react-fancy': 2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
 
   '@particle-academy/fancy-sheets@0.7.2(@particle-academy/react-fancy@2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:

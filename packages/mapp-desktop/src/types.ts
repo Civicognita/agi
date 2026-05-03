@@ -22,6 +22,27 @@ export interface MAppEntry {
    *  cleanly with a useful "not installed" message instead of a
    *  broken iframe. */
   panelUrl?: string;
+  /** s146 Phase D / t612 cycle 200 — declarative screens shape (PAx
+   *  fancy-screens primitive). Window dispatches via ScreenRenderer
+   *  when panelUrl is absent AND screens[] is non-empty. Mirror of
+   *  the MAppScreen shape from `@agi/sdk`; kept loose locally. */
+  screens?: Array<{
+    id: string;
+    label: string;
+    interface?: "static" | "dynamic";
+    inputs?: Array<{ key: string; label: string; type: string }>;
+    elements: Array<{
+      id: string;
+      componentRef: string;
+      props?: Record<string, unknown>;
+      children?: unknown[];
+    }>;
+    miniAgent?: {
+      intent: string;
+      toolMode?: "auto" | "whitelist" | "blacklist";
+      tools?: string[];
+    };
+  }>;
 }
 
 /**
