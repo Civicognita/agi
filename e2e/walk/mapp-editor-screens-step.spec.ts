@@ -139,4 +139,68 @@ test.describe("MApp Editor — Screens step (s146 phase A.2)", () => {
 
     expect(pageErrors).toEqual([]);
   });
+
+  // s146 phase C cycle 191 — Hybrid mini-agent authoring UI.
+  test("Mini-agent toggle creates intent + toolMode + tools controls (s146 phase C)", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (e) => pageErrors.push(e.message));
+
+    await page.goto(ROUTE);
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+    await page.getByText(/(^|\s)Screens(\s|$)/i).first().click();
+    await page.getByTestId("mapp-editor-add-screen").click();
+
+    // Before toggle: no intent textarea visible.
+    const toggleBtn = page.getByTestId("mapp-editor-toggle-mini-agent");
+    await expect(toggleBtn).toBeVisible();
+    expect(await toggleBtn.textContent()).toContain("Add");
+
+    // Toggle on — Phase C surface mounts.
+    await toggleBtn.click();
+    await expect(page.getByTestId("mapp-editor-mini-agent-intent")).toBeVisible();
+    await expect(page.getByTestId("mapp-editor-mini-agent-tools")).toBeVisible();
+
+    // Toggle text flips to "Remove".
+    expect(await toggleBtn.textContent()).toContain("Remove");
+
+    // Tools input is disabled by default (toolMode="auto").
+    const toolsInput = page.getByTestId("mapp-editor-mini-agent-tools");
+    const isDisabled = await toolsInput.isDisabled();
+    expect(isDisabled, "tools input must be disabled when toolMode=auto").toBe(true);
+
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("Mini-agent intent + tools fields accept input + serialize correctly", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (e) => pageErrors.push(e.message));
+
+    await page.goto(ROUTE);
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+    await page.getByText(/(^|\s)Screens(\s|$)/i).first().click();
+    await page.getByTestId("mapp-editor-add-screen").click();
+    await page.getByTestId("mapp-editor-toggle-mini-agent").click();
+
+    // Type an intent.
+    const intentField = page.getByTestId("mapp-editor-mini-agent-intent");
+    await intentField.fill("Help the user draft policy documents based on the inputs they provide.");
+
+    // Verify the value persists in the textarea.
+    const intentValue = await intentField.inputValue();
+    expect(intentValue).toContain("draft policy documents");
+
+    // The Editor's session-storage draft should also include miniAgent.
+    // (sessionStorage write is debounced 2s in MAppEditor; give it a beat.)
+    await page.waitForTimeout(2_500);
+
+    const draft = await page.evaluate(() => sessionStorage.getItem("mapp-editor-draft"));
+    expect(draft, "draft should be persisted to sessionStorage").not.toBeNull();
+    if (draft !== null) {
+      const parsed = JSON.parse(draft) as { screens?: Array<{ miniAgent?: { intent: string; toolMode: string } | null }> };
+      expect(parsed.screens?.[0]?.miniAgent?.intent).toContain("draft policy documents");
+      expect(parsed.screens?.[0]?.miniAgent?.toolMode).toBe("auto");
+    }
+
+    expect(pageErrors).toEqual([]);
+  });
 });
