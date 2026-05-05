@@ -31,7 +31,7 @@
  *     storage which RoutingDecision intentionally doesn't carry)
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ModelsTab } from "@/components/ModelsTab";
@@ -257,24 +257,118 @@ function CostModeRangeDial({
     ? `${COST_MODE_DESCRIPTIONS[floor]} (locked — no escalation)`
     : `Starts at ${floor}; escalates up to ${ceiling} when warranted.`;
 
-  // Snap the nearest handle on click — distance ties go to ceiling so it's
-  // possible to widen a locked range without un-pinning floor first.
-  const snapNearest = (i: number): void => {
-    if (pending) return;
-    const distFloor = Math.abs(i - floorIdx);
-    const distCeil = Math.abs(i - ceilingIdx);
-    if (distFloor < distCeil) {
-      const nextFloor = COST_MODES[i]!;
-      const nextCeiling = i > ceilingIdx ? nextFloor : ceiling;
-      if (nextFloor === floor && nextCeiling === ceiling) return;
-      onChange({ floor: nextFloor, ceiling: nextCeiling });
+  // ─────────────────────────────────────────────────────────────────────
+  // Drag handling for the two handles (cycle 223 fix — owner reported
+  // floor handle wouldn't move because the prior snapNearest tie-breaker
+  // sent every click to ceiling once ceiling was already at max).
+  //
+  // Real drag: pointerdown on a handle captures the pointer; pointermove
+  // computes the cursor's track-relative position + clamps to valid range
+  // for that handle (floor ≤ ceiling); pointerup releases capture. Stops
+  // remain clickable as a fallback for keyboard-only users + as snap
+  // assists.
+  // ─────────────────────────────────────────────────────────────────────
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{
+    which: "floor" | "ceiling";
+    pointerId: number;
+    lastIdx: number;
+  } | null>(null);
+
+  const indexFromClientX = useCallback((clientX: number): number => {
+    const track = trackRef.current;
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return 0;
+    const ratio = (clientX - rect.left) / rect.width;
+    const clamped = Math.max(0, Math.min(1, ratio));
+    return Math.round(clamped * max);
+  }, [max]);
+
+  const moveHandle = useCallback((which: "floor" | "ceiling", idx: number) => {
+    if (which === "floor") {
+      const nextFloorIdx = Math.max(0, Math.min(idx, ceilingIdx));
+      const nextFloor = COST_MODES[nextFloorIdx]!;
+      if (nextFloor === floor) return;
+      onChange({ floor: nextFloor, ceiling });
     } else {
-      const nextCeiling = COST_MODES[i]!;
-      const nextFloor = i < floorIdx ? nextCeiling : floor;
-      if (nextFloor === floor && nextCeiling === ceiling) return;
-      onChange({ floor: nextFloor, ceiling: nextCeiling });
+      const nextCeilingIdx = Math.max(floorIdx, Math.min(idx, max));
+      const nextCeiling = COST_MODES[nextCeilingIdx]!;
+      if (nextCeiling === ceiling) return;
+      onChange({ floor, ceiling: nextCeiling });
     }
-  };
+  }, [floor, ceiling, floorIdx, ceilingIdx, max, onChange]);
+
+  const handlePointerDown = useCallback(
+    (which: "floor" | "ceiling") => (e: React.PointerEvent<HTMLButtonElement>) => {
+      if (pending) return;
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      dragStateRef.current = { which, pointerId: e.pointerId, lastIdx: which === "floor" ? floorIdx : ceilingIdx };
+    },
+    [pending, floorIdx, ceilingIdx],
+  );
+
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const idx = indexFromClientX(e.clientX);
+    if (idx === drag.lastIdx) return;
+    drag.lastIdx = idx;
+    moveHandle(drag.which, idx);
+  }, [indexFromClientX, moveHandle]);
+
+  const handlePointerUp = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore — pointer may already be released
+    }
+    dragStateRef.current = null;
+  }, []);
+
+  // Click-on-stop fallback (keyboard-friendly + click-not-drag UX).
+  // Snaps the *nearest* handle to that stop, but with explicit semantics:
+  // - Click on a stop strictly < floorIdx → moves floor down
+  // - Click on a stop strictly > ceilingIdx → moves ceiling up
+  // - Click on a stop strictly between floor and ceiling → snaps the
+  //   closer handle, with ties going to whichever handle has more room
+  //   to move (favors the one that's NOT pinned at an edge)
+  // - Click on a stop AT floorIdx or ceilingIdx → no-op (the handle is
+  //   already there)
+  const snapNearest = useCallback((i: number): void => {
+    if (pending) return;
+    if (i === floorIdx && i === ceilingIdx) return; // locked; nothing to do
+    if (i < floorIdx) {
+      moveHandle("floor", i);
+      return;
+    }
+    if (i > ceilingIdx) {
+      moveHandle("ceiling", i);
+      return;
+    }
+    // Strictly between (floor < i < ceiling) — pick by distance, with the
+    // tie-breaker favoring whichever handle has more headroom to move
+    // (so floor can move up if ceiling is pinned at max, etc.)
+    const distFloor = i - floorIdx;
+    const distCeil = ceilingIdx - i;
+    if (distFloor < distCeil) {
+      moveHandle("floor", i);
+    } else if (distCeil < distFloor) {
+      moveHandle("ceiling", i);
+    } else {
+      // Tie — favor the handle with more room to grow toward this stop
+      const floorHeadroom = ceilingIdx - floorIdx; // floor can grow up
+      const ceilingHeadroom = max - ceilingIdx; // ceiling can grow up
+      if (ceilingHeadroom === 0 && floorHeadroom > 0) {
+        moveHandle("floor", i);
+      } else {
+        moveHandle("ceiling", i);
+      }
+    }
+  }, [pending, floorIdx, ceilingIdx, max, moveHandle]);
 
   return (
     <Card className="p-6">
@@ -299,6 +393,7 @@ function CostModeRangeDial({
               clickable stops + label row); range mode just adds the second handle
               and constrains the gradient to the [floor, ceiling] window. */}
           <div
+            ref={trackRef}
             className="relative h-3 bg-secondary rounded-full"
             role="presentation"
             data-testid="cost-mode-range-dial"
@@ -310,37 +405,66 @@ function CostModeRangeDial({
                 width: `${String(ceilingPct - floorPct)}%`,
               }}
             />
+            {/* Stop dots (clickable; not the handles themselves). Render
+                only the non-handle positions to keep the visual clean
+                and avoid stacking handles on top of stop dots. */}
             {COST_MODES.map((mode, i) => {
+              if (i === floorIdx || i === ceilingIdx) return null;
               const left = max > 0 ? (i / max) * 100 : 0;
-              const isFloor = i === floorIdx;
-              const isCeiling = i === ceilingIdx;
-              const isHandle = isFloor || isCeiling;
               return (
                 <button
-                  key={mode}
+                  key={`stop-${mode}`}
                   type="button"
                   onClick={() => snapNearest(i)}
-                  disabled={pending || (isFloor && isCeiling)}
-                  aria-label={
-                    isFloor && isCeiling
-                      ? `Locked at ${mode}`
-                      : isFloor
-                        ? `Floor: ${mode}`
-                        : isCeiling
-                          ? `Ceiling: ${mode}`
-                          : `Snap nearest handle to ${mode}`
-                  }
-                  className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all ${
-                    isHandle
-                      ? "w-5 h-5 bg-white shadow-[0_2px_12px_rgba(91,141,239,0.6)] cursor-pointer"
-                      : pending
-                        ? "w-3 h-3 bg-muted-foreground cursor-wait"
-                        : "w-3 h-3 bg-muted-foreground hover:bg-foreground cursor-pointer"
+                  disabled={pending}
+                  aria-label={`Snap nearest handle to ${mode}`}
+                  className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all w-3 h-3 ${
+                    pending ? "bg-muted-foreground cursor-wait" : "bg-muted-foreground hover:bg-foreground cursor-pointer"
                   }`}
                   style={{ left: `${String(left)}%` }}
+                  data-testid={`cost-mode-stop-${mode}`}
                 />
               );
             })}
+            {/* Floor handle (draggable). Rendered before ceiling so ceiling
+                stacks on top when locked (floor === ceiling). */}
+            <button
+              type="button"
+              onPointerDown={handlePointerDown("floor")}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              disabled={pending}
+              aria-label={locked ? `Locked at ${floor}` : `Floor: ${floor} — drag to change`}
+              aria-valuemin={0}
+              aria-valuemax={ceilingIdx}
+              aria-valuenow={floorIdx}
+              role="slider"
+              className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all w-5 h-5 bg-white shadow-[0_2px_12px_rgba(91,141,239,0.6)] ${
+                pending ? "cursor-wait" : "cursor-grab active:cursor-grabbing"
+              } touch-none`}
+              style={{ left: `${String(floorPct)}%`, zIndex: 10 }}
+              data-testid="cost-mode-handle-floor"
+            />
+            {/* Ceiling handle (draggable). */}
+            <button
+              type="button"
+              onPointerDown={handlePointerDown("ceiling")}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              disabled={pending}
+              aria-label={locked ? `Locked at ${ceiling}` : `Ceiling: ${ceiling} — drag to change`}
+              aria-valuemin={floorIdx}
+              aria-valuemax={max}
+              aria-valuenow={ceilingIdx}
+              role="slider"
+              className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all w-5 h-5 bg-white shadow-[0_2px_12px_rgba(91,141,239,0.6)] ${
+                pending ? "cursor-wait" : "cursor-grab active:cursor-grabbing"
+              } touch-none`}
+              style={{ left: `${String(ceilingPct)}%`, zIndex: 11 }}
+              data-testid="cost-mode-handle-ceiling"
+            />
           </div>
           <div className="flex justify-between mt-2 text-[11px]">
             {COST_MODES.map((mode, i) => {
