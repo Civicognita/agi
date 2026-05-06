@@ -25,6 +25,7 @@ ExecStart=/usr/bin/podman run \
 	-d \
 	--name agi-caddy \
 	--network=aionima \
+	--add-host=host.containers.internal:host-gateway \
 	-v /etc/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
 	-v %h/.local/share/agi-caddy/data:/data \
 	-v %h/.local/share/agi-caddy/config:/config \
