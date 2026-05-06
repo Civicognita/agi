@@ -14,6 +14,8 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { hostname, arch, cpus, totalmem } from "node:os";
 import { promisify } from "node:util";
 import { createComponentLogger } from "./logger.js";
+import { probeGpus, probeThunderbolt } from "./hardware-probe.js";
+import type { GpuDevice, ThunderboltInfo } from "./hardware-probe.js";
 import type { Logger } from "./logger.js";
 import type { DashboardUserStore, DashboardRole } from "./dashboard-user-store.js";
 import { hasRole } from "./dashboard-user-store.js";
@@ -266,6 +268,8 @@ export function registerMachineAdminRoutes(
       const cpu = probeCpuDetail();
       const storage = probeStorage();
       const networkInterfaces = probeNetworkInterfaces();
+      const gpus: GpuDevice[] = probeGpus();
+      const thunderbolt: ThunderboltInfo = probeThunderbolt();
 
       // OS / kernel
       let distro = "Unknown";
@@ -315,6 +319,8 @@ export function registerMachineAdminRoutes(
         },
         storage,
         network: networkInterfaces,
+        gpus,
+        thunderbolt,
       });
     } catch (e) {
       log.error(`Failed to get machine hardware snapshot: ${e instanceof Error ? e.message : String(e)}`);
