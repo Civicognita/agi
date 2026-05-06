@@ -240,6 +240,28 @@ export function resolveLegacyMountBasePure(input: ResolveLegacyMountBaseInput): 
 function stripAnsi(text: string): string { return text.replace(ANSI_RE, ""); }
 
 /**
+ * Parse a podman -v argument like "/host/path:/container/path:ro,Z" into
+ * its components. Returns null when the spec doesn't look like a real
+ * bind mount (e.g. a named volume reference). Keeps the original flag
+ * string so callers can decide which mounts to validate ahead of time.
+ */
+function parseVolumeSpec(v: string): { host: string; container: string; flags: string } | null {
+  // Bind mounts always start with `/` (or `~`) on the host side; named
+  // volumes don't.
+  if (!v.startsWith("/") && !v.startsWith("~")) return null;
+  // Walk the string and split on the FIRST colon after the host portion
+  // and FIRST colon after the container portion. Container paths can't
+  // contain colons in practice, but flags can include them; we only need
+  // 3 fields max.
+  const parts = v.split(":");
+  if (parts.length < 2) return null;
+  const host = parts[0]!;
+  const container = parts[1]!;
+  const flags = parts.slice(2).join(":");
+  return { host, container, flags };
+}
+
+/**
  * Container start-command source — which tier of the precedence ladder
  * produced the command tokens passed to `podman run`.
  *
@@ -2132,7 +2154,35 @@ export class HostingManager {
         `--network=${projectNetworkName(hosted.meta.hostname)}`,
       ];
 
-      for (const vol of stackConfig.volumeMounts(ctx)) {
+      const stackVolumes = stackConfig.volumeMounts(ctx);
+      // Pre-flight: read-only mount sources must exist on the host. podman
+      // would otherwise abort with `statfs ENOENT`, the breaker would
+      // increment, and the project would land in error with a cryptic
+      // message. Detect missing build outputs here and surface an
+      // actionable status that the UI can render distinctly. Only
+      // checks read-only mounts (the common pattern for static-site
+      // dist/ outputs); read-write mounts (the project workspace) are
+      // assumed to exist since the project itself is on disk.
+      const missingRO = stackVolumes
+        .map((v) => parseVolumeSpec(v))
+        .filter((m): m is { host: string; container: string; flags: string } => m !== null && m.flags.includes("ro"))
+        .map((m) => m.host)
+        .filter((host) => !existsSync(host));
+      if (missingRO.length > 0) {
+        hosted.status = "error";
+        hosted.error =
+          `Build output missing — host path${missingRO.length > 1 ? "s" : ""} not found: ${missingRO.join(", ")}. ` +
+          `Run the project's build (e.g., \`npm run build\`) so the expected output directory exists, ` +
+          `then restart hosting for this project.`;
+        // Mirrors the static-site pre-flight at the legacy path. Pre-empts
+        // podman's `statfs ENOENT` so the breaker doesn't trip and the
+        // owner sees the actionable message immediately.
+        this.log.warn(
+          `[${hosted.meta.hostname}] needs-build pre-flight: ${missingRO.join(", ")} missing — skipping container start`,
+        );
+        return;
+      }
+      for (const vol of stackVolumes) {
         args.push("-v", vol);
       }
       for (const [key, value] of Object.entries(stackConfig.env(ctx))) {
