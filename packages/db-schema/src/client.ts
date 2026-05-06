@@ -55,3 +55,55 @@ export function createDbClient(options: CreateDbClientOptions = {}): DbClient {
   const db = drizzle(pool, { schema });
   return { pool, db };
 }
+
+export interface WaitForDbOptions {
+  /** Total budget in ms before giving up. Default 20_000. */
+  timeoutMs?: number;
+  /** Initial backoff in ms; doubles up to 2_000ms. Default 250. */
+  initialDelayMs?: number;
+  /** Optional logger for retry attempts. */
+  onAttempt?: (attempt: number, lastError: Error | null) => void;
+}
+
+/**
+ * Block until the pool can accept a query, or throw after the timeout.
+ *
+ * Boot order race: when the host reboots, systemd starts the gateway at the
+ * same time the postgres container is coming up. The first DB query can
+ * reject with ECONNREFUSED / "the database system is starting up" before
+ * postgres is ready. Without this wait, the rejection lands in the global
+ * unhandled-rejection safety net and the gateway zombies — process alive,
+ * Fastify never bound. With this wait, the failure becomes a fatal boot
+ * error and systemd restarts cleanly.
+ */
+export async function waitForDb(pool: Pool, options: WaitForDbOptions = {}): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 20_000;
+  const initialDelayMs = options.initialDelayMs ?? 250;
+  const deadline = Date.now() + timeoutMs;
+  let delay = initialDelayMs;
+  let attempt = 0;
+  let lastError: Error | null = null;
+  while (Date.now() < deadline) {
+    attempt += 1;
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query("select 1");
+      } finally {
+        client.release();
+      }
+      return;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (options.onAttempt !== undefined) options.onAttempt(attempt, lastError);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      await new Promise((r) => setTimeout(r, Math.min(delay, remaining)));
+      delay = Math.min(delay * 2, 2_000);
+    }
+  }
+  throw new Error(
+    `Database not ready after ${String(timeoutMs)}ms (${String(attempt)} attempts). ` +
+      `Last error: ${lastError?.message ?? "unknown"}`,
+  );
+}

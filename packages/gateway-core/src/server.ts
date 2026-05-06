@@ -45,7 +45,7 @@ function resolveAgiVersion(selfRepoPath: string | undefined): string {
 }
 import { EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@agi/entity-model";
 import type { Entity } from "@agi/entity-model";
-import { createDbClient } from "@agi/db-schema/client";
+import { createDbClient, waitForDb } from "@agi/db-schema/client";
 import { BackupManager } from "./backup-manager.js";
 import { registerComplianceRoutes } from "./compliance-api.js";
 import { registerSecurityRoutes } from "./security-api.js";
@@ -428,6 +428,21 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const { db, pool: dbPool } = createDbClient();
+
+  // Wait for postgres to accept queries before any store touches it.
+  // After a host reboot, systemd starts the gateway at the same time as the
+  // postgres container; the first query can race ahead of postgres readiness
+  // and reject with ECONNREFUSED. Without this wait, that rejection lands in
+  // the global safety net and the gateway zombies — process alive, Fastify
+  // never bound. The throw here is fatal: it propagates to run.ts and exits
+  // the process so systemd can restart cleanly.
+  await waitForDb(dbPool, {
+    onAttempt: (attempt, err) => {
+      if (attempt === 1) return;
+      log.warn(`waiting for postgres (attempt ${String(attempt)}): ${err?.message ?? "unknown"}`);
+    },
+  });
+
   const entityStore = new EntityStore(db);
   const messageQueue = new MessageQueue(db);
   const coaLogger = new COAChainLogger(db);
