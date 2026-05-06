@@ -333,6 +333,14 @@ export interface ProjectHostingInfo {
   containerKind?: "static" | "code" | "mapp";
   /** s145 t585 — installed MApp IDs for the MApp container kind. */
   mapps?: string[];
+  /** Circuit-breaker state for this project's hosting service id, when not closed.
+   *  Surfaces "open" / "half-open" so the dashboard can render a distinct chip. */
+  breaker?: {
+    status: "closed" | "half-open" | "open";
+    failures: number;
+    lastError?: string;
+    lastFailureAt?: string;
+  };
 }
 
 /** Tool definition from project type registry. */
