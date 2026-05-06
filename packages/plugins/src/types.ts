@@ -25,7 +25,12 @@ export type AionimaPermission =
 // Plugin categories
 // ---------------------------------------------------------------------------
 
-export type PluginCategory = "runtime" | "service" | "tool" | "editor" | "integration" | "project" | "knowledge" | "theme" | "workflow" | "system" | "stack";
+// "provider" — added per s111 t376. Anthropic / OpenAI / Ollama / Lemonade /
+// HF / aion-micro all qualify. Runtime is a Provider attribute (per
+// `feedback_provider_definition` memory), not a sibling category, so the
+// pre-existing "runtime" value is now reserved for non-Provider runtime
+// plugins (none today; back-compat for future cases).
+export type PluginCategory = "provider" | "runtime" | "service" | "tool" | "editor" | "integration" | "project" | "knowledge" | "theme" | "workflow" | "system" | "stack";
 
 // ---------------------------------------------------------------------------
 // Provides labels — capability-based taxonomy
