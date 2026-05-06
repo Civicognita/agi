@@ -248,6 +248,21 @@ export function HostingPanel({
           <div className="flex items-center gap-2">
             <span className={cn("inline-block w-2 h-2 rounded-full", statusDot)} />
             <span className={cn("text-[12px] font-semibold capitalize", statusColor)}>{statusLabel}</span>
+            {hosting.breaker && hosting.breaker.status !== "closed" && (
+              <span
+                className={cn(
+                  "text-[10px] px-1.5 py-0.5 rounded font-medium",
+                  hosting.breaker.status === "open"
+                    ? "bg-red/15 text-red"
+                    : "bg-amber/15 text-amber",
+                )}
+                title={hosting.breaker.lastError ?? `${String(hosting.breaker.failures)} consecutive failures`}
+              >
+                {hosting.breaker.status === "open"
+                  ? `circuit open · ${String(hosting.breaker.failures)} fails`
+                  : "circuit half-open"}
+              </span>
+            )}
             {hosting.url && (
               <a href={hosting.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue underline">{hosting.url}</a>
             )}

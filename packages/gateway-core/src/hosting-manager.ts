@@ -3223,6 +3223,15 @@ export class HostingManager {
     /** s145 t585 — surface containerKind + mapps to dashboard. */
     containerKind?: "static" | "code" | "mapp";
     mapps?: string[];
+    /** Circuit-breaker state for this project's hosting service id, when not closed.
+     * Surfaces "open" / "half-open" so the dashboard can render a distinct chip
+     * instead of leaving the project looking simply "stopped" with no context. */
+    breaker?: {
+      status: "closed" | "half-open" | "open";
+      failures: number;
+      lastError?: string;
+      lastFailureAt?: string;
+    };
   } {
     const resolved = resolvePath(projectPath);
     const hosted = this.projects.get(resolved);
@@ -3237,6 +3246,18 @@ export class HostingManager {
       const resolvedImage = runtimeDef?.containerImage
         ?? stackConfig?.image
         ?? CONTAINER_IMAGES[knownType];
+      // Surface circuit-breaker state when not "closed" — dashboard renders a
+      // distinct chip so owners can see why a project keeps failing or
+      // is being skipped on boot.
+      const breakerState = this.circuitBreaker?.getState(`hosting:${resolved}`);
+      const breaker = breakerState && breakerState.status !== "closed"
+        ? {
+            status: breakerState.status,
+            failures: breakerState.failures,
+            ...(breakerState.lastError ? { lastError: breakerState.lastError } : {}),
+            ...(breakerState.lastFailureAt ? { lastFailureAt: breakerState.lastFailureAt } : {}),
+          }
+        : undefined;
       return {
         enabled: hosted.meta.enabled,
         type: hosted.meta.type,
@@ -3255,6 +3276,7 @@ export class HostingManager {
         ...(hosted.meta.viewer ? { viewer: hosted.meta.viewer } : {}),
         ...(hosted.meta.containerKind !== undefined ? { containerKind: hosted.meta.containerKind } : {}),
         ...(hosted.meta.mapps !== undefined ? { mapps: hosted.meta.mapps } : {}),
+        ...(breaker ? { breaker } : {}),
         url: hosted.status === "running"
           ? `https://${hosted.meta.hostname}.${this.config.baseDomain}`
           : null,
