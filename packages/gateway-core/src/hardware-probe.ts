@@ -166,3 +166,56 @@ export function probeThunderbolt(): ThunderboltInfo {
   }
   return { available: true, devices };
 }
+
+// ---------------------------------------------------------------------------
+// Live per-GPU stats — utilization, VRAM, temp, power. Sampled every poll.
+// NVIDIA path uses nvidia-smi --query-gpu (single shell-out covers all
+// fields). AMD path is a future addition (rocm-smi --showuse --showmemuse
+// --showtemp --showpower) once the iGPU vs dGPU enrichment matters more.
+// ---------------------------------------------------------------------------
+
+export interface GpuLiveStats {
+  busId: string;
+  name: string;
+  gpuUtilPct: number | null;
+  memUtilPct: number | null;
+  memUsedMB: number | null;
+  memTotalMB: number | null;
+  tempC: number | null;
+  powerW: number | null;
+  powerLimitW: number | null;
+}
+
+export function probeGpuStats(): GpuLiveStats[] {
+  const out = safeRun(
+    "nvidia-smi",
+    [
+      "--query-gpu=pci.bus_id,name,utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu,power.draw,power.limit",
+      "--format=csv,noheader,nounits",
+    ],
+    3_000,
+  );
+  if (!out) return [];
+  const rows: GpuLiveStats[] = [];
+  for (const row of out.split("\n")) {
+    const cols = row.split(",").map((s) => s.trim());
+    if (cols.length < 9 || !cols[0]) continue;
+    const num = (s: string | undefined): number | null => {
+      if (s === undefined || s === "" || s === "[N/A]" || s === "[Not Supported]") return null;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : null;
+    };
+    rows.push({
+      busId: cols[0]!.toLowerCase(),
+      name: cols[1] ?? "",
+      gpuUtilPct: num(cols[2]),
+      memUtilPct: num(cols[3]),
+      memUsedMB: num(cols[4]),
+      memTotalMB: num(cols[5]),
+      tempC: num(cols[6]),
+      powerW: num(cols[7]),
+      powerLimitW: num(cols[8]),
+    });
+  }
+  return rows;
+}

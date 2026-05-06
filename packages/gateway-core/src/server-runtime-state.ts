@@ -33,6 +33,8 @@ import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model
 import { fetchOwnerToken, injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
+import { probeGpuStats } from "./hardware-probe.js";
+import type { GpuLiveStats } from "./hardware-probe.js";
 import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";
 import { appRouter, type AppContext } from "@agi/trpc-api";
 import type { HostingManager } from "./hosting-manager.js";
@@ -3924,6 +3926,10 @@ export async function createGatewayRuntimeState(
     // socket CPU aggregate), multi-GPU aggregation.
     const cpuWatts = cpuPowerSampler.sample();
     const gpuWatts = gpuPowerSampler.sample();
+    // Per-GPU live stats (utilization, VRAM, temp, power). NVIDIA only via
+    // nvidia-smi today; AMD ROCm enrichment planned. Empty array on hosts
+    // without nvidia-smi installed.
+    const gpuStats: GpuLiveStats[] = probeGpuStats();
 
     return reply.send({
       cpu: { loadAvg, cores, usage: cpuUsage },
@@ -3931,6 +3937,7 @@ export async function createGatewayRuntimeState(
       disk: { total: diskTotal, used: diskUsed, free: diskFree, percent: diskPercent },
       diskIO,
       power: { cpuWatts, gpuWatts },
+      gpus: gpuStats,
       uptime: os.uptime(),
       hostname: os.hostname(),
     });
