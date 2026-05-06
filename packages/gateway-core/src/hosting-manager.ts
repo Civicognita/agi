@@ -178,21 +178,35 @@ export function buildMultiRepoContainerArgsPure(input: MultiRepoArgsInput): Mult
  * `existsSync(<projectPath>/dist)` always fails (statfs ENOENT) and Apache
  * mounts an empty directory instead of the actual checkout.
  *
- * Behavior:
- *   - If `projectConfig.repos[]` is non-empty, return `<projectPath>/repos/<defaultRepo.name>`
- *     (or the repo's explicit `path` override). The default repo is the one
- *     marked `isDefault`, falling back to the first repo.
- *   - If `projectConfig` is null or `repos[]` is empty, return `projectPath`
- *     unchanged — preserves behavior for projects that haven't been migrated.
+ * Behavior (in priority order):
+ *   1. If `projectConfig.repos[]` is non-empty, return `<projectPath>/repos/<defaultRepo.name>`
+ *      (or the repo's explicit `path` override). The default repo is the one
+ *      marked `isDefault`, falling back to the first repo.
+ *   2. If `projectConfig.repos[]` is missing/empty BUT a `repos/` directory
+ *      exists on disk with exactly one subdirectory, treat it as the implicit
+ *      default repo. This heals projects whose `project.json` was never
+ *      updated to declare `repos[]` after s140 — the filesystem layout is the
+ *      source of truth, the config catches up later.
+ *   3. Otherwise return `projectPath` unchanged — preserves behavior for
+ *      projects that genuinely haven't been migrated.
  *
  * Multi-repo projects with at least one runtime repo (port set) take the
  * dedicated `buildMultiRepoContainerArgsPure` branch above and never reach
  * this helper. This is for the static-only / single-runtime-repo case where
  * the container only needs to see one repo at the conventional mount path.
+ *
+ * Filesystem detection is opt-in via `existsSync` / `readdirSync` injection
+ * so the function stays pure for unit tests; production callers pass the
+ * real fs accessors.
  */
 export interface ResolveLegacyMountBaseInput {
   projectPath: string;
   projectConfig: { repos?: Array<{ name: string; path?: string; isDefault?: boolean }> } | null;
+  /** Optional fs accessors — when provided, enable disk-based auto-detect. */
+  fs?: {
+    existsSync: (path: string) => boolean;
+    readdirSync: (path: string, options: { withFileTypes: true }) => Array<{ name: string; isDirectory: () => boolean }>;
+  };
 }
 export interface ResolveLegacyMountBaseResult {
   base: string;
@@ -200,13 +214,27 @@ export interface ResolveLegacyMountBaseResult {
 }
 export function resolveLegacyMountBasePure(input: ResolveLegacyMountBaseInput): ResolveLegacyMountBaseResult {
   const repos = input.projectConfig?.repos;
-  if (!repos || repos.length === 0) {
-    return { base: input.projectPath, repoName: null };
+  if (repos && repos.length > 0) {
+    const defaultRepo = repos.find((r) => r.isDefault) ?? repos[0];
+    if (defaultRepo) {
+      const base = defaultRepo.path ?? `${input.projectPath}/repos/${defaultRepo.name}`;
+      return { base, repoName: defaultRepo.name };
+    }
   }
-  const defaultRepo = repos.find((r) => r.isDefault) ?? repos[0];
-  if (!defaultRepo) return { base: input.projectPath, repoName: null };
-  const base = defaultRepo.path ?? `${input.projectPath}/repos/${defaultRepo.name}`;
-  return { base, repoName: defaultRepo.name };
+  // Auto-detect from filesystem when config doesn't declare repos[].
+  if (input.fs) {
+    const reposDir = `${input.projectPath}/repos`;
+    if (input.fs.existsSync(reposDir)) {
+      const entries = input.fs.readdirSync(reposDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name);
+      if (entries.length === 1) {
+        const name = entries[0]!;
+        return { base: `${reposDir}/${name}`, repoName: name };
+      }
+    }
+  }
+  return { base: input.projectPath, repoName: null };
 }
 
 function stripAnsi(text: string): string { return text.replace(ANSI_RE, ""); }
@@ -1923,6 +1951,11 @@ export class HostingManager {
     const contentBase = resolveLegacyMountBasePure({
       projectPath: hosted.path,
       projectConfig: this.configMgr?.read(hosted.path) ?? null,
+      // Disk fallback when project.json doesn't declare repos[] yet —
+      // single-subdir projects (kronos_trader / my_art / bliss_chronicles)
+      // pick up the rebase from the filesystem layout instead of failing
+      // with statfs ENOENT.
+      fs: { existsSync, readdirSync },
     });
     if (contentBase.repoName) {
       this.log.info(
