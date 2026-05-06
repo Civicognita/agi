@@ -409,9 +409,7 @@ function GpuLiveSection() {
                   <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Core activity</span>
                   <span className="text-[18px] font-bold text-foreground tabular-nums">{Math.round(corePct)}%</span>
                 </div>
-                <div style={{ width: "100%", height: 130 }}>
-                  <EChart option={activityHeatmapOption(corePct, "Core")} />
-                </div>
+                <EChart option={activityHeatmapOption(corePct, "Core")} style={{ height: 140 }} />
               </div>
               <div>
                 <div className="flex items-center justify-between mb-2">
@@ -420,9 +418,7 @@ function GpuLiveSection() {
                     {memUsedGB}<span className="text-muted-foreground text-[12px]"> / {memTotalGB} GB ({Math.round(memPct)}%)</span>
                   </span>
                 </div>
-                <div style={{ width: "100%", height: 130 }}>
-                  <EChart option={activityHeatmapOption(memPct, "VRAM")} />
-                </div>
+                <EChart option={activityHeatmapOption(memPct, "VRAM")} style={{ height: 140 }} />
               </div>
             </div>
             <div className="mt-2 text-[9px] text-muted-foreground">
@@ -461,8 +457,12 @@ function GpuLiveSection() {
 // ---------------------------------------------------------------------------
 
 function cpuPerCoreHeatmapOption(perCore: number[]): Record<string, unknown> {
-  const cols = Math.ceil(Math.sqrt(perCore.length));
-  const rows = Math.ceil(perCore.length / cols);
+  // Wider-than-tall grid suits a full-width card better than a square grid.
+  // Target 2-3 rows for typical core counts; fall back to sqrt for ≤6 cores.
+  const N = perCore.length;
+  const targetRows = N > 16 ? 3 : N > 6 ? 2 : 1;
+  const cols = Math.ceil(N / targetRows);
+  const rows = Math.ceil(N / cols);
   const data: [number, number, number, number][] = perCore.map((pct, i) => [
     i % cols,
     Math.floor(i / cols),
@@ -542,9 +542,7 @@ function CpuPerCoreSection() {
         </div>
         <div className="text-[9px] text-muted-foreground">blue = idle · green = active · yellow/red = saturated</div>
       </div>
-      <div style={{ width: "100%", height: 200 }}>
-        <EChart option={option} />
-      </div>
+      <EChart option={option} style={{ height: 180 }} />
     </div>
   );
 }
