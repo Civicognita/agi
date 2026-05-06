@@ -249,6 +249,119 @@ function PowerGaugeSection() {
 }
 
 // ---------------------------------------------------------------------------
+// GPU live stats — per-GPU utilization, VRAM, temperature, power. Polls
+// /api/system/stats every 5s. Hidden when no GPUs report stats (no
+// nvidia-smi installed or no NVIDIA hardware). AMD ROCm enrichment is a
+// follow-up; today only NVIDIA fills these fields.
+// ---------------------------------------------------------------------------
+
+interface GpuLiveRow {
+  busId: string;
+  name: string;
+  gpuUtilPct: number | null;
+  memUtilPct: number | null;
+  memUsedMB: number | null;
+  memTotalMB: number | null;
+  tempC: number | null;
+  powerW: number | null;
+  powerLimitW: number | null;
+}
+
+function GpuLiveSection() {
+  const [gpus, setGpus] = useState<GpuLiveRow[]>([]);
+  const hw = useMachineHardware();
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async (): Promise<void> => {
+      try {
+        const r = await fetch("/api/system/stats");
+        if (!r.ok) return;
+        const j = await r.json() as { gpus?: GpuLiveRow[] };
+        if (!cancelled) setGpus(j.gpus ?? []);
+      } catch { /* ignore */ }
+    };
+    void refresh();
+    const id = window.setInterval(() => { void refresh(); }, 5_000);
+    return (): void => { cancelled = true; window.clearInterval(id); };
+  }, []);
+
+  // Surface non-NVIDIA GPUs the static hardware probe found, even when we
+  // have no live stats for them — owner can see they exist + which driver.
+  const detected = hw.data?.gpus ?? [];
+  const nonNvidiaDetected = detected.filter((g) => g.driver !== null && g.driver !== "nvidia");
+
+  if (gpus.length === 0 && nonNvidiaDetected.length === 0) {
+    return (
+      <div className="text-[11px] text-muted-foreground">
+        No GPU stats available. Install nvidia-smi or rocm-smi to surface live utilization, VRAM, and temperature.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {gpus.map((g) => {
+        const memPct = g.memTotalMB && g.memUsedMB !== null
+          ? Math.round((g.memUsedMB / g.memTotalMB) * 100) : null;
+        const memUsedGB = g.memUsedMB !== null  ? (g.memUsedMB  / 1024).toFixed(1) : "—";
+        const memTotalGB = g.memTotalMB !== null ? (g.memTotalMB / 1024).toFixed(1) : "—";
+        return (
+          <div key={g.busId} className="border border-border rounded p-3">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <div className="text-[12px] font-medium text-foreground">{g.name}</div>
+                <code className="text-[10px] text-muted-foreground">{g.busId}</code>
+              </div>
+              <div className="text-right text-[10px] text-muted-foreground">
+                {g.tempC !== null ? <span className="mr-3">{g.tempC}°C</span> : null}
+                {g.powerW !== null
+                  ? <span>{g.powerW.toFixed(1)} W{g.powerLimitW !== null ? <span className="text-muted-foreground"> / {g.powerLimitW.toFixed(0)} W</span> : null}</span>
+                  : null}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+                  <span>Core utilization</span>
+                  <span className="tabular-nums text-foreground">{g.gpuUtilPct !== null ? `${g.gpuUtilPct}%` : "—"}</span>
+                </div>
+                <BarGauge pct={g.gpuUtilPct ?? 0} />
+              </div>
+              <div>
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+                  <span>VRAM</span>
+                  <span className="tabular-nums text-foreground">{memUsedGB} / {memTotalGB} GB{memPct !== null ? ` (${String(memPct)}%)` : ""}</span>
+                </div>
+                <BarGauge pct={memPct ?? 0} />
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      {nonNvidiaDetected.map((g) => (
+        <div key={g.busId} className="border border-border rounded p-3 opacity-70">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[12px] font-medium text-foreground">
+                {g.vendor.replace(/, Inc\.\s*\[AMD\/ATI\]$/, " (AMD)").replace(/ Corporation$/, "").replace(/, Inc\.$/, "")} — {g.model.replace(/\s*\(rev.*$/, "")}
+              </div>
+              <code className="text-[10px] text-muted-foreground">{g.busId}</code>
+            </div>
+            <div className="text-[10px] text-muted-foreground">
+              driver: <span className="text-foreground">{g.driver}</span>
+            </div>
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">
+            Live stats not yet sampled for this driver — utilization/VRAM/temp/power need rocm-smi or i915-perf integration (planned).
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 
 export default function ResourcesPage() {
   return (
@@ -258,6 +371,12 @@ export default function ResourcesPage() {
         <Card className="p-4">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Power</h3>
           <PowerGaugeSection />
+        </Card>
+      </div>
+      <div className="mt-4">
+        <Card className="p-4">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">GPUs</h3>
+          <GpuLiveSection />
         </Card>
       </div>
       <div className="mt-4">
