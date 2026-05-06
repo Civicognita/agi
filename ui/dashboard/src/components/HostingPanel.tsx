@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import type { ProjectHostingInfo, ProjectTypeTool, RuntimeInfo, StackInfo, ProjectStackInstance } from "../types.js";
-import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks, fetchEffectiveStartCommand } from "../api.js";
+import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks, fetchEffectiveStartCommand, resetCircuitBreaker } from "../api.js";
 import type { EffectiveStartCommand } from "../api.js";
 import { ProjectToolbar } from "./ProjectToolbar.js";
 import { StackManager } from "./StackManager.js";
@@ -89,6 +89,7 @@ export function HostingPanel({
     hosting.internalPort !== null ? String(hosting.internalPort) : "",
   );
   const [saving, setSaving] = useState(false);
+  const [resettingBreaker, setResettingBreaker] = useState(false);
   const [tunnelLoading, setTunnelLoading] = useState(false);
   const [tunnelCopied, setTunnelCopied] = useState(false);
   const [devCommands, setDevCommands] = useState<Record<string, string>>({});
@@ -249,19 +250,35 @@ export function HostingPanel({
             <span className={cn("inline-block w-2 h-2 rounded-full", statusDot)} />
             <span className={cn("text-[12px] font-semibold capitalize", statusColor)}>{statusLabel}</span>
             {hosting.breaker && hosting.breaker.status !== "closed" && (
-              <span
-                className={cn(
-                  "text-[10px] px-1.5 py-0.5 rounded font-medium",
-                  hosting.breaker.status === "open"
-                    ? "bg-red/15 text-red"
-                    : "bg-amber/15 text-amber",
-                )}
-                title={hosting.breaker.lastError ?? `${String(hosting.breaker.failures)} consecutive failures`}
-              >
-                {hosting.breaker.status === "open"
-                  ? `circuit open · ${String(hosting.breaker.failures)} fails`
-                  : "circuit half-open"}
-              </span>
+              <>
+                <span
+                  className={cn(
+                    "text-[10px] px-1.5 py-0.5 rounded font-medium",
+                    hosting.breaker.status === "open"
+                      ? "bg-red/15 text-red"
+                      : "bg-amber/15 text-amber",
+                  )}
+                  title={hosting.breaker.lastError ?? `${String(hosting.breaker.failures)} consecutive failures`}
+                >
+                  {hosting.breaker.status === "open"
+                    ? `circuit open · ${String(hosting.breaker.failures)} fails`
+                    : "circuit half-open"}
+                </span>
+                <button
+                  onClick={() => {
+                    setResettingBreaker(true);
+                    resetCircuitBreaker(`hosting:${projectPath}`)
+                      .then(() => onRestart(projectPath))
+                      .catch((err: unknown) => setStickyError(err instanceof Error ? err.message : String(err)))
+                      .finally(() => setResettingBreaker(false));
+                  }}
+                  disabled={resettingBreaker || busy}
+                  className="text-[10px] px-1.5 py-0.5 rounded border border-border hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Reset the circuit breaker and re-attempt boot"
+                >
+                  {resettingBreaker ? "resetting…" : "reset"}
+                </button>
+              </>
             )}
             {hosting.url && (
               <a href={hosting.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue underline">{hosting.url}</a>
