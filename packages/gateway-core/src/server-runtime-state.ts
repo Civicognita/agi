@@ -3817,6 +3817,25 @@ export async function createGatewayRuntimeState(
     return usage;
   }
 
+  // Per-core CPU utilization — same delta-based sampling but reported as
+  // one value per logical CPU. Powers the per-core heatmap on the
+  // Resources page.
+  async function getCpuPerCore(): Promise<number[]> {
+    const os = await import("node:os");
+    const cpus1 = os.cpus();
+    await new Promise((r) => setTimeout(r, 100));
+    const cpus2 = os.cpus();
+    const result: number[] = [];
+    for (let i = 0; i < cpus1.length; i++) {
+      const c1 = cpus1[i]!.times;
+      const c2 = cpus2[i]!.times;
+      const idle = c2.idle - c1.idle;
+      const total = (c2.user - c1.user) + (c2.nice - c1.nice) + (c2.sys - c1.sys) + (c2.irq - c1.irq) + idle;
+      result.push(total > 0 ? Math.round(((total - idle) / total) * 100) : 0);
+    }
+    return result;
+  }
+
   // Disk I/O tracking — reads /proc/diskstats for the root volume device
   let rootDiskDevice = "";
   try {
@@ -3930,9 +3949,11 @@ export async function createGatewayRuntimeState(
     // nvidia-smi today; AMD ROCm enrichment planned. Empty array on hosts
     // without nvidia-smi installed.
     const gpuStats: GpuLiveStats[] = probeGpuStats();
+    // Per-core CPU utilization for the per-core heatmap.
+    const cpuPerCore = await getCpuPerCore();
 
     return reply.send({
-      cpu: { loadAvg, cores, usage: cpuUsage },
+      cpu: { loadAvg, cores, usage: cpuUsage, perCore: cpuPerCore },
       memory: { total: totalMem, free: freeMem, used: usedMem, percent: memPercent },
       disk: { total: diskTotal, used: diskUsed, free: diskFree, percent: diskPercent },
       diskIO,
