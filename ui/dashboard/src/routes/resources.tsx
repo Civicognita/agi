@@ -9,7 +9,7 @@ import { ResourceUsage } from "@/components/ResourceUsage.js";
 import { PageScroll } from "@/components/PageScroll.js";
 import { Card } from "@/components/ui/card.js";
 import { fetchDatabaseStorage } from "@/api.js";
-import { useHFContainerStats } from "@/hooks.js";
+import { useHFContainerStats, useMachineHardware } from "@/hooks.js";
 import type { HFContainerStats } from "@/api.js";
 
 function formatBytes(bytes: number): string {
@@ -178,6 +178,24 @@ function ModelContainerStatsSection() {
 function PowerGaugeSection() {
   const [power, setPower] = useState<{ cpuWatts: number | null; gpuWatts: number | null } | null>(null);
   const [energyToday, setEnergyToday] = useState<number | null>(null);
+  const hw = useMachineHardware();
+
+  // Detect-driven sub-labels: replace the previous hardcoded "RAPL / intel-rapl"
+  // and "NVML / nvidia-smi" strings with what's actually present on this box.
+  const cpuVendor = hw.data?.cpu.vendorId.toLowerCase() ?? "";
+  const cpuSubLabel =
+    cpuVendor.includes("intel") ? "RAPL / intel-rapl" :
+    cpuVendor.includes("amd")   ? "RAPL / amd-rapl" :
+    cpuVendor !== ""            ? "RAPL" :
+                                  "—";
+  const gpus = hw.data?.gpus ?? [];
+  const nvidiaGpu = gpus.find((g) => g.driver === "nvidia");
+  const otherGpu  = gpus.find((g) => g.driver !== null && g.driver !== "nvidia");
+  const gpuSubLabel =
+    nvidiaGpu ? `NVML — ${nvidiaGpu.model.replace(/^[A-Z0-9]+\s+\[/, "").replace(/\]\s*\(rev.*$/, "").replace(/\s*\(rev.*$/, "")}` :
+    otherGpu  ? `${otherGpu.driver} — power not sampled` :
+    gpus.length > 0 ? "no power sampler for detected GPU" :
+                      "no GPU detected";
 
   useEffect(() => {
     let cancelled = false;
@@ -209,12 +227,12 @@ function PowerGaugeSection() {
       <div>
         <span className="text-[9px] text-muted-foreground uppercase tracking-wider">CPU power</span>
         <div className="text-[22px] font-bold text-foreground mt-0.5 tabular-nums">{cpuStr}</div>
-        <div className="text-[10px] text-muted-foreground mt-0.5">RAPL / intel-rapl</div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">{cpuSubLabel}</div>
       </div>
       <div>
         <span className="text-[9px] text-muted-foreground uppercase tracking-wider">GPU power</span>
         <div className="text-[22px] font-bold text-foreground mt-0.5 tabular-nums">{gpuStr}</div>
-        <div className="text-[10px] text-muted-foreground mt-0.5">NVML / nvidia-smi</div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">{gpuSubLabel}</div>
       </div>
       <div>
         <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Energy today</span>

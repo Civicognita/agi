@@ -882,6 +882,26 @@ export interface MachineHardware {
     addresses: string[];
     state: string;
   }>;
+  gpus: Array<{
+    busId: string;
+    classDesc: string;
+    vendor: string;
+    model: string;
+    driver: string | null;
+    memoryMB: number | null;
+    driverVersion: string | null;
+  }>;
+  thunderbolt: {
+    available: boolean;
+    devices: Array<{
+      name: string;
+      type: string;
+      vendor: string;
+      generation: string;
+      status: string;
+      uuid: string;
+    }>;
+  };
 }
 
 export interface LinuxUser {

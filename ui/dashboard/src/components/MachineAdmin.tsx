@@ -194,6 +194,54 @@ function HardwareSnapshotCard() {
         <Field label="Total Bytes" value={bytesToHuman(d.memory.totalBytes)} />
       </div>
 
+      {/* Graphics — GPUs detected via lspci, with NVIDIA enrichment when available. */}
+      {d.gpus.length > 0 && (
+        <>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 mt-4">Graphics</div>
+          <div className="flex flex-col gap-1.5 mb-4">
+            {d.gpus.map((g) => (
+              <div key={g.busId} className="flex items-start gap-3 text-[12px] py-1 border-b border-border last:border-b-0">
+                <code className="text-foreground w-28">{g.busId}</code>
+                <span className="text-muted-foreground w-24 truncate" title={g.classDesc}>{g.classDesc.replace(/ controller$/i, "").replace(/ compatible$/i, "")}</span>
+                <span className="text-foreground w-32 truncate" title={g.vendor}>{g.vendor.replace(/ Corporation$/, "").replace(/ Inc\.\s*\[AMD\/ATI\]$/, " (AMD)").replace(/, Inc\.$/, "")}</span>
+                <span className="text-foreground flex-1 truncate" title={g.model}>{g.model}</span>
+                <span className="text-muted-foreground text-[11px] w-20 truncate">
+                  {g.memoryMB !== null ? `${(g.memoryMB / 1024).toFixed(g.memoryMB >= 8192 ? 0 : 1)} GB` : ""}
+                </span>
+                <span className={cn(
+                  "px-1.5 rounded text-[10px]",
+                  g.driver ? "bg-green/15 text-green" : "bg-muted text-muted-foreground",
+                )}>{g.driver ?? "no driver"}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Thunderbolt / USB4 — detected via boltctl. Hidden when no controllers. */}
+      {d.thunderbolt.available && d.thunderbolt.devices.length > 0 && (
+        <>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 mt-4">Thunderbolt / USB4</div>
+          <div className="flex flex-col gap-1.5 mb-4">
+            {d.thunderbolt.devices.map((tb) => (
+              <div key={tb.uuid || tb.name} className="flex items-start gap-3 text-[12px] py-1 border-b border-border last:border-b-0">
+                <span className="text-foreground w-32 truncate" title={tb.name}>{tb.name}</span>
+                <span className={cn(
+                  "px-1.5 rounded text-[10px]",
+                  tb.type === "host" ? "bg-blue/15 text-blue" : "bg-purple/15 text-purple",
+                )}>{tb.type || "—"}</span>
+                <span className="text-muted-foreground w-20 truncate">{tb.generation}</span>
+                <span className={cn(
+                  "px-1.5 rounded text-[10px]",
+                  tb.status === "authorized" ? "bg-green/15 text-green" : "bg-amber/15 text-amber",
+                )}>{tb.status || "—"}</span>
+                <code className="text-muted-foreground text-[10px] flex-1 truncate" title={tb.uuid}>{tb.uuid}</code>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* Storage */}
       {d.storage.length > 0 && (
         <>
