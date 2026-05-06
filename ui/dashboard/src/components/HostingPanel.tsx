@@ -190,19 +190,32 @@ export function HostingPanel({
     ? runtimes.filter((r) => compatibleLanguages.has(r.language))
     : runtimes;
 
-  const statusColor = {
-    running: "text-green",
-    stopped: "text-muted-foreground",
-    error: "text-red",
-    unconfigured: "text-muted-foreground",
-  }[hosting.status];
+  // "needs-build" is a soft-error sub-state surfaced by the gateway's
+  // pre-flight when a stack-driven project lacks a built dist/ on disk.
+  // It's not a runtime failure — it's an owner-action waiting state, so
+  // render it as amber/yellow rather than red.
+  const needsBuild = hosting.status === "error"
+    && (stickyError?.startsWith("Build output missing") ?? false);
 
-  const statusDot = {
-    running: "bg-green",
-    stopped: "bg-muted-foreground",
-    error: "bg-red",
-    unconfigured: "bg-muted-foreground",
-  }[hosting.status];
+  const statusColor = needsBuild
+    ? "text-yellow"
+    : {
+        running: "text-green",
+        stopped: "text-muted-foreground",
+        error: "text-red",
+        unconfigured: "text-muted-foreground",
+      }[hosting.status];
+
+  const statusDot = needsBuild
+    ? "bg-yellow"
+    : {
+        running: "bg-green",
+        stopped: "bg-muted-foreground",
+        error: "bg-red",
+        unconfigured: "bg-muted-foreground",
+      }[hosting.status];
+
+  const statusLabel = needsBuild ? "needs build" : hosting.status;
 
   return (
     <Card className="p-3">
@@ -221,18 +234,20 @@ export function HostingPanel({
       {/* Container status + actions — at the top */}
       <div className="mb-3 pb-2 border-b border-border">
         {stickyError && (
-          <Callout color="red" className="px-3 py-2 mb-2">
+          <Callout color={needsBuild ? "amber" : "red"} className="px-3 py-2 mb-2">
             <div className="flex items-center justify-between mb-0.5">
-              <span className="text-[11px] font-semibold text-red">Container Error</span>
-              <button onClick={() => setStickyError(null)} className="text-[10px] text-red/60 hover:text-red">Dismiss</button>
+              <span className={cn("text-[11px] font-semibold", needsBuild ? "text-yellow" : "text-red")}>
+                {needsBuild ? "Needs Build" : "Container Error"}
+              </span>
+              <button onClick={() => setStickyError(null)} className={cn("text-[10px]", needsBuild ? "text-yellow/60 hover:text-yellow" : "text-red/60 hover:text-red")}>Dismiss</button>
             </div>
-            <div className="text-[11px] text-red/80 whitespace-pre-wrap break-words">{stickyError}</div>
+            <div className={cn("text-[11px] whitespace-pre-wrap break-words", needsBuild ? "text-yellow/80" : "text-red/80")}>{stickyError}</div>
           </Callout>
         )}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className={cn("inline-block w-2 h-2 rounded-full", statusDot)} />
-            <span className={cn("text-[12px] font-semibold capitalize", statusColor)}>{hosting.status}</span>
+            <span className={cn("text-[12px] font-semibold capitalize", statusColor)}>{statusLabel}</span>
             {hosting.url && (
               <a href={hosting.url} target="_blank" rel="noopener noreferrer" className="text-[11px] text-blue underline">{hosting.url}</a>
             )}
