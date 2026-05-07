@@ -39,7 +39,7 @@ import { MagicAppPicker } from "./MagicAppPicker.js";
 
 export interface ProjectDetailProps {
   projects: ProjectInfo[];
-  onUpdate: (params: { path: string; name?: string; tynnToken?: string | null; category?: string; type?: string }) => Promise<void>;
+  onUpdate: (params: { path: string; name?: string; tynnToken?: string | null; category?: string; type?: string; description?: string }) => Promise<void>;
   updating: boolean;
   onDelete: (params: { path: string; confirm: boolean }) => Promise<void>;
   deleting: boolean;
@@ -114,8 +114,10 @@ export function ProjectDetail({
   const [editName, setEditName] = useState<string | null>(null);
   // s140 cycle-169 t591 — Tynn token state removed; token now lives in
   // the Tynn MCP plugin settings UX, not on the project Details tab.
-  const [editCategory, setEditCategory] = useState<string | null>(null);
   const [editProjectType, setEditProjectType] = useState<string | null>(null);
+  // s150 t636 — free-form purpose textarea replaces the legacy Purpose select.
+  // Bound to project.description (a top-level optional field already in the schema).
+  const [editDescription, setEditDescription] = useState<string | null>(null);
   const [projectTypes, setProjectTypes] = useState<Array<{ id: string; label: string }>>([]);
   const [saving, setSaving] = useState(false);
   const [cloneUrl, setCloneUrl] = useState("");
@@ -266,7 +268,7 @@ export function ProjectDetail({
 
   // Initialize edit fields when project loads
   const name = editName ?? project?.name ?? "";
-  const category = editCategory ?? project?.category ?? project?.projectType?.category ?? "";
+  const description = editDescription ?? project?.description ?? "";
 
   const handleSave = useCallback(async () => {
     if (!project) return;
@@ -276,11 +278,15 @@ export function ProjectDetail({
       // owned by the Tynn MCP plugin settings UX. The PUT route still
       // accepts a tynnToken body for back-compat callers, but the Details
       // tab no longer exposes it.
-      const params: { path: string; name?: string; category?: string; type?: string } = { path: project.path };
+      const params: { path: string; name?: string; type?: string; description?: string } = { path: project.path };
       const trimmedName = name.trim();
       if (trimmedName && trimmedName !== project.name) params.name = trimmedName;
-      if (category && category !== (project.category ?? project.projectType?.category ?? "")) {
-        params.category = category;
+      // s150 t636 — free-form purpose textarea (Description). Empty string is
+      // the canonical "cleared" value, so include it when it differs from the
+      // currently-saved description.
+      const trimmedDescription = description.trim();
+      if (trimmedDescription !== (project.description ?? "")) {
+        params.description = trimmedDescription;
       }
       // Include project type change — also trigger hosting reconfigure
       const selectedType = editProjectType;
@@ -295,7 +301,7 @@ export function ProjectDetail({
     } catch { /* error shown via hook */ } finally {
       setSaving(false);
     }
-  }, [project, name, category, editProjectType, onUpdate]);
+  }, [project, name, description, editProjectType, onUpdate, onHostingConfigure]);
 
   const handleFileSave = useCallback(async () => {
     if (!openFilePath || !fileDirty) return;
@@ -757,43 +763,42 @@ export function ProjectDetail({
                 These settings control how Aion treats the project. Hosting, MCP servers, and
                 environment vars live in their own tabs.
               </p>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <div>
-                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Purpose</label>
-                  <Select
-                    className="text-[13px]"
-                    list={[
-                      { value: "", label: "Auto-detect" },
-                      { value: "literature", label: "Literature" },
-                      { value: "app", label: "App" },
-                      { value: "web", label: "Web" },
-                      { value: "media", label: "Media" },
-                      { value: "administration", label: "Administration" },
-                    ]}
-                    value={category}
-                    onValueChange={setEditCategory}
-                    disabled={isSacred}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Project Type</label>
-                  <Select
-                    className="text-[13px]"
-                    list={(() => {
-                      const items = [];
-                      if (project.projectType && !projectTypes.some((t) => t.id === project.projectType?.id)) {
-                        items.push({ value: project.projectType.id, label: `${project.projectType.label} (detected)` });
-                      }
-                      for (const pt of projectTypes) {
-                        items.push({ value: pt.id, label: `${pt.label}${pt.id === project.projectType?.id ? " (detected)" : ""}` });
-                      }
-                      return items;
-                    })()}
-                    value={editProjectType ?? project.projectType?.id ?? ""}
-                    onValueChange={(v) => setEditProjectType(v || null)}
-                    disabled={isSacred}
-                  />
-                </div>
+              {/* s150 t636 — Project Type is the single classifier. The legacy
+                  "Purpose" select (bound to category) is replaced by a free-form
+                  Purpose textarea below (bound to project.description). category
+                  itself is dropped from the data model in s150 t630/t632. */}
+              <div className="mb-3">
+                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Project Type</label>
+                <Select
+                  className="text-[13px]"
+                  list={(() => {
+                    const items = [];
+                    if (project.projectType && !projectTypes.some((t) => t.id === project.projectType?.id)) {
+                      items.push({ value: project.projectType.id, label: `${project.projectType.label} (detected)` });
+                    }
+                    for (const pt of projectTypes) {
+                      items.push({ value: pt.id, label: `${pt.label}${pt.id === project.projectType?.id ? " (detected)" : ""}` });
+                    }
+                    return items;
+                  })()}
+                  value={editProjectType ?? project.projectType?.id ?? ""}
+                  onValueChange={(v) => setEditProjectType(v || null)}
+                  disabled={isSacred}
+                />
+              </div>
+              <div className="mb-3">
+                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                  Purpose <span className="font-normal italic opacity-70">(free-form — what this project is for)</span>
+                </label>
+                <textarea
+                  className="w-full rounded border border-input bg-background px-2 py-1.5 text-[13px] resize-y min-h-[60px] disabled:opacity-50"
+                  value={description}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder="One or two lines describing what this project is for. Visible to Aion as project context."
+                  disabled={isSacred}
+                  rows={3}
+                  data-testid="project-purpose-textarea"
+                />
               </div>
 
               {/*

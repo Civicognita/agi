@@ -174,7 +174,12 @@ export async function updateProject(params: {
   path: string;
   name?: string;
   tynnToken?: string | null;
+  /** @deprecated s150 — use `type`. Backend still accepts for back-compat. */
   category?: string;
+  /** s150 — single classifier replacing `category`. */
+  type?: string;
+  /** s150 t636 — free-form purpose textarea. */
+  description?: string;
 }): Promise<{ ok: boolean }> {
   const res = await fetch("/api/projects", {
     method: "PUT",

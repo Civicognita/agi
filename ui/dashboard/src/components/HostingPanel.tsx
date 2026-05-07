@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
+import { isDesktopServedType } from "@/lib/project-type-classifier";
 import type { ProjectHostingInfo, ProjectTypeTool, RuntimeInfo, StackInfo, ProjectStackInstance } from "../types.js";
 import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks, fetchEffectiveStartCommand, resetCircuitBreaker } from "../api.js";
 import type { EffectiveStartCommand } from "../api.js";
@@ -38,9 +39,12 @@ export interface HostingPanelProps {
     mode?: "production" | "development";
     internalPort?: number;
     runtimeId?: string;
-    /** s145 t585 — flip container kind from the dashboard. */
+    /**
+     * @deprecated s150 t636 — UI no longer emits this; backend computes it
+     * from `type`. Kept on the prop type for any caller still passing it.
+     */
     containerKind?: "static" | "code" | "mapp";
-    /** s145 t585 — list of MApp IDs installed when containerKind=mapp. */
+    /** s145 t585 / s150 t636 — list of MApp IDs installed when type is Desktop-served. */
     mapps?: string[];
   }) => Promise<unknown>;
   onRestart: (path: string) => Promise<unknown>;
@@ -77,11 +81,11 @@ export function HostingPanel({
   const [type, setType] = useState<string>(hosting.type ?? detectedHosting?.projectType ?? "static-site");
   const [hostname, setHostname] = useState(hosting.hostname);
   const [docRoot, setDocRoot] = useState(hosting.docRoot ?? detectedHosting?.docRoot ?? "");
-  // s145 t585 — container-kind selector + mapps[] entries. Default reads
-  // from server; user toggle persists via configureHosting.
-  const [containerKind, setContainerKind] = useState<"static" | "code" | "mapp" | "">(
-    hosting.containerKind ?? "",
-  );
+  // s150 t636 — Desktop-served vs code-served is derived from `type`.
+  // Replaces the old `containerKind` selector. The mapps input renders only
+  // when the project is Desktop-served; docRoot/startCommand render only
+  // when it's code-served.
+  const desktopServed = isDesktopServedType(type);
   const [mappsInput, setMappsInput] = useState<string>((hosting.mapps ?? []).join(", "));
   const [startCommand, setStartCommand] = useState(hosting.startCommand ?? detectedHosting?.startCommand ?? "");
   const [mode, setMode] = useState<"production" | "development">(hosting.mode ?? "production");
@@ -102,13 +106,13 @@ export function HostingPanel({
 
   // Sync state when hosting prop changes
   useEffect(() => {
+    // s150 t636 — track only the rerender values that survive the migration.
     setType(hosting.type ?? detectedHosting?.projectType ?? "static-site");
     setHostname(hosting.hostname);
     setDocRoot(hosting.docRoot ?? detectedHosting?.docRoot ?? "");
     setStartCommand(hosting.startCommand ?? detectedHosting?.startCommand ?? "");
     setMode(hosting.mode ?? "production");
     setInternalPort(hosting.internalPort !== null ? String(hosting.internalPort) : "");
-    setContainerKind(hosting.containerKind ?? "");
     setMappsInput((hosting.mapps ?? []).join(", "));
   }, [hosting, detectedHosting]);
 
@@ -147,33 +151,35 @@ export function HostingPanel({
     setSaving(true);
     try {
       const portNum = internalPort ? Number(internalPort) : undefined;
-      // s145 t585 — split the comma-separated MApps input into a deduped
-      // array. Empty input + non-mapp kinds → undefined (clears mapps[]).
-      const parsedMapps = containerKind === "mapp"
+      // s150 t636 — Desktop-served projects emit mapps[]; code-served emit
+      // docRoot/startCommand. Empty input on Desktop-served clears mapps[].
+      const parsedMapps = desktopServed
         ? Array.from(new Set(mappsInput.split(",").map((s) => s.trim()).filter((s) => s.length > 0)))
         : undefined;
       await onConfigure({
         path: projectPath,
         type,
         hostname: hostname || undefined,
-        docRoot: docRoot || undefined,
-        // Intentionally send empty string when the user has cleared the field — the
-        // server treats empty/whitespace as "clear the override". Previously
-        // `startCommand || undefined` collapsed an empty string to undefined,
-        // and the server treated undefined as "don't update", so clearing the
-        // field silently did nothing and the stored override persisted.
-        startCommand: startCommand,
+        // s150 t636 — only emit code-served fields for code-served projects.
+        // Desktop-served projects ignore docRoot/startCommand at dispatch
+        // (post-t634); sending stale values would just clutter project.json.
+        ...(desktopServed
+          ? {}
+          : {
+              docRoot: docRoot || undefined,
+              // Intentionally send empty string when the user clears the field —
+              // server treats empty as "clear the override". `startCommand || undefined`
+              // would collapse it to "don't update".
+              startCommand,
+            }),
         mode,
         internalPort: portNum && !isNaN(portNum) ? portNum : undefined,
-        // Only emit containerKind when set — undefined means "leave unchanged",
-        // so existing back-compat projects keep their type-driven kind.
-        containerKind: containerKind === "" ? undefined : containerKind,
         mapps: parsedMapps,
       });
     } catch { /* error handled by caller */ } finally {
       setSaving(false);
     }
-  }, [projectPath, type, hostname, docRoot, startCommand, mode, internalPort, containerKind, mappsInput, onConfigure]);
+  }, [projectPath, type, hostname, docRoot, startCommand, mode, internalPort, desktopServed, mappsInput, onConfigure]);
 
   // Derive the set of compatible languages from installed stacks.
   // If any installed stack declares compatibleLanguages, restrict the runtime
@@ -350,28 +356,13 @@ export function HostingPanel({
             <span className="text-[10px] text-muted-foreground whitespace-nowrap">.{baseDomain}</span>
           </div>
         </div>
-        {/* s145 t585 — Container kind selector. Default ('Auto') leaves the
-            field undefined so HostingManager dispatches based on type +
-            stacks (existing behavior). 'MApp' flips dispatch to the MApp
-            host container branch (currently a stub via t584; t586 will
-            replace it with the real bundle). */}
-        <div data-testid="hosting-container-kind-row">
-          <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
-            Container Kind
-          </label>
-          <Select
-            className="text-[12px]"
-            list={[
-              { value: "", label: "Auto (type-driven)" },
-              { value: "static", label: "Static" },
-              { value: "code", label: "Code" },
-              { value: "mapp", label: "MApp Container" },
-            ]}
-            value={containerKind}
-            onValueChange={(v) => setContainerKind(v as "" | "static" | "code" | "mapp")}
-          />
-        </div>
-        {containerKind === "mapp" && (
+        {/*
+          s150 t636 — Container Kind select REMOVED. The container shape is
+          now derived from `type` via the type registry (DESKTOP_SERVED_TYPES
+          vs CODE_SERVED_TYPES). The MApps input below renders only for
+          Desktop-served types.
+        */}
+        {desktopServed && (
           <div className="col-span-2" data-testid="hosting-mapps-row">
             <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
               MApps <span className="font-normal italic opacity-70">(comma-separated IDs from MApp Marketplace)</span>
@@ -386,72 +377,77 @@ export function HostingPanel({
               data-testid="hosting-mapps-input"
             />
             <p className="mt-0.5 text-[10px] text-muted-foreground leading-tight">
-              s145 t586 implementation pending — for now, flagging this kind sets project status to <code>stopped</code> with a clear reason; the gateway logs the configured MApps.
+              Desktop-served project — listed MApps render as tiles on the project's Desktop.
             </p>
           </div>
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-2 mb-2">
-        <div>
-          <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
-            Doc Root
-          </label>
-          <Input
-            type="text"
-            value={docRoot}
-            onChange={(e) => setDocRoot(e.target.value)}
-            disabled={busy}
-            placeholder="dist"
-            className="text-[12px] h-8"
-          />
-        </div>
-        <div>
-          <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
-            Start Command <span className="font-normal italic opacity-70">(override)</span>
-          </label>
-          <Input
-            type="text"
-            value={startCommand}
-            onChange={(e) => setStartCommand(e.target.value)}
-            disabled={busy}
-            placeholder={effectiveStart?.stackDefault ?? "npm start"}
-            className="text-[12px] h-8"
-            data-testid="hosting-start-command-input"
-          />
-          <div className="mt-0.5 text-[10px] text-muted-foreground leading-tight">
-            {effectiveStart !== null && (
-              <>
-                <span data-testid="hosting-start-command-source" className={cn(
-                  effectiveStart.source === "override" && "text-blue font-semibold",
-                )}>
-                  {effectiveStart.source === "override" && "Using your override."}
-                  {effectiveStart.source === "stack" && "Using stack default."}
-                  {effectiveStart.source === "devCommands" && "Using stack devCommands fallback."}
-                  {effectiveStart.source === "image-default" && "No command \u2014 image default CMD runs."}
-                </span>
-                {effectiveStart.source !== "override" && effectiveStart.stackDefault && (
-                  <>
-                    {" "}
-                    <span className="opacity-70">Leave empty to keep default: </span>
-                    <code className="text-[10px]">{effectiveStart.stackDefault}</code>
-                  </>
-                )}
-                {effectiveStart.source === "override" && effectiveStart.stackDefault && (
-                  <>
-                    {" "}
-                    <span className="opacity-70">Stack default (cleared by override): </span>
-                    <code className="text-[10px]">{effectiveStart.stackDefault}</code>
-                  </>
-                )}
-              </>
-            )}
-            {effectiveStart === null && (
-              <span className="opacity-70">Leave empty to use your installed stack&apos;s default; when set, this replaces the stack command and runs via sh -c.</span>
-            )}
+      {/* s150 t636 \u2014 docRoot + startCommand only render for code-served projects.
+          Desktop-served projects ignore both fields at dispatch (post-t634);
+          rendering them just wastes attention and invites stale config. */}
+      {!desktopServed && (
+        <div className="grid grid-cols-2 gap-2 mb-2" data-testid="hosting-code-served-fields">
+          <div>
+            <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
+              Doc Root
+            </label>
+            <Input
+              type="text"
+              value={docRoot}
+              onChange={(e) => setDocRoot(e.target.value)}
+              disabled={busy}
+              placeholder="dist"
+              className="text-[12px] h-8"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
+              Start Command <span className="font-normal italic opacity-70">(override)</span>
+            </label>
+            <Input
+              type="text"
+              value={startCommand}
+              onChange={(e) => setStartCommand(e.target.value)}
+              disabled={busy}
+              placeholder={effectiveStart?.stackDefault ?? "npm start"}
+              className="text-[12px] h-8"
+              data-testid="hosting-start-command-input"
+            />
+            <div className="mt-0.5 text-[10px] text-muted-foreground leading-tight">
+              {effectiveStart !== null && (
+                <>
+                  <span data-testid="hosting-start-command-source" className={cn(
+                    effectiveStart.source === "override" && "text-blue font-semibold",
+                  )}>
+                    {effectiveStart.source === "override" && "Using your override."}
+                    {effectiveStart.source === "stack" && "Using stack default."}
+                    {effectiveStart.source === "devCommands" && "Using stack devCommands fallback."}
+                    {effectiveStart.source === "image-default" && "No command \u2014 image default CMD runs."}
+                  </span>
+                  {effectiveStart.source !== "override" && effectiveStart.stackDefault && (
+                    <>
+                      {" "}
+                      <span className="opacity-70">Leave empty to keep default: </span>
+                      <code className="text-[10px]">{effectiveStart.stackDefault}</code>
+                    </>
+                  )}
+                  {effectiveStart.source === "override" && effectiveStart.stackDefault && (
+                    <>
+                      {" "}
+                      <span className="opacity-70">Stack default (cleared by override): </span>
+                      <code className="text-[10px]">{effectiveStart.stackDefault}</code>
+                    </>
+                  )}
+                </>
+              )}
+              {effectiveStart === null && (
+                <span className="opacity-70">Leave empty to use your installed stack&apos;s default; when set, this replaces the stack command and runs via sh -c.</span>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="grid grid-cols-2 gap-2 mb-2">
         <div>
