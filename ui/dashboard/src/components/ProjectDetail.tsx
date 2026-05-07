@@ -36,6 +36,7 @@ import { WidgetRenderer } from "./WidgetRenderer.js";
 import { isSacredProject } from "@/lib/sacred-projects.js";
 import { SecurityTab } from "./SecurityTab.js";
 import { MagicAppPicker } from "./MagicAppPicker.js";
+import { isDesktopServedType } from "@/lib/project-type-classifier";
 
 export interface ProjectDetailProps {
   projects: ProjectInfo[];
@@ -79,7 +80,8 @@ const CANVAS_LABELS: Record<string, string> = {
   hosting: "Hosting",
   "iterative-work": "Iterative Work",
   mcp: "MCP",
-  "magic-apps": "MagicApps",
+  // s150 t637 — "magic-apps" tab dropped; MApps config now lives inside the
+  // Hosting tab when type is Desktop-served. Label removed from this map.
   taskmaster: "TaskMaster",
   security: "Security",
   activity: "Activity",
@@ -195,7 +197,8 @@ export function ProjectDetail({
     "hosting": "operate",
     "iterative-work": "operate",
     "mcp": "operate",
-    "magic-apps": "coordinate",
+    // s150 t637 — "magic-apps" tab dropped; MApps config now lives inside the
+    // Hosting tab when type is Desktop-served.
     "taskmaster": "coordinate",
     "security": "insight",
     "activity": "insight",
@@ -213,7 +216,7 @@ export function ProjectDetail({
   useEffect(() => {
     if (!tabBelongsToMode(activeTab)) {
       // Find first tab in current mode (prefer the canonical first one)
-      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "magic-apps", "taskmaster", "security", "activity"];
+      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "taskmaster", "security", "activity"];
       const firstInMode = candidates.find((id) => TAB_MODES[id] === currentMode);
       if (firstInMode) setActiveTab(firstInMode);
     }
@@ -640,13 +643,15 @@ export function ProjectDetail({
               {tabBelongsToMode("details") && <TabsTrigger value="details" className={SUB_PILL_CLASS}>Details</TabsTrigger>}
               {tabBelongsToMode("files") && <TabsTrigger value="files" className={SUB_PILL_CLASS}>Editor</TabsTrigger>}
               {tabBelongsToMode("repository") && <TabsTrigger value="repository" className={SUB_PILL_CLASS}>Repository</TabsTrigger>}
-              {tabBelongsToMode("hosting") && onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
+              {/* s150 t637 — Hosting tab is universal (every project has a network face).
+                  No hasCode gate; the panel internally adapts to Desktop-served vs code-served. */}
+              {tabBelongsToMode("hosting") && onHostingConfigure && onHostingRestart && (
                 <TabsTrigger value="hosting" className={SUB_PILL_CLASS}>Hosting</TabsTrigger>
               )}
               {tabBelongsToMode("environment") && project.projectType?.hasCode && (
                 <TabsTrigger value="environment" className={SUB_PILL_CLASS}>Environment</TabsTrigger>
               )}
-              {tabBelongsToMode("magic-apps") && <TabsTrigger value="magic-apps" className={SUB_PILL_CLASS}>MagicApps</TabsTrigger>}
+              {/* s150 t637 — standalone MagicApps tab dropped; merged into Hosting (above). */}
               {tabBelongsToMode("taskmaster") && <TabsTrigger value="taskmaster" className={SUB_PILL_CLASS}>TaskMaster</TabsTrigger>}
               {tabBelongsToMode("iterative-work") && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
                 <TabsTrigger value="iterative-work" className={SUB_PILL_CLASS}>Iterative Work</TabsTrigger>
@@ -1300,7 +1305,7 @@ export function ProjectDetail({
           </Card>
         </TabsContent>
 
-        {onHostingConfigure && onHostingRestart && project.projectType?.hasCode && (
+        {onHostingConfigure && onHostingRestart && (
           <TabsContent value="hosting" className="mt-4 flex-1 min-h-0 overflow-y-auto">
             <Card className="p-4">
               <HostingPanel
@@ -1321,6 +1326,22 @@ export function ProjectDetail({
                 availableTypes={projectTypes}
               />
             </Card>
+            {/* s150 t637 — Desktop-served projects get the MagicApps picker inline
+                under the hosting card. Replaces the standalone MagicApps tab. */}
+            {isDesktopServedType(project.projectType?.id ?? project.hosting?.type) && (
+              <Card className="p-4 mt-4" data-testid="hosting-magicapps-section">
+                <h3 className="text-[12px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                  MagicApps for this project
+                </h3>
+                <MagicAppPicker
+                  project={project}
+                  onOpenApp={(appId, projectPath) => {
+                    if (onOpenMagicApp) void onOpenMagicApp(appId, projectPath);
+                  }}
+                  onRefresh={onRefresh}
+                />
+              </Card>
+            )}
           </TabsContent>
         )}
 
@@ -1350,17 +1371,8 @@ export function ProjectDetail({
           </TabsContent>
         )}
 
-        <TabsContent value="magic-apps" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-          <Card className="p-4">
-            <MagicAppPicker
-              project={project}
-              onOpenApp={(appId, projectPath) => {
-                if (onOpenMagicApp) void onOpenMagicApp(appId, projectPath);
-              }}
-              onRefresh={onRefresh}
-            />
-          </Card>
-        </TabsContent>
+        {/* s150 t637 — standalone MagicApps TabsContent removed; rendered inline
+            under the Hosting tab when type is Desktop-served (above). */}
 
         {pluginPanels.map((panel) => (
           <TabsContent key={panel.id} value={`plugin-${panel.id}`} className="mt-4">
