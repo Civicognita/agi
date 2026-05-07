@@ -55,8 +55,28 @@ export interface ProjectTypeDefinition {
   label: string;
   category: ProjectCategory;
   hostable: boolean;
-  /** Whether this project type contains code (vs. content like literature/media). */
+  /**
+   * @deprecated s150 (2026-05-07) — use `servesDesktop` (inverted polarity).
+   * `hasCode` was the binary "code-served-or-not" knob inferred from category.
+   * Per the universal monorepo directive, every project HAS code in repos/ even
+   * if it's content-only. The right binary is whether the Aion Desktop serves
+   * the project's network face (vs the project's repos producing the served
+   * output). Consumers should migrate to `servesDesktop`. Kept as a field for
+   * back-compat until t634 (hosting-manager refactor) lands.
+   */
   hasCode: boolean;
+  /**
+   * s150 (2026-05-07) — single source of truth for the code-served-vs-Desktop-
+   * served binary. When `true`, hosting-manager runs the Aion Desktop bundle
+   * (light Caddy + nginx:alpine + per-project hosting.mapps[]). When `false`,
+   * the project's repos produce the served output via stack-driven container
+   * (npm start, nginx-on-dist, etc.). When undefined, falls back to
+   * `servesDesktopFor(id)` which uses a known type-id set (with category as
+   * a final-fallback heuristic). Hosting-manager reads via the helper, not
+   * this field directly, so plugin contributors don't have to set it for
+   * recognized types.
+   */
+  servesDesktop?: boolean;
   /**
    * Whether this project type can have an iterative-work loop (s118).
    * Only `app`/`web` (dev) and `ops`/`administration` (ops) categories are
@@ -78,6 +98,65 @@ export interface ProjectTypeDefinition {
 
 /** Categories that default to hasCode: true when not explicitly set. */
 const CODE_CATEGORIES: ReadonlySet<ProjectCategory> = new Set(["web", "app", "monorepo", "ops"]);
+
+/**
+ * Project type IDs that serve their network face from Aion Desktop (light
+ * Caddy + nginx:alpine + per-project hosting.mapps[]). Per s150 directive,
+ * this is the canonical discriminator — `type` drives container shape.
+ *
+ * Updates land here when new Desktop-served types ship (e.g., backup-aggregator).
+ * For types not in this set + not in CODE_SERVED_TYPES, the fallback is
+ * category-based (CODE_CATEGORIES inverted).
+ */
+export const DESKTOP_SERVED_TYPES: ReadonlySet<string> = new Set([
+  "ops",
+  "media",
+  "literature",
+  "documentation",
+  "backup-aggregator",
+]);
+
+/**
+ * Project type IDs that produce their network face from the project's own
+ * repos (npm start, nginx-on-dist, apache-on-php, etc.) — image + mounts
+ * driven by stacks. Counterpart to DESKTOP_SERVED_TYPES.
+ */
+export const CODE_SERVED_TYPES: ReadonlySet<string> = new Set([
+  "web-app",
+  "static-site",
+  "api-service",
+  "php-app",
+  "monorepo",
+  "art",
+  "writing",
+]);
+
+/**
+ * Returns whether the given project type serves its network face from Aion
+ * Desktop (true) vs its own code (false). Resolution precedence:
+ *   1. Explicit `servesDesktop` on the registered ProjectTypeDefinition
+ *   2. DESKTOP_SERVED_TYPES set membership
+ *   3. CODE_SERVED_TYPES set membership (returns false)
+ *   4. Category fallback via CODE_CATEGORIES (returns false for code categories,
+ *      true for everything else)
+ *
+ * The registry parameter is optional — when omitted, the function uses just
+ * the type-id sets + a default category heuristic. Callers with access to a
+ * ProjectTypeRegistry should pass it for the most accurate answer.
+ */
+export function servesDesktopFor(
+  typeId: string | undefined | null,
+  registry?: ProjectTypeRegistry,
+): boolean {
+  if (!typeId) return false;
+  const def = registry?.get(typeId);
+  if (def?.servesDesktop !== undefined) return def.servesDesktop;
+  if (DESKTOP_SERVED_TYPES.has(typeId)) return true;
+  if (CODE_SERVED_TYPES.has(typeId)) return false;
+  // Final fallback: derive from category if registered, else assume code-served.
+  if (def && CODE_CATEGORIES.has(def.category)) return false;
+  return def !== undefined; // unknown type with non-code category → Desktop-served
+}
 
 /**
  * Categories eligible for the testing suite UX (s121 — Tests / Spot / E2E
