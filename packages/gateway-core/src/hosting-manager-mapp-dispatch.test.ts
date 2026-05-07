@@ -2,6 +2,11 @@ import { describe, it, expect } from "vitest";
 import { ProjectHostingSchema } from "@agi/config";
 import { existsSync, statSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
+import {
+  CODE_SERVED_TYPES,
+  DESKTOP_SERVED_TYPES,
+  servesDesktopFor,
+} from "./project-types.js";
 
 /**
  * MApp container kind — foundation slice (s145 t584).
@@ -50,14 +55,18 @@ describe("MApp container kind — schema (s145 t584)", () => {
     }
   });
 
-  it("rejects containerKind values outside the enum", () => {
+  it("tolerates legacy containerKind values via .passthrough() (s150 t630)", () => {
+    // After s150 t630, the schema no longer enforces a containerKind enum —
+    // it tolerates legacy values via .passthrough(). The s150 t632 boot
+    // sweep is the cleaner. s150 t634 then routes dispatch via `type` so
+    // the field has no semantic meaning regardless of value.
     const result = ProjectHostingSchema.safeParse({
       enabled: false,
       type: "static-site",
       hostname: "site",
-      containerKind: "invalid-kind" as unknown as "static",
+      containerKind: "anything-now",
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it("treats containerKind + mapps as fully optional (back-compat)", () => {
@@ -119,5 +128,60 @@ describe("MApp container kind — skeleton (s145 t584)", () => {
     };
     const result = ProjectHostingSchema.safeParse(raw.hosting);
     expect(result.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// s150 t634 — type-driven Desktop-served dispatch (replaces containerKind)
+// ---------------------------------------------------------------------------
+
+describe("s150 t634 — type drives container shape", () => {
+  it("DESKTOP_SERVED_TYPES routes through servesDesktopFor() to true", () => {
+    for (const t of DESKTOP_SERVED_TYPES) {
+      expect(servesDesktopFor(t)).toBe(true);
+    }
+  });
+
+  it("CODE_SERVED_TYPES routes through servesDesktopFor() to false", () => {
+    for (const t of CODE_SERVED_TYPES) {
+      expect(servesDesktopFor(t)).toBe(false);
+    }
+  });
+
+  it("ops + media + literature + documentation + backup-aggregator are Desktop-served", () => {
+    expect(servesDesktopFor("ops")).toBe(true);
+    expect(servesDesktopFor("media")).toBe(true);
+    expect(servesDesktopFor("literature")).toBe(true);
+    expect(servesDesktopFor("documentation")).toBe(true);
+    expect(servesDesktopFor("backup-aggregator")).toBe(true);
+  });
+
+  it("web-app + static-site + api-service + php-app + monorepo are code-served", () => {
+    expect(servesDesktopFor("web-app")).toBe(false);
+    expect(servesDesktopFor("static-site")).toBe(false);
+    expect(servesDesktopFor("api-service")).toBe(false);
+    expect(servesDesktopFor("php-app")).toBe(false);
+    expect(servesDesktopFor("monorepo")).toBe(false);
+  });
+
+  it("undefined / null / empty / unknown types return false (safe default)", () => {
+    expect(servesDesktopFor(undefined)).toBe(false);
+    expect(servesDesktopFor(null)).toBe(false);
+    expect(servesDesktopFor("")).toBe(false);
+    expect(servesDesktopFor("never-registered-type")).toBe(false);
+  });
+
+  it("legacy containerKind value on hosting is ignored — type wins", () => {
+    // Schema parses cleanly with a legacy containerKind value (passthrough).
+    // Dispatch reads `type`, not `containerKind`. A `web-app` project with
+    // a legacy `containerKind: "mapp"` still routes code-served.
+    const result = ProjectHostingSchema.safeParse({
+      enabled: true,
+      type: "web-app",
+      hostname: "site",
+      containerKind: "mapp",
+    });
+    expect(result.success).toBe(true);
+    expect(servesDesktopFor("web-app")).toBe(false);
   });
 });
