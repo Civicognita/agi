@@ -297,6 +297,97 @@ function pluginChecks(): CheckGroup {
   return { title: "Plugins & Marketplace", checks };
 }
 
+/**
+ * s150 t641 — per-project shape diagnostic. Walks every project under each
+ * `workspace.projects[]` directory and verifies the s150 model:
+ *   - no top-level `category` field
+ *   - no `hosting.containerKind` field
+ *   - no `<projectPath>/.agi/project.json` debris
+ *   - top-level `type` set + not in retired set
+ *   - `repos/`, `sandbox/`, `.trash/`, `k/{plans,knowledge,pm,memory,chat}` present
+ *
+ * Each project becomes one row. A clean project shows ✓; a project with
+ * any drift shows ✗ with a multi-line `fix` listing every finding.
+ */
+async function projectShapeChecks(config: AionimaConfig): Promise<CheckGroup | null> {
+  const workspaces = config.workspace?.projects ?? [];
+  if (workspaces.length === 0) return null;
+
+  const checks: Check[] = [];
+  const RETIRED_TYPES: ReadonlySet<string> = new Set(["monorepo"]);
+  const REQUIRED_DIRS = ["repos", "sandbox", ".trash", "k/plans", "k/knowledge", "k/pm", "k/memory", "k/chat"];
+  const SACRED_NAMES = new Set([
+    "_aionima", "agi", "prime", "id", "marketplace", "mapp-marketplace",
+    "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d", "fancy-screens",
+  ]);
+
+  const { readdirSync } = await import("node:fs");
+  const path = await import("node:path");
+
+  let scanned = 0;
+  for (const ws of workspaces) {
+    let entries: string[];
+    try {
+      entries = readdirSync(ws, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+        .map((d) => d.name);
+    } catch {
+      continue;
+    }
+
+    for (const slug of entries) {
+      if (SACRED_NAMES.has(slug.toLowerCase())) continue;
+      const projectPath = path.join(ws, slug);
+      const findings: string[] = [];
+
+      const configPath = path.join(projectPath, "project.json");
+      if (!fileExists(configPath)) {
+        // Pre-scaffold project — skip; nothing to validate yet.
+        continue;
+      }
+      scanned++;
+
+      let raw: Record<string, unknown> = {};
+      try {
+        raw = JSON.parse(await readFile(configPath, "utf-8")) as Record<string, unknown>;
+      } catch (e) {
+        findings.push(`unparseable project.json (${e instanceof Error ? e.message : String(e)})`);
+      }
+
+      if ("category" in raw) findings.push("legacy `category` field present (s150 t630/t632)");
+
+      const hosting = raw.hosting as Record<string, unknown> | undefined;
+      if (hosting && "containerKind" in hosting) findings.push("legacy `hosting.containerKind` field present (s150 t634)");
+
+      const agiDebris = path.join(projectPath, ".agi", "project.json");
+      if (fileExists(agiDebris)) findings.push("`.agi/project.json` debris (s130 → s140 leftover)");
+
+      const type = typeof raw.type === "string" ? raw.type : null;
+      if (type === null || type.length === 0) {
+        findings.push("top-level `type` is missing");
+      } else if (RETIRED_TYPES.has(type)) {
+        findings.push(`type "${type}" was retired (s150 t640) — boot sweep will remap to "web-app"`);
+      }
+
+      for (const rel of REQUIRED_DIRS) {
+        const abs = path.join(projectPath, rel);
+        if (!dirExists(abs)) findings.push(`missing dir: ${rel}/`);
+      }
+      // sandbox + .trash also count as required (covered above).
+
+      checks.push({
+        name: findings.length === 0 ? `${slug}: shape clean` : `${slug}: ${String(findings.length)} drift finding(s)`,
+        ok: findings.length === 0,
+        warn: findings.length > 0 && findings.every((f) => f.startsWith("legacy") || f.includes("debris") || f.includes("retired")),
+        fix: findings.length === 0 ? undefined : findings.map((f) => `• ${f}`).join("\n"),
+      });
+    }
+  }
+
+  if (scanned === 0) return null;
+  return { title: "Project shape (s150)", checks };
+}
+
 function hostingChecks(config: AionimaConfig): CheckGroup | null {
   if (!config.hosting?.enabled) return null;
 
@@ -614,6 +705,10 @@ export function registerDoctorCommand(program: Command): void {
 
         const hosting = hostingChecks(config);
         if (hosting) groups.push(hosting);
+
+        // s150 t641 — per-project shape validation
+        const shape = await projectShapeChecks(config);
+        if (shape) groups.push(shape);
 
         const dev = devChecks(config);
         if (dev) groups.push(dev);
