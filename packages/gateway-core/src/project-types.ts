@@ -133,7 +133,10 @@ export const CODE_SERVED_TYPES: ReadonlySet<string> = new Set([
   "static-site",
   "api-service",
   "php-app",
-  "monorepo",
+  // s150 t640 (2026-05-07) — "monorepo" REMOVED. Every project is a monorepo
+  // per the universal-monorepo directive; a sibling "monorepo" type as a
+  // peer of web-app/static-site/etc. contradicts the model. The s150 t632
+  // shape sweep remaps existing type="monorepo" projects to "web-app".
   "art",
   "writing",
 ]);
@@ -182,7 +185,6 @@ export const ITERATIVE_WORK_ELIGIBLE_TYPE_IDS: ReadonlySet<string> = new Set([
   "api-service",
   "static-site",
   "php-app",
-  "monorepo",
   "ops",
 ]);
 
@@ -191,7 +193,6 @@ export const TESTING_UX_ELIGIBLE_TYPE_IDS: ReadonlySet<string> = new Set([
   "static-site",
   "api-service",
   "php-app",
-  "monorepo",
 ]);
 
 export const TESTING_UX_ELIGIBLE_CATEGORIES: ReadonlySet<ProjectCategory> = new Set([

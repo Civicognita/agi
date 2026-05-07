@@ -1845,10 +1845,13 @@ export async function startGatewayServer(
       // sweep. Cleanup of pre-t634 over-attached state on disk.
       isDesktopServedType: (type) => servesDesktopFor(type, projectTypeRegistry),
     });
-    if (result.rewrote > 0 || result.debrisRemoved > 0 || result.stacksStripped > 0 || result.errors > 0) {
+    if (
+      result.rewrote > 0 || result.debrisRemoved > 0 || result.stacksStripped > 0
+      || result.typesRemapped > 0 || result.errors > 0
+    ) {
       logger.info(
         "migrate",
-        `boot-time s150 shape sweep: ${String(result.scanned)} scanned, ${String(result.rewrote)} rewritten, ${String(result.debrisRemoved)} .agi/project.json removed, ${String(result.stacksStripped)} stack-set(s) stripped, ${String(result.errors)} error(s)`,
+        `boot-time s150 shape sweep: ${String(result.scanned)} scanned, ${String(result.rewrote)} rewritten, ${String(result.debrisRemoved)} .agi/project.json removed, ${String(result.stacksStripped)} stack-set(s) stripped, ${String(result.typesRemapped)} type(s) remapped, ${String(result.errors)} error(s)`,
       );
     }
   } catch (err) {
