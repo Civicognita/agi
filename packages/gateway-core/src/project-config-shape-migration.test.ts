@@ -214,6 +214,94 @@ describe("migrateProjectConfigShape", () => {
     expect(r.configRewritten).toBe(false);
     expect(readConfig(sacred).category).toBe("monorepo"); // untouched
   });
+
+  // s150 t635 — stack-strip pass for Desktop-served projects
+  describe("Desktop-served stack strip (s150 t635)", () => {
+    it("strips hosting.stacks[] when isDesktopServedType returns true", () => {
+      writeConfig({
+        name: "demo",
+        type: "ops",
+        hosting: {
+          enabled: true,
+          type: "static-site",
+          hostname: "demo",
+          stacks: [
+            { stackId: "stack-static-hosting", addedAt: "2026-04-01T00:00:00Z" },
+            { stackId: "stack-foo", addedAt: "2026-04-02T00:00:00Z" },
+          ],
+        },
+      });
+
+      const r = migrateProjectConfigShape(projectPath, {
+        isDesktopServedType: (t) => t === "ops",
+      });
+
+      expect(r.configRewritten).toBe(true);
+      expect(r.strippedStacks).toEqual(["stack-static-hosting", "stack-foo"]);
+      const after = readConfig();
+      const hosting = after.hosting as Record<string, unknown>;
+      expect(hosting.stacks).toEqual([]);
+    });
+
+    it("preserves hosting.stacks[] for code-served projects", () => {
+      writeConfig({
+        name: "demo",
+        type: "web-app",
+        hosting: {
+          enabled: true,
+          type: "web-app",
+          hostname: "demo",
+          stacks: [{ stackId: "stack-nextjs", addedAt: "2026-04-01T00:00:00Z" }],
+        },
+      });
+
+      const r = migrateProjectConfigShape(projectPath, {
+        isDesktopServedType: (t) => t === "ops", // not web-app
+      });
+
+      expect(r.strippedStacks).toBeUndefined();
+      const after = readConfig();
+      const hosting = after.hosting as Record<string, unknown>;
+      expect(hosting.stacks).toEqual([{ stackId: "stack-nextjs", addedAt: "2026-04-01T00:00:00Z" }]);
+    });
+
+    it("is a no-op when isDesktopServedType is not provided", () => {
+      writeConfig({
+        name: "demo",
+        type: "ops",
+        hosting: {
+          enabled: true,
+          type: "static-site",
+          hostname: "demo",
+          stacks: [{ stackId: "stack-static-hosting", addedAt: "2026-04-01T00:00:00Z" }],
+        },
+      });
+
+      const r = migrateProjectConfigShape(projectPath); // no opts
+      expect(r.strippedStacks).toBeUndefined();
+      const after = readConfig();
+      const hosting = after.hosting as Record<string, unknown>;
+      expect(hosting.stacks).toHaveLength(1);
+    });
+
+    it("handles hosting.stacks[] absent gracefully", () => {
+      writeConfig({
+        name: "demo",
+        type: "ops",
+        hosting: { enabled: true, type: "static-site", hostname: "demo" },
+      });
+
+      const r = migrateProjectConfigShape(projectPath, {
+        isDesktopServedType: (t) => t === "ops",
+      });
+
+      expect(r.strippedStacks).toBeUndefined();
+      // No stacks key was created.
+      const after = readConfig();
+      const hosting = after.hosting as Record<string, unknown>;
+      expect(hosting.stacks).toBeUndefined();
+    });
+  });
 });
 
 describe("migrateAllProjectConfigShapes", () => {
@@ -298,5 +386,39 @@ describe("migrateAllProjectConfigShapes", () => {
     ]);
     expect(summary.scanned).toBe(0);
     expect(summary.errors).toBe(0);
+  });
+
+  it("aggregates stacks-stripped count across the workspace (s150 t635)", () => {
+    makeProject("ops-project", {
+      name: "ops-project",
+      type: "ops",
+      hosting: {
+        enabled: true,
+        type: "static-site",
+        hostname: "ops",
+        stacks: [{ stackId: "stack-static-hosting", addedAt: "2026-04-01T00:00:00Z" }],
+      },
+    });
+    makeProject("web-project", {
+      name: "web-project",
+      type: "web-app",
+      hosting: {
+        enabled: true,
+        type: "web-app",
+        hostname: "web",
+        stacks: [{ stackId: "stack-nextjs", addedAt: "2026-04-01T00:00:00Z" }],
+      },
+    });
+
+    const summary = migrateAllProjectConfigShapes([workspace], {
+      isDesktopServedType: (t) => t === "ops",
+    });
+
+    expect(summary.scanned).toBe(2);
+    expect(summary.stacksStripped).toBe(1);
+    const ops = summary.projects.find((p) => p.projectPath.endsWith("ops-project"));
+    expect(ops?.result.strippedStacks).toEqual(["stack-static-hosting"]);
+    const web = summary.projects.find((p) => p.projectPath.endsWith("web-project"));
+    expect(web?.result.strippedStacks).toBeUndefined();
   });
 });

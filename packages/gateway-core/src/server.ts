@@ -134,7 +134,7 @@ import { listProjectsWithConfig } from "./iterative-work/list-projects.js";
 import { projectSlug } from "./project-config-path.js";
 import { SystemConfigService } from "./system-config-service.js";
 import { CircuitBreakerTracker } from "./circuit-breaker.js";
-import { createProjectTypeRegistry } from "./project-types.js";
+import { createProjectTypeRegistry, servesDesktopFor } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { discoverPlugins, getDefaultSearchPaths, loadPlugins, tryLoadManifest, PluginRegistry, HookBus } from "@agi/plugins";
 import { ServiceManager } from "./service-manager.js";
@@ -1840,11 +1840,15 @@ export async function startGatewayServer(
   // actually changed. Sibling to the s130 sweep above, which handles file-
   // location migration; this one handles shape inside the file.
   try {
-    const result = migrateAllProjectConfigShapes(projectPaths);
-    if (result.rewrote > 0 || result.debrisRemoved > 0 || result.errors > 0) {
+    const result = migrateAllProjectConfigShapes(projectPaths, {
+      // s150 t635 — strip stacks from Desktop-served projects during the
+      // sweep. Cleanup of pre-t634 over-attached state on disk.
+      isDesktopServedType: (type) => servesDesktopFor(type, projectTypeRegistry),
+    });
+    if (result.rewrote > 0 || result.debrisRemoved > 0 || result.stacksStripped > 0 || result.errors > 0) {
       logger.info(
         "migrate",
-        `boot-time s150 shape sweep: ${String(result.scanned)} scanned, ${String(result.rewrote)} rewritten, ${String(result.debrisRemoved)} .agi/project.json removed, ${String(result.errors)} error(s)`,
+        `boot-time s150 shape sweep: ${String(result.scanned)} scanned, ${String(result.rewrote)} rewritten, ${String(result.debrisRemoved)} .agi/project.json removed, ${String(result.stacksStripped)} stack-set(s) stripped, ${String(result.errors)} error(s)`,
       );
     }
   } catch (err) {

@@ -1230,12 +1230,13 @@ export class HostingManager {
             };
           }
 
-          // Auto-assign stacks BEFORE enabling (container launch needs the stack config)
-          const typeDef = this.registry?.get(meta.type);
-          const isCodeType = typeDef?.hasCode ?? true; // default to code if unknown
-
-          if (isCodeType) {
-            // Code projects: auto-assign suggested stack if none
+          // s150 t635 — auto-stamp gate is now `!isDesktopServed`. Was
+          // `typeDef?.hasCode ?? true` which over-attached for unknown types
+          // and used the deprecated `hasCode` flag. Desktop-served projects
+          // (ops/media/literature/etc.) NEVER auto-attach stacks; their
+          // container shape is type-driven and stack-attached defs are
+          // either ignored (after t634) or actively misleading.
+          if (!this.isDesktopServed(meta)) {
             const stacks = this.getProjectStacks(fullPath);
             if (stacks.length === 0) {
               const detected = this.detectProjectDefaults(fullPath);
@@ -1310,8 +1311,8 @@ export class HostingManager {
             }
           }
 
-          if (!isCodeType) {
-            // Non-code projects: auto-set viewer to first matching MagicApp
+          if (this.isDesktopServed(meta)) {
+            // s150 t635 — Desktop-served projects: auto-set viewer to first matching MagicApp
             const hosting = this.readHostingMeta(fullPath);
             if (hosting && !hosting.viewer) {
               const apps = this.mappReg?.getForType(meta.type);

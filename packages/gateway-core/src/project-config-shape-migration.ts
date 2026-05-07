@@ -58,15 +58,34 @@ export interface ShapeMigrationResult {
   droppedCategory?: string;
   /** Populated when a `hosting.containerKind` was removed. */
   droppedContainerKind?: string;
+  /** s150 t635 — populated when `hosting.stacks[]` entries were stripped
+   * because the project is Desktop-served (stacks don't apply). */
+  strippedStacks?: string[];
   /** Populated when migration failed for the project (non-fatal). */
   error?: string;
+}
+
+export interface ShapeMigrationOptions {
+  /**
+   * s150 t635 — predicate that returns true when a given project type is
+   * Desktop-served. When provided, the migration strips entries from
+   * `hosting.stacks[]` for Desktop-served projects (stacks attach to code,
+   * Desktop-served projects don't run code-stack containers). Boot wires
+   * this with `(type) => servesDesktopFor(type, registry)`. Tests can pass
+   * a custom predicate to verify the contract without spinning up a
+   * registry.
+   */
+  isDesktopServedType?: (type: string) => boolean;
 }
 
 /**
  * Migrate one project's project.json into the s150 shape.
  * Idempotent and side-effect-free when nothing needs changing.
  */
-export function migrateProjectConfigShape(projectPath: string): ShapeMigrationResult {
+export function migrateProjectConfigShape(
+  projectPath: string,
+  options: ShapeMigrationOptions = {},
+): ShapeMigrationResult {
   const result: ShapeMigrationResult = {
     configRewritten: false,
     agiDebrisRemoved: false,
@@ -148,6 +167,31 @@ export function migrateProjectConfigShape(projectPath: string): ShapeMigrationRe
     mutated = true;
   }
 
+  // 2d — s150 t635 — strip `hosting.stacks[]` for Desktop-served projects.
+  // Stacks attach to code; Desktop-served projects (type=ops/media/etc.)
+  // ignore them at dispatch (post-t634), so attached stacks are dead data
+  // that misleads the dashboard "Stacks" surface.
+  const isDesktopServed = options.isDesktopServedType;
+  const finalType = next.type;
+  if (
+    isDesktopServed !== undefined
+    && typeof finalType === "string"
+    && finalType.length > 0
+    && isDesktopServed(finalType)
+  ) {
+    const hostingForStacks = next.hosting as Record<string, unknown> | undefined;
+    const stacks = hostingForStacks?.stacks;
+    if (Array.isArray(stacks) && stacks.length > 0) {
+      result.strippedStacks = stacks
+        .map((s) => (typeof s === "object" && s !== null && typeof (s as { stackId?: unknown }).stackId === "string"
+          ? (s as { stackId: string }).stackId
+          : null))
+        .filter((s): s is string => s !== null);
+      next.hosting = { ...hostingForStacks, stacks: [] };
+      mutated = true;
+    }
+  }
+
   if (mutated) {
     try {
       writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, "utf-8");
@@ -167,6 +211,8 @@ export interface ShapeSweepResult {
   rewrote: number;
   /** How many had a `.agi/project.json` debris file removed. */
   debrisRemoved: number;
+  /** s150 t635 — how many had stacks stripped (Desktop-served cleanup). */
+  stacksStripped: number;
   /** How many failed the migration (non-fatal). */
   errors: number;
   /** Per-project results for the boot log / dashboard. */
@@ -179,8 +225,11 @@ export interface ShapeSweepResult {
  * `migrateAllProjectsToFolderLayout` shape so the boot-time wiring reads
  * symmetrically.
  */
-export function migrateAllProjectConfigShapes(workspaceProjects: readonly string[]): ShapeSweepResult {
-  const out: ShapeSweepResult = { scanned: 0, rewrote: 0, debrisRemoved: 0, errors: 0, projects: [] };
+export function migrateAllProjectConfigShapes(
+  workspaceProjects: readonly string[],
+  options: ShapeMigrationOptions = {},
+): ShapeSweepResult {
+  const out: ShapeSweepResult = { scanned: 0, rewrote: 0, debrisRemoved: 0, stacksStripped: 0, errors: 0, projects: [] };
 
   for (const dir of workspaceProjects) {
     let entries: string[];
@@ -197,10 +246,11 @@ export function migrateAllProjectConfigShapes(workspaceProjects: readonly string
       if (isSacredProjectPath(projectPath)) continue;
       out.scanned++;
       try {
-        const result = migrateProjectConfigShape(projectPath);
+        const result = migrateProjectConfigShape(projectPath, options);
         out.projects.push({ projectPath, result });
         if (result.configRewritten) out.rewrote++;
         if (result.agiDebrisRemoved) out.debrisRemoved++;
+        if (result.strippedStacks !== undefined && result.strippedStacks.length > 0) out.stacksStripped++;
         if (result.error !== undefined) out.errors++;
       } catch (e) {
         out.errors++;
