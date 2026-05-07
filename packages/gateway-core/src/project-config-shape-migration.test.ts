@@ -284,6 +284,50 @@ describe("migrateProjectConfigShape", () => {
       expect(hosting.stacks).toHaveLength(1);
     });
 
+    it("remaps retired type='monorepo' to 'web-app' (s150 t640)", () => {
+      writeConfig({
+        name: "demo",
+        type: "monorepo",
+        hosting: {
+          enabled: true,
+          type: "monorepo",
+          hostname: "demo",
+        },
+      });
+
+      const r = migrateProjectConfigShape(projectPath);
+
+      expect(r.configRewritten).toBe(true);
+      expect(r.remappedType).toEqual({ from: "monorepo", to: "web-app" });
+      const after = readConfig();
+      expect(after.type).toBe("web-app");
+      const hosting = after.hosting as Record<string, unknown>;
+      expect(hosting.type).toBe("web-app");
+    });
+
+    it("preserves hosting.type when it differs from a retired top-level type", () => {
+      // If hosting.type is already "web-app" but top-level is the retired
+      // "monorepo", we still remap top-level. The hosting.type stays since
+      // it doesn't match the retired value.
+      writeConfig({
+        name: "demo",
+        type: "monorepo",
+        hosting: {
+          enabled: true,
+          type: "web-app",
+          hostname: "demo",
+        },
+      });
+
+      const r = migrateProjectConfigShape(projectPath);
+
+      expect(r.remappedType).toEqual({ from: "monorepo", to: "web-app" });
+      const after = readConfig();
+      expect(after.type).toBe("web-app");
+      const hosting = after.hosting as Record<string, unknown>;
+      expect(hosting.type).toBe("web-app"); // unchanged
+    });
+
     it("handles hosting.stacks[] absent gracefully", () => {
       writeConfig({
         name: "demo",

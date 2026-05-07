@@ -44,7 +44,9 @@ const CATEGORY_TO_DEFAULT_TYPE: Readonly<Record<string, string>> = Object.freeze
   media: "art",
   administration: "ops",
   ops: "ops",
-  monorepo: "monorepo",
+  // s150 t640 — `category: monorepo` maps to `web-app` (every project is a
+  // monorepo; the sibling "monorepo" type was retired).
+  monorepo: "web-app",
 });
 
 export interface ShapeMigrationResult {
@@ -61,9 +63,23 @@ export interface ShapeMigrationResult {
   /** s150 t635 — populated when `hosting.stacks[]` entries were stripped
    * because the project is Desktop-served (stacks don't apply). */
   strippedStacks?: string[];
+  /** s150 t640 — populated when type was remapped from a retired id (e.g.
+   * "monorepo" → "web-app"). */
+  remappedType?: { from: string; to: string };
   /** Populated when migration failed for the project (non-fatal). */
   error?: string;
 }
+
+/**
+ * s150 t640 — types that have been retired from the registry. Existing
+ * project.json files carrying these values are remapped on read so they
+ * route to a sensible live type instead of falling through to "unknown".
+ */
+const RETIRED_TYPE_REMAP: Readonly<Record<string, string>> = Object.freeze({
+  // "Every project IS a monorepo" — a peer "monorepo" project type
+  // contradicts the model; web-app is the most-common concrete shape.
+  monorepo: "web-app",
+});
 
 export interface ShapeMigrationOptions {
   /**
@@ -126,6 +142,22 @@ export function migrateProjectConfigShape(
 
   const next: Record<string, unknown> = { ...raw };
   let mutated = false;
+
+  // 2a-pre — s150 t640 — remap retired type ids to their live successor.
+  // Run BEFORE the type-derivation step so derivation logic doesn't see the
+  // stale value. The hosting.type sub-field is also remapped so dispatch
+  // and dashboard payload agree.
+  const currentType = typeof next.type === "string" ? next.type : undefined;
+  if (currentType !== undefined && RETIRED_TYPE_REMAP[currentType] !== undefined) {
+    const replacement = RETIRED_TYPE_REMAP[currentType]!;
+    next.type = replacement;
+    result.remappedType = { from: currentType, to: replacement };
+    const hostingForRemap = next.hosting as Record<string, unknown> | undefined;
+    if (hostingForRemap !== undefined && hostingForRemap.type === currentType) {
+      next.hosting = { ...hostingForRemap, type: replacement };
+    }
+    mutated = true;
+  }
 
   // 2a — ensure top-level `type` is set.
   if (typeof next.type !== "string" || next.type.length === 0) {
@@ -213,6 +245,8 @@ export interface ShapeSweepResult {
   debrisRemoved: number;
   /** s150 t635 — how many had stacks stripped (Desktop-served cleanup). */
   stacksStripped: number;
+  /** s150 t640 — how many had their type remapped from a retired id. */
+  typesRemapped: number;
   /** How many failed the migration (non-fatal). */
   errors: number;
   /** Per-project results for the boot log / dashboard. */
@@ -229,7 +263,7 @@ export function migrateAllProjectConfigShapes(
   workspaceProjects: readonly string[],
   options: ShapeMigrationOptions = {},
 ): ShapeSweepResult {
-  const out: ShapeSweepResult = { scanned: 0, rewrote: 0, debrisRemoved: 0, stacksStripped: 0, errors: 0, projects: [] };
+  const out: ShapeSweepResult = { scanned: 0, rewrote: 0, debrisRemoved: 0, stacksStripped: 0, typesRemapped: 0, errors: 0, projects: [] };
 
   for (const dir of workspaceProjects) {
     let entries: string[];
@@ -251,6 +285,7 @@ export function migrateAllProjectConfigShapes(
         if (result.configRewritten) out.rewrote++;
         if (result.agiDebrisRemoved) out.debrisRemoved++;
         if (result.strippedStacks !== undefined && result.strippedStacks.length > 0) out.stacksStripped++;
+        if (result.remappedType !== undefined) out.typesRemapped++;
         if (result.error !== undefined) out.errors++;
       } catch (e) {
         out.errors++;
