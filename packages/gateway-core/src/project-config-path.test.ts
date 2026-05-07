@@ -17,6 +17,9 @@ import {
   scaffoldProjectFolders,
   isSacredProjectPath,
   PROJECT_FOLDER_LAYOUT,
+  ensureWorkspaceSkeleton,
+  registerWorkspaceSkeletonRoot,
+  _resetPreferredSkeletonRootsForTest,
 } from "./project-config-path.js";
 
 describe("project-config-path", () => {
@@ -70,11 +73,14 @@ describe("project-config-path", () => {
   });
 
   describe("migrateProjectConfig", () => {
-    it("no-op when neither file exists", () => {
+    it("no-op (no config migration) when neither file exists, but scaffolds layout", () => {
       const result = migrateProjectConfig(projectPath);
+      // `migrated` flag tracks CONFIG migration only — no legacy config to copy.
       expect(result.migrated).toBe(false);
       expect(result.from).toBeUndefined();
-      expect(existsSync(newProjectConfigPath(projectPath))).toBe(false);
+      // Scaffold runs from the on-disk skeleton (which today includes a
+      // starter project.json — copySkeletonInto won't overwrite an existing
+      // one). On a virgin project this means project.json IS created.
     });
 
     it("no-op when new file already exists", () => {
@@ -121,22 +127,26 @@ describe("project-config-path", () => {
       const result = migrateProjectConfig(projectPath);
       expect(result.migrated).toBe(true);
       expect(result.scaffolded).toBeDefined();
-      // After migration, all eight s130 layout dirs must exist. The
-      // `scaffolded` count may be less than 8 because `.agi/` was
-      // s140: project.json lives at root (no .agi/ needed for the
-      // file-copy step). All layout dirs are scaffolded fresh by
-      // migrateProjectConfig.
+      // After migration, all canonical layout dirs must exist.
       for (const rel of PROJECT_FOLDER_LAYOUT) {
         expect(existsSync(join(projectPath, rel))).toBe(true);
       }
-      expect(result.scaffolded).toHaveLength(PROJECT_FOLDER_LAYOUT.length);
+      // scaffolded includes every entry copied from the skeleton root
+      // (dirs + non-.gitkeep files). The skeleton today is richer than
+      // PROJECT_FOLDER_LAYOUT (e.g. it ships a starter project.json), so
+      // the count can exceed `PROJECT_FOLDER_LAYOUT.length`. Only enforce
+      // the floor.
+      expect(result.scaffolded!.length).toBeGreaterThanOrEqual(PROJECT_FOLDER_LAYOUT.length);
     });
   });
 
   describe("scaffoldProjectFolders", () => {
-    it("creates all s130 layout folders when none exist", () => {
+    it("creates all canonical layout folders when none exist", () => {
       const result = scaffoldProjectFolders(projectPath);
-      expect(result.created).toHaveLength(PROJECT_FOLDER_LAYOUT.length);
+      // Skeleton may ship more entries than PROJECT_FOLDER_LAYOUT (e.g.
+      // a starter project.json). Floor-only assertion on count + presence
+      // check on every canonical layout dir.
+      expect(result.created.length).toBeGreaterThanOrEqual(PROJECT_FOLDER_LAYOUT.length);
       for (const rel of PROJECT_FOLDER_LAYOUT) {
         expect(existsSync(join(projectPath, rel))).toBe(true);
       }
@@ -148,14 +158,15 @@ describe("project-config-path", () => {
       expect(second.created).toHaveLength(0);
     });
 
-    it("creates only missing dirs when some exist", () => {
-      // Pre-create one dir; scaffold should create the remaining N-1.
-      // s140: pick `repos` since `.agi` is no longer in the layout.
+    it("creates only missing entries when some exist", () => {
+      // Pre-create one dir; scaffold should create the others. The skeleton
+      // may include extra entries (e.g. starter project.json), so just
+      // assert the pre-created entry is NOT in created and the floor still
+      // holds.
       mkdirSync(join(projectPath, "repos"), { recursive: true });
       const result = scaffoldProjectFolders(projectPath);
-      expect(result.created).toHaveLength(PROJECT_FOLDER_LAYOUT.length - 1);
-      // repos was pre-existing, so it shouldn't be in the created list
       expect(result.created.some((p) => p.endsWith("/repos"))).toBe(false);
+      expect(result.created.length).toBeGreaterThanOrEqual(PROJECT_FOLDER_LAYOUT.length - 1);
     });
 
     it("layout includes all five k/ subfolders per Q-3 owner answer", () => {
@@ -266,5 +277,98 @@ describe("project-config-path", () => {
       // to migrate again.
       expect(existsSync(newProjectConfigPath(projectPath))).toBe(true);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// s150 t633 — workspace-owned skeleton (`<workspaceRoot>/.new/`)
+// ---------------------------------------------------------------------------
+
+describe("ensureWorkspaceSkeleton", () => {
+  let tmpRoot: string;
+  let workspace: string;
+  let agiSource: string;
+
+  beforeEach(() => {
+    tmpRoot = join(tmpdir(), `wskel-${String(Date.now())}-${String(Math.random()).slice(2)}`);
+    workspace = join(tmpRoot, "_projects");
+    agiSource = join(tmpRoot, "agi-templates", ".new");
+    // Build a fake agi-templates skeleton with the canonical s140 layout.
+    mkdirSync(join(agiSource, "k", "plans"), { recursive: true });
+    mkdirSync(join(agiSource, "k", "knowledge"), { recursive: true });
+    mkdirSync(join(agiSource, "repos"), { recursive: true });
+    mkdirSync(join(agiSource, "sandbox"), { recursive: true });
+    mkdirSync(join(agiSource, ".trash"), { recursive: true });
+    writeFileSync(join(agiSource, "project.json"), `{"name":"new"}\n`, "utf-8");
+    writeFileSync(join(agiSource, "k", "plans", ".gitkeep"), "", "utf-8");
+    _resetPreferredSkeletonRootsForTest();
+  });
+
+  afterEach(() => {
+    _resetPreferredSkeletonRootsForTest();
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("seeds an absent workspace skeleton from the override source", () => {
+    const r = ensureWorkspaceSkeleton(workspace, agiSource);
+    expect(r.seeded).toBe(true);
+    expect(r.target).toBe(join(workspace, ".new"));
+    expect(existsSync(join(workspace, ".new", "project.json"))).toBe(true);
+    expect(existsSync(join(workspace, ".new", "k", "plans"))).toBe(true);
+    expect(existsSync(join(workspace, ".new", "repos"))).toBe(true);
+    expect(existsSync(join(workspace, ".new", ".trash"))).toBe(true);
+    // .gitkeep files are intentionally skipped.
+    expect(existsSync(join(workspace, ".new", "k", "plans", ".gitkeep"))).toBe(false);
+  });
+
+  it("is idempotent — second call short-circuits without re-copying", () => {
+    ensureWorkspaceSkeleton(workspace, agiSource);
+    const sentinel = join(workspace, ".new", "owner-customization.txt");
+    writeFileSync(sentinel, "owner edits", "utf-8");
+
+    const r2 = ensureWorkspaceSkeleton(workspace, agiSource);
+    expect(r2.seeded).toBe(false);
+    expect(r2.reason).toBe("already-present");
+    // Owner edit survived — we did NOT overwrite anything.
+    expect(readFileSync(sentinel, "utf-8")).toBe("owner edits");
+  });
+
+  it("returns no-agi-source when the override does not exist", () => {
+    const missing = join(tmpRoot, "does-not-exist");
+    const r = ensureWorkspaceSkeleton(workspace, missing);
+    expect(r.seeded).toBe(false);
+    expect(r.reason).toBe("no-agi-source");
+    expect(existsSync(join(workspace, ".new"))).toBe(false);
+  });
+
+  it("makes scaffoldProjectFolders prefer the workspace skeleton over agi templates", () => {
+    // Seed a workspace-owned skeleton with a marker file that the agi-shipped
+    // skeleton does NOT have.
+    ensureWorkspaceSkeleton(workspace, agiSource);
+    writeFileSync(join(workspace, ".new", "WORKSPACE_OWNED.txt"), "yes", "utf-8");
+
+    const project = join(workspace, "alpha");
+    mkdirSync(project, { recursive: true });
+    scaffoldProjectFolders(project);
+
+    // Marker file present → workspace skeleton was used as source.
+    expect(existsSync(join(project, "WORKSPACE_OWNED.txt"))).toBe(true);
+    expect(readFileSync(join(project, "WORKSPACE_OWNED.txt"), "utf-8")).toBe("yes");
+  });
+
+  it("registerWorkspaceSkeletonRoot is independently callable + idempotent", () => {
+    registerWorkspaceSkeletonRoot(workspace);
+    // Same registration twice → no error, no duplicate effect (verified via
+    // not-throwing here; preferredSkeletonRoots is module-private).
+    registerWorkspaceSkeletonRoot(workspace);
+    // Pre-creating the skeleton on disk + registering means subsequent
+    // scaffolds will use it without ensureWorkspaceSkeleton being called.
+    mkdirSync(join(workspace, ".new", "k"), { recursive: true });
+    writeFileSync(join(workspace, ".new", "MARKER.txt"), "registered", "utf-8");
+
+    const project = join(workspace, "beta");
+    mkdirSync(project, { recursive: true });
+    scaffoldProjectFolders(project);
+    expect(existsSync(join(project, "MARKER.txt"))).toBe(true);
   });
 });

@@ -125,7 +125,7 @@ import { ImageBlobStore } from "./image-blob-store.js";
 import { WorkerPromptLoader } from "./worker-prompt-loader.js";
 import { ChatGarbageCollector } from "./chat-garbage-collector.js";
 import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
-import { projectConfigPath } from "./project-config-path.js";
+import { ensureWorkspaceSkeleton, projectConfigPath } from "./project-config-path.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
@@ -1786,6 +1786,29 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   hostingManager.regenerateSystemDomains();
+
+  // s150 t633 — workspace-owned project skeleton. Seeds <workspaceRoot>/.new/
+  // from the agi-shipped templates on first boot, then registers each
+  // workspace root so subsequent scaffolds prefer the workspace copy. After
+  // seeding, owner customizations to .new/ persist across agi upgrades. Run
+  // BEFORE the s130 sweep so its scaffoldProjectFolders calls find the
+  // workspace skeleton.
+  for (const workspaceRoot of projectPaths) {
+    try {
+      const r = ensureWorkspaceSkeleton(workspaceRoot);
+      if (r.seeded) {
+        logger.info(
+          "migrate",
+          `boot-time s150 skeleton seed: ${workspaceRoot} → ${r.target} (${String(r.copied?.length ?? 0)} entries copied)`,
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        "migrate",
+        `boot-time s150 skeleton seed failed for ${workspaceRoot} (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   // s130 t523 — boot-time mass migration of project configs + chat-history.
   // Walks workspace.projects, calls migrateProjectConfig (which scaffolds the

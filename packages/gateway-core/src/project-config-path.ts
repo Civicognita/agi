@@ -145,12 +145,41 @@ const PROJECT_FOLDER_LAYOUT_FALLBACK: readonly string[] = Object.freeze([
 export const PROJECT_FOLDER_LAYOUT = PROJECT_FOLDER_LAYOUT_FALLBACK;
 
 /**
- * Resolve the on-disk skeleton root. The gateway's cwd is the agi source
- * tree (set by the systemd unit / `agi run` wrapper), so the skeleton
- * sits one directory away. Returns null when not findable so callers can
- * fall through to the hardcoded layout list.
+ * Workspace-owned skeleton roots registered at boot via
+ * `registerWorkspaceSkeletonRoot`. Searched first by `findProjectSkeletonRoot`
+ * so owner-customizations to `<workspaceRoot>/.new/` win over the agi-shipped
+ * default at `<gatewayCwd>/templates/.new/`.
+ *
+ * **s150 t633 (2026-05-07):** the workspace owns the skeleton so the
+ * owner can customize it without forking agi. The agi-shipped templates
+ * remain the seed for fresh installs (see `ensureWorkspaceSkeleton`).
  */
-function findProjectSkeletonRoot(): string | null {
+const preferredSkeletonRoots: string[] = [];
+
+/**
+ * Registers a workspace root whose `.new/` directory should be searched
+ * before the agi-shipped templates. Idempotent.
+ */
+export function registerWorkspaceSkeletonRoot(workspaceRoot: string): void {
+  const target = resolvePath(workspaceRoot, ".new");
+  if (!preferredSkeletonRoots.includes(target)) preferredSkeletonRoots.push(target);
+}
+
+/**
+ * Test-only helper to clear registered workspace skeleton roots. The
+ * preferred-roots list is a module-level singleton that boot populates
+ * once; tests need a way to reset it between runs.
+ */
+export function _resetPreferredSkeletonRootsForTest(): void {
+  preferredSkeletonRoots.length = 0;
+}
+
+/**
+ * Resolve the agi-shipped skeleton (the SEED for `ensureWorkspaceSkeleton`).
+ * Returns null when the agi source tree isn't reachable from the runtime
+ * (rare in production; happens in test fixtures + ad-hoc tooling).
+ */
+function findAgiTemplatesSkeleton(): string | null {
   const candidates = [
     resolvePath(process.cwd(), "templates/.new"),
     // Walk up from this module location too, in case cwd is somewhere
@@ -162,6 +191,70 @@ function findProjectSkeletonRoot(): string | null {
     if (existsSync(c) && statSync(c).isDirectory()) return c;
   }
   return null;
+}
+
+/**
+ * Resolve the on-disk skeleton root. Lookup order:
+ *   1. Workspace-owned skeletons registered via
+ *      `registerWorkspaceSkeletonRoot` (s150 t633 — owner customization)
+ *   2. agi-shipped templates (`<gatewayCwd>/templates/.new`,
+ *      `<modulePath>/../../../templates/.new`)
+ *
+ * Returns null when none are findable so callers can fall through to the
+ * hardcoded `PROJECT_FOLDER_LAYOUT_FALLBACK` list.
+ */
+function findProjectSkeletonRoot(): string | null {
+  for (const root of preferredSkeletonRoots) {
+    if (existsSync(root) && statSync(root).isDirectory()) return root;
+  }
+  return findAgiTemplatesSkeleton();
+}
+
+export interface EnsureWorkspaceSkeletonResult {
+  seeded: boolean;
+  /** Resolved `<workspaceRoot>/.new` target. */
+  target: string;
+  /** Files + dirs created when seeded; undefined when no seed occurred. */
+  copied?: string[];
+  /** Why a seed didn't happen (already present / no source). */
+  reason?: "already-present" | "no-agi-source";
+}
+
+/**
+ * Ensure `<workspaceRoot>/.new/` exists, seeding it from the agi-shipped
+ * `templates/.new/` if needed. Always registers the workspace root with
+ * `registerWorkspaceSkeletonRoot` so subsequent `findProjectSkeletonRoot`
+ * calls prefer it.
+ *
+ * **s150 t633 (2026-05-07):** owner directive — the workspace owns the
+ * project skeleton so it can be customized without forking agi. Boot
+ * calls this once per workspace root; idempotent.
+ *
+ * @param workspaceRoot Absolute path to the projects workspace (e.g.
+ *                      `/home/wishborn/_projects`).
+ * @param sourceOverride Test-only override for the agi-templates source.
+ */
+export function ensureWorkspaceSkeleton(
+  workspaceRoot: string,
+  sourceOverride?: string,
+): EnsureWorkspaceSkeletonResult {
+  const target = resolvePath(workspaceRoot, ".new");
+  registerWorkspaceSkeletonRoot(workspaceRoot);
+
+  if (existsSync(target)) {
+    return { seeded: false, target, reason: "already-present" };
+  }
+
+  const source = sourceOverride ?? findAgiTemplatesSkeleton();
+  if (source === null || !existsSync(source) || !statSync(source).isDirectory()) {
+    return { seeded: false, target, reason: "no-agi-source" };
+  }
+
+  // Make sure the parent dir exists (it might not on a fresh install).
+  if (!existsSync(workspaceRoot)) mkdirSync(workspaceRoot, { recursive: true });
+
+  const copied = copySkeletonInto(source, target);
+  return { seeded: true, target, copied };
 }
 
 /**
