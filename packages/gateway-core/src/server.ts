@@ -128,6 +128,7 @@ import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
 import { projectConfigPath } from "./project-config-path.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
+import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
 import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import { listProjectsWithConfig } from "./iterative-work/list-projects.js";
 import { projectSlug } from "./project-config-path.js";
@@ -1807,6 +1808,26 @@ export async function startGatewayServer(
     logger.warn(
       "migrate",
       `boot-time s130 sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // s150 t632 — boot-time JSON-shape sweep. Drops legacy `category` +
+  // `hosting.containerKind` and ensures top-level `type` is set on every
+  // project.json across the workspace. Idempotent; only logs when something
+  // actually changed. Sibling to the s130 sweep above, which handles file-
+  // location migration; this one handles shape inside the file.
+  try {
+    const result = migrateAllProjectConfigShapes(projectPaths);
+    if (result.rewrote > 0 || result.debrisRemoved > 0 || result.errors > 0) {
+      logger.info(
+        "migrate",
+        `boot-time s150 shape sweep: ${String(result.scanned)} scanned, ${String(result.rewrote)} rewritten, ${String(result.debrisRemoved)} .agi/project.json removed, ${String(result.errors)} error(s)`,
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      "migrate",
+      `boot-time s150 shape sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
