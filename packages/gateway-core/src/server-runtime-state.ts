@@ -1843,10 +1843,13 @@ export async function createGatewayRuntimeState(
     }
 
     // Read current config to access category for eligibility + cadence validation.
+    // s150 (2026-05-07): `category` was dropped from the schema. Legacy values
+    // survive via .passthrough(); read through an unknown-cast for the migration
+    // period until consumers move to deriving from `type` (s150 doc-update task t642).
     let projectCategory: ProjectCategory | undefined;
     try {
       const cur = await deps.projectConfigManager.read(targetPath);
-      projectCategory = cur?.category;
+      projectCategory = (cur as unknown as { category?: ProjectCategory })?.category;
     } catch {
       /* fall through — read errors get caught by update() below */
     }
