@@ -78,24 +78,20 @@ export const ProjectHostingSchema = z
     /** MagicApp ID used as the viewer for this project's *.ai.on URL. */
     viewer: z.string().optional(),
     /**
-     * s145 t584 — Container kind. Default undefined preserves existing
-     * behavior: HostingManager dispatches based on project type + stacks.
-     * When set to "mapp", HostingManager routes to the MApp host container
-     * branch (light Caddy + static MApp host bundle, no nginx + no app
-     * server). Used by ops/media/literature projects whose primary surface
-     * is one or more MApps from the marketplace, not custom UI/API code.
-     */
-    containerKind: z.enum(["static", "code", "mapp"]).optional(),
-    /**
-     * s145 t584 — list of MApp IDs installed in this project's container.
-     * Only meaningful when containerKind === "mapp". Each id resolves to a
-     * MApp definition from the MApp Marketplace. The first id (or the one
-     * marked default in MApp config) is what loads at the project root URL;
-     * each MApp is also addressable at <project>.ai.on/<mappId>/.
+     * List of MApp IDs installed in this project's container. Only
+     * meaningful when the project's `type` is registered as Desktop-served
+     * (see Type Registry's `servesDesktop` flag — s150). Each id resolves to
+     * a MApp definition from the MApp Marketplace. Surfaced as launcher
+     * tiles on the Aion Desktop at the project root URL; each MApp is also
+     * addressable at <project>.ai.on/<mappId>/.
      */
     mapps: z.array(z.string()).optional(),
+    // s150 (2026-05-07): `containerKind` was removed. Type registry now
+    // derives the code-served-vs-Desktop-served binary from `type`. Legacy
+    // values in existing project.json files are tolerated by .passthrough()
+    // and stripped by the s150 migration script (s150 t632).
   })
-  .strict();
+  .passthrough();
 
 // ---------------------------------------------------------------------------
 // AI model binding — declared per-project in project.json
@@ -329,8 +325,11 @@ export const ProjectConfigSchema = z
     tynnToken: z.string().optional(),
     /** Project type ID (mirrors hosting.type when hosting is configured). */
     type: z.string().optional(),
-    /** Project category (literature, app, web, etc.). */
-    category: ProjectCategorySchema.optional(),
+    // s150 (2026-05-07): `category` was removed. `type` is now the single
+    // source of truth for project classification. Legacy values tolerated
+    // by the root-level .passthrough() and stripped by the s150 migration
+    // script (s150 t632). ProjectCategorySchema export is preserved for
+    // back-compat consumers (magic-app-schema.ts) until they migrate.
     /** Human-readable project description. */
     description: z.string().optional(),
     /** Hosting configuration (present when project has been configured for hosting). */

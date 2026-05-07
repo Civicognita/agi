@@ -1372,7 +1372,12 @@ export class HostingManager {
         tunnelId: hosting.tunnelId ?? null,
         viewer: hosting.viewer ?? null,
         // s145 t584 — propagate the new MApp container fields.
-        ...(hosting.containerKind !== undefined ? { containerKind: hosting.containerKind } : {}),
+        // s150 (2026-05-07): `containerKind` was dropped from the schema. Legacy values survive
+        // via .passthrough(); read them through an unknown-cast for the migration period until
+        // hosting-manager refactor (t634) removes the field from ProjectHostingMeta entirely.
+        ...((hosting as unknown as { containerKind?: "static" | "code" | "mapp" }).containerKind !== undefined
+          ? { containerKind: (hosting as unknown as { containerKind?: "static" | "code" | "mapp" }).containerKind }
+          : {}),
         ...(hosting.mapps !== undefined ? { mapps: hosting.mapps } : {}),
       };
     }
