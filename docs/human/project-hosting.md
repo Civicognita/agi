@@ -1,6 +1,8 @@
 # Project Hosting
 
-Aionima can host local web projects and services on your LAN using Caddy as a reverse proxy, dnsmasq for local DNS, and Podman for container isolation. Projects are accessible via human-readable hostnames on your local network (e.g. `myapp.ai.on`).
+Aionima can host local projects and services on your LAN using Caddy as a reverse proxy, dnsmasq for local DNS, and Podman for container isolation. Projects are accessible via human-readable hostnames on your local network (e.g. `myapp.ai.on`).
+
+> **Universal monorepo model (s150).** Every project — code-served or Desktop-served — has a `repos/` directory and a network face. The `type` field in `<projectPath>/project.json` is the single classifier; it discriminates between projects that serve code (web-app, static-site, api-service, php-app, art, writing) and projects that serve a Desktop bundle of MApp tiles (ops, media, literature, documentation, backup-aggregator). The legacy `category` and `hosting.containerKind` fields have been retired (see `_discovery/pm-hosting-reconciliation.md` for the full reconciliation).
 
 ---
 
@@ -98,15 +100,32 @@ bash scripts/hosting-setup.sh
 
 ## Project Types
 
-Each project has a type that determines how it is run and hosted.
+The `type` field in `<projectPath>/project.json` discriminates two container shapes — code-served vs Desktop-served. The dispatch helper `servesDesktopFor(type, registry)` reads the type registry's explicit `servesDesktop` flag first, then falls back to the canonical id sets below.
 
-| Type | Runtime | Container Image | Notes |
-|------|---------|----------------|-------|
-| `node` | Node.js | Plugin-configured | Runs `npm start` or configured start command |
-| `php` | PHP-FPM | Plugin-configured | Requires `plugin-php-runtime` |
-| `static` | Caddy (static files) | None | Serves files directly from disk |
+### Code-served (the project's own code produces the network face)
 
-Additional project types can be added by runtime plugins (see the [Plugins](./plugins.md) document).
+| Type id | Typical project | Container shape |
+|---------|-----------------|----------------|
+| `web-app` | React/Vue/Next/Nuxt apps | Stack-driven (`stack-nextjs`, `stack-react-vite`, `stack-nuxt`, etc.) |
+| `static-site` | Static HTML/Vite-only output | Caddy static, `dist/` served from `repos/<name>/dist` |
+| `api-service` | Node/Go/Rust/FastAPI services | Stack-driven (`stack-node-app`, `stack-fastapi`, `stack-go-app`, …) |
+| `php-app` | Laravel / WordPress / loose `.php` | `aionima-php-runtime` Apache image |
+| `art` | Code that produces media art | Stack-driven (mostly static) |
+| `writing` | Markdown content with a code-driven SSG | Stack-driven |
+
+### Desktop-served (Aion Desktop bundle serves the network face)
+
+| Type id | Typical project | Container shape |
+|---------|-----------------|----------------|
+| `ops` | Operations dashboards, monitoring | nginx:alpine + generated MApp Desktop, tiles from `hosting.mapps[]` |
+| `media` | Image / video / asset libraries | nginx:alpine + MApp tiles |
+| `literature` | Book-style content, chronicles | nginx:alpine + MApp tiles |
+| `documentation` | Project family docs aggregator | nginx:alpine + MApp tiles |
+| `backup-aggregator` | Cross-repo backup index | nginx:alpine + MApp tiles |
+
+Additional project types can be added by runtime plugins (see [Plugins](./plugins.md)). Plugin manifests should NOT set a `category` — `id` alone identifies the type, and the gateway derives Desktop-served vs code-served from the canonical sets in `agi/packages/gateway-core/src/project-types.ts`.
+
+> **Retired (s150 t640):** the `monorepo` project type was removed. Every project IS a monorepo per the universal-monorepo directive; a sibling "monorepo" type contradicted the model. Boot sweep remaps existing `type: "monorepo"` to `"web-app"`.
 
 ---
 
@@ -114,26 +133,44 @@ Additional project types can be added by runtime plugins (see the [Plugins](./pl
 
 ### Adding a Project
 
-Projects are added via the dashboard (Projects section). The AGI stores all project configuration in `~/.agi/{projectSlug}/project.json` — nothing is written inside the project directory itself.
+Projects are added via the dashboard (Projects section). Configuration lives at the project root: `<projectPath>/project.json`. Pre-s130 location (`~/.agi/{slug}/project.json`) and the intermediate `<projectPath>/.agi/project.json` are migrated transparently.
 
-For example, a project at `/home/user/myproject` stores its config at `~/.agi/home-user-myproject/project.json`:
+For example, a code-served project at `/home/user/_projects/myapp/`:
 
 ```json
 {
   "name": "My App",
-  "type": "node",
+  "type": "web-app",
+  "description": "Customer-facing storefront.",
   "hosting": {
     "enabled": true,
     "hostname": "myapp",
     "mode": "production",
     "startCommand": "node dist/server.js",
     "docRoot": null,
-    "internalPort": 3000
+    "internalPort": 3000,
+    "stacks": [{ "stackId": "stack-nextjs", "addedAt": "2026-04-01T00:00:00Z" }]
   }
 }
 ```
 
-The project is then accessible at `http://myapp.ai.on` on your LAN.
+A Desktop-served project (e.g. operations dashboards) looks like:
+
+```json
+{
+  "name": "Civicognita Ops",
+  "type": "ops",
+  "description": "Operations dashboards for Civicognita.",
+  "hosting": {
+    "enabled": true,
+    "hostname": "civicognita-ops",
+    "mode": "production",
+    "mapps": ["ops-monitor", "incident-board"]
+  }
+}
+```
+
+Both projects are then accessible at `https://<hostname>.ai.on` on your LAN.
 
 ### Project Hosting Fields
 
@@ -141,21 +178,22 @@ The project is then accessible at `http://myapp.ai.on` on your LAN.
 |-------|-------------|
 | `enabled` | Whether hosting is active for this project |
 | `hostname` | Subdomain under the base domain (e.g. `myapp` → `myapp.ai.on`) |
+| `type` | Project type id (mirrors top-level `type`; drives container shape) |
 | `mode` | `production` or `development` |
-| `startCommand` | Command to run the project (for non-static types) |
-| `docRoot` | Document root for static file serving |
+| `startCommand` | Command to run the project (code-served only) |
+| `docRoot` | Document root for static file serving (code-served only) |
 | `internalPort` | Port the app listens on inside the container |
-| `runtimeId` | Plugin runtime ID (e.g. `node-22`, `php-8.5`) |
-| `containerKind` | Override dispatch — `"static"`, `"code"`, or `"mapp"`. Leave unset for the project-type default. |
-| `mapps` | List of MApp IDs to render on the MApp Desktop when `containerKind = "mapp"` |
+| `runtimeId` | Plugin runtime ID (e.g. `node-24`, `php-8.4`) |
+| `mapps` | List of MApp IDs to render as Desktop tiles (Desktop-served only) |
+| `stacks` | Installed stacks (code-served only — boot sweep strips for Desktop-served) |
+| `tunnelUrl` / `tunnelId` | Cloudflare named-tunnel state |
+| `viewer` | Single MApp viewer (legacy single-viewer path; superseded by `mapps[]` for new projects) |
 
-### MApp Container Kind
+> **Removed (s150 t634):** the `containerKind` field on `hosting` is no longer schema-enforced. The dashboard payload still computes a `containerKind` value from `type` for back-compat consumers; that surface lands gone in a follow-up SDK rev.
 
-Operations / media / literature projects often have no codebase to run and no
-custom UI to host — what they need is a curated set of MApps (a Budget MApp,
-a Whitepaper Brainstorming MApp, a Model Training MApp, etc.). For those
-projects, set `hosting.containerKind = "mapp"` and list the MApp IDs in
-`hosting.mapps[]`.
+### Desktop-served container shape
+
+Projects with a Desktop-served type (`ops`, `media`, `literature`, `documentation`, `backup-aggregator`) often have no codebase to "run" and no custom UI to host — what they need is a curated set of MApps (a Budget MApp, a Whitepaper Brainstorming MApp, a Model Training MApp, etc.). For those projects, set `type` to one of the Desktop-served ids and list the MApp IDs in `hosting.mapps[]`.
 
 When the gateway boots the container, it:
 
@@ -297,9 +335,10 @@ The gateway dashboard itself is served at the base domain (`ai.on`) and any conf
 
 ### Project Container Does Not Start
 
-- Check the container logs: `podman logs aionima-{project-name}`.
+- Check the container logs: `podman logs agi-{hostname}`.
 - Verify the container image is available: `podman images`.
-- Ensure the `startCommand` in `~/.agi/{projectSlug}/project.json` is correct.
+- Ensure the `startCommand` in `<projectPath>/project.json` is correct (code-served projects only).
+- Run `agi doctor` — the s150 t641 project-shape diagnostic flags drift in `<projectPath>/project.json` against the canonical s150 model.
 
 ### Hostname Not Resolving
 
