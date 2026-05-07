@@ -62,30 +62,36 @@ MApps are classified into 5 top-level categories:
 | `game` | Interactive games & simulations | (Future) |
 | `custom` | Catch-all | (User-defined) |
 
-### Project Category Compatibility
+### Project Type Compatibility (s150 model)
 
-MApps declare which project categories they serve via `projectCategories`:
+MApps declare which **project types** they serve via `projectTypes`:
 
-`literature`, `app`, `web`, `media`, `administration`, `ops`, `monorepo`
+Code-served: `web-app`, `static-site`, `api-service`, `php-app`, `art`, `writing`
+Desktop-served: `ops`, `media`, `literature`, `documentation`, `backup-aggregator`
 
-Empty `projectCategories` means compatible with all types.
+Empty `projectTypes` means compatible with all. The legacy `projectCategories` field is still recognized for back-compat (s150 t630/t639 dropped `category` from the project schema and from registerProjectType plugin manifests; MApp-side migration to `projectTypes` is the next step). New MApp definitions should set `projectTypes` only.
 
 ## Container Resolution Order
 
 When `HostingManager.startContainer()` runs for a project:
 
-1. **MagicApp** — checked first. If a MagicApp is set as the project's viewer, its container config is used.
-2. **Stack** — if no MagicApp, checks installed stacks for `containerConfig`.
-3. **Legacy** — fallback to hardcoded image constants.
+1. **Desktop-served dispatch** (`isDesktopServed(meta)` via `servesDesktopFor(type)`) — when the project's `type` is in `DESKTOP_SERVED_TYPES`, the gateway runs the unified desktop+tiles container (nginx:alpine + generated MApp Desktop HTML, tiles from `hosting.mapps[]`). This replaces the legacy `containerKind === "mapp"` branch (s150 t634).
+2. **Multi-repo** — if the project has multiple repos with `port` set, build dedicated multi-repo container args.
+3. **Single-MApp viewer** (legacy fallback) — if a registered MApp resolves for the project's type via `resolveMagicAppContainerConfig`, its container config drives dispatch. Wish #14 tracks the collapse of this path into the unified Desktop-served dispatch once owner UX direction is clear.
+4. **Stack** — if no Desktop-served + no single-viewer match, checks installed stacks for `containerConfig`.
+5. **Legacy** — fallback to hardcoded image constants.
 
 ## Dashboard Integration
 
-The MApp desktop (`/magic-apps`) organizes apps into category Cards with icon buttons. Clicking an app opens a Project Picker filtered to compatible projects.
+The MApp Marketplace UI lists every registered MApp; install/uninstall happens there at the system level.
 
-In project detail, the **MagicApps tab** allows:
-- Setting a **Content Viewer** (non-dev projects) via `PUT /api/projects/viewer`
-- **Attaching/detaching** MApps via `PUT/DELETE /api/projects/magic-apps`
-- **Opening** MApps in floating/docked modals
+After s150 t637, **per-project MApp configuration lives inside the Hosting tab**, not a standalone MagicApps tab:
+
+- Desktop-served projects render the MagicAppPicker inline beneath the Hosting card.
+- The `mapps` input on the Hosting panel takes a comma-separated list of MApp IDs that become tiles.
+- The `viewer` field still sets a single MApp viewer (legacy path; see Container Resolution Order #3).
+
+The standalone `/magic-apps` route is still the system-wide marketplace surface. It's the project-tab merge that changed in t637.
 
 ## MAppDefinition Fields
 
@@ -132,18 +138,20 @@ MApp lifecycle events are tracked via the Impactinomics COA<>COI chain:
 
 ## Default MApps (Marketplace)
 
-| App | Category | Project Categories |
+> **Note:** the s150 model classifies projects by `type`, not `category`. The "Project Categories" column below reflects the legacy field that MApp definitions still set; new MApps should declare `projectTypes` instead. The `monorepo` category is retired (s150 t640) — entries that listed it now imply `web-app`.
+
+| App | Category | Project Categories (legacy) |
 |-----|----------|--------------------|
 | Reader | viewer | literature |
 | Gallery | viewer | media |
-| Code Browser | viewer | app, web, monorepo |
+| Code Browser | viewer | app, web |
 | Dashboard Viewer | viewer | administration, ops |
 | Mind Mapper | production | literature |
-| Dev Workbench | production | app, web, monorepo |
+| Dev Workbench | production | app, web |
 | Media Studio | production | media |
 | Admin Editor | production | administration |
 | Runbook Editor | production | ops |
-| Project Analyzer | tool | app, web, monorepo |
+| Project Analyzer | tool | app, web |
 | Ops Monitor | tool | ops |
 
 ## Key Files
