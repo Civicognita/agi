@@ -18,7 +18,7 @@ import { execSync, execFileSync, spawnSync, spawn, type ChildProcess } from "nod
 import { createComponentLogger } from "./logger.js";
 import { projectConfigPath, projectSlug, migrateProjectConfig } from "./project-config-path.js";
 import type { Logger, ComponentLogger } from "./logger.js";
-import type { ProjectTypeRegistry } from "./project-types.js";
+import { servesDesktopFor, type ProjectTypeRegistry } from "./project-types.js";
 import type { PluginRegistry } from "@agi/plugins";
 import type { StackRegistry } from "./stack-registry.js";
 import type { SharedContainerManager } from "./shared-container-manager.js";
@@ -777,12 +777,16 @@ export interface ProjectHostingMeta {
   /** MagicApp ID used as the content viewer for this project's *.ai.on URL. */
   viewer?: string | null;
   /**
-   * s145 t584 — Container kind. When set to "mapp", HostingManager routes
-   * to the MApp host container branch (no nginx/app, just MApp viewer).
-   * Mirrors hosting.containerKind in project.json.
+   * @deprecated s150 t634 (2026-05-07) — superseded by `type`. The container
+   * shape is now derived via `servesDesktopFor(meta.type, registry)`. The
+   * field stays here as a transitional bridge for the dashboard payload
+   * (see HostingProject.containerKind below) until t636 drops the UI surface.
+   * Internal dispatch no longer reads it. The s150 t632 boot sweep strips
+   * the on-disk value, so the runtime in-memory copy is also typically
+   * undefined post-migration.
    */
   containerKind?: "static" | "code" | "mapp";
-  /** s145 t584 — Installed MApp IDs for the MApp container kind. */
+  /** s145 t584 — Installed MApp IDs for the Desktop-served container shape. */
   mapps?: string[];
 }
 
@@ -1353,6 +1357,16 @@ export class HostingManager {
   // Project metadata I/O
   // -------------------------------------------------------------------------
 
+  /**
+   * s150 t634 — single source of truth for "is this project Desktop-served?".
+   * Replaces the old `meta.containerKind === "mapp"` checks. The type-registry
+   * lookup honors plugin-registered types; falls back to DESKTOP_SERVED_TYPES
+   * / CODE_SERVED_TYPES from project-types.ts.
+   */
+  private isDesktopServed(meta: ProjectHostingMeta): boolean {
+    return servesDesktopFor(meta.type, this.registry ?? undefined);
+  }
+
   readHostingMeta(projectPath: string): ProjectHostingMeta | null {
     // Delegate to ProjectConfigManager when available
     if (this.configMgr) {
@@ -1371,13 +1385,11 @@ export class HostingManager {
         tunnelUrl: hosting.tunnelUrl ?? null,
         tunnelId: hosting.tunnelId ?? null,
         viewer: hosting.viewer ?? null,
-        // s145 t584 — propagate the new MApp container fields.
-        // s150 (2026-05-07): `containerKind` was dropped from the schema. Legacy values survive
-        // via .passthrough(); read them through an unknown-cast for the migration period until
-        // hosting-manager refactor (t634) removes the field from ProjectHostingMeta entirely.
-        ...((hosting as unknown as { containerKind?: "static" | "code" | "mapp" }).containerKind !== undefined
-          ? { containerKind: (hosting as unknown as { containerKind?: "static" | "code" | "mapp" }).containerKind }
-          : {}),
+        // s145 t584 — propagate selected MApps for the Desktop-served container shape.
+        // s150 t634 (2026-05-07): `containerKind` is no longer read from disk —
+        // dispatch derives the binary from `type` via `isDesktopServed`. The
+        // s150 t632 boot sweep strips legacy values so this read path no
+        // longer surfaces them.
         ...(hosting.mapps !== undefined ? { mapps: hosting.mapps } : {}),
       };
     }
@@ -1427,9 +1439,11 @@ export class HostingManager {
         ...(meta.runtimeId != null ? { runtimeId: meta.runtimeId } : {}),
         ...(meta.tunnelUrl != null ? { tunnelUrl: meta.tunnelUrl } : {}),
         ...(meta.tunnelId != null ? { tunnelId: meta.tunnelId } : {}),
-        // s145 t585 — persist MApp container kind + selected MApps so the
-        // dashboard toggle survives restarts.
-        ...(meta.containerKind !== undefined ? { containerKind: meta.containerKind } : {}),
+        // s150 t634 — DO NOT persist `containerKind` to disk. The s150 t632
+        // boot sweep strips legacy values, and dispatch derives the binary
+        // from `type`. Persisting it would resurrect the redundant field
+        // every cycle. `mapps[]` IS persisted — it's the project-level
+        // configuration of which MApps are installed in the Desktop.
         ...(meta.mapps !== undefined ? { mapps: meta.mapps } : {}),
       });
       return;
@@ -1723,16 +1737,20 @@ export class HostingManager {
     if (updates.runtimeId !== undefined) hosted.meta.runtimeId = updates.runtimeId;
     // s145 t585 — propagate MApp container fields so the toggle UI flips
     // dispatch routing on next startContainer call.
+    // s150 t634 — `containerKind` is no longer authoritative. Honor incoming
+    // updates so old API consumers (pre-t636 dashboards, plugin tests) don't
+    // break, but dispatch reads only `type` via isDesktopServed.
     if (updates.containerKind !== undefined) hosted.meta.containerKind = updates.containerKind;
     if (updates.mapps !== undefined) hosted.meta.mapps = updates.mapps;
 
-    // s145 t586 — when flipping into MApp mode, stamp internalPort=80 here
-    // (synchronously, before startContainer fires async) so the regenerated
-    // Caddyfile routes via container DNS `agi-<hostname>:80` instead of
-    // falling through to `host.containers.internal:<port>`. Project
-    // containers don't publish ports — only AGI binds host ports — so the
-    // host.containers.internal fallback always 503s for the MApp branch.
-    if (hosted.meta.containerKind === "mapp" && hosted.meta.internalPort == null) {
+    // s145 t586 / s150 t634 — when the project is Desktop-served, stamp
+    // internalPort=80 here (synchronously, before startContainer fires async)
+    // so the regenerated Caddyfile routes via container DNS
+    // `agi-<hostname>:80` instead of falling through to
+    // `host.containers.internal:<port>`. Project containers don't publish
+    // ports — only AGI binds host ports — so the host.containers.internal
+    // fallback always 503s for Desktop-served projects.
+    if (this.isDesktopServed(hosted.meta) && hosted.meta.internalPort == null) {
       hosted.meta.internalPort = 80;
     }
 
@@ -1991,16 +2009,16 @@ export class HostingManager {
     }
 
     // -----------------------------------------------------------------------
-    // s145 t586 — MApp container kind dispatch. Replaces the t584 stub
-    // with a real container: nginx:alpine serving a generated MApp
-    // Desktop index.html. Tiles render from hosting.mapps[]; unknown
-    // IDs surface as "not installed" placeholders so the operator sees
-    // the configured set even before MApps are populated in the
-    // marketplace cache. Standalone per-MApp routing (each MApp at
-    // /<mappId>/) is a follow-up task — for now the Desktop tiles link
-    // there and resolve to 404 until that lands.
+    // s145 t586 / s150 t634 — Desktop-served container dispatch. The decision
+    // is now derived from `type` via `isDesktopServed` (replaces the legacy
+    // `meta.containerKind === "mapp"` check). Container is nginx:alpine
+    // serving a generated MApp Desktop index.html; tiles render from
+    // `hosting.mapps[]`; unknown IDs surface as "not installed" placeholders
+    // so the operator sees the configured set even before MApps are populated
+    // in the marketplace cache. Each MApp also gets a per-id standalone
+    // placeholder page at `/<mappId>/`.
     // -----------------------------------------------------------------------
-    if (hosted.meta.containerKind === "mapp") {
+    if (this.isDesktopServed(hosted.meta)) {
       const mappIds = hosted.meta.mapps ?? [];
       const tiles = resolveMAppTiles(mappIds);
       const html = generateMAppDesktopHtml({ hostname: hosted.meta.hostname, tiles });
@@ -3279,7 +3297,9 @@ export class HostingManager {
         ...(resolvedImage ? { image: resolvedImage } : {}),
         ...(hosted.error !== undefined ? { error: hosted.error } : {}),
         ...(hosted.meta.viewer ? { viewer: hosted.meta.viewer } : {}),
-        ...(hosted.meta.containerKind !== undefined ? { containerKind: hosted.meta.containerKind } : {}),
+        // s150 t634 — `containerKind` is computed from `type` for back-compat
+        // dashboards. Removed entirely once t636 lands the HostingPanel UI cleanup.
+        containerKind: this.isDesktopServed(hosted.meta) ? "mapp" : "code",
         ...(hosted.meta.mapps !== undefined ? { mapps: hosted.meta.mapps } : {}),
         ...(breaker ? { breaker } : {}),
         url: hosted.status === "running"
@@ -3302,7 +3322,8 @@ export class HostingManager {
         internalPort: meta.internalPort,
         runtimeId: meta.runtimeId ?? null,
         ...(meta.viewer ? { viewer: meta.viewer } : {}),
-        ...(meta.containerKind !== undefined ? { containerKind: meta.containerKind } : {}),
+        // s150 t634 — see active-hosted branch above. Computed; removed by t636.
+        containerKind: this.isDesktopServed(meta) ? "mapp" : "code",
         ...(meta.mapps !== undefined ? { mapps: meta.mapps } : {}),
         status: "unconfigured",
         url: null,
