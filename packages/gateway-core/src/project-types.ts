@@ -53,7 +53,14 @@ export interface ContainerConfig {
 export interface ProjectTypeDefinition {
   id: string;
   label: string;
-  category: ProjectCategory;
+  /**
+   * @deprecated s150 t639 (2026-05-07) — `category` is being phased out.
+   * `id` is now the single classifier; `servesDesktop` derives the container
+   * binary; iterative-work / testing-UX eligibility are inferred from
+   * type-id sets instead. Kept optional for back-compat with plugin
+   * manifests that still set it; new manifests should omit it.
+   */
+  category?: ProjectCategory;
   hostable: boolean;
   /**
    * @deprecated s150 (2026-05-07) — use `servesDesktop` (inverted polarity).
@@ -154,7 +161,7 @@ export function servesDesktopFor(
   if (DESKTOP_SERVED_TYPES.has(typeId)) return true;
   if (CODE_SERVED_TYPES.has(typeId)) return false;
   // Final fallback: derive from category if registered, else assume code-served.
-  if (def && CODE_CATEGORIES.has(def.category)) return false;
+  if (def && def.category !== undefined && CODE_CATEGORIES.has(def.category)) return false;
   return def !== undefined; // unknown type with non-code category → Desktop-served
 }
 
@@ -165,6 +172,28 @@ export function servesDesktopFor(
  * don't expose testing tabs/buttons. Mirrors the iterative-work eligibility
  * pattern but with a narrower set.
  */
+/**
+ * s150 t639 — type-id sets for inference paths that previously routed
+ * through `category`. Plugins now express eligibility by registering with
+ * a known id; falling back to the category set keeps legacy paths working.
+ */
+export const ITERATIVE_WORK_ELIGIBLE_TYPE_IDS: ReadonlySet<string> = new Set([
+  "web-app",
+  "api-service",
+  "static-site",
+  "php-app",
+  "monorepo",
+  "ops",
+]);
+
+export const TESTING_UX_ELIGIBLE_TYPE_IDS: ReadonlySet<string> = new Set([
+  "web-app",
+  "static-site",
+  "api-service",
+  "php-app",
+  "monorepo",
+]);
+
 export const TESTING_UX_ELIGIBLE_CATEGORIES: ReadonlySet<ProjectCategory> = new Set([
   "app",
   "web",
@@ -219,17 +248,22 @@ export class ProjectTypeRegistry {
   private readonly types = new Map<string, ProjectTypeDefinition>();
 
   register(def: ProjectTypeDefinition): void {
-    // Infer hasCode from category if not explicitly provided
+    // s150 t639 — defaults derive from `id` first, then category fallback for
+    // legacy plugins that still pass it. The id-based maps (DESKTOP_SERVED_TYPES
+    // / CODE_SERVED_TYPES / ITERATIVE_WORK_ELIGIBLE_TYPE_IDS / TESTING_UX_ELIGIBLE_TYPE_IDS)
+    // are the single source of truth.
     let resolved = def.hasCode !== undefined
       ? def
-      : { ...def, hasCode: CODE_CATEGORIES.has(def.category) };
-    // Infer iterativeWorkEligible from category if not explicitly provided
+      : { ...def, hasCode: !servesDesktopFor(def.id) };
     if (resolved.iterativeWorkEligible === undefined) {
-      resolved = { ...resolved, iterativeWorkEligible: ITERATIVE_WORK_ELIGIBLE_CATEGORIES.has(resolved.category) };
+      const idEligible = ITERATIVE_WORK_ELIGIBLE_TYPE_IDS.has(resolved.id);
+      const catEligible = resolved.category !== undefined && ITERATIVE_WORK_ELIGIBLE_CATEGORIES.has(resolved.category);
+      resolved = { ...resolved, iterativeWorkEligible: idEligible || catEligible };
     }
-    // Infer testingUxEligible from category if not explicitly provided (s121)
     if (resolved.testingUxEligible === undefined) {
-      resolved = { ...resolved, testingUxEligible: TESTING_UX_ELIGIBLE_CATEGORIES.has(resolved.category) };
+      const idEligible = TESTING_UX_ELIGIBLE_TYPE_IDS.has(resolved.id);
+      const catEligible = resolved.category !== undefined && TESTING_UX_ELIGIBLE_CATEGORIES.has(resolved.category);
+      resolved = { ...resolved, testingUxEligible: idEligible || catEligible };
     }
     this.types.set(resolved.id, resolved);
   }

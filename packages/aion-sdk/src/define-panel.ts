@@ -1,5 +1,12 @@
 /**
  * definePanel — chainable builder for ProjectPanelDefinition.
+ *
+ * @deprecated s150 t639 (2026-05-07) — `registerProjectPanel` has zero
+ * production callers and conflicts with the trimmed primary/secondary tab
+ * model from t638 (plugin panels are part of the secondary overflow, but
+ * none have shipped). Plan: delete in the next major SDK rev. Plugins
+ * needing per-project surfaces should land their own MApp instead — that
+ * surface has clear ownership + UX patterns.
  */
 
 import type { ProjectPanelDefinition, PanelWidget } from "@agi/plugins";

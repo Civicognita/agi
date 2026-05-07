@@ -802,6 +802,11 @@ export interface AionimaPluginAPI {
   registerStack(def: StackDefinition): void;
   registerChannel(channelPlugin: AionimaChannelPlugin): void;
   registerAction(def: ActionDefinition): void;
+  /**
+   * @deprecated s150 t639 (2026-05-07) — zero production callers; slated for
+   * removal in the next major SDK rev. Plugins needing per-project surfaces
+   * should ship a MApp instead. See define-panel.ts for the SDK-side note.
+   */
   registerProjectPanel(def: ProjectPanelDefinition): void;
   registerSettingsSection(def: SettingsSectionDefinition): void;
   registerSkill(def: SkillRegistration): void;
