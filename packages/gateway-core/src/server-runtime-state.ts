@@ -1312,6 +1312,8 @@ export async function createGatewayRuntimeState(
       tynnToken?: string | null;
       category?: string;
       type?: string;
+      /** s150 t636 — free-form Purpose textarea content. Empty string clears. */
+      description?: string;
     };
 
     if (!body.path || typeof body.path !== "string") {
@@ -1361,6 +1363,16 @@ export async function createGatewayRuntimeState(
       const hosting = projectMeta.hosting as Record<string, unknown> | undefined;
       if (hosting) {
         hosting.type = body.type.trim();
+      }
+    }
+    // s150 t636 — free-form description (Purpose textarea). Empty string is
+    // the canonical "cleared" value: delete the key so JSON stays clean.
+    if (body.description !== undefined && typeof body.description === "string") {
+      const trimmed = body.description.trim();
+      if (trimmed.length > 0) {
+        projectMeta.description = trimmed;
+      } else {
+        delete projectMeta.description;
       }
     }
 
