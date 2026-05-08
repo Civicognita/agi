@@ -888,6 +888,22 @@ const PORT_POOL_SIZE = 100;
  * Migration map: old framework-based project types → broad project types + corresponding stacks.
  * Used during initialize() to auto-migrate existing projects to the new model.
  */
+/**
+ * Sort stack instances LATEST-FIRST by `addedAt` (ISO 8601 timestamps,
+ * lexicographic order matches chronological order; missing timestamps sort
+ * to the end). Wish #15 (s150 follow-up) — the prior FIRST-wins semantics
+ * caused stale stacks to mask newly-added ones. Owner case 2026-05-08:
+ * blackorchid_web had `[stack-static-hosting (May 1), stack-nextjs (May 8)]`;
+ * the legacy ordering returned static-hosting and mounted /dist read-only,
+ * ENOENT-ing dev-mode projects with no build output.
+ *
+ * Module-scope + exported so it's unit-testable without a HostingManager
+ * instance.
+ */
+export function orderStacksLatestFirst(stacks: readonly ProjectStackInstance[]): ProjectStackInstance[] {
+  return [...stacks].sort((a, b) => (b.addedAt ?? "").localeCompare(a.addedAt ?? ""));
+}
+
 const MIGRATION_MAP: Record<string, { newType: string; autoStack: string }> = {
   laravel:      { newType: "web-app",      autoStack: "stack-laravel" },
   nextjs:       { newType: "web-app",      autoStack: "stack-nextjs" },
@@ -1849,7 +1865,7 @@ export class HostingManager {
     const stacks = this.getProjectStacks(hosted.path);
     if (stacks.length === 0) return null;
 
-    for (const instance of stacks) {
+    for (const instance of orderStacksLatestFirst(stacks)) {
       const def = this.stackReg.get(instance.stackId);
       if (def?.containerConfig && !def.containerConfig.shared) {
         return def.containerConfig;
@@ -1864,7 +1880,7 @@ export class HostingManager {
     if (!this.stackReg) return null;
 
     const stacks = this.getProjectStacks(hosted.path);
-    for (const instance of stacks) {
+    for (const instance of orderStacksLatestFirst(stacks)) {
       const def = this.stackReg.get(instance.stackId);
       if (def?.containerConfig && !def.containerConfig.shared) {
         return def;
@@ -4128,8 +4144,30 @@ export class HostingManager {
       addedAt: new Date().toISOString(),
     };
 
-    // Persist to ~/.agi/{slug}/project.json
+    // Persist to <projectPath>/project.json
     this.writeStackInstance(resolved, instance);
+
+    // Wish #15 — when the new stack brings its own container command, clear
+    // any stale user-set `hosting.startCommand` override so the stack's
+    // command takes effect on next restart. Without this clear, a previously-
+    // entered override (e.g. `npm run dev` typed before the stack was added)
+    // would silently win over the stack's command and the user would have to
+    // manually clear the field. Owner directive 2026-05-08.
+    if (def.containerConfig?.command !== undefined && this.configMgr) {
+      const existingHosting = this.configMgr.readHosting(resolved);
+      if (existingHosting?.startCommand !== null && existingHosting?.startCommand !== undefined) {
+        try {
+          await this.configMgr.updateHosting(resolved, { startCommand: null });
+          // Mirror in-memory hosted state so a restart in the same process
+          // sees the cleared override.
+          const hosted = this.projects.get(resolved);
+          if (hosted) hosted.meta.startCommand = null;
+          this.log.info(`[${this.slugFromPath(resolved)}] cleared startCommand override on addStack(${stackId}) — stack provides its own command`);
+        } catch (err) {
+          this.log.warn(`[${this.slugFromPath(resolved)}] could not clear startCommand override: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
 
     // Auto-run install actions sequentially
     const actionResults = await this.runInstallActions(resolved, def);
