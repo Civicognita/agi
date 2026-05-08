@@ -118,7 +118,7 @@ import { HeartbeatScheduler } from "./heartbeat.js";
 import { PrimeLoader } from "./prime-loader.js";
 import { resolvePrimeDir, resolveIdDir } from "./resolve-paths.js";
 import { checkProtocolCompatibility } from "./protocol-check.js";
-import { PlanStore } from "./plan-store.js";
+import { PlanStore, migrateProjectPlans } from "./plan-store.js";
 import { ChatPersistence } from "./chat-persistence.js";
 import type { PersistedChatSession } from "./chat-persistence.js";
 import { ImageBlobStore } from "./image-blob-store.js";
@@ -1831,6 +1831,49 @@ export async function startGatewayServer(
     logger.warn(
       "migrate",
       `boot-time s130 sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // Wish #16 (2026-05-08) — boot-time per-project plans migration. Walks
+  // every project under workspace.projects and copies plans from the legacy
+  // `~/.agi/{slug}/plans/` location into the canonical
+  // `<projectPath>/k/plans/`. Idempotent — already-canonical plans are
+  // skipped, not re-copied. Legacy files are preserved as backup.
+  try {
+    let migratedTotal = 0;
+    let projectsTouched = 0;
+    let errorsTotal = 0;
+    for (const dir of projectPaths) {
+      let entries: string[];
+      try {
+        entries = (await import("node:fs")).readdirSync(dir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+          .map((d) => d.name);
+      } catch {
+        continue;
+      }
+      for (const slug of entries) {
+        const projectPath = join(dir, slug);
+        try {
+          const r = migrateProjectPlans(projectPath);
+          if (r.migrated > 0) {
+            projectsTouched++;
+            migratedTotal += r.migrated;
+          }
+          if (r.errors.length > 0) errorsTotal += r.errors.length;
+        } catch { /* per-project guard — never fatal */ }
+      }
+    }
+    if (migratedTotal > 0 || errorsTotal > 0) {
+      logger.info(
+        "migrate",
+        `boot-time wish#16 plans sweep: ${String(migratedTotal)} plan(s) migrated across ${String(projectsTouched)} project(s), ${String(errorsTotal)} error(s)`,
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      "migrate",
+      `boot-time wish#16 plans sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
