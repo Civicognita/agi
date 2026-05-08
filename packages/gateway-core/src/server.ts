@@ -63,6 +63,7 @@ import { CostLedgerReader } from "./cost-ledger-reader.js";
 import { McpClient } from "@agi/mcp-client";
 import { TynnPmProvider } from "./pm/tynn-provider.js";
 import { TynnLitePmProvider } from "./pm/tynn-lite-provider.js";
+import { LayeredPmProvider } from "./pm/layered-pm-provider.js";
 import type { PmProvider, PmStatus } from "@agi/sdk";
 
 import type { AionimaConfig, ConfigReloadEvent } from "@agi/config";
@@ -2358,26 +2359,40 @@ export async function startGatewayServer(
     .agent?.pm ?? {};
   const pmProviderId = pmConfig.provider ?? "tynn";
   const pmProviderConfig = pmConfig.config ?? {};
-  let pmProvider: PmProvider;
+
+  // Wish #17 (2026-05-08) — PM-Lite is ALWAYS available as the file-based
+  // floor, regardless of which remote provider (if any) the user has
+  // configured. Construct it unconditionally so the LayeredPmProvider can
+  // fall through on remote errors.
+  const pmLiteRoot = (pmProviderConfig.projectRoot as string | undefined)
+    ?? (workspaceRoot.length > 0 ? workspaceRoot : "/");
+  const tynnLiteFloor = new TynnLitePmProvider({
+    projectRoot: pmLiteRoot,
+    projectName: pmProviderConfig.projectName as string | undefined,
+  });
+
+  let pmPrimary: PmProvider;
   if (pmProviderId === "tynn") {
-    pmProvider = new TynnPmProvider({ mcpClient });
+    pmPrimary = new TynnPmProvider({ mcpClient });
   } else if (pmProviderId === "tynn-lite") {
-    const projectRoot = (pmProviderConfig.projectRoot as string | undefined) ?? workspaceRoot;
-    if (projectRoot === undefined || projectRoot.length === 0) {
-      throw new Error("agent.pm.provider 'tynn-lite' requires either pm.config.projectRoot or workspace.root to be set");
-    }
-    pmProvider = new TynnLitePmProvider({
-      projectRoot,
-      projectName: pmProviderConfig.projectName as string | undefined,
-    });
+    pmPrimary = tynnLiteFloor;
   } else {
     const def = pluginRegistry.getPmProvider(pmProviderId);
     if (def === undefined) {
       throw new Error(`agent.pm.provider '${pmProviderId}' is not registered (built-in: tynn, tynn-lite; plugin-registered: ${pluginRegistry.getPmProviders().map(p => p.provider.id).join(", ") || "none"})`);
     }
-    pmProvider = def.factory(pmProviderConfig) as PmProvider;
+    pmPrimary = def.factory(pmProviderConfig) as PmProvider;
   }
-  log.info(`pm provider resolved: id=${pmProviderId}, providerId=${pmProvider.providerId}`);
+
+  // Wrap with the layered fallback. When the primary IS tynn-lite (single-
+  // provider config) the wrapper degenerates to a pass-through — same code
+  // path keeps behavior consistent across configs.
+  const pmProvider: PmProvider = new LayeredPmProvider({
+    primary: pmPrimary,
+    fallback: tynnLiteFloor,
+    logger: { info: (m) => log.info(m), warn: (m) => log.warn(m) },
+  });
+  log.info(`pm provider resolved: primary=${pmPrimary.providerId}, fallback=${tynnLiteFloor.providerId}, exposed=${pmProvider.providerId}`);
 
   // s126 — Ops-mode tools (cross-project + infrastructure) registered after
   // pmProvider is resolved. requiresProjectCategory: [ops, administration]
@@ -2465,13 +2480,19 @@ export async function startGatewayServer(
     {
       name: "pm",
       description:
-        "Project-management workflow operations (the tynn workflow — race-to-DONE, look-for-MORE). " +
-        "Action options: 'next' (active version + top story + tasks), 'task'/'story' (lookup by id or number), " +
+        "The single project-management entryway with many functions. " +
+        "Always works — the file-based PM-Lite floor handles every read/write when no remote PM provider " +
+        "(tynn / linear / jira / …) is configured or reachable. " +
+        "Tasks/stories/comments: 'next' (active version + top story + tasks), 'task'/'story' (lookup by id or number), " +
         "'find-tasks' (filtered list), 'comments' (entity audit trail), " +
         "'start-task'/'testing'/'finished'/'block' (status transitions), " +
         "'update-task' (modify fields), 'create-task'/'comment'/'iwish' (create entities), " +
         "'progress' (race-to-DONE counts for active focus). " +
-        "Use this tool whenever you need to query or update the project's tracked work — never invent your own task tracking.",
+        "Plans (file-based, per-project k/plans/, ALWAYS available regardless of remote provider): " +
+        "'plan-list' (list all plans for a projectPath), 'plan-get' (fetch by planId), " +
+        "'plan-create' (new plan), 'plan-update' (status/steps/body). " +
+        "Use this tool whenever you need to query or update the project's tracked work or recall a plan — " +
+        "never invent your own task tracking, and never assume tynn is the only PM provider.",
       requiresState: [],
       requiresTier: [],
     },
@@ -2544,8 +2565,62 @@ export async function startGatewayServer(
             return pmProvider.getActiveFocusProgress !== undefined
               ? JSON.stringify(await pmProvider.getActiveFocusProgress())
               : JSON.stringify({ error: `pm provider ${pmProvider.providerId} doesn't expose progress` });
+          // Wish #17 (2026-05-08) — plans live in PM-Lite (file-based,
+          // <projectPath>/k/plans/) and are part of the PM domain regardless
+          // of remote provider availability. The pm tool exposes them directly
+          // through PlanStore so an unconfigured tynn never blocks plan recall.
+          case "plan-list": {
+            const projectPath = String(input.projectPath ?? "");
+            if (projectPath.length === 0) {
+              return JSON.stringify({ error: "projectPath is required for plan-list — pass the absolute path of the project (visible in your Project Context section)." });
+            }
+            return JSON.stringify(planStore.list(projectPath));
+          }
+          case "plan-get": {
+            const projectPath = String(input.projectPath ?? "");
+            const planId = String(input.planId ?? "");
+            if (projectPath.length === 0 || planId.length === 0) {
+              return JSON.stringify({ error: "plan-get requires both projectPath and planId" });
+            }
+            const got = planStore.get(projectPath, planId);
+            return JSON.stringify(got ?? { error: `plan ${planId} not found` });
+          }
+          case "plan-create": {
+            const projectPath = String(input.projectPath ?? "");
+            const planInput = input.plan as { title?: string; body?: string; chatSessionId?: string; steps?: Array<{ title: string; type: string }> } | undefined;
+            if (projectPath.length === 0 || planInput === undefined) {
+              return JSON.stringify({ error: "plan-create requires projectPath and a plan object {title, body, steps[]}" });
+            }
+            const validStepTypes: Array<"plan" | "implement" | "test" | "review" | "deploy"> = ["plan", "implement", "test", "review", "deploy"];
+            const steps = (planInput.steps ?? [])
+              .filter((s): s is { title: string; type: string } => typeof s === "object" && s !== null && typeof s.title === "string" && typeof s.type === "string")
+              .map((s) => ({
+                title: s.title,
+                type: (validStepTypes.includes(s.type as "plan" | "implement" | "test" | "review" | "deploy")
+                  ? (s.type as "plan" | "implement" | "test" | "review" | "deploy")
+                  : "plan"),
+              }));
+            const plan = planStore.create({
+              title: String(planInput.title ?? ""),
+              body: String(planInput.body ?? ""),
+              steps,
+              projectPath,
+              ...(planInput.chatSessionId !== undefined ? { chatSessionId: planInput.chatSessionId } : {}),
+            });
+            return JSON.stringify(plan);
+          }
+          case "plan-update": {
+            const projectPath = String(input.projectPath ?? "");
+            const planId = String(input.planId ?? "");
+            const update = input.update as Record<string, unknown> | undefined;
+            if (projectPath.length === 0 || planId.length === 0 || update === undefined) {
+              return JSON.stringify({ error: "plan-update requires projectPath, planId, and an update object" });
+            }
+            const updated = planStore.update(projectPath, planId, update as Parameters<typeof planStore.update>[2]);
+            return JSON.stringify(updated ?? { error: `plan ${planId} not found` });
+          }
           default:
-            return JSON.stringify({ error: `unknown action: ${action}. Valid: next, task, story, find-tasks, comments, start-task, testing, finished, block, update-task, create-task, comment, iwish, progress` });
+            return JSON.stringify({ error: `unknown action: ${action}. Valid: next, task, story, find-tasks, comments, start-task, testing, finished, block, update-task, create-task, comment, iwish, progress, plan-list, plan-get, plan-create, plan-update` });
         }
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
@@ -2554,7 +2629,7 @@ export async function startGatewayServer(
     {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["next", "task", "story", "find-tasks", "comments", "start-task", "testing", "finished", "block", "update-task", "create-task", "comment", "iwish", "progress"], description: "PM operation to perform" },
+        action: { type: "string", enum: ["next", "task", "story", "find-tasks", "comments", "start-task", "testing", "finished", "block", "update-task", "create-task", "comment", "iwish", "progress", "plan-list", "plan-get", "plan-create", "plan-update"], description: "PM operation to perform" },
         id: { type: "string", description: "Entity id (for task/story actions when known)" },
         number: { type: "number", description: "Entity number (alternative to id for task/story)" },
         taskId: { type: "string", description: "Task id (for status transitions / update-task)" },
@@ -2568,6 +2643,10 @@ export async function startGatewayServer(
         fields: { type: "object", description: "Field updates for update-task" },
         task: { type: "object", description: "New task input for create-task: {storyId, title, description, verificationSteps?, codeArea?}" },
         wish: { type: "object", description: "Wish input for iwish: {title, didnt?, when?, had?, needs?, explain?, priority?}" },
+        projectPath: { type: "string", description: "Absolute project path (required for plan-* actions)" },
+        planId: { type: "string", description: "Plan id (required for plan-get / plan-update)" },
+        plan: { type: "object", description: "New plan input for plan-create: {title, body, steps[{title,type}], chatSessionId?}" },
+        update: { type: "object", description: "Plan update fields for plan-update: {status?, body?, title?, steps?, stepUpdates?, tynnRefs?}" },
       },
       required: ["action"],
     },
