@@ -138,6 +138,27 @@ The dump path is printed on stdout; share the file with whoever is helping
 diagnose. Sensitive values are redacted but log tails are not — review the
 bundle before sharing externally.
 
+#### agi doctor config
+
+Safe-edit cycle for `gateway.json` keys: read or write a single dotted-path
+value, with full-config Zod validation before writing. The file on disk
+never enters an invalid state mid-edit — validation failure rolls back
+without touching `gateway.json`.
+
+```bash
+agi doctor config get gateway.port
+agi doctor config set gateway.port 4100
+agi doctor config set workspace.projects '["/srv/proj-a","/srv/proj-b"]'
+```
+
+`set` coerces values automatically: `true`/`false` → boolean, integer
+strings → number, `null` → null, JSON object/array literals are parsed,
+anything else stays a string. Atomic write via temp + rename so an
+interrupted command can't corrupt the file.
+
+The interactive editor variant (open a chosen key in `$EDITOR`) lands
+with the `agi doctor` TUI in s144 t574.
+
 #### agi doctor logs
 
 Tail recent logs and surface known crash patterns. Each match category
