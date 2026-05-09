@@ -752,6 +752,28 @@ async function projectShapeChecks(config: AionimaConfig): Promise<CheckGroup | n
       const hosting = raw.hosting as Record<string, unknown> | undefined;
       if (hosting && "containerKind" in hosting) findings.push("legacy `hosting.containerKind` field present (s150 t634)");
 
+      // s131 t683 — flag the deprecated mcp field (boot migration writes
+      // `.mcp.json` and strips this on next restart; surface as drift so
+      // operators know what's about to happen).
+      if ("mcp" in raw) findings.push("legacy `mcp` field present (s131 — will migrate to .mcp.json on next boot)");
+
+      // s131 t683 — validate `.mcp.json` if present. Loud-fail so a hand-
+      // edited but malformed file surfaces here rather than at next boot.
+      const dotMcpPath = path.join(projectPath, ".mcp.json");
+      if (fileExists(dotMcpPath)) {
+        try {
+          const mcpRaw = JSON.parse(await readFile(dotMcpPath, "utf-8")) as unknown;
+          const { DotMcpJsonSchema } = await import("@agi/gateway-core");
+          const result = DotMcpJsonSchema.safeParse(mcpRaw);
+          if (!result.success) {
+            const firstIssue = result.error.issues[0];
+            findings.push(`.mcp.json schema error: ${firstIssue?.path.join(".") ?? "(root)"}: ${firstIssue?.message ?? "unknown"}`);
+          }
+        } catch (e) {
+          findings.push(`.mcp.json unparseable (${e instanceof Error ? e.message : String(e)})`);
+        }
+      }
+
       const agiDebris = path.join(projectPath, ".agi", "project.json");
       if (fileExists(agiDebris)) findings.push("`.agi/project.json` debris (s130 → s140 leftover)");
 
