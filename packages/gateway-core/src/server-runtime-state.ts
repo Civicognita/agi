@@ -29,6 +29,7 @@ import type { DashboardApi } from "./dashboard-api.js";
 import type { DashboardQueries } from "./dashboard-queries.js";
 import { GatewayWebSocketServer } from "./ws-server.js";
 import { handlePlanRequest } from "./plan-api.js";
+import { readProjectMcpServers, setDotMcpServer, removeDotMcpServer } from "./mcp-config-store.js";
 import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model";
 import { fetchOwnerToken, injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
 import { createComponentLogger } from "./logger.js";
@@ -2030,6 +2031,8 @@ export async function createGatewayRuntimeState(
   };
 
   // GET /api/projects/mcp/list?path= — list MCP servers + connection state.
+  // s131 t682 — reads via the dual-read API: prefers .mcp.json, falls
+  // back to legacy project.json mcp.servers[] for unmigrated installs.
   fastify.get("/api/projects/mcp/list", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
@@ -2042,7 +2045,9 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
     }
     const cfg = await deps.projectConfigManager.read(targetPath);
-    const servers = (cfg as { mcp?: { servers?: Array<{ id: string; name?: string; transport: string; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> } }).mcp?.servers ?? [];
+    const legacy = (cfg as { mcp?: { servers?: Array<{ id: string; name?: string; transport: string; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> } }).mcp?.servers;
+    const dualResult = readProjectMcpServers(targetPath, legacy as Parameters<typeof readProjectMcpServers>[1]);
+    const servers = dualResult.servers as typeof legacy & object;
     // Augment with live connection state from mcpClient.
     const liveServers = deps.mcpClient?.listServers() ?? [];
     const liveById = new Map(liveServers.map((s: { id: string; state: string }) => [s.id, s.state]));
@@ -2075,10 +2080,18 @@ export async function createGatewayRuntimeState(
     }
     if (!existsSync(projectConfigPath(targetPath))) return reply.code(404).send({ error: "Project has no project.json" });
     try {
+      // s131 t682 — write to .mcp.json (Claude Code convention). Legacy
+      // project.json mcp.servers writes are removed; the boot migration
+      // (t681) brings unmigrated projects forward, and the dual-read in
+      // /list keeps them visible until then. Atomic temp+rename inside
+      // setDotMcpServer.
+      setDotMcpServer(targetPath, body.server as Parameters<typeof setDotMcpServer>[1]);
+      // Re-derive the post-write state for the response so callers see
+      // the same shape that /list returns.
       const cur = await deps.projectConfigManager.read(targetPath);
-      const servers = ((cur as { mcp?: { servers?: typeof body.server[] } }).mcp?.servers ?? []).filter((s) => s.id !== body.server!.id);
-      servers.push(body.server);
-      const updated = await deps.projectConfigManager.update(targetPath, { mcp: { servers } } as Record<string, unknown>);
+      const dualResult = readProjectMcpServers(targetPath, (cur as { mcp?: { servers?: typeof body.server[] } }).mcp?.servers as Parameters<typeof readProjectMcpServers>[1]);
+      const servers = dualResult.servers;
+      const updated = { mcp: { servers } } as { mcp: { servers: typeof servers } };
       // Re-register with mcpClient under namespaced id (best-effort; surfaces error in response).
       let registerError: string | null = null;
       if (deps.mcpClient && (body.server.autoConnect ?? true)) {
@@ -2120,9 +2133,9 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
     }
     try {
-      const cur = await deps.projectConfigManager.read(targetPath);
-      const servers = ((cur as { mcp?: { servers?: Array<{ id: string }> } }).mcp?.servers ?? []).filter((s) => s.id !== idParam);
-      await deps.projectConfigManager.update(targetPath, { mcp: { servers } } as Record<string, unknown>);
+      // s131 t682 — remove from .mcp.json. No-op when neither .mcp.json
+      // nor legacy mcp.servers carries the id.
+      removeDotMcpServer(targetPath, idParam);
       // Best-effort unregister.
       try { await deps.mcpClient?.unregisterServer?.(mcpServerNs(targetPath, idParam)); } catch { /* ignore */ }
       return reply.send({ ok: true });

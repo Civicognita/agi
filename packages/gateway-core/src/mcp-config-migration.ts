@@ -21,8 +21,13 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { isSacredProjectPath } from "./project-config-path.js";
-import { projectMcpPath, type DotMcpJson, type McpServerEntry } from "./mcp-config-store.js";
+import { projectMcpPath, serverToMcpEntry, type DotMcpJson, type McpServerEntry } from "./mcp-config-store.js";
 import type { ProjectMcpServer } from "@agi/config";
+
+// Re-export for back-compat — t681 originally landed serverToMcpEntry in
+// this module; t682 moved it to mcp-config-store.ts to avoid a circular
+// import when adding write helpers. Existing callers continue working.
+export { serverToMcpEntry };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,36 +52,6 @@ export interface McpSweepResult {
   errors: number;
   totalServers: number;
   projects: { projectPath: string; result: McpMigrationResult }[];
-}
-
-// ---------------------------------------------------------------------------
-// Adapter (internal ProjectMcpServer → Claude Code .mcp.json shape)
-// ---------------------------------------------------------------------------
-
-/**
- * Translate one internal ProjectMcpServer back into a Claude-Code-shaped
- * `.mcp.json` entry. Inverse of `mcp-config-store.ts`'s `mcpEntryToServer`.
- *
- * - `transport` → `type` (collapses identically; "http"/"stdio"/"websocket")
- * - `command: string[]` → split into `{ command, args }` (head + tail)
- * - `authToken` → `headers: { Authorization: "Bearer <token>" }` for http
- */
-export function serverToMcpEntry(server: ProjectMcpServer): McpServerEntry {
-  const entry: McpServerEntry = {
-    type: server.transport,
-    autoConnect: server.autoConnect,
-  };
-  if (server.name !== undefined) entry.name = server.name;
-  if (server.url !== undefined) entry.url = server.url;
-  if (server.command !== undefined && server.command.length > 0) {
-    entry.command = server.command[0];
-    if (server.command.length > 1) entry.args = server.command.slice(1);
-  }
-  if (server.env !== undefined) entry.env = server.env;
-  if (server.authToken !== undefined && (server.transport === "http" || server.transport === "websocket")) {
-    entry.headers = { Authorization: `Bearer ${server.authToken}` };
-  }
-  return entry;
 }
 
 // ---------------------------------------------------------------------------
