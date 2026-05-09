@@ -13,7 +13,7 @@ import { Select } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, fetchIterativeWorkStatus, fetchIterativeWorkProgress, updateProjectRepo } from "../api.js";
+import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, fetchIterativeWorkStatus, fetchIterativeWorkProgress, fetchNotes, updateProjectRepo } from "../api.js";
 import type { FileNode, IterativeWorkProjectStatus, IterativeWorkProgress } from "../api.js";
 import { DevNotes } from "@/components/ui/dev-notes";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
@@ -1488,6 +1488,7 @@ export function ProjectDetail({
           <ProjectChatAside
             project={project}
             onOpenChat={() => onOpenChat(project.path)}
+            onOpenNotes={() => setActiveTab("notes")}
           />
         </aside>
       )}
@@ -1511,19 +1512,28 @@ export function ProjectDetail({
 function ProjectChatAside({
   project,
   onOpenChat,
+  onOpenNotes,
 }: {
   project: ProjectInfo;
   onOpenChat: () => void;
+  /** s152 t653 — clicking the notes breadcrumb routes here. */
+  onOpenNotes?: () => void;
 }) {
   const eligible = (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) === true;
   const [status, setStatus] = useState<IterativeWorkProjectStatus | null>(null);
   const [progress, setProgress] = useState<IterativeWorkProgress | null>(null);
+  // s152 t653 — passive note-availability breadcrumb. When notes exist
+  // for this project (or globally), surface a count so the user knows
+  // Aion is seeing them as project context. Click navigates to the
+  // Notes tab. Best-effort fetch; failures are silent.
+  const [noteCount, setNoteCount] = useState<{ project: number; global: number } | null>(null);
 
   useEffect(() => {
     // Cycle 148 — reset state on project change so we don't briefly show
     // the previous project's status/progress while the new fetch lands.
     setStatus(null);
     setProgress(null);
+    setNoteCount(null);
     if (!eligible) return;
     let cancelled = false;
     void Promise.all([
@@ -1537,11 +1547,55 @@ function ProjectChatAside({
     return () => { cancelled = true; };
   }, [eligible, project.path]);
 
+  // s152 t653 — note count fetch lives in its own effect so it runs for
+  // every project (not just iterative-work-eligible ones).
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      fetchNotes(project.path).catch(() => []),
+      fetchNotes(null).catch(() => []),
+    ]).then(([proj, global]) => {
+      if (cancelled) return;
+      setNoteCount({ project: proj.length, global: global.length });
+    });
+    return () => { cancelled = true; };
+  }, [project.path]);
+
   return (
     <>
       <h2 className="text-[12px] uppercase tracking-wider text-muted-foreground/80 font-semibold mt-3 mb-2">
         Chat
       </h2>
+
+      {/* s152 t653 — passive notes breadcrumb. Visible when at least one
+          per-project or global note exists. Clicking it switches to the
+          Notes tab so the user can see what Aion is seeing. */}
+      {noteCount !== null && (noteCount.project > 0 || noteCount.global > 0) && (
+        <button
+          type="button"
+          className="text-left mb-2 px-3 py-2 rounded bg-secondary/10 hover:bg-secondary/20 transition-colors w-full"
+          onClick={() => { onOpenNotes?.(); }}
+          data-testid="project-chat-aside-notes-breadcrumb"
+          title="Aion sees these notes as project context"
+        >
+          <span className="text-[11px] text-muted-foreground">
+            <span aria-hidden="true">📝</span>{" "}
+            {noteCount.project > 0 && (
+              <>
+                <strong className="text-foreground">{String(noteCount.project)}</strong>{" "}
+                project note{noteCount.project === 1 ? "" : "s"}
+              </>
+            )}
+            {noteCount.project > 0 && noteCount.global > 0 && " · "}
+            {noteCount.global > 0 && (
+              <>
+                <strong className="text-foreground">{String(noteCount.global)}</strong>{" "}
+                global
+              </>
+            )}
+          </span>
+        </button>
+      )}
 
       {eligible && (
         <Card className="p-3 mb-2 bg-secondary/10" data-testid="project-chat-aside-iterative">
