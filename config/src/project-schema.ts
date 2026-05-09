@@ -259,6 +259,35 @@ export const ProjectRepoSchema = z
      *  Required when `port` is set. */
     startCommand: z.string().optional(),
 
+    /** Optional development-mode command, distinct from startCommand. When
+     *  the dashboard's "Dev" affordance launches the repo, this command
+     *  runs instead — typical examples:
+     *    startCommand: "node dist/server.js" (production-shape)
+     *    devCommand:   "pnpm dev"           (vite, hot reload, source maps)
+     *  When unset, "Dev" falls back to startCommand. (s141 t551) */
+    devCommand: z.string().optional(),
+
+    /** Per-repo custom actions surfaced as buttons in the dashboard's
+     *  hosting card (e.g. "Run tests", "Lint", "Migrate DB"). Each action
+     *  is one shell command run inside the container with cwd = the
+     *  repo's checkout path. Action labels must be unique per repo.
+     *  (s141 t551) */
+    actions: z.array(z.object({
+      /** Display label for the dashboard button. Short — fits in a
+       *  per-repo card row. Example: "Run tests", "Lint", "Build". */
+      label: z.string().min(1).max(40),
+      /** Shell command to execute. Examples:
+       *    "pnpm test"
+       *    "pnpm lint --fix"
+       *    "drizzle-kit push" */
+      command: z.string().min(1),
+      /** Optional one-line description shown as a tooltip / hover hint.
+       *  Useful when the label can't fully describe what the action
+       *  does (e.g. "Migrate DB" → "Runs drizzle-kit push against the
+       *  project's hosted Postgres"). */
+      description: z.string().optional(),
+    }).strict()).optional(),
+
     /** Marks this repo as the default served on `https://<project>.ai.on/`.
      *  At most one repo per project may set this true (enforced via
      *  ProjectConfigSchema.refine). When no repo is marked default, the
@@ -309,6 +338,14 @@ export const ProjectRepoSchema = z
   .refine(
     (r) => r.autoRun === undefined || r.port !== undefined,
     { message: "autoRun only applies to repos with a port set" },
+  )
+  .refine(
+    (r) => {
+      if (!r.actions || r.actions.length === 0) return true;
+      const labels = r.actions.map((a) => a.label);
+      return new Set(labels).size === labels.length;
+    },
+    { message: "action labels must be unique within a repo" },
   );
 
 // ---------------------------------------------------------------------------

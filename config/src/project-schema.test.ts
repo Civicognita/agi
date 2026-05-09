@@ -284,6 +284,92 @@ describe("ProjectConfigSchema", () => {
       expect(ProjectConfigSchema.safeParse(data).success).toBe(true);
     });
 
+    it("accepts a repo with devCommand distinct from startCommand (s141 t551)", () => {
+      const data = {
+        name: "X",
+        repos: [
+          { name: "web", url: "u", port: 5173, startCommand: "node dist/server.js", devCommand: "pnpm dev", isDefault: true },
+        ],
+      };
+      const r = ProjectConfigSchema.safeParse(data);
+      expect(r.success).toBe(true);
+      if (r.success) {
+        expect(r.data.repos?.[0]?.devCommand).toBe("pnpm dev");
+      }
+    });
+
+    it("accepts a repo with custom actions (s141 t551)", () => {
+      const data = {
+        name: "X",
+        repos: [
+          {
+            name: "api",
+            url: "u",
+            port: 8001,
+            startCommand: "node dist",
+            actions: [
+              { label: "Run tests", command: "pnpm test" },
+              { label: "Migrate DB", command: "drizzle-kit push", description: "Pushes the latest schema to the project's hosted Postgres" },
+            ],
+          },
+        ],
+      };
+      const r = ProjectConfigSchema.safeParse(data);
+      expect(r.success).toBe(true);
+      if (r.success) {
+        expect(r.data.repos?.[0]?.actions?.length).toBe(2);
+      }
+    });
+
+    it("rejects duplicate action labels within a repo (s141 t551)", () => {
+      const data = {
+        name: "X",
+        repos: [
+          {
+            name: "api",
+            url: "u",
+            actions: [
+              { label: "Build", command: "pnpm build" },
+              { label: "Build", command: "pnpm build:dashboard" },
+            ],
+          },
+        ],
+      };
+      const r = ProjectConfigSchema.safeParse(data);
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(r.error.issues.some((i) => i.message.includes("action labels must be unique"))).toBe(true);
+      }
+    });
+
+    it("rejects empty action label (s141 t551)", () => {
+      const data = {
+        name: "X",
+        repos: [
+          {
+            name: "api",
+            url: "u",
+            actions: [{ label: "", command: "pnpm build" }],
+          },
+        ],
+      };
+      expect(ProjectConfigSchema.safeParse(data).success).toBe(false);
+    });
+
+    it("rejects empty action command (s141 t551)", () => {
+      const data = {
+        name: "X",
+        repos: [
+          {
+            name: "api",
+            url: "u",
+            actions: [{ label: "Build", command: "" }],
+          },
+        ],
+      };
+      expect(ProjectConfigSchema.safeParse(data).success).toBe(false);
+    });
+
     it("accepts env vars on a repo", () => {
       const data = {
         name: "X",
