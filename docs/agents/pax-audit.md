@@ -108,6 +108,11 @@ These files already pull from PAx — use as reference for refactor shape:
 
 Items where the right PAx primitive may not exist yet:
 
+- **Markdown editor**: fancy-code exports `CodeEditor` (syntax-highlighted
+  code) but no MarkdownEditor with optional preview. NotesPanel currently
+  uses a hand-rolled `<textarea>`. **Filed upstream:**
+  [Particle-Academy/fancy-code#2](https://github.com/Particle-Academy/fancy-code/issues/2).
+  Tracked Aionima-side under tynn s156 t673.
 - **Toast/notification stack**: `NotificationBell.tsx` shows a list; the
   permanent toast surface (cycle 162 spec) needs PAx Toast. **File
   upstream issue against react-fancy if no Toast primitive is present.**
@@ -117,6 +122,14 @@ Items where the right PAx primitive may not exist yet:
 - **Universal help Support Canvas** (s137 t531): doc-tree + reader
   primitives exist in fancy-code; combining them into a Support Canvas
   shape is a local component, not a missing PAx primitive.
+
+## 7. List-with-selection primitive (resolved 2026-05-09 cycle 260)
+
+react-fancy's **Table** primitive (with `onRowClick`) is the right fit
+for selectable lists; no upstream issue needed. NotesPanel + future
+list-shaped UIs route through Table when they need single-column +
+clickable selection. fancy-sheets' Spreadsheet/Sheet are overkill for
+flat lists. Sidebar is for nav-shaped lists.
 
 ---
 
