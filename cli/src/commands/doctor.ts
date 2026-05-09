@@ -11,7 +11,7 @@ import type { Command } from "commander";
 import { loadConfig, validateConfigFile } from "../config-loader.js";
 import { GatewayClient } from "../gateway-client.js";
 import { bold, dim, formatCheck, green, red, yellow } from "../output.js";
-import type { AionimaConfig } from "@agi/config";
+import { AionimaConfigSchema, type AionimaConfig } from "@agi/config";
 
 interface Check {
   name: string;
@@ -1096,6 +1096,71 @@ export function redactConfig(value: unknown): unknown {
 }
 
 // ---------------------------------------------------------------------------
+// `agi doctor config get/set` — Safe edit cycle for gateway.json (s144 t578)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read a dotted path out of a nested object. Returns `undefined` on any
+ * missing segment. Pure function for testability.
+ */
+export function getDottedPath(obj: unknown, path: string): unknown {
+  if (path.length === 0) return obj;
+  const parts = path.split(".");
+  let cur: unknown = obj;
+  for (const p of parts) {
+    if (cur === null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[p];
+  }
+  return cur;
+}
+
+/**
+ * Immutably set a dotted path on a deep clone of `obj`. Creates
+ * intermediate objects as needed. Returns the new root. Pure function.
+ */
+export function setDottedPath(obj: unknown, path: string, value: unknown): unknown {
+  if (path.length === 0) return value;
+  // Deep-ish clone via JSON round-trip. Sufficient for plain config
+  // shapes — gateway.json never contains functions, Maps, or Dates.
+  const cloned: Record<string, unknown> = obj && typeof obj === "object"
+    ? JSON.parse(JSON.stringify(obj)) as Record<string, unknown>
+    : {};
+  const parts = path.split(".");
+  let cur: Record<string, unknown> = cloned;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const p = parts[i]!;
+    const next = cur[p];
+    if (next === null || typeof next !== "object" || Array.isArray(next)) {
+      cur[p] = {};
+    }
+    cur = cur[p] as Record<string, unknown>;
+  }
+  cur[parts[parts.length - 1]!] = value;
+  return cloned;
+}
+
+/**
+ * Coerce a raw CLI value to the most useful JSON-typed shape:
+ *   "true"/"false" → boolean; integer string → number; "null" → null;
+ *   "{...}" or "[...]" parses as JSON; anything else → string verbatim.
+ * Operators commonly want `agi doctor config set gateway.port 4100` to
+ * write a number, not the string "4100" — same intuition for booleans.
+ */
+export function coerceValue(raw: string): unknown {
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  if (raw === "null") return null;
+  if (/^-?\d+$/.test(raw)) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && Number.isSafeInteger(n)) return n;
+  }
+  if (raw.length > 0 && (raw[0] === "{" || raw[0] === "[")) {
+    try { return JSON.parse(raw) as unknown; } catch { /* fallthrough */ }
+  }
+  return raw;
+}
+
+// ---------------------------------------------------------------------------
 // `agi doctor logs` — Tail recent logs and classify by crash pattern (s144 t581)
 // ---------------------------------------------------------------------------
 
@@ -1492,6 +1557,78 @@ export function registerDoctorCommand(program: Command): void {
         }
         console.log(`    ${yellow("→")} ${pattern.repair}`);
         console.log();
+      }
+    });
+
+  // s144 t578 — `agi doctor config get/set` for safe edits to gateway.json
+  // (interactive editor variant lands with t574 TUI). Validates the full
+  // config via Zod before writing; rolls back on validation failure so the
+  // file on disk never enters an invalid state mid-edit.
+  const configSub = doctor
+    .command("config")
+    .description("Inspect or edit gateway.json keys with Zod-validated rollback");
+
+  configSub
+    .command("get <path>")
+    .description("Read a dotted path out of gateway.json (e.g. gateway.port)")
+    .action(async (path: string) => {
+      const opts = program.opts<{ config?: string }>();
+      try {
+        const result = await loadConfig(opts.config);
+        const value = getDottedPath(result.config as unknown, path);
+        if (value === undefined) {
+          console.log(`${dim("(unset)")}`);
+          process.exitCode = 1;
+          return;
+        }
+        // Print primitives raw; objects/arrays as JSON.
+        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) {
+          console.log(String(value));
+        } else {
+          console.log(JSON.stringify(value, null, 2));
+        }
+      } catch (err) {
+        console.error(`${red("✗")} ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  configSub
+    .command("set <path> <value>")
+    .description("Set a dotted path in gateway.json. Validates against AionimaConfigSchema before writing; rolls back on failure. Coerces 'true'/'false'/'null'/integers/JSON automatically.")
+    .action(async (path: string, value: string) => {
+      const opts = program.opts<{ config?: string }>();
+      try {
+        const result = await loadConfig(opts.config);
+        const previous = getDottedPath(result.config as unknown, path);
+        const coerced = coerceValue(value);
+        const candidate = setDottedPath(result.config as unknown, path, coerced);
+
+        // Validate the FULL candidate config — this catches type
+        // mismatches AND cross-field invariants that single-key
+        // validation would miss.
+        const parsed = AionimaConfigSchema.safeParse(candidate);
+        if (!parsed.success) {
+          console.error(`${red("✗")} Validation failed — gateway.json NOT modified.`);
+          for (const issue of parsed.error.issues) {
+            const where = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+            console.error(`  ${red("•")} ${where}: ${issue.message}`);
+          }
+          process.exitCode = 1;
+          return;
+        }
+
+        // Validation passed — atomic write via temp + rename.
+        const tmpPath = `${result.path}.tmp.${String(process.pid)}`;
+        writeFileSync(tmpPath, JSON.stringify(candidate, null, 2) + "\n", "utf-8");
+        execFileSync("mv", [tmpPath, result.path], { stdio: ["ignore", "ignore", "ignore"] });
+
+        console.log(`${green("✓")} ${path} = ${typeof coerced === "string" ? JSON.stringify(coerced) : String(coerced)}`);
+        console.log(`  ${dim(`previous: ${previous === undefined ? "(unset)" : typeof previous === "string" ? JSON.stringify(previous) : String(previous)}`)}`);
+        console.log(`  ${dim(`written: ${result.path}`)}`);
+      } catch (err) {
+        console.error(`${red("✗")} ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
       }
     });
 }
