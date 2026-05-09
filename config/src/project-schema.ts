@@ -379,7 +379,16 @@ export const ProjectConfigSchema = z
     aiDatasets: z.array(ProjectAiDatasetBindingSchema).optional(),
     /** Iterative-work mode — toggles tynn-workflow prompt injection + cron-nudged scheduling. */
     iterativeWork: ProjectIterativeWorkSchema.optional(),
-    /** Per-project MCP servers (Wish #7) — surfaces on the project's MCP tab. */
+    /**
+     * @deprecated s131 (2026-05-09) — per-project MCP servers moved to a
+     * top-level `<projectPath>/.mcp.json` file (Claude Code convention).
+     * The boot-time migration in `mcp-config-migration.ts` rewrites this
+     * field into `.mcp.json` and strips it from project.json on first
+     * boot after the upgrade. New writes (PUT /api/projects/mcp/server)
+     * land in `.mcp.json` directly. Reads fall through via the dual-read
+     * API in `mcp-config-store.ts`. Kept here as `.optional()` so legacy
+     * project.json files parse without error during the migration window.
+     */
     mcp: ProjectMcpSchema.optional(),
     /** Sub-repos served from this project — s130 phase B (t515).
      *  Each entry clones into `<projectPath>/repos/<name>/`. Used by
