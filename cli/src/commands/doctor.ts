@@ -2,10 +2,10 @@
  * `aionima doctor` — Config-aware self-diagnostics with grouped checks.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { access, constants, readFile } from "node:fs/promises";
 import { execSync, execFileSync } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, hostname as osHostname, platform as osPlatform, release as osRelease, totalmem, freemem } from "node:os";
 import { resolve, join } from "node:path";
 import type { Command } from "commander";
 import { loadConfig, validateConfigFile } from "../config-loader.js";
@@ -681,11 +681,145 @@ async function lemonadeChecks(config: AionimaConfig): Promise<CheckGroup | null>
 }
 
 // ---------------------------------------------------------------------------
+// `agi doctor dump` — Diagnostic bundle for incident triage (s144 t579)
+// ---------------------------------------------------------------------------
+
+/** Sanitize a gateway.json-shape object — strip obvious secret-bearing keys. */
+export function redactConfig(value: unknown): unknown {
+  const SECRET_KEY_RE = /(secret|password|token|apikey|api_key|credential|private[-_]?key)/i;
+  if (Array.isArray(value)) return value.map(redactConfig);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (SECRET_KEY_RE.test(k)) {
+        out[k] = typeof v === "string" && v.length > 0 ? `<redacted:${String(v.length)}-chars>` : "<redacted>";
+      } else {
+        out[k] = redactConfig(v);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Read up to N most-recent lines of a file (best-effort). Returns [] on any error. */
+function tailFile(path: string, lines: number): string[] {
+  try {
+    if (!existsSync(path)) return [];
+    const raw = readFileSync(path, "utf-8");
+    const all = raw.split("\n");
+    return all.slice(Math.max(0, all.length - lines));
+  } catch {
+    return [];
+  }
+}
+
+/** Collect a doctor diagnostic bundle and write it to ~/.agi/doctor-dumps/. */
+async function runDoctorDump(opts: { config?: string }): Promise<string> {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const dumpDir = join(homedir(), ".agi", "doctor-dumps");
+  mkdirSync(dumpDir, { recursive: true });
+  const outPath = join(dumpDir, `dump-${timestamp}.json`);
+
+  // 1. Diagnostic checks (re-use the existing groups).
+  const groups: CheckGroup[] = [];
+  const { group: core, config, configOk } = await coreChecks(opts.config);
+  groups.push(core);
+  if (config && configOk) {
+    groups.push(authChecks(config));
+    groups.push(repoChecks(config));
+    groups.push(pluginChecks());
+    const hosting = hostingChecks(config);
+    if (hosting) groups.push(hosting);
+    const shape = await projectShapeChecks(config);
+    if (shape) groups.push(shape);
+    const dev = devChecks(config);
+    if (dev) groups.push(dev);
+    groups.push(await gatewayChecks(config));
+    const lemonade = await lemonadeChecks(config);
+    if (lemonade) groups.push(lemonade);
+  }
+
+  // 2. Sanitized config + system info + log tails + workspace projects.
+  const redactedConfig = config ? redactConfig(config) : null;
+
+  const sys = {
+    hostname: osHostname(),
+    platform: osPlatform(),
+    release: osRelease(),
+    nodeVersion: process.version,
+    totalMemMB: Math.round(totalmem() / 1024 / 1024),
+    freeMemMB: Math.round(freemem() / 1024 / 1024),
+    podmanVersion: execVersion("podman --version"),
+    gitVersion: execVersion("git --version"),
+  };
+
+  const logsDir = join(homedir(), ".agi", "logs");
+  const logTails: Record<string, string[]> = {};
+  if (existsSync(logsDir)) {
+    try {
+      const entries = readdirSync(logsDir).filter((f) => f.endsWith(".log") || f.endsWith(".jsonl"));
+      const ranked = entries.map((f) => {
+        const p = join(logsDir, f);
+        try { return { f, mtime: statSync(p).mtimeMs }; } catch { return { f, mtime: 0 }; }
+      }).sort((a, b) => b.mtime - a.mtime).slice(0, 5);
+      for (const { f } of ranked) logTails[f] = tailFile(join(logsDir, f), 200);
+    } catch {
+      // ignore
+    }
+  }
+  const tmpLog = "/tmp/agi.log";
+  if (existsSync(tmpLog)) logTails["/tmp/agi.log"] = tailFile(tmpLog, 200);
+
+  const workspaceProjects: { path: string; type?: string; exists: boolean }[] = [];
+  if (config?.workspace?.projects) {
+    for (const p of config.workspace.projects) {
+      const projJson = join(p, "project.json");
+      let type: string | undefined;
+      if (existsSync(projJson)) {
+        try {
+          const raw = await readFile(projJson, "utf8");
+          const parsed = JSON.parse(raw) as { type?: string };
+          type = parsed.type;
+        } catch {
+          // ignore
+        }
+      }
+      workspaceProjects.push({ path: p, type, exists: existsSync(p) });
+    }
+  }
+
+  const allChecks = groups.flatMap((g) => g.checks);
+  const bundle = {
+    bundleVersion: 1,
+    bundleId: timestamp,
+    generatedAt: new Date().toISOString(),
+    cliVersion: process.env["AGI_CLI_VERSION"] ?? "unknown",
+    system: sys,
+    checks: {
+      groups,
+      summary: {
+        total: allChecks.length,
+        passed: allChecks.filter((c) => c.ok).length,
+        warnings: allChecks.filter((c) => !c.ok && c.warn).length,
+        failed: allChecks.filter((c) => !c.ok && !c.warn).length,
+      },
+    },
+    config: redactedConfig,
+    logTails,
+    workspaceProjects,
+  };
+
+  writeFileSync(outPath, JSON.stringify(bundle, null, 2), "utf-8");
+  return outPath;
+}
+
+// ---------------------------------------------------------------------------
 // Command registration
 // ---------------------------------------------------------------------------
 
 export function registerDoctorCommand(program: Command): void {
-  program
+  const doctor = program
     .command("doctor")
     .description("Run self-diagnostics")
     .option("--json", "Output results as JSON")
@@ -797,5 +931,25 @@ export function registerDoctorCommand(program: Command): void {
       console.log();
 
       if (totalFailed > 0) process.exitCode = 1;
+    });
+
+  // s144 t579 — `agi doctor dump` writes a diagnostic bundle to
+  // ~/.agi/doctor-dumps/dump-<timestamp>.json. Hands the path back so an
+  // operator can attach it to a bug report or share it with support.
+  doctor
+    .command("dump")
+    .description("Write a diagnostic bundle (logs + redacted config + checks + system info) to ~/.agi/doctor-dumps/")
+    .action(async () => {
+      const opts = program.opts<{ config?: string }>();
+      try {
+        const path = await runDoctorDump({ config: opts.config });
+        console.log();
+        console.log(`  ${green("✓")} diagnostic bundle written`);
+        console.log(`  ${dim(path)}`);
+        console.log();
+      } catch (err) {
+        console.error(`${red("✗")} failed to write bundle: ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+      }
     });
 }
