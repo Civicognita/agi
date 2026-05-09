@@ -51,6 +51,7 @@ import { registerComplianceRoutes } from "./compliance-api.js";
 import { registerSecurityRoutes } from "./security-api.js";
 import { registerProvidersRoutes } from "./providers-api.js";
 import { registerPmRoutes } from "./pm-api.js";
+import { registerNotesRoutes } from "./notes-api.js";
 import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
 import { COAChainLogger } from "@agi/coa-chain";
@@ -2734,6 +2735,11 @@ export async function startGatewayServer(
   const { MagicAppStateStore } = await import("./magic-app-state-store.js");
   const magicAppStateStore = new MagicAppStateStore(db);
 
+  // s152 — UserNotes store (markdown notepad surface, per-project + global).
+  // Storage round-trips through agi_data per single-source-of-truth.
+  const { NotesStore } = await import("./notes-store.js");
+  const notesStore = new NotesStore(db);
+
   const { httpServer, wsServer } = await createGatewayRuntimeState(
     {
       auth,
@@ -2971,6 +2977,13 @@ export async function startGatewayServer(
         (f) => registerPmRoutes(f, {
           pmProvider,
           planStore,
+          workspaceProjects: projectPaths,
+        }),
+        // s152 — UserNotes REST surface. Markdown notepad, per-project +
+        // global scopes. Single-owner alpha; userEntityId is fixed to
+        // `~$U0` until Hive-ID multi-user lands.
+        (f) => registerNotesRoutes(f, {
+          notesStore,
           workspaceProjects: projectPaths,
         }),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),

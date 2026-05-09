@@ -211,6 +211,70 @@ export async function fetchPmPlan(projectPath: string, planId: string): Promise<
   return res.json() as Promise<PmPlanLite>;
 }
 
+// ---------------------------------------------------------------------------
+// UserNotes — s152. Markdown notepad surface, per-project + global scopes.
+// ---------------------------------------------------------------------------
+
+export interface UserNote {
+  id: string;
+  userEntityId: string;
+  projectPath: string | null;
+  title: string;
+  body: string;
+  sortOrder: number;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** List notes for a scope. Pass null for global; pass an absolute path for per-project. */
+export async function fetchNotes(projectPath: string | null): Promise<UserNote[]> {
+  const url = projectPath !== null
+    ? `/api/notes?projectPath=${encodeURIComponent(projectPath)}`
+    : "/api/notes";
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { notes: UserNote[] };
+  return data.notes;
+}
+
+export async function createNote(input: { projectPath: string | null; title: string; body?: string; pinned?: boolean }): Promise<UserNote> {
+  const res = await fetch("/api/notes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<UserNote>;
+}
+
+export async function updateNote(id: string, patch: { title?: string; body?: string; pinned?: boolean; sortOrder?: number }): Promise<UserNote> {
+  const res = await fetch(`/api/notes/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<UserNote>;
+}
+
+export async function deleteNote(id: string): Promise<void> {
+  const res = await fetch(`/api/notes/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
 export async function createProject(params: {
   name: string;
   tynnToken?: string;
