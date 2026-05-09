@@ -2207,6 +2207,14 @@ export async function createGatewayRuntimeState(
   // GET /api/projects/mcp/server/tools|prompts|resources?path=&id= — browse what
   // a connected server provides. Lets the MCPTab UI render the card's expanded
   // inspector. Errors surface as 502 with the underlying SDK message.
+  // s133 t678 (2026-05-09) — `?fresh=1` on any of these GET endpoints
+  // bypasses the mcp-client cache (forces a re-fetch). Refresh button in
+  // MCPTab passes the param so the user always gets a current snapshot
+  // when explicitly refreshing.
+  const isFreshRequested = (q: Record<string, string>): boolean => {
+    const fresh = q["fresh"];
+    return fresh === "1" || fresh === "true";
+  };
   fastify.get("/api/projects/mcp/server/tools", async (request, reply) => {
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
@@ -2216,7 +2224,7 @@ export async function createGatewayRuntimeState(
     if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
     const nsId = mcpServerNs(resolvePath(pathParam), idParam);
     try {
-      const tools = await deps.mcpClient.listTools(nsId);
+      const tools = await deps.mcpClient.listTools(nsId, { bypassCache: isFreshRequested(query) });
       return reply.send({ ok: true, tools });
     } catch (err) {
       return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -2232,7 +2240,7 @@ export async function createGatewayRuntimeState(
     if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
     const nsId = mcpServerNs(resolvePath(pathParam), idParam);
     try {
-      const prompts = await deps.mcpClient.listPrompts(nsId);
+      const prompts = await deps.mcpClient.listPrompts(nsId, { bypassCache: isFreshRequested(query) });
       return reply.send({ ok: true, prompts });
     } catch (err) {
       return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -2248,11 +2256,22 @@ export async function createGatewayRuntimeState(
     if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
     const nsId = mcpServerNs(resolvePath(pathParam), idParam);
     try {
-      const resources = await deps.mcpClient.listResources(nsId);
+      const resources = await deps.mcpClient.listResources(nsId, { bypassCache: isFreshRequested(query) });
       return reply.send({ ok: true, resources });
     } catch (err) {
       return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  // s133 t679 (2026-05-09) — diagnostic surface for the MCP cache.
+  // Returns per-server hit/miss/bypass/invalidation counts + last-fetch
+  // timestamp; verifies the acceptance criterion "hit ratio > 80% under
+  // normal browsing." Read-only; no UI surface in v1.
+  fastify.get("/api/projects/mcp/server/cache-status", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    return reply.send({ ok: true, servers: deps.mcpClient.getCacheStatus() });
   });
 
   // POST /api/projects/mcp/server/call-tool|read-resource — invoke a tool or
@@ -2277,11 +2296,12 @@ export async function createGatewayRuntimeState(
     const clientIp = getClientIp(request.raw);
     if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
     if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
-    const body = request.body as { path?: string; id?: string; uri?: string } | undefined;
+    const body = request.body as { path?: string; id?: string; uri?: string; fresh?: boolean } | undefined;
     if (!body?.path || !body.id || !body.uri) return reply.code(400).send({ error: "path + id + uri required" });
     const nsId = mcpServerNs(resolvePath(body.path), body.id);
     try {
-      const result = await deps.mcpClient.readResource(nsId, body.uri);
+      // s133 t678 — body.fresh=true bypasses the resource-read cache.
+      const result = await deps.mcpClient.readResource(nsId, body.uri, { bypassCache: body.fresh === true });
       return reply.send({ ok: true, result });
     } catch (err) {
       return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
