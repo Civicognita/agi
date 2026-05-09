@@ -32,7 +32,7 @@ import { RouteDevNotes } from "@/lib/route-notes.js";
 import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
-import { Chart } from "@particle-academy/react-fancy";
+import { Chart, Icon } from "@particle-academy/react-fancy";
 import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard, fetchProviderBalances, fetchBalanceHistory } from "@/api.js";
 import type { ProviderBalance } from "@/api.js";
 import { LoginPage } from "@/components/LoginPage.js";
@@ -726,10 +726,16 @@ export default function RootLayout() {
                 title="System Terminal"
                 data-testid="system-terminal-button"
               >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="4 17 10 11 4 5" />
-                  <line x1="12" y1="19" x2="20" y2="19" />
-                </svg>
+                {/* s142 t558 — wrap SVG in PAx Icon for consistent a11y +
+                    sizing. Icon provides aria-hidden=true + flex
+                    centering; the inner svg keeps its viewBox + paths
+                    until an icon set is registered upstream. */}
+                <Icon size="md">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="4 17 10 11 4 5" />
+                    <line x1="12" y1="19" x2="20" y2="19" />
+                  </svg>
+                </Icon>
               </button>
             </div>
             <div className="hidden md:block">
@@ -739,11 +745,13 @@ export default function RootLayout() {
                 title="WhoDB"
                 data-testid="whodb-button"
               >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <ellipse cx="12" cy="5" rx="9" ry="3" />
-                  <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-                  <path d="M3 12A9 3 0 0 0 21 12" />
-                </svg>
+                <Icon size="md">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <ellipse cx="12" cy="5" rx="9" ry="3" />
+                    <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+                    <path d="M3 12A9 3 0 0 0 21 12" />
+                  </svg>
+                </Icon>
               </button>
             </div>
             {/* DevNotes universal trigger (cycle 150 refactor). Opens the
@@ -770,11 +778,13 @@ export default function RootLayout() {
               data-testid="header-help-button"
               aria-label="Open help chat"
             >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-                <line x1="12" y1="17" x2="12.01" y2="17" />
-              </svg>
+              <Icon size="md">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+              </Icon>
             </button>
             <button
               onClick={() => setChatOpen((p) => !p)}
@@ -787,9 +797,11 @@ export default function RootLayout() {
               title="Chat"
               data-testid="header-chat-button"
             >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
+              <Icon size="md">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+              </Icon>
             </button>
             {!isMobile && <ActivityDot active={systemActive} />}
             <NotificationBell
