@@ -40,6 +40,43 @@ export function registerStackRoutes(app: FastifyInstance, deps: StackApiDeps): v
     reply.send({ stacks });
   });
 
+  // GET /api/stacks/for-repo — catalog filtered by the repo's effective
+  // project category (s141 t555). When attaching a stack to a specific
+  // repo, the dashboard hits this to cut menu noise — only stacks
+  // compatible with the project's classification surface. The "all"
+  // toggle on the dashboard side just falls back to /api/stacks
+  // (unfiltered).
+  //
+  // Response includes `inferredCategory` so the dashboard can label the
+  // filter ("Showing for App — view all") without a second call. When
+  // the project type can't be resolved (no projectTypeRegistry, project
+  // type unset, registry doesn't know the type), returns the full
+  // catalog + `inferredCategory: null` — caller fall-through is the
+  // same code path as the toggle-off case.
+  app.get("/api/stacks/for-repo", async (request, reply) => {
+    const query = request.query as { path?: string; repo?: string };
+    if (!query.path) {
+      reply.code(400).send({ error: "path query parameter required" });
+      return;
+    }
+
+    let inferredCategory: ProjectCategory | null = null;
+    const cfg = (hostingManager as unknown as {
+      configMgr: { read(p: string): { type?: string } | null } | undefined;
+    }).configMgr?.read(query.path);
+    const typeId = cfg?.type;
+    const projectTypeRegistry = hostingManager.getProjectTypeRegistry();
+    if (typeId && projectTypeRegistry) {
+      const def = projectTypeRegistry.get(typeId);
+      if (def?.category) inferredCategory = def.category;
+    }
+
+    const stacks = stackRegistry.toJSON({
+      projectCategory: inferredCategory ?? undefined,
+    });
+    reply.send({ stacks, inferredCategory, projectType: typeId ?? null });
+  });
+
   // GET /api/stacks/:id — single stack detail
   app.get("/api/stacks/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
