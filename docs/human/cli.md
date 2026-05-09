@@ -177,6 +177,29 @@ Reads from `~/.agi/logs/` (top 5 most-recent .log/.jsonl files) and
 
 ---
 
+### agi iw — iterative-work operator commands
+
+Operator kill switch for runaway iterative-work loops (s159 t692).
+When Aion is stuck looping on a project's iterative-work and you need
+to break the loop without restarting the gateway:
+
+```bash
+agi iw stop --project /home/wishborn/_projects/work/proj-a
+agi iw stop --all
+```
+
+Both flip `iterativeWork.enabled = false` on the affected project(s)
+in `project.json` AND force-clear any in-flight tracking in the
+scheduler. After the stop, the next `agi doctor logs` sweep should
+show no fresh fire entries for that project. Re-enable via the
+dashboard's Iterative Work tab when the underlying issue is fixed.
+
+The `--all` form is the nuclear option: hits every project in the
+configured `workspace.projects` directories. Use when you can't
+identify the looping project from logs alone.
+
+---
+
 ### agi config
 
 Read configuration values from `~/.agi/gateway.json`.

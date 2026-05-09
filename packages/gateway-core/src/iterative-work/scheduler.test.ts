@@ -473,3 +473,90 @@ describe("IterativeWorkScheduler.start/stop", () => {
     expect(scheduler.getInFlight()).toEqual([]);
   });
 });
+
+describe("IterativeWorkScheduler operator kill switch (s159 t692)", () => {
+  it("forceClearProject removes the project from in-flight + lastFired tracking", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/runaway": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/runaway"],
+    });
+
+    scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
+    expect(scheduler.getInFlight()).toEqual(["/p/runaway"]);
+
+    const result = scheduler.forceClearProject("/p/runaway");
+    expect(result).toEqual({ wasInFlight: true, hadLastFired: true });
+    expect(scheduler.getInFlight()).toEqual([]);
+  });
+
+  it("forceClearProject returns wasInFlight=false when project was never in-flight", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({}),
+      listProjectPaths: () => [],
+    });
+    const result = scheduler.forceClearProject("/p/never-fired");
+    expect(result).toEqual({ wasInFlight: false, hadLastFired: false });
+  });
+
+  it("forceClearProject leaves OTHER projects' state intact", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/b": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a", "/p/b"],
+    });
+
+    scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
+    expect(scheduler.getInFlight().sort()).toEqual(["/p/a", "/p/b"]);
+
+    scheduler.forceClearProject("/p/a");
+    expect(scheduler.getInFlight()).toEqual(["/p/b"]);
+  });
+
+  it("forceClearAll wipes every project from in-flight + lastFired", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/b": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/c": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a", "/p/b", "/p/c"],
+    });
+
+    scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
+    expect(scheduler.getInFlight()).toHaveLength(3);
+
+    const result = scheduler.forceClearAll();
+    expect(result.inFlightCleared).toBe(3);
+    expect(result.lastFiredCleared).toBe(3);
+    expect(scheduler.getInFlight()).toEqual([]);
+  });
+
+  it("forceClearAll on a fresh scheduler is a no-op", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({}),
+      listProjectPaths: () => [],
+    });
+    expect(scheduler.forceClearAll()).toEqual({ inFlightCleared: 0, lastFiredCleared: 0 });
+  });
+
+  it("after forceClearProject, the next tick can re-fire the same project", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    const fires = captureFires(scheduler);
+
+    scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
+    expect(fires).toHaveLength(1);
+
+    scheduler.forceClearProject("/p/a");
+    scheduler.tick(new Date("2026-04-27T05:31:30.000Z"));
+    expect(fires).toHaveLength(2);
+  });
+});

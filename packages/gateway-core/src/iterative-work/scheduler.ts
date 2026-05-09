@@ -215,6 +215,45 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
   }
 
   /**
+   * Operator kill switch (s159 t692). Force-clears the in-flight + last-fired
+   * tracking for one project so the scheduler treats it as never-fired.
+   * Pair with flipping `iterativeWork.enabled = false` in project.json to
+   * also prevent future fires; this method ONLY clears the runtime tracking.
+   * Returns whether anything was cleared.
+   *
+   * Use case: scheduler thinks a project is in-flight (so it won't re-fire)
+   * but actually the consumer crashed without calling markComplete — OR the
+   * opposite, jobs keep re-firing for the same key without backing off and
+   * the operator wants to break the loop without a gateway restart.
+   */
+  forceClearProject(projectPath: string): { wasInFlight: boolean; hadLastFired: boolean } {
+    const wasInFlight = this.inFlight.has(projectPath);
+    const hadLastFired = this.lastFiredAt.has(projectPath);
+    this.inFlight.delete(projectPath);
+    this.inFlightStartedAt.delete(projectPath);
+    if (wasInFlight || hadLastFired) {
+      this.log.warn(`forceClearProject(${projectPath}) — wasInFlight=${String(wasInFlight)} hadLastFired=${String(hadLastFired)}`);
+    }
+    return { wasInFlight, hadLastFired };
+  }
+
+  /**
+   * Force-clear ALL projects from in-flight + last-fired tracking. Nuclear
+   * option for the runaway scenario when the operator can't identify which
+   * project is looping. Returns counts.
+   */
+  forceClearAll(): { inFlightCleared: number; lastFiredCleared: number } {
+    const inFlightCleared = this.inFlight.size;
+    const lastFiredCleared = this.lastFiredAt.size;
+    this.inFlight.clear();
+    this.inFlightStartedAt.clear();
+    if (inFlightCleared > 0 || lastFiredCleared > 0) {
+      this.log.warn(`forceClearAll — cleared ${String(inFlightCleared)} in-flight + ${String(lastFiredCleared)} lastFired entries`);
+    }
+    return { inFlightCleared, lastFiredCleared };
+  }
+
+  /**
    * Read-only per-project introspection — the data behind the status API +
    * the eventual Settings UX. Returns null when the project has no config
    * file at all (callers can distinguish "unknown project" from "configured
