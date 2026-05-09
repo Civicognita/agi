@@ -653,19 +653,18 @@ export function ProjectDetail({
             <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold whitespace-nowrap pr-1" data-testid="project-sub-surface-label">{currentMode} ›</span>
             <TabsList className="border-b-0 gap-1 flex-wrap py-0">
               {/*
-                s150 t638 + s159 (cycle 261) — primary/secondary split.
-                Primary tabs render as always-visible TabsTriggers; secondary
-                tabs collapse into the overflow Select to the right.
-
-                Cycle 261 promotion: Iterative Work + Plans + Notes are
-                daily-use surfaces and were buried in the dropdown. Promoted
-                to primary so owners can reach the work without an extra
-                click. Per-tab gates (hasCode, iterativeWorkEligible,
-                hostingConfigure) still apply — a tab can be primary AND
-                hidden if its gate fails.
+                Cycle 263 — flat sub-tabs. The s150 t638 primary/secondary
+                "More…" dropdown was hostile UX: every mode had ≤4 tabs
+                anyway, so the dropdown only added a click. Nuked entirely.
+                All sub-tabs render as flat TabsTriggers gated by
+                tabBelongsToMode + per-tab visibility rules.
               */}
               {tabBelongsToMode("details") && <TabsTrigger value="details" className={SUB_PILL_CLASS}>Details</TabsTrigger>}
               {tabBelongsToMode("files") && <TabsTrigger value="files" className={SUB_PILL_CLASS}>Editor</TabsTrigger>}
+              {tabBelongsToMode("repository") && <TabsTrigger value="repository" className={SUB_PILL_CLASS} data-testid="project-tab-repository">Repository</TabsTrigger>}
+              {tabBelongsToMode("environment") && project.projectType?.hasCode && (
+                <TabsTrigger value="environment" className={SUB_PILL_CLASS} data-testid="project-tab-environment">Environment</TabsTrigger>
+              )}
               {tabBelongsToMode("hosting") && onHostingConfigure && onHostingRestart && (
                 <TabsTrigger value="hosting" className={SUB_PILL_CLASS}>Hosting</TabsTrigger>
               )}
@@ -679,75 +678,31 @@ export function ProjectDetail({
               {tabBelongsToMode("notes") && (
                 <TabsTrigger value="notes" className={SUB_PILL_CLASS} data-testid="project-tab-notes">Notes</TabsTrigger>
               )}
+              {tabBelongsToMode("taskmaster") && (
+                <TabsTrigger value="taskmaster" className={SUB_PILL_CLASS} data-testid="project-tab-taskmaster">TaskMaster</TabsTrigger>
+              )}
+              {tabBelongsToMode("mcp") && project.projectType?.hasCode && (
+                <TabsTrigger value="mcp" className={SUB_PILL_CLASS} data-testid="project-tab-mcp">MCP</TabsTrigger>
+              )}
+              {pluginPanels
+                .filter((p) => (p.mode ?? "coordinate") === currentMode)
+                .map((p) => (
+                  <TabsTrigger
+                    key={`plugin-${p.id}`}
+                    value={`plugin-${p.id}`}
+                    className={SUB_PILL_CLASS}
+                    data-testid={`project-tab-plugin-${p.id}`}
+                  >
+                    {p.label}
+                  </TabsTrigger>
+                ))}
+              {tabBelongsToMode("security") && project.projectType?.hasCode && (
+                <TabsTrigger value="security" className={SUB_PILL_CLASS} data-testid="project-tab-security">Security</TabsTrigger>
+              )}
               {tabBelongsToMode("activity") && (
                 <TabsTrigger value="activity" className={SUB_PILL_CLASS} data-testid="project-tab-activity">Activity</TabsTrigger>
               )}
-              {/* If the active tab is secondary (e.g. Environment/Security), surface it
-                  as a TabsTrigger too so it has a visible "this is selected" affordance.
-                  Otherwise hide it from the trigger row — overflow Select drives navigation. */}
-              {(() => {
-                const SECONDARY_LABELS: Record<string, string> = {
-                  repository: "Repository",
-                  environment: "Environment",
-                  taskmaster: "TaskMaster",
-                  "iterative-work": "Iterative Work",
-                  mcp: "MCP",
-                  security: "Security",
-                };
-                const label = SECONDARY_LABELS[activeTab] ?? (activeTab.startsWith("plugin-")
-                  ? pluginPanels.find((p) => `plugin-${p.id}` === activeTab)?.label ?? null
-                  : null);
-                if (!label) return null;
-                if (!tabBelongsToMode(activeTab)) return null;
-                return (
-                  <TabsTrigger value={activeTab} className={SUB_PILL_CLASS} data-testid="project-active-secondary-pill">{label}</TabsTrigger>
-                );
-              })()}
             </TabsList>
-            {/* s150 t638 — overflow Select for secondary tabs. Lists tabs that
-                aren't in the primary set, gated by tabBelongsToMode + per-tab
-                visibility rules (hasCode, iterativeWorkEligible). Selecting
-                an entry sets activeTab; the matching TabsContent renders its
-                content normally. */}
-            {(() => {
-              type Entry = { value: string; label: string };
-              const entries: Entry[] = [];
-              if (tabBelongsToMode("repository")) entries.push({ value: "repository", label: "Repository" });
-              if (tabBelongsToMode("environment") && project.projectType?.hasCode) {
-                entries.push({ value: "environment", label: "Environment" });
-              }
-              if (tabBelongsToMode("taskmaster")) entries.push({ value: "taskmaster", label: "TaskMaster" });
-              // Plans + Notes + Iterative Work were promoted to PRIMARY tabs
-              // in cycle 261 — they no longer appear in the More dropdown.
-              if (tabBelongsToMode("mcp") && project.projectType?.hasCode) {
-                entries.push({ value: "mcp", label: "MCP" });
-              }
-              for (const p of pluginPanels.filter((p) => (p.mode ?? "coordinate") === currentMode)) {
-                entries.push({ value: `plugin-${p.id}`, label: p.label });
-              }
-              if (tabBelongsToMode("security") && project.projectType?.hasCode) {
-                entries.push({ value: "security", label: "Security" });
-              }
-              if (entries.length === 0) return null;
-              const isOnSecondary = entries.some((e) => e.value === activeTab);
-              return (
-                <Select
-                  className="text-[12px] h-7 w-[160px]"
-                  list={[
-                    // Cycle 261 — single placeholder option that's the same
-                    // as the closed-state label. Was a buggy ternary that
-                    // returned "More…" on both branches AND showed the
-                    // string as a selectable option below the closed
-                    // dropdown.
-                    { value: "", label: "More…" },
-                    ...entries,
-                  ]}
-                  value={isOnSecondary ? activeTab : ""}
-                  onValueChange={(v) => { if (v) setActiveTab(v); }}
-                  data-testid="project-secondary-tabs-overflow"
-                />
-              );
-            })()}
           </div>
         )}
 
