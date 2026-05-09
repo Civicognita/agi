@@ -15,6 +15,9 @@
 #   agi doctor          — check infra health (caddy, podman, dnsmasq, ports)
 #   agi config [key]    — read config value (dot-path, e.g. agi config hosting.enabled)
 #   agi projects        — list hosted projects with status
+#   agi iw stop --project <path>  — STOP iterative-work on one project
+#                                    (kill switch — runs without gateway restart)
+#   agi iw stop --all   — STOP iterative-work on ALL projects (nuclear option)
 # ---------------------------------------------------------------------------
 set -uo pipefail
 
@@ -1166,6 +1169,53 @@ cmd_projects_logs() {
   podman logs --tail "$tail" $follow "$container" 2>&1
 }
 
+cmd_iw() {
+  # Iterative-work operator commands (s159 t692). Currently:
+  #   agi iw stop --project <path>   — flip enabled=false + force-clear
+  #                                     in-flight tracking for one project
+  #   agi iw stop --all              — same, all projects (nuclear option)
+  #
+  # Use case: Taskmaster runaway loop where the only previous fix was
+  # restarting the gateway. These endpoints break the loop without
+  # restart so log capture + state inspection remain possible.
+  local action="${1:-}"
+  shift || true
+  local gw_url="http://127.0.0.1:3100"
+  local fmt
+  fmt="$(command -v jq >/dev/null && echo "jq ." || echo "cat")"
+
+  case "$action" in
+    stop)
+      local project=""
+      local all=false
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) project="${2:-}"; shift 2 ;;
+          --all) all=true; shift ;;
+          *) err "Unknown flag: $1"; exit 1 ;;
+        esac
+      done
+      if [ "$all" = true ]; then
+        info "Stopping iterative-work on ALL projects (force-clear + enabled=false)"
+        curl -s -X POST "$gw_url/api/projects/iterative-work/stop-all" | ($fmt)
+      elif [ -n "$project" ]; then
+        info "Stopping iterative-work on project: $project"
+        local encoded
+        encoded="$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$project")"
+        curl -s -X POST "$gw_url/api/projects/iterative-work/stop?path=$encoded" | ($fmt)
+      else
+        err "Usage: agi iw stop --project <absolute-path> | agi iw stop --all"
+        exit 1
+      fi
+      ;;
+    *)
+      err "Unknown iw action: $action"
+      echo "  Actions: stop --project <path> | stop --all"
+      exit 1
+      ;;
+  esac
+}
+
 cmd_projects() {
   # Accept subcommands. Default (no arg) lists all projects.
   case "${1:-list}" in
@@ -1903,6 +1953,9 @@ cmd_help() {
   echo "  projects [CMD]  List hosted projects (default) or:"
   echo "                    logs <slug> [--tail N] [-f]   Tail container logs"
   echo "                    restart <slug>                Restart project container"
+  echo "  iw <CMD>        Iterative-work operator commands (s159 t692 kill switch):"
+  echo "                    stop --project <path>         Stop iterative-work on one project"
+  echo "                    stop --all                    Stop iterative-work on ALL projects"
   echo "  models CMD      HF model management — pulled/cached/installed models"
   echo "                  (list|running|status|install|start|stop|remove|search|hardware)."
   echo "                  For provider/router config (which Provider, cost-mode), use"
@@ -1978,6 +2031,7 @@ case "${1:-help}" in
   scan) shift; cmd_scan "$@" ;;
   config)   cmd_config "${2:-}" ;;
   projects) shift; cmd_projects "$@" ;;
+  iw)       shift; cmd_iw "$@" ;;
   models)    shift; cmd_models "$@" ;;
   providers) shift; cmd_providers "$@" ;;
   marketplace) shift; cmd_marketplace "$@" ;;

@@ -1906,6 +1906,92 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // POST /api/projects/iterative-work/stop?path=<projectPath> — operator
+  // kill switch (s159 t692). Flips iterativeWork.enabled=false on the
+  // project AND force-clears any in-flight tracking so the scheduler
+  // treats it as never-fired. Use when a project is in a runaway loop
+  // and you don't want to restart the gateway.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/projects/iterative-work/stop", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+
+    let configFlipped = false;
+    try {
+      const cur = await deps.projectConfigManager.read(targetPath);
+      const iw = ((cur as { iterativeWork?: { enabled?: boolean } }).iterativeWork) ?? {};
+      if (iw.enabled !== false) {
+        await deps.projectConfigManager.update(targetPath, { iterativeWork: { ...iw, enabled: false } });
+        configFlipped = true;
+      }
+    } catch (err) {
+      // Continue — the runtime force-clear is the more important hard-stop.
+      deps.logger?.warn?.("iterative-work", `stop: config update for ${targetPath} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    const cleared = deps.iterativeWorkScheduler?.forceClearProject(targetPath) ?? { wasInFlight: false, hadLastFired: false };
+    return reply.send({ ok: true, configFlipped, ...cleared });
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/projects/iterative-work/stop-all — nuclear operator kill
+  // switch. Force-clears ALL in-flight tracking AND flips enabled=false
+  // on every project that has iterativeWork configured. For runaway
+  // scenarios where the operator can't pinpoint the looping project.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/projects/iterative-work/stop-all", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+
+    let configFlippedCount = 0;
+    let configErrorCount = 0;
+    for (const wsDir of projectDirs) {
+      let entries: string[];
+      try {
+        const { readdirSync } = await import("node:fs");
+        entries = readdirSync(wsDir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+          .map((d) => d.name);
+      } catch {
+        continue;
+      }
+      for (const slug of entries) {
+        const projectPath = resolvePath(`${wsDir}/${slug}`);
+        try {
+          const cur = await deps.projectConfigManager.read(projectPath);
+          const iw = ((cur as { iterativeWork?: { enabled?: boolean } }).iterativeWork);
+          if (iw?.enabled === true) {
+            await deps.projectConfigManager.update(projectPath, { iterativeWork: { ...iw, enabled: false } });
+            configFlippedCount++;
+          }
+        } catch {
+          configErrorCount++;
+        }
+      }
+    }
+
+    const cleared = deps.iterativeWorkScheduler?.forceClearAll() ?? { inFlightCleared: 0, lastFiredCleared: 0 };
+    return reply.send({ ok: true, configFlippedCount, configErrorCount, ...cleared });
+  });
+
+  // -----------------------------------------------------------------------
   // GET /api/projects/iterative-work/log — per-project iteration log
   // (private network only). Query: ?path=<projectPath>&limit=<N>.
   // Returns the in-memory ring buffer (most-recent-first). Buffer is reset
