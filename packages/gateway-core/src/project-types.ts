@@ -141,6 +141,11 @@ export const CODE_SERVED_TYPES: ReadonlySet<string> = new Set([
   "static-site",
   "api-service",
   "php-app",
+  // s119 t700 (2026-05-09) — `aionima-system` is the always-present
+  // meta-project for the Aionima system itself; its repos contain code
+  // (forks of agi/prime/id/PAx/etc.), so it routes via code-served paths.
+  // Hosting is still false (Aionima isn't hosted as an app by itself).
+  "aionima-system",
   // s150 t640 (2026-05-07) — "monorepo" REMOVED. Every project is a monorepo
   // per the universal-monorepo directive; a sibling "monorepo" type as a
   // peer of web-app/static-site/etc. contradicts the model. The s150 t632
@@ -196,6 +201,10 @@ export const ITERATIVE_WORK_ELIGIBLE_TYPE_IDS: ReadonlySet<string> = new Set([
   "static-site",
   "php-app",
   "ops",
+  // s119 t700 (2026-05-09) — Aionima system project gets iterative-work
+  // so the owner can run Aion in autonomous-mode against the system
+  // itself (e.g. "drive remaining VIP 0.7.1 to done").
+  "aionima-system",
 ]);
 
 export const TESTING_UX_ELIGIBLE_TYPE_IDS: ReadonlySet<string> = new Set([
@@ -361,6 +370,34 @@ export function createProjectTypeRegistry(): ProjectTypeRegistry {
     hasCode: false,
     defaultMeta: {
       type: "aionima",
+      mode: "production",
+      internalPort: null,
+    },
+    tools: [],
+  });
+
+  // Aionima System — the always-present meta-project that holds Aionima
+  // itself. The dashboard's `_aionima` project (s119 t700) — repos folder
+  // contains every fork (agi, prime, id, marketplace, mapp-marketplace,
+  // react-fancy, fancy-code, fancy-sheets, fancy-echarts, fancy-3d,
+  // fancy-screens). k/ holds Aion's memory + user-generated system
+  // knowledge. Aion chat on this project lets the owner work on the
+  // Aionima system itself the same way they work on any other project.
+  // hasCode=true — repos contain real code consumers can edit / inspect /
+  // run via standard project tooling. hostable=false — Aionima isn't
+  // hosted as an app by itself (it IS the gateway). servesDesktop=false —
+  // not a Desktop-served project; the project's value is the repos +
+  // memory, not a hostname-routed surface.
+  registry.register({
+    id: "aionima-system",
+    label: "Aionima System",
+    category: "monorepo",
+    hostable: false,
+    hasCode: true,
+    servesDesktop: false,
+    iterativeWorkEligible: true,
+    defaultMeta: {
+      type: "aionima-system",
       mode: "production",
       internalPort: null,
     },
