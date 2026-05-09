@@ -653,17 +653,31 @@ export function ProjectDetail({
             <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold whitespace-nowrap pr-1" data-testid="project-sub-surface-label">{currentMode} ›</span>
             <TabsList className="border-b-0 gap-1 flex-wrap py-0">
               {/*
-                s150 t638 — primary/secondary split. Primary tabs render as
-                always-visible TabsTriggers; secondary tabs collapse into the
-                "More…" overflow Select to the right. Primary set is owner-
-                directed: Details / Editor / Hosting / Activity. Existing
-                per-tab gates (hasCode, iterativeWorkEligible, hostingConfigure)
-                still apply — a tab can be primary AND hidden if its gate fails.
+                s150 t638 + s159 (cycle 261) — primary/secondary split.
+                Primary tabs render as always-visible TabsTriggers; secondary
+                tabs collapse into the overflow Select to the right.
+
+                Cycle 261 promotion: Iterative Work + Plans + Notes are
+                daily-use surfaces and were buried in the dropdown. Promoted
+                to primary so owners can reach the work without an extra
+                click. Per-tab gates (hasCode, iterativeWorkEligible,
+                hostingConfigure) still apply — a tab can be primary AND
+                hidden if its gate fails.
               */}
               {tabBelongsToMode("details") && <TabsTrigger value="details" className={SUB_PILL_CLASS}>Details</TabsTrigger>}
               {tabBelongsToMode("files") && <TabsTrigger value="files" className={SUB_PILL_CLASS}>Editor</TabsTrigger>}
               {tabBelongsToMode("hosting") && onHostingConfigure && onHostingRestart && (
                 <TabsTrigger value="hosting" className={SUB_PILL_CLASS}>Hosting</TabsTrigger>
+              )}
+              {tabBelongsToMode("iterative-work")
+                && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
+                <TabsTrigger value="iterative-work" className={SUB_PILL_CLASS} data-testid="project-tab-iterative-work">Iterative Work</TabsTrigger>
+              )}
+              {tabBelongsToMode("plans") && (
+                <TabsTrigger value="plans" className={SUB_PILL_CLASS} data-testid="project-tab-plans">Plans</TabsTrigger>
+              )}
+              {tabBelongsToMode("notes") && (
+                <TabsTrigger value="notes" className={SUB_PILL_CLASS} data-testid="project-tab-notes">Notes</TabsTrigger>
               )}
               {tabBelongsToMode("activity") && (
                 <TabsTrigger value="activity" className={SUB_PILL_CLASS} data-testid="project-tab-activity">Activity</TabsTrigger>
@@ -703,18 +717,8 @@ export function ProjectDetail({
                 entries.push({ value: "environment", label: "Environment" });
               }
               if (tabBelongsToMode("taskmaster")) entries.push({ value: "taskmaster", label: "TaskMaster" });
-              // Wish #17 / s155 t671 — Plans entry. Available for every
-              // project (no hasCode gate) since PM-Lite is universal.
-              if (tabBelongsToMode("plans")) entries.push({ value: "plans", label: "Plans" });
-              // s152 — Notes entry. Available for every project; markdown
-              // notepad surface, agent-readable.
-              if (tabBelongsToMode("notes")) entries.push({ value: "notes", label: "Notes" });
-              if (
-                tabBelongsToMode("iterative-work")
-                && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible)
-              ) {
-                entries.push({ value: "iterative-work", label: "Iterative Work" });
-              }
+              // Plans + Notes + Iterative Work were promoted to PRIMARY tabs
+              // in cycle 261 — they no longer appear in the More dropdown.
               if (tabBelongsToMode("mcp") && project.projectType?.hasCode) {
                 entries.push({ value: "mcp", label: "MCP" });
               }
@@ -730,7 +734,12 @@ export function ProjectDetail({
                 <Select
                   className="text-[12px] h-7 w-[160px]"
                   list={[
-                    { value: "", label: isOnSecondary ? "More…" : "More…" },
+                    // Cycle 261 — single placeholder option that's the same
+                    // as the closed-state label. Was a buggy ternary that
+                    // returned "More…" on both branches AND showed the
+                    // string as a selectable option below the closed
+                    // dropdown.
+                    { value: "", label: "More…" },
                     ...entries,
                   ]}
                   value={isOnSecondary ? activeTab : ""}
