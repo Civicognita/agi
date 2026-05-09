@@ -6,7 +6,11 @@ import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { PageScroll } from "@/components/PageScroll.js";
-import { fetchServices, startService, stopService, restartService } from "@/api.js";
+import {
+  fetchServices, startService, stopService, restartService,
+  fetchCircuitBreakers, resetCircuitBreaker, resetAllCircuitBreakers,
+  type CircuitBreakersResponse,
+} from "@/api.js";
 import type { ServiceInfo } from "@/types.js";
 
 export default function ServicesPage() {
@@ -51,8 +55,15 @@ export default function ServicesPage() {
   const visibleServices = services.filter((svc) => svc.imageAvailable !== false);
 
   if (visibleServices.length === 0) {
+    // s143 t573 — render the CircuitBreakerSection BEFORE the empty-state
+    // early-return so circuit-broken services are visible even when no
+    // service plugin is registered. Previously, breakers were hidden
+    // behind this branch — a real UX gap caught while wiring the e2e.
+    // CircuitBreakerSection internally returns null when totalCount === 0,
+    // so the empty-state stays clean for the actually-empty case.
     return (
       <PageScroll>
+      <CircuitBreakerSection />
       <div className="text-center py-12">
         <div className="text-[13px] text-muted-foreground mb-2">No services registered</div>
         <div className="text-[11px] text-muted-foreground">
@@ -66,6 +77,7 @@ export default function ServicesPage() {
 
   return (
     <PageScroll>
+    <CircuitBreakerSection />
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       {visibleServices.map((svc) => {
         const statusColor = {
@@ -142,5 +154,161 @@ export default function ServicesPage() {
       })}
     </div>
     </PageScroll>
+  );
+}
+
+/**
+ * CircuitBreakerSection — surfaces the gateway's persistent circuit-breaker
+ * state at the top of the Services page (s143 t570). Closes the loop opened
+ * in cycles 153-157: the breaker auto-trips broken hosting services to keep
+ * boot bounded, but until now the only way to see + reset breakers was
+ * editing gateway.json by hand. Owner directive cycle 156: "we need a
+ * circuit breaker in the Services page for failing services we're
+ * responsible for."
+ *
+ * Hidden when nothing is tracked. Otherwise lists every breaker with status
+ * pill, failure count, last error (truncated), per-service Reset button,
+ * and a "Reset all" affordance when multiple are tracked.
+ */
+function CircuitBreakerSection(): React.ReactElement | null {
+  const [data, setData] = useState<CircuitBreakersResponse | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const refresh = useCallback(() => {
+    fetchCircuitBreakers().then(setData).catch(() => setData(null));
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    // Refresh every 10s so a freshly-tripped breaker surfaces without
+    // requiring a manual reload. Cheap — single GET against gateway.json.
+    const t = setInterval(refresh, 10_000);
+    return () => clearInterval(t);
+  }, [refresh]);
+
+  if (data === null || data.totalCount === 0) {
+    return null;
+  }
+
+  // s143 t573 — section title is "Circuit-broken services". Only render
+  // rows whose breaker is open or half-open. Reset writes status=closed
+  // but does NOT delete the entry (intentional — operators see when each
+  // breaker was last reset), so closed entries leak into the list
+  // otherwise. Hiding closed ones makes the UI self-clearing after Reset
+  // is clicked, and keeps the count summary honest ("N open · M
+  // half-open"). The full state map is still available via API for any
+  // diagnostic surface that wants the full history.
+  const entries = Object.entries(data.states).filter(
+    ([, state]) => state.status === "open" || state.status === "half-open",
+  );
+  if (entries.length === 0) {
+    return null;
+  }
+
+  async function handleReset(serviceId: string): Promise<void> {
+    setBusy(serviceId);
+    try {
+      await resetCircuitBreaker(serviceId);
+      refresh();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleResetAll(): Promise<void> {
+    setBusy("__all__");
+    try {
+      await resetAllCircuitBreakers();
+      refresh();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-card border border-border p-4 mb-6" data-testid="circuit-breakers-section">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="inline-block w-2 h-2 rounded-full bg-yellow shrink-0" />
+        <span className="text-[14px] font-semibold text-foreground">
+          Circuit-broken services
+        </span>
+        <span className="text-[11px] text-muted-foreground ml-2">
+          {data.openCount} open · {data.halfOpenCount} half-open · {data.totalCount} tracked
+        </span>
+        {data.totalCount > 1 && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy !== null}
+            onClick={() => void handleResetAll()}
+            className="text-[11px] h-7 ml-auto"
+          >
+            {busy === "__all__" ? "Resetting..." : "Reset all"}
+          </Button>
+        )}
+      </div>
+      <p className="text-[11px] text-muted-foreground mb-3">
+        Services that failed to start N consecutive times. Open breakers are skipped on the next boot
+        until reset or until the cool-down elapses (default 24h).
+      </p>
+      <div className="flex flex-col gap-2">
+        {entries.map(([id, state]) => {
+          const statusPillClass = state.status === "open"
+            ? "bg-red/15 text-red"
+            : state.status === "half-open"
+              ? "bg-yellow/15 text-yellow"
+              : "bg-green/15 text-green";
+          // s143 t571 — derive a "kind" badge from the service id prefix
+          // (the id shape is `<kind>:<subject>`, e.g.
+          // `hosting:/home/.../proj`, `channel:slack-mainline`, etc.). The
+          // kind badge surfaces which subsystem the breaker is gating so
+          // the operator can scan a mixed list (hosting + channels +
+          // runtimes) and triage by category. Falls back to "service" when
+          // the id doesn't have a prefix.
+          const kindFromId = id.includes(":") ? id.split(":", 1)[0] ?? "service" : "service";
+          return (
+            <div key={id} className="rounded-lg border border-border bg-background p-3 flex items-start gap-3" data-testid={`circuit-breaker-${id}`}>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={cn("text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded", statusPillClass)}>
+                    {state.status}
+                  </span>
+                  <span
+                    className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground"
+                    data-testid={`circuit-breaker-kind-${id}`}
+                  >
+                    {kindFromId}
+                  </span>
+                  <code className="text-[11px] font-mono text-foreground truncate">{id}</code>
+                  <span className="text-[10px] text-muted-foreground ml-auto shrink-0">
+                    {state.failures} {state.failures === 1 ? "failure" : "failures"}
+                  </span>
+                </div>
+                {state.lastError && (
+                  <p className="text-[10px] text-muted-foreground font-mono truncate" title={state.lastError}>
+                    {state.lastError}
+                  </p>
+                )}
+                {state.lastFailureAt && (
+                  <p className="text-[10px] text-muted-foreground/70">
+                    Last failure: {new Date(state.lastFailureAt).toLocaleString()}
+                  </p>
+                )}
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy !== null}
+                onClick={() => void handleReset(id)}
+                className="text-[11px] h-7 shrink-0"
+                data-testid={`circuit-breaker-reset-${id}`}
+              >
+                {busy === id ? "Resetting..." : "Reset"}
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }

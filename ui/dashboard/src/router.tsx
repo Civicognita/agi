@@ -23,6 +23,7 @@ import AdminPage from "./routes/admin.js";
 import AdminDashboardPage from "./routes/admin-dashboard.js";
 import KnowledgePage from "./routes/knowledge.js";
 import DocsPage from "./routes/docs.js";
+import NotesPage from "./routes/notes.js";
 import SettingsLayout from "./routes/settings-layout.js";
 import SettingsGatewayPage from "./routes/settings-gateway.js";
 import SettingsDynamicPage from "./routes/settings-dynamic.js";
@@ -31,8 +32,10 @@ import MarketplacePage from "./routes/marketplace.js";
 import HFMarketplacePage from "./routes/hf-marketplace.js";
 import SettingsHFPage from "./routes/settings-hf.js";
 import SettingsProvidersPage from "./routes/settings-providers.js";
+import SettingsVaultPage from "./routes/settings-vault.js";
 import ScheduledJobsPage from "./routes/settings-scheduled-jobs.js";
 import AionimaPage from "./routes/aionima.js";
+import PaxPage from "./routes/pax.js";
 import { OnboardingPage } from "./routes/onboarding.js";
 import { GatewayOnboardingPage } from "./routes/gateway-onboarding.js";
 import ReportsPage from "./routes/reports.js";
@@ -77,6 +80,7 @@ export const router = createBrowserRouter([
       { path: "magic-apps/:id", element: <MagicAppDetailPage /> },
       // Knowledge
       { path: "knowledge", element: <KnowledgePage /> },
+      { path: "notes", element: <NotesPage /> },
       // Documentation
       { path: "docs", element: <DocsPage /> },
       // Gateway
@@ -86,6 +90,7 @@ export const router = createBrowserRouter([
       { path: "gateway/marketplace", element: <MarketplacePage /> },
       { path: "hf-marketplace", element: <HFMarketplacePage /> },
       { path: "aionima", element: <AionimaPage /> },
+      { path: "pax", element: <PaxPage /> },
       { path: "gateway/onboarding", element: <GatewayOnboardingPage /> },
       // Redirect old settings path
       { path: "gateway/settings", element: <Navigate to="/settings/gateway" replace /> },
@@ -97,6 +102,7 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="/settings/gateway" replace /> },
           { path: "gateway", element: <SettingsGatewayPage /> },
           { path: "providers", element: <SettingsProvidersPage /> },
+          { path: "vault", element: <SettingsVaultPage /> },
           { path: "scheduled-jobs", element: <ScheduledJobsPage /> },
           { path: "security", element: <SecuritySettingsPage /> },
           { path: "hf", element: <SettingsHFPage /> },

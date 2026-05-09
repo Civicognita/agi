@@ -150,6 +150,131 @@ export async function fetchProjects(): Promise<ProjectInfo[]> {
   return res.json() as Promise<ProjectInfo[]>;
 }
 
+// ---------------------------------------------------------------------------
+// PM-Lite — Wish #17 / s155 t671. Owner directive: "always available file-
+// based PM workflow + UI" with DONE/CURRENT/NEXT views.
+// ---------------------------------------------------------------------------
+
+export type PmView = "done" | "current" | "next";
+
+export interface PmTaskLite {
+  id: string;
+  number: number;
+  storyId: string;
+  title: string;
+  status: string;
+  description?: string;
+  priority?: "active" | "qa" | "blocked";
+  verificationSteps?: string[];
+  codeArea?: string;
+}
+
+export interface PmPlanLite {
+  id: string;
+  title: string;
+  status: string;
+  projectPath: string;
+  createdAt: string;
+  updatedAt: string;
+  steps: Array<{ id: string; title: string; type: string; status: string }>;
+  body: string;
+}
+
+export async function fetchPmView(view: PmView, opts: { storyId?: string; limit?: number } = {}): Promise<{ view: PmView; tasks: PmTaskLite[]; providerId: string }> {
+  const params = new URLSearchParams({ view });
+  if (opts.storyId !== undefined) params.set("storyId", opts.storyId);
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  const res = await fetch(`/api/pm/view?${params.toString()}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ view: PmView; tasks: PmTaskLite[]; providerId: string }>;
+}
+
+export async function fetchPmPlans(projectPath: string): Promise<PmPlanLite[]> {
+  const res = await fetch(`/api/pm/plans?projectPath=${encodeURIComponent(projectPath)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { plans: PmPlanLite[] };
+  return data.plans;
+}
+
+export async function fetchPmPlan(projectPath: string, planId: string): Promise<PmPlanLite> {
+  const res = await fetch(`/api/pm/plans/${encodeURIComponent(planId)}?projectPath=${encodeURIComponent(projectPath)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<PmPlanLite>;
+}
+
+// ---------------------------------------------------------------------------
+// UserNotes — s152. Markdown notepad surface, per-project + global scopes.
+// ---------------------------------------------------------------------------
+
+export interface UserNote {
+  id: string;
+  userEntityId: string;
+  projectPath: string | null;
+  title: string;
+  body: string;
+  sortOrder: number;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** List notes for a scope. Pass null for global; pass an absolute path for per-project. */
+export async function fetchNotes(projectPath: string | null): Promise<UserNote[]> {
+  const url = projectPath !== null
+    ? `/api/notes?projectPath=${encodeURIComponent(projectPath)}`
+    : "/api/notes";
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { notes: UserNote[] };
+  return data.notes;
+}
+
+export async function createNote(input: { projectPath: string | null; title: string; body?: string; pinned?: boolean }): Promise<UserNote> {
+  const res = await fetch("/api/notes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<UserNote>;
+}
+
+export async function updateNote(id: string, patch: { title?: string; body?: string; pinned?: boolean; sortOrder?: number }): Promise<UserNote> {
+  const res = await fetch(`/api/notes/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<UserNote>;
+}
+
+export async function deleteNote(id: string): Promise<void> {
+  const res = await fetch(`/api/notes/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
 export async function createProject(params: {
   name: string;
   tynnToken?: string;
@@ -174,7 +299,12 @@ export async function updateProject(params: {
   path: string;
   name?: string;
   tynnToken?: string | null;
+  /** @deprecated s150 — use `type`. Backend still accepts for back-compat. */
   category?: string;
+  /** s150 — single classifier replacing `category`. */
+  type?: string;
+  /** s150 t636 — free-form purpose textarea. */
+  description?: string;
 }): Promise<{ ok: boolean }> {
   const res = await fetch("/api/projects", {
     method: "PUT",
@@ -461,6 +591,13 @@ export interface ActiveProviderState {
     simpleThresholdTokens?: number;
     complexThresholdTokens?: number;
     maxEscalationsPerTurn?: number;
+    /** s129 t510: tier range. floor === ceiling means "lock; never escalate".
+     *  When unset on the wire (legacy config), server derives from costMode. */
+    floor: string;
+    ceiling: string;
+    escalateOnLowConfidence: boolean;
+    escalateOnTimeoutSec: number | null;
+    parallelRace: boolean;
   };
   offGridMode: boolean;
 }
@@ -478,6 +615,27 @@ export async function fetchActiveProvider(): Promise<ActiveProviderState> {
   const res = await fetch("/api/providers/active");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json() as Promise<ActiveProviderState>;
+}
+
+/** Live model info returned by GET /api/providers/:id/models (cycle 140). */
+export interface ProviderModelInfo {
+  id: string;
+  label?: string;
+  contextLength?: number;
+  capabilities?: { vision?: boolean; tools?: boolean; reasoning?: boolean };
+}
+
+/**
+ * GET /api/providers/:id/models — live model list per Provider (cycle 140).
+ * Returns null when the provider is unreachable, unauthenticated, or doesn't
+ * expose a list endpoint (cloud providers today). UI treats null as "fall
+ * back to static catalog defaultModel" or shows a status indicator.
+ */
+export async function fetchProviderModels(providerId: string): Promise<ProviderModelInfo[] | null> {
+  const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/models`);
+  if (!res.ok) return null;
+  const body = await res.json() as { models: ProviderModelInfo[] | null };
+  return body.models;
 }
 
 /** s111 t419 wire shape — recent routing decisions from AgentRouter ring
@@ -533,6 +691,11 @@ export async function updateRouterConfig(patch: {
   complexThresholdTokens?: number;
   maxEscalationsPerTurn?: number;
   offGridMode?: boolean;
+  floor?: string;
+  ceiling?: string;
+  escalateOnLowConfidence?: boolean;
+  escalateOnTimeoutSec?: number | null;
+  parallelRace?: boolean;
 }): Promise<ActiveProviderState> {
   const res = await fetch("/api/providers/router", {
     method: "PUT",
@@ -880,6 +1043,10 @@ export async function configureHosting(params: {
   mode?: "production" | "development";
   internalPort?: number;
   runtimeId?: string;
+  /** s145 t585 — flip container kind from the dashboard. */
+  containerKind?: "static" | "code" | "mapp";
+  /** s145 t585 — list of MApp IDs (only used when containerKind === "mapp"). */
+  mapps?: string[];
 }): Promise<{ ok: boolean; hosting: unknown }> {
   const res = await fetch("/api/hosting/configure", {
     method: "PUT",
@@ -1369,6 +1536,30 @@ export interface PersistedChatSession {
   lastPreview: string;
 }
 
+/** Per-day activity counts for a project. s130 t516 slice 2 (cycle 105+106). */
+export interface ProjectActivitySummary {
+  path: string;
+  days: number;
+  total: number;
+  /** Length = days, oldest → newest. */
+  dailyCounts: number[];
+  /** YYYY-MM-DD per index (parallel to dailyCounts). */
+  dayKeys: string[];
+}
+
+export async function fetchProjectActivitySummary(
+  projectPath: string,
+  days = 30,
+): Promise<ProjectActivitySummary> {
+  const url = `/api/projects/activity-summary?path=${encodeURIComponent(projectPath)}&days=${String(days)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ProjectActivitySummary>;
+}
+
 export async function fetchChatSessions(): Promise<ChatSessionSummary[]> {
   const res = await fetch("/api/chat/sessions");
   if (!res.ok) {
@@ -1379,8 +1570,15 @@ export async function fetchChatSessions(): Promise<ChatSessionSummary[]> {
   return data.sessions;
 }
 
-export async function fetchChatSession(id: string): Promise<PersistedChatSession> {
-  const res = await fetch(`/api/chat/sessions/${id}`);
+export async function fetchChatSession(id: string, projectPath?: string): Promise<PersistedChatSession> {
+  // s130 t521 UI-side wiring slice (cycle 101): when projectPath is
+  // provided, append ?projectPath= so the gateway prefers the
+  // per-project copy at <projectPath>/k/chat/<id>.json over the
+  // global dir. When unset, falls back to global-only resolution.
+  const url = projectPath !== undefined && projectPath.length > 0
+    ? `/api/chat/sessions/${id}?projectPath=${encodeURIComponent(projectPath)}`
+    : `/api/chat/sessions/${id}`;
+  const res = await fetch(url);
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -1513,6 +1711,52 @@ export async function restartService(id: string): Promise<{ ok: boolean }> {
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<{ ok: boolean }>;
+}
+
+// ---------------------------------------------------------------------------
+// Circuit-breaker API — /api/services/circuit-breakers (s143 t570)
+// ---------------------------------------------------------------------------
+
+export interface CircuitBreakerStateInfo {
+  failures: number;
+  lastFailureAt?: string;
+  lastError?: string;
+  status: "closed" | "half-open" | "open";
+  lastResetAt?: string;
+}
+
+export interface CircuitBreakersResponse {
+  states: Record<string, CircuitBreakerStateInfo>;
+  openCount: number;
+  halfOpenCount: number;
+  totalCount: number;
+}
+
+export async function fetchCircuitBreakers(): Promise<CircuitBreakersResponse> {
+  const res = await fetch("/api/services/circuit-breakers");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<CircuitBreakersResponse>;
+}
+
+export async function resetCircuitBreaker(serviceId: string): Promise<{ ok: boolean; serviceId: string }> {
+  const res = await fetch(`/api/services/circuit-breakers/${encodeURIComponent(serviceId)}/reset`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean; serviceId: string }>;
+}
+
+export async function resetAllCircuitBreakers(): Promise<{ ok: boolean; count: number }> {
+  const res = await fetch("/api/services/circuit-breakers/reset-all", { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean; count: number }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -3308,4 +3552,127 @@ export async function fetchPromptPreview(
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<PromptPreview>;
+}
+
+// ---------------------------------------------------------------------------
+// Vault API (s128 t495)
+// ---------------------------------------------------------------------------
+
+export type VaultEntryType = "key" | "password" | "token";
+
+export interface VaultEntrySummary {
+  id: string;
+  name: string;
+  type: VaultEntryType;
+  created: string;
+  lastAccessed: string | null;
+  ownedByProject: boolean;
+  description?: string;
+}
+
+export interface VaultEntryCreateInput {
+  name: string;
+  type: VaultEntryType;
+  value: string;
+  owningProject?: string;
+  description?: string;
+}
+
+export async function fetchVaultEntries(requestingProject?: string): Promise<VaultEntrySummary[]> {
+  const url = new URL("/api/vault", window.location.origin);
+  if (requestingProject !== undefined) url.searchParams.set("requestingProject", requestingProject);
+  const res = await fetch(url.toString());
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { entries: VaultEntrySummary[] };
+  return data.entries;
+}
+
+export async function createVaultEntry(input: VaultEntryCreateInput): Promise<VaultEntrySummary> {
+  const res = await fetch("/api/vault", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { entry: VaultEntrySummary };
+  return data.entry;
+}
+
+export async function deleteVaultEntry(id: string, requestingProject?: string): Promise<boolean> {
+  const url = new URL(`/api/vault/${encodeURIComponent(id)}`, window.location.origin);
+  if (requestingProject !== undefined) url.searchParams.set("requestingProject", requestingProject);
+  const res = await fetch(url.toString(), { method: "DELETE" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({ error: res.statusText }))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { deleted: boolean };
+  return data.deleted;
+}
+
+// s130 t515 B6 — repos[] CRUD for the dashboard RepoManager component.
+export interface ProjectRepo {
+  name: string;
+  url: string;
+  branch?: string;
+  path?: string;
+  writable?: boolean;
+  port?: number;
+  startCommand?: string;
+  isDefault?: boolean;
+  externalPath?: string;
+  env?: Record<string, string>;
+  autoRun?: boolean;
+}
+
+export async function fetchProjectRepos(projectPath: string): Promise<ProjectRepo[]> {
+  const url = `/api/projects/repos?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { repos: ProjectRepo[] };
+  return data.repos;
+}
+
+export async function addProjectRepo(projectPath: string, repo: ProjectRepo): Promise<void> {
+  const url = `/api/projects/repos?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(repo),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function updateProjectRepo(projectPath: string, name: string, patch: Partial<ProjectRepo>): Promise<void> {
+  const url = `/api/projects/repos/${encodeURIComponent(name)}?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function removeProjectRepo(projectPath: string, name: string): Promise<void> {
+  const url = `/api/projects/repos/${encodeURIComponent(name)}?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
 }

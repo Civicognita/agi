@@ -408,6 +408,7 @@ export type { ProjectTypeDefinition, ProjectTypeTool, ContainerConfig, ProjectCa
 
 // Stacks
 export { StackRegistry } from "./stack-registry.js";
+export { filterStackActionsForRepo } from "./stack-types.js";
 export type {
   StackCategory, StackRequirement, StackGuide,
   StackContainerContext, StackContainerConfig, StackDatabaseConfig,
@@ -448,9 +449,29 @@ export type { MagicAppInstanceRecord, CreateInstanceParams } from "./magic-app-s
 export { HostingManager } from "./hosting-manager.js";
 export type { HostingConfig, ProjectHostingMeta, HostedProject, InfraStatus, HostingManagerDeps, InstallActionResult, DetectedProjectConfig } from "./hosting-manager.js";
 
+// MCP project config (s131)
+export {
+  projectMcpPath,
+  mcpEntryToServer,
+  readDotMcpJson,
+  readProjectMcpServers,
+  DotMcpJsonSchema,
+} from "./mcp-config-store.js";
+export type { DotMcpJson, McpServerEntry } from "./mcp-config-store.js";
+export {
+  serverToMcpEntry,
+  migrateProjectMcpConfig,
+  migrateAllProjectMcpConfigs,
+} from "./mcp-config-migration.js";
+export type { McpMigrationResult, McpSweepResult } from "./mcp-config-migration.js";
+
 // Service Manager
 export { ServiceManager } from "./service-manager.js";
 export type { ServiceStatus, ServiceManagerDeps } from "./service-manager.js";
+
+// Circuit breaker (s143)
+export { CircuitBreakerTracker } from "./circuit-breaker.js";
+export type { CircuitBreakerDeps, ShouldSkipResult } from "./circuit-breaker.js";
 
 // Terminal
 export { TerminalManager } from "./terminal-manager.js";

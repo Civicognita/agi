@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { Callout } from "@particle-academy/react-fancy";
 import { Button } from "@/components/ui/button";
 import { useSafemode, useExitSafemode, useAdminIncidentMarkdown } from "@/hooks";
 import type { SafemodeSnapshot } from "@/types.js";
@@ -45,7 +46,7 @@ export function SafemodeCallout() {
   };
 
   return (
-    <div className="mb-4 px-4 py-4 rounded-xl border-2 border-red bg-red/10">
+    <Callout color="red" className="mb-4 px-4 py-4 border-2">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1">
           <div className="text-[14px] font-bold text-red mb-1">
@@ -60,9 +61,9 @@ export function SafemodeCallout() {
             containers and exit safemode.
           </div>
           {errMsg !== null ? (
-            <div className="mb-3 px-3 py-2 rounded border border-red bg-surface0 text-[12px] text-red">
+            <Callout color="red" className="mb-3 px-3 py-2 text-[12px]">
               {errMsg}
-            </div>
+            </Callout>
           ) : null}
           <div className="flex gap-2">
             <Button size="sm" onClick={onRecover} disabled={exitSafemode.isPending}>
@@ -86,6 +87,6 @@ export function SafemodeCallout() {
           {markdown}
         </pre>
       ) : null}
-    </div>
+    </Callout>
   );
 }

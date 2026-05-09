@@ -27,14 +27,17 @@ import { ActiveDownloads } from "@/components/ActiveDownloads.js";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator.js";
 import { NotificationBell } from "@/components/NotificationBell.js";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover.js";
+import { DevNotesIcon } from "@/components/ui/dev-notes.js";
+import { RouteDevNotes } from "@/lib/route-notes.js";
 import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
-import { Chart } from "@particle-academy/react-fancy";
+import { Chart, Icon } from "@particle-academy/react-fancy";
 import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard, fetchProviderBalances, fetchBalanceHistory } from "@/api.js";
 import type { ProviderBalance } from "@/api.js";
 import { LoginPage } from "@/components/LoginPage.js";
 import type { ActivityEntry, DashboardEvent, Notification, ProjectActivity, TimeBucket, UpdateCheck } from "@/types.js";
+import { resolveHelpContext } from "@/lib/help-context.js";
 
 export type View = "overview" | "entity" | "coa" | "settings" | "logs" | "projects" | "system";
 
@@ -312,6 +315,12 @@ export default function RootLayout() {
     setChatOpen(true);
   }, []);
 
+  // s124 cycle 86 rework — handleOpenChatForIterativeWork removed. The
+  // toast click-through is no longer needed because the artifact card now
+  // renders INSIDE the project's chat flyout directly. Owners see the
+  // artifact when they open that project's chat; no global toast →
+  // chat-routing dispatch is required.
+
   const handleOpenEditor = useCallback((path: string) => {
     setEditorFilePath(path);
   }, []);
@@ -436,6 +445,11 @@ export default function RootLayout() {
         return [event.data, ...safeArray<Notification>(prev)].slice(0, 100);
       });
       setUnreadCount((prev) => (typeof prev === "number" ? prev : 0) + 1);
+      // s124 cycle 86 rework: iterative-work completions now render INSIDE
+      // the project's chat flyout (per-project surface) via ChatFlyout's
+      // notifications prop + filter on activeSession.context. The previous
+      // setLatestIterativeWorkToast / global toast stack is gone — the chat
+      // surface IS the per-project surface.
     }
     if (event.type === "usage:recorded") {
       // Refresh provider balances after each completion so alerts stay current
@@ -605,7 +619,7 @@ export default function RootLayout() {
                     </span>
                   </button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[300px] p-4 bg-card border border-border rounded-xl shadow-lg z-[200]">
+                <PopoverContent className="w-[300px] p-4 bg-card border border-border rounded-xl shadow-lg z-[300]">
                   <div className="text-[12px] font-semibold text-foreground mb-3">Provider Balances</div>
                   {providerBalances.filter(b => b.balance !== null).map(b => (
                     <div key={b.providerId} className="flex items-center gap-3 py-2 border-b border-border last:border-b-0">
@@ -649,7 +663,7 @@ export default function RootLayout() {
                   {upgradeLogs.length > 0 && <span className="ml-1 opacity-70">({upgradeLogs.length})</span>}
                 </Badge>
                 {upgradeDropdown && upgradeLogs.length > 0 && upgradePhase !== "complete" && !upgradeReloading && (
-                  <div className="absolute top-[calc(100%+8px)] right-0 w-[min(384px,calc(100vw-24px))] bg-card border border-border rounded-xl p-3 z-[200] shadow-lg max-h-[300px] overflow-y-auto">
+                  <div className="absolute top-[calc(100%+8px)] right-0 w-[min(384px,calc(100vw-24px))] bg-card border border-border rounded-xl p-3 z-[300] shadow-lg max-h-[300px] overflow-y-auto">
                     <div className="text-[13px] font-semibold mb-2">Deploy Log</div>
                     {upgradeLogs.map((entry, i) => (
                       <div key={i} className="text-xs py-1 border-b border-border flex items-center gap-2">
@@ -683,7 +697,7 @@ export default function RootLayout() {
                   )}
                 </Button>
                 {upgradeDropdown && (
-                  <div className="absolute top-[calc(100%+8px)] right-0 w-[min(320px,calc(100vw-24px))] bg-card border border-border rounded-xl p-4 z-[200] shadow-lg">
+                  <div className="absolute top-[calc(100%+8px)] right-0 w-[min(320px,calc(100vw-24px))] bg-card border border-border rounded-xl p-4 z-[300] shadow-lg">
                     <div className="text-[13px] font-semibold mb-2">
                       Pending commits{updateCheck.channel === "dev" ? " (dev)" : ""}
                     </div>
@@ -712,10 +726,16 @@ export default function RootLayout() {
                 title="System Terminal"
                 data-testid="system-terminal-button"
               >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="4 17 10 11 4 5" />
-                  <line x1="12" y1="19" x2="20" y2="19" />
-                </svg>
+                {/* s142 t558 — wrap SVG in PAx Icon for consistent a11y +
+                    sizing. Icon provides aria-hidden=true + flex
+                    centering; the inner svg keeps its viewBox + paths
+                    until an icon set is registered upstream. */}
+                <Icon size="md">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="4 17 10 11 4 5" />
+                    <line x1="12" y1="19" x2="20" y2="19" />
+                  </svg>
+                </Icon>
               </button>
             </div>
             <div className="hidden md:block">
@@ -725,13 +745,47 @@ export default function RootLayout() {
                 title="WhoDB"
                 data-testid="whodb-button"
               >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <ellipse cx="12" cy="5" rx="9" ry="3" />
-                  <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-                  <path d="M3 12A9 3 0 0 0 21 12" />
-                </svg>
+                <Icon size="md">
+                  <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <ellipse cx="12" cy="5" rx="9" ry="3" />
+                    <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+                    <path d="M3 12A9 3 0 0 0 21 12" />
+                  </svg>
+                </Icon>
               </button>
             </div>
+            {/* DevNotes universal trigger (cycle 150 refactor). Opens the
+                global modal with all currently-registered notes from the
+                rendered page+tab+visible-views. Hidden when no notes exist
+                or when Contributing/Dev Mode is off. */}
+            <DevNotesIcon />
+            {/* s137 t529 — universal help button. Opens chat with a help-mode
+                context derived from the current pathname so the agent knows
+                what page the user is looking at. The route → context mapping
+                is the next slice (t530); for now the raw pathname suffices
+                as the agent can read it. */}
+            <button
+              onClick={() => {
+                // s137 t530 — resolve route → human-readable help context
+                // string instead of the raw pathname. The help agent gets
+                // a stable description (e.g. "providers + models
+                // management") regardless of dynamic segments in the URL.
+                setChatContext(`help:${resolveHelpContext(location.pathname)}`);
+                setChatOpen(true);
+              }}
+              className="p-2 rounded-lg transition-colors text-subtext0 hover:bg-surface0 hover:text-text"
+              title="Get help with this page"
+              data-testid="header-help-button"
+              aria-label="Open help chat"
+            >
+              <Icon size="md">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+              </Icon>
+            </button>
             <button
               onClick={() => setChatOpen((p) => !p)}
               className={cn(
@@ -743,9 +797,11 @@ export default function RootLayout() {
               title="Chat"
               data-testid="header-chat-button"
             >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
+              <Icon size="md">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+              </Icon>
             </button>
             {!isMobile && <ActivityDot active={systemActive} />}
             <NotificationBell
@@ -779,7 +835,7 @@ export default function RootLayout() {
                       {initial}
                     </div>
                   </PopoverTrigger>
-                  <PopoverContent className="p-0 w-auto border-0 bg-transparent shadow-none z-[200]">
+                  <PopoverContent className="p-0 w-auto border-0 bg-transparent shadow-none z-[300]">
                     <ProfileCard
                       displayName={ownerName}
                       channels={configHook.data?.owner?.channels}
@@ -817,6 +873,7 @@ export default function RootLayout() {
               openWithContext={chatContext}
               openWithMessage={chatInitialMessage}
               openRequestId={chatRequestId}
+              notifications={notifications}
               docked
             />
           </div>
@@ -824,6 +881,11 @@ export default function RootLayout() {
           // Normal mode: content area with flyout overlays
           <>
             <main className="max-w-[1200px] w-full mx-auto flex-1 min-h-0 flex flex-col overflow-hidden">
+              {/* Route-default DevNote — registers a per-route default note
+                  to the global modal. Page components can embed inline
+                  <DevNote> instances for additional context; both stack into
+                  the same modal accessible from the header icon. */}
+              <RouteDevNotes />
               <Outlet context={ctx} />
             </main>
 
@@ -846,6 +908,7 @@ export default function RootLayout() {
               openWithContext={chatContext}
               openWithMessage={chatInitialMessage}
               openRequestId={chatRequestId}
+              notifications={notifications}
             />
           </>
         )}
@@ -919,6 +982,12 @@ export default function RootLayout() {
           </div>
         </div>
       )}
+
+      {/* s124 cycle 86 rework — iterative-work artifacts now render INSIDE
+          the project's chat flyout (per-project surface), not as a global
+          bottom-right toast stack. The IterativeWorkToastStack component
+          is deprecated by this change; ChatFlyout consumes notifications
+          directly + filters to its active session's project path. */}
     </div>
   );
 }

@@ -1,8 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { TynnLitePmProvider } from "./tynn-lite-provider.js";
+import { migrateTynnLiteStorage, TynnLitePmProvider } from "./tynn-lite-provider.js";
 
 let projectRoot: string;
 let provider: TynnLitePmProvider;
@@ -382,5 +382,120 @@ describe("TynnLitePmProvider — iWish (cycle 46)", () => {
 describe("TynnLitePmProvider — methods still stubbed (cycle 47+ scope)", () => {
   it("getStory still returns null (no story concept in tynn-lite yet)", async () => {
     expect(await provider.getStory("any-id")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// s155 t670 — pluggable storage dir + migration helper
+// ---------------------------------------------------------------------------
+
+describe("TynnLitePmProvider — pluggable storageDir (s155 t670)", () => {
+  let testRoot: string;
+  beforeEach(() => {
+    testRoot = mkdtempSync(join(tmpdir(), "tlp-storage-"));
+  });
+  afterEach(() => {
+    rmSync(testRoot, { recursive: true, force: true });
+  });
+
+  it("defaults to <projectRoot>/.tynn-lite/ when storageDir is omitted", () => {
+    const p = new TynnLitePmProvider({ projectRoot: testRoot });
+    expect(p.storageDir).toBe(join(testRoot, ".tynn-lite"));
+  });
+
+  it("relative storageDir joins with projectRoot (e.g. 'k/pm')", () => {
+    const p = new TynnLitePmProvider({ projectRoot: testRoot, storageDir: "k/pm" });
+    expect(p.storageDir).toBe(join(testRoot, "k", "pm"));
+  });
+
+  it("absolute storageDir lands as-is, ignoring projectRoot", () => {
+    const abs = join(testRoot, "elsewhere", "pm");
+    const p = new TynnLitePmProvider({ projectRoot: testRoot, storageDir: abs });
+    expect(p.storageDir).toBe(abs);
+  });
+
+  it("create+findTasks roundtrip works with the k/pm/ storage layout", async () => {
+    const p = new TynnLitePmProvider({ projectRoot: testRoot, storageDir: "k/pm" });
+    await p.createTask({ storyId: "s1", title: "Sample", description: "" });
+    const tasks = await p.findTasks();
+    expect(tasks.map((t) => t.title)).toEqual(["Sample"]);
+    expect(existsSync(join(testRoot, "k", "pm", "tasks.jsonl"))).toBe(true);
+    expect(existsSync(join(testRoot, ".tynn-lite", "tasks.jsonl"))).toBe(false);
+  });
+});
+
+describe("migrateTynnLiteStorage (s155 t670)", () => {
+  let testRoot: string;
+  beforeEach(() => {
+    testRoot = mkdtempSync(join(tmpdir(), "tlp-mig-"));
+  });
+  afterEach(() => {
+    rmSync(testRoot, { recursive: true, force: true });
+  });
+
+  it("copies all four canonical files when present in legacy", () => {
+    const legacy = join(testRoot, ".tynn-lite");
+    const canonical = join(testRoot, "k", "pm");
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, "tasks.jsonl"), `{"id":"t1"}\n`, "utf-8");
+    writeFileSync(join(legacy, "comments.jsonl"), `{"id":"c1"}\n`, "utf-8");
+    writeFileSync(join(legacy, "wishes.jsonl"), `{"id":"w1"}\n`, "utf-8");
+    writeFileSync(join(legacy, "state.json"), `{"activeFocus":null}\n`, "utf-8");
+
+    const r = migrateTynnLiteStorage(legacy, canonical);
+    expect(r.migrated).toBe(true);
+    expect(r.skipped).toBe(false);
+    expect(new Set(r.copied)).toEqual(new Set(["tasks.jsonl", "comments.jsonl", "wishes.jsonl", "state.json"]));
+    expect(existsSync(join(canonical, "tasks.jsonl"))).toBe(true);
+    expect(existsSync(join(canonical, "state.json"))).toBe(true);
+    // Legacy preserved as backup
+    expect(existsSync(join(legacy, "tasks.jsonl"))).toBe(true);
+  });
+
+  it("is a no-op when legacy dir is absent", () => {
+    const r = migrateTynnLiteStorage(join(testRoot, "missing"), join(testRoot, "k", "pm"));
+    expect(r).toEqual({ migrated: false, skipped: false, copied: [], errors: [] });
+  });
+
+  it("skips when canonical already contains any TynnLite file (no clobber)", () => {
+    const legacy = join(testRoot, ".tynn-lite");
+    const canonical = join(testRoot, "k", "pm");
+    mkdirSync(legacy, { recursive: true });
+    mkdirSync(canonical, { recursive: true });
+    writeFileSync(join(legacy, "tasks.jsonl"), `{"id":"legacy"}\n`, "utf-8");
+    writeFileSync(join(canonical, "tasks.jsonl"), `{"id":"already-here"}\n`, "utf-8");
+
+    const r = migrateTynnLiteStorage(legacy, canonical);
+    expect(r.migrated).toBe(false);
+    expect(r.skipped).toBe(true);
+    expect(r.copied).toEqual([]);
+    expect(readFileSync(join(canonical, "tasks.jsonl"), "utf-8")).toContain("already-here");
+  });
+
+  it("copies only files that exist in legacy (skips absent)", () => {
+    const legacy = join(testRoot, ".tynn-lite");
+    const canonical = join(testRoot, "k", "pm");
+    mkdirSync(legacy, { recursive: true });
+    writeFileSync(join(legacy, "tasks.jsonl"), `{"id":"t1"}\n`, "utf-8");
+    const r = migrateTynnLiteStorage(legacy, canonical);
+    expect(r.migrated).toBe(true);
+    expect(r.copied).toEqual(["tasks.jsonl"]);
+  });
+
+  it("a TynnLitePmProvider can read the migrated state seamlessly", async () => {
+    const projectRoot = testRoot;
+    const legacy = join(projectRoot, ".tynn-lite");
+    const canonical = join(projectRoot, "k", "pm");
+
+    const legacyProvider = new TynnLitePmProvider({ projectRoot });
+    await legacyProvider.createTask({ storyId: "s1", title: "From legacy", description: "" });
+    expect(existsSync(join(legacy, "tasks.jsonl"))).toBe(true);
+
+    const r = migrateTynnLiteStorage(legacy, canonical);
+    expect(r.migrated).toBe(true);
+
+    const newProvider = new TynnLitePmProvider({ projectRoot, storageDir: "k/pm" });
+    const tasks = await newProvider.findTasks();
+    expect(tasks.map((t) => t.title)).toEqual(["From legacy"]);
   });
 });

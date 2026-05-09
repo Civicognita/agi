@@ -196,6 +196,15 @@ export interface AgentInvokerDeps {
    *  mode + other per-project flags can shape prompt assembly. Null when
    *  invoker is run without project context (e.g. entity-only requests). */
   projectConfigManager?: ProjectConfigManager;
+  /** s152 t651 — UserNotes store. When wired, the invoker reads up to N
+   *  notes for the active project (and global notes) and injects them
+   *  into the system-prompt's project-context section so Aion sees what
+   *  the owner wrote. Null in tests / non-project paths. */
+  notesStore?: import("./notes-store.js").NotesStore;
+  /** s152 t651 — alpha-stage owner entity id used to scope note reads. Defaults
+   *  to `~$U0`; the same constant the notes-api uses. Hive-ID multi-user
+   *  later replaces this with a per-session resolution. */
+  notesOwnerEntityId?: string;
   /** Workspace root path — injected as context when devMode is true. */
   workspaceRoot?: string;
   /** Directories where projects are stored and worked on. */
@@ -419,10 +428,20 @@ export class AgentInvoker extends EventEmitter {
     // Step 6: System prompt assembly
     // -----------------------------------------------------------------------
     const capabilities = this.deps.stateMachine.getCapabilities();
+
+    // Resolve project category once — used for both the tool gate (ops-mode
+    // tools surface only on ops/admin projects) and the iterativeWork hot-load
+    // below. Read at use time per `feedback_hot_config`.
+    const projectConfigForTurn = (request.projectContext !== undefined && this.deps.projectConfigManager !== undefined)
+      ? this.deps.projectConfigManager.read(request.projectContext)
+      : null;
+    const projectCategory = (projectConfigForTurn as { category?: string } | null | undefined)?.category;
+
     const availableTools = computeAvailableTools(
       state,
       entity.verificationTier,
       this.deps.toolRegistry.getManifests(),
+      projectCategory,
     );
 
     const entityCtx: EntityContextSection = {
@@ -520,19 +539,53 @@ export class AgentInvoker extends EventEmitter {
     let iterativeWorkPrompt: string | undefined;
     if (
       requestType === "project" &&
-      request.projectContext !== undefined &&
-      this.deps.projectConfigManager !== undefined
+      projectConfigForTurn?.iterativeWork?.enabled === true
     ) {
-      const projectConfig = this.deps.projectConfigManager.read(request.projectContext);
-      if (projectConfig?.iterativeWork?.enabled === true) {
-        try {
-          const { readFileSync } = await import("node:fs");
-          const { resolve: resolvePath } = await import("node:path");
-          iterativeWorkPrompt = readFileSync(
-            resolvePath(process.cwd(), "prompts/iterative-work.md"),
-            "utf-8",
-          );
-        } catch { /* iterative-work.md missing — proceed without injection */ }
+      try {
+        const { readFileSync } = await import("node:fs");
+        const { resolve: resolvePath } = await import("node:path");
+        iterativeWorkPrompt = readFileSync(
+          resolvePath(process.cwd(), "prompts/iterative-work.md"),
+          "utf-8",
+        );
+      } catch { /* iterative-work.md missing — proceed without injection */ }
+    }
+
+    // s152 t651 — read UserNotes for the active project + global notes,
+    // inject into prompt context so Aion sees what the owner wrote.
+    // Cap at top-N (pinned + most-recently-updated) to keep prompt size
+    // bounded; full search is available via the `notes` agent tool.
+    let projectNotes: SystemPromptContext["projectNotes"];
+    if (
+      this.deps.notesStore !== undefined
+      && request.projectContext !== undefined
+      && request.projectContext.length > 0
+    ) {
+      try {
+        const ownerId = this.deps.notesOwnerEntityId ?? "~$U0";
+        const [perProject, global] = await Promise.all([
+          this.deps.notesStore.list(ownerId, request.projectContext),
+          this.deps.notesStore.list(ownerId, null),
+        ]);
+        const NOTES_INJECTED_CAP = 6;
+        // Order: per-project pinned, per-project recent, global pinned, global recent.
+        const ordered = [
+          ...perProject.filter((n) => n.pinned),
+          ...perProject.filter((n) => !n.pinned),
+          ...global.filter((n) => n.pinned),
+          ...global.filter((n) => !n.pinned),
+        ].slice(0, NOTES_INJECTED_CAP);
+        projectNotes = ordered.map((n) => ({
+          title: n.title,
+          body: n.body,
+          pinned: n.pinned,
+          updatedAt: n.updatedAt,
+          scope: n.projectPath === null ? "global" as const : "project" as const,
+        }));
+      } catch (err) {
+        // Notes injection is best-effort — never block the agent if the DB
+        // hiccups. The notes tool surface still works.
+        this.log.warn(`notes injection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 
@@ -552,10 +605,12 @@ export class AgentInvoker extends EventEmitter {
       ownerName: this.deps.ownerConfig?.displayName,
       isOwner: request.isOwner,
       projectPath: request.projectContext,
+      projectCategory,
       requestType,
       costMode: this.deps.getCostMode?.(),
       toolsAvailable: willOfferTools,
       iterativeWorkPrompt,
+      ...(projectNotes !== undefined ? { projectNotes } : {}),
     };
 
     const { prompt: baseSystemPrompt, breakdown: promptBreakdown } = assembleSystemPromptWithBreakdown(promptCtx);
@@ -661,6 +716,7 @@ export class AgentInvoker extends EventEmitter {
       const providerTools = this.deps.toolRegistry.toProviderTools(
         state,
         entity.verificationTier,
+        projectCategory,
       );
 
       // Build API messages: resolve image refs on ALL history turns so the
@@ -1138,7 +1194,7 @@ export class AgentInvoker extends EventEmitter {
       this.emit("invocation_complete", {
         entityId: entity.id,
         model: result.model,
-        provider: result.model.startsWith("claude") ? "anthropic" : result.model.startsWith("gpt") ? "openai" : "ollama",
+        provider: typeof result.model === "string" && result.model.startsWith("claude") ? "anthropic" : typeof result.model === "string" && result.model.startsWith("gpt") ? "openai" : "ollama",
         usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
         toolsUsed,
         toolCount: toolsUsed.length,
@@ -1168,7 +1224,7 @@ export class AgentInvoker extends EventEmitter {
         coaFingerprint: outboundFingerprint,
         taskmasterEmissions: emissions.map((e) => e.description),
         model: result.model,
-        provider: result.model.startsWith("claude") ? "anthropic" : result.model.startsWith("gpt") ? "openai" : "ollama",
+        provider: typeof result.model === "string" && result.model.startsWith("claude") ? "anthropic" : typeof result.model === "string" && result.model.startsWith("gpt") ? "openai" : "ollama",
         usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
         toolCount: toolsUsed.length,
         loopCount,

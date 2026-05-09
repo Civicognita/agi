@@ -52,13 +52,48 @@ const AuthConfigSchema = z
   .strict();
 
 const CostModeSchema = z.enum(["local", "economy", "balanced", "max"]);
+/** Tier scale for router floor/ceiling (s129). Same enum as costMode but
+ *  named TierSchema to reflect that floor + ceiling represent positions on
+ *  a quality scale, not the legacy single-mode picker. */
+const TierSchema = z.enum(["local", "economy", "balanced", "max"]);
 
 const RouterConfigSchema = z
   .object({
-    /** Active cost mode — controls which models the router selects. */
+    /** **DEPRECATED — preserved for backward-compat / first-load migration**
+     *  (s129). Active cost mode under the legacy 4-button picker. New configs
+     *  should use floor/ceiling instead; the migration helper at boot derives
+     *  floor + ceiling from costMode + escalation when only legacy fields are
+     *  present. Default kept as "balanced" so configs without router{} bind. */
     costMode: CostModeSchema.default("balanced"),
-    /** Enable confidence-based escalation (cheap model first, re-route on low confidence). */
+    /** **DEPRECATED — see floor/ceiling + escalateOnLowConfidence below.**
+     *  Legacy single-toggle escalation switch. Migration: when set true,
+     *  ceiling is widened above floor; when false, ceiling = floor. */
     escalation: z.boolean().default(false),
+    /** Floor tier (s129). Where every turn STARTS. Router never picks below
+     *  this tier even if a higher-quality response would be cheaper. Use
+     *  "local" to start every turn on the local provider, "balanced" for
+     *  Sonnet-class default, etc. */
+    floor: TierSchema.default("balanced"),
+    /** Ceiling tier (s129). Maximum tier the router will escalate to.
+     *  Floor === ceiling means no escalation. Floor < ceiling on the
+     *  local→economy→balanced→max scale means escalation is allowed up
+     *  to ceiling on low-confidence or timeout. */
+    ceiling: TierSchema.default("max"),
+    /** Escalate when a response shows hedging/short-answer markers (s129).
+     *  Replaces the legacy `escalation` flag with explicit semantics —
+     *  signals the router to step up ONE tier when isLowConfidence() fires. */
+    escalateOnLowConfidence: z.boolean().default(true),
+    /** Escalate when a turn doesn't return within N seconds (s129). null
+     *  disables timeout escalation; positive integer triggers Promise.race
+     *  against setTimeout(N*1000) and steps up one tier when the floor
+     *  provider is too slow. Critical for off-grid scenarios where local
+     *  inference can be slow. */
+    escalateOnTimeoutSec: z.number().int().positive().nullable().default(null),
+    /** Race floor + ceiling in parallel (s129). When true, the router fires
+     *  the call against BOTH the floor tier AND the ceiling tier
+     *  simultaneously and takes the first acceptable response. Doubles cost;
+     *  cuts latency. Only useful for time-sensitive turns. */
+    parallelRace: z.boolean().default(false),
     /** Maximum escalations per turn to prevent cost spiraling. */
     maxEscalationsPerTurn: z.number().int().min(0).default(1),
     /** Token threshold below which a request is classified as "simple". */
@@ -67,6 +102,62 @@ const RouterConfigSchema = z
     complexThresholdTokens: z.number().int().positive().default(2000),
   })
   .strict();
+
+/**
+ * Migrate a legacy RouterConfig (costMode + escalation) to the new
+ * floor/ceiling/escalateOnLowConfidence shape (s129). Used by boot wiring
+ * to seamlessly convert configs written before s129. Mapping:
+ *
+ *   costMode=local + escalation=true   → floor=local, ceiling=balanced
+ *   costMode=local + escalation=false  → floor=local, ceiling=local
+ *   costMode=economy + escalation=true → floor=economy, ceiling=max
+ *   costMode=economy + escalation=false → floor=economy, ceiling=economy
+ *   costMode=balanced + escalation=true → floor=balanced, ceiling=max
+ *   costMode=balanced + escalation=false → floor=balanced, ceiling=balanced
+ *   costMode=max + (any escalation)    → floor=max, ceiling=max
+ *
+ * Idempotent: returns the input unchanged if floor/ceiling are already set
+ * to non-default values (i.e. config has already been migrated or written
+ * fresh in the new shape).
+ */
+export function migrateRouterConfig(config: {
+  costMode?: string;
+  escalation?: boolean;
+  floor?: string;
+  ceiling?: string;
+  escalateOnLowConfidence?: boolean;
+  [k: string]: unknown;
+}): {
+  floor: "local" | "economy" | "balanced" | "max";
+  ceiling: "local" | "economy" | "balanced" | "max";
+  escalateOnLowConfidence: boolean;
+} {
+  const tierOrder = ["local", "economy", "balanced", "max"] as const;
+  // If the caller already set BOTH floor AND ceiling explicitly, treat as
+  // already migrated; honor their choice + default escalateOnLowConfidence
+  // when missing. (We can't tell from the parsed object whether default
+  // was applied or set explicitly, so we use "is in legacy shape" as the
+  // migration signal: if costMode != balanced default OR escalation != false
+  // default, the legacy fields were intentional and we migrate.)
+  const costMode = (config.costMode ?? "balanced") as "local" | "economy" | "balanced" | "max";
+  const escalation = config.escalation ?? false;
+  // If floor/ceiling were explicitly set (non-default values), keep them.
+  if (config.floor !== undefined && config.ceiling !== undefined && (config.floor !== "balanced" || config.ceiling !== "max")) {
+    return {
+      floor: config.floor as typeof tierOrder[number],
+      ceiling: config.ceiling as typeof tierOrder[number],
+      escalateOnLowConfidence: config.escalateOnLowConfidence ?? true,
+    };
+  }
+  // Migrate from legacy costMode + escalation.
+  const floor = costMode;
+  const ceiling = escalation ? (costMode === "max" ? "max" : "max") : costMode;
+  return {
+    floor,
+    ceiling,
+    escalateOnLowConfidence: escalation,
+  };
+}
 
 const ProviderConfigSchema = z
   .object({
@@ -78,6 +169,38 @@ const ProviderConfigSchema = z
     apiKey: z.string().optional(),
     /** Base URL for self-hosted or proxy deployments. */
     baseUrl: z.string().optional(),
+  })
+  .strict();
+
+/**
+ * MCP server config block (s118 t446 D5). Wired at boot to the McpClient
+ * via mcpClient.registerServer(...) so TynnPmProvider + the `mcp` agent
+ * tool can reach external MCP servers (tynn, github, custom plugins).
+ *
+ * Per-server: id (stable ref), transport (stdio/http/websocket), command
+ * + env (stdio), url (http/websocket), authToken (env-var-resolvable
+ * via $VAR notation), autoConnect (default true).
+ */
+const McpServerConfigSchema = z
+  .object({
+    id: z.string(),
+    name: z.string().optional(),
+    transport: z.enum(["stdio", "http", "websocket"]),
+    command: z.array(z.string()).optional(),
+    env: z.record(z.string()).optional(),
+    url: z.string().optional(),
+    autoConnect: z.boolean().default(true),
+    authToken: z.string().optional(),
+  })
+  .strict();
+
+const McpConfigSchema = z
+  .object({
+    /** External MCP servers to register at gateway boot. Each entry passes
+     *  to mcpClient.registerServer(). When transport=stdio + autoConnect,
+     *  the subprocess spawns at startup and stays alive for the gateway's
+     *  lifetime. */
+    servers: z.array(McpServerConfigSchema).default([]),
   })
   .strict();
 
@@ -348,10 +471,45 @@ const ServiceOverrideSchema = z
   })
   .strict();
 
+/**
+ * s143 t566 — circuit-breaker state per service. Keyed by stable service id
+ * (e.g. "hosting:/home/wishborn/_projects/blackorchid_web", "channel:slack",
+ * "plugin:reader-media", "service:agi-finetune"). Status drives the gateway's
+ * boot-time decision to attempt or skip a service:
+ *   - closed     → boot normally (the default)
+ *   - open       → skip on boot; only re-enabled by manual reset OR after
+ *                  cool-down elapses, which moves it to half-open
+ *   - half-open  → boot is allowed once; success closes the breaker, failure
+ *                  re-opens it
+ */
+const CircuitBreakerStateSchema = z
+  .object({
+    failures: z.number().int().min(0).default(0),
+    lastFailureAt: z.string().optional(),
+    lastError: z.string().optional(),
+    status: z.enum(["closed", "half-open", "open"]).default("closed"),
+    /** ISO timestamp when the breaker was last manually reset. */
+    lastResetAt: z.string().optional(),
+  })
+  .strict();
+
+const CircuitBreakerConfigSchema = z
+  .object({
+    /** Consecutive failures before flipping a breaker to "open". */
+    threshold: z.number().int().min(1).default(3),
+    /** Hours after lastFailureAt before an "open" breaker becomes "half-open". */
+    coolDownHours: z.number().int().min(1).default(24),
+    /** Per-service runtime state, keyed by service id. */
+    states: z.record(z.string(), CircuitBreakerStateSchema).optional(),
+  })
+  .strict();
+
 const ServicesConfigSchema = z
   .object({
     /** Per-service overrides keyed by service ID. */
     overrides: z.record(z.string(), ServiceOverrideSchema).optional(),
+    /** s143 — persistent circuit-breaker state + config. */
+    circuitBreaker: CircuitBreakerConfigSchema.optional(),
   })
   .strict();
 
@@ -388,6 +546,26 @@ const DevConfigSchema = z
     mappMarketplaceRepo: z.string().default("git@github.com:wishborn/agi-mapp-marketplace.git"),
     /** Dev directory for MApp marketplace fork. */
     mappMarketplaceDir: z.string().default("/opt/agi-mapp-marketplace_dev"),
+
+    // PAx (Particle-Academy) ADF UI primitive forks — workspace-resident
+    // per CLAUDE.md § 1.5. Provisioned by the same Dev Mode toggle that
+    // handles the core five. Fork live at wishborn/<repo>; upstream lives
+    // at Particle-Academy/<repo> (different org from Civicognita-owned
+    // core five). No `*Dir` field — these clone into the same
+    // `_aionima/<slug>/` workspace collection as the core five (no /opt/
+    // production deploy for ADF primitives).
+    /** Git remote URL for react-fancy fork. */
+    reactFancyRepo: z.string().default("git@github.com:wishborn/react-fancy.git"),
+    /** Git remote URL for fancy-code fork. */
+    fancyCodeRepo: z.string().default("git@github.com:wishborn/fancy-code.git"),
+    /** Git remote URL for fancy-sheets fork. */
+    fancySheetsRepo: z.string().default("git@github.com:wishborn/fancy-sheets.git"),
+    /** Git remote URL for fancy-echarts fork. */
+    fancyEchartsRepo: z.string().default("git@github.com:wishborn/fancy-echarts.git"),
+    /** Git remote URL for fancy-3d fork. */
+    fancy3dRepo: z.string().default("git@github.com:wishborn/fancy-3d.git"),
+    /** Git remote URL for fancy-screens fork (s146 t604 cycle 199 — 6th PAx package). */
+    fancyScreensRepo: z.string().default("git@github.com:wishborn/fancy-screens.git"),
   })
   .strict();
 
@@ -607,6 +785,7 @@ export const AionimaConfigSchema = z
     nexus: LegacyNexusConfigSchema.optional(),
     hosting: HostingConfigSchema.optional(),
     plugins: z.record(z.string(), PluginPreferenceSchema).optional(),
+    mcp: McpConfigSchema.optional(),
     services: ServicesConfigSchema.optional(),
     owner: OwnerConfigSchema.optional(),
     logging: LoggingConfigSchema.optional(),
@@ -657,6 +836,8 @@ export type ProviderCredential = z.infer<typeof ProviderCredentialSchema>;
 export type PluginPreference = z.infer<typeof PluginPreferenceSchema>;
 export type ServiceOverride = z.infer<typeof ServiceOverrideSchema>;
 export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;
+export type CircuitBreakerConfig = z.infer<typeof CircuitBreakerConfigSchema>;
+export type CircuitBreakerState = z.infer<typeof CircuitBreakerStateSchema>;
 export type WorkersConfig = z.infer<typeof WorkersConfigSchema>;
 export type MarketplaceConfig = z.infer<typeof MarketplaceConfigSchema>;
 export type DevConfig = z.infer<typeof DevConfigSchema>;

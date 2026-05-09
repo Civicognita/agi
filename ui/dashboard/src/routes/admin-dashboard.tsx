@@ -15,6 +15,7 @@ import { IncidentsList } from "@/components/IncidentsList.js";
 import { useProjects, useSystemStats } from "../hooks.js";
 import { fetchServices, fetchHFRunningModels, fetchHFInstalledModels, fetchHFHardwareProfile, fetchHFAuthStatus } from "../api.js";
 import type { ServiceInfo, HFRunningModel, HFInstalledModel, HFHardwareProfile } from "../types.js";
+import { DevNote } from "../components/ui/dev-notes";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -121,6 +122,11 @@ export default function AdminDashboardPage() {
       <div className="space-y-6">
         <SafemodeCallout />
         <h1 className="text-xl font-bold text-foreground">Admin Dashboard</h1>
+        <DevNote heading="Admin overview — system pulse" kind="info" scope="admin-dashboard">
+          Aggregate view: projects, services, HF models, recent incidents. Stable surface; no recent
+          agent-side changes this session. If a card's data looks stale, reload — the underlying
+          fetches are useEffect-on-mount.
+        </DevNote>
 
         {/* ── Row 1: Quick stats ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

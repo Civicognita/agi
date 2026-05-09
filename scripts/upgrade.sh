@@ -309,6 +309,17 @@ fi
 id_version_before="$(cd "$ID_DIR" 2>/dev/null && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
 if [ -d "$ID_DIR/.git" ]; then
   emit "pull-id" "start"
+  # The build runs scripts/sync-schema.sh as a prebuild hook which copies
+  # @agi/db-schema files into src/db/schema/ — that dirties the working
+  # tree. Subsequent git checkout would fail with "local changes would be
+  # overwritten". Discard the sync-schema modifications first; the prebuild
+  # hook will regenerate them. Mirrors the /opt/agi dirty-tree handler at
+  # the top of this script.
+  if [ -n "$(cd "$ID_DIR" && git diff --name-only 2>/dev/null)" ]; then
+    ID_DIRTY="$(cd "$ID_DIR" && git diff --name-only | tr '\n' ', ')"
+    emit "pull-id" "error" "ID tree dirty (auto-regenerated schema files): ${ID_DIRTY}— stashing"
+    (cd "$ID_DIR" && git stash --quiet) || true
+  fi
   if (cd "$ID_DIR" && git fetch origin 2>&1 && git checkout -B "$BRANCH" "origin/$BRANCH" 2>&1); then
     emit "pull-id" "done" "ID service repo updated ($BRANCH)"
   else

@@ -31,8 +31,11 @@
  *     storage which RoutingDecision intentionally doesn't carry)
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Card } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { ModelsTab } from "@/components/ModelsTab";
+import { DevNote } from "@/components/ui/dev-notes";
 import {
   fetchProvidersCatalog,
   fetchActiveProvider,
@@ -205,14 +208,18 @@ function MissionControlHero({
 }
 
 // ---------------------------------------------------------------------------
-// Cost-mode dial (s111 t420 / A2 slice 4)
+// Cost-mode range dial (s111 t420 + s129 t510)
 //
-// Backend's KNOWN_COST_MODES (providers-api.ts:99) is local|economy|balanced|max.
-// The mockup shows a horizontal slider with 3 visible stops (Local/Balanced/
-// Max); we render 4 stops to expose `economy` as well — it's a real cost mode
-// the backend supports and economy = "Anthropic Haiku always" is owner-useful
-// distinct from local. Stop positions: local=0%, economy=33%, balanced=66%,
-// max=100%. The fill bar tracks the selected stop's left edge.
+// Backend's KNOWN_COST_MODES (providers-api.ts:158) is local|economy|balanced|max.
+// The dial renders all four stops on a single track. Two handles select a
+// floor (where every turn starts) and a ceiling (max escalation tier);
+// floor === ceiling means "lock to this tier; never escalate". When the
+// handles are equal the gradient between them collapses to a single dot, so
+// the visual reads as a locked tier; when they're separate the gradient runs
+// from emerald (low cost) → primary (high cost), matching the original
+// single-mode visual language. Clicking a stop or label snaps the NEAREST
+// handle. The legacy `costMode` continues to be patched alongside `floor`
+// so older Provider plugins reading `costMode` still see a coherent value.
 // ---------------------------------------------------------------------------
 
 const COST_MODES = ["local", "economy", "balanced", "max"] as const;
@@ -229,80 +236,371 @@ function isCostMode(s: string): s is CostMode {
   return (COST_MODES as readonly string[]).includes(s);
 }
 
-function CostModeDial({
-  current,
+function CostModeRangeDial({
+  floor,
+  ceiling,
   pending,
   onChange,
 }: {
-  current: CostMode;
+  floor: CostMode;
+  ceiling: CostMode;
   pending: boolean;
-  onChange: (next: CostMode) => void;
+  onChange: (next: { floor: CostMode; ceiling: CostMode }) => void;
 }) {
-  const idx = COST_MODES.indexOf(current);
-  const fillPct = COST_MODES.length > 1 ? (idx / (COST_MODES.length - 1)) * 100 : 0;
-  const description = COST_MODE_DESCRIPTIONS[current];
+  const floorIdx = COST_MODES.indexOf(floor);
+  const ceilingIdx = COST_MODES.indexOf(ceiling);
+  const max = COST_MODES.length - 1;
+  const floorPct = max > 0 ? (floorIdx / max) * 100 : 0;
+  const ceilingPct = max > 0 ? (ceilingIdx / max) * 100 : 0;
+  const locked = floor === ceiling;
+  const description = locked
+    ? `${COST_MODE_DESCRIPTIONS[floor]} (locked — no escalation)`
+    : `Starts at ${floor}; escalates up to ${ceiling} when warranted.`;
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Drag handling for the two handles (cycle 223 fix — owner reported
+  // floor handle wouldn't move because the prior snapNearest tie-breaker
+  // sent every click to ceiling once ceiling was already at max).
+  //
+  // Real drag: pointerdown on a handle captures the pointer; pointermove
+  // computes the cursor's track-relative position + clamps to valid range
+  // for that handle (floor ≤ ceiling); pointerup releases capture. Stops
+  // remain clickable as a fallback for keyboard-only users + as snap
+  // assists.
+  // ─────────────────────────────────────────────────────────────────────
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{
+    which: "floor" | "ceiling";
+    pointerId: number;
+    lastIdx: number;
+  } | null>(null);
+
+  const indexFromClientX = useCallback((clientX: number): number => {
+    const track = trackRef.current;
+    if (!track) return 0;
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return 0;
+    const ratio = (clientX - rect.left) / rect.width;
+    const clamped = Math.max(0, Math.min(1, ratio));
+    return Math.round(clamped * max);
+  }, [max]);
+
+  const moveHandle = useCallback((which: "floor" | "ceiling", idx: number) => {
+    if (which === "floor") {
+      const nextFloorIdx = Math.max(0, Math.min(idx, ceilingIdx));
+      const nextFloor = COST_MODES[nextFloorIdx]!;
+      if (nextFloor === floor) return;
+      onChange({ floor: nextFloor, ceiling });
+    } else {
+      const nextCeilingIdx = Math.max(floorIdx, Math.min(idx, max));
+      const nextCeiling = COST_MODES[nextCeilingIdx]!;
+      if (nextCeiling === ceiling) return;
+      onChange({ floor, ceiling: nextCeiling });
+    }
+  }, [floor, ceiling, floorIdx, ceilingIdx, max, onChange]);
+
+  const handlePointerDown = useCallback(
+    (which: "floor" | "ceiling") => (e: React.PointerEvent<HTMLButtonElement>) => {
+      if (pending) return;
+      e.preventDefault();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      dragStateRef.current = { which, pointerId: e.pointerId, lastIdx: which === "floor" ? floorIdx : ceilingIdx };
+    },
+    [pending, floorIdx, ceilingIdx],
+  );
+
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const idx = indexFromClientX(e.clientX);
+    if (idx === drag.lastIdx) return;
+    drag.lastIdx = idx;
+    moveHandle(drag.which, idx);
+  }, [indexFromClientX, moveHandle]);
+
+  const handlePointerUp = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // ignore — pointer may already be released
+    }
+    dragStateRef.current = null;
+  }, []);
+
+  // Click-on-stop fallback (keyboard-friendly + click-not-drag UX).
+  // Snaps the *nearest* handle to that stop, but with explicit semantics:
+  // - Click on a stop strictly < floorIdx → moves floor down
+  // - Click on a stop strictly > ceilingIdx → moves ceiling up
+  // - Click on a stop strictly between floor and ceiling → snaps the
+  //   closer handle, with ties going to whichever handle has more room
+  //   to move (favors the one that's NOT pinned at an edge)
+  // - Click on a stop AT floorIdx or ceilingIdx → no-op (the handle is
+  //   already there)
+  const snapNearest = useCallback((i: number): void => {
+    if (pending) return;
+    if (i === floorIdx && i === ceilingIdx) return; // locked; nothing to do
+    if (i < floorIdx) {
+      moveHandle("floor", i);
+      return;
+    }
+    if (i > ceilingIdx) {
+      moveHandle("ceiling", i);
+      return;
+    }
+    // Strictly between (floor < i < ceiling) — pick by distance, with the
+    // tie-breaker favoring whichever handle has more headroom to move
+    // (so floor can move up if ceiling is pinned at max, etc.)
+    const distFloor = i - floorIdx;
+    const distCeil = ceilingIdx - i;
+    if (distFloor < distCeil) {
+      moveHandle("floor", i);
+    } else if (distCeil < distFloor) {
+      moveHandle("ceiling", i);
+    } else {
+      // Tie — favor the handle with more room to grow toward this stop
+      const floorHeadroom = ceilingIdx - floorIdx; // floor can grow up
+      const ceilingHeadroom = max - ceilingIdx; // ceiling can grow up
+      if (ceilingHeadroom === 0 && floorHeadroom > 0) {
+        moveHandle("floor", i);
+      } else {
+        moveHandle("ceiling", i);
+      }
+    }
+  }, [pending, floorIdx, ceilingIdx, max, moveHandle]);
+
   return (
     <Card className="p-6">
       <div className="grid md:grid-cols-2 gap-6 items-center">
         <div>
           <h3 className="text-base font-semibold">Cost preference</h3>
           <p className="text-muted-foreground text-[13px] mt-1">
-            Aion respects this preference for every routing decision unless a hard rule
-            overrides (off-grid mode, no internet, missing API key).
+            Set a tier range. Aion starts every turn at the floor, and may escalate up
+            to the ceiling when a request looks too complex or low-confidence. Drag the
+            handles together to lock a single tier (no escalation).
           </p>
           <p className="text-[12px] mt-3 px-3 py-2 rounded-md bg-secondary text-foreground">
-            <span className="text-primary font-semibold">{current}:</span> {description}
+            <span className="text-primary font-semibold">
+              {locked ? `${floor} only` : `${floor} → ${ceiling}`}:
+            </span>{" "}
+            {description}
           </p>
         </div>
         <div>
-          {/* Track + fill + clickable stops. Continuous-slider feel, discrete
-              backend semantics — clicking a stop snaps to that cost mode. */}
+          {/* Track + range fill + two handles. Visual language matches the original
+              single-mode dial (gradient emerald→primary, white handle with glow,
+              clickable stops + label row); range mode just adds the second handle
+              and constrains the gradient to the [floor, ceiling] window. */}
           <div
+            ref={trackRef}
             className="relative h-3 bg-secondary rounded-full"
             role="presentation"
+            data-testid="cost-mode-range-dial"
           >
             <div
-              className="absolute left-0 top-0 bottom-0 rounded-full bg-gradient-to-r from-emerald-500 to-primary transition-all"
-              style={{ width: `${String(fillPct)}%` }}
+              className="absolute top-0 bottom-0 rounded-full bg-gradient-to-r from-emerald-500 to-primary transition-all"
+              style={{
+                left: `${String(floorPct)}%`,
+                width: `${String(ceilingPct - floorPct)}%`,
+              }}
             />
+            {/* Stop dots (clickable; not the handles themselves). Render
+                only the non-handle positions to keep the visual clean
+                and avoid stacking handles on top of stop dots. */}
             {COST_MODES.map((mode, i) => {
-              const left = COST_MODES.length > 1 ? (i / (COST_MODES.length - 1)) * 100 : 0;
-              const isCurrent = mode === current;
+              if (i === floorIdx || i === ceilingIdx) return null;
+              const left = max > 0 ? (i / max) * 100 : 0;
+              return (
+                <button
+                  key={`stop-${mode}`}
+                  type="button"
+                  onClick={() => snapNearest(i)}
+                  disabled={pending}
+                  aria-label={`Snap nearest handle to ${mode}`}
+                  className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all w-3 h-3 ${
+                    pending ? "bg-muted-foreground cursor-wait" : "bg-muted-foreground hover:bg-foreground cursor-pointer"
+                  }`}
+                  style={{ left: `${String(left)}%` }}
+                  data-testid={`cost-mode-stop-${mode}`}
+                />
+              );
+            })}
+            {/* Floor handle (draggable). Rendered before ceiling so ceiling
+                stacks on top when locked (floor === ceiling). */}
+            <button
+              type="button"
+              onPointerDown={handlePointerDown("floor")}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              disabled={pending}
+              aria-label={locked ? `Locked at ${floor}` : `Floor: ${floor} — drag to change`}
+              aria-valuemin={0}
+              aria-valuemax={ceilingIdx}
+              aria-valuenow={floorIdx}
+              role="slider"
+              className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all w-5 h-5 bg-white shadow-[0_2px_12px_rgba(91,141,239,0.6)] ${
+                pending ? "cursor-wait" : "cursor-grab active:cursor-grabbing"
+              } touch-none`}
+              style={{ left: `${String(floorPct)}%`, zIndex: 10 }}
+              data-testid="cost-mode-handle-floor"
+            />
+            {/* Ceiling handle (draggable). */}
+            <button
+              type="button"
+              onPointerDown={handlePointerDown("ceiling")}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              disabled={pending}
+              aria-label={locked ? `Locked at ${ceiling}` : `Ceiling: ${ceiling} — drag to change`}
+              aria-valuemin={floorIdx}
+              aria-valuemax={max}
+              aria-valuenow={ceilingIdx}
+              role="slider"
+              className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all w-5 h-5 bg-white shadow-[0_2px_12px_rgba(91,141,239,0.6)] ${
+                pending ? "cursor-wait" : "cursor-grab active:cursor-grabbing"
+              } touch-none`}
+              style={{ left: `${String(ceilingPct)}%`, zIndex: 11 }}
+              data-testid="cost-mode-handle-ceiling"
+            />
+          </div>
+          <div className="flex justify-between mt-2 text-[11px]">
+            {COST_MODES.map((mode, i) => {
+              const isInRange = i >= floorIdx && i <= ceilingIdx;
               return (
                 <button
                   key={mode}
                   type="button"
-                  onClick={() => !pending && !isCurrent && onChange(mode)}
+                  onClick={() => snapNearest(i)}
                   disabled={pending}
-                  aria-label={`Set cost mode to ${mode}`}
-                  className={`absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full transition-all ${
-                    isCurrent
-                      ? "w-5 h-5 bg-white shadow-[0_2px_12px_rgba(91,141,239,0.6)] cursor-default"
-                      : pending
-                        ? "w-3 h-3 bg-muted-foreground cursor-wait"
-                        : "w-3 h-3 bg-muted-foreground hover:bg-foreground cursor-pointer"
-                  }`}
-                  style={{ left: `${String(left)}%` }}
-                />
+                  className={`capitalize font-medium ${
+                    isInRange ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                  } ${pending ? "cursor-wait" : "cursor-pointer"}`}
+                >
+                  {mode}
+                </button>
               );
             })}
           </div>
-          <div className="flex justify-between mt-2 text-[11px]">
-            {COST_MODES.map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => !pending && mode !== current && onChange(mode)}
-                disabled={pending}
-                className={`capitalize font-medium ${
-                  mode === current ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                } ${pending ? "cursor-wait" : "cursor-pointer"}`}
-              >
-                {mode}
-              </button>
-            ))}
-          </div>
         </div>
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Escalation triggers — only meaningful when floor < ceiling.
+//
+// Three knobs: low-confidence detection, mid-turn timeout, and parallel race.
+// Visual language matches the dial above: same Card wrapper, same typography,
+// row gridded for label/control alignment.
+// ---------------------------------------------------------------------------
+
+function EscalationTriggers({
+  enabled,
+  state,
+  pending,
+  onChange,
+}: {
+  enabled: boolean;
+  state: {
+    escalateOnLowConfidence: boolean;
+    escalateOnTimeoutSec: number | null;
+    parallelRace: boolean;
+  };
+  pending: boolean;
+  onChange: (patch: Partial<{
+    escalateOnLowConfidence: boolean;
+    escalateOnTimeoutSec: number | null;
+    parallelRace: boolean;
+  }>) => void;
+}) {
+  if (!enabled) return null;
+  const timeoutOn = state.escalateOnTimeoutSec !== null && state.escalateOnTimeoutSec > 0;
+  return (
+    <Card className="p-6">
+      <h3 className="text-base font-semibold">Escalation triggers</h3>
+      <p className="text-muted-foreground text-[13px] mt-1 mb-4">
+        When the floor tier comes back uncertain, Aion can move up to the ceiling. Pick
+        the gates that should fire that move.
+      </p>
+      <div className="space-y-3">
+        <label className="flex items-start gap-3 cursor-pointer p-3 rounded-md hover:bg-secondary/50 transition-colors">
+          <input
+            type="checkbox"
+            checked={state.escalateOnLowConfidence}
+            onChange={(e) => onChange({ escalateOnLowConfidence: e.target.checked })}
+            disabled={pending}
+            className="mt-0.5 rounded border-input"
+          />
+          <div className="flex-1">
+            <div className="text-[13px] font-medium text-foreground">On low confidence</div>
+            <div className="text-[11.5px] text-muted-foreground mt-0.5">
+              Short answer to a complex question, hedging phrases, or self-flagged uncertainty
+              kicks the next call up one tier.
+            </div>
+          </div>
+        </label>
+
+        <label className="flex items-start gap-3 cursor-pointer p-3 rounded-md hover:bg-secondary/50 transition-colors">
+          <input
+            type="checkbox"
+            checked={timeoutOn}
+            onChange={(e) => onChange({ escalateOnTimeoutSec: e.target.checked ? 30 : null })}
+            disabled={pending}
+            className="mt-0.5 rounded border-input"
+          />
+          <div className="flex-1">
+            <div className="text-[13px] font-medium text-foreground flex items-center gap-2">
+              On timeout
+              {timeoutOn && (
+                <span className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    value={state.escalateOnTimeoutSec ?? 30}
+                    onChange={(e) => {
+                      const n = Number(e.target.value);
+                      onChange({ escalateOnTimeoutSec: Number.isFinite(n) && n > 0 ? Math.floor(n) : null });
+                    }}
+                    disabled={pending}
+                    className="w-16 px-2 py-0.5 text-[12px] font-mono bg-secondary border border-input rounded"
+                    min={1}
+                    step={1}
+                  />
+                  <span className="text-[11px] text-muted-foreground">seconds</span>
+                </span>
+              )}
+            </div>
+            <div className="text-[11.5px] text-muted-foreground mt-0.5">
+              If the floor tier hasn't streamed a complete answer in N seconds, Aion fires
+              the next call to a higher tier.
+            </div>
+          </div>
+        </label>
+
+        <label className="flex items-start gap-3 cursor-pointer p-3 rounded-md hover:bg-secondary/50 transition-colors">
+          <input
+            type="checkbox"
+            checked={state.parallelRace}
+            onChange={(e) => onChange({ parallelRace: e.target.checked })}
+            disabled={pending}
+            className="mt-0.5 rounded border-input"
+          />
+          <div className="flex-1">
+            <div className="text-[13px] font-medium text-foreground">
+              Race floor + ceiling in parallel{" "}
+              <span className="text-[10px] text-amber-400 font-mono uppercase tracking-wider ml-1">
+                2× cost
+              </span>
+            </div>
+            <div className="text-[11.5px] text-muted-foreground mt-0.5">
+              Fire the call to both tiers simultaneously and take the first complete answer.
+              Cuts perceived latency at the price of doubled inference spend.
+            </div>
+          </div>
+        </label>
       </div>
     </Card>
   );
@@ -527,13 +825,41 @@ export default function SettingsProvidersPage() {
     }
   }, [active, togglePending]);
 
-  const onChangeCostMode = useCallback(
-    async (next: CostMode) => {
+  const onChangeRange = useCallback(
+    async (next: { floor: CostMode; ceiling: CostMode }) => {
       if (!active || costModePending) return;
-      if (active.router.costMode === next) return;
+      if (active.router.floor === next.floor && active.router.ceiling === next.ceiling) return;
       setCostModePending(true);
       try {
-        const updated = await updateRouterConfig({ costMode: next });
+        // Patch floor + ceiling alongside legacy costMode (= floor) so old
+        // Provider plugins reading agent.router.costMode still see a value
+        // that maps to the new range. Server-side schema validation enforces
+        // floor <= ceiling on the local|economy|balanced|max scale.
+        const updated = await updateRouterConfig({
+          floor: next.floor,
+          ceiling: next.ceiling,
+          costMode: next.floor,
+        });
+        setActive(updated);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setCostModePending(false);
+      }
+    },
+    [active, costModePending],
+  );
+
+  const onChangeTriggers = useCallback(
+    async (patch: Partial<{
+      escalateOnLowConfidence: boolean;
+      escalateOnTimeoutSec: number | null;
+      parallelRace: boolean;
+    }>) => {
+      if (!active || costModePending) return;
+      setCostModePending(true);
+      try {
+        const updated = await updateRouterConfig(patch);
         setActive(updated);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
@@ -597,24 +923,30 @@ export default function SettingsProvidersPage() {
 
   return (
     <div className="space-y-6">
-      {/* Disclaimer banner — visual design discipline (mockup is layout, not contract) */}
-      <div className="px-4 py-3 rounded-lg border-l-4 border-amber-400 border border-amber-400/30 bg-amber-400/5 text-[12.5px] leading-relaxed">
-        <strong className="text-amber-400 uppercase tracking-wider text-[11px]">
-          ⚠ Implementation in progress
-        </strong>
-        <p className="mt-1 text-foreground">
-          This is the first slice of the Providers route. Catalog rendering, off-grid toggle, and
-          active-Provider highlight ship in v0.4.208. Mission Control hero, cost-mode dial,
-          Runtimes strip, decision feed, and what-if simulator land in follow-up cycles. See
-          <code className="bg-background px-1.5 py-0.5 rounded mx-1 text-[11px]">tynn s111</code>
-          for the task chain.
-        </p>
-      </div>
-
       {/* Page head */}
       <div className="flex items-end justify-between gap-8 flex-wrap">
         <div>
           <h1 className="text-[28px] font-semibold tracking-tight">Providers</h1>
+          <DevNote heading="Cycle 129 directive — model management consolidation" kind="info" scope="settings/providers">
+            Models tab (cycle 141) is now the single UI source of truth for what each Provider can serve.
+            Cloud REST /v1/models live for anthropic + openai (cycle 142, requires API key). Ollama + Lemonade
+            populate from their daemons. HF goes through /api/hf/models still.
+          </DevNote>
+          <DevNote heading="Cycle 142 — OpenAI chat-id filter" kind="info" scope="settings/providers">
+            OpenAI's /v1/models returns ~70 entries including whisper/dall-e/embeddings/tts/moderation.
+            Filtered to chat-capable id patterns: gpt-*, o1-*, o3-*, o4-*, chatgpt-*. Update the regex
+            in providers-api.ts isOpenAIChatModel() when OpenAI ships new chat families.
+          </DevNote>
+          <DevNote heading="Plugin SDK adoption pending (cycle-129 sub-task 5)" kind="todo" scope="settings/providers">
+            Ollama + Lemonade providers should adopt the SDK contract `defineProvider().fetchModels(fn)`
+            (cycle 139, v0.4.407). Currently the gateway has built-in switch logic for them in
+            getModelsForBuiltin. Moving to the plugin path generalizes to Linear/Jira-style PM providers.
+          </DevNote>
+          <DevNote heading="Legacy per-runtime model UIs to remove (cycle-129 sub-task 6)" kind="todo" scope="settings/providers">
+            The old "load model" UI on Ollama / Lemonade provider settings pages should redirect to
+            the Models tab once the plugin SDK adoption lands. Models tab becomes the single source of
+            truth for model lifecycle (start/stop/uninstall).
+          </DevNote>
           <p className="text-muted-foreground mt-1 max-w-[56ch] text-[13.5px]">
             Aion's available brains. Each Provider is a catalog of models. The Agent Router picks
             the right Provider + model for each turn — you tell it how to prefer cost vs capability,
@@ -631,6 +963,19 @@ export default function SettingsProvidersPage() {
         )}
       </div>
 
+      {/* Owner directive cycle 129: split the page into two tabs.
+          - "Providers" keeps today's catalog + router + cards
+          - "Models" is the new consolidated entry point for installed
+            local models. HF Marketplace remains the discovery/download
+            flow; lifecycle (start/stop/uninstall) lives here. */}
+      <Tabs defaultValue="providers">
+        <TabsList variant="line">
+          <TabsTrigger value="providers" data-testid="providers-tab-providers">Providers</TabsTrigger>
+          <TabsTrigger value="models" data-testid="providers-tab-models">Models</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="providers" className="mt-4 space-y-6">
+
       {/* Mission Control hero — most recent routing decision (s111 t419).
           Hides when no decisions exist yet (fresh boot, no turns). */}
       {recentDecisions.length > 0 && (
@@ -640,13 +985,26 @@ export default function SettingsProvidersPage() {
         />
       )}
 
-      {/* Cost-mode dial + placeholder ticker (s111 t420) */}
+      {/* Cost-mode range dial + escalation triggers + placeholder ticker
+          (s111 t420 + s129 t510). Floor/ceiling come from server-projected
+          state (derived from legacy costMode/escalation when unset). */}
       {active && (
-        <div>
-          <CostModeDial
-            current={isCostMode(active.router.costMode) ? active.router.costMode : "balanced"}
+        <div className="space-y-4">
+          <CostModeRangeDial
+            floor={isCostMode(active.router.floor) ? active.router.floor : "balanced"}
+            ceiling={isCostMode(active.router.ceiling) ? active.router.ceiling : "max"}
             pending={costModePending}
-            onChange={(next) => void onChangeCostMode(next)}
+            onChange={(next) => void onChangeRange(next)}
+          />
+          <EscalationTriggers
+            enabled={active.router.floor !== active.router.ceiling}
+            state={{
+              escalateOnLowConfidence: active.router.escalateOnLowConfidence,
+              escalateOnTimeoutSec: active.router.escalateOnTimeoutSec,
+              parallelRace: active.router.parallelRace,
+            }}
+            pending={costModePending}
+            onChange={(patch) => void onChangeTriggers(patch)}
           />
           <CostTicker />
         </div>
@@ -678,6 +1036,12 @@ export default function SettingsProvidersPage() {
           Last action failed: {error}
         </div>
       )}
+        </TabsContent>
+
+        <TabsContent value="models" className="mt-4">
+          <ModelsTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

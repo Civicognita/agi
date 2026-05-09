@@ -10,7 +10,7 @@ import type {
   ThemeDefinition, AgentToolDefinition, SidebarSectionDefinition,
   ScheduledTaskDefinition, WorkflowDefinition,
   SettingsPageDefinition, DashboardInterfacePageDefinition, DashboardInterfaceDomainDefinition,
-  SubdomainRouteDefinition, LLMProviderDefinition, PmProviderDefinition, ProvidesLabel, WorkerDefinition,
+  SubdomainRouteDefinition, LLMProviderDefinition, PmProviderDefinition, McpServerTemplate, ProvidesLabel, WorkerDefinition,
 } from "./types.js";
 import type { StackDefinition } from "@agi/gateway-core";
 import type { ScanProviderDefinition } from "@agi/security";
@@ -129,6 +129,11 @@ export interface RegisteredPmProvider {
   provider: PmProviderDefinition;
 }
 
+export interface RegisteredMcpServerTemplate {
+  pluginId: string;
+  template: McpServerTemplate;
+}
+
 export interface RegisteredScanProvider {
   pluginId: string;
   scanProvider: ScanProviderDefinition;
@@ -194,6 +199,7 @@ export class PluginRegistry {
   private readonly channels: RegisteredChannel[] = [];
   private readonly providers: RegisteredProvider[] = [];
   private readonly pmProviders: RegisteredPmProvider[] = [];
+  private readonly mcpServerTemplates: RegisteredMcpServerTemplate[] = [];
   private readonly scanProviders: RegisteredScanProvider[] = [];
   private readonly workers: RegisteredWorker[] = [];
   private readonly projectTypesByPlugin = new Map<string, string[]>();
@@ -586,6 +592,31 @@ export class PluginRegistry {
 
   getPmProvider(id: string): PmProviderDefinition | undefined {
     return this.pmProviders.find(p => p.provider.id === id)?.provider;
+  }
+
+  // -------------------------------------------------------------------------
+  // MCP Server Templates (s127 t489)
+  // -------------------------------------------------------------------------
+
+  /** Register a plugin-provided MCP server template. First-wins on id —
+   *  re-registering the same id is a no-op so plugin reloads don't surface
+   *  duplicates in the dashboard's dropdown. */
+  addMcpServerTemplate(pluginId: string, template: McpServerTemplate): void {
+    if (this.mcpServerTemplates.some(t => t.template.id === template.id)) return;
+    this.mcpServerTemplates.push({ pluginId, template });
+  }
+
+  /** Return the unwrapped templates in registration order, suitable for
+   *  appending to the gateway's built-in template list. Server-runtime-state
+   *  consumes this via the optional `getMcpServerTemplates` hook on the
+   *  pluginRegistry dep (server-runtime-state.ts:2028). */
+  getMcpServerTemplates(): McpServerTemplate[] {
+    return this.mcpServerTemplates.map(t => t.template);
+  }
+
+  /** Wrapped form for inspection / removal logic. */
+  getRegisteredMcpServerTemplates(): RegisteredMcpServerTemplate[] {
+    return [...this.mcpServerTemplates];
   }
 
   // -------------------------------------------------------------------------

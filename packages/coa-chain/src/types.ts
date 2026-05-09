@@ -22,7 +22,12 @@ export type COAWorkType =
   | "mapp_mint"
   | "mapp_install"
   | "mapp_publish"
-  | "mapp_execute";
+  | "mapp_execute"
+  /** s128 t498: vault entry read at the resolver or API surface. `ref`
+   *  carries the entry id; `payloadHash` carries SHA-256 of `entryId|
+   *  callerProjectPath` so post-hoc audit can correlate without
+   *  storing the project path in plaintext. */
+  | "vault_read";
 
 /** Full COA record for persistence */
 export interface COARecord {

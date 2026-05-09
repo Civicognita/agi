@@ -2,16 +2,16 @@
  * `aionima doctor` — Config-aware self-diagnostics with grouped checks.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { access, constants, readFile } from "node:fs/promises";
 import { execSync, execFileSync } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, hostname as osHostname, platform as osPlatform, release as osRelease, totalmem, freemem } from "node:os";
 import { resolve, join } from "node:path";
 import type { Command } from "commander";
 import { loadConfig, validateConfigFile } from "../config-loader.js";
 import { GatewayClient } from "../gateway-client.js";
 import { bold, dim, formatCheck, green, red, yellow } from "../output.js";
-import type { AionimaConfig } from "@agi/config";
+import { AionimaConfigSchema, type AionimaConfig } from "@agi/config";
 
 interface Check {
   name: string;
@@ -262,6 +262,399 @@ function repoChecks(config: AionimaConfig): CheckGroup {
   return { title: "Multi-Repo", checks };
 }
 
+// ---------------------------------------------------------------------------
+// Git state — per-project + sacred repos (s144 t577)
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of inspecting a single repo's git state. `null` when the path
+ * isn't a git working tree (or git is unavailable / the call fails).
+ */
+export interface GitRepoState {
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  upstreamSet: boolean;
+  ahead: number;
+  behind: number;
+}
+
+/**
+ * Parse `git status --porcelain=v2 --branch` output into a GitRepoState.
+ * Pure function — pulled out for unit testing without shelling out.
+ */
+export function parseGitPorcelainV2(out: string): GitRepoState {
+  const lines = out.split("\n");
+  let staged = 0;
+  let unstaged = 0;
+  let untracked = 0;
+  let upstreamSet = false;
+  let ahead = 0;
+  let behind = 0;
+
+  for (const line of lines) {
+    if (line.startsWith("# branch.upstream ")) {
+      upstreamSet = true;
+    } else if (line.startsWith("# branch.ab ")) {
+      // Format: "# branch.ab +N -M"
+      const m = /^# branch\.ab \+(\d+) -(\d+)$/.exec(line);
+      if (m) {
+        ahead = Number(m[1]);
+        behind = Number(m[2]);
+      }
+    } else if (line.startsWith("1 ") || line.startsWith("2 ")) {
+      // Tracked-changed entry. Field 2 is the XY status (e.g. ".M", "M.", "MM").
+      const parts = line.split(" ");
+      const xy = parts[1] ?? "..";
+      const indexFlag = xy[0] ?? ".";
+      const worktreeFlag = xy[1] ?? ".";
+      if (indexFlag !== "." && indexFlag !== "?") staged++;
+      if (worktreeFlag !== "." && worktreeFlag !== "?") unstaged++;
+    } else if (line.startsWith("? ")) {
+      untracked++;
+    }
+  }
+
+  return { staged, unstaged, untracked, upstreamSet, ahead, behind };
+}
+
+function readGitState(repoPath: string): GitRepoState | null {
+  try {
+    const out = execFileSync("git", ["status", "--porcelain=v2", "--branch"], {
+      cwd: repoPath,
+      encoding: "utf8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    return parseGitPorcelainV2(out);
+  } catch {
+    return null;
+  }
+}
+
+/** Render a one-line summary of a repo's git state (or `null` if not git). */
+function summarizeGitState(state: GitRepoState | null): { ok: boolean; warn: boolean; summary: string } {
+  if (state === null) return { ok: true, warn: false, summary: "not a git repo (skipping)" };
+
+  const parts: string[] = [];
+  const dirty = state.staged > 0 || state.unstaged > 0 || state.untracked > 0;
+  if (state.staged > 0) parts.push(`${String(state.staged)} staged`);
+  if (state.unstaged > 0) parts.push(`${String(state.unstaged)} unstaged`);
+  if (state.untracked > 0) parts.push(`${String(state.untracked)} untracked`);
+  if (!state.upstreamSet) parts.push("no upstream");
+  else if (state.ahead > 0) parts.push(`${String(state.ahead)} unpushed`);
+  if (state.behind > 0) parts.push(`${String(state.behind)} behind`);
+
+  if (parts.length === 0) return { ok: true, warn: false, summary: "clean + in sync" };
+
+  // Mix of staged + unstaged is a warning (looks like a half-finished commit).
+  const stagedMix = state.staged > 0 && state.unstaged > 0;
+  return {
+    ok: !dirty && state.upstreamSet && state.ahead === 0,
+    warn: stagedMix || !state.upstreamSet,
+    summary: parts.join(", "),
+  };
+}
+
+function gitStateChecks(config: AionimaConfig): CheckGroup {
+  const checks: Check[] = [];
+
+  // Sacred repos (mirror the set in repoChecks, which only verifies existence).
+  const mappMarketplaceConfig = (config as Record<string, unknown>).mappMarketplace as Record<string, string> | undefined;
+  const sacred = [
+    { name: "PRIME corpus", path: config.prime?.dir ?? "/opt/agi-prime" },
+    { name: "Plugin Marketplace", path: config.marketplace?.dir ?? "/opt/agi-marketplace" },
+    { name: "MApp Marketplace", path: mappMarketplaceConfig?.dir ?? "/opt/agi-mapp-marketplace" },
+    { name: "ID service", path: config.idService?.dir ?? "/opt/agi-local-id" },
+  ];
+
+  for (const repo of sacred) {
+    if (!dirExists(repo.path)) continue; // existence-warning surfaced by repoChecks
+    const state = readGitState(repo.path);
+    const { ok, warn, summary } = summarizeGitState(state);
+    checks.push({
+      name: `${repo.name} — ${summary}`,
+      ok,
+      warn,
+      fix: ok ? undefined : "Repair actions land with `agi doctor` TUI (s144 t574)",
+    });
+  }
+
+  // Workspace projects.
+  const workspaceProjects = config.workspace?.projects ?? [];
+  for (const projectPath of workspaceProjects) {
+    if (!dirExists(projectPath)) continue;
+    const state = readGitState(projectPath);
+    const { ok, warn, summary } = summarizeGitState(state);
+    checks.push({
+      name: `${projectPath} — ${summary}`,
+      ok,
+      warn,
+      fix: ok ? undefined : "Repair actions land with `agi doctor` TUI (s144 t574)",
+    });
+  }
+
+  return { title: "Git state", checks };
+}
+
+// ---------------------------------------------------------------------------
+// Network — Caddyfile parse + TLS cert expiry (s144 t580)
+// ---------------------------------------------------------------------------
+
+const CADDYFILE_PATH = "/etc/caddy/Caddyfile";
+const CADDY_CERT_ROOTS = [
+  "/var/lib/caddy/.local/share/caddy/certificates",
+  // Fallback for non-systemd installs (Caddy run as the invoking user).
+  join(homedir(), ".local/share/caddy/certificates"),
+];
+/** Warn when a cert is within this many days of expiring. */
+const CERT_EXPIRY_WARN_DAYS = 7;
+
+/**
+ * Walk the Caddy certificates dir tree and return the deepest matching
+ * .crt files. Caddy's layout is:
+ *   <root>/acme-v02.api.letsencrypt.org-directory/<hostname>/<hostname>.crt
+ * Returns up to 32 cert paths total to keep the diagnostic bounded.
+ */
+function findCaddyCerts(): string[] {
+  const results: string[] = [];
+  const walk = (dir: string, depth: number): void => {
+    if (results.length >= 32 || depth > 4 || !existsSync(dir)) return;
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return; // permission denied (typical for /var/lib/caddy from non-root) — skip
+    }
+    for (const name of entries) {
+      if (results.length >= 32) break;
+      const full = join(dir, name);
+      let isDir = false;
+      try {
+        isDir = statSync(full).isDirectory();
+      } catch {
+        continue;
+      }
+      if (isDir) {
+        walk(full, depth + 1);
+      } else if (name.endsWith(".crt")) {
+        results.push(full);
+      }
+    }
+  };
+  for (const root of CADDY_CERT_ROOTS) walk(root, 0);
+  return results;
+}
+
+/**
+ * Parse a PEM cert and return `(hostname, daysUntilExpiry)`.
+ * Returns `null` on any parse error so the caller can surface a warning
+ * without poisoning the rest of the check group.
+ */
+function inspectCertFile(path: string): { subject: string; daysUntilExpiry: number } | null {
+  try {
+    const pem = readFileSync(path, "utf-8");
+    // Avoid a top-level dynamic import — crypto is synchronous available.
+    // X509Certificate is sync-capable; parsing is fast (<1ms per cert).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { X509Certificate } = require("node:crypto") as typeof import("node:crypto");
+    const cert = new X509Certificate(pem);
+    const validTo = Date.parse(cert.validTo);
+    if (!Number.isFinite(validTo)) return null;
+    const daysUntilExpiry = Math.floor((validTo - Date.now()) / (1000 * 60 * 60 * 24));
+    // Subject like "CN=foo.ai.on" — extract the CN.
+    const cnMatch = /CN=([^,/\n]+)/.exec(cert.subject);
+    const subject = cnMatch?.[1] ?? cert.subject ?? "(unknown)";
+    return { subject, daysUntilExpiry };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Container diagnostics — agi-* podman containers (s144 t576)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-container summary derived from `podman ps -a --format json`.
+ * Pulled out as a typed shape so the parser can be unit-tested without
+ * a real podman call.
+ */
+export interface ContainerSummary {
+  name: string;
+  status: string;
+  state: string;
+  exitCode: number;
+  restartCount: number;
+  startedAt: string;
+}
+
+/**
+ * Normalize a single entry from `podman ps -a --format json` into the
+ * fields we surface. podman's JSON output has historically varied across
+ * versions in casing (Names vs names, ExitCode vs exitcode); this
+ * accepts the union shapes and falls back to safe defaults.
+ */
+export function normalizePodmanEntry(entry: Record<string, unknown>): ContainerSummary {
+  const namesField = (entry["Names"] ?? entry["names"]) as unknown;
+  const name = Array.isArray(namesField)
+    ? (namesField[0] as string | undefined) ?? "(unknown)"
+    : typeof namesField === "string" ? namesField : "(unknown)";
+  const status = String(entry["Status"] ?? entry["status"] ?? "");
+  const state = String(entry["State"] ?? entry["state"] ?? "");
+  const exitCodeRaw = entry["ExitCode"] ?? entry["exitcode"] ?? entry["exitCode"] ?? 0;
+  const exitCode = typeof exitCodeRaw === "number" ? exitCodeRaw : Number(exitCodeRaw) || 0;
+  const restartRaw = entry["RestartCount"] ?? entry["restartcount"] ?? entry["restartCount"] ?? 0;
+  const restartCount = typeof restartRaw === "number" ? restartRaw : Number(restartRaw) || 0;
+  const startedAt = String(entry["StartedAt"] ?? entry["startedat"] ?? entry["startedAt"] ?? "");
+  return { name, status, state, exitCode, restartCount, startedAt };
+}
+
+/**
+ * Classify a container as healthy / warn / failing for the diagnostic.
+ *   - failing: state !== running AND exitCode !== 0 (truly broken)
+ *   - warn:    running but restartCount > 3 (flapping under --restart=always)
+ *   - ok:      everything else
+ */
+export function classifyContainer(c: ContainerSummary): { ok: boolean; warn: boolean; reason: string } {
+  const stateLower = c.state.toLowerCase();
+  const isRunning = stateLower === "running" || c.status.toLowerCase().startsWith("up");
+  if (!isRunning && c.exitCode !== 0) {
+    return {
+      ok: false,
+      warn: false,
+      reason: `${c.state || "stopped"} (exit ${String(c.exitCode)})`,
+    };
+  }
+  if (isRunning && c.restartCount > 3) {
+    return {
+      ok: false,
+      warn: true,
+      reason: `running but flapping (${String(c.restartCount)} restarts)`,
+    };
+  }
+  return {
+    ok: true,
+    warn: false,
+    reason: isRunning ? "running" : c.state || c.status || "stopped",
+  };
+}
+
+function containerChecks(): CheckGroup | null {
+  let raw = "";
+  try {
+    raw = execFileSync("podman", ["ps", "-a", "--filter", "name=agi-", "--format", "json"], {
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+  } catch {
+    return null; // podman not installed or not reachable — surfaced by core checks
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+
+  const containers = parsed.map((e) => normalizePodmanEntry(e as Record<string, unknown>));
+  if (containers.length === 0) {
+    // No agi-* containers — fresh install or all stopped + removed. Don't
+    // emit an empty group; surface only when there's something material.
+    return null;
+  }
+
+  const checks: Check[] = [];
+  for (const c of containers) {
+    const verdict = classifyContainer(c);
+    checks.push({
+      name: `${c.name} — ${verdict.reason}`,
+      ok: verdict.ok,
+      warn: verdict.warn,
+      fix: verdict.ok ? undefined : "Repair: force-remove / recreate / podman logs <name> via `agi doctor` TUI (s144 t574)",
+    });
+  }
+
+  return { title: "Containers (agi-*)", checks };
+}
+
+function networkChecks(): CheckGroup | null {
+  const checks: Check[] = [];
+
+  // 1. Caddyfile presence + parse via `caddy validate`. Skip silently when
+  //    the file isn't there (caddy may not be configured on this host).
+  if (existsSync(CADDYFILE_PATH)) {
+    let validateOk = true;
+    let validateErr = "";
+    try {
+      execFileSync("caddy", ["validate", "--config", CADDYFILE_PATH], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (err) {
+      validateOk = false;
+      // execFileSync.error.stderr captures caddy's diagnostic output.
+      const e = err as { stderr?: Buffer | string; message?: string };
+      validateErr = (typeof e.stderr === "string" ? e.stderr : e.stderr?.toString("utf-8")) ?? e.message ?? "";
+    }
+    checks.push({
+      name: validateOk ? "Caddyfile parses (caddy validate)" : `Caddyfile parse error: ${validateErr.split("\n")[0]?.trim() ?? "unknown"}`,
+      ok: validateOk,
+      fix: validateOk ? undefined : "Repair: regenerate Caddyfile via `agi doctor` TUI (s144 t574); current contents at /etc/caddy/Caddyfile",
+    });
+  } else {
+    // No Caddyfile — surfaces in core checks (Caddy active/inactive). Skip silently here.
+  }
+
+  // 2. TLS certs — surface ones near expiry.
+  const certs = findCaddyCerts();
+  if (certs.length === 0) {
+    // Either no certs yet (fresh install / never reached ACME) or
+    // permissions blocked enumeration. Either way, don't add a check —
+    // surfacing "0 certs" here would noise up healthy fresh installs.
+  } else {
+    for (const certPath of certs) {
+      const info = inspectCertFile(certPath);
+      if (info === null) {
+        checks.push({
+          name: `Cert parse failed: ${certPath}`,
+          ok: false,
+          warn: true,
+          fix: "Caddy will retry; if persistent, regenerate via `agi doctor` TUI (s144 t574)",
+        });
+        continue;
+      }
+      const { subject, daysUntilExpiry } = info;
+      if (daysUntilExpiry < 0) {
+        checks.push({
+          name: `Cert EXPIRED: ${subject} (${String(Math.abs(daysUntilExpiry))}d ago)`,
+          ok: false,
+          fix: "Repair: request fresh cert via `agi doctor` TUI (s144 t574)",
+        });
+      } else if (daysUntilExpiry <= CERT_EXPIRY_WARN_DAYS) {
+        checks.push({
+          name: `Cert expiring soon: ${subject} (${String(daysUntilExpiry)}d remaining)`,
+          ok: false,
+          warn: true,
+          fix: "Caddy auto-renews ~30 days before expiry; if no renewal, check ACME logs",
+        });
+      } else {
+        checks.push({
+          name: `Cert OK: ${subject} (${String(daysUntilExpiry)}d remaining)`,
+          ok: true,
+        });
+      }
+    }
+  }
+
+  if (checks.length === 0) return null;
+  return { title: "Network", checks };
+}
+
 function pluginChecks(): CheckGroup {
   const checks: Check[] = [];
 
@@ -295,6 +688,119 @@ function pluginChecks(): CheckGroup {
   });
 
   return { title: "Plugins & Marketplace", checks };
+}
+
+/**
+ * s150 t641 — per-project shape diagnostic. Walks every project under each
+ * `workspace.projects[]` directory and verifies the s150 model:
+ *   - no top-level `category` field
+ *   - no `hosting.containerKind` field
+ *   - no `<projectPath>/.agi/project.json` debris
+ *   - top-level `type` set + not in retired set
+ *   - `repos/`, `sandbox/`, `.trash/`, `k/{plans,knowledge,pm,memory,chat}` present
+ *
+ * Each project becomes one row. A clean project shows ✓; a project with
+ * any drift shows ✗ with a multi-line `fix` listing every finding.
+ */
+async function projectShapeChecks(config: AionimaConfig): Promise<CheckGroup | null> {
+  const workspaces = config.workspace?.projects ?? [];
+  if (workspaces.length === 0) return null;
+
+  const checks: Check[] = [];
+  const RETIRED_TYPES: ReadonlySet<string> = new Set(["monorepo"]);
+  const REQUIRED_DIRS = ["repos", "sandbox", ".trash", "k/plans", "k/knowledge", "k/pm", "k/memory", "k/chat"];
+  const SACRED_NAMES = new Set([
+    "_aionima", "agi", "prime", "id", "marketplace", "mapp-marketplace",
+    "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d", "fancy-screens",
+  ]);
+
+  const { readdirSync } = await import("node:fs");
+  const path = await import("node:path");
+
+  let scanned = 0;
+  for (const ws of workspaces) {
+    let entries: string[];
+    try {
+      entries = readdirSync(ws, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+        .map((d) => d.name);
+    } catch {
+      continue;
+    }
+
+    for (const slug of entries) {
+      if (SACRED_NAMES.has(slug.toLowerCase())) continue;
+      const projectPath = path.join(ws, slug);
+      const findings: string[] = [];
+
+      const configPath = path.join(projectPath, "project.json");
+      if (!fileExists(configPath)) {
+        // Pre-scaffold project — skip; nothing to validate yet.
+        continue;
+      }
+      scanned++;
+
+      let raw: Record<string, unknown> = {};
+      try {
+        raw = JSON.parse(await readFile(configPath, "utf-8")) as Record<string, unknown>;
+      } catch (e) {
+        findings.push(`unparseable project.json (${e instanceof Error ? e.message : String(e)})`);
+      }
+
+      if ("category" in raw) findings.push("legacy `category` field present (s150 t630/t632)");
+
+      const hosting = raw.hosting as Record<string, unknown> | undefined;
+      if (hosting && "containerKind" in hosting) findings.push("legacy `hosting.containerKind` field present (s150 t634)");
+
+      // s131 t683 — flag the deprecated mcp field (boot migration writes
+      // `.mcp.json` and strips this on next restart; surface as drift so
+      // operators know what's about to happen).
+      if ("mcp" in raw) findings.push("legacy `mcp` field present (s131 — will migrate to .mcp.json on next boot)");
+
+      // s131 t683 — validate `.mcp.json` if present. Loud-fail so a hand-
+      // edited but malformed file surfaces here rather than at next boot.
+      const dotMcpPath = path.join(projectPath, ".mcp.json");
+      if (fileExists(dotMcpPath)) {
+        try {
+          const mcpRaw = JSON.parse(await readFile(dotMcpPath, "utf-8")) as unknown;
+          const { DotMcpJsonSchema } = await import("@agi/gateway-core");
+          const result = DotMcpJsonSchema.safeParse(mcpRaw);
+          if (!result.success) {
+            const firstIssue = result.error.issues[0];
+            findings.push(`.mcp.json schema error: ${firstIssue?.path.join(".") ?? "(root)"}: ${firstIssue?.message ?? "unknown"}`);
+          }
+        } catch (e) {
+          findings.push(`.mcp.json unparseable (${e instanceof Error ? e.message : String(e)})`);
+        }
+      }
+
+      const agiDebris = path.join(projectPath, ".agi", "project.json");
+      if (fileExists(agiDebris)) findings.push("`.agi/project.json` debris (s130 → s140 leftover)");
+
+      const type = typeof raw.type === "string" ? raw.type : null;
+      if (type === null || type.length === 0) {
+        findings.push("top-level `type` is missing");
+      } else if (RETIRED_TYPES.has(type)) {
+        findings.push(`type "${type}" was retired (s150 t640) — boot sweep will remap to "web-app"`);
+      }
+
+      for (const rel of REQUIRED_DIRS) {
+        const abs = path.join(projectPath, rel);
+        if (!dirExists(abs)) findings.push(`missing dir: ${rel}/`);
+      }
+      // sandbox + .trash also count as required (covered above).
+
+      checks.push({
+        name: findings.length === 0 ? `${slug}: shape clean` : `${slug}: ${String(findings.length)} drift finding(s)`,
+        ok: findings.length === 0,
+        warn: findings.length > 0 && findings.every((f) => f.startsWith("legacy") || f.includes("debris") || f.includes("retired")),
+        fix: findings.length === 0 ? undefined : findings.map((f) => `• ${f}`).join("\n"),
+      });
+    }
+  }
+
+  if (scanned === 0) return null;
+  return { title: "Project shape (s150)", checks };
 }
 
 function hostingChecks(config: AionimaConfig): CheckGroup | null {
@@ -590,11 +1096,282 @@ async function lemonadeChecks(config: AionimaConfig): Promise<CheckGroup | null>
 }
 
 // ---------------------------------------------------------------------------
+// `agi doctor dump` — Diagnostic bundle for incident triage (s144 t579)
+// ---------------------------------------------------------------------------
+
+/** Sanitize a gateway.json-shape object — strip obvious secret-bearing keys. */
+export function redactConfig(value: unknown): unknown {
+  const SECRET_KEY_RE = /(secret|password|token|apikey|api_key|credential|private[-_]?key)/i;
+  if (Array.isArray(value)) return value.map(redactConfig);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (SECRET_KEY_RE.test(k)) {
+        out[k] = typeof v === "string" && v.length > 0 ? `<redacted:${String(v.length)}-chars>` : "<redacted>";
+      } else {
+        out[k] = redactConfig(v);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
+// ---------------------------------------------------------------------------
+// `agi doctor config get/set` — Safe edit cycle for gateway.json (s144 t578)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read a dotted path out of a nested object. Returns `undefined` on any
+ * missing segment. Pure function for testability.
+ */
+export function getDottedPath(obj: unknown, path: string): unknown {
+  if (path.length === 0) return obj;
+  const parts = path.split(".");
+  let cur: unknown = obj;
+  for (const p of parts) {
+    if (cur === null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[p];
+  }
+  return cur;
+}
+
+/**
+ * Immutably set a dotted path on a deep clone of `obj`. Creates
+ * intermediate objects as needed. Returns the new root. Pure function.
+ */
+export function setDottedPath(obj: unknown, path: string, value: unknown): unknown {
+  if (path.length === 0) return value;
+  // Deep-ish clone via JSON round-trip. Sufficient for plain config
+  // shapes — gateway.json never contains functions, Maps, or Dates.
+  const cloned: Record<string, unknown> = obj && typeof obj === "object"
+    ? JSON.parse(JSON.stringify(obj)) as Record<string, unknown>
+    : {};
+  const parts = path.split(".");
+  let cur: Record<string, unknown> = cloned;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const p = parts[i]!;
+    const next = cur[p];
+    if (next === null || typeof next !== "object" || Array.isArray(next)) {
+      cur[p] = {};
+    }
+    cur = cur[p] as Record<string, unknown>;
+  }
+  cur[parts[parts.length - 1]!] = value;
+  return cloned;
+}
+
+/**
+ * Coerce a raw CLI value to the most useful JSON-typed shape:
+ *   "true"/"false" → boolean; integer string → number; "null" → null;
+ *   "{...}" or "[...]" parses as JSON; anything else → string verbatim.
+ * Operators commonly want `agi doctor config set gateway.port 4100` to
+ * write a number, not the string "4100" — same intuition for booleans.
+ */
+export function coerceValue(raw: string): unknown {
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  if (raw === "null") return null;
+  if (/^-?\d+$/.test(raw)) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && Number.isSafeInteger(n)) return n;
+  }
+  if (raw.length > 0 && (raw[0] === "{" || raw[0] === "[")) {
+    try { return JSON.parse(raw) as unknown; } catch { /* fallthrough */ }
+  }
+  return raw;
+}
+
+// ---------------------------------------------------------------------------
+// `agi doctor logs` — Tail recent logs and classify by crash pattern (s144 t581)
+// ---------------------------------------------------------------------------
+
+/**
+ * Known crash patterns surfaced by `agi doctor logs`. The order is
+ * load-bearing: earlier entries win on ambiguous lines (e.g. a ZodError
+ * mention in an unhandledRejection log line classifies as schema-error,
+ * which is the more actionable category).
+ */
+export const LOG_PATTERNS = [
+  {
+    id: "schema-error",
+    label: "Schema validation error",
+    regex: /\bZod(Error|Issue)\b|schema validation (?:rejected|failed)/i,
+    repair: "Run `agi doctor schema` for the offending file. Cycle 150 caught a project.json drift this way.",
+  },
+  {
+    id: "port-conflict",
+    label: "Port already in use",
+    regex: /\bEADDRINUSE\b/i,
+    repair: "Another process is bound to the gateway port (default 3100). `lsof -iTCP:3100 -sTCP:LISTEN` to identify; stop it or change `gateway.port` in gateway.json.",
+  },
+  {
+    id: "segfault",
+    label: "Segfault / SIGSEGV",
+    regex: /\bsegfault\b|signal: SIGSEGV|core dumped/i,
+    repair: "Native crash. Capture `agi doctor dump` and the journalctl tail; likely a node-pty / podman / hf-runtime issue. Open an incident.",
+  },
+  {
+    id: "unhandled-rejection",
+    label: "Unhandled promise rejection",
+    regex: /unhandled\s*(?:promise\s*)?rejection|unhandledrejection/i,
+    repair: "Async error escaped a handler. Capture `agi doctor dump` for the stack; root-cause via the surrounding log lines.",
+  },
+  {
+    id: "container-exit-nonzero",
+    label: "Container exited non-zero",
+    regex: /\bexited (?:with )?(?:status |code )(?:[1-9]|\d{2,})\b|\bcontainer\b[^\n]*?\bexit\s+code\s+(?:[1-9]|\d{2,})\b/i,
+    repair: "A hosted-project or system-service container failed. `agi doctor` repos / hosting groups + `podman logs <name>` for context.",
+  },
+  {
+    id: "restart-loop",
+    label: "Restart loop / fuse popped",
+    regex: /restart\s*(?:count|loop)|fuse popped/i,
+    repair: "podman --restart=always is cycling a broken container. Hosting circuit-breaker (s143) should trip after 3 failures; if not, check the breaker state and reset.",
+  },
+  {
+    id: "oom",
+    label: "Out of memory",
+    regex: /\b(?:out of memory|OOM(?:Killer)?)\b|killed.*(?:memory|by\s+OOM)/i,
+    repair: "OOM killer activated. Check `free -m` and lemonade/HF model RAM ceilings; reduce model concurrency.",
+  },
+] as const;
+
+/**
+ * Classify a single log line by the first matching crash pattern.
+ * Returns `null` when no pattern matches. Pure function — pulled out
+ * for unit testing.
+ */
+export function classifyLogLine(line: string): string | null {
+  for (const p of LOG_PATTERNS) {
+    if (p.regex.test(line)) return p.id;
+  }
+  return null;
+}
+
+/** Read up to N most-recent lines of a file (best-effort). Returns [] on any error. */
+function tailFile(path: string, lines: number): string[] {
+  try {
+    if (!existsSync(path)) return [];
+    const raw = readFileSync(path, "utf-8");
+    const all = raw.split("\n");
+    return all.slice(Math.max(0, all.length - lines));
+  } catch {
+    return [];
+  }
+}
+
+/** Collect a doctor diagnostic bundle and write it to ~/.agi/doctor-dumps/. */
+async function runDoctorDump(opts: { config?: string }): Promise<string> {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const dumpDir = join(homedir(), ".agi", "doctor-dumps");
+  mkdirSync(dumpDir, { recursive: true });
+  const outPath = join(dumpDir, `dump-${timestamp}.json`);
+
+  // 1. Diagnostic checks (re-use the existing groups).
+  const groups: CheckGroup[] = [];
+  const { group: core, config, configOk } = await coreChecks(opts.config);
+  groups.push(core);
+  if (config && configOk) {
+    groups.push(authChecks(config));
+    groups.push(repoChecks(config));
+    groups.push(gitStateChecks(config));
+    groups.push(pluginChecks());
+    const network = networkChecks();
+    if (network) groups.push(network);
+    const containers = containerChecks();
+    if (containers) groups.push(containers);
+    const hosting = hostingChecks(config);
+    if (hosting) groups.push(hosting);
+    const shape = await projectShapeChecks(config);
+    if (shape) groups.push(shape);
+    const dev = devChecks(config);
+    if (dev) groups.push(dev);
+    groups.push(await gatewayChecks(config));
+    const lemonade = await lemonadeChecks(config);
+    if (lemonade) groups.push(lemonade);
+  }
+
+  // 2. Sanitized config + system info + log tails + workspace projects.
+  const redactedConfig = config ? redactConfig(config) : null;
+
+  const sys = {
+    hostname: osHostname(),
+    platform: osPlatform(),
+    release: osRelease(),
+    nodeVersion: process.version,
+    totalMemMB: Math.round(totalmem() / 1024 / 1024),
+    freeMemMB: Math.round(freemem() / 1024 / 1024),
+    podmanVersion: execVersion("podman --version"),
+    gitVersion: execVersion("git --version"),
+  };
+
+  const logsDir = join(homedir(), ".agi", "logs");
+  const logTails: Record<string, string[]> = {};
+  if (existsSync(logsDir)) {
+    try {
+      const entries = readdirSync(logsDir).filter((f) => f.endsWith(".log") || f.endsWith(".jsonl"));
+      const ranked = entries.map((f) => {
+        const p = join(logsDir, f);
+        try { return { f, mtime: statSync(p).mtimeMs }; } catch { return { f, mtime: 0 }; }
+      }).sort((a, b) => b.mtime - a.mtime).slice(0, 5);
+      for (const { f } of ranked) logTails[f] = tailFile(join(logsDir, f), 200);
+    } catch {
+      // ignore
+    }
+  }
+  const tmpLog = "/tmp/agi.log";
+  if (existsSync(tmpLog)) logTails["/tmp/agi.log"] = tailFile(tmpLog, 200);
+
+  const workspaceProjects: { path: string; type?: string; exists: boolean }[] = [];
+  if (config?.workspace?.projects) {
+    for (const p of config.workspace.projects) {
+      const projJson = join(p, "project.json");
+      let type: string | undefined;
+      if (existsSync(projJson)) {
+        try {
+          const raw = await readFile(projJson, "utf8");
+          const parsed = JSON.parse(raw) as { type?: string };
+          type = parsed.type;
+        } catch {
+          // ignore
+        }
+      }
+      workspaceProjects.push({ path: p, type, exists: existsSync(p) });
+    }
+  }
+
+  const allChecks = groups.flatMap((g) => g.checks);
+  const bundle = {
+    bundleVersion: 1,
+    bundleId: timestamp,
+    generatedAt: new Date().toISOString(),
+    cliVersion: process.env["AGI_CLI_VERSION"] ?? "unknown",
+    system: sys,
+    checks: {
+      groups,
+      summary: {
+        total: allChecks.length,
+        passed: allChecks.filter((c) => c.ok).length,
+        warnings: allChecks.filter((c) => !c.ok && c.warn).length,
+        failed: allChecks.filter((c) => !c.ok && !c.warn).length,
+      },
+    },
+    config: redactedConfig,
+    logTails,
+    workspaceProjects,
+  };
+
+  writeFileSync(outPath, JSON.stringify(bundle, null, 2), "utf-8");
+  return outPath;
+}
+
+// ---------------------------------------------------------------------------
 // Command registration
 // ---------------------------------------------------------------------------
 
 export function registerDoctorCommand(program: Command): void {
-  program
+  const doctor = program
     .command("doctor")
     .description("Run self-diagnostics")
     .option("--json", "Output results as JSON")
@@ -610,10 +1387,21 @@ export function registerDoctorCommand(program: Command): void {
       if (config && configOk) {
         groups.push(authChecks(config));
         groups.push(repoChecks(config));
+        groups.push(gitStateChecks(config));
         groups.push(pluginChecks());
+
+        const network = networkChecks();
+        if (network) groups.push(network);
+
+        const containers = containerChecks();
+        if (containers) groups.push(containers);
 
         const hosting = hostingChecks(config);
         if (hosting) groups.push(hosting);
+
+        // s150 t641 — per-project shape validation
+        const shape = await projectShapeChecks(config);
+        if (shape) groups.push(shape);
 
         const dev = devChecks(config);
         if (dev) groups.push(dev);
@@ -702,5 +1490,167 @@ export function registerDoctorCommand(program: Command): void {
       console.log();
 
       if (totalFailed > 0) process.exitCode = 1;
+    });
+
+  // s144 t579 — `agi doctor dump` writes a diagnostic bundle to
+  // ~/.agi/doctor-dumps/dump-<timestamp>.json. Hands the path back so an
+  // operator can attach it to a bug report or share it with support.
+  doctor
+    .command("dump")
+    .description("Write a diagnostic bundle (logs + redacted config + checks + system info) to ~/.agi/doctor-dumps/")
+    .action(async () => {
+      const opts = program.opts<{ config?: string }>();
+      try {
+        const path = await runDoctorDump({ config: opts.config });
+        console.log();
+        console.log(`  ${green("✓")} diagnostic bundle written`);
+        console.log(`  ${dim(path)}`);
+        console.log();
+      } catch (err) {
+        console.error(`${red("✗")} failed to write bundle: ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  // s144 t581 — `agi doctor logs` tails recent logs and classifies any
+  // matching crash patterns, with a repair pointer per pattern.
+  doctor
+    .command("logs")
+    .description("Tail recent logs and surface known crash patterns (ZodError, EADDRINUSE, segfault, OOM, container exit, restart loop)")
+    .option("--lines <n>", "Lines to inspect per log file (default 500)", "500")
+    .action((cmdOpts: { lines?: string }) => {
+      const linesPerFile = Math.max(50, Math.min(5000, Number(cmdOpts.lines ?? 500)));
+      const sources: { path: string; lines: string[] }[] = [];
+
+      // Collect from the same locations as `agi doctor dump`.
+      const logsDir = join(homedir(), ".agi", "logs");
+      if (existsSync(logsDir)) {
+        try {
+          const entries = readdirSync(logsDir).filter((f) => f.endsWith(".log") || f.endsWith(".jsonl"));
+          const ranked = entries.map((f) => {
+            const p = join(logsDir, f);
+            try { return { f, mtime: statSync(p).mtimeMs, path: p }; } catch { return { f, mtime: 0, path: p }; }
+          }).sort((a, b) => b.mtime - a.mtime).slice(0, 5);
+          for (const r of ranked) sources.push({ path: r.path, lines: tailFile(r.path, linesPerFile) });
+        } catch {
+          // ignore
+        }
+      }
+      const tmpLog = "/tmp/agi.log";
+      if (existsSync(tmpLog)) sources.push({ path: tmpLog, lines: tailFile(tmpLog, linesPerFile) });
+
+      // Bucket lines by pattern id.
+      const buckets = new Map<string, { count: number; samples: string[]; sources: Set<string> }>();
+      let totalLines = 0;
+      for (const src of sources) {
+        for (const raw of src.lines) {
+          if (raw.length === 0) continue;
+          totalLines++;
+          const id = classifyLogLine(raw);
+          if (!id) continue;
+          let bucket = buckets.get(id);
+          if (!bucket) {
+            bucket = { count: 0, samples: [], sources: new Set() };
+            buckets.set(id, bucket);
+          }
+          bucket.count++;
+          bucket.sources.add(src.path);
+          if (bucket.samples.length < 3) bucket.samples.push(raw.slice(0, 200));
+        }
+      }
+
+      console.log();
+      console.log(bold("  agi doctor logs"));
+      console.log(`  ${dim(`scanned ${String(totalLines)} lines across ${String(sources.length)} log file(s)`)}`);
+      console.log();
+
+      if (buckets.size === 0) {
+        console.log(`  ${green("No known crash patterns found")}`);
+        console.log();
+        return;
+      }
+
+      for (const pattern of LOG_PATTERNS) {
+        const bucket = buckets.get(pattern.id);
+        if (!bucket) continue;
+        console.log(`  ${red("✗")} ${bold(pattern.label)} ${dim(`(${String(bucket.count)} hit${bucket.count === 1 ? "" : "s"} across ${String(bucket.sources.size)} file${bucket.sources.size === 1 ? "" : "s"})`)}`);
+        for (const sample of bucket.samples) {
+          console.log(`    ${dim(sample)}`);
+        }
+        console.log(`    ${yellow("→")} ${pattern.repair}`);
+        console.log();
+      }
+    });
+
+  // s144 t578 — `agi doctor config get/set` for safe edits to gateway.json
+  // (interactive editor variant lands with t574 TUI). Validates the full
+  // config via Zod before writing; rolls back on validation failure so the
+  // file on disk never enters an invalid state mid-edit.
+  const configSub = doctor
+    .command("config")
+    .description("Inspect or edit gateway.json keys with Zod-validated rollback");
+
+  configSub
+    .command("get <path>")
+    .description("Read a dotted path out of gateway.json (e.g. gateway.port)")
+    .action(async (path: string) => {
+      const opts = program.opts<{ config?: string }>();
+      try {
+        const result = await loadConfig(opts.config);
+        const value = getDottedPath(result.config as unknown, path);
+        if (value === undefined) {
+          console.log(`${dim("(unset)")}`);
+          process.exitCode = 1;
+          return;
+        }
+        // Print primitives raw; objects/arrays as JSON.
+        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) {
+          console.log(String(value));
+        } else {
+          console.log(JSON.stringify(value, null, 2));
+        }
+      } catch (err) {
+        console.error(`${red("✗")} ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  configSub
+    .command("set <path> <value>")
+    .description("Set a dotted path in gateway.json. Validates against AionimaConfigSchema before writing; rolls back on failure. Coerces 'true'/'false'/'null'/integers/JSON automatically.")
+    .action(async (path: string, value: string) => {
+      const opts = program.opts<{ config?: string }>();
+      try {
+        const result = await loadConfig(opts.config);
+        const previous = getDottedPath(result.config as unknown, path);
+        const coerced = coerceValue(value);
+        const candidate = setDottedPath(result.config as unknown, path, coerced);
+
+        // Validate the FULL candidate config — this catches type
+        // mismatches AND cross-field invariants that single-key
+        // validation would miss.
+        const parsed = AionimaConfigSchema.safeParse(candidate);
+        if (!parsed.success) {
+          console.error(`${red("✗")} Validation failed — gateway.json NOT modified.`);
+          for (const issue of parsed.error.issues) {
+            const where = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+            console.error(`  ${red("•")} ${where}: ${issue.message}`);
+          }
+          process.exitCode = 1;
+          return;
+        }
+
+        // Validation passed — atomic write via temp + rename.
+        const tmpPath = `${result.path}.tmp.${String(process.pid)}`;
+        writeFileSync(tmpPath, JSON.stringify(candidate, null, 2) + "\n", "utf-8");
+        execFileSync("mv", [tmpPath, result.path], { stdio: ["ignore", "ignore", "ignore"] });
+
+        console.log(`${green("✓")} ${path} = ${typeof coerced === "string" ? JSON.stringify(coerced) : String(coerced)}`);
+        console.log(`  ${dim(`previous: ${previous === undefined ? "(unset)" : typeof previous === "string" ? JSON.stringify(previous) : String(previous)}`)}`);
+        console.log(`  ${dim(`written: ${result.path}`)}`);
+      } catch (err) {
+        console.error(`${red("✗")} ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+      }
     });
 }

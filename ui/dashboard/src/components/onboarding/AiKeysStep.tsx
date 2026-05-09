@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import { Card } from "@/components/ui/card.js";
-import { Input as FancyInput, Select as FancySelect } from "@particle-academy/react-fancy";
+import { Input as FancyInput, Select as FancySelect, Callout } from "@particle-academy/react-fancy";
 import { fetchModels, type ModelEntry } from "../../api.js";
 import type { OnboardingStepStatus } from "@/types.js";
 import { Sparkles, BrainCircuit, Server } from "lucide-react";
@@ -193,9 +193,9 @@ export function AiKeysStep({ onNext, status }: Props) {
       </div>
 
       {isCompleted && (
-        <div className="p-3 rounded-lg bg-green/5 border border-green/20 text-sm text-muted-foreground onboard-animate-in">
+        <Callout color="green" className="text-sm text-muted-foreground onboard-animate-in">
           AI providers already configured. Continue to keep existing config, or reconfigure below.
-        </div>
+        </Callout>
       )}
 
       {/* Phase 1: Provider cards */}

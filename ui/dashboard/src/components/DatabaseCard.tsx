@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
+import { Select } from "@/components/ui/select.js";
 import type { ProjectStackInstance, StackInfo } from "@/types.js";
 import {
   fetchDatabaseEngines,
@@ -234,19 +235,16 @@ export function DatabaseCard({
       )}
 
       {/* Engine selector */}
-      <select
+      <Select
+        className="text-[12px]"
+        list={[
+          { value: "", label: "File (default)" },
+          ...engines.map((eng) => ({ value: eng.stackId, label: eng.label })),
+        ]}
         value={selectedValue}
         disabled={changing}
-        onChange={(e) => void handleEngineChange(e.target.value)}
-        className="w-full h-8 px-2 rounded-md border border-border bg-background text-foreground text-[12px] disabled:opacity-50"
-      >
-        <option value="">File (default)</option>
-        {engines.map((eng) => (
-          <option key={eng.stackId} value={eng.stackId}>
-            {eng.label}
-          </option>
-        ))}
-      </select>
+        onValueChange={(v) => void handleEngineChange(v)}
+      />
 
       {changing && (
         <p className="text-[11px] text-muted-foreground">Applying database change...</p>

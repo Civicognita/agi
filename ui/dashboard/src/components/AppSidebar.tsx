@@ -19,7 +19,7 @@ import {
   Compass, FileText, GitBranch, Store, ScrollText, Rocket,
   SlidersHorizontal, Activity, Blocks, ShieldHalf, ShieldCheck,
   AlertTriangle, Building2, HardDrive, Fingerprint, Sparkles, Cpu,
-  Shield, ArrowLeft, FileSearch,
+  Shield, ArrowLeft, FileSearch, NotebookPen,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -61,6 +61,8 @@ const builtinSections: NavSectionWithMode[] = [
   { mode: "main", title: "Knowledge", items: [
     { to: "/knowledge", label: "Browse", icon: Compass },
     { to: "/docs", label: "Documentation", icon: FileText },
+    // s152 — Global Notes page (markdown notepad surface, scoped to no project).
+    { to: "/notes", label: "Notes", icon: NotebookPen },
   ]},
   // ── ADMIN ──
   { mode: "admin", title: "Overview", items: [

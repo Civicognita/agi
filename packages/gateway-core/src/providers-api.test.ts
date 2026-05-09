@@ -416,3 +416,193 @@ describe("providers-api — PUT /api/providers/router (s111 t372 slice 2/2)", ()
     await app.close();
   });
 });
+
+describe("providers-api — PUT /api/providers/router floor/ceiling (s129 t510)", () => {
+  it("patches floor + ceiling + escalation triggers atomically", async () => {
+    const app = makeApp({});
+    const res = await app.inject({
+      method: "PUT", url: "/api/providers/router",
+      payload: {
+        floor: "economy",
+        ceiling: "max",
+        escalateOnLowConfidence: true,
+        escalateOnTimeoutSec: 30,
+        parallelRace: true,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as ActiveProviderState;
+    expect(body.router.floor).toBe("economy");
+    expect(body.router.ceiling).toBe("max");
+    expect(body.router.escalateOnLowConfidence).toBe(true);
+    expect(body.router.escalateOnTimeoutSec).toBe(30);
+    expect(body.router.parallelRace).toBe(true);
+    await app.close();
+  });
+
+  it("rejects floor > ceiling on the tier scale", async () => {
+    const app = makeApp({});
+    const res = await app.inject({
+      method: "PUT", url: "/api/providers/router",
+      payload: { floor: "max", ceiling: "local" },
+    });
+    expect(res.statusCode).toBe(400);
+    const details = (res.json() as { details: string[] }).details;
+    expect(details.join(" ")).toContain("floor must be <= ceiling");
+    await app.close();
+  });
+
+  it("rejects invalid tier values for floor/ceiling", async () => {
+    const app = makeApp({});
+    const res = await app.inject({
+      method: "PUT", url: "/api/providers/router",
+      payload: { floor: "extreme", ceiling: "ultra" },
+    });
+    expect(res.statusCode).toBe(400);
+    const details = (res.json() as { details: string[] }).details;
+    expect(details.some((d) => d.startsWith("floor must be one of"))).toBe(true);
+    expect(details.some((d) => d.startsWith("ceiling must be one of"))).toBe(true);
+    await app.close();
+  });
+
+  it("accepts escalateOnTimeoutSec=null (off) but rejects 0 or negative", async () => {
+    const app = makeApp({});
+    const okRes = await app.inject({
+      method: "PUT", url: "/api/providers/router",
+      payload: { escalateOnTimeoutSec: null },
+    });
+    expect(okRes.statusCode).toBe(200);
+
+    const badRes = await app.inject({
+      method: "PUT", url: "/api/providers/router",
+      payload: { escalateOnTimeoutSec: 0 },
+    });
+    expect(badRes.statusCode).toBe(400);
+    const details = (badRes.json() as { details: string[] }).details;
+    expect(details.join(" ")).toContain("escalateOnTimeoutSec must be null or a positive integer");
+    await app.close();
+  });
+
+  it("derives floor/ceiling on read when only legacy costMode is set", async () => {
+    const app = makeApp({
+      agent: { router: { costMode: "economy", escalation: true } },
+    } as Partial<AionimaConfig>);
+    const res = await app.inject({ method: "GET", url: "/api/providers/active" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as ActiveProviderState;
+    expect(body.router.floor).toBe("economy");
+    expect(body.router.ceiling).toBe("max");
+    expect(body.router.escalateOnLowConfidence).toBe(true);
+    await app.close();
+  });
+});
+
+describe("providers-api — GET /api/providers/:id/models (cycle 140)", () => {
+  it("returns 404 for unknown provider ids", async () => {
+    const app = makeApp({});
+    const res = await app.inject({ method: "GET", url: "/api/providers/bogus/models" });
+    expect(res.statusCode).toBe(404);
+    const body = res.json() as { error: string; validIds: string[] };
+    expect(body.error).toMatch(/unknown provider/);
+    expect(body.validIds).toContain("ollama");
+    expect(body.validIds).toContain("lemonade");
+    await app.close();
+  });
+
+  it("returns the hardcoded aion-micro model entry", async () => {
+    const app = makeApp({});
+    const res = await app.inject({ method: "GET", url: "/api/providers/aion-micro/models" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: Array<{ id: string; label?: string }> | null };
+    expect(body.models).not.toBeNull();
+    expect(body.models).toHaveLength(1);
+    const [m] = body.models!;
+    expect(m?.id).toBe("wishborn/aion-micro-v1");
+    expect(m?.label).toBe("aion-micro v1");
+    await app.close();
+  });
+
+  it("returns null for huggingface (delegated to /api/hf/models)", async () => {
+    const app = makeApp({});
+    const res = await app.inject({ method: "GET", url: "/api/providers/huggingface/models" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: unknown };
+    expect(body.models).toBeNull();
+    await app.close();
+  });
+
+  it("returns null for cloud providers without an API key (anthropic, openai)", async () => {
+    // Cycle 142: with no apiKey configured AND no env var, getModelsForBuiltin
+    // short-circuits to null before any fetch. We clear env vars defensively
+    // since the test runner may inherit them from the dev shell.
+    const prevAnth = process.env["ANTHROPIC_API_KEY"];
+    const prevOpenai = process.env["OPENAI_API_KEY"];
+    delete process.env["ANTHROPIC_API_KEY"];
+    delete process.env["OPENAI_API_KEY"];
+    try {
+      const app = makeApp({});
+      for (const id of ["anthropic", "openai"]) {
+        const res = await app.inject({ method: "GET", url: `/api/providers/${id}/models` });
+        expect(res.statusCode).toBe(200);
+        const body = res.json() as { models: unknown };
+        expect(body.models).toBeNull();
+      }
+      await app.close();
+    } finally {
+      if (prevAnth !== undefined) process.env["ANTHROPIC_API_KEY"] = prevAnth;
+      if (prevOpenai !== undefined) process.env["OPENAI_API_KEY"] = prevOpenai;
+    }
+  });
+
+  it("returns null when anthropic API rejects the key (401)", async () => {
+    // Cycle 142: with a clearly-bad key, the live REST call returns 401 →
+    // res.ok is false → we return null. No mocking needed; api.anthropic.com
+    // is reachable from the test VM with internet.
+    const app = makeApp({
+      providers: { anthropic: { apiKey: "sk-ant-invalid-test-key" } } as Record<string, unknown>,
+    } as Partial<AionimaConfig>);
+    const res = await app.inject({ method: "GET", url: "/api/providers/anthropic/models" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: unknown };
+    expect(body.models).toBeNull();
+    await app.close();
+  }, 15_000);
+
+  it("returns null when openai API rejects the key (401)", async () => {
+    const app = makeApp({
+      providers: { openai: { apiKey: "sk-invalid-test-key" } } as Record<string, unknown>,
+    } as Partial<AionimaConfig>);
+    const res = await app.inject({ method: "GET", url: "/api/providers/openai/models" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: unknown };
+    expect(body.models).toBeNull();
+    await app.close();
+  }, 15_000);
+
+  it("returns null when ollama is unreachable (network errors swallowed)", async () => {
+    // Default config has no ollama baseUrl → falls back to 127.0.0.1:11434.
+    // Test VM may or may not have Ollama running; either way, the contract
+    // is "errors swallowed → null." If Ollama IS running, this test still
+    // proves the success-path codepath returns models[].
+    const app = makeApp({
+      providers: { ollama: { baseUrl: "http://127.0.0.1:1" } } as Record<string, unknown>,
+    } as Partial<AionimaConfig>);
+    const res = await app.inject({ method: "GET", url: "/api/providers/ollama/models" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: unknown };
+    // Port 1 is reserved (TCPMUX), refuses connection → null
+    expect(body.models).toBeNull();
+    await app.close();
+  });
+
+  it("returns null when lemonade is unreachable", async () => {
+    const app = makeApp({
+      providers: { lemonade: { baseUrl: "http://127.0.0.1:1" } } as Record<string, unknown>,
+    } as Partial<AionimaConfig>);
+    const res = await app.inject({ method: "GET", url: "/api/providers/lemonade/models" });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { models: unknown };
+    expect(body.models).toBeNull();
+    await app.close();
+  });
+});

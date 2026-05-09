@@ -48,6 +48,52 @@ const AGI_CLIENT_IDENTITY = {
   version: "0.1.0",
 };
 
+// ---------------------------------------------------------------------------
+// s133 t677 — TTL'd response cache for list* + readResource (2026-05-09)
+// ---------------------------------------------------------------------------
+//
+// Owner directive (cycle 70): "add a story for mcp cacheing to our setup in
+// VIP so we don't have to hit server apis so much." Every dashboard MCP
+// browse hits the upstream MCP server fresh; this layer wraps list*/read
+// with a per-(serverId,kind) cache. Tool calls are NEVER cached (stateful
+// by nature); cache invalidates on registerServer / unregisterServer /
+// explicit invalidate() + bypassCache parameter on each method.
+//
+// In-memory only — survives gateway restart by re-fetching on first access.
+// Per-server TTL configurable via McpServerConfig.cacheTtlSec (added to
+// types.ts; defaults below kick in when unset).
+
+/** Default TTL for tool / resource / prompt listings. 5 min. */
+export const DEFAULT_LIST_CACHE_TTL_SEC = 5 * 60;
+
+/** Default TTL for resource reads. 30 min — resources are typically static. */
+export const DEFAULT_RESOURCE_READ_CACHE_TTL_SEC = 30 * 60;
+
+interface CacheEntry<T> {
+  value: T;
+  expiresAt: number;
+}
+
+interface CacheStats {
+  hits: number;
+  misses: number;
+  bypasses: number;
+  invalidations: number;
+  /** Last-fetch (cache-miss) timestamp ISO. */
+  lastFetchAt?: string;
+}
+
+/** Per-server cache surface. Exposed for diagnostics + tests. */
+export interface McpServerCacheStatus {
+  serverId: string;
+  hits: number;
+  misses: number;
+  bypasses: number;
+  invalidations: number;
+  hitRatio: number;
+  lastFetchAt?: string;
+}
+
 /**
  * McpClient — manages a pool of MCP server connections + dispatches calls.
  *
@@ -60,6 +106,85 @@ export class McpClient {
   private readonly servers = new Map<string, McpServerConfig>();
   private readonly states = new Map<string, McpServerState>();
   private readonly clients = new Map<string, Client>();
+  // s133 t677 — per-server caches. Keys for listing caches are the
+  // bare kind string ("tools"|"resources"|"prompts"); resource-read
+  // cache keys are the URI.
+  private readonly listCache = new Map<string, Map<string, CacheEntry<unknown>>>();
+  private readonly resourceCache = new Map<string, Map<string, CacheEntry<unknown>>>();
+  private readonly cacheStats = new Map<string, CacheStats>();
+  /** s133 t677 — clock injection point for tests. Defaults to Date.now. */
+  private readonly now: () => number;
+
+  constructor(opts: { now?: () => number } = {}) {
+    this.now = opts.now ?? (() => Date.now());
+  }
+
+  // ---- s133 t677 cache helpers ----
+
+  private getStats(serverId: string): CacheStats {
+    let s = this.cacheStats.get(serverId);
+    if (s === undefined) {
+      s = { hits: 0, misses: 0, bypasses: 0, invalidations: 0 };
+      this.cacheStats.set(serverId, s);
+    }
+    return s;
+  }
+
+  private listCacheFor(serverId: string): Map<string, CacheEntry<unknown>> {
+    let m = this.listCache.get(serverId);
+    if (m === undefined) {
+      m = new Map();
+      this.listCache.set(serverId, m);
+    }
+    return m;
+  }
+
+  private resourceCacheFor(serverId: string): Map<string, CacheEntry<unknown>> {
+    let m = this.resourceCache.get(serverId);
+    if (m === undefined) {
+      m = new Map();
+      this.resourceCache.set(serverId, m);
+    }
+    return m;
+  }
+
+  private listTtlMs(serverId: string): number {
+    const cfg = this.servers.get(serverId);
+    const sec = cfg?.cacheTtlSec ?? DEFAULT_LIST_CACHE_TTL_SEC;
+    return sec * 1000;
+  }
+
+  private resourceReadTtlMs(serverId: string): number {
+    const cfg = this.servers.get(serverId);
+    const sec = cfg?.resourceReadCacheTtlSec ?? DEFAULT_RESOURCE_READ_CACHE_TTL_SEC;
+    return sec * 1000;
+  }
+
+  /** Clear all caches for a server. Call on reconnect / server config update. */
+  invalidateCache(serverId: string): void {
+    this.listCache.delete(serverId);
+    this.resourceCache.delete(serverId);
+    const s = this.getStats(serverId);
+    s.invalidations++;
+  }
+
+  /** Diagnostic: per-server hit/miss totals. */
+  getCacheStatus(): McpServerCacheStatus[] {
+    const out: McpServerCacheStatus[] = [];
+    for (const [serverId, s] of this.cacheStats) {
+      const total = s.hits + s.misses;
+      out.push({
+        serverId,
+        hits: s.hits,
+        misses: s.misses,
+        bypasses: s.bypasses,
+        invalidations: s.invalidations,
+        hitRatio: total > 0 ? s.hits / total : 0,
+        ...(s.lastFetchAt !== undefined ? { lastFetchAt: s.lastFetchAt } : {}),
+      });
+    }
+    return out;
+  }
 
   /**
    * Register a server config. Idempotent — re-registering an id replaces the
@@ -75,6 +200,9 @@ export class McpClient {
     }
     this.servers.set(config.id, config);
     this.states.set(config.id, "disconnected");
+    // s133 t677 — config update invalidates cache so a TTL change or new
+    // server URL doesn't serve stale data.
+    this.invalidateCache(config.id);
     if (config.autoConnect === true) {
       await this.connect(config.id);
     }
@@ -106,7 +234,8 @@ export class McpClient {
     }
   }
 
-  /** Disconnect a server's client. State returns to disconnected. Idempotent. */
+  /** Disconnect a server's client. State returns to disconnected. Idempotent.
+   *  s133 t677 — invalidates the server's cache so the next connect re-fetches. */
   async disconnect(serverId: string): Promise<void> {
     const client = this.clients.get(serverId);
     if (client !== undefined) {
@@ -114,6 +243,7 @@ export class McpClient {
       this.clients.delete(serverId);
     }
     this.states.set(serverId, "disconnected");
+    this.invalidateCache(serverId);
   }
 
   /** Unregister a server entirely (disconnect + remove config). */
@@ -121,6 +251,7 @@ export class McpClient {
     await this.disconnect(serverId);
     this.servers.delete(serverId);
     this.states.delete(serverId);
+    this.cacheStats.delete(serverId);
   }
 
   /** Current state of all registered servers. UX consumes for status badges. */
@@ -137,41 +268,83 @@ export class McpClient {
     return result;
   }
 
-  /** List tools surfaced by a connected server. */
-  async listTools(serverId: string): Promise<McpToolDescriptor[]> {
-    const client = this.requireConnectedClient(serverId);
-    const result = await client.listTools();
-    return result.tools.map((t) => ({
-      serverId,
-      name: t.name,
-      description: t.description,
-      inputSchema: (t.inputSchema as Record<string, unknown>) ?? {},
-    }));
+  /**
+   * List tools surfaced by a connected server. Cached per-(serverId,"tools")
+   * with TTL from `McpServerConfig.cacheTtlSec` (default 5 min). Pass
+   * `{ bypassCache: true }` to force-fetch (e.g. when the dashboard's
+   * Refresh button is clicked).
+   */
+  async listTools(serverId: string, opts: { bypassCache?: boolean } = {}): Promise<McpToolDescriptor[]> {
+    return this.cachedList(serverId, "tools", opts, async () => {
+      const client = this.requireConnectedClient(serverId);
+      const result = await client.listTools();
+      return result.tools.map((t) => ({
+        serverId,
+        name: t.name,
+        description: t.description,
+        inputSchema: (t.inputSchema as Record<string, unknown>) ?? {},
+      }));
+    });
   }
 
-  /** List resources surfaced by a connected server. */
-  async listResources(serverId: string): Promise<McpResourceDescriptor[]> {
-    const client = this.requireConnectedClient(serverId);
-    const result = await client.listResources();
-    return result.resources.map((r) => ({
-      serverId,
-      uri: r.uri,
-      name: r.name,
-      description: r.description,
-      mimeType: r.mimeType,
-    }));
+  /** List resources surfaced by a connected server. Cached like listTools. */
+  async listResources(serverId: string, opts: { bypassCache?: boolean } = {}): Promise<McpResourceDescriptor[]> {
+    return this.cachedList(serverId, "resources", opts, async () => {
+      const client = this.requireConnectedClient(serverId);
+      const result = await client.listResources();
+      return result.resources.map((r) => ({
+        serverId,
+        uri: r.uri,
+        name: r.name,
+        description: r.description,
+        mimeType: r.mimeType,
+      }));
+    });
   }
 
-  /** List prompts surfaced by a connected server. */
-  async listPrompts(serverId: string): Promise<McpPromptDescriptor[]> {
-    const client = this.requireConnectedClient(serverId);
-    const result = await client.listPrompts();
-    return result.prompts.map((p) => ({
-      serverId,
-      name: p.name,
-      description: p.description,
-      arguments: p.arguments,
-    }));
+  /** List prompts surfaced by a connected server. Cached like listTools. */
+  async listPrompts(serverId: string, opts: { bypassCache?: boolean } = {}): Promise<McpPromptDescriptor[]> {
+    return this.cachedList(serverId, "prompts", opts, async () => {
+      const client = this.requireConnectedClient(serverId);
+      const result = await client.listPrompts();
+      return result.prompts.map((p) => ({
+        serverId,
+        name: p.name,
+        description: p.description,
+        arguments: p.arguments,
+      }));
+    });
+  }
+
+  /**
+   * s133 t677 — generic listing-cache helper. Wraps a fetch fn with
+   * per-(serverId,kind) TTL'd memoization. Used by listTools / listResources /
+   * listPrompts.
+   */
+  private async cachedList<T>(
+    serverId: string,
+    kind: string,
+    opts: { bypassCache?: boolean },
+    fetcher: () => Promise<T>,
+  ): Promise<T> {
+    const stats = this.getStats(serverId);
+    const cache = this.listCacheFor(serverId);
+
+    if (opts.bypassCache !== true) {
+      const entry = cache.get(kind);
+      if (entry !== undefined && entry.expiresAt > this.now()) {
+        stats.hits++;
+        return entry.value as T;
+      }
+    } else {
+      stats.bypasses++;
+    }
+
+    const value = await fetcher();
+    cache.set(kind, { value, expiresAt: this.now() + this.listTtlMs(serverId) });
+    stats.misses++;
+    stats.lastFetchAt = new Date(this.now()).toISOString();
+    return value;
   }
 
   /** Call a tool on a connected server. */
@@ -188,16 +361,38 @@ export class McpClient {
     };
   }
 
-  /** Read a resource by URI. */
+  /**
+   * Read a resource by URI. Cached per-(serverId, uri) with TTL from
+   * `McpServerConfig.resourceReadCacheTtlSec` (default 30 min). Pass
+   * `{ bypassCache: true }` to force-fetch.
+   */
   async readResource(
     serverId: string,
     uri: string,
+    opts: { bypassCache?: boolean } = {},
   ): Promise<{ contents: Array<{ uri: string; text?: string; blob?: string; mimeType?: string }> }> {
+    const stats = this.getStats(serverId);
+    const cache = this.resourceCacheFor(serverId);
+
+    if (opts.bypassCache !== true) {
+      const entry = cache.get(uri);
+      if (entry !== undefined && entry.expiresAt > this.now()) {
+        stats.hits++;
+        return entry.value as { contents: Array<{ uri: string; text?: string; blob?: string; mimeType?: string }> };
+      }
+    } else {
+      stats.bypasses++;
+    }
+
     const client = this.requireConnectedClient(serverId);
     const result = await client.readResource({ uri });
-    return {
+    const value = {
       contents: result.contents as Array<{ uri: string; text?: string; blob?: string; mimeType?: string }>,
     };
+    cache.set(uri, { value, expiresAt: this.now() + this.resourceReadTtlMs(serverId) });
+    stats.misses++;
+    stats.lastFetchAt = new Date(this.now()).toISOString();
+    return value;
   }
 
   /**
@@ -222,7 +417,16 @@ export class McpClient {
       if (config.url === undefined || config.url.length === 0) {
         throw new Error(`McpClient: http transport requires url for server ${config.id}`);
       }
-      return new StreamableHTTPClientTransport(new URL(config.url));
+      // Bearer-auth threading: the SDK accepts requestInit which is merged
+      // into every fetch the transport makes (POST + GET-SSE). When the
+      // server config carries an authToken (already $VAR-resolved upstream
+      // at boot wiring), we surface it as `Authorization: Bearer <token>`.
+      // Without this the transport sends only the URL, which fails for any
+      // MCP service that gates access behind a key (tynn.ai, etc).
+      const httpOpts = config.authToken !== undefined && config.authToken.length > 0
+        ? { requestInit: { headers: { Authorization: `Bearer ${config.authToken}` } } }
+        : undefined;
+      return new StreamableHTTPClientTransport(new URL(config.url), httpOpts);
     }
     if (config.transport === "websocket") {
       if (config.url === undefined || config.url.length === 0) {

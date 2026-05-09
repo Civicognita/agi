@@ -224,12 +224,21 @@ export class UsageStore {
     count: number;
   }>> {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const truncUnit = bucket === "hour" ? "hour" : "day";
-    const bucketExpr = sql`date_trunc(${truncUnit}, ${usageLog.createdAt})`;
+    // PostgreSQL's date_trunc expects a literal text first arg. Branch at
+    // compile time on the validated bucket so the SQL has a literal.
+    //
+    // GROUP BY uses ordinal position (`GROUP BY 1`) instead of repeating the
+    // expression, because drizzle 0.45 inlines bound parameters differently
+    // between SELECT and GROUP BY clauses — the textual non-match makes
+    // PostgreSQL reject the bucketed `created_at` as if it weren't grouped.
+    // Position-based grouping bypasses the textual-match requirement entirely.
+    const bucketSql = bucket === "hour"
+      ? sql<Date>`date_trunc('hour', ${usageLog.createdAt})`
+      : sql<Date>`date_trunc('day', ${usageLog.createdAt})`;
 
     const rows = await this.db
       .select({
-        period: bucketExpr,
+        period: bucketSql,
         input: sql<number>`SUM(${usageLog.inputTokens})`,
         output: sql<number>`SUM(${usageLog.outputTokens})`,
         cost: sql<number>`SUM(${usageLog.costUsd})`,
@@ -237,8 +246,8 @@ export class UsageStore {
       })
       .from(usageLog)
       .where(gte(usageLog.createdAt, cutoff))
-      .groupBy(bucketExpr)
-      .orderBy(bucketExpr);
+      .groupBy(sql`1`)
+      .orderBy(sql`1`);
 
     return rows.map((r) => ({
       period: r.period instanceof Date ? r.period.toISOString() : String(r.period ?? ""),

@@ -6,6 +6,7 @@ import { useCallback, useState } from "react";
 import { useOutletContext } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { AionimaConfig } from "../types.js";
 
@@ -64,7 +65,7 @@ export default function SecuritySettingsPage() {
   return (
     <div className="space-y-6">
       {/* Encryption at Rest */}
-      <div className="rounded-xl bg-card border border-border p-4">
+      <Card className="p-4">
         <h3 className="text-[14px] font-bold text-foreground mb-1">Encryption at Rest</h3>
         <p className="text-[12px] text-muted-foreground mb-3">
           Encrypt sensitive entity data (PII/PHI) in the database using AES-256-GCM. Required for HIPAA and PCI DSS compliance.
@@ -97,10 +98,10 @@ export default function SecuritySettingsPage() {
             </div>
           )}
         </div>
-      </div>
+      </Card>
 
       {/* MFA */}
-      <div className="rounded-xl bg-card border border-border p-4">
+      <Card className="p-4">
         <h3 className="text-[14px] font-bold text-foreground mb-1">Multi-Factor Authentication</h3>
         <p className="text-[12px] text-muted-foreground mb-3">
           Require TOTP-based two-factor authentication for dashboard access. Required for PCI DSS and recommended for SOC 2.
@@ -118,10 +119,10 @@ export default function SecuritySettingsPage() {
             <span className={cn("inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform", compliance?.requireMfa ? "translate-x-4" : "translate-x-0.5")} />
           </button>
         </div>
-      </div>
+      </Card>
 
       {/* Backups */}
-      <div className="rounded-xl bg-card border border-border p-4">
+      <Card className="p-4">
         <h3 className="text-[14px] font-bold text-foreground mb-1">Automated Backups</h3>
         <p className="text-[12px] text-muted-foreground mb-3">
           Daily database backups with configurable retention. Required for GDPR Art 32 (restore capability) and SOC 2 availability.
@@ -150,10 +151,10 @@ export default function SecuritySettingsPage() {
             />
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Log Retention */}
-      <div className="rounded-xl bg-card border border-border p-4">
+      <Card className="p-4">
         <h3 className="text-[14px] font-bold text-foreground mb-1">Audit Log Retention</h3>
         <p className="text-[12px] text-muted-foreground mb-3">
           PCI DSS requires 12 months total retention with 3 months immediately available.
@@ -178,16 +179,16 @@ export default function SecuritySettingsPage() {
             />
           </div>
         </div>
-      </div>
+      </Card>
 
       {/* Save bar */}
       {dirty && (
-        <div className="sticky bottom-4 rounded-xl bg-card border border-border p-3 flex items-center justify-between shadow-lg">
+        <Card className="sticky bottom-4 p-3 flex items-center justify-between shadow-lg">
           <span className="text-sm text-yellow font-semibold">Unsaved changes</span>
           <Button size="sm" onClick={() => void handleSave()} disabled={configHook.saving}>
             {configHook.saving ? "Saving..." : "Save"}
           </Button>
-        </div>
+        </Card>
       )}
       {configHook.saveMessage && !dirty && (
         <div className="text-sm text-green">{configHook.saveMessage}</div>

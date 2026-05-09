@@ -47,6 +47,50 @@ A test config fixture at `test/fixtures/gateway-test.json` points to these VM mo
 
 If mounts become stale (e.g., after a host reboot), the VM scripts detect and re-mount automatically.
 
+### Marketplace seeder — `installed: <plugins> / <mapps>`
+
+When `agi test-vm services-start` runs, the seeder pulls Plugin
+Marketplace and MApp Marketplace catalogs and reports a count line:
+
+```
+==> Seeding official MApps from marketplace...
+    installed: 60 / 11
+```
+
+That count reflects what was available **at the time the test VM
+seeder snapshot was published**. The seeder fetches from the
+upstream `Civicognita/main` HEAD of each marketplace repo, **not**
+from the dev forks where day-to-day work lives (`wishborn/dev` for
+agents working in this workspace).
+
+#### qa → DONE merge dependency
+
+This shapes the `qa → DONE` pathway for any task that ships a
+catalog entry:
+
+1. Agent ships to `wishborn/agi-marketplace:dev` or
+   `wishborn/agi-mapp-marketplace:dev` and walks the tynn task to
+   `qa` with the verification plan.
+2. The qa-batch surfaces in test VM only after a cross-repo PR
+   merges `wishborn/<repo>:dev → Civicognita/<repo>:main`. That
+   merge is **owner-only** per the
+   `feedback_never_push_upstream` rule.
+3. Once merged, the next `services-start` (or full
+   `test-vm setup`) reseeds the marketplace catalogs and the new
+   entries become installable.
+4. Owner verifies per the test plan and walks tasks to `done` /
+   `finished` in tynn.
+
+> **Owner upgrade isn't just verification — it's also the merge
+> mechanism.** The autonomous loop can drive catalog ships to
+> `qa` but cannot drive them to `done` because the merge step is
+> owner-only by policy.
+
+This is structural, not a loop-discipline failure. Tasks that
+land catalog content correctly belong in qa with explicit owner
+test plans (per `feedback_qa_filing_must_include_test_plan_for_owner`)
+until the merge step happens.
+
 ---
 
 ## Test Tiers
@@ -108,11 +152,57 @@ Four test suites run in sequence:
 
 ### 3. UI End-to-End Tests (Playwright)
 
-Playwright tests run a real browser on the host against the gateway running inside the VM.
+Playwright tests run a real browser on the host against the gateway running inside the VM. Three modes — pick by intent:
 
 ```bash
-pnpm test:e2e:ui       # Run Playwright UI tests
+agi test --e2e <pattern>            # Headless (default for owner-watch + CI)
+agi test --e2e-ui <pattern>         # Interactive Playwright UI runner — driven by hand
+agi test --e2e-headed <pattern>     # Visible auto-running tests, no UI shell
 ```
+
+When to use which:
+- **`--e2e`** (headless): the right default. Faster, doesn't disrupt the desktop, same DOM extraction. Use for CI + most owner-driven runs.
+- **`--e2e-ui`** (interactive): the Playwright UI runner — a browser-based test runner with watch mode, run controls, traces, and debugging. Use when you want to drive the tests by hand or pause/inspect mid-run.
+- **`--e2e-headed`** (visible auto-run): like `--e2e` but the browser window is visible. Use when the goal is "watch the test execute" without needing the UI shell. Slower than headless; useful for owner-attended live verification of a single spec.
+
+Pattern arg matches against spec filename (case-insensitive substring); omit to run all specs.
+
+#### Dev-side spec discovery (auto-prefers `~/temp_core/agi`)
+
+`agi test <pattern>` runs from the deployed install (`/opt/agi/`) but auto-prefers the host dev tree at `~/temp_core/agi/` for spec discovery when that tree exists. This means brand-new specs added on dev source are runnable pre-deploy without any extra ceremony — the wrapper sees them automatically.
+
+The detection order:
+
+1. **`AGI_TEST_DEV_REPO_DIR=<path>`** explicit override — when set + valid (directory containing `package.json`), wins over everything else.
+2. **Auto-prefer `$HOME/temp_core/agi/`** — when the script runs from `/opt/agi*` AND that dev tree exists with a `package.json`, it becomes `REPO_DIR`. This is the default for normal dev workflow on the owner machine. Logged at run time so you can see which tree resolved.
+3. **`/opt/agi/` fallback** — production-only installs (no dev tree) keep the legacy behavior.
+
+Examples:
+
+```bash
+# Default: dev tree auto-preferred when present
+agi test --e2e walk/my-new-spec
+
+# Explicit override (e.g. testing a different dev branch)
+AGI_TEST_DEV_REPO_DIR=$HOME/projects/agi-fork agi test --e2e walk/my-new-spec
+
+# Force production-only discovery (rare)
+AGI_TEST_DEV_REPO_DIR=/opt/agi agi test --e2e walk/my-new-spec
+```
+
+The test VM mounts dev source live, so the runtime target already matches dev — only the spec-discovery path needed the override. Same behavior for unit specs (`--unit`) too.
+
+#### Auto-skip when VM > host
+
+When the test VM is at a newer version than `/opt/agi/` (typical mid-/loop), the wrapper auto-skips `services-align` rather than downgrading the VM. To force alignment regardless, set `AGI_TEST_SKIP_ALIGN=0` and run `agi test-vm services-align` manually. To skip alignment entirely (e.g. iterating on a known-fresh VM), set `AGI_TEST_SKIP_ALIGN=1`.
+
+#### Auto-rebuild dashboard bundle — `AGI_TEST_SKIP_BUILD`
+
+The test VM mounts dev source live but the dashboard is a Vite-built static bundle, not source. When `services-align` is auto-skipped (above), the bundle stays at whatever was last built — typically days behind dev source after a /loop session. Symptom: Playwright timeouts on `getByText` for elements your dev source clearly defines, because the served HTML is from an older build.
+
+Before each `--e2e` / `--e2e-ui` / `--e2e-headed` run, the wrapper compares the mtime of `ui/dashboard/dist/index.html` against the newest mtime under `ui/dashboard/src/` (`.tsx` / `.ts` / `.css` / `.html`). When src is newer, runs `pnpm --filter @agi/dashboard build` inside the VM before launching Playwright.
+
+Set `AGI_TEST_SKIP_BUILD=1` to bypass — useful when iterating on a known-fresh bundle or when the build itself is the problem under test.
 
 ### Run All Tiers
 
@@ -143,7 +233,7 @@ CI steps:
 | After changing `install.sh` or `upgrade.sh` | `pnpm test:e2e` |
 | After adding or modifying API endpoints | `pnpm test:e2e` |
 | After changing the onboarding flow | `pnpm test:e2e` |
-| After changing dashboard UI | `pnpm test:e2e:ui` |
+| After changing dashboard UI | `agi test --e2e <spec>` (headless); `--e2e-ui` to drive interactively |
 | After changing plugin image refs or stack dependencies | `pnpm test` (plugin tests) |
 | After changing `required-plugins.json` | `pnpm test` |
 | Before shipping a release | `pnpm test:all` |
@@ -156,7 +246,9 @@ CI steps:
 |---------|--------------|-------|
 | `pnpm test` | Unit tests (vitest in VM) | Seconds |
 | `pnpm test:e2e` | Full system on a clean VM (install, API, onboarding, plugins) | ~5 minutes |
-| `pnpm test:e2e:ui` | Dashboard UI in a browser against VM | ~1 minute |
+| `agi test --e2e <spec>` | Dashboard UI against VM (headless) | ~1 minute |
+| `agi test --e2e-ui <spec>` | Playwright UI runner (interactive) | persistent until you close it |
+| `agi test --e2e-headed <spec>` | Visible auto-run, no UI shell | ~1-2 minutes |
 | `pnpm test:all` | All three tiers | ~7 minutes |
 | `pnpm test:vm:create` | Create the test VM | ~2 minutes |
 | `pnpm test:vm:setup` | Install deps in the VM | ~3 minutes |

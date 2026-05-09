@@ -9,13 +9,16 @@ import { Toast } from "@particle-academy/react-fancy";
 import { queryClient } from "./lib/query-client.js";
 import { ThemeProvider } from "./lib/theme-provider.js";
 import { router } from "./router.js";
+import { DevNotesProvider } from "./components/ui/dev-notes.js";
 
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <Toast.Provider position="bottom-right" maxToasts={5}>
-          <RouterProvider router={router} />
+          <DevNotesProvider>
+            <RouterProvider router={router} />
+          </DevNotesProvider>
         </Toast.Provider>
       </ThemeProvider>
     </QueryClientProvider>

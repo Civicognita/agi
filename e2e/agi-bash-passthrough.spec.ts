@@ -1,7 +1,12 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// ESM equivalent of CJS __dirname — Playwright loads e2e specs as ESM, so
+// the bare __dirname reference would be undefined at module init.
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * agi bash passthrough enforcement (story #105 — caller migration + e2e).

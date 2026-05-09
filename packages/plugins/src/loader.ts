@@ -7,7 +7,7 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createComponentLogger } from "@agi/gateway-core";
 import { scanPluginSource } from "./scanner.js";
-import type { Logger, ComponentLogger, ProjectTypeRegistry, ProjectTypeDefinition, ProjectTypeTool } from "@agi/gateway-core";
+import type { Logger, ComponentLogger, ProjectTypeRegistry, ProjectTypeDefinition, ProjectTypeTool, CircuitBreakerTracker } from "@agi/gateway-core";
 import type { AionimaChannelPlugin } from "@agi/channel-sdk";
 import type { DiscoveredPlugin } from "./discovery.js";
 import { HookBus } from "./hooks.js";
@@ -20,7 +20,7 @@ import type {
   ThemeDefinition, AgentToolDefinition, SidebarSectionDefinition,
   ScheduledTaskDefinition, WorkflowDefinition,
   SettingsPageDefinition, DashboardInterfacePageDefinition, DashboardInterfaceDomainDefinition,
-  SubdomainRouteDefinition, LLMProviderDefinition, PmProviderDefinition, WorkerDefinition,
+  SubdomainRouteDefinition, LLMProviderDefinition, PmProviderDefinition, McpServerTemplate, WorkerDefinition,
 } from "./types.js";
 import type { StackDefinition } from "@agi/gateway-core";
 import type { ScanProviderDefinition } from "@agi/security";
@@ -41,6 +41,13 @@ export interface PluginLoaderDeps {
   projectConfigReader?: (projectPath: string) => Record<string, unknown> | null;
   /** Read project stacks (for plugin getProjectStacks API). */
   projectStacksReader?: (projectPath: string) => Array<{ stackId: string; addedAt: string }>;
+  /**
+   * Optional circuit-breaker. When wired (s143 t569), each plugin load runs
+   * through `shouldSkip(plugin:<id>)` first; failed activations are recorded
+   * so a chronically broken plugin won't burn boot time forever. Without
+   * this, plugin loads fall back to the bare try/catch behavior unchanged.
+   */
+  circuitBreaker?: CircuitBreakerTracker;
 }
 
 export interface LoadResult {
@@ -63,6 +70,26 @@ export async function loadPlugins(
     if (deps.pluginRegistry.has(manifest.id)) {
       log.warn(`plugin "${manifest.id}" already loaded — skipping duplicate`);
       continue;
+    }
+
+    // s143 t569 — circuit-breaker gate. If a plugin has tripped the breaker
+    // on previous boots, skip the dynamic-import + activate() entirely so a
+    // chronically broken plugin (bad entry, throws on activate, missing
+    // peer dep) can't burn budget every restart. Failed loads still record
+    // through the catch block below regardless of whether the breaker is
+    // wired — falling back to bare try/catch when not.
+    const serviceId = `plugin:${manifest.id}`;
+    if (deps.circuitBreaker) {
+      const decision = deps.circuitBreaker.shouldSkip(serviceId);
+      if (decision.skip) {
+        const reason = decision.reason ?? "circuit open";
+        log.warn(`[${manifest.id}] circuit-open — skipping plugin load (${reason})`);
+        failed.push({ id: manifest.id, error: reason });
+        continue;
+      }
+      if (decision.transitionedTo) {
+        log.info(`[${manifest.id}] breaker transitioned to ${decision.transitionedTo} — attempting load`);
+      }
     }
 
     // Scan plugin source for suspicious patterns (warn-only)
@@ -117,10 +144,12 @@ export async function loadPlugins(
       }
 
       loaded.push(manifest.id);
+      deps.circuitBreaker?.recordSuccess(serviceId);
       log.info(`loaded plugin: ${manifest.name} v${manifest.version}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       failed.push({ id: manifest.id, error: message });
+      deps.circuitBreaker?.recordFailure(serviceId, err);
       log.error(`failed to load plugin "${manifest.id}": ${message}`);
     }
   }
@@ -226,6 +255,10 @@ function createPluginAPI(
 
     registerPmProvider(def: PmProviderDefinition): void {
       deps.pluginRegistry.addPmProvider(pluginId, def);
+    },
+
+    registerMcpServerTemplate(def: McpServerTemplate): void {
+      deps.pluginRegistry.addMcpServerTemplate(pluginId, def);
     },
 
     registerAction(def: ActionDefinition): void {

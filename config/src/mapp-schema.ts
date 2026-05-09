@@ -157,6 +157,100 @@ export const MAppOutputSchema = z.object({
 }).strict();
 
 // ---------------------------------------------------------------------------
+// Screens primitive (s146 Phase A.1, owner-confirmed cycle 181)
+// ---------------------------------------------------------------------------
+//
+// Per owner clarification 2026-05-02: a MApp is a mini agentic app with one
+// or more screens. Each screen is composed of PAx components (every component
+// in @particle-academy/{react-fancy, fancy-sheets, fancy-code, fancy-echarts,
+// fancy-3d}). Each screen has typed input props with required/prefilled/
+// optional qualifiers. Inputs accept values from user OR agent. Each screen
+// runs a hybrid agentic-typed mini-agent with special agentic tools.
+//
+// Phase A.1 (this commit) lands the schema only. Phase B+ adds Editor surface
+// + runtime renderer + per-screen mini-agent (the mini-agent shape is gated
+// on owner judgment; see s146 open questions).
+
+/** Input prop on a screen. Accepts values from user or agent (or either). */
+export const MAppScreenInputSchema = z.object({
+  /** Stable identifier (used in references like `$input.key`). */
+  key: z.string().min(1),
+  /** Display label for the user-facing input. */
+  label: z.string(),
+  /** Coarse type for the editor + runtime to validate against. */
+  type: z.enum(["string", "text", "number", "boolean", "date", "select", "object"]),
+  /** Filled-state qualifier — the heart of owner's primitive. */
+  qualifier: z.enum(["required", "prefilled", "optional"]),
+  /** Where input values come from — user, agent, or either. */
+  source: z.enum(["user", "agent", "either"]).default("either"),
+  /** Default value when qualifier="prefilled" (or any default-eligible state). */
+  default: z.unknown().optional(),
+  /** Description shown to the user OR included in the agent's context. */
+  description: z.string().optional(),
+  /** When type="select", the allowed options. */
+  options: z.array(z.string()).optional(),
+}).strict();
+
+/** A screen element — a PAx component placement with optional props. */
+export const MAppScreenElementSchema = z.object({
+  /** Stable identifier within the screen (so wirings can target it later). */
+  id: z.string().min(1),
+  /** Reference to a PAx component, e.g. "react-fancy:Card",
+   *  "fancy-code:Editor", "fancy-echarts:Chart", "react-fancy:Input".
+   *  Format is "<package>:<ComponentName>". */
+  componentRef: z.string().min(1).regex(
+    /^[a-z0-9-]+:[A-Z][A-Za-z0-9]*$/,
+    "componentRef must be '<package>:<ComponentName>' (lowercase package, PascalCase component)",
+  ),
+  /** Component-specific props as JSON. The runtime forwards these to the
+   *  PAx component; the editor type-checks against the component's known
+   *  prop schema (Phase D+). */
+  props: z.record(z.unknown()).optional(),
+  /** Optional nested children for container components (Card, Tabs, etc.). */
+  children: z.array(z.unknown()).optional(), // recursive — typed as unknown to avoid Zod cycle
+}).strict();
+
+/** Per-screen mini-agent (s146 phase C, owner-confirmed cycle 190 Hybrid).
+ *  Author writes intent; runtime auto-selects tools from project context
+ *  unless author whitelists or blacklists specific ones. Default mode is
+ *  "auto" so authors get sensible behavior without picking tools per
+ *  screen. */
+export const MAppScreenMiniAgentSchema = z.object({
+  /** Natural-language description of what the agent should do on this
+   *  screen. Sent as the agent prompt at runtime alongside current input
+   *  values. */
+  intent: z.string().min(1),
+  /** How the tool set is determined. */
+  toolMode: z.enum(["auto", "whitelist", "blacklist"]).default("auto"),
+  /** Tool ids; only consulted when toolMode is "whitelist" or "blacklist".
+   *  Source: project's MCP tools + plugin actions + MApp built-ins as
+   *  surfaced by the Editor at design time. */
+  tools: z.array(z.string()).optional(),
+}).strict();
+
+/** A screen in a MApp. Has elements + typed input props + an optional
+ *  hybrid agentic-typed mini-agent. Per owner cycle 190 SDK answer: PAx
+ *  Screen component is upstream-in-progress; this schema is provisional
+ *  and will align tighter when PAx Screen lands (see s146 t604). */
+export const MAppScreenSchema = z.object({
+  /** Stable identifier within the MApp. */
+  id: z.string().min(1).regex(/^[a-z0-9][a-z0-9_-]*$/),
+  /** Display label. */
+  label: z.string(),
+  /** Whether the interface is static (composition fixed at author time) or
+   *  dynamic (composition can change at runtime — Phase D will define the
+   *  exact mechanism). Static is the safer default. */
+  interface: z.enum(["static", "dynamic"]).default("static"),
+  /** Typed input props consumed by the screen's elements + mini-agent. */
+  inputs: z.array(MAppScreenInputSchema).optional(),
+  /** Composed elements drawn from PAx components. */
+  elements: z.array(MAppScreenElementSchema),
+  /** Optional per-screen mini-agent. When omitted, screen renders without
+   *  agentic processing — purely declarative. */
+  miniAgent: MAppScreenMiniAgentSchema.optional(),
+}).strict();
+
+// ---------------------------------------------------------------------------
 // Full definition schema
 // ---------------------------------------------------------------------------
 
@@ -179,6 +273,9 @@ export const MAppDefinitionSchema = z.object({
   theme: MAppThemeSchema.optional(),
   dockable: z.boolean().optional(),
   pages: z.array(MAppPageSchema).optional(),
+  /** Screens primitive (s146 Phase A.1) — coexists with `pages` for
+   *  legacy form-and-formula MApps. New iframe-rendered MApps use this. */
+  screens: z.array(MAppScreenSchema).optional(),
   constants: z.array(MAppConstantSchema).optional(),
   output: MAppOutputSchema.optional(),
   prompts: z.array(MAppAgentPromptSchema).optional(),

@@ -16,15 +16,32 @@ import { join, resolve as resolvePath, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execSync, execFileSync, spawnSync, spawn, type ChildProcess } from "node:child_process";
 import { createComponentLogger } from "./logger.js";
-import { projectConfigPath, projectSlug } from "./project-config-path.js";
+import { projectConfigPath, projectSlug, migrateProjectConfig } from "./project-config-path.js";
 import type { Logger, ComponentLogger } from "./logger.js";
-import type { ProjectTypeRegistry } from "./project-types.js";
+import { servesDesktopFor, type ProjectTypeRegistry } from "./project-types.js";
 import type { PluginRegistry } from "@agi/plugins";
 import type { StackRegistry } from "./stack-registry.js";
 import type { SharedContainerManager } from "./shared-container-manager.js";
 import type { ProjectStackInstance, StackContainerContext, StackDefinition, StackContainerConfig } from "./stack-types.js";
 import type { ProjectConfigManager } from "./project-config-manager.js";
-import type { MagicAppContainerConfig, MagicAppContainerContext } from "./magic-app-types.js";
+// s151 (2026-05-09) — magic-app-types imports removed. The single-viewer
+// MagicApp dispatch path was deleted; the Desktop+tiles container is the
+// unified path for every Desktop-served project.
+import {
+  buildMAppContainerArgsPure,
+  generateMAppDesktopHtml,
+  resolveMAppHostDir,
+  resolveMAppTiles,
+  writeMAppDesktopHtml,
+  writePerMAppStandaloneHtml,
+} from "./hosting-manager-mapp.js";
+import {
+  type PodmanRunner,
+  projectNetworkName,
+  ensureProjectNetwork,
+  connectCaddyToProjectNetwork,
+  destroyProjectNetwork,
+} from "./project-network.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -33,7 +50,218 @@ import type { MagicAppContainerConfig, MagicAppContainerContext } from "./magic-
 /** Strip ANSI escape codes from command output for clean dashboard display. */
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07/g;
+
+/** Simple shell argument escaping — wraps in single quotes. Used by
+ *  buildMultiRepoContainerArgs to safely pass startCommand strings
+ *  through `bash -lc` to concurrently. */
+function shellEscape(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+export interface MultiRepoArgsInput {
+  hostname: string;
+  projectPath: string;
+  mode: "production" | "development";
+  containerName: string;
+  /** From ProjectConfigManager. When null, returns null. */
+  projectConfig: { repos?: Array<{
+    name: string;
+    url: string;
+    branch?: string;
+    path?: string;
+    writable?: boolean;
+    port?: number;
+    startCommand?: string;
+    isDefault?: boolean;
+    externalPath?: string;
+    env?: Record<string, string>;
+    autoRun?: boolean;
+  }> } | null;
+  aiBindingArgs: { envArgs: string[]; volumeArgs: string[] };
+  /** Optional tunnel hostname for HOSTNAME_ALLOWED_ORIGIN injection. */
+  tunnelOrigin?: string | null;
+  /** Per-project podman network name (s130 t515 B3b). */
+  networkName: string;
+  /** Image to use (default: agi-runtime:lamp from B4 prerequisite). */
+  image?: string;
+}
+
+export interface MultiRepoArgsResult {
+  args: string[];
+  /** The default repo's port — caller sets hosted.meta.internalPort to this. */
+  internalPort: number;
+}
+
+/**
+ * Pure helper. Builds podman run args for a multi-repo project, OR
+ * returns null when the project has no runtime repos (single-repo —
+ * caller falls back to existing branches).
+ */
+export function buildMultiRepoContainerArgsPure(input: MultiRepoArgsInput): MultiRepoArgsResult | null {
+  if (!input.projectConfig?.repos || input.projectConfig.repos.length === 0) return null;
+
+  const runtimeRepos = input.projectConfig.repos.filter((r) => r.port !== undefined);
+  if (runtimeRepos.length === 0) return null;
+
+  const defaultRepo = runtimeRepos.find((r) => r.isDefault) ?? runtimeRepos[0];
+  if (!defaultRepo || defaultRepo.port === undefined) return null;
+
+  const args: string[] = [
+    "run", "-d",
+    "--name", input.containerName,
+    "--restart=always",
+    "--label", "agi.managed=true",
+    "--label", `agi.hostname=${input.hostname}`,
+    "--label", `agi.project=${input.projectPath}`,
+    "--label", "agi.multi-repo=true",
+    `--network=${input.networkName}`,
+    "-w", `/srv/repos/${defaultRepo.name}`,
+  ];
+
+  // Bind-mount each repo at /srv/repos/<name>. :Z relabels for SELinux;
+  // ro on writable=false repos keeps them read-only inside the container
+  // (matches s130 Q-5 owner answer: write-on-explicit-action).
+  for (const repo of input.projectConfig.repos) {
+    const mode = repo.writable ? "Z" : "ro,Z";
+    const hostPath = repo.path ?? `${input.projectPath}/repos/${repo.name}`;
+    args.push("-v", `${hostPath}:/srv/repos/${repo.name}:${mode}`);
+  }
+
+  args.push("-e", `NODE_ENV=${input.mode}`);
+  args.push("-e", `AGI_PROJECT=${input.hostname}`);
+  args.push("-e", `AGI_DEFAULT_REPO=${defaultRepo.name}`);
+
+  if (input.tunnelOrigin) {
+    args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${input.tunnelOrigin}`);
+  }
+
+  args.push(...input.aiBindingArgs.volumeArgs, ...input.aiBindingArgs.envArgs);
+
+  args.push(input.image ?? "agi-runtime:lamp");
+
+  // concurrently invocation. autoRun=false repos are skipped from boot
+  // but still bind-mounted so siblings can reach them via filesystem
+  // (or owner can `podman exec` to start them manually).
+  const autoRunRepos = runtimeRepos
+    .filter((r) => r.autoRun !== false && r.startCommand)
+    .map((r) => {
+      const env = Object.entries(r.env ?? {})
+        .map(([k, v]) => `${k}=${shellEscape(v)}`)
+        .join(" ");
+      const envPrefix = env ? `${env} ` : "";
+      return {
+        name: r.name,
+        cmd: `cd /srv/repos/${r.name} && ${envPrefix}${r.startCommand}`,
+      };
+    });
+
+  if (autoRunRepos.length === 0) {
+    args.push("bash", "-lc", "echo 'multi-repo project with autoRun=false on all repos; exec into container to start manually'; sleep infinity");
+  } else {
+    const names = autoRunRepos.map((r) => r.name).join(",");
+    const cmds = autoRunRepos.map((r) => shellEscape(r.cmd)).join(" ");
+    args.push(
+      "bash", "-lc",
+      `exec npx -y concurrently --names ${shellEscape(names)} --prefix '[{name}]' --kill-others-on-fail=false --restart-tries=10 ${cmds}`,
+    );
+  }
+
+  return { args, internalPort: defaultRepo.port };
+}
+
+/**
+ * s141 t552 — resolve the on-host base directory for the LEGACY single-mount
+ * branch when a project follows the post-s140 layout.
+ *
+ * Why: the legacy branch in startContainer mounts `${hosted.path}` as the
+ * project root for static / php / node / default cases. That worked when
+ * project content lived directly at `<projectPath>/...`, but s140 moved
+ * content into `<projectPath>/repos/<repoName>/...`. Without this rebase,
+ * `existsSync(<projectPath>/dist)` always fails (statfs ENOENT) and Apache
+ * mounts an empty directory instead of the actual checkout.
+ *
+ * Behavior (in priority order):
+ *   1. If `projectConfig.repos[]` is non-empty, return `<projectPath>/repos/<defaultRepo.name>`
+ *      (or the repo's explicit `path` override). The default repo is the one
+ *      marked `isDefault`, falling back to the first repo.
+ *   2. If `projectConfig.repos[]` is missing/empty BUT a `repos/` directory
+ *      exists on disk with exactly one subdirectory, treat it as the implicit
+ *      default repo. This heals projects whose `project.json` was never
+ *      updated to declare `repos[]` after s140 — the filesystem layout is the
+ *      source of truth, the config catches up later.
+ *   3. Otherwise return `projectPath` unchanged — preserves behavior for
+ *      projects that genuinely haven't been migrated.
+ *
+ * Multi-repo projects with at least one runtime repo (port set) take the
+ * dedicated `buildMultiRepoContainerArgsPure` branch above and never reach
+ * this helper. This is for the static-only / single-runtime-repo case where
+ * the container only needs to see one repo at the conventional mount path.
+ *
+ * Filesystem detection is opt-in via `existsSync` / `readdirSync` injection
+ * so the function stays pure for unit tests; production callers pass the
+ * real fs accessors.
+ */
+export interface ResolveLegacyMountBaseInput {
+  projectPath: string;
+  projectConfig: { repos?: Array<{ name: string; path?: string; isDefault?: boolean }> } | null;
+  /** Optional fs accessors — when provided, enable disk-based auto-detect. */
+  fs?: {
+    existsSync: (path: string) => boolean;
+    readdirSync: (path: string, options: { withFileTypes: true }) => Array<{ name: string; isDirectory: () => boolean }>;
+  };
+}
+export interface ResolveLegacyMountBaseResult {
+  base: string;
+  repoName: string | null;
+}
+export function resolveLegacyMountBasePure(input: ResolveLegacyMountBaseInput): ResolveLegacyMountBaseResult {
+  const repos = input.projectConfig?.repos;
+  if (repos && repos.length > 0) {
+    const defaultRepo = repos.find((r) => r.isDefault) ?? repos[0];
+    if (defaultRepo) {
+      const base = defaultRepo.path ?? `${input.projectPath}/repos/${defaultRepo.name}`;
+      return { base, repoName: defaultRepo.name };
+    }
+  }
+  // Auto-detect from filesystem when config doesn't declare repos[].
+  if (input.fs) {
+    const reposDir = `${input.projectPath}/repos`;
+    if (input.fs.existsSync(reposDir)) {
+      const entries = input.fs.readdirSync(reposDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name);
+      if (entries.length === 1) {
+        const name = entries[0]!;
+        return { base: `${reposDir}/${name}`, repoName: name };
+      }
+    }
+  }
+  return { base: input.projectPath, repoName: null };
+}
+
 function stripAnsi(text: string): string { return text.replace(ANSI_RE, ""); }
+
+/**
+ * Parse a podman -v argument like "/host/path:/container/path:ro,Z" into
+ * its components. Returns null when the spec doesn't look like a real
+ * bind mount (e.g. a named volume reference). Keeps the original flag
+ * string so callers can decide which mounts to validate ahead of time.
+ */
+function parseVolumeSpec(v: string): { host: string; container: string; flags: string } | null {
+  // Bind mounts always start with `/` (or `~`) on the host side; named
+  // volumes don't.
+  if (!v.startsWith("/") && !v.startsWith("~")) return null;
+  // Walk the string and split on the FIRST colon after the host portion
+  // and FIRST colon after the container portion. Container paths can't
+  // contain colons in practice, but flags can include them; we only need
+  // 3 fields max.
+  const parts = v.split(":");
+  if (parts.length < 2) return null;
+  const host = parts[0]!;
+  const container = parts[1]!;
+  const flags = parts.slice(2).join(":");
+  return { host, container, flags };
+}
 
 /**
  * Container start-command source — which tier of the precedence ladder
@@ -115,10 +343,21 @@ export interface BuildCaddyfileOptions {
    */
   projects: Array<{
     hostname: string;
+    /** s140 t597 cycle-176 — absolute project path on host. When set,
+     *  emit the `/sandbox/*` handle_path block that file_servers
+     *  `<projectPath>/sandbox/`. Caddy must have read access to this
+     *  path (agi-caddy.service bind-mounts $HOME/_projects:ro). When
+     *  omitted (legacy callers / unit tests), the sandbox block is
+     *  skipped. */
+    path?: string;
     port?: number | null;
     containerName?: string | null;
     internalPort?: number | null;
     name?: string;
+    /** s130 t515 B5 — non-default repos with externalPath get their own
+     *  handle_path block. Only repos with both port + externalPath are
+     *  routed; default repo serves on `/` via the catch-all reverse_proxy. */
+    repos?: Array<{ name: string; port: number; externalPath: string }>;
   }>;
   existingCaddyfile: string;
 }
@@ -156,6 +395,29 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
   const PROJECTS_END = "# === END PROJECT DOMAINS ===";
   const CUSTOM_BEGIN = "# --- BEGIN CUSTOM ---";
   const CUSTOM_END = "# --- END CUSTOM ---";
+
+  // Caddy's `tls internal` defaults to ~12h cert lifetime. Owner directive
+  // 2026-04-29 cycle 124: bump local-CA cert lifetime to 7 days for less
+  // renewal churn during long-running development sessions. Caddy auto-renews
+  // when ~1/3 lifetime remains (~5 days post-issue) and on every reload —
+  // natural cadence accepted; no daily-reload timer needed.
+  //
+  // s141 (cycle 152) — original cycle-124 syntax `tls internal { lifetime
+  // 168h }` was emitted but never accepted by Caddy: it tripped both the
+  // "Unexpected next token after '{' on same line" lexer error AND the
+  // "unknown subdirective: lifetime" semantic error (lifetime is not a
+  // subdirective of the `tls internal` shorthand). The shorthand is just
+  // `tls { issuer internal }` — to customize the internal issuer's
+  // settings, use the long form. The surrounding interpolation
+  // `blocks.push(\`    ${TLS_INTERNAL}\`)` produces correctly indented
+  // multi-line output once joined with "\n":
+  //     tls {
+  //         issuer internal {
+  //             lifetime 168h
+  //         }
+  //     }
+  const TLS_INTERNAL =
+    "tls {\n        issuer internal {\n            lifetime 168h\n        }\n    }";
 
   // Extract the user-editable CUSTOM block from the existing Caddyfile.
   let customBlock = "";
@@ -201,7 +463,7 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
   // Gateway (dashboard) — reached by Caddy-on-aionima via the host bridge.
   const gatewayDomains = [opts.baseDomain, ...(opts.domainAliases ?? [])].join(", ");
   blocks.push(`${gatewayDomains} {`);
-  blocks.push(`    tls internal`);
+  blocks.push(`    ${TLS_INTERNAL}`);
   blocks.push(`    reverse_proxy ${gw}`);
   blocks.push(`}\n`);
 
@@ -217,7 +479,7 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
     .map((d) => `https://${d} https://*.${d}`)
     .join(" ");
   blocks.push(`db.${opts.baseDomain} {`);
-  blocks.push(`    tls internal`);
+  blocks.push(`    ${TLS_INTERNAL}`);
   blocks.push(`    header -X-Frame-Options`);
   blocks.push(`    header -Content-Security-Policy`);
   blocks.push(`    header Content-Security-Policy "frame-ancestors 'self' ${whodbFrameOrigins}"`);
@@ -231,7 +493,7 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
     const idContainer = opts.idService.containerName ?? "agi-local-id";
     const idInternalPort = opts.idService.port ?? 3200;
     blocks.push(`${idSubdomain}.${opts.baseDomain} {`);
-    blocks.push(`    tls internal`);
+    blocks.push(`    ${TLS_INTERNAL}`);
     blocks.push(`    reverse_proxy ${idContainer}:${String(idInternalPort)}`);
     blocks.push(`}\n`);
   }
@@ -251,7 +513,7 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
       target = `host.containers.internal:${String(route.target)}`;
     }
     blocks.push(`${fqdn} {`);
-    blocks.push(`    tls internal`);
+    blocks.push(`    ${TLS_INTERNAL}`);
     blocks.push(`    reverse_proxy ${target}`);
     blocks.push(`}\n`);
   }
@@ -324,7 +586,46 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
       projectUpstream = `host.containers.internal:${String(project.port ?? 0)}`;
     }
     blocks.push(`${fqdn} {`);
-    blocks.push(`    tls internal`);
+    blocks.push(`    ${TLS_INTERNAL}`);
+
+    // s140 t597 cycle-176 — sandbox auto-route. Every project's
+    // <projectPath>/sandbox/ is browseable at https://<host>/sandbox/.
+    // Owner directive: "Every project needs to expose its sandbox via
+    // an auto route to the sandbox folder for that project. Sandboxes
+    // are used for building and testing any content that does not
+    // require an engine to serve it (meaning I can just open it in
+    // the browser)". Caddy file_server with `browse` lets owner
+    // navigate the directory; encode gzip is a small bandwidth win
+    // for HTML/CSS/JS. The agi-caddy container bind-mounts $HOME/_projects:ro
+    // so this `root` directive resolves correctly. handle_path strips
+    // /sandbox before file_server resolves (so /sandbox/foo.html →
+    // <projectPath>/sandbox/foo.html). Skipped when path is undefined
+    // (legacy callers / unit tests).
+    if (project.path) {
+      blocks.push(`    handle_path /sandbox/* {`);
+      blocks.push(`        root * ${project.path}/sandbox`);
+      blocks.push(`        file_server browse`);
+      blocks.push(`        encode gzip`);
+      blocks.push(`    }`);
+    }
+
+    // s130 t515 B5 — non-default repos with externalPath route via
+    // handle_path before the catch-all reverse_proxy. Each gets a
+    // path-prefix matcher; the default repo serves on `/` via the
+    // existing catch-all. handle_path strips the prefix before
+    // proxying (so /api/health → /health on the api container).
+    if (project.repos && project.repos.length > 0 && project.containerName) {
+      for (const repo of project.repos) {
+        // Skip malformed entries — schema enforces port+externalPath
+        // together but defensive guard for runtime shape.
+        if (!repo.externalPath || !repo.port) continue;
+        const path = repo.externalPath.startsWith("/") ? repo.externalPath : `/${repo.externalPath}`;
+        blocks.push(`    handle_path ${path}/* {`);
+        blocks.push(`        reverse_proxy ${project.containerName}:${String(repo.port)}`);
+        blocks.push(`    }`);
+      }
+    }
+
     blocks.push(`    reverse_proxy ${projectUpstream}`);
     // `handle_errors <status_codes...>` (filter form) needs Caddy 2.8+.
     // Plenty of deployments are still on 2.6.x which rejects that syntax
@@ -336,6 +637,10 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
     blocks.push(`    handle_errors {`);
     blocks.push(`        @5xx expression \`{http.error.status_code} >= 500\``);
     blocks.push(`        handle @5xx {`);
+    // `respond` defaults to text/plain, which renders the offline HTML
+    // as raw source in browsers (cycle-122 owner-reported bug). Set
+    // Content-Type explicitly so the styled card renders.
+    blocks.push(`            header Content-Type "text/html; charset=utf-8"`);
     blocks.push(`            respond \`${offlineHtml}\` 503`);
     blocks.push(`        }`);
     blocks.push(`    }`);
@@ -473,6 +778,18 @@ export interface ProjectHostingMeta {
   tunnelId?: string | null;
   /** MagicApp ID used as the content viewer for this project's *.ai.on URL. */
   viewer?: string | null;
+  /**
+   * @deprecated s150 t634 (2026-05-07) — superseded by `type`. The container
+   * shape is now derived via `servesDesktopFor(meta.type, registry)`. The
+   * field stays here as a transitional bridge for the dashboard payload
+   * (see HostingProject.containerKind below) until t636 drops the UI surface.
+   * Internal dispatch no longer reads it. The s150 t632 boot sweep strips
+   * the on-disk value, so the runtime in-memory copy is also typically
+   * undefined post-migration.
+   */
+  containerKind?: "static" | "code" | "mapp";
+  /** s145 t584 — Installed MApp IDs for the Desktop-served container shape. */
+  mapps?: string[];
 }
 
 export interface HostedProject {
@@ -502,6 +819,9 @@ export interface HostingManagerDeps {
   sharedContainerManager?: SharedContainerManager;
   projectConfigManager?: ProjectConfigManager;
   mappRegistry?: import("./mapp-registry.js").MAppRegistry;
+  /** s143 t568 — persistent circuit-breaker tracker. Optional so existing
+   * tests can construct a HostingManager without wiring breaker state. */
+  circuitBreaker?: import("./circuit-breaker.js").CircuitBreakerTracker;
   logger?: Logger;
 }
 
@@ -570,6 +890,22 @@ const PORT_POOL_SIZE = 100;
  * Migration map: old framework-based project types → broad project types + corresponding stacks.
  * Used during initialize() to auto-migrate existing projects to the new model.
  */
+/**
+ * Sort stack instances LATEST-FIRST by `addedAt` (ISO 8601 timestamps,
+ * lexicographic order matches chronological order; missing timestamps sort
+ * to the end). Wish #15 (s150 follow-up) — the prior FIRST-wins semantics
+ * caused stale stacks to mask newly-added ones. Owner case 2026-05-08:
+ * blackorchid_web had `[stack-static-hosting (May 1), stack-nextjs (May 8)]`;
+ * the legacy ordering returned static-hosting and mounted /dist read-only,
+ * ENOENT-ing dev-mode projects with no build output.
+ *
+ * Module-scope + exported so it's unit-testable without a HostingManager
+ * instance.
+ */
+export function orderStacksLatestFirst(stacks: readonly ProjectStackInstance[]): ProjectStackInstance[] {
+  return [...stacks].sort((a, b) => (b.addedAt ?? "").localeCompare(a.addedAt ?? ""));
+}
+
 const MIGRATION_MAP: Record<string, { newType: string; autoStack: string }> = {
   laravel:      { newType: "web-app",      autoStack: "stack-laravel" },
   nextjs:       { newType: "web-app",      autoStack: "stack-nextjs" },
@@ -601,12 +937,25 @@ export class HostingManager {
   private readonly tunnelProcesses = new Map<string, ChildProcess>();
   private readonly tunnelMode: "quick" | "named";
   private readonly tunnelDomain: string | undefined;
+  /** s143 t568 — persistent circuit-breaker tracker; null when not wired. */
+  private readonly circuitBreaker: import("./circuit-breaker.js").CircuitBreakerTracker | null = null;
   private loginProcess: ChildProcess | null = null;
   private onStatusChange: (() => void) | null = null;
   private statusPollTimer: ReturnType<typeof setInterval> | null = null;
   private eventsProcess: ChildProcess | null = null;
   /** HuggingFace model runtime deps — set via setModelDeps() after Step 5i. */
   private modelDeps: HostingManagerModelDeps | null = null;
+
+  /**
+   * PodmanRunner backing the per-project network helpers (s130 t515 B3).
+   * Wraps execFileSync + array args so the network helpers can stay pure
+   * + dep-injection-testable while production calls hit real podman.
+   */
+  private readonly podmanRunner: PodmanRunner = {
+    run: (args: string[]): string => {
+      return execFileSync("podman", args, { stdio: "pipe", timeout: 30_000 }).toString();
+    },
+  };
 
   constructor(deps: HostingManagerDeps) {
     this.config = deps.config;
@@ -619,6 +968,7 @@ export class HostingManager {
     this.sharedContainers = deps.sharedContainerManager ?? null;
     this.configMgr = deps.projectConfigManager ?? null;
     this.mappReg = deps.mappRegistry ?? null;
+    this.circuitBreaker = deps.circuitBreaker ?? null;
     this.log = createComponentLogger(deps.logger, "hosting");
   }
 
@@ -898,12 +1248,13 @@ export class HostingManager {
             };
           }
 
-          // Auto-assign stacks BEFORE enabling (container launch needs the stack config)
-          const typeDef = this.registry?.get(meta.type);
-          const isCodeType = typeDef?.hasCode ?? true; // default to code if unknown
-
-          if (isCodeType) {
-            // Code projects: auto-assign suggested stack if none
+          // s150 t635 — auto-stamp gate is now `!isDesktopServed`. Was
+          // `typeDef?.hasCode ?? true` which over-attached for unknown types
+          // and used the deprecated `hasCode` flag. Desktop-served projects
+          // (ops/media/literature/etc.) NEVER auto-attach stacks; their
+          // container shape is type-driven and stack-attached defs are
+          // either ignored (after t634) or actively misleading.
+          if (!this.isDesktopServed(meta)) {
             const stacks = this.getProjectStacks(fullPath);
             if (stacks.length === 0) {
               const detected = this.detectProjectDefaults(fullPath);
@@ -917,10 +1268,69 @@ export class HostingManager {
             }
           }
 
-          await this.enableProject(fullPath, meta);
+          // Service circuit-breaker (s143 cycle 153 — replaces v0.4.431 local
+          // try/catch hotfix with persistent tracking).
+          //
+          // Three layers of defense:
+          //   1. shouldSkip — if this project has tripped the breaker on
+          //      previous boots, skip it entirely (no 15s timeout burned).
+          //   2. 15s race — bounds a single attempt so one slow boot can't
+          //      hang the gateway even before the breaker trips.
+          //   3. recordFailure / recordSuccess — persists outcome so the
+          //      breaker can transition (closed → open after threshold,
+          //      open → half-open after cool-down, half-open → closed/open
+          //      based on next attempt).
+          //
+          // The v0.4.431 fallback path (try/catch with no tracker) still
+          // applies when circuitBreaker isn't wired — keeps existing tests
+          // and fresh-install paths working unchanged.
+          {
+            const slug = this.slugFromPath(fullPath);
+            const serviceId = `hosting:${fullPath}`;
+            let circuitSkipStart = false;
+            if (this.circuitBreaker) {
+              const decision = this.circuitBreaker.shouldSkip(serviceId);
+              if (decision.skip) {
+                // s140 cycle-176 — register meta without starting the
+                // container so Caddy gets a route + cert for the hostname
+                // and serves the "Container not running" offline page
+                // (instead of TLS handshake internal-error from no route).
+                // The container won't start until the breaker is reset
+                // (Reset button in the Services page) or the underlying
+                // failure is fixed.
+                this.log.warn(`[${slug}] circuit-open — registering meta only, skipping container start (${decision.reason ?? "no reason"})`);
+                circuitSkipStart = true;
+              }
+              if (decision.transitionedTo) {
+                this.log.info(`[${slug}] breaker transitioned to ${decision.transitionedTo} — attempting boot`);
+              }
+            }
+            try {
+              await Promise.race([
+                this.enableProject(fullPath, meta, { skipContainerStart: circuitSkipStart }),
+                new Promise<never>((_, reject) => setTimeout(
+                  () => reject(new Error(`enableProject timeout (15s) — gateway continues without ${slug}`)),
+                  15_000,
+                )),
+              ]);
+              // Note: we do NOT call recordSuccess here. enableProject calls
+              // startContainer with `void` (fire-and-forget), so by the time
+              // enableProject resolves the container hasn't actually started
+              // yet — premature success would clear the failure that
+              // execContainerStart's catch block writes a few hundred ms
+              // later. Container-start success/failure drives the breaker;
+              // the boot-loop only records pre-container failures here.
+            } catch (err) {
+              this.log.warn(
+                `[${slug}] enableProject failed during boot — skipping: ${err instanceof Error ? err.message : String(err)}`,
+              );
+              this.circuitBreaker?.recordFailure(serviceId, err);
+              // Continue to next project; don't let one bad project block the whole gateway boot.
+            }
+          }
 
-          if (!isCodeType) {
-            // Non-code projects: auto-set viewer to first matching MagicApp
+          if (this.isDesktopServed(meta)) {
+            // s150 t635 — Desktop-served projects: auto-set viewer to first matching MagicApp
             const hosting = this.readHostingMeta(fullPath);
             if (hosting && !hosting.viewer) {
               const apps = this.mappReg?.getForType(meta.type);
@@ -966,6 +1376,16 @@ export class HostingManager {
   // Project metadata I/O
   // -------------------------------------------------------------------------
 
+  /**
+   * s150 t634 — single source of truth for "is this project Desktop-served?".
+   * Replaces the old `meta.containerKind === "mapp"` checks. The type-registry
+   * lookup honors plugin-registered types; falls back to DESKTOP_SERVED_TYPES
+   * / CODE_SERVED_TYPES from project-types.ts.
+   */
+  private isDesktopServed(meta: ProjectHostingMeta): boolean {
+    return servesDesktopFor(meta.type, this.registry ?? undefined);
+  }
+
   readHostingMeta(projectPath: string): ProjectHostingMeta | null {
     // Delegate to ProjectConfigManager when available
     if (this.configMgr) {
@@ -984,6 +1404,12 @@ export class HostingManager {
         tunnelUrl: hosting.tunnelUrl ?? null,
         tunnelId: hosting.tunnelId ?? null,
         viewer: hosting.viewer ?? null,
+        // s145 t584 — propagate selected MApps for the Desktop-served container shape.
+        // s150 t634 (2026-05-07): `containerKind` is no longer read from disk —
+        // dispatch derives the binary from `type` via `isDesktopServed`. The
+        // s150 t632 boot sweep strips legacy values so this read path no
+        // longer surfaces them.
+        ...(hosting.mapps !== undefined ? { mapps: hosting.mapps } : {}),
       };
     }
 
@@ -1014,10 +1440,13 @@ export class HostingManager {
     }
   }
 
-  private writeHostingMeta(projectPath: string, meta: ProjectHostingMeta): void {
-    // Delegate to ProjectConfigManager when available
+  private async writeHostingMeta(projectPath: string, meta: ProjectHostingMeta): Promise<void> {
+    // Delegate to ProjectConfigManager when available. Now async-awaited so
+    // callers like configureProject can sequence the write before
+    // startContainer's safety re-read (line 1822) — fire-and-forget
+    // raced with the disk re-sync and clobbered in-memory updates.
     if (this.configMgr) {
-      void this.configMgr.updateHosting(projectPath, {
+      await this.configMgr.updateHosting(projectPath, {
         enabled: meta.enabled,
         type: meta.type,
         hostname: meta.hostname,
@@ -1029,6 +1458,12 @@ export class HostingManager {
         ...(meta.runtimeId != null ? { runtimeId: meta.runtimeId } : {}),
         ...(meta.tunnelUrl != null ? { tunnelUrl: meta.tunnelUrl } : {}),
         ...(meta.tunnelId != null ? { tunnelId: meta.tunnelId } : {}),
+        // s150 t634 — DO NOT persist `containerKind` to disk. The s150 t632
+        // boot sweep strips legacy values, and dispatch derives the binary
+        // from `type`. Persisting it would resurrect the redundant field
+        // every cycle. `mapps[]` IS persisted — it's the project-level
+        // configuration of which MApps are installed in the Desktop.
+        ...(meta.mapps !== undefined ? { mapps: meta.mapps } : {}),
       });
       return;
     }
@@ -1162,6 +1597,7 @@ export class HostingManager {
   async enableProject(
     projectPath: string,
     meta: ProjectHostingMeta,
+    opts: { skipContainerStart?: boolean } = {},
   ): Promise<HostedProject> {
     const resolved = resolvePath(projectPath);
 
@@ -1219,6 +1655,19 @@ export class HostingManager {
       hosted.status = "running";
       this._runningContainers.delete(resolved);
       this.log.info(`[${meta.hostname}] reconnected to running container ${existing.name}`);
+    } else if (opts.skipContainerStart) {
+      // s140 cycle-176 — meta-only registration path. Used by the boot
+      // loop when the circuit-breaker is open: the start would just fail
+      // again, but the project still needs a Caddyfile entry so the
+      // hostname resolves with TLS + serves the "Container not running"
+      // offline page (the existing 5xx handler in the Caddyfile route)
+      // instead of triggering a TLS handshake internal-error from Caddy
+      // having no route at all. status stays "stopped".
+      if (existing) {
+        try { execFileSync("podman", ["rm", "-f", existing.name], { stdio: "pipe", timeout: 15_000 }); } catch { /* ignore */ }
+        this._runningContainers.delete(resolved);
+      }
+      this.log.info(`[${meta.hostname}] meta registered without container start (caller opted out — circuit-open path)`);
     } else {
       // No running container — clean up stale one if exists, start fresh
       if (existing) {
@@ -1246,6 +1695,13 @@ export class HostingManager {
 
     // Stop container
     this.stopContainer(hosted);
+
+    // s130 t515 B3c — tear down the per-project podman network now that
+    // the container is stopped + removed. Safe: destroyProjectNetwork
+    // refuses to remove if non-Caddy containers remain attached. Caddy
+    // gets disconnected best-effort. Idempotent — re-disabling a
+    // project is a no-op for the network.
+    this.tearDownProjectNetworkForHosted(hosted);
 
     // Release port
     if (hosted.meta.port !== null) {
@@ -1298,14 +1754,39 @@ export class HostingManager {
     if (updates.mode !== undefined) hosted.meta.mode = updates.mode;
     if (updates.internalPort !== undefined) hosted.meta.internalPort = updates.internalPort;
     if (updates.runtimeId !== undefined) hosted.meta.runtimeId = updates.runtimeId;
+    // s145 t585 — propagate MApp container fields so the toggle UI flips
+    // dispatch routing on next startContainer call.
+    // s150 t634 — `containerKind` is no longer authoritative. Honor incoming
+    // updates so old API consumers (pre-t636 dashboards, plugin tests) don't
+    // break, but dispatch reads only `type` via isDesktopServed.
+    if (updates.containerKind !== undefined) hosted.meta.containerKind = updates.containerKind;
+    if (updates.mapps !== undefined) hosted.meta.mapps = updates.mapps;
 
-    // Restart container with new config
+    // s145 t586 / s150 t634 — when the project is Desktop-served, stamp
+    // internalPort=80 here (synchronously, before startContainer fires async)
+    // so the regenerated Caddyfile routes via container DNS
+    // `agi-<hostname>:80` instead of falling through to
+    // `host.containers.internal:<port>`. Project containers don't publish
+    // ports — only AGI binds host ports — so the host.containers.internal
+    // fallback always 503s for Desktop-served projects.
+    if (this.isDesktopServed(hosted.meta) && hosted.meta.internalPort == null) {
+      hosted.meta.internalPort = 80;
+    }
+
+    // Persist meta to disk BEFORE restarting the container. startContainer's
+    // safety re-read (line ~1822) re-loads the meta from disk to honor any
+    // user-side edits to project.json. If we wrote fire-and-forget, the
+    // re-read could fire before the write completed and clobber the new
+    // in-memory updates with stale disk values — exactly what happened to
+    // mapps[] + internalPort during the v0.4.461→v0.4.463 ship.
+    await this.writeHostingMeta(resolved, hosted.meta);
+
+    // Restart container with new config (now reads the freshly-persisted meta).
     if (hadContainer) {
       this.stopContainer(hosted);
     }
     void this.startContainer(hosted);
 
-    this.writeHostingMeta(resolved, hosted.meta);
     this.regenerateCaddyfile();
     this.notifyStatusChange();
 
@@ -1320,73 +1801,21 @@ export class HostingManager {
    * Resolve container config from the project's installed stacks.
    * Returns the first per-project (shared === false) stack container config,
    * or null if no stack provides one.
+   *
+   * **s151 (2026-05-09)** — `resolveMagicAppContainerConfig` and
+   * `mappContainerToConfig` were deleted. Owner UX call unified the
+   * single-viewer MApp dispatch path into the Desktop+tiles container.
+   * Projects that used `hosting.viewer` (e.g. bliss_chronicles with the
+   * `reader` MApp) now route through the Desktop-served branch above,
+   * with their viewer rendered as a tile on the Aion Desktop.
    */
-  /**
-   * Resolve container config from a registered MagicApp for this project type.
-   * MagicApps serve non-dev project types (literature, media, etc.).
-   */
-  /**
-   * Resolve MagicApp container config. Priority:
-   * 1. Project-specific viewer (hosting.viewer) — exact MagicApp ID
-   * 2. Type-based fallback — first MagicApp registered for this project type
-   */
-  /**
-   * Resolve MApp container config from standalone MAppRegistry.
-   * Priority: viewer field → type-based fallback.
-   */
-  private resolveMagicAppContainerConfig(hosted: HostedProject): MagicAppContainerConfig | null {
-    if (!this.mappReg) return null;
-
-    // 1. Check viewer field (project-specific MApp selection)
-    const viewerId = hosted.meta.viewer;
-    if (viewerId) {
-      const viewerApp = this.mappReg.get(viewerId);
-      if (viewerApp?.container) {
-        // Convert MApp container template strings to functions
-        return this.mappContainerToConfig(viewerApp.container);
-      }
-    }
-
-    // 2. Fallback: first MApp registered for this project type
-    const apps = this.mappReg.getForType(hosted.meta.type);
-    if (apps.length === 0) return null;
-    const first = apps[0]!;
-    if (!first.container) return null;
-    return this.mappContainerToConfig(first.container);
-  }
-
-  /**
-   * Convert MApp container config (template strings) to the function-based
-   * MagicAppContainerConfig used by startContainer().
-   */
-  private mappContainerToConfig(container: import("@agi/sdk").MAppContainerConfig): MagicAppContainerConfig {
-    return {
-      image: container.image,
-      internalPort: container.internalPort,
-      volumeMounts: (ctx) => container.volumeMounts.map((v) =>
-        v.replace(/\{projectPath\}/g, ctx.projectPath)
-          .replace(/\{projectHostname\}/g, ctx.projectHostname),
-      ),
-      env: (ctx) => {
-        const env: Record<string, string> = {};
-        for (const [k, v] of Object.entries(container.env ?? {})) {
-          env[k] = v.replace(/\{projectPath\}/g, ctx.projectPath)
-            .replace(/\{projectHostname\}/g, ctx.projectHostname);
-        }
-        return env;
-      },
-      command: container.command ? () => container.command! : undefined,
-      healthCheck: container.healthCheck,
-    };
-  }
-
   private resolveStackContainerConfig(hosted: HostedProject): StackContainerConfig | null {
     if (!this.stackReg) return null;
 
     const stacks = this.getProjectStacks(hosted.path);
     if (stacks.length === 0) return null;
 
-    for (const instance of stacks) {
+    for (const instance of orderStacksLatestFirst(stacks)) {
       const def = this.stackReg.get(instance.stackId);
       if (def?.containerConfig && !def.containerConfig.shared) {
         return def.containerConfig;
@@ -1401,7 +1830,7 @@ export class HostingManager {
     if (!this.stackReg) return null;
 
     const stacks = this.getProjectStacks(hosted.path);
-    for (const instance of stacks) {
+    for (const instance of orderStacksLatestFirst(stacks)) {
       const def = this.stackReg.get(instance.stackId);
       if (def?.containerConfig && !def.containerConfig.shared) {
         return def;
@@ -1521,73 +1950,101 @@ export class HostingManager {
     // These are injected into every code path (magic-app, stack, legacy) before the image token.
     const aiBindingArgs = await this.buildAiBindingArgs(hosted.path);
 
-    // -----------------------------------------------------------------------
-    // MagicApp path: resolve container config from registered MagicApps
-    // (non-dev project types like literature/media use MagicApps, not stacks)
-    // -----------------------------------------------------------------------
+    // s141 t552 — resolve the on-host content base ONCE here, then feed it
+    // to every single-mount branch (magic-app, stack, legacy). For projects
+    // following the post-s140 layout (`repos[]` populated), this rebases
+    // the mount source from `<projectPath>/...` to
+    // `<projectPath>/repos/<defaultRepo.name>/...`. For legacy/empty-repos
+    // projects it returns the project root unchanged.
+    //
+    // Multi-repo projects (any repo with `port` set) take the dedicated
+    // buildMultiRepoContainerArgsPure branch below and never reach this
+    // — that path already rebases each repo at /srv/repos/<name>/.
+    const contentBase = resolveLegacyMountBasePure({
+      projectPath: hosted.path,
+      projectConfig: this.configMgr?.read(hosted.path) ?? null,
+      // Disk fallback when project.json doesn't declare repos[] yet —
+      // single-subdir projects (kronos_trader / my_art / bliss_chronicles)
+      // pick up the rebase from the filesystem layout instead of failing
+      // with statfs ENOENT.
+      fs: { existsSync, readdirSync },
+    });
+    if (contentBase.repoName) {
+      this.log.info(
+        `[${hosted.meta.hostname}] mount rebased onto repo "${contentBase.repoName}" — base: ${contentBase.base}`,
+      );
+    }
 
-    const magicAppConfig = this.resolveMagicAppContainerConfig(hosted);
-    if (magicAppConfig) {
-      const ctx: MagicAppContainerContext = {
+    // -----------------------------------------------------------------------
+    // s145 t586 / s150 t634 — Desktop-served container dispatch. The decision
+    // is now derived from `type` via `isDesktopServed` (replaces the legacy
+    // `meta.containerKind === "mapp"` check). Container is nginx:alpine
+    // serving a generated MApp Desktop index.html; tiles render from
+    // `hosting.mapps[]`; unknown IDs surface as "not installed" placeholders
+    // so the operator sees the configured set even before MApps are populated
+    // in the marketplace cache. Each MApp also gets a per-id standalone
+    // placeholder page at `/<mappId>/`.
+    // -----------------------------------------------------------------------
+    if (this.isDesktopServed(hosted.meta)) {
+      const mappIds = hosted.meta.mapps ?? [];
+      const tiles = resolveMAppTiles(mappIds);
+      const html = generateMAppDesktopHtml({ hostname: hosted.meta.hostname, tiles });
+      const hostDir = resolveMAppHostDir(hosted.meta.hostname);
+      writeMAppDesktopHtml(hostDir, html);
+
+      // s145 t589 — write per-MApp standalone placeholder pages so tile
+      // clicks resolve to a useful "not installed yet" page instead of
+      // nginx's generic 404. Real MApps with manifests skip the
+      // placeholder write — their bundled content stays intact.
+      const placeholderIds = writePerMAppStandaloneHtml(hostDir, tiles);
+
+      // Set internalPort so the Caddyfile generator routes via podman DNS
+      // (`agi-<hostname>:80`) instead of falling through to
+      // `host.containers.internal:<allocatedPort>`. MApp containers run
+      // nginx:alpine which listens on 80 inside, and project containers
+      // publish nothing on the host (per per-project network design).
+      hosted.meta.internalPort = hosted.meta.internalPort ?? 80;
+
+      const result = buildMAppContainerArgsPure({
+        hostname: hosted.meta.hostname,
         projectPath: hosted.path,
-        projectHostname: hosted.meta.hostname,
-        allocatedPort: hosted.meta.port,
-        mode: hosted.meta.mode,
-      };
-
-      // Ensure meta.internalPort reflects the effective port so the
-      // regenerated Caddyfile routes to the right container port.
-      // Takes effect on next project write via updateProject.
-      hosted.meta.internalPort = hosted.meta.internalPort ?? magicAppConfig.internalPort;
-
-      const args: string[] = [
-        "run", "-d",
-        "--name", containerName,
-        "--restart=always",
-        "--label", "agi.managed=true",
-        "--label", `agi.hostname=${hosted.meta.hostname}`,
-        "--label", `agi.project=${hosted.path}`,
-        // Story #100 — only AGI binds host ports. Project containers live on
-        // the aionima network and are reached by Caddy-on-aionima via
-        // podman DNS (`${containerName}:${internalPort}`). No `-p` mapping.
-        "--network=aionima",
-      ];
-
-      for (const vol of magicAppConfig.volumeMounts(ctx)) {
-        args.push("-v", vol);
-      }
-      for (const [key, value] of Object.entries(magicAppConfig.env(ctx))) {
-        args.push("-e", `${key}=${value}`);
-      }
-
-      const magicTunnelOrigin = this.computeTunnelOrigin(hosted);
-      if (magicTunnelOrigin) {
-        args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${magicTunnelOrigin}`);
-      }
-
-      // Inject AI model env vars and dataset volume mounts
-      args.push(...aiBindingArgs.volumeArgs);
-      args.push(...aiBindingArgs.envArgs);
-
-      args.push(magicAppConfig.image);
-
-      // Resolve via the same precedence ladder as stack projects; magic apps have no
-      // devCommands, so devCommands step is skipped and the ladder collapses to
-      // override > magic-app-config.command > image default.
-      const magicResolved = resolveContainerStartCommand({
-        userStartCommand: hosted.meta.startCommand,
-        stackCommand: magicAppConfig.command?.(ctx) ?? null,
-        stackId: `magic-app:${hosted.meta.viewer ?? hosted.meta.type}`,
-        mode: hosted.meta.mode,
+        containerName,
+        mappIds,
+        hostHtmlDir: hostDir,
+        networkName: projectNetworkName(hosted.meta.hostname),
+        tunnelOrigin: this.computeTunnelOrigin(hosted),
       });
-      this.log.info(`[${hosted.meta.hostname}] start command source: ${magicResolved.sourceLabel}`);
-      const cmdTokens = magicResolved.tokens;
-      const wrapped = this.wrapResilient(cmdTokens);
-      if (wrapped) args.push(...wrapped);
 
-      this.execContainerStart(hosted, containerName, args, "magic-app");
+      this.log.info(
+        `[${hosted.meta.hostname}] MApp container start: ${tiles.length} tiles ` +
+        `(${tiles.filter((t) => t.installed).length} installed, ` +
+        `${tiles.filter((t) => !t.installed).length} placeholder). ` +
+        `wrote ${placeholderIds.length} per-MApp placeholder pages. ` +
+        `image=${result.image}`,
+      );
+      this.execContainerStart(hosted, containerName, result.args, "magic-app");
       return;
     }
+
+    // -----------------------------------------------------------------------
+    // s130 t515 B4 — multi-repo project? Build dedicated container args
+    // (agi-runtime:lamp + multi-bind + concurrently startup). Short-circuits
+    // the magic-app/stack/legacy branches below. Returns null when not
+    // multi-repo so the existing flow handles single-repo projects unchanged.
+    // -----------------------------------------------------------------------
+    const multiRepoArgs = this.buildMultiRepoContainerArgs(hosted, containerName, aiBindingArgs);
+    if (multiRepoArgs) {
+      this.execContainerStart(hosted, containerName, multiRepoArgs, "magic-app");
+      return;
+    }
+
+    // s151 (2026-05-09) — single-viewer MagicApp dispatch path REMOVED.
+    // Owner UX call: Desktop+tiles is the unified path for every Desktop-
+    // served project type. Projects that previously routed here (writing/
+    // art/literature with a registered MApp viewer) now route through the
+    // Desktop-served branch above (isDesktopServed → desktop+tiles
+    // container) since "writing" + "art" joined DESKTOP_SERVED_TYPES.
+    // resolveMagicAppContainerConfig + mappContainerToConfig deleted.
 
     // -----------------------------------------------------------------------
     // Stack path: resolve container config from installed stacks
@@ -1596,7 +2053,11 @@ export class HostingManager {
     const stackConfig = this.resolveStackContainerConfig(hosted);
     if (stackConfig) {
       const ctx: StackContainerContext = {
-        projectPath: hosted.path,
+        // s141 t552 — feed the rebased content path so stack plugins'
+        // volumeMounts callbacks (e.g. stack-static-hosting's
+        // `${ctx.projectPath}/dist`) resolve into the per-repo checkout
+        // when projects follow the post-s140 layout.
+        projectPath: contentBase.base,
         projectHostname: hosted.meta.hostname,
         allocatedPort: hosted.meta.port,
         mode: hosted.meta.mode,
@@ -1611,11 +2072,42 @@ export class HostingManager {
         "--label", "agi.managed=true",
         "--label", `agi.hostname=${hosted.meta.hostname}`,
         "--label", `agi.project=${hosted.path}`,
-        // Story #100 — aionima network, no host port binding.
-        "--network=aionima",
+        // s130 t515 B3b — per-project network. Stack containers (e.g.
+        // per-project postgres) live alongside the project's repo
+        // container, reached via container DNS within the same isolated
+        // network.
+        `--network=${projectNetworkName(hosted.meta.hostname)}`,
       ];
 
-      for (const vol of stackConfig.volumeMounts(ctx)) {
+      const stackVolumes = stackConfig.volumeMounts(ctx);
+      // Pre-flight: read-only mount sources must exist on the host. podman
+      // would otherwise abort with `statfs ENOENT`, the breaker would
+      // increment, and the project would land in error with a cryptic
+      // message. Detect missing build outputs here and surface an
+      // actionable status that the UI can render distinctly. Only
+      // checks read-only mounts (the common pattern for static-site
+      // dist/ outputs); read-write mounts (the project workspace) are
+      // assumed to exist since the project itself is on disk.
+      const missingRO = stackVolumes
+        .map((v) => parseVolumeSpec(v))
+        .filter((m): m is { host: string; container: string; flags: string } => m !== null && m.flags.includes("ro"))
+        .map((m) => m.host)
+        .filter((host) => !existsSync(host));
+      if (missingRO.length > 0) {
+        hosted.status = "error";
+        hosted.error =
+          `Build output missing — host path${missingRO.length > 1 ? "s" : ""} not found: ${missingRO.join(", ")}. ` +
+          `Run the project's build (e.g., \`npm run build\`) so the expected output directory exists, ` +
+          `then restart hosting for this project.`;
+        // Mirrors the static-site pre-flight at the legacy path. Pre-empts
+        // podman's `statfs ENOENT` so the breaker doesn't trip and the
+        // owner sees the actionable message immediately.
+        this.log.warn(
+          `[${hosted.meta.hostname}] needs-build pre-flight: ${missingRO.join(", ")} missing — skipping container start`,
+        );
+        return;
+      }
+      for (const vol of stackVolumes) {
         args.push("-v", vol);
       }
       for (const [key, value] of Object.entries(stackConfig.env(ctx))) {
@@ -1721,8 +2213,9 @@ export class HostingManager {
       "--label", "agi.managed=true",
       "--label", `agi.hostname=${hosted.meta.hostname}`,
       "--label", `agi.project=${hosted.path}`,
-      // Story #100 — legacy-path project container joins aionima.
-      "--network=aionima",
+      // s130 t515 B3b — per-project network. Legacy-path container
+      // joins agi-net-<hostname> for isolation from sibling projects.
+      `--network=${projectNetworkName(hosted.meta.hostname)}`,
     ];
 
     // Collected across branches: the user-level command tokens (post-image).
@@ -1731,7 +2224,7 @@ export class HostingManager {
 
     if (typeDef?.containerConfig) {
       const cfg = typeDef.containerConfig;
-      const volumes = cfg.volumeMounts(hosted.path, hosted.meta);
+      const volumes = cfg.volumeMounts(contentBase.base, hosted.meta);
       for (const vol of volumes) {
         args.push("-v", vol);
       }
@@ -1758,7 +2251,7 @@ export class HostingManager {
       switch (hosted.meta.type) {
         case "static": {
           const docRoot = hosted.meta.docRoot ?? "dist";
-          const hostPath = join(hosted.path, docRoot);
+          const hostPath = join(contentBase.base, docRoot);
           // Pre-flight: nginx mounts hostPath read-only; if the directory
           // doesn't exist on the host, podman aborts with `statfs ENOENT`
           // and the project lands in an "exited" state with a cryptic
@@ -1780,7 +2273,7 @@ export class HostingManager {
         }
         case "php": {
           const docRoot = hosted.meta.docRoot ?? "public";
-          args.push("-v", `${hosted.path}:/var/www/html:Z`);
+          args.push("-v", `${contentBase.base}:/var/www/html:Z`);
           // Inject AI model env vars and dataset volume mounts
           args.push(...aiBindingArgs.volumeArgs);
           args.push(...aiBindingArgs.envArgs);
@@ -1797,7 +2290,7 @@ export class HostingManager {
             hosted.error = "Missing startCommand for Node.js project";
             return;
           }
-          args.push("-v", `${hosted.path}:/app:Z`);
+          args.push("-v", `${contentBase.base}:/app:Z`);
           args.push("-w", "/app");
           args.push("-e", `PORT=${String(internalPort)}`);
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
@@ -1817,7 +2310,7 @@ export class HostingManager {
             hosted.error = `No container configuration for project type "${hosted.meta.type}". Add a stack or set a start command.`;
             return;
           }
-          args.push("-v", `${hosted.path}:/app:Z`);
+          args.push("-v", `${contentBase.base}:/app:Z`);
           args.push("-w", "/app");
           args.push("-e", `PORT=${String(internalPort)}`);
           args.push("-e", `NODE_ENV=${hosted.meta.mode}`);
@@ -1841,6 +2334,186 @@ export class HostingManager {
     this.execContainerStart(hosted, containerName, args, "legacy");
   }
 
+  /**
+   * s130 t515 B4 — build podman run args for a multi-repo project.
+   *
+   * Returns null when the project has no runtime repos (no `port` set
+   * on any repo) — caller falls through to the existing branches for
+   * single-repo projects.
+   *
+   * Multi-repo projects host all of their repos in one shared container
+   * built on `agi-runtime:lamp` (PHP+Apache+Node+concurrently). Each
+   * repo's checkout is bind-mounted at `/srv/repos/<name>/`. Process
+   * supervision via `concurrently`: every repo with `autoRun !== false`
+   * + `port` set + `startCommand` is launched at container boot.
+   * Sibling repos reach each other via `localhost:<port>` inside the
+   * shared network namespace.
+   *
+   * Default repo (`isDefault: true`) is the one Caddy proxies to on
+   * `https://<project>.ai.on/`. Its port becomes the container's
+   * `internalPort` so the Caddyfile generator routes correctly.
+   * Non-default repos with `externalPath` set get their Caddy routing
+   * via slice B5 (separate slice — for now they're internal-only).
+   */
+  private buildMultiRepoContainerArgs(
+    hosted: HostedProject,
+    containerName: string,
+    aiBindingArgs: { envArgs: string[]; volumeArgs: string[] },
+  ): string[] | null {
+    if (!this.configMgr) return null;
+    const projectConfig = this.configMgr.read(hosted.path);
+    const result = buildMultiRepoContainerArgsPure({
+      hostname: hosted.meta.hostname,
+      projectPath: hosted.path,
+      mode: hosted.meta.mode,
+      containerName,
+      projectConfig,
+      aiBindingArgs,
+      tunnelOrigin: this.computeTunnelOrigin(hosted),
+      networkName: projectNetworkName(hosted.meta.hostname),
+    });
+    if (!result) return null;
+    // Set internalPort to the default repo's port so the Caddyfile
+    // generator's reverse_proxy lands on the right port.
+    hosted.meta.internalPort = result.internalPort;
+    return result.args;
+  }
+
+  /**
+   * s130 t515 B6b — start a single repo's process inside an already-running
+   * multi-repo container, without restarting the whole container. Useful
+   * for autoRun=false repos that owner wants to spin up on demand.
+   *
+   * Looks up the repo by name in the project's config, finds its
+   * startCommand, then runs `podman exec -d <container> bash -lc 'cd
+   * /srv/repos/<name> && <env> <startCommand>'`. The -d flag detaches
+   * so the gateway returns immediately; the process becomes a child
+   * of the container's existing concurrently parent OR of the container's
+   * init (dumb-init) — either way, the container's restart=always policy
+   * keeps it alive.
+   *
+   * Caveat: if the same repo is already running, this WILL spawn a
+   * duplicate. Caller should call stopRepoProcess first OR check
+   * status. Idempotency is the caller's responsibility.
+   */
+  async startRepoProcess(projectPath: string, repoName: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!this.configMgr) return { ok: false, error: "Project config manager not available" };
+    const cfg = this.configMgr.read(projectPath);
+    if (!cfg?.repos) return { ok: false, error: "Project has no repos[]" };
+    const repo = cfg.repos.find((r) => r.name === repoName);
+    if (!repo) return { ok: false, error: `Repo not found: ${repoName}` };
+    if (!repo.startCommand) return { ok: false, error: `Repo ${repoName} has no startCommand (code-only repo)` };
+
+    const hosted = this.projects.get(resolvePath(projectPath));
+    if (!hosted?.containerName) return { ok: false, error: "Project container is not running" };
+
+    const env = Object.entries(repo.env ?? {})
+      .map(([k, v]) => `${k}='${v.replace(/'/g, "'\\''")}'`)
+      .join(" ");
+    const envPrefix = env ? `${env} ` : "";
+    const cmd = `cd /srv/repos/${repoName} && ${envPrefix}${repo.startCommand}`;
+
+    try {
+      execFileSync("podman", ["exec", "-d", hosted.containerName, "bash", "-lc", cmd], {
+        stdio: "pipe",
+        timeout: 15_000,
+      });
+      this.log.info(`[${hosted.meta.hostname}] started repo process: ${repoName}`);
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `podman exec failed: ${msg}` };
+    }
+  }
+
+  /**
+   * s130 t515 B6b — stop a single repo's process inside the multi-repo
+   * container. Uses pkill -f against a fragment of the startCommand
+   * unique enough to identify it. Targets the container's PID namespace,
+   * not the host's, so it only affects that repo's process(es).
+   *
+   * Caveat: pkill matches by command line. If two repos share an
+   * identical startCommand fragment, this could kill both. The cwd-
+   * prefix `cd /srv/repos/<name> &&` is included in our generated
+   * concurrently invocation, so matching `/srv/repos/<name>` is unique.
+   */
+  async stopRepoProcess(projectPath: string, repoName: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!this.configMgr) return { ok: false, error: "Project config manager not available" };
+    const cfg = this.configMgr.read(projectPath);
+    if (!cfg?.repos) return { ok: false, error: "Project has no repos[]" };
+    const repo = cfg.repos.find((r) => r.name === repoName);
+    if (!repo) return { ok: false, error: `Repo not found: ${repoName}` };
+
+    const hosted = this.projects.get(resolvePath(projectPath));
+    if (!hosted?.containerName) return { ok: false, error: "Project container is not running" };
+
+    // Match the cwd path which is unique per repo: /srv/repos/<name>
+    const matcher = `/srv/repos/${repoName}`;
+
+    try {
+      // pkill returns 1 when no processes match — that's "already stopped",
+      // not an error. Use SIGTERM first; container's own supervisor (or
+      // concurrently with --restart-tries=10) may try to respawn but
+      // since we pkill the parent the chain dies cleanly within ~10s.
+      execFileSync("podman", ["exec", hosted.containerName, "pkill", "-TERM", "-f", matcher], {
+        stdio: "pipe",
+        timeout: 15_000,
+      });
+      this.log.info(`[${hosted.meta.hostname}] stopped repo process: ${repoName}`);
+      return { ok: true };
+    } catch (err) {
+      // pkill exit 1 = no match (already stopped); treat as success
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/exit code 1\b|status 1\b/.test(msg)) {
+        return { ok: true };
+      }
+      return { ok: false, error: `podman exec pkill failed: ${msg}` };
+    }
+  }
+
+  /**
+   * s130 t515 B3c — tear down the per-project network when hosting is
+   * disabled. Refuses to remove if non-Caddy containers still attached
+   * (would orphan them). Logs the reason on skip. Best-effort — never
+   * throws to the caller; disable should succeed even if podman has
+   * a transient hiccup.
+   */
+  private tearDownProjectNetworkForHosted(hosted: HostedProject): void {
+    try {
+      const result = destroyProjectNetwork(this.podmanRunner, { hostname: hosted.meta.hostname });
+      if (result.destroyed) {
+        this.log.info(`[${hosted.meta.hostname}] removed project network: ${result.name}`);
+      } else if (result.reason) {
+        this.log.info(`[${hosted.meta.hostname}] kept project network ${result.name}: ${result.reason}`);
+      }
+    } catch (err) {
+      this.log.warn(`[${hosted.meta.hostname}] project-network teardown failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * s130 t515 B3b — ensure the per-project podman network exists +
+   * Caddy is connected to it, before the project container starts.
+   * Idempotent. Errors are logged but don't block container start;
+   * the container will still come up on the network (containers can
+   * create their own network if needed) and Caddy may not reach it
+   * cleanly until the operator intervenes.
+   */
+  private ensureProjectNetworkForHosted(hosted: HostedProject): void {
+    try {
+      const ensured = ensureProjectNetwork(this.podmanRunner, { hostname: hosted.meta.hostname });
+      if (ensured.created) {
+        this.log.info(`[${hosted.meta.hostname}] created project network: ${ensured.name}`);
+      }
+      const connected = connectCaddyToProjectNetwork(this.podmanRunner, { hostname: hosted.meta.hostname });
+      if (connected.connected) {
+        this.log.info(`[${hosted.meta.hostname}] connected agi-caddy to ${connected.name}`);
+      }
+    } catch (err) {
+      this.log.warn(`[${hosted.meta.hostname}] project-network setup failed (continuing anyway): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   /** Execute podman run and update hosted project state. */
   private execContainerStart(
     hosted: HostedProject,
@@ -1848,6 +2521,10 @@ export class HostingManager {
     args: string[],
     source: "stack" | "legacy" | "magic-app",
   ): void {
+    // Ensure the per-project network + Caddy attachment exist before
+    // the container joins it. Idempotent; safe to call on every start.
+    this.ensureProjectNetworkForHosted(hosted);
+
     try {
       const result = execFileSync("podman", args, {
         stdio: "pipe",
@@ -1860,10 +2537,19 @@ export class HostingManager {
       hosted.error = undefined;
 
       this.log.info(`[${hosted.meta.hostname}] container started: ${containerName} (port ${String(hosted.meta.port)}) [${source}]`);
+      // s143 t568 — record container-start success so any prior breaker
+      // state for this project gets cleared. The boot-loop's recordSuccess
+      // covers enableProject's success path, but startContainer is fire-
+      // and-forget from there, so its outcome lives or dies here.
+      this.circuitBreaker?.recordSuccess(`hosting:${hosted.path}`);
     } catch (err) {
       hosted.status = "error";
       hosted.error = err instanceof Error ? err.message : String(err);
       this.log.error(`[${hosted.meta.hostname}] failed to start container: ${hosted.error}`);
+      // s143 t568 — record the failure so consecutive container-start
+      // failures eventually trip the breaker and the next boot skips
+      // this project entirely.
+      this.circuitBreaker?.recordFailure(`hosting:${hosted.path}`, err);
     }
   }
 
@@ -1926,6 +2612,109 @@ export class HostingManager {
     return true;
   }
 
+  /**
+   * s130 cycle 129 — scaffold the s130 folder layout (.agi/, k/{plans,
+   * knowledge,pm,memory,chat}/, repos/, .trash/) across every project
+   * in workspace.projects.
+   *
+   * This is the forced-migration counterpart to migrateProjectConfig's
+   * lazy "scaffold-on-read" behavior. Owner directive cycle 129: ensure
+   * all existing projects have the s130 layout, not just the ones that
+   * were read-after-upgrade.
+   *
+   * Idempotent: every call ensures the layout exists; already-present
+   * dirs are silently kept.
+   *
+   * Returns per-project + aggregate counts so the API + dashboard can
+   * surface what changed.
+   */
+  migrateAllProjectsToFolderLayout(): {
+    scanned: number;
+    scaffolded: number;
+    errors: number;
+    projects: Array<{ projectPath: string; created: string[]; error?: string }>;
+  } {
+    const projectDirs = this.workspaceProjects;
+    const out: Array<{ projectPath: string; created: string[]; error?: string }> = [];
+    let scaffolded = 0;
+    let errors = 0;
+    let scanned = 0;
+
+    for (const dir of projectDirs) {
+      let entries: string[];
+      try {
+        entries = readdirSync(dir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+          .map((d) => d.name);
+      } catch {
+        continue;
+      }
+
+      for (const slug of entries) {
+        const projectPath = resolvePath(dir, slug);
+        scanned++;
+        try {
+          const result = migrateProjectConfig(projectPath);
+          const created = result.scaffolded ?? [];
+          out.push({ projectPath, created });
+          if (created.length > 0) {
+            scaffolded++;
+            this.log.info(`[${slug}] scaffolded ${created.length} s130 layout dir(s)`);
+          }
+          if (result.error) {
+            errors++;
+            this.log.warn(`[${slug}] folder migration error: ${result.error}`);
+          }
+        } catch (err) {
+          errors++;
+          out.push({ projectPath, created: [], error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+    }
+
+    return { scanned, scaffolded, errors, projects: out };
+  }
+
+  /**
+   * s130 t515 B3d — migrate every hosted project to its per-project
+   * podman network. Existing aionima-attached containers (started before
+   * B3b) keep running on aionima until restarted. This method walks all
+   * hosted projects + restarts each one — startContainer's
+   * ensureProjectNetworkForHosted (B3b) handles network creation +
+   * Caddy attachment + the new --network flag.
+   *
+   * Safe to re-run: projects already on per-project networks just
+   * get a brief restart. No data loss; container state is preserved
+   * by container image / volume mounts (whatever your project
+   * persists is unaffected).
+   *
+   * Best invoked after `agi upgrade` lands B3b on the production
+   * gateway. Call from a CLI command, an API endpoint, or the
+   * dashboard's "Migrate networks" action.
+   */
+  migrateAllProjectsToNetworks(): { migrated: number; failed: number; projects: Array<{ hostname: string; ok: boolean; error?: string }> } {
+    const results: Array<{ hostname: string; ok: boolean; error?: string }> = [];
+    let migrated = 0;
+    let failed = 0;
+    for (const hosted of this.projects.values()) {
+      const hostname = hosted.meta.hostname;
+      try {
+        this.stopContainer(hosted);
+        void this.startContainer(hosted);
+        results.push({ hostname, ok: true });
+        migrated++;
+        this.log.info(`[${hostname}] migrated to per-project network`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        results.push({ hostname, ok: false, error: msg });
+        failed++;
+        this.log.warn(`[${hostname}] migration failed: ${msg}`);
+      }
+    }
+    this.notifyStatusChange();
+    return { migrated, failed, projects: results };
+  }
+
   // -------------------------------------------------------------------------
   // Tunnel origin computation
   // -------------------------------------------------------------------------
@@ -1979,6 +2768,16 @@ export class HostingManager {
       });
       const stdout = result.stdout?.toString() ?? "";
       const stderr = result.stderr?.toString() ?? "";
+
+      // s140 cycle-176 — when the container doesn't exist (circuit-open
+      // meta-only state from v0.4.484, OR a fresh project that hasn't
+      // started yet), podman exits non-zero with "no such container" on
+      // stderr. Returning that string as "logs" surfaces a confusing
+      // raw podman error in the dashboard. Detect the case and return a
+      // domain-aware message instead.
+      if (result.status !== 0 && /no (such|container with name)/i.test(stderr)) {
+        return "(no container running yet — start the container or reset the circuit breaker to populate logs)";
+      }
       return (stdout + stderr).trim();
     } catch {
       return null;
@@ -2185,12 +2984,29 @@ export class HostingManager {
       pluginSubdomainRoutes: this.pluginReg?.getSubdomainRoutes().map(({ route }) => route) ?? [],
       projects: Array.from(this.projects.values())
         .filter((p) => p.meta.enabled)
-        .map((p) => ({
-          hostname: p.meta.hostname,
-          port: p.meta.port,
-          containerName: p.containerName ?? (p.meta.hostname ? `agi-${p.meta.hostname}` : null),
-          internalPort: p.meta.internalPort,
-        })),
+        .map((p) => {
+          // s130 t515 B5 — pull non-default repos with externalPath from
+          // ProjectConfig so the Caddyfile generator can emit handle_path
+          // blocks for them. Skipped silently for projects without repos.
+          let repos: Array<{ name: string; port: number; externalPath: string }> | undefined;
+          if (this.configMgr) {
+            const cfg = this.configMgr.read(p.path);
+            if (cfg?.repos) {
+              repos = cfg.repos
+                .filter((r) => r.port !== undefined && r.externalPath !== undefined && !r.isDefault)
+                .map((r) => ({ name: r.name, port: r.port!, externalPath: r.externalPath! }));
+              if (repos.length === 0) repos = undefined;
+            }
+          }
+          return {
+            hostname: p.meta.hostname,
+            path: p.path, // s140 t597 — for the /sandbox/* handle_path block
+            port: p.meta.port,
+            containerName: p.containerName ?? (p.meta.hostname ? `agi-${p.meta.hostname}` : null),
+            internalPort: p.meta.internalPort,
+            ...(repos ? { repos } : {}),
+          };
+        }),
       existingCaddyfile: existing,
     });
 
@@ -2206,13 +3022,45 @@ export class HostingManager {
       return;
     }
 
-    // Reload Caddy
+    // Reload Caddy. s141 (cycle 152) — Caddy now lives in the rootless
+    // `agi-caddy` podman container (story #100), and the host caddy
+    // binary's `caddy reload` tries to push to localhost:2019 which is
+    // not exposed from the container — gives "connect: connection
+    // refused". Reload from INSIDE the container instead, where the
+    // admin endpoint binds locally and the same Caddyfile is mounted at
+    // /etc/caddy/Caddyfile.
+    //
+    // Fallback to host caddy when the container isn't present (degraded
+    // dev environments, fresh installs, or operators running caddy as a
+    // host service for some reason). Both paths share the same
+    // /etc/caddy/Caddyfile that we just regenerated.
     try {
-      execSync("sudo caddy reload --config /etc/caddy/Caddyfile", {
-        stdio: "pipe",
-        timeout: 10_000,
-      });
-      this.log.info("Caddy reloaded");
+      let containerExists = false;
+      try {
+        const containerCheck = execFileSync(
+          "podman",
+          ["ps", "--filter", "name=^agi-caddy$", "--format", "{{.Names}}"],
+          { stdio: "pipe", timeout: 5_000 },
+        ).toString().trim();
+        containerExists = containerCheck === "agi-caddy";
+      } catch {
+        // podman missing or rootless socket unavailable — fall through to host caddy
+      }
+      if (containerExists) {
+        execFileSync(
+          "podman",
+          ["exec", "agi-caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"],
+          { stdio: "pipe", timeout: 10_000 },
+        );
+        this.log.info("Caddy reloaded via agi-caddy container");
+      } else {
+        execFileSync(
+          "sudo",
+          ["caddy", "reload", "--config", "/etc/caddy/Caddyfile"],
+          { stdio: "pipe", timeout: 10_000 },
+        );
+        this.log.info("Caddy reloaded via host caddy");
+      }
     } catch (err) {
       this.log.error(`failed to reload Caddy: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -2297,6 +3145,18 @@ export class HostingManager {
     error?: string;
     url: string | null;
     viewer?: string;
+    /** s145 t585 — surface containerKind + mapps to dashboard. */
+    containerKind?: "static" | "code" | "mapp";
+    mapps?: string[];
+    /** Circuit-breaker state for this project's hosting service id, when not closed.
+     * Surfaces "open" / "half-open" so the dashboard can render a distinct chip
+     * instead of leaving the project looking simply "stopped" with no context. */
+    breaker?: {
+      status: "closed" | "half-open" | "open";
+      failures: number;
+      lastError?: string;
+      lastFailureAt?: string;
+    };
   } {
     const resolved = resolvePath(projectPath);
     const hosted = this.projects.get(resolved);
@@ -2311,6 +3171,18 @@ export class HostingManager {
       const resolvedImage = runtimeDef?.containerImage
         ?? stackConfig?.image
         ?? CONTAINER_IMAGES[knownType];
+      // Surface circuit-breaker state when not "closed" — dashboard renders a
+      // distinct chip so owners can see why a project keeps failing or
+      // is being skipped on boot.
+      const breakerState = this.circuitBreaker?.getState(`hosting:${resolved}`);
+      const breaker = breakerState && breakerState.status !== "closed"
+        ? {
+            status: breakerState.status,
+            failures: breakerState.failures,
+            ...(breakerState.lastError ? { lastError: breakerState.lastError } : {}),
+            ...(breakerState.lastFailureAt ? { lastFailureAt: breakerState.lastFailureAt } : {}),
+          }
+        : undefined;
       return {
         enabled: hosted.meta.enabled,
         type: hosted.meta.type,
@@ -2327,6 +3199,11 @@ export class HostingManager {
         ...(resolvedImage ? { image: resolvedImage } : {}),
         ...(hosted.error !== undefined ? { error: hosted.error } : {}),
         ...(hosted.meta.viewer ? { viewer: hosted.meta.viewer } : {}),
+        // s150 t634 — `containerKind` is computed from `type` for back-compat
+        // dashboards. Removed entirely once t636 lands the HostingPanel UI cleanup.
+        containerKind: this.isDesktopServed(hosted.meta) ? "mapp" : "code",
+        ...(hosted.meta.mapps !== undefined ? { mapps: hosted.meta.mapps } : {}),
+        ...(breaker ? { breaker } : {}),
         url: hosted.status === "running"
           ? `https://${hosted.meta.hostname}.${this.config.baseDomain}`
           : null,
@@ -2347,6 +3224,9 @@ export class HostingManager {
         internalPort: meta.internalPort,
         runtimeId: meta.runtimeId ?? null,
         ...(meta.viewer ? { viewer: meta.viewer } : {}),
+        // s150 t634 — see active-hosted branch above. Computed; removed by t636.
+        containerKind: this.isDesktopServed(meta) ? "mapp" : "code",
+        ...(meta.mapps !== undefined ? { mapps: meta.mapps } : {}),
         status: "unconfigured",
         url: null,
       };
@@ -3149,8 +4029,30 @@ export class HostingManager {
       addedAt: new Date().toISOString(),
     };
 
-    // Persist to ~/.agi/{slug}/project.json
+    // Persist to <projectPath>/project.json
     this.writeStackInstance(resolved, instance);
+
+    // Wish #15 — when the new stack brings its own container command, clear
+    // any stale user-set `hosting.startCommand` override so the stack's
+    // command takes effect on next restart. Without this clear, a previously-
+    // entered override (e.g. `npm run dev` typed before the stack was added)
+    // would silently win over the stack's command and the user would have to
+    // manually clear the field. Owner directive 2026-05-08.
+    if (def.containerConfig?.command !== undefined && this.configMgr) {
+      const existingHosting = this.configMgr.readHosting(resolved);
+      if (existingHosting?.startCommand !== null && existingHosting?.startCommand !== undefined) {
+        try {
+          await this.configMgr.updateHosting(resolved, { startCommand: null });
+          // Mirror in-memory hosted state so a restart in the same process
+          // sees the cleared override.
+          const hosted = this.projects.get(resolved);
+          if (hosted) hosted.meta.startCommand = null;
+          this.log.info(`[${this.slugFromPath(resolved)}] cleared startCommand override on addStack(${stackId}) — stack provides its own command`);
+        } catch (err) {
+          this.log.warn(`[${this.slugFromPath(resolved)}] could not clear startCommand override: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
 
     // Auto-run install actions sequentially
     const actionResults = await this.runInstallActions(resolved, def);
@@ -3379,7 +4281,17 @@ export class HostingManager {
   private writeStackInstance(projectPath: string, instance: ProjectStackInstance): void {
     // Delegate to ProjectConfigManager when available
     if (this.configMgr) {
-      void this.configMgr.addStack(projectPath, instance);
+      // Cycle 150 hotfix v0.4.432: catch the rejection so a config-validation
+      // failure (e.g. schema rejecting a key) doesn't propagate as an
+      // unhandled rejection and kill the gateway. Owner directive: "Bad code
+      // in a container should not crash the whole agi system." Same applies
+      // to bad config — log and continue.
+      this.configMgr.addStack(projectPath, instance).catch((err) => {
+        const slug = this.slugFromPath(projectPath);
+        this.log.warn(
+          `[${slug}] addStack failed (project config rejected): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
       return;
     }
 

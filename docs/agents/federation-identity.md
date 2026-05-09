@@ -146,6 +146,231 @@ Functions in `entity-map.ts`: `generateEntityMap()`, `verifyEntityMap()`, `isEnt
 | POST | `/mycelium/ring/announce` | Ring announce (trust >= 1) |
 | GET | `/mycelium/identity/map/:geid` | Fetch EntityMap (trust >= 1) |
 
+## Third-party API gateway (s149 unified pattern)
+
+Aionima distinguishes **two provider classes** for any third-party API
+the system integrates with. The class drives where the OAuth flow runs,
+where credentials live, and where API calls happen.
+
+| Class | Examples | OAuth happens at | Tokens live at | API calls happen at |
+|-------|----------|------------------|----------------|---------------------|
+| Public-client OAuth | GitHub | Local-ID | Local-ID `connections` | Node-side (just Bearer access_token; no `client_secret` needed) |
+| Proxied | Plaid, Google, Discord, Stripe, Twilio, … | Hive-ID | Hive-ID `connections` (never leave) | Hive-ID `/api/proxy/<provider>/<endpoint>` (DToken-bearer auth from nodes) |
+
+Memory rules driving this:
+
+- `feedback_oauth_with_secret_routes_through_hive_id` — third-party APIs
+  requiring a server-held `client_secret` OR a publicly-resolvable HTTPS
+  URL (webhooks, OAuth redirects) route through Hive-ID. Local-ID's
+  `id.ai.on` is LAN-only DNS — fundamentally cannot satisfy public-URL
+  requirements.
+- `feedback_localid_private_be_careful_what_ships_in_agi` — agi source
+  becomes public; never hardcode owner-specific or per-deployment
+  secrets there.
+- `feedback_third_party_oauth_lives_in_localid` — narrowed scope
+  post-cycle 215: applies to **public-client** OAuth (GitHub) only;
+  proxied providers go to Hive-ID.
+
+### Public-client class (GitHub)
+
+GitHub uses RFC 8628 Device Authorization Grant — no `client_secret`
+required at any step. Local-ID's `device-flow.ts:LOCAL_PROVIDERS = new
+Set(["github"])` is the authoritative list. Flow:
+
+1. Owner clicks Connect at Local-ID dashboard
+2. Local-ID hits GitHub's `/login/device/code` with `GITHUB_CLIENT_ID`
+   (a public value, baked into source)
+3. Owner completes authorization on github.com using the user_code
+4. Local-ID polls `/login/oauth/access_token` until it gets the token
+5. access_token stored encrypted in Local-ID `connections.accessToken`
+6. agi gateway broker call: `GET id.ai.on/api/auth/device-flow/token
+   ?provider=github&role=owner` returns the decrypted access_token
+7. agi attaches Bearer access_token + calls api.github.com directly
+
+No Hive-ID involvement. agi holds the access_token only after the LAN
+broker call (private-network gated; not stored agi-side).
+
+### Proxied class — DToken model
+
+Aionima nodes hold **DTokens** (delegation tokens) instead of raw
+provider access_tokens. DTokens are 32-byte random bearers,
+SHA-256-hashed at Hive-ID's `dtokens` table, mapping to a `connections`
+row. They're scoped + revocable + carry an optional expiry. The plaintext
+is returned ONCE at issuance (during OAuth completion) and stored
+encrypted node-side; never retrievable from Hive-ID after.
+
+DToken issuance happens at OAuth-completion paths in Hive-ID
+(plaid-link/exchange-public-token, oauth/{google,discord}/callback). The
+caller (Local-ID typically) receives the plaintext via the response body
++ stores it encrypted on `connections.dtoken`.
+
+Validation: every `/api/proxy/<provider>/<endpoint>` call accepts the
+DToken via `Authorization: Bearer dtok_…` or `X-DToken` header. Hive-ID
+hashes + looks up the `dtokens` row → `connections` row → resolves the
+`client_id`+`client_secret`+`access_token` → calls upstream → returns
+mapped response.
+
+### Plaid integration (s147 + s149 t624/t626/t627)
+
+Plaid is **system-level for Aion** (registered globally to the agent's
+tool palette so Aion can read bank accounts directly), with MApps as
+secondary consumers via mini-agent auto-discovery. End-to-end:
+
+```
+┌──────────────────────────────────────┐                  ┌──────────────────────┐
+│  Owner browser                        │                  │ Plaid                │
+│  https://id.ai.on/dashboard           │  Plaid Link      │ (api.plaid.com)      │
+│  "Connect Bank Account"               │ ◄──widget──┐     │                      │
+└────────────┬─────────────────────────┘            │     └──────────┬───────────┘
+              │  POST plaid-link/{create-link-token, │                ▲
+              │   exchange-public-token}             │                │
+              ▼                                      │                │
+┌──────────────────────────────────────┐            │                │
+│  Local-ID  (id.ai.on, LAN)            │            │                │
+│  connections row                       │            │                │
+│  role="plaid-item:<itemId>"            │            │                │
+│  dtoken encrypted (AES-256-GCM)        │            │                │
+└────────────┬─────────────────────────┘            │                │
+              │  POST /api/oauth/plaid-link/<…>      │                │
+              ▼                                      │                │ /link/token/create
+┌──────────────────────────────────────┐            │                │ /item/public_token/exchange
+│  Hive-ID  (cloud, public HTTPS)       │ ◄──user OAuth completion────┘ /accounts/get
+│  connections row holds access_token   │ ─────────────────────────────► /transactions/get
+│  providerSettings holds Plaid creds   │                                /accounts/balance/get
+│  dtokens table maps DToken→connection │                                /identity/get
+│  /api/proxy/plaid/<endpoint>          │                                /item/remove
+└────────────▲─────────────────────────┘                                
+              │  POST /api/proxy/plaid/<endpoint>?role=plaid-item:<id>
+              │  Authorization: Bearer dtok_…
+              │
+┌──────────────────────────────────────┐
+│  Local-ID /api/proxy/plaid/<endpoint> │
+│  (private-network gated; forwards    │
+│   DToken from connections.dtoken)    │
+└────────────▲─────────────────────────┘
+              │  POST /api/proxy/plaid/<endpoint>?role=plaid-item:<id>
+              │
+┌──────────────────────────────────────┐
+│  agi gateway                          │
+│  plugin-plaid-api (4 tools, system-   │
+│  level; no creds, no Hive-ID URL,     │
+│  no Plaid-specific config)            │
+└──────────────────────────────────────┘
+```
+
+#### Hive-ID routes (`agi-hive-id/src/routes/oauth/plaid-link.ts`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/oauth/plaid-link/create-link-token` | Issue Plaid `link_token` for browser widget |
+| POST | `/api/oauth/plaid-link/exchange-public-token` | Exchange `public_token` → encrypted access_token + mint DToken |
+| POST | `/api/proxy/plaid/<endpoint>` | Generic gateway proxy (DToken bearer); endpoints: `accounts-get`, `transactions-get`, `balance-get`, `identity-get`, `item-remove` |
+| POST | `/webhook/plaid` | Webhook receiver (signature verification flagged as future-scope; sandbox+development tiers don't sign) |
+
+`/api/proxy/plaid/*` lives at `agi-hive-id/src/services/proxy-gateway.ts`
++ `agi-hive-id/src/providers/proxy/plaid.ts` (the ProxyProviderDef).
+
+#### Local-ID routes (`agi-local-id/src/routes/{plaid-link,proxy-forward}.ts`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/auth/plaid-link/create-link-token` | Forwards to Hive-ID (browser-side widget callback chain) |
+| POST | `/api/auth/plaid-link/exchange-public-token` | Forwards to Hive-ID; receives DToken; stores encrypted on `connections.dtoken` |
+| POST | `/api/auth/plaid-link/items/:itemId/remove` | Forwards proxy `item-remove` + drops local connection row |
+| GET | `/api/auth/plaid-link/items` | Lists locally-mirrored connections (no Hive-ID round-trip) |
+| POST | `/api/proxy/<provider>/<endpoint>` | Generic per-provider forwarding to Hive-ID's gateway with DToken bearer |
+
+#### agi-side caller pattern (`plugin-plaid-api/src/index.ts`)
+
+```ts
+async function callLocalIdProxy<T>(endpoint: string, body: object, opts: {role: string}): Promise<T> {
+  const base = process.env.LOCAL_ID_BASE_URL ?? "https://id.ai.on";
+  const url = `${base}/api/proxy/plaid/${endpoint}?role=${encodeURIComponent(opts.role)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  // …error handling that points user at id.ai.on/dashboard for re-link
+  return (await res.json()) as T;
+}
+
+// Tool handler (e.g., plaid:list-accounts):
+const data = await callLocalIdProxy<{accounts: PlaidAccount[]}>(
+  "accounts-get", {}, { role: `plaid-item:${itemId}` }
+);
+```
+
+agi never sees: PLAID_CLIENT_ID, PLAID_SECRET, Plaid access_tokens,
+Hive-ID's URL (Local-ID is the only public-internet hop from agi's
+perspective). Per `feedback_localid_private_be_careful_what_ships_in_agi`.
+
+#### Multi-bank support: role-encoding
+
+The `connections` table's existing unique index is `(user_id, provider,
+role)`. For Plaid, encode the Plaid `item_id` into the `role` field as
+`plaid-item:<itemId>`. One linked bank per row; unlimited banks per
+user. **No schema migration needed.** The role-encoding is mirrored at
+Hive-ID's `connections` table — both ends use the same convention.
+
+#### Plaid-specific behaviors
+
+- **`/item/remove` cleanup on disconnect** — Plaid requires server-side
+  notification when a bank is unlinked. Local-ID forwards the proxy call
+  via `/api/proxy/plaid/item-remove` + drops the local connection row.
+  Hive-ID's gateway proxies to Plaid `/item/remove`. Cleanup is
+  best-effort; local row drops even if Hive-ID call fails.
+- **Webhooks** — Plaid pushes events (`TRANSACTIONS_UPDATED`,
+  `ITEM_LOGIN_REQUIRED`, etc.) to a configured public HTTPS URL.
+  Hive-ID hosts the receiver at `/webhook/plaid` (scaffold; signature
+  verification flagged for follow-up). Production webhooks should stay
+  disabled at the Plaid app level until JWS signature verification
+  ships.
+- **Reauth flow UI** — when an item gets `ITEM_LOGIN_REQUIRED`, dashboard
+  should surface a reauth prompt. Future scope; mirrors the analogous
+  GitHub flow.
+
+### Generalizing to Google + Discord (s149 t625, pending)
+
+Google and Discord adopt the same proxied-class pattern. Hive-ID already
+handles the OAuth dance for both via authorization-code flow at
+`/oauth/google/{start,callback}` + `/oauth/discord/{start,callback}` —
+the cycle 215 unification flips the **token-transfer** step (which used
+to hand raw access_tokens via the handoff mechanism) to **DToken
+issuance**. Local-ID's existing `device-flow.ts:223-227` stubs (`501
+not_implemented` for Google + Discord) get replaced with the same
+proxy-forwarding shape.
+
+Per-provider proxy definitions live at `agi-hive-id/src/providers/proxy/
+{google,discord}.ts` (pending t625). Endpoints:
+
+- Google: `gmail.users.messages.send`, `gmail.users.messages.list`,
+  `calendar.events.list`, `calendar.events.insert`, `drive.files.list`,
+  `drive.files.get`, `oauth2.userinfo.get`
+- Discord: `users/@me`, `users/@me/guilds`, `channels/<id>/messages`
+
+Both providers use Bearer `access_token` upstream (unlike Plaid's per-call
+`client_id`+`secret`+`access_token` body). The ProxyProviderDef
+abstraction handles either shape via the `buildRequest` transformer per
+`agi-hive-id/src/services/proxy-gateway.ts`.
+
+### When to use which class
+
+If you're integrating a new third-party API:
+
+1. **Does the API support public-client OAuth (no `client_secret`)?** If
+   yes (RFC 8628 Device Authorization Grant or equivalent), it can run
+   in Local-ID. Add to `LOCAL_PROVIDERS` at `device-flow.ts`.
+2. **Otherwise it's proxied.** Add a ProxyProviderDef under
+   `agi-hive-id/src/providers/proxy/<provider>.ts`, an OAuth-bootstrap
+   route under `agi-hive-id/src/routes/oauth/<provider>.ts` (auth-code
+   flow → use the existing `provider-factory.ts`; widget flow → custom
+   like `plaid-link.ts`), a webhook receiver if applicable, and the
+   agi-side plugin calls Local-ID's `/api/proxy/<provider>/<endpoint>`
+   forwarding route.
+3. **Always cite memory rules inline in code comments** — future agents
+   need to know why GitHub is the exception, not the rule.
+
 ## Server Wiring
 
 Federation components are initialized in `server.ts` (Step 3f) when `federation.enabled` is true:

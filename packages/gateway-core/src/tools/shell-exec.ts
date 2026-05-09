@@ -23,7 +23,7 @@
  *   command is enough to block it.
  */
 import { execSync, spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { resolveCagedPath } from "./cage-gate.js";
 import type { ToolHandler } from "../tool-registry.js";
 
 // One-shot probe at module load: does the live `agi` binary on PATH
@@ -91,6 +91,18 @@ export interface ShellExecConfig {
   /** When true (default), block long-running server-start commands. Set to
    *  false to permit host-side server starts (e.g. intentional tooling). */
   blockServerStart?: boolean;
+  /**
+   * Per-invocation cage provider — s130 t515 slice 6 (chat tool caging).
+   * When set, the handler calls this on each invocation to get the
+   * caller's current cage and gates cwd against `isPathInCage`. When the
+   * provider returns null (no projectContext on the chat session), the
+   * legacy workspaceRoot-only check applies (today's behavior preserved
+   * for non-project-bound chats). When the provider returns a Cage,
+   * cwd must be inside the cage's allowed prefixes — workspaceRoot is
+   * NOT consulted as a separate boundary, because the cage is the
+   * stricter primitive.
+   */
+  cageProvider?: () => import("../agent-cage.js").Cage | null;
 }
 
 /** Detect whether a command matches a server-start pattern. Exported for tests. */
@@ -109,13 +121,43 @@ export function createShellExecHandler(config: ShellExecConfig): ToolHandler {
       Number(input.timeout_ms ?? DEFAULT_TIMEOUT_MS),
       MAX_TIMEOUT_MS,
     );
+    // s140 t590 cycle-170 — when a project cage is active, relative cwd
+    // resolves against the project root, not the gateway-wide
+    // workspaceRoot ("/"). The default cwd (no input.cwd) is the
+    // project root when caged; legacy workspaceRoot otherwise.
     const cwd = input.cwd
-      ? resolve(config.workspaceRoot, String(input.cwd))
-      : config.workspaceRoot;
+      ? resolveCagedPath(config, String(input.cwd))
+      : resolveCagedPath(config, ".");
 
-    // Workspace boundary check for cwd
-    if (!cwd.startsWith(config.workspaceRoot)) {
-      return JSON.stringify({ error: "Access denied: cwd escapes workspace boundary", exitCode: -1 });
+    // s130 t515 slice 6 — chat tool caging. When a cage provider is set
+    // AND returns a non-null cage (the chat session has projectContext),
+    // gate cwd against isPathInCage. The cage is stricter than the
+    // workspaceRoot boundary, so workspaceRoot is NOT also consulted.
+    // When provider returns null (no projectContext) OR no provider is
+    // wired, fall back to the workspaceRoot check (today's behavior).
+    if (config.cageProvider !== undefined) {
+      const cage = config.cageProvider();
+      if (cage !== null) {
+        const { isPathInCage } = await import("../agent-cage.js");
+        if (!isPathInCage(cwd, cage)) {
+          return JSON.stringify({
+            error: `Access denied: cwd is outside the project cage. cwd=${cwd}. The chat session is bound to a project; tools can only operate within that project's subtree (.agi/, k/, repos/, .trash/, project root). To request out-of-cage access, ask the owner.`,
+            exitCode: -1,
+          });
+        }
+        // Cage check passed — skip the workspaceRoot fallback.
+      } else {
+        // Provider wired but returned null = no projectContext on this
+        // session. Fall through to workspaceRoot check.
+        if (!cwd.startsWith(config.workspaceRoot)) {
+          return JSON.stringify({ error: "Access denied: cwd escapes workspace boundary", exitCode: -1 });
+        }
+      }
+    } else {
+      // Legacy path — no cage provider wired. Workspace boundary check.
+      if (!cwd.startsWith(config.workspaceRoot)) {
+        return JSON.stringify({ error: "Access denied: cwd escapes workspace boundary", exitCode: -1 });
+      }
     }
 
     // Check blocked commands

@@ -1,10 +1,18 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { registerAll as registerAllEChartTypes } from "@particle-academy/react-echarts";
 import "./index.css";
 import "@particle-academy/react-fancy/styles.css";
 import { App } from "./App.js";
 import { isElectron } from "./lib/environment.js";
 import { setupContentRendererExtensions } from "./lib/content-renderer-setup.js";
+
+// react-echarts 1.1.3 made chart/component/renderer registration explicit
+// (was implicit in 1.0.x). Without this call, mounting any <EChart> throws
+// `TypeError: ia[o] is not a constructor` from zrender's painterMap when it
+// can't find the canvas/svg renderer. Call once at boot before any chart
+// component mounts; the function is idempotent.
+registerAllEChartTypes();
 
 // Register ContentRenderer custom tags (thinking, question, callout, highlight)
 // so the chat — and any future consumer — can render agent-authored inline

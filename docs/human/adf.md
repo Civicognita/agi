@@ -50,7 +50,58 @@ The **Agent Router** picks Provider + model per turn based on cost mode + comple
 Tracked in tynn s111. The owner-facing UX for this lives in the Settings → Providers page; canonical visual design at `~/_dropbox/providers-mockup.html` (visual design approved 2026-04-25; not functional spec).
 
 ### 5. UI components
-The dashboard surfaces an owner uses to inspect and control the agent: live decision feed, what-if router simulator, cost-aware dial, off-grid mode toggle, provider shelf, runtimes strip, decision-explanation panels. Today most of these don't exist — they ship as part of s111 (Providers page) and forward as ADF UI primitives. Built on `@particle-academy/react-fancy` + `@/components/ui/card`.
+
+The ADF UI primitive layer is a **contract**, not a styling guide. Plugins, MApps, and locally-hosted apps consume the same primitives so they get consistent UX, theming, accessibility, and security guarantees for free. The contract is anchored in `~/temp_core/CLAUDE.md` § 1.5 and enforced by VIP s132.
+
+**Source packages** (we own all six):
+- `@particle-academy/react-fancy` — primary primitive set (Card, Tabs, Action, Field, Input, Select, Textarea, Modal, Toast, Sidebar, Menu, Dropdown, ContentRenderer, Editor, Canvas, Diagram, Chart-via-react-echarts, Calendar, FileUpload, Kanban, Timeline, Pagination, Pillbox, Skeleton, Tooltip, TreeNav, etc).
+- `@particle-academy/fancy-sheets` — spreadsheet/table primitives.
+- `@particle-academy/fancy-code` — code editor with syntax highlighting (used in PlanPane, MAppEditor).
+- `@particle-academy/react-echarts` (being renamed to `fancy-echarts`) — chart primitives backed by Apache eCharts.
+- `@particle-academy/fancy-3d` — 3D scene primitives.
+- `@particle-academy/fancy-screens` — Screen + ScreenSystem primitives. Containerized application surface with scoped state, typed ports, hibernation, schema-driven rendering, and an agent-introspectable registry. **MApps compose against `Screen` for their UI surface** (s146 phase D + t604 cycle 199).
+
+**Project-side adapters** under `agi/ui/dashboard/src/components/ui/*` (button, card, tabs, dialog, badge, input, popover, select, separator, table, etc.) thin-wrap the upstream primitives with project-specific styling (theme tokens, density, defaults). **All consumers go through these wrappers; no hand-rolled `<div>` chrome for things that should be a primitive.**
+
+**Primitive cheatsheet — what to use when:**
+
+| Need | Use | Wrapper path |
+|---|---|---|
+| Bordered panel / section | `<Card>` + `<CardHeader>` + `<CardContent>` | `@/components/ui/card` |
+| Tabs | `<Tabs>` + `<TabsList variant="line">` + `<TabsTrigger>` + `<TabsContent>` | `@/components/ui/tabs` |
+| Form field with label + error | `<Field label="..." error="...">` + child input | react-fancy direct |
+| Single-line input | `<Input>` inside `<Field>` | `@/components/ui/input` |
+| Dropdown select | `<Select>` inside `<Field>` | `@/components/ui/select` |
+| Multi-line text | react-fancy `<Textarea>` inside `<Field>` | react-fancy direct |
+| Button | `<Button>` (project wrapper around react-fancy `Action`) | `@/components/ui/button` |
+| Inline status pill | `<Badge>` | `@/components/ui/badge` |
+| Modal | `<Dialog>` (react-fancy `Modal`) | `@/components/ui/dialog` |
+| Popover / dropdown menu | react-fancy `<Popover>` / `<Dropdown>` / `<Menu>` | direct |
+| Toast notification | react-fancy `<Toast>` (already wired in `App.tsx`) | direct |
+| Markdown content | react-fancy `<ContentRenderer value={text} format="markdown">` | direct |
+| Code editor (read or edit) | react-fancy `<Editor>` (backed by `fancy-code`) | direct |
+| Chart | react-echarts `<Chart>` (already used in ProvidersSettings) | direct |
+| Spreadsheet/grid | `fancy-sheets` | direct |
+| Data table | react-fancy `<Table>` | `@/components/ui/table` |
+| Sidebar / nav | react-fancy `<Sidebar>` (already used in `AppSidebar.tsx`) | direct |
+| Tree view | react-fancy `<TreeNav>` (already used in ProjectDetail editor) | direct |
+| Diagram / canvas | react-fancy `<Canvas>` / `<Diagram>` (already used in WorkflowGraph) | direct |
+| Kanban board | react-fancy `<Kanban>` | direct |
+| MApp screen / app-shell / typed ports | fancy-screens `<Screen>` + `<Screen.Body>` + `<Screen.Port>` (containerized application surface; lifecycle: mounting → loading → active → suspended → hibernated → restoring) | direct |
+| Multi-screen app system | fancy-screens `<ScreenSystem>` wrapping the desktop / app shell (provides registry + lifecycle to nested Screens) | direct |
+
+**Reference implementation** (what "right" looks like): `agi/ui/dashboard/src/components/MCPTab.tsx` after v0.4.278 — Card + Tabs + ContentRenderer + content-block-aware result rendering for MCP tool/resource responses.
+
+**Bug routing — `react-fancy` / `fancy-sheets` / `fancy-code` / `react-echarts` (→ `fancy-echarts`) / `fancy-3d` / `fancy-screens`:**
+We own the upstream repos. If a primitive is missing a feature, has a bug, or fights a use case, file an issue in the corresponding particle-academy repo and link it from the agi-side issue / story. Local hand-rolled fallbacks are allowed only when (a) the upstream issue is filed first, (b) the workaround is genuinely temporary, (c) a TODO points back at the upstream issue. Drift away from the framework otherwise.
+
+**Acceptance criteria for any UI work:**
+1. No new hand-rolled `<div className="...rounded ... border ...">` chrome where a `<Card>` would do.
+2. No new bare `<input>` / `<select>` / `<textarea>` outside form-renderer schemas — wrap in `<Field>` + the typed primitive.
+3. No new `JSON.stringify(...)` in `<pre>` — use `<ContentRenderer>` for docs, `<Editor>` for code, the typed-content-block renderer pattern from MCPTab.tsx for MCP results.
+4. No new modals/popovers/dropdowns hand-rolled with `position: fixed` + backdrop classes — use the react-fancy primitives.
+
+The audit baseline + reusable scanner live in `~/temp_core/_discovery/adf-primitive-audit.md` + `adf-primitive-audit-script.py`. VIP s132 sweeps the existing dashboard to acceptance.
 
 ### 6. SDK contracts
 The `define*()` builders plugins use to extend the agent: `defineTool`, `defineProvider` (covers any system that provides AI models — Ollama, Lemonade, HF, Anthropic, OpenAI, aion-micro), `defineSkill`, `defineMagicApp`, `defineEmbedder` (s116), `defineAnchor` (s113), `defineScanProvider` (security). Each builder is a contract between SDK and ADF. There is no separate `defineRuntime` builder — runtime selection is a Provider attribute, not a top-level plugin kind.

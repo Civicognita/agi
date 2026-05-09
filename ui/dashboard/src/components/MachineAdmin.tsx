@@ -4,9 +4,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { Callout } from "@particle-academy/react-fancy";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -191,6 +193,54 @@ function HardwareSnapshotCard() {
         <Field label="Total RAM" value={`${d.memory.totalGB} GB`} />
         <Field label="Total Bytes" value={bytesToHuman(d.memory.totalBytes)} />
       </div>
+
+      {/* Graphics — GPUs detected via lspci, with NVIDIA enrichment when available. */}
+      {d.gpus.length > 0 && (
+        <>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 mt-4">Graphics</div>
+          <div className="flex flex-col gap-1.5 mb-4">
+            {d.gpus.map((g) => (
+              <div key={g.busId} className="flex items-start gap-3 text-[12px] py-1 border-b border-border last:border-b-0">
+                <code className="text-foreground w-28">{g.busId}</code>
+                <span className="text-muted-foreground w-24 truncate" title={g.classDesc}>{g.classDesc.replace(/ controller$/i, "").replace(/ compatible$/i, "")}</span>
+                <span className="text-foreground w-32 truncate" title={g.vendor}>{g.vendor.replace(/ Corporation$/, "").replace(/ Inc\.\s*\[AMD\/ATI\]$/, " (AMD)").replace(/, Inc\.$/, "")}</span>
+                <span className="text-foreground flex-1 truncate" title={g.model}>{g.model}</span>
+                <span className="text-muted-foreground text-[11px] w-20 truncate">
+                  {g.memoryMB !== null ? `${(g.memoryMB / 1024).toFixed(g.memoryMB >= 8192 ? 0 : 1)} GB` : ""}
+                </span>
+                <span className={cn(
+                  "px-1.5 rounded text-[10px]",
+                  g.driver ? "bg-green/15 text-green" : "bg-muted text-muted-foreground",
+                )}>{g.driver ?? "no driver"}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Thunderbolt / USB4 — detected via boltctl. Hidden when no controllers. */}
+      {d.thunderbolt.available && d.thunderbolt.devices.length > 0 && (
+        <>
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2 mt-4">Thunderbolt / USB4</div>
+          <div className="flex flex-col gap-1.5 mb-4">
+            {d.thunderbolt.devices.map((tb) => (
+              <div key={tb.uuid || tb.name} className="flex items-start gap-3 text-[12px] py-1 border-b border-border last:border-b-0">
+                <span className="text-foreground w-32 truncate" title={tb.name}>{tb.name}</span>
+                <span className={cn(
+                  "px-1.5 rounded text-[10px]",
+                  tb.type === "host" ? "bg-blue/15 text-blue" : "bg-purple/15 text-purple",
+                )}>{tb.type || "—"}</span>
+                <span className="text-muted-foreground w-20 truncate">{tb.generation}</span>
+                <span className={cn(
+                  "px-1.5 rounded text-[10px]",
+                  tb.status === "authorized" ? "bg-green/15 text-green" : "bg-amber/15 text-amber",
+                )}>{tb.status || "—"}</span>
+                <code className="text-muted-foreground text-[10px] flex-1 truncate" title={tb.uuid}>{tb.uuid}</code>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Storage */}
       {d.storage.length > 0 && (
@@ -480,12 +530,12 @@ export function MachineAdmin() {
     <div className="flex flex-col gap-4">
       {/* Error banner */}
       {actionError && (
-        <div className="rounded-lg bg-red/10 border border-red/30 px-4 py-2 text-[12px] text-red flex items-center justify-between">
+        <Callout color="red" className="text-[12px] text-red flex items-center justify-between">
           <span>{actionError}</span>
           <button onClick={() => setActionError(null)} className="text-red hover:text-foreground cursor-pointer bg-transparent border-none text-[11px]">
             Dismiss
           </button>
-        </div>
+        </Callout>
       )}
 
       {/* ================================================================= */}
@@ -951,15 +1001,16 @@ export function MachineAdmin() {
             </div>
             <div>
               <label className="text-[11px] text-muted-foreground mb-1 block">Role</label>
-              <select
+              <Select
+                className="text-[13px]"
+                list={[
+                  { value: "admin", label: "Admin" },
+                  { value: "operator", label: "Operator" },
+                  { value: "viewer", label: "Viewer" },
+                ]}
                 value={newDashUser.role}
-                onChange={(e) => setNewDashUser((p) => ({ ...p, role: e.target.value as DashboardRole }))}
-                className="h-8 w-full rounded-md border border-border bg-background px-3 text-[13px] text-foreground"
-              >
-                <option value="admin">Admin</option>
-                <option value="operator">Operator</option>
-                <option value="viewer">Viewer</option>
-              </select>
+                onValueChange={(v) => setNewDashUser((p) => ({ ...p, role: v as DashboardRole }))}
+              />
             </div>
           </div>
           <DialogFooter>

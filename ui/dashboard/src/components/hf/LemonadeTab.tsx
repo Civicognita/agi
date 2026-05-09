@@ -143,13 +143,13 @@ export function LemonadeTab() {
 
   if (!status.running) {
     return (
-      <div className="rounded-md border border-border bg-card p-6 text-center">
+      <Card className="p-6 text-center">
         <p className="text-sm font-semibold text-foreground mb-2">Lemonade not reachable</p>
         <p className="text-[13px] text-muted-foreground mb-4">
           {status.error ?? "AGI couldn't reach the Lemonade server. Install the agi-lemonade-runtime plugin from the Plugin Marketplace, or check that lemonade-server is running."}
         </p>
         <Button variant="outline" size="sm" onClick={() => { void refresh(); }}>Retry</Button>
-      </div>
+      </Card>
     );
   }
 

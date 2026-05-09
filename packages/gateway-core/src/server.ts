@@ -45,11 +45,13 @@ function resolveAgiVersion(selfRepoPath: string | undefined): string {
 }
 import { EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@agi/entity-model";
 import type { Entity } from "@agi/entity-model";
-import { createDbClient } from "@agi/db-schema/client";
+import { createDbClient, waitForDb } from "@agi/db-schema/client";
 import { BackupManager } from "./backup-manager.js";
 import { registerComplianceRoutes } from "./compliance-api.js";
 import { registerSecurityRoutes } from "./security-api.js";
 import { registerProvidersRoutes } from "./providers-api.js";
+import { registerPmRoutes } from "./pm-api.js";
+import { registerNotesRoutes } from "./notes-api.js";
 import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
 import { COAChainLogger } from "@agi/coa-chain";
@@ -63,6 +65,7 @@ import { CostLedgerReader } from "./cost-ledger-reader.js";
 import { McpClient } from "@agi/mcp-client";
 import { TynnPmProvider } from "./pm/tynn-provider.js";
 import { TynnLitePmProvider } from "./pm/tynn-lite-provider.js";
+import { LayeredPmProvider } from "./pm/layered-pm-provider.js";
 import type { PmProvider, PmStatus } from "@agi/sdk";
 
 import type { AionimaConfig, ConfigReloadEvent } from "@agi/config";
@@ -118,21 +121,25 @@ import { HeartbeatScheduler } from "./heartbeat.js";
 import { PrimeLoader } from "./prime-loader.js";
 import { resolvePrimeDir, resolveIdDir } from "./resolve-paths.js";
 import { checkProtocolCompatibility } from "./protocol-check.js";
-import { PlanStore } from "./plan-store.js";
+import { PlanStore, migrateProjectPlans } from "./plan-store.js";
 import { ChatPersistence } from "./chat-persistence.js";
 import type { PersistedChatSession } from "./chat-persistence.js";
 import { ImageBlobStore } from "./image-blob-store.js";
 import { WorkerPromptLoader } from "./worker-prompt-loader.js";
 import { ChatGarbageCollector } from "./chat-garbage-collector.js";
 import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
-import { projectConfigPath } from "./project-config-path.js";
+import { ensureAionimaSystemProject, ensureWorkspaceSkeleton, projectConfigPath } from "./project-config-path.js";
+import { migrateAionimaSystemForks } from "./aionima-system-migration.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
+import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
+import { migrateAllProjectMcpConfigs } from "./mcp-config-migration.js";
 import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import { listProjectsWithConfig } from "./iterative-work/list-projects.js";
 import { projectSlug } from "./project-config-path.js";
 import { SystemConfigService } from "./system-config-service.js";
-import { createProjectTypeRegistry } from "./project-types.js";
+import { CircuitBreakerTracker } from "./circuit-breaker.js";
+import { createProjectTypeRegistry, servesDesktopFor } from "./project-types.js";
 import { TerminalManager } from "./terminal-manager.js";
 import { discoverPlugins, getDefaultSearchPaths, loadPlugins, tryLoadManifest, PluginRegistry, HookBus } from "@agi/plugins";
 import { ServiceManager } from "./service-manager.js";
@@ -268,6 +275,34 @@ export async function startGatewayServer(
   const logger: Logger = createLogger(config.logging);
   const log = createComponentLogger(logger, "server");
 
+  // ---------------------------------------------------------------------
+  // Cycle 150 hotfix v0.4.432: process-level safety net.
+  // Owner directive: "Bad code in a container should not crash the whole
+  // agi system." Same applies to bad config / fire-and-forget rejections.
+  //
+  // Default Node behavior on unhandled promise rejection is exit-with-1
+  // (in Node 24+). One uncaught Zod validation in a fire-and-forget call
+  // killed the gateway service via systemd (the "fuse popping"). This
+  // listener logs + swallows so the gateway stays up; specific bugs get
+  // fixed at the call site over time.
+  //
+  // Note: this is the LAST-resort net. Caller-side `.catch()` at every
+  // fire-and-forget is still the right pattern — see hosting-manager
+  // writeStackInstance for the v0.4.432 fix in that path.
+  // ---------------------------------------------------------------------
+  process.on("unhandledRejection", (reason) => {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    const stack = reason instanceof Error ? reason.stack : undefined;
+    log.warn(
+      `unhandled promise rejection (caught by safety net — gateway continues): ${message}${stack ? "\n" + stack : ""}`,
+    );
+  });
+  process.on("uncaughtException", (err) => {
+    log.warn(
+      `uncaught exception (caught by safety net — gateway continues): ${err.message}\n${err.stack ?? ""}`,
+    );
+  });
+
   // -------------------------------------------------------------------------
   // Step 1b2: Boot-recovery — detect crash vs graceful shutdown
   //
@@ -340,6 +375,27 @@ export async function startGatewayServer(
   secrets.loadIntoEnv();
   log.info(`Secrets: ${String(secrets.listSecrets().length)} credential(s) on disk, CREDENTIALS_DIRECTORY ${process.env["CREDENTIALS_DIRECTORY"] ? "active" : "not set"}`);
 
+  // s128 t493/t494 — Vault: structured layer over SecretsManager (TPM2)
+  // OR FilesystemSecretsBackend (plaintext fallback for dev/test/CI
+  // environments without TPM2). Detection runs once at boot.
+  const { VaultStorage } = await import("./vault/storage.js");
+  const { VaultResolver } = await import("./vault/resolver.js");
+  const { FilesystemSecretsBackend, detectTpm2Available } = await import("./vault/filesystem-backend.js");
+  const tpm2Available = await detectTpm2Available();
+  const vaultBackend = tpm2Available
+    ? secrets
+    : new FilesystemSecretsBackend(join(homedir(), ".agi", "secrets"));
+  log.info(`Vault: using ${tpm2Available ? "SecretsManager (TPM2-sealed)" : "FilesystemSecretsBackend (plaintext — no TPM2 detected)"} for value storage`);
+  const vaultStorage = new VaultStorage({
+    vaultDir: join(homedir(), ".agi", "secrets", "vault"),
+    secretsBackend: vaultBackend,
+  });
+  vaultStorage.initialize();
+  // s128 cycle 86 — VaultResolver wired for runtime vault://<id> substitution
+  // at MCP server registration. Audit hook skipped this slice; follow-up
+  // wires audit identity context for boot-time resolves.
+  const vaultResolver = new VaultResolver(vaultStorage);
+
   // -------------------------------------------------------------------------
   // Step 2: Auth bootstrap
   // -------------------------------------------------------------------------
@@ -378,6 +434,21 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const { db, pool: dbPool } = createDbClient();
+
+  // Wait for postgres to accept queries before any store touches it.
+  // After a host reboot, systemd starts the gateway at the same time as the
+  // postgres container; the first query can race ahead of postgres readiness
+  // and reject with ECONNREFUSED. Without this wait, that rejection lands in
+  // the global safety net and the gateway zombies — process alive, Fastify
+  // never bound. The throw here is fatal: it propagates to run.ts and exits
+  // the process so systemd can restart cleanly.
+  await waitForDb(dbPool, {
+    onAttempt: (attempt, err) => {
+      if (attempt === 1) return;
+      log.warn(`waiting for postgres (attempt ${String(attempt)}): ${err?.message ?? "unknown"}`);
+    },
+  });
+
   const entityStore = new EntityStore(db);
   const messageQueue = new MessageQueue(db);
   const coaLogger = new COAChainLogger(db);
@@ -729,6 +800,20 @@ export async function startGatewayServer(
     ? new SystemConfigService({ configPath: opts.configPath, logger })
     : null;
 
+  // s143 t567/t568/t569 — persistent circuit-breaker tracker for boot-time
+  // service failures. Constructed early (right after SystemConfigService)
+  // so it can be wired into ChannelRegistry, plugin-loader, and
+  // hosting-manager — all of which start before/at boot. The v0.4.431
+  // try/catch fallback in hosting still applies when systemConfigService is
+  // null (no persistence available). Service-id prefix conventions live in
+  // circuit-breaker.ts: hosting:/channel:/plugin:/service:/mcp:.
+  const circuitBreakerTracker = systemConfigService
+    ? new CircuitBreakerTracker({ configService: systemConfigService, logger })
+    : undefined;
+  if (circuitBreakerTracker) {
+    channelRegistry.setCircuitBreaker(circuitBreakerTracker);
+  }
+
   // Iterative-work scheduler — walks workspace projects each tick, decides
   // who's due based on their iterativeWork.cron config, emits fire events.
   // The fire→AgentInvoker handler is installed below (after agentInvoker
@@ -853,6 +938,13 @@ export async function startGatewayServer(
   });
   log.info(`memory adapter initialized (dir: ${memoryDir})`);
 
+  // s152 t651 — UserNotes store. Constructed here (before AgentInvoker)
+  // so the invoker can read notes per project + global on each turn and
+  // inject them into the system-prompt project-context section. Closes
+  // the user-writes-note → Aion-reads-note loop.
+  const { NotesStore } = await import("./notes-store.js");
+  const notesStore = new NotesStore(db);
+
   const agentInvoker = new AgentInvoker({
     stateMachine,
     apiClient: getLLMProvider,
@@ -867,6 +959,7 @@ export async function startGatewayServer(
     userContextStore,
     primeLoader,
     projectConfigManager,
+    notesStore,
     workspaceRoot,
     projectPaths,
     ownerConfig: ownerConfig !== undefined ? {
@@ -907,7 +1000,7 @@ export async function startGatewayServer(
 
   iterativeWorkScheduler.on("fire", (fire) => {
     void (async () => {
-      let outcome: { status: "done" | "error"; error?: string } = { status: "done" };
+      const outcome: { status: "done" | "error"; error?: string; artifact?: import("./iterative-work/types.js").IterativeWorkArtifact } = { status: "done" };
       try {
         const slug = projectSlug(fire.projectPath);
         const systemEntity = await entityStore.resolveOrCreate(
@@ -926,13 +1019,67 @@ export async function startGatewayServer(
           projectContext: fire.projectPath,
           isOwner: true,
         });
+
+        // s124 t469 — capture a screenshot of the project's deployed URL
+        // (when hosting is configured). Resolved Q-2 mechanism: full-page
+        // headless Chromium via Playwright (not Puppeteer — Playwright is
+        // already in deps for e2e). Failure-tolerant: a missed thumbnail
+        // just leaves artifact.thumbnailPath undefined; the
+        // IterativeWorkArtifactCard renders gracefully without it.
+        try {
+          const hosting = projectConfigManager.readHosting(fire.projectPath) as { hostname?: string } | null;
+          const hostname = hosting?.hostname;
+          if (typeof hostname === "string" && hostname.length > 0) {
+            const baseDomain = (config as { hosting?: { baseDomain?: string } }).hosting?.baseDomain ?? "ai.on";
+            const url = `https://${hostname}.${baseDomain}`;
+            const { captureProjectScreenshot } = await import("./iterative-work/screenshot.js");
+            const thumbnailPath = await captureProjectScreenshot({
+              hostingUrl: url,
+              log: (msg) => { log.warn(`iter-screenshot: ${msg}`); },
+            });
+            if (thumbnailPath !== null) {
+              outcome.artifact = { ...outcome.artifact, thumbnailPath };
+              log.info(`iterative-work screenshot captured: ${thumbnailPath}`);
+            }
+          }
+        } catch (err) {
+          log.warn(`iterative-work screenshot block failed for ${fire.projectPath}: ${err instanceof Error ? err.message : String(err)}`);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         log.error(`iterative-work fire failed for ${fire.projectPath}: ${message}`);
-        outcome = { status: "error", error: message };
+        outcome.status = "error";
+        outcome.error = message;
       } finally {
         iterativeWorkScheduler.recordCompletion(fire.projectPath, outcome);
         iterativeWorkScheduler.markComplete(fire.projectPath);
+      }
+    })();
+  });
+
+  // s124 t470 + t471: route iterative-work completions into NotificationStore
+  // (persistent) AND broadcast as `notification:new` over the dashboard WS
+  // (real-time, wakes Toast UI). The mapper produces canonical `iterative-work`
+  // typed metadata; artifact fields populate incrementally as the agent-
+  // observability hook (t469) fills them. Subscriber failures are non-fatal —
+  // the iteration itself already completed; a missed notification is
+  // recoverable from the iteration log.
+  iterativeWorkScheduler.on("complete", (completion) => {
+    void (async () => {
+      try {
+        const { mapIterativeWorkCompletionToParams } = await import("./iterative-work/notification-mapper.js");
+        const created = await notificationStore.create(mapIterativeWorkCompletionToParams(completion));
+        dashboardBroadcasterRef?.emitNotification({
+          id: created.id,
+          type: created.type,
+          title: created.title,
+          body: created.body,
+          metadata: created.metadata,
+          createdAt: created.createdAt,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        log.warn(`iterative-work notification create failed for ${completion.projectPath}: ${message}`);
       }
     })();
   });
@@ -1466,6 +1613,7 @@ export async function startGatewayServer(
         pluginPriorities,
         channelRegistry,
         channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+        circuitBreaker: circuitBreakerTracker,
       });
       log.info(`plugins: ${String(result.loaded.length)} loaded, ${String(result.failed.length)} failed`);
       if (discovered.plugins.length > enabledPlugins.length) {
@@ -1524,6 +1672,7 @@ export async function startGatewayServer(
                       ),
                       channelRegistry,
                       channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+                      circuitBreaker: circuitBreakerTracker,
                     });
                     bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
                     // Retry provider creation now that the plugin is loaded
@@ -1620,6 +1769,9 @@ export async function startGatewayServer(
     }
   }
 
+  // (s143 circuitBreakerTracker constructed earlier — see § "s143 t567/t568/t569"
+  // right after systemConfigService.)
+
   const hostingManager = new HostingManager({
     config: {
       enabled: hostingConfig?.enabled ?? false,
@@ -1648,6 +1800,7 @@ export async function startGatewayServer(
     sharedContainerManager,
     projectConfigManager,
     mappRegistry,
+    circuitBreaker: circuitBreakerTracker,
     logger,
   });
 
@@ -1656,6 +1809,185 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   hostingManager.regenerateSystemDomains();
+
+  // s150 t633 — workspace-owned project skeleton. Seeds <workspaceRoot>/.new/
+  // from the agi-shipped templates on first boot, then registers each
+  // workspace root so subsequent scaffolds prefer the workspace copy. After
+  // seeding, owner customizations to .new/ persist across agi upgrades. Run
+  // BEFORE the s130 sweep so its scaffoldProjectFolders calls find the
+  // workspace skeleton.
+  for (const workspaceRoot of projectPaths) {
+    try {
+      const r = ensureWorkspaceSkeleton(workspaceRoot);
+      if (r.seeded) {
+        logger.info(
+          "migrate",
+          `boot-time s150 skeleton seed: ${workspaceRoot} → ${r.target} (${String(r.copied?.length ?? 0)} entries copied)`,
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        "migrate",
+        `boot-time s150 skeleton seed failed for ${workspaceRoot} (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    // s119 t701 (2026-05-09) — always-present `_aionima` meta-project
+    // scaffold. Idempotent; creates the universal monorepo layout
+    // beneath `<workspaceRoot>/_aionima/` if missing. Aion chat on this
+    // project lets the owner work on the Aionima system itself.
+    try {
+      const r = ensureAionimaSystemProject(workspaceRoot);
+      if (r.projectJsonCreated || r.scaffoldedFolders.length > 0) {
+        logger.info(
+          "migrate",
+          `boot-time s119 _aionima scaffold: ${r.projectPath} (project.json=${String(r.projectJsonCreated)}, folders=${String(r.scaffoldedFolders.length)})`,
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        "migrate",
+        `boot-time s119 _aionima scaffold failed for ${workspaceRoot} (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    // s119 t703 (2026-05-09) — hard-move forks from legacy flat layout
+    // (`_aionima/<name>`) into universal monorepo layout
+    // (`_aionima/repos/<name>`). Idempotent + atomic per fork. Runs only
+    // after t701 scaffolder so `repos/` exists. Errors captured per-fork
+    // and logged as warnings; the gateway still boots.
+    try {
+      const r = migrateAionimaSystemForks(workspaceRoot, createComponentLogger(logger, "migrate-aionima-forks"));
+      if (r.moved > 0 || r.errors.length > 0) {
+        logger.info(
+          "migrate",
+          `boot-time s119 fork migration: scanned=${String(r.scanned)} moved=${String(r.moved)} alreadyMigrated=${String(r.alreadyMigrated)} notPresent=${String(r.notPresent)} errors=${String(r.errors.length)}`,
+        );
+        for (const e of r.errors) {
+          logger.warn("migrate", `s119 fork migration error [${e.name}]: ${e.reason}`);
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        "migrate",
+        `boot-time s119 fork migration failed for ${workspaceRoot} (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  // s130 t523 — boot-time mass migration of project configs + chat-history.
+  // Walks workspace.projects, calls migrateProjectConfig (which scaffolds the
+  // s130 layout AND chains migrateChatSessionsForProject) for each. Idempotent:
+  // already-migrated projects are silent no-ops. Front-loads what's currently
+  // lazy (per-call) so a fresh-booted gateway has uniform layout.
+  //
+  // Logged inline so the boot log shows the migration outcome alongside other
+  // step phases. Errors are non-fatal — boot continues even if some projects
+  // fail to migrate (the lazy per-call path remains the safety net).
+  try {
+    const result = hostingManager.migrateAllProjectsToFolderLayout();
+    if (result.scaffolded > 0 || result.errors > 0) {
+      logger.info(
+        "migrate",
+        `boot-time s130 sweep: ${String(result.scanned)} project(s) scanned, ${String(result.scaffolded)} scaffolded, ${String(result.errors)} error(s)`,
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      "migrate",
+      `boot-time s130 sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // Wish #16 (2026-05-08) — boot-time per-project plans migration. Walks
+  // every project under workspace.projects and copies plans from the legacy
+  // `~/.agi/{slug}/plans/` location into the canonical
+  // `<projectPath>/k/plans/`. Idempotent — already-canonical plans are
+  // skipped, not re-copied. Legacy files are preserved as backup.
+  try {
+    let migratedTotal = 0;
+    let projectsTouched = 0;
+    let errorsTotal = 0;
+    for (const dir of projectPaths) {
+      let entries: string[];
+      try {
+        entries = (await import("node:fs")).readdirSync(dir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+          .map((d) => d.name);
+      } catch {
+        continue;
+      }
+      for (const slug of entries) {
+        const projectPath = join(dir, slug);
+        try {
+          const r = migrateProjectPlans(projectPath);
+          if (r.migrated > 0) {
+            projectsTouched++;
+            migratedTotal += r.migrated;
+          }
+          if (r.errors.length > 0) errorsTotal += r.errors.length;
+        } catch { /* per-project guard — never fatal */ }
+      }
+    }
+    if (migratedTotal > 0 || errorsTotal > 0) {
+      logger.info(
+        "migrate",
+        `boot-time wish#16 plans sweep: ${String(migratedTotal)} plan(s) migrated across ${String(projectsTouched)} project(s), ${String(errorsTotal)} error(s)`,
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      "migrate",
+      `boot-time wish#16 plans sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // s150 t632 — boot-time JSON-shape sweep. Drops legacy `category` +
+  // `hosting.containerKind` and ensures top-level `type` is set on every
+  // project.json across the workspace. Idempotent; only logs when something
+  // actually changed. Sibling to the s130 sweep above, which handles file-
+  // location migration; this one handles shape inside the file.
+  try {
+    const result = migrateAllProjectConfigShapes(projectPaths, {
+      // s150 t635 — strip stacks from Desktop-served projects during the
+      // sweep. Cleanup of pre-t634 over-attached state on disk.
+      isDesktopServedType: (type) => servesDesktopFor(type, projectTypeRegistry),
+    });
+    if (
+      result.rewrote > 0 || result.debrisRemoved > 0 || result.stacksStripped > 0
+      || result.typesRemapped > 0 || result.errors > 0
+    ) {
+      logger.info(
+        "migrate",
+        `boot-time s150 shape sweep: ${String(result.scanned)} scanned, ${String(result.rewrote)} rewritten, ${String(result.debrisRemoved)} .agi/project.json removed, ${String(result.stacksStripped)} stack-set(s) stripped, ${String(result.typesRemapped)} type(s) remapped, ${String(result.errors)} error(s)`,
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      "migrate",
+      `boot-time s150 shape sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // s131 t681 — MCP config migration. Walk projects and rewrite
+  // `project.json mcp.servers[]` → top-level `.mcp.json` (Claude Code
+  // convention). Idempotent; already-migrated projects are skipped.
+  // Same boot-stage as the s150 shape sweep above so MCP wiring further
+  // down (line 2243+) can rely on either source via the dual-read API.
+  try {
+    const mcpResult = migrateAllProjectMcpConfigs(projectPaths);
+    if (mcpResult.migrated > 0 || mcpResult.errors > 0) {
+      logger.info(
+        "migrate",
+        `boot-time s131 mcp sweep: ${String(mcpResult.scanned)} scanned, ${String(mcpResult.migrated)} migrated (${String(mcpResult.totalServers)} server(s) total), ${String(mcpResult.errors)} error(s)`,
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      "migrate",
+      `boot-time s131 mcp sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   // Populate late-bound refs so project tools can access hosting/stack/mapp data
   hostingManagerRef.current = hostingManager;
@@ -1971,11 +2303,146 @@ export async function startGatewayServer(
   });
   log.info(`registered ${String(agentToolCount)} agent tools`);
 
-  // s118 t441 cycle 33 — MCP client + `mcp` agent tool. Instantiated empty;
-  // server config wiring (per-project mcp.servers block) ships in s118 t435.
-  // Until then, mcp.list-servers returns [] and call/list-tools/etc. error
-  // with "server X not registered" — Aion has the surface, not yet the data.
+  // s118 t441 cycle 33 — MCP client + `mcp` agent tool.
+  // s118 t446 D5 (cycle 67+) — boot-time wiring: read config.mcp.servers
+  // and registerServer each. TynnPmProvider's callTool("tynn", ...) +
+  // /api/projects/iterative-work/progress + the `mcp` agent tool's
+  // listServers/listTools/callTool now have real data when servers are
+  // configured. Each server block: { id, transport: stdio|http|websocket,
+  // command/env (stdio), url (http/ws), authToken (env-resolvable via
+  // $VAR), autoConnect: bool }.
   const mcpClient = new McpClient();
+  const mcpServersConfig = (config as { mcp?: { servers?: Array<Record<string, unknown>> } }).mcp?.servers ?? [];
+  // s128 cycle 86 — secret-reference resolver for MCP server config. Handles
+  // both $VAR (legacy, reads from process.env) AND vault://<id> (Vault).
+  // Vault refs are gateway-scoped here (no projectPath context); per-project
+  // servers below pass their own context.
+  const resolveSecretRef = async (raw: string | undefined): Promise<string | undefined> => {
+    if (raw === undefined) return undefined;
+    if (raw.startsWith("$")) return process.env[raw.slice(1)];
+    if (raw.startsWith("vault://")) {
+      try {
+        const resolved = await vaultResolver.resolve(raw);
+        return typeof resolved === "string" ? resolved : raw;
+      } catch (err) {
+        log.warn(`mcp: vault reference "${raw}" failed to resolve: ${err instanceof Error ? err.message : String(err)}`);
+        return undefined;
+      }
+    }
+    return raw;
+  };
+
+  for (const serverCfg of mcpServersConfig) {
+    try {
+      // Resolve authToken via $VAR + vault:// — the latter is the s128 t492-t498
+      // path that lets owners reference TPM2-sealed Vault entries from gateway
+      // config without putting plaintext into gateway.json.
+      const resolvedAuthToken = await resolveSecretRef(serverCfg.authToken as string | undefined);
+      // Resolve env values too (same dual-shape rule: $VAR or vault://).
+      const resolvedEnv = typeof serverCfg.env === "object" && serverCfg.env !== null
+        ? Object.fromEntries(
+            await Promise.all(
+              Object.entries(serverCfg.env as Record<string, string>).map(async ([k, v]) =>
+                [k, (await resolveSecretRef(v)) ?? ""] as [string, string],
+              ),
+            ),
+          )
+        : undefined;
+      await mcpClient.registerServer({
+        id: serverCfg.id as string,
+        name: serverCfg.name as string | undefined,
+        transport: serverCfg.transport as "stdio" | "http" | "websocket",
+        command: serverCfg.command as string[] | undefined,
+        env: resolvedEnv,
+        url: serverCfg.url as string | undefined,
+        autoConnect: (serverCfg.autoConnect as boolean | undefined) ?? true,
+        authToken: resolvedAuthToken,
+      });
+      log.info(`mcp: registered server "${String(serverCfg.id)}" (transport=${String(serverCfg.transport)})`);
+    } catch (err) {
+      log.warn(`mcp: failed to register server "${String(serverCfg.id)}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Per-project MCP servers (Wish #7 / s125 t478) — register each project's
+  // mcp.servers block under namespaced ids `<slug>:<id>`. Auth tokens + env
+  // values resolve from the project's .env file via $VAR notation.
+  try {
+    const { readProjectEnv, resolveDollarVars, resolveDollarVarsObject } = await import("./project-env-store.js");
+    const { projectConfigPath: pcp, projectSlug: pslug } = await import("./project-config-path.js");
+    // s131 t682 — read MCP servers via the dual-read API. Prefers
+    // `<projectPath>/.mcp.json` (Claude Code convention) over the legacy
+    // `project.json mcp.servers[]` block. Boot-time migration (t681)
+    // already brings unmigrated projects forward, so by this point most
+    // projects read from .mcp.json directly.
+    const { readProjectMcpServers: readMcpDual } = await import("./mcp-config-store.js");
+    for (const projectDir of projectPaths) {
+      try {
+        const { readdirSync, statSync } = await import("node:fs");
+        for (const entry of readdirSync(projectDir)) {
+          const fullPath = `${projectDir}/${entry}`;
+          if (!statSync(fullPath).isDirectory()) continue;
+          const cfgPath = pcp(fullPath);
+          if (!existsSync(cfgPath)) continue;
+          const raw = JSON.parse(readFileSync(cfgPath, "utf-8")) as { mcp?: { servers?: Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> } };
+          const dualResult = readMcpDual(fullPath, raw.mcp?.servers as Parameters<typeof readMcpDual>[1]);
+          const projectServers = dualResult.servers as Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }>;
+          if (projectServers.length === 0) continue;
+          if (dualResult.source === "legacy") {
+            log.info(`mcp: project ${entry} still using legacy project.json mcp.servers — migration will run on next restart`);
+          }
+          const projectEnv = readProjectEnv(fullPath);
+          // s128 cycle 86 — per-project secret resolver. $VAR reads from the
+          // project's .env (legacy); vault://<id> resolves through VaultResolver
+          // with the project's path as the scope context (so project-scoped
+          // entries stay scoped, gateway-scoped entries pass).
+          const resolveProjectSecretRef = async (raw: string | undefined): Promise<string | undefined> => {
+            if (raw === undefined) return undefined;
+            if (raw.startsWith("$")) return resolveDollarVars(raw, projectEnv);
+            if (raw.startsWith("vault://")) {
+              try {
+                const resolved = await vaultResolver.resolve(raw, { projectPath: fullPath });
+                return typeof resolved === "string" ? resolved : raw;
+              } catch (err) {
+                log.warn(`mcp: vault reference "${raw}" for project ${fullPath} failed to resolve: ${err instanceof Error ? err.message : String(err)}`);
+                return undefined;
+              }
+            }
+            return raw;
+          };
+          for (const s of projectServers) {
+            if (s.autoConnect === false) continue;
+            try {
+              const projectEnvResolved = s.env !== undefined
+                ? Object.fromEntries(
+                    await Promise.all(
+                      Object.entries(s.env).map(async ([k, v]) => [k, (await resolveProjectSecretRef(v)) ?? ""] as [string, string]),
+                    ),
+                  )
+                : undefined;
+              await mcpClient.registerServer({
+                id: `${pslug(fullPath)}:${s.id}`,
+                name: s.name,
+                transport: s.transport,
+                command: s.command,
+                env: projectEnvResolved ?? resolveDollarVarsObject(s.env, projectEnv),
+                url: s.url ? (await resolveProjectSecretRef(s.url)) : undefined,
+                autoConnect: true,
+                authToken: s.authToken ? (await resolveProjectSecretRef(s.authToken)) : undefined,
+              });
+              log.info(`mcp: registered project-server "${pslug(fullPath)}:${s.id}" (project=${entry})`);
+            } catch (err) {
+              log.warn(`mcp: failed to register project-server "${pslug(fullPath)}:${s.id}": ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+        }
+      } catch (err) {
+        log.warn(`mcp: project enumeration failed for ${projectDir}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  } catch (err) {
+    log.warn(`mcp: per-project wiring init failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // s118 t432 cycle 36 — PM provider resolution + `pm` agent tool.
   // PM provider resolution (s118 t434): config.agent.pm.provider selects
@@ -1986,26 +2453,58 @@ export async function startGatewayServer(
     .agent?.pm ?? {};
   const pmProviderId = pmConfig.provider ?? "tynn";
   const pmProviderConfig = pmConfig.config ?? {};
-  let pmProvider: PmProvider;
+
+  // Wish #17 (2026-05-08) — PM-Lite is ALWAYS available as the file-based
+  // floor, regardless of which remote provider (if any) the user has
+  // configured. Construct it unconditionally so the LayeredPmProvider can
+  // fall through on remote errors.
+  const pmLiteRoot = (pmProviderConfig.projectRoot as string | undefined)
+    ?? (workspaceRoot.length > 0 ? workspaceRoot : "/");
+  const tynnLiteFloor = new TynnLitePmProvider({
+    projectRoot: pmLiteRoot,
+    projectName: pmProviderConfig.projectName as string | undefined,
+  });
+
+  let pmPrimary: PmProvider;
   if (pmProviderId === "tynn") {
-    pmProvider = new TynnPmProvider({ mcpClient });
+    pmPrimary = new TynnPmProvider({ mcpClient });
   } else if (pmProviderId === "tynn-lite") {
-    const projectRoot = (pmProviderConfig.projectRoot as string | undefined) ?? workspaceRoot;
-    if (projectRoot === undefined || projectRoot.length === 0) {
-      throw new Error("agent.pm.provider 'tynn-lite' requires either pm.config.projectRoot or workspace.root to be set");
-    }
-    pmProvider = new TynnLitePmProvider({
-      projectRoot,
-      projectName: pmProviderConfig.projectName as string | undefined,
-    });
+    pmPrimary = tynnLiteFloor;
   } else {
     const def = pluginRegistry.getPmProvider(pmProviderId);
     if (def === undefined) {
       throw new Error(`agent.pm.provider '${pmProviderId}' is not registered (built-in: tynn, tynn-lite; plugin-registered: ${pluginRegistry.getPmProviders().map(p => p.provider.id).join(", ") || "none"})`);
     }
-    pmProvider = def.factory(pmProviderConfig) as PmProvider;
+    pmPrimary = def.factory(pmProviderConfig) as PmProvider;
   }
-  log.info(`pm provider resolved: id=${pmProviderId}, providerId=${pmProvider.providerId}`);
+
+  // Wrap with the layered fallback. When the primary IS tynn-lite (single-
+  // provider config) the wrapper degenerates to a pass-through — same code
+  // path keeps behavior consistent across configs.
+  const pmProvider: PmProvider = new LayeredPmProvider({
+    primary: pmPrimary,
+    fallback: tynnLiteFloor,
+    logger: { info: (m) => log.info(m), warn: (m) => log.warn(m) },
+  });
+  log.info(`pm provider resolved: primary=${pmPrimary.providerId}, fallback=${tynnLiteFloor.providerId}, exposed=${pmProvider.providerId}`);
+
+  // s126 — Ops-mode tools (cross-project + infrastructure) registered after
+  // pmProvider is resolved. requiresProjectCategory: [ops, administration]
+  // hides them from non-ops projects via computeAvailableTools.
+  try {
+    const { registerOpsTools } = await import("./ops-tools.js");
+    const opsCount = registerOpsTools({
+      toolRegistry,
+      workspaceProjects: projectPaths,
+      projectConfigManager,
+      pmProvider,
+      hostingManager,
+      stackRegistry,
+    });
+    log.info(`registered ${String(opsCount)} ops-mode tools (gated on project.category in [ops, administration])`);
+  } catch (err) {
+    log.warn(`ops-mode tools registration failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   toolRegistry.register(
     {
@@ -2075,13 +2574,23 @@ export async function startGatewayServer(
     {
       name: "pm",
       description:
-        "Project-management workflow operations (the tynn workflow — race-to-DONE, look-for-MORE). " +
-        "Action options: 'next' (active version + top story + tasks), 'task'/'story' (lookup by id or number), " +
+        "The single project-management entryway. ALWAYS available — no flag, no fallback to invent your own tracking. " +
+        "PM-Lite (file-based, per-project k/pm/) is wired as a permanent floor on top of which the configured remote provider " +
+        "(tynn / linear / jira / GitHub Projects / …) layers when reachable; reads fall through to PM-Lite on remote failure, " +
+        "writes always land in PM-Lite (and propagate to remote when configured). PM-Lite is part of the contract, not a fallback. " +
+        "Tasks/stories/comments: 'next' (active version + top story + tasks), 'task'/'story' (lookup by id or number), " +
         "'find-tasks' (filtered list), 'comments' (entity audit trail), " +
         "'start-task'/'testing'/'finished'/'block' (status transitions), " +
-        "'update-task' (modify fields), 'create-task'/'comment'/'iwish' (create entities), " +
+        "'update-task' (modify fields), 'create-task'/'comment' (create entities), " +
+        "'iwish' (declare an outcome the agent doesn't know how to action yet — captures intent for later triage), " +
         "'progress' (race-to-DONE counts for active focus). " +
-        "Use this tool whenever you need to query or update the project's tracked work — never invent your own task tracking.",
+        "Plans (file-based, per-project k/plans/, ALWAYS available regardless of remote provider's capabilities — " +
+        "remote PM tools rarely model plans, so plans live in PM-Lite by definition): " +
+        "'plan-list' (list all plans for a projectPath), 'plan-get' (fetch by planId), " +
+        "'plan-create' (new plan), 'plan-update' (status/steps/body). " +
+        "Use this tool whenever you need to query or update the project's tracked work or recall a plan — " +
+        "never invent your own task tracking, never assume tynn (or any single backend) is the only provider, " +
+        "never wait for a remote PM to be reachable before recording state — PM-Lite always accepts the write.",
       requiresState: [],
       requiresTier: [],
     },
@@ -2154,8 +2663,62 @@ export async function startGatewayServer(
             return pmProvider.getActiveFocusProgress !== undefined
               ? JSON.stringify(await pmProvider.getActiveFocusProgress())
               : JSON.stringify({ error: `pm provider ${pmProvider.providerId} doesn't expose progress` });
+          // Wish #17 (2026-05-08) — plans live in PM-Lite (file-based,
+          // <projectPath>/k/plans/) and are part of the PM domain regardless
+          // of remote provider availability. The pm tool exposes them directly
+          // through PlanStore so an unconfigured tynn never blocks plan recall.
+          case "plan-list": {
+            const projectPath = String(input.projectPath ?? "");
+            if (projectPath.length === 0) {
+              return JSON.stringify({ error: "projectPath is required for plan-list — pass the absolute path of the project (visible in your Project Context section)." });
+            }
+            return JSON.stringify(planStore.list(projectPath));
+          }
+          case "plan-get": {
+            const projectPath = String(input.projectPath ?? "");
+            const planId = String(input.planId ?? "");
+            if (projectPath.length === 0 || planId.length === 0) {
+              return JSON.stringify({ error: "plan-get requires both projectPath and planId" });
+            }
+            const got = planStore.get(projectPath, planId);
+            return JSON.stringify(got ?? { error: `plan ${planId} not found` });
+          }
+          case "plan-create": {
+            const projectPath = String(input.projectPath ?? "");
+            const planInput = input.plan as { title?: string; body?: string; chatSessionId?: string; steps?: Array<{ title: string; type: string }> } | undefined;
+            if (projectPath.length === 0 || planInput === undefined) {
+              return JSON.stringify({ error: "plan-create requires projectPath and a plan object {title, body, steps[]}" });
+            }
+            const validStepTypes: Array<"plan" | "implement" | "test" | "review" | "deploy"> = ["plan", "implement", "test", "review", "deploy"];
+            const steps = (planInput.steps ?? [])
+              .filter((s): s is { title: string; type: string } => typeof s === "object" && s !== null && typeof s.title === "string" && typeof s.type === "string")
+              .map((s) => ({
+                title: s.title,
+                type: (validStepTypes.includes(s.type as "plan" | "implement" | "test" | "review" | "deploy")
+                  ? (s.type as "plan" | "implement" | "test" | "review" | "deploy")
+                  : "plan"),
+              }));
+            const plan = planStore.create({
+              title: String(planInput.title ?? ""),
+              body: String(planInput.body ?? ""),
+              steps,
+              projectPath,
+              ...(planInput.chatSessionId !== undefined ? { chatSessionId: planInput.chatSessionId } : {}),
+            });
+            return JSON.stringify(plan);
+          }
+          case "plan-update": {
+            const projectPath = String(input.projectPath ?? "");
+            const planId = String(input.planId ?? "");
+            const update = input.update as Record<string, unknown> | undefined;
+            if (projectPath.length === 0 || planId.length === 0 || update === undefined) {
+              return JSON.stringify({ error: "plan-update requires projectPath, planId, and an update object" });
+            }
+            const updated = planStore.update(projectPath, planId, update as Parameters<typeof planStore.update>[2]);
+            return JSON.stringify(updated ?? { error: `plan ${planId} not found` });
+          }
           default:
-            return JSON.stringify({ error: `unknown action: ${action}. Valid: next, task, story, find-tasks, comments, start-task, testing, finished, block, update-task, create-task, comment, iwish, progress` });
+            return JSON.stringify({ error: `unknown action: ${action}. Valid: next, task, story, find-tasks, comments, start-task, testing, finished, block, update-task, create-task, comment, iwish, progress, plan-list, plan-get, plan-create, plan-update` });
         }
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
@@ -2164,7 +2727,7 @@ export async function startGatewayServer(
     {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["next", "task", "story", "find-tasks", "comments", "start-task", "testing", "finished", "block", "update-task", "create-task", "comment", "iwish", "progress"], description: "PM operation to perform" },
+        action: { type: "string", enum: ["next", "task", "story", "find-tasks", "comments", "start-task", "testing", "finished", "block", "update-task", "create-task", "comment", "iwish", "progress", "plan-list", "plan-get", "plan-create", "plan-update"], description: "PM operation to perform" },
         id: { type: "string", description: "Entity id (for task/story actions when known)" },
         number: { type: "number", description: "Entity number (alternative to id for task/story)" },
         taskId: { type: "string", description: "Task id (for status transitions / update-task)" },
@@ -2178,6 +2741,93 @@ export async function startGatewayServer(
         fields: { type: "object", description: "Field updates for update-task" },
         task: { type: "object", description: "New task input for create-task: {storyId, title, description, verificationSteps?, codeArea?}" },
         wish: { type: "object", description: "Wish input for iwish: {title, didnt?, when?, had?, needs?, explain?, priority?}" },
+        projectPath: { type: "string", description: "Absolute project path (required for plan-* actions)" },
+        planId: { type: "string", description: "Plan id (required for plan-get / plan-update)" },
+        plan: { type: "object", description: "New plan input for plan-create: {title, body, steps[{title,type}], chatSessionId?}" },
+        update: { type: "object", description: "Plan update fields for plan-update: {status?, body?, title?, steps?, stepUpdates?, tynnRefs?}" },
+      },
+      required: ["action"],
+    },
+  );
+
+  // s152 t652 — `notes` agent tool. The owner writes UserNotes via the
+  // dashboard; t651 injects them into the system-prompt on every turn.
+  // This tool lets Aion fetch/search additional notes on demand and
+  // append to existing notes (e.g. when the user says "add this to my
+  // notes for kronos_trader"). All actions are project-scope-gated:
+  // pass projectPath for per-project, omit for global.
+  toolRegistry.register(
+    {
+      name: "notes",
+      description:
+        "User-authored markdown notes — read, search, or append. The owner writes notes via the dashboard's Notes tab (per-project) or the global Notes page; Aion sees them as project context automatically. Actions: 'read' (list notes for a scope), 'get' (fetch a single note by id), 'search' (substring match across title+body), 'append' (add text to an existing note's body). Notes are file-of-record for owner intent + decisions + TODOs that aren't in the code.",
+      requiresState: [],
+      requiresTier: [],
+    },
+    async (input: Record<string, unknown>) => {
+      const action = String(input.action ?? "read");
+      const ownerEntityId = "~$U0"; // single-owner alpha; mirrors notes-api ALPHA_OWNER_ENTITY_ID
+      try {
+        switch (action) {
+          case "read": {
+            // projectPath optional: omitted = global, set = per-project, "all" = both
+            const scope = input.scope as string | undefined;
+            const projectPath = typeof input.projectPath === "string" && input.projectPath.length > 0 ? input.projectPath : null;
+            if (scope === "all") {
+              const all = await notesStore.list(ownerEntityId);
+              return JSON.stringify({ scope: "all", notes: all });
+            }
+            const list = await notesStore.list(ownerEntityId, projectPath);
+            return JSON.stringify({ scope: projectPath === null ? "global" : "project", projectPath, notes: list });
+          }
+          case "get": {
+            const noteId = String(input.noteId ?? "");
+            if (noteId.length === 0) return JSON.stringify({ error: "noteId is required for get" });
+            const note = await notesStore.get(noteId);
+            if (note === null) return JSON.stringify({ error: `note ${noteId} not found` });
+            if (note.userEntityId !== ownerEntityId) return JSON.stringify({ error: "note is owned by another user" });
+            return JSON.stringify(note);
+          }
+          case "search": {
+            const query = String(input.query ?? "").trim().toLowerCase();
+            if (query.length === 0) return JSON.stringify({ error: "query is required for search" });
+            const projectPath = typeof input.projectPath === "string" && input.projectPath.length > 0 ? input.projectPath : undefined;
+            const candidates = await notesStore.list(ownerEntityId, projectPath);
+            const matches = candidates.filter(
+              (n) => n.title.toLowerCase().includes(query) || n.body.toLowerCase().includes(query),
+            );
+            return JSON.stringify({ query, matches: matches.length, notes: matches });
+          }
+          case "append": {
+            const noteId = String(input.noteId ?? "");
+            const text = String(input.text ?? "");
+            if (noteId.length === 0 || text.length === 0) {
+              return JSON.stringify({ error: "noteId and text are required for append" });
+            }
+            const existing = await notesStore.get(noteId);
+            if (existing === null) return JSON.stringify({ error: `note ${noteId} not found` });
+            if (existing.userEntityId !== ownerEntityId) return JSON.stringify({ error: "note is owned by another user" });
+            const separator = existing.body.endsWith("\n\n") ? "" : existing.body.endsWith("\n") ? "\n" : "\n\n";
+            const newBody = `${existing.body}${separator}${text}`;
+            const updated = await notesStore.update(noteId, { body: newBody });
+            return JSON.stringify(updated);
+          }
+          default:
+            return JSON.stringify({ error: `unknown action: ${action}. Valid: read, get, search, append` });
+        }
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+    {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["read", "get", "search", "append"], description: "Notes operation to perform" },
+        projectPath: { type: "string", description: "Absolute project path for per-project scope (omit for global)" },
+        scope: { type: "string", enum: ["all"], description: "Pass 'all' on read to merge per-project + global" },
+        noteId: { type: "string", description: "Note id (required for get / append)" },
+        query: { type: "string", description: "Substring match query (required for search)" },
+        text: { type: "string", description: "Text to append (required for append)" },
       },
       required: ["action"],
     },
@@ -2264,6 +2914,11 @@ export async function startGatewayServer(
   const { MagicAppStateStore } = await import("./magic-app-state-store.js");
   const magicAppStateStore = new MagicAppStateStore(db);
 
+  // s152 — UserNotes store moved earlier in boot (was here, now lives
+  // before AgentInvoker construction so the invoker can inject project
+  // notes into the system prompt — t651). The reference is reused here
+  // by the late dashboard runtime wiring.
+
   const { httpServer, wsServer } = await createGatewayRuntimeState(
     {
       auth,
@@ -2286,9 +2941,11 @@ export async function startGatewayServer(
       webhookSecret: config.workspace?.webhookSecret,
       logger,
       hostingManager,
+      circuitBreaker: circuitBreakerTracker,
       iterativeWorkScheduler,
       projectConfigManager,
       pmProvider,
+      mcpClient,
       commsLog,
       notificationStore,
       chatPersistence,
@@ -2343,6 +3000,7 @@ export async function startGatewayServer(
             ),
             channelRegistry,
             channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+            circuitBreaker: circuitBreakerTracker,
           });
           if (result.loaded.length > 0) {
             // Bridge newly registered capabilities and sync stacks to the registry
@@ -2386,6 +3044,7 @@ export async function startGatewayServer(
             ),
             channelRegistry,
             channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+            circuitBreaker: circuitBreakerTracker,
           }, { bustCache: true });
           if (result.loaded.length > 0) {
             bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
@@ -2492,12 +3151,56 @@ export async function startGatewayServer(
             return provider instanceof AgentRouter ? provider.getRecentDecisions(limit) : [];
           },
         }),
+        // s155 t671 — PM REST surface. Mirrors the agent's `pm` tool but
+        // for the dashboard PM-Lite panel (DONE/CURRENT/NEXT views).
+        // Wraps the same LayeredPmProvider so reads + plan lookups always
+        // succeed, even if no remote PM provider is configured.
+        (f) => registerPmRoutes(f, {
+          pmProvider,
+          planStore,
+          workspaceProjects: projectPaths,
+        }),
+        // s152 — UserNotes REST surface. Markdown notepad, per-project +
+        // global scopes. Single-owner alpha; userEntityId is fixed to
+        // `~$U0` until Hive-ID multi-user lands.
+        (f) => registerNotesRoutes(f, {
+          notesStore,
+          workspaceProjects: projectPaths,
+        }),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
         (f) => registerLemonadeRoutes(f, {
           getConfig: () => config,
           logger: createComponentLogger(logger, "lemonade-api"),
         }),
+        // s128 t494 — Vault REST surface (private-network gated; project-
+        // scoping enforced via ?requestingProject= query parameter).
+        async (f) => {
+          const { registerVaultRoutes } = await import("./vault/api.js");
+          registerVaultRoutes(f, { vaultStorage });
+        },
+        // s124 t469 — serve iterative-work thumbnails. Files live in
+        // ~/.agi/thumbs/ written by captureProjectScreenshot. Strict
+        // filename allowlist (iter-<ulid>.png) prevents path traversal.
+        (f) => {
+          const thumbsDir = join(homedir(), ".agi", "thumbs");
+          f.get<{ Params: { filename: string } }>("/api/thumbs/:filename", async (request, reply) => {
+            const { filename } = request.params;
+            // Allowlist: iter-<ulid>.png. ULIDs are 26 chars; allow 20-32 to
+            // accommodate any future id shape. No `..`, no slashes.
+            if (!/^iter-[A-Z0-9]{20,32}\.png$/i.test(filename)) {
+              return reply.code(400).send({ error: "invalid thumbnail filename" });
+            }
+            const fullPath = join(thumbsDir, filename);
+            if (!existsSync(fullPath)) {
+              return reply.code(404).send({ error: "thumbnail not found" });
+            }
+            const buf = readFileSync(fullPath);
+            reply.header("Content-Type", "image/png");
+            reply.header("Cache-Control", "public, max-age=86400");
+            return reply.send(buf);
+          });
+        },
       ],
     },
     { host, port },

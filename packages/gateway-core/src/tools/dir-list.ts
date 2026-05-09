@@ -1,23 +1,25 @@
 /**
  * dir_list tool — list directory contents within workspace boundary.
+ *
+ * s130 t515 slice 6c: gates path access via the shared cage-gate helper.
  */
 import { readdir } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { join } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
+import { gatePath, resolveCagedPath, type PathGateConfig } from "./cage-gate.js";
 
-export interface DirListConfig {
-  workspaceRoot: string;
-}
+export interface DirListConfig extends PathGateConfig {}
 
 export function createDirListHandler(config: DirListConfig): ToolHandler {
   return async (input: Record<string, unknown>): Promise<string> => {
     const dirPath = String(input.path ?? ".");
     const pattern = input.pattern ? String(input.pattern) : undefined;
 
-    const absPath = resolve(config.workspaceRoot, dirPath);
+    const absPath = resolveCagedPath(config, dirPath);
 
-    if (!absPath.startsWith(config.workspaceRoot)) {
-      return JSON.stringify({ error: "Access denied: path escapes workspace boundary" });
+    const denial = gatePath(config, absPath);
+    if (denial !== null) {
+      return JSON.stringify({ error: denial });
     }
 
     try {

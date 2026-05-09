@@ -102,6 +102,102 @@ Checks: Node.js version, pnpm, deploy directory, config file, Caddy, Podman (roo
 
 Exits with the issue count as a one-line summary at the bottom.
 
+#### agi doctor schema
+
+Walk every on-disk config file the gateway reads at boot and validate each
+against its Zod schema. Catches the class of failure that crash-looped the
+gateway in cycle 150 (project.json shape drift after the s140 layout
+migration; unhandled ZodError in fire-and-forget addStack). Run this BEFORE
+attempting upgrade or restart whenever schema validation might fail.
+
+```bash
+agi doctor schema           # human-readable report
+agi doctor schema --json    # machine-readable for scripting / CI
+```
+
+Currently validates: `~/.agi/gateway.json` (AionimaConfigSchema) plus every
+discovered `<workspace>/<project>/project.json` (ProjectConfigSchema). Exits
+with code 1 when any error is found. Plugin manifests are validated in a
+follow-up slice once their schema lands.
+
+#### agi doctor dump
+
+Write a diagnostic bundle to `~/.agi/doctor-dumps/dump-<timestamp>.json` for
+incident triage. The bundle includes the full diagnostic-check output, a
+sanitized copy of `gateway.json` (secret-bearing keys redacted by name —
+`password`, `apiKey`, `token`, `*Secret*`, `*credential*`, `private_key`),
+system info (OS / Node / podman / git versions + memory), tails of recent
+logs from `~/.agi/logs/` and `/tmp/agi.log`, and per-project type info from
+the workspace.
+
+```bash
+agi doctor dump
+```
+
+The dump path is printed on stdout; share the file with whoever is helping
+diagnose. Sensitive values are redacted but log tails are not — review the
+bundle before sharing externally.
+
+#### agi doctor config
+
+Safe-edit cycle for `gateway.json` keys: read or write a single dotted-path
+value, with full-config Zod validation before writing. The file on disk
+never enters an invalid state mid-edit — validation failure rolls back
+without touching `gateway.json`.
+
+```bash
+agi doctor config get gateway.port
+agi doctor config set gateway.port 4100
+agi doctor config set workspace.projects '["/srv/proj-a","/srv/proj-b"]'
+```
+
+`set` coerces values automatically: `true`/`false` → boolean, integer
+strings → number, `null` → null, JSON object/array literals are parsed,
+anything else stays a string. Atomic write via temp + rename so an
+interrupted command can't corrupt the file.
+
+The interactive editor variant (open a chosen key in `$EDITOR`) lands
+with the `agi doctor` TUI in s144 t574.
+
+#### agi doctor logs
+
+Tail recent logs and surface known crash patterns. Each match category
+includes a count, sample lines, and a pointer to the relevant repair
+surface. Categories: schema-error (ZodError / ZodIssue), port-conflict
+(EADDRINUSE), segfault, unhandled-rejection, container-exit-nonzero,
+restart-loop / fuse-popped, OOM.
+
+```bash
+agi doctor logs                # default 500 lines per file
+agi doctor logs --lines 2000   # cap is 5000 per file
+```
+
+Reads from `~/.agi/logs/` (top 5 most-recent .log/.jsonl files) and
+`/tmp/agi.log`. Pure pattern matching — no journalctl shell-out yet.
+
+---
+
+### agi iw — iterative-work operator commands
+
+Operator kill switch for runaway iterative-work loops (s159 t692).
+When Aion is stuck looping on a project's iterative-work and you need
+to break the loop without restarting the gateway:
+
+```bash
+agi iw stop --project /home/wishborn/_projects/work/proj-a
+agi iw stop --all
+```
+
+Both flip `iterativeWork.enabled = false` on the affected project(s)
+in `project.json` AND force-clear any in-flight tracking in the
+scheduler. After the stop, the next `agi doctor logs` sweep should
+show no fresh fire entries for that project. Re-enable via the
+dashboard's Iterative Work tab when the underlying issue is fixed.
+
+The `--all` form is the nuclear option: hits every project in the
+configured `workspace.projects` directories. Use when you can't
+identify the looping project from logs alone.
+
 ---
 
 ### agi config
@@ -197,6 +293,23 @@ Manage channel adapters.
 agi channels list     # list configured channels
 agi channels test <id>  # test a channel (future)
 ```
+
+---
+
+### agi project-migrate
+
+Run a project-folder migration script for a specific story-id. Each migration is idempotent; defaults to dry-run mode (read-only audit) so the report can be reviewed before any irreversible operation.
+
+```bash
+agi project-migrate s140 --dry-run    # audit current state vs target shape
+agi project-migrate s140 --execute    # NOT YET implemented (will run the migration)
+```
+
+**Available migrations.**
+
+- **s140** — Project folder restructure. Each non-sacred project moves to a flat top-level layout: `k/` (with `plans/`, `knowledge/`, `pm/`, `memory/`, `chat/` subfolders) + `repos/` + `sandbox/` (new) + a single `project.json` config at the project root holding both project- and per-repo configuration. Stacks attach to repos rather than to projects. Sacred projects (Aionima five + PAx four) are skipped.
+
+The dry-run reports per-project: folder-shape diff, per-repo git state (clean/dirty/unpushed), current stack attachments to remap, and the sacred skip list.
 
 ---
 

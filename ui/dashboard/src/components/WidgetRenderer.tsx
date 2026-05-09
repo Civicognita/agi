@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { ContentRenderer } from "@particle-academy/react-fancy";
+import { ContentRenderer, Textarea } from "@particle-academy/react-fancy";
 import { markdownComponents } from "@/lib/markdown";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -161,12 +161,12 @@ function FieldInput({ field }: { field: UIField }) {
     return (
       <div className="col-span-2">
         <label className="block text-[11px] font-semibold text-muted-foreground mb-1">{field.label}</label>
-        <textarea
+        <Textarea
           value={String(value)}
           onChange={(e) => setValue(e.target.value)}
           placeholder={field.placeholder}
           rows={4}
-          className="w-full px-3 py-2 rounded-md border border-border bg-background text-foreground text-[13px] resize-y"
+          className="text-[13px] resize-y"
         />
       </div>
     );

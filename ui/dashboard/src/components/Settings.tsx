@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { fetchModels, fetchPluginSettings, type ModelEntry } from "@/api";
 import { useTheme } from "@/lib/theme-provider";
 import type {
@@ -279,17 +280,18 @@ export function Settings({ config, saving, saveMessage, onSave }: SettingsProps)
             />
           </FieldGroup>
           <FieldGroup label="DM Policy">
-            <select
-              className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+            <Select
+              className="font-mono"
+              list={[
+                { value: "pairing", label: "Pairing (require approval)" },
+                { value: "open", label: "Open (allow all)" },
+              ]}
               value={owner.dmPolicy}
-              onChange={(e) => update((prev) => ({
+              onValueChange={(v) => update((prev) => ({
                 ...prev,
-                owner: { ...owner, dmPolicy: e.target.value as "pairing" | "open" },
+                owner: { ...owner, dmPolicy: v as "pairing" | "open" },
               }))}
-            >
-              <option value="pairing">Pairing (require approval)</option>
-              <option value="open">Open (allow all)</option>
-            </select>
+            />
           </FieldGroup>
         </div>
         <SectionHeading className="text-sm mt-2">Owner Channel IDs</SectionHeading>
@@ -541,18 +543,19 @@ export function Settings({ config, saving, saveMessage, onSave }: SettingsProps)
             />
           </FieldGroup>
           <FieldGroup label="Initial State">
-            <select
-              className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+            <Select
+              className="font-mono"
+              list={[
+                { value: "ONLINE", label: "ONLINE" },
+                { value: "LIMBO", label: "LIMBO" },
+                { value: "OFFLINE", label: "OFFLINE" },
+              ]}
               value={gateway.state}
-              onChange={(e) => update((prev) => ({
+              onValueChange={(v) => update((prev) => ({
                 ...prev,
-                gateway: { ...gateway, state: e.target.value as GatewayConfig["state"] },
+                gateway: { ...gateway, state: v as GatewayConfig["state"] },
               }))}
-            >
-              <option value="ONLINE">ONLINE</option>
-              <option value="LIMBO">LIMBO</option>
-              <option value="OFFLINE">OFFLINE</option>
-            </select>
+            />
           </FieldGroup>
         </div>
       </Card>
@@ -562,21 +565,21 @@ export function Settings({ config, saving, saveMessage, onSave }: SettingsProps)
         <SectionHeading>Agent</SectionHeading>
         <div className="grid grid-cols-3 gap-4">
           <FieldGroup label="Provider">
-            <select
-              className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+            <Select
+              className="font-mono"
+              list={[
+                { value: "anthropic", label: "Anthropic" },
+                { value: "openai", label: "OpenAI" },
+                { value: "ollama", label: "Ollama" },
+              ]}
               value={agentProvider}
-              onChange={(e) => {
-                const next = e.target.value as Provider;
+              onValueChange={(v) => {
                 update((prev) => ({
                   ...prev,
-                  agent: { ...prev.agent, provider: next, model: "" },
+                  agent: { ...prev.agent, provider: v as Provider, model: "" },
                 }));
               }}
-            >
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
-              <option value="ollama">Ollama</option>
-            </select>
+            />
           </FieldGroup>
           <FieldGroup label="Model">
             {agentModelsLoading ? (
@@ -584,34 +587,32 @@ export function Settings({ config, saving, saveMessage, onSave }: SettingsProps)
             ) : agentModelsError ? (
               <div className="h-9 flex items-center text-sm text-red font-mono">{agentModelsError}</div>
             ) : agentModels.length > 0 ? (
-              <select
-                className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+              <Select
+                className="font-mono"
+                list={agentModels.map((m) => ({ value: m.id, label: m.name }))}
                 value={(draft.agent as Record<string, unknown> | undefined)?.["model"] as string ?? ""}
-                onChange={(e) => update((prev) => ({
+                onValueChange={(v) => update((prev) => ({
                   ...prev,
-                  agent: { ...prev.agent, model: e.target.value },
+                  agent: { ...prev.agent, model: v },
                 }))}
-              >
-                {agentModels.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </select>
+              />
             ) : (
               <div className="h-9 flex items-center text-sm text-muted-foreground font-mono">No models available</div>
             )}
           </FieldGroup>
           <FieldGroup label="Reply Mode">
-            <select
-              className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+            <Select
+              className="font-mono"
+              list={[
+                { value: "autonomous", label: "Autonomous" },
+                { value: "human-in-loop", label: "Human-in-Loop" },
+              ]}
               value={(draft.agent as Record<string, unknown> | undefined)?.["replyMode"] as string ?? "autonomous"}
-              onChange={(e) => update((prev) => ({
+              onValueChange={(v) => update((prev) => ({
                 ...prev,
-                agent: { ...prev.agent, replyMode: e.target.value },
+                agent: { ...prev.agent, replyMode: v },
               }))}
-            >
-              <option value="autonomous">Autonomous</option>
-              <option value="human-in-loop">Human-in-Loop</option>
-            </select>
+            />
           </FieldGroup>
         </div>
       </Card>
@@ -647,18 +648,15 @@ export function Settings({ config, saving, saveMessage, onSave }: SettingsProps)
                     )} />
                   </button>
                 ) : field.type === "select" && field.options ? (
-                  <select
-                    className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm font-mono cursor-pointer"
+                  <Select
+                    className="font-mono"
+                    list={field.options.map((o) => ({ value: o.value, label: o.label }))}
                     value={String(getNestedValue(draft, `${section.configPath}.${field.configKey ?? field.id}`) ?? field.defaultValue ?? "")}
-                    onChange={(e) => {
+                    onValueChange={(v) => {
                       const path = `${section.configPath}.${field.configKey ?? field.id}`;
-                      update((prev) => setNestedValue(prev, path, e.target.value));
+                      update((prev) => setNestedValue(prev, path, v));
                     }}
-                  >
-                    {field.options.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
+                  />
                 ) : field.type === "readonly" ? (
                   <div className="h-9 flex items-center text-sm text-foreground font-mono">
                     {String(getNestedValue(draft, `${section.configPath}.${field.configKey ?? field.id}`) ?? field.defaultValue ?? "")}

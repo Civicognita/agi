@@ -146,7 +146,14 @@ export class TynnPmProvider implements PmProvider {
    *  Tynn returns JSON-stringified results in `content[0].text`. */
   private async tynnCall(op: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     const result = await this.mcp.callTool(this.tynnServerId, op, args);
-    const firstContent = result.content[0];
+    // Defensive: `result.content` may be undefined when the MCP server
+    // returns a malformed envelope (no content key) — without optional
+    // chaining, `result.content[0]` throws "Cannot read properties of
+    // undefined (reading '0')" which cascades up through the agent loop
+    // and surfaces in the project chat as an opaque tool failure
+    // (cycle 156 morning bug report). Optional-chain so the
+    // `firstContent === undefined` check below catches it cleanly.
+    const firstContent = result.content?.[0];
     const text = firstContent !== undefined && typeof firstContent["text"] === "string"
       ? firstContent["text"]
       : "";

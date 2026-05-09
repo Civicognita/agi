@@ -33,9 +33,6 @@ importers:
       ansi-to-html:
         specifier: ^0.7.2
         version: 0.7.2
-      better-sqlite3:
-        specifier: ^11.0.0
-        version: 11.10.0
       drizzle-kit:
         specifier: ^0.30.4
         version: 0.30.6
@@ -413,6 +410,43 @@ importers:
         specifier: ^8.5.0
         version: 8.18.1
 
+  packages/mapp-desktop:
+    dependencies:
+      '@particle-academy/fancy-screens':
+        specifier: ^0.2.0
+        version: 0.2.0(@particle-academy/react-fancy@2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      '@particle-academy/react-fancy':
+        specifier: ^2.9.0
+        version: 2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
+      '@tailwindcss/vite':
+        specifier: ^4.2.1
+        version: 4.2.1(vite@6.4.2(@types/node@25.6.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.3))
+      react:
+        specifier: ^19.0.0
+        version: 19.2.4
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.4(react@19.2.4)
+      tailwindcss:
+        specifier: ^4.2.1
+        version: 4.2.1
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.3(@types/react@19.2.14)
+      '@vitejs/plugin-react':
+        specifier: ^4.3.0
+        version: 4.7.0(vite@6.4.2(@types/node@25.6.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.3))
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vite:
+        specifier: ^6.4.2
+        version: 6.4.2(@types/node@25.6.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.3)
+
   packages/marketplace:
     dependencies:
       '@agi/db-schema':
@@ -534,14 +568,14 @@ importers:
         specifier: ^1.2.0
         version: 1.2.3
       '@particle-academy/fancy-sheets':
-        specifier: ^0.4.5
-        version: 0.4.5(@particle-academy/react-fancy@1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        specifier: ^0.7.2
+        version: 0.7.2(@particle-academy/react-fancy@2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@particle-academy/react-echarts':
-        specifier: ^1.0.0
-        version: 1.0.1(echarts@5.6.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        specifier: ^1.1.3
+        version: 1.1.3(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@particle-academy/react-fancy':
-        specifier: ^1.9.1
-        version: 1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
+        specifier: ^2.9.0
+        version: 2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
       '@tailwindcss/vite':
         specifier: ^4.2.1
         version: 4.2.1(vite@6.4.2(@types/node@25.6.0)(jiti@2.6.1)(lightningcss@1.31.1)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.3))
@@ -607,8 +641,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/gateway-core
       '@particle-academy/fancy-code':
-        specifier: ^0.4.2
-        version: 0.4.2(@particle-academy/react-fancy@1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+        specifier: ^0.4.5
+        version: 0.4.5(@particle-academy/react-fancy@2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       '@types/react':
         specifier: ^19.0.0
         version: 19.2.14
@@ -1828,7 +1862,7 @@ packages:
 
   '@expo/bunyan@4.0.1':
     resolution: {integrity: sha512-+Lla7nYSiHZirgK+U/uYzsLv/X+HaJienbD5AKX1UQZHYfWaP+9uuQluRB4GrEVWF0GZ7vEVp/jzaOT9k/SQlg==}
-    engines: {'0': node >=0.10.0}
+    engines: {node: '>=0.10.0'}
 
   '@expo/cli@0.22.28':
     resolution: {integrity: sha512-lvt72KNitGuixYD2l3SZmRKVu2G4zJpmg5V7WfUBNpmUU5oODBw/6qmiJ6kSLAlfDozscUk+BBGknBBzxUrwrA==}
@@ -2117,29 +2151,38 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@particle-academy/fancy-code@0.4.2':
-    resolution: {integrity: sha512-9wg6+LnWrgsZruHUWy6Ld6AvTyZPk7XgAtWb53RVewsKI3Hb1RFaBXf/US6oJ6TVZPlqf3gxavOBKmlToycXwg==}
+  '@particle-academy/fancy-code@0.4.5':
+    resolution: {integrity: sha512-2KEuHS/2vhvOQt060taZ/tMtRaqB77lKAeySHPMnwKmYVwQuG56LcCev57VbtzYK+apXz2JKLlNodOsESfJRvQ==}
     peerDependencies:
-      '@particle-academy/react-fancy': ^1.5.0
+      '@particle-academy/react-fancy': ^2.0.0
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@particle-academy/fancy-sheets@0.4.5':
-    resolution: {integrity: sha512-BoK/c8qJVFGrNvHVx0aNsLPdqzkxj3SmM41tpkQM5kw93Dvfj7K/38qvlUnhAYU3Jn4ETk0oJNOxVbt9eQAT6g==}
+  '@particle-academy/fancy-screens@0.2.0':
+    resolution: {integrity: sha512-GEw5XHjzn7DDOMovL7v7zI+yHbR1oMInviPTc/1yjkvV42gmDw90Oz0cVWUgCyAhTB+AKOOmB7xtZvFEjUurTA==}
     peerDependencies:
-      '@particle-academy/react-fancy': ^1.5.0
+      '@particle-academy/react-fancy': ^3.0.0
+      react: ^18.0.0 || ^19.0.0
+      react-dom: ^18.0.0 || ^19.0.0
+    peerDependenciesMeta:
+      '@particle-academy/react-fancy':
+        optional: true
+
+  '@particle-academy/fancy-sheets@0.7.2':
+    resolution: {integrity: sha512-4WvJWhLzOwnn+qboR9eFPTuxNs5HHPszX94qZZ7AEHQsWTMV6lrsXLeeVAM4x29UtZiFJ9HK1bAal4Q9Vqt+HQ==}
+    peerDependencies:
+      '@particle-academy/react-fancy': ^2.0.0
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@particle-academy/react-echarts@1.0.1':
-    resolution: {integrity: sha512-yJiSojrHlFkw1Z9beiYnRuR12ZQuczpv1RGs0neG4q1poY+nFFOqZHPYsb9yll1zPgV9lJtbOL74iOOEsAEIkg==}
+  '@particle-academy/react-echarts@1.1.3':
+    resolution: {integrity: sha512-eXYvvk7X11AF7yxB08Ym3LqunwwiD1Ygpd4Q1a+6aaXvQKFoBff3FmuM0W0Fhis5hMg5yNNtidoqnPL4JOeRbQ==}
     peerDependencies:
-      echarts: ^5.5.0
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
 
-  '@particle-academy/react-fancy@1.9.1':
-    resolution: {integrity: sha512-Qci5Kzg8nck4PgeGXJfKAdAEVw6wRyAV5j6Fi9u7tDjg4bMXDQGuvBhdE3+Vcr7nn0hB/1/fbGMpRHDQPGsoWg==}
+  '@particle-academy/react-fancy@2.9.0':
+    resolution: {integrity: sha512-+EEnG51P9fclsN5CWcCQJeJtQI1FuYjfRM7nEVKajsOgZilnIarTCsFUe3ToW436tJ6y5EBdg1BKB4MxNV/bYg==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
       react-dom: ^18.0.0 || ^19.0.0
@@ -9444,27 +9487,33 @@ snapshots:
   '@oxlint/win32-x64@0.16.12':
     optional: true
 
-  '@particle-academy/fancy-code@0.4.2(@particle-academy/react-fancy@1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@particle-academy/fancy-code@0.4.5(@particle-academy/react-fancy@2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
-      '@particle-academy/react-fancy': 1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
+      '@particle-academy/react-fancy': 2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
 
-  '@particle-academy/fancy-sheets@0.4.5(@particle-academy/react-fancy@1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+  '@particle-academy/fancy-screens@0.2.0(@particle-academy/react-fancy@2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
     dependencies:
-      '@particle-academy/react-fancy': 1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
-      react: 19.2.4
-      react-dom: 19.2.4(react@19.2.4)
-
-  '@particle-academy/react-echarts@1.0.1(echarts@5.6.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
-    dependencies:
-      echarts: 5.6.0
       react: 19.2.4
       react-dom: 19.2.4(react@19.2.4)
     optionalDependencies:
-      echarts-gl: 2.0.9(echarts@5.6.0)
+      '@particle-academy/react-fancy': 2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
 
-  '@particle-academy/react-fancy@1.9.1(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)':
+  '@particle-academy/fancy-sheets@0.7.2(@particle-academy/react-fancy@2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1))(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+    dependencies:
+      '@particle-academy/react-fancy': 2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)
+      react: 19.2.4
+      react-dom: 19.2.4(react@19.2.4)
+
+  '@particle-academy/react-echarts@1.1.3(react-dom@19.2.4(react@19.2.4))(react@19.2.4)':
+    dependencies:
+      echarts: 5.6.0
+      echarts-gl: 2.0.9(echarts@5.6.0)
+      react: 19.2.4
+      react-dom: 19.2.4(react@19.2.4)
+
+  '@particle-academy/react-fancy@2.9.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(tailwindcss@4.2.1)':
     dependencies:
       clsx: 2.1.1
       lucide-react: 0.511.0(react@19.2.4)
@@ -10725,6 +10774,7 @@ snapshots:
     dependencies:
       bindings: 1.5.0
       prebuild-install: 7.1.3
+    optional: true
 
   big-integer@1.6.52: {}
 
@@ -10733,6 +10783,7 @@ snapshots:
   bindings@1.5.0:
     dependencies:
       file-uri-to-path: 1.0.0
+    optional: true
 
   birpc@2.9.0: {}
 
@@ -10741,6 +10792,7 @@ snapshots:
       buffer: 5.7.1
       inherits: 2.0.4
       readable-stream: 3.6.2
+    optional: true
 
   body-parser@2.2.2:
     dependencies:
@@ -10923,7 +10975,8 @@ snapshots:
     dependencies:
       readdirp: 4.1.2
 
-  chownr@1.1.4: {}
+  chownr@1.1.4:
+    optional: true
 
   chownr@3.0.0: {}
 
@@ -10953,8 +11006,7 @@ snapshots:
 
   classcat@5.0.5: {}
 
-  claygl@1.3.0:
-    optional: true
+  claygl@1.3.0: {}
 
   clean-stack@2.2.0: {}
 
@@ -11364,7 +11416,6 @@ snapshots:
       claygl: 1.3.0
       echarts: 5.6.0
       zrender: 5.6.1
-    optional: true
 
   echarts@5.6.0:
     dependencies:
@@ -11632,7 +11683,8 @@ snapshots:
       signal-exit: 3.0.7
       strip-final-newline: 2.0.0
 
-  expand-template@2.0.3: {}
+  expand-template@2.0.3:
+    optional: true
 
   expect-type@1.3.0: {}
 
@@ -11912,7 +11964,8 @@ snapshots:
 
   fetch-retry@4.1.1: {}
 
-  file-uri-to-path@1.0.0: {}
+  file-uri-to-path@1.0.0:
+    optional: true
 
   filelist@1.0.6:
     dependencies:
@@ -12019,7 +12072,8 @@ snapshots:
 
   fresh@2.0.0: {}
 
-  fs-constants@1.0.0: {}
+  fs-constants@1.0.0:
+    optional: true
 
   fs-extra@8.1.0:
     dependencies:
@@ -12147,7 +12201,8 @@ snapshots:
 
   getenv@1.0.0: {}
 
-  github-from-package@0.0.0: {}
+  github-from-package@0.0.0:
+    optional: true
 
   glob-parent@5.1.2:
     dependencies:
@@ -13618,7 +13673,8 @@ snapshots:
     dependencies:
       minipass: 7.1.3
 
-  mkdirp-classic@0.5.3: {}
+  mkdirp-classic@0.5.3:
+    optional: true
 
   mkdirp@0.5.6:
     dependencies:
@@ -13638,7 +13694,8 @@ snapshots:
 
   nanoid@3.3.11: {}
 
-  napi-build-utils@2.0.0: {}
+  napi-build-utils@2.0.0:
+    optional: true
 
   negotiator@0.6.3: {}
 
@@ -13655,6 +13712,7 @@ snapshots:
   node-abi@3.87.0:
     dependencies:
       semver: 7.7.4
+    optional: true
 
   node-addon-api@7.1.1: {}
 
@@ -14001,6 +14059,7 @@ snapshots:
       simple-get: 4.0.1
       tar-fs: 2.1.4
       tunnel-agent: 0.6.0
+    optional: true
 
   pretty-bytes@5.6.0: {}
 
@@ -14274,6 +14333,7 @@ snapshots:
       inherits: 2.0.4
       string_decoder: 1.3.0
       util-deprecate: 1.0.2
+    optional: true
 
   readdirp@4.1.2: {}
 
@@ -14739,13 +14799,15 @@ snapshots:
 
   signal-exit@4.1.0: {}
 
-  simple-concat@1.0.1: {}
+  simple-concat@1.0.1:
+    optional: true
 
   simple-get@4.0.1:
     dependencies:
       decompress-response: 6.0.0
       once: 1.4.0
       simple-concat: 1.0.1
+    optional: true
 
   simple-plist@1.3.1:
     dependencies:
@@ -14882,6 +14944,7 @@ snapshots:
   string_decoder@1.3.0:
     dependencies:
       safe-buffer: 5.2.1
+    optional: true
 
   stringify-entities@4.0.4:
     dependencies:
@@ -14977,6 +15040,7 @@ snapshots:
       mkdirp-classic: 0.5.3
       pump: 3.0.3
       tar-stream: 2.2.0
+    optional: true
 
   tar-stream@2.2.0:
     dependencies:
@@ -14985,6 +15049,7 @@ snapshots:
       fs-constants: 1.0.0
       inherits: 2.0.4
       readable-stream: 3.6.2
+    optional: true
 
   tar@7.5.13:
     dependencies:
@@ -15136,6 +15201,7 @@ snapshots:
   tunnel-agent@0.6.0:
     dependencies:
       safe-buffer: 5.2.1
+    optional: true
 
   type-detect@4.0.8: {}
 
@@ -15310,7 +15376,8 @@ snapshots:
     dependencies:
       react: 19.2.4
 
-  util-deprecate@1.0.2: {}
+  util-deprecate@1.0.2:
+    optional: true
 
   util@0.12.5:
     dependencies:

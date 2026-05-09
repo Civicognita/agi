@@ -27,6 +27,9 @@ export {
   type HfConfig,
   type RouterConfig,
   type CostMode,
+  type ServicesConfig,
+  type CircuitBreakerConfig,
+  type CircuitBreakerState,
 } from "./schema.js";
 
 export {
@@ -37,6 +40,9 @@ export {
   ProjectAiModelBindingSchema,
   ProjectAiDatasetBindingSchema,
   ProjectIterativeWorkSchema,
+  ProjectRepoSchema,
+  ProjectMcpServerSchema,
+  ProjectMcpSchema,
   type ProjectConfig,
   type ProjectHosting,
   type ProjectStackInstance,
@@ -44,6 +50,9 @@ export {
   type ProjectAiModelBinding,
   type ProjectAiDatasetBinding,
   type ProjectIterativeWork,
+  type ProjectRepo,
+  type ProjectMcpServer,
+  type ProjectMcp,
 } from "./project-schema.js";
 
 export {

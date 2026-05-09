@@ -36,6 +36,18 @@ export interface McpServerConfig {
   autoConnect?: boolean;
   /** Optional server-supplied auth token, env-var-resolvable (e.g. "$TYNN_KEY"). */
   authToken?: string;
+  /**
+   * s133 t677 — TTL (seconds) for tool / resource / prompt LISTING caches
+   * for this server. Defaults to 300 (5 min). Set to 0 to disable caching
+   * for this server (every list call re-fetches).
+   */
+  cacheTtlSec?: number;
+  /**
+   * s133 t677 — TTL (seconds) for resource READ cache. Defaults to 1800
+   * (30 min); resources are typically static markdown docs. Tool calls
+   * remain uncached regardless.
+   */
+  resourceReadCacheTtlSec?: number;
 }
 
 /** Tool surfaced by an MCP server. Mirrors MCP's tool schema. */

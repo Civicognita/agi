@@ -53,10 +53,37 @@ export interface ContainerConfig {
 export interface ProjectTypeDefinition {
   id: string;
   label: string;
-  category: ProjectCategory;
+  /**
+   * @deprecated s150 t639 (2026-05-07) — `category` is being phased out.
+   * `id` is now the single classifier; `servesDesktop` derives the container
+   * binary; iterative-work / testing-UX eligibility are inferred from
+   * type-id sets instead. Kept optional for back-compat with plugin
+   * manifests that still set it; new manifests should omit it.
+   */
+  category?: ProjectCategory;
   hostable: boolean;
-  /** Whether this project type contains code (vs. content like literature/media). */
+  /**
+   * @deprecated s150 (2026-05-07) — use `servesDesktop` (inverted polarity).
+   * `hasCode` was the binary "code-served-or-not" knob inferred from category.
+   * Per the universal monorepo directive, every project HAS code in repos/ even
+   * if it's content-only. The right binary is whether the Aion Desktop serves
+   * the project's network face (vs the project's repos producing the served
+   * output). Consumers should migrate to `servesDesktop`. Kept as a field for
+   * back-compat until t634 (hosting-manager refactor) lands.
+   */
   hasCode: boolean;
+  /**
+   * s150 (2026-05-07) — single source of truth for the code-served-vs-Desktop-
+   * served binary. When `true`, hosting-manager runs the Aion Desktop bundle
+   * (light Caddy + nginx:alpine + per-project hosting.mapps[]). When `false`,
+   * the project's repos produce the served output via stack-driven container
+   * (npm start, nginx-on-dist, etc.). When undefined, falls back to
+   * `servesDesktopFor(id)` which uses a known type-id set (with category as
+   * a final-fallback heuristic). Hosting-manager reads via the helper, not
+   * this field directly, so plugin contributors don't have to set it for
+   * recognized types.
+   */
+  servesDesktop?: boolean;
   /**
    * Whether this project type can have an iterative-work loop (s118).
    * Only `app`/`web` (dev) and `ops`/`administration` (ops) categories are
@@ -80,12 +107,113 @@ export interface ProjectTypeDefinition {
 const CODE_CATEGORIES: ReadonlySet<ProjectCategory> = new Set(["web", "app", "monorepo", "ops"]);
 
 /**
+ * Project type IDs that serve their network face from Aion Desktop (light
+ * Caddy + nginx:alpine + per-project hosting.mapps[]). Per s150 directive,
+ * this is the canonical discriminator — `type` drives container shape.
+ *
+ * Updates land here when new Desktop-served types ship (e.g., backup-aggregator).
+ * For types not in this set + not in CODE_SERVED_TYPES, the fallback is
+ * category-based (CODE_CATEGORIES inverted).
+ */
+export const DESKTOP_SERVED_TYPES: ReadonlySet<string> = new Set([
+  "ops",
+  "media",
+  "literature",
+  "documentation",
+  "backup-aggregator",
+  // s151 (2026-05-09) — owner UX call unified single-viewer projects under
+  // Desktop-served. `writing` (e.g. bliss_chronicles) and `art` projects
+  // now render the Aion Desktop with their configured `magicApps[]` as
+  // tiles instead of inlining a single MApp at /. The hosting.type is
+  // what dispatch reads, so projects whose hosting.type stays "static-site"
+  // (my_art's case) remain code-served.
+  "writing",
+  "art",
+]);
+
+/**
+ * Project type IDs that produce their network face from the project's own
+ * repos (npm start, nginx-on-dist, apache-on-php, etc.) — image + mounts
+ * driven by stacks. Counterpart to DESKTOP_SERVED_TYPES.
+ */
+export const CODE_SERVED_TYPES: ReadonlySet<string> = new Set([
+  "web-app",
+  "static-site",
+  "api-service",
+  "php-app",
+  // s119 t700 (2026-05-09) — `aionima-system` is the always-present
+  // meta-project for the Aionima system itself; its repos contain code
+  // (forks of agi/prime/id/PAx/etc.), so it routes via code-served paths.
+  // Hosting is still false (Aionima isn't hosted as an app by itself).
+  "aionima-system",
+  // s150 t640 (2026-05-07) — "monorepo" REMOVED. Every project is a monorepo
+  // per the universal-monorepo directive; a sibling "monorepo" type as a
+  // peer of web-app/static-site/etc. contradicts the model. The s150 t632
+  // shape sweep remaps existing type="monorepo" projects to "web-app".
+  // s151 (2026-05-09) — "art" + "writing" MOVED to DESKTOP_SERVED_TYPES.
+  // Owner UX call unified single-viewer projects under the Desktop+tiles
+  // dispatch path. Projects whose hosting.type is "static-site" still
+  // route here (my_art's case).
+]);
+
+/**
+ * Returns whether the given project type serves its network face from Aion
+ * Desktop (true) vs its own code (false). Resolution precedence:
+ *   1. Explicit `servesDesktop` on the registered ProjectTypeDefinition
+ *   2. DESKTOP_SERVED_TYPES set membership
+ *   3. CODE_SERVED_TYPES set membership (returns false)
+ *   4. Category fallback via CODE_CATEGORIES (returns false for code categories,
+ *      true for everything else)
+ *
+ * The registry parameter is optional — when omitted, the function uses just
+ * the type-id sets + a default category heuristic. Callers with access to a
+ * ProjectTypeRegistry should pass it for the most accurate answer.
+ */
+export function servesDesktopFor(
+  typeId: string | undefined | null,
+  registry?: ProjectTypeRegistry,
+): boolean {
+  if (!typeId) return false;
+  const def = registry?.get(typeId);
+  if (def?.servesDesktop !== undefined) return def.servesDesktop;
+  if (DESKTOP_SERVED_TYPES.has(typeId)) return true;
+  if (CODE_SERVED_TYPES.has(typeId)) return false;
+  // Final fallback: derive from category if registered, else assume code-served.
+  if (def && def.category !== undefined && CODE_CATEGORIES.has(def.category)) return false;
+  return def !== undefined; // unknown type with non-code category → Desktop-served
+}
+
+/**
  * Categories eligible for the testing suite UX (s121 — Tests / Spot / E2E
  * surfaces). Only app + web project types host code in the testable sense;
  * other categories (literature, media, ops, administration, monorepo)
  * don't expose testing tabs/buttons. Mirrors the iterative-work eligibility
  * pattern but with a narrower set.
  */
+/**
+ * s150 t639 — type-id sets for inference paths that previously routed
+ * through `category`. Plugins now express eligibility by registering with
+ * a known id; falling back to the category set keeps legacy paths working.
+ */
+export const ITERATIVE_WORK_ELIGIBLE_TYPE_IDS: ReadonlySet<string> = new Set([
+  "web-app",
+  "api-service",
+  "static-site",
+  "php-app",
+  "ops",
+  // s119 t700 (2026-05-09) — Aionima system project gets iterative-work
+  // so the owner can run Aion in autonomous-mode against the system
+  // itself (e.g. "drive remaining VIP 0.7.1 to done").
+  "aionima-system",
+]);
+
+export const TESTING_UX_ELIGIBLE_TYPE_IDS: ReadonlySet<string> = new Set([
+  "web-app",
+  "static-site",
+  "api-service",
+  "php-app",
+]);
+
 export const TESTING_UX_ELIGIBLE_CATEGORIES: ReadonlySet<ProjectCategory> = new Set([
   "app",
   "web",
@@ -140,17 +268,22 @@ export class ProjectTypeRegistry {
   private readonly types = new Map<string, ProjectTypeDefinition>();
 
   register(def: ProjectTypeDefinition): void {
-    // Infer hasCode from category if not explicitly provided
+    // s150 t639 — defaults derive from `id` first, then category fallback for
+    // legacy plugins that still pass it. The id-based maps (DESKTOP_SERVED_TYPES
+    // / CODE_SERVED_TYPES / ITERATIVE_WORK_ELIGIBLE_TYPE_IDS / TESTING_UX_ELIGIBLE_TYPE_IDS)
+    // are the single source of truth.
     let resolved = def.hasCode !== undefined
       ? def
-      : { ...def, hasCode: CODE_CATEGORIES.has(def.category) };
-    // Infer iterativeWorkEligible from category if not explicitly provided
+      : { ...def, hasCode: !servesDesktopFor(def.id) };
     if (resolved.iterativeWorkEligible === undefined) {
-      resolved = { ...resolved, iterativeWorkEligible: ITERATIVE_WORK_ELIGIBLE_CATEGORIES.has(resolved.category) };
+      const idEligible = ITERATIVE_WORK_ELIGIBLE_TYPE_IDS.has(resolved.id);
+      const catEligible = resolved.category !== undefined && ITERATIVE_WORK_ELIGIBLE_CATEGORIES.has(resolved.category);
+      resolved = { ...resolved, iterativeWorkEligible: idEligible || catEligible };
     }
-    // Infer testingUxEligible from category if not explicitly provided (s121)
     if (resolved.testingUxEligible === undefined) {
-      resolved = { ...resolved, testingUxEligible: TESTING_UX_ELIGIBLE_CATEGORIES.has(resolved.category) };
+      const idEligible = TESTING_UX_ELIGIBLE_TYPE_IDS.has(resolved.id);
+      const catEligible = resolved.category !== undefined && TESTING_UX_ELIGIBLE_CATEGORIES.has(resolved.category);
+      resolved = { ...resolved, testingUxEligible: idEligible || catEligible };
     }
     this.types.set(resolved.id, resolved);
   }
@@ -237,6 +370,34 @@ export function createProjectTypeRegistry(): ProjectTypeRegistry {
     hasCode: false,
     defaultMeta: {
       type: "aionima",
+      mode: "production",
+      internalPort: null,
+    },
+    tools: [],
+  });
+
+  // Aionima System — the always-present meta-project that holds Aionima
+  // itself. The dashboard's `_aionima` project (s119 t700) — repos folder
+  // contains every fork (agi, prime, id, marketplace, mapp-marketplace,
+  // react-fancy, fancy-code, fancy-sheets, fancy-echarts, fancy-3d,
+  // fancy-screens). k/ holds Aion's memory + user-generated system
+  // knowledge. Aion chat on this project lets the owner work on the
+  // Aionima system itself the same way they work on any other project.
+  // hasCode=true — repos contain real code consumers can edit / inspect /
+  // run via standard project tooling. hostable=false — Aionima isn't
+  // hosted as an app by itself (it IS the gateway). servesDesktop=false —
+  // not a Desktop-served project; the project's value is the repos +
+  // memory, not a hostname-routed surface.
+  registry.register({
+    id: "aionima-system",
+    label: "Aionima System",
+    category: "monorepo",
+    hostable: false,
+    hasCode: true,
+    servesDesktop: false,
+    iterativeWorkEligible: true,
+    defaultMeta: {
+      type: "aionima-system",
       mode: "production",
       internalPort: null,
     },

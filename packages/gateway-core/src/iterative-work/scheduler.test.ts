@@ -199,6 +199,7 @@ describe("IterativeWorkScheduler.getStatus", () => {
     expect(scheduler.getStatus("/p/a")).toEqual({
       enabled: false,
       cron: null,
+      cadence: null,
       inFlight: false,
       lastFiredAt: null,
       nextFireAt: null,
@@ -215,6 +216,7 @@ describe("IterativeWorkScheduler.getStatus", () => {
     expect(status).toEqual({
       enabled: true,
       cron: "8,38 * * * *",
+      cadence: null,
       inFlight: false,
       lastFiredAt: null,
       nextFireAt: "2026-04-27T05:38:00.000Z",
@@ -327,6 +329,63 @@ describe("IterativeWorkScheduler iteration log", () => {
     expect(scheduler.getLog("/p/a")).toEqual([]);
   });
 
+  it("recordCompletion emits a `complete` event carrying the iteration shape (s124 t468)", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    const completions: Array<unknown> = [];
+    scheduler.on("complete", (c) => { completions.push(c); });
+    scheduler.tick(new Date("2026-04-28T05:30:00.000Z"));
+    scheduler.recordCompletion("/p/a", {
+      status: "done",
+      now: new Date("2026-04-28T05:30:12.000Z"),
+      artifact: { summary: "Test ship", commitHash: "abc1234" },
+    });
+    expect(completions).toHaveLength(1);
+    expect(completions[0]).toMatchObject({
+      projectPath: "/p/a",
+      cron: "* * * * *",
+      firedAt: "2026-04-28T05:30:00.000Z",
+      completedAt: "2026-04-28T05:30:12.000Z",
+      durationMs: 12_000,
+      status: "done",
+      artifact: { summary: "Test ship", commitHash: "abc1234" },
+    });
+  });
+
+  it("recordCompletion `complete` event includes error field on error status", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    const completions: Array<{ status: string; error?: string }> = [];
+    scheduler.on("complete", (c) => { completions.push(c as { status: string; error?: string }); });
+    scheduler.tick(new Date("2026-04-28T05:30:00.000Z"));
+    scheduler.recordCompletion("/p/a", {
+      status: "error",
+      error: "test failure",
+      now: new Date("2026-04-28T05:30:30.000Z"),
+    });
+    expect(completions).toHaveLength(1);
+    expect(completions[0]?.status).toBe("error");
+    expect(completions[0]?.error).toBe("test failure");
+  });
+
+  it("recordCompletion does NOT emit `complete` when no running entry exists (no-op)", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({}),
+    });
+    const completions: Array<unknown> = [];
+    scheduler.on("complete", (c) => { completions.push(c); });
+    scheduler.recordCompletion("/p/a", { status: "done" });
+    expect(completions).toHaveLength(0);
+  });
+
   it("ring buffer caps at logBufferSize, dropping oldest entries", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
@@ -413,4 +472,133 @@ describe("IterativeWorkScheduler.start/stop", () => {
     scheduler.stop();
     expect(scheduler.getInFlight()).toEqual([]);
   });
+});
+
+describe("IterativeWorkScheduler operator kill switch (s159 t692)", () => {
+  it("forceClearProject removes the project from in-flight + lastFired tracking", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/runaway": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/runaway"],
+    });
+
+    scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
+    expect(scheduler.getInFlight()).toEqual(["/p/runaway"]);
+
+    const result = scheduler.forceClearProject("/p/runaway");
+    expect(result).toEqual({ wasInFlight: true, hadLastFired: true });
+    expect(scheduler.getInFlight()).toEqual([]);
+  });
+
+  it("forceClearProject returns wasInFlight=false when project was never in-flight", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({}),
+      listProjectPaths: () => [],
+    });
+    const result = scheduler.forceClearProject("/p/never-fired");
+    expect(result).toEqual({ wasInFlight: false, hadLastFired: false });
+  });
+
+  it("forceClearProject leaves OTHER projects' state intact", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/b": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a", "/p/b"],
+    });
+
+    scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
+    expect(scheduler.getInFlight().sort()).toEqual(["/p/a", "/p/b"]);
+
+    scheduler.forceClearProject("/p/a");
+    expect(scheduler.getInFlight()).toEqual(["/p/b"]);
+  });
+
+  it("forceClearAll wipes every project from in-flight + lastFired", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/b": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/c": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a", "/p/b", "/p/c"],
+    });
+
+    scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
+    expect(scheduler.getInFlight()).toHaveLength(3);
+
+    const result = scheduler.forceClearAll();
+    expect(result.inFlightCleared).toBe(3);
+    expect(result.lastFiredCleared).toBe(3);
+    expect(scheduler.getInFlight()).toEqual([]);
+  });
+
+  it("forceClearAll on a fresh scheduler is a no-op", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({}),
+      listProjectPaths: () => [],
+    });
+    expect(scheduler.forceClearAll()).toEqual({ inFlightCleared: 0, lastFiredCleared: 0 });
+  });
+
+  it("after forceClearProject, the next tick can re-fire the same project", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    const fires = captureFires(scheduler);
+
+    scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
+    expect(fires).toHaveLength(1);
+
+    scheduler.forceClearProject("/p/a");
+    scheduler.tick(new Date("2026-04-27T05:31:30.000Z"));
+    expect(fires).toHaveLength(2);
+  });
+});
+
+describe("IterativeWorkScheduler fire-rate observability (s159 t693)", () => {
+  it("getRecentFireCount returns 0 for a project that has never fired", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({}),
+      listProjectPaths: () => [],
+    });
+    expect(scheduler.getRecentFireCount("/p/never")).toBe(0);
+  });
+
+  it("getRecentFireCount returns 1 after a normal fire", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    scheduler.tick(new Date("2026-04-27T05:30:00.000Z"));
+    expect(scheduler.getRecentFireCount("/p/a", new Date("2026-04-27T05:30:30.000Z"))).toBe(1);
+  });
+
+  it("getRecentFireCount drops timestamps older than the 60s window", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    scheduler.tick(new Date("2026-04-27T05:00:00.000Z"));
+    // 90s later, the recorded fire timestamp is outside the 60s window.
+    expect(scheduler.getRecentFireCount("/p/a", new Date("2026-04-27T05:01:30.000Z"))).toBe(0);
+  });
+
+  // NOTE: testing the "5 fires in 60s → WARN" runaway path against
+  // scheduler.tick directly is tricky because the natural scheduler.tick
+  // path is rate-limited by the cron's next-fire-time gate AND lastFiredAt
+  // tracking. The runaway scenario reported by owner (Wish #20 / s159)
+  // is downstream of scheduler.tick — at the agent-invoker / Taskmaster
+  // worker level. This counter is observability for IF the scheduler
+  // itself ever loops (defense in depth); the actual reported bug needs
+  // tracing in agent-invoker (s159 t693 follow-up) + reproducer (t694).
 });

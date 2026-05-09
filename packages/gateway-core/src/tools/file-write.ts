@@ -1,13 +1,14 @@
 /**
  * file_write tool — write file contents within workspace boundary.
+ *
+ * s130 t515 slice 6c: gates path access via the shared cage-gate helper.
  */
 import { writeFile, mkdir } from "node:fs/promises";
-import { resolve, dirname } from "node:path";
+import { dirname } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
+import { gatePath, resolveCagedPath, type PathGateConfig } from "./cage-gate.js";
 
-export interface FileWriteConfig {
-  workspaceRoot: string;
-}
+export interface FileWriteConfig extends PathGateConfig {}
 
 export function createFileWriteHandler(config: FileWriteConfig): ToolHandler {
   return async (input: Record<string, unknown>): Promise<string> => {
@@ -15,10 +16,11 @@ export function createFileWriteHandler(config: FileWriteConfig): ToolHandler {
     const content = String(input.content ?? "");
     const createDirs = Boolean(input.create_dirs ?? false);
 
-    const absPath = resolve(config.workspaceRoot, filePath);
+    const absPath = resolveCagedPath(config, filePath);
 
-    if (!absPath.startsWith(config.workspaceRoot)) {
-      return JSON.stringify({ error: "Access denied: path escapes workspace boundary" });
+    const denial = gatePath(config, absPath);
+    if (denial !== null) {
+      return JSON.stringify({ error: denial });
     }
 
     try {

@@ -39,8 +39,7 @@ export function registerRunCommand(program: Command): void {
         console.error(
           `Error: ${err instanceof Error ? err.message : String(err)}`,
         );
-        process.exitCode = 1;
-        return;
+        process.exit(1);
       }
 
       const gw = config.gateway ?? { host: "127.0.0.1", port: 3100, state: "OFFLINE" as const };
@@ -64,8 +63,11 @@ export function registerRunCommand(program: Command): void {
         console.error(
           `Error starting gateway: ${err instanceof Error ? err.message : String(err)}`,
         );
-        process.exitCode = 1;
-        return;
+        // Hard exit — `process.exitCode = 1; return;` left the process alive
+        // when DB pools / file watchers / half-initialized Fastify held open
+        // handles, causing systemd self-heal to never fire. Force exit so
+        // systemd restarts the unit cleanly.
+        process.exit(1);
       }
 
       // Graceful shutdown on SIGINT / SIGTERM

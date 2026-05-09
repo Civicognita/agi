@@ -11,6 +11,7 @@ import { fetchMagicApps, fetchMAppCatalog, installMApp, uninstallMApp, fetchMApp
 import type { MagicAppInfo, MAppCatalogEntry } from "@/types.js";
 import { Button } from "@/components/ui/button.js";
 import { Card, CardHeader, CardContent, CardTitle } from "@/components/ui/card.js";
+import { Input } from "@/components/ui/input.js";
 import type { RootContext } from "./root.js";
 
 const DEFAULT_AUTHOR = "civicognita";
@@ -127,7 +128,7 @@ export default function MagicAppsAdminPage() {
       </div>
 
       {/* Sources section */}
-      <div className="mb-4 p-3 rounded-lg border border-border bg-card">
+      <Card className="mb-4 p-3">
         <div className="flex items-center justify-between mb-2">
           <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Sources</span>
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handlePull()} disabled={pulling}>
@@ -147,19 +148,19 @@ export default function MagicAppsAdminPage() {
           </div>
         ))}
         <div className="flex gap-2 mt-2">
-          <input
+          <Input
             type="text"
             value={newSourceRef}
             onChange={(e) => setNewSourceRef(e.target.value)}
             placeholder="owner/repo (e.g. myorg/my-mapps)"
-            className="flex-1 h-7 px-2 rounded border border-border bg-background text-foreground text-[11px]"
+            className="flex-1 text-[11px]"
             onKeyDown={(e) => { if (e.key === "Enter") void handleAddSource(); }}
           />
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleAddSource()} disabled={!newSourceRef.trim()}>
             Add Source
           </Button>
         </div>
-      </div>
+      </Card>
 
       {/* Tab switcher */}
       <div className="flex gap-1 mb-6 border-b border-border">
@@ -212,13 +213,26 @@ export default function MagicAppsAdminPage() {
                 const app = entry.definition;
                 const isInstalled = installedIds.has(app.id);
                 const isInstalling = installing === app.id;
+                // s140 cycle-176 — fallback when the catalog source ships
+                // without `name`. Humanize the id (admin-editor → Admin
+                // Editor) so cards always have a title. The proper fix
+                // (name in MAppCatalog source + DB schema + API response)
+                // is filed as a separate task — this is the immediate
+                // owner-visible improvement.
+                const displayName = (app.name && app.name.trim().length > 0)
+                  ? app.name
+                  : app.id
+                      .split(/[-_]/)
+                      .filter(Boolean)
+                      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+                      .join(" ");
                 return (
                   <Card key={app.id}>
                     <CardHeader className="pb-2">
                       <CardTitle className="flex items-center gap-2 text-sm">
                         <span className="text-xl">{app.icon ?? "✨"}</span>
                         <div className="flex-1 min-w-0">
-                          <div className="truncate">{app.name}</div>
+                          <div className="truncate" data-testid={`mapp-card-name-${app.id}`}>{displayName}</div>
                           <div className="text-[10px] text-muted-foreground font-normal">{app.author} · v{app.version}</div>
                         </div>
                         {isInstalled ? (

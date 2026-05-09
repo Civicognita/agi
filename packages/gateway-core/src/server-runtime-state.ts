@@ -29,17 +29,21 @@ import type { DashboardApi } from "./dashboard-api.js";
 import type { DashboardQueries } from "./dashboard-queries.js";
 import { GatewayWebSocketServer } from "./ws-server.js";
 import { handlePlanRequest } from "./plan-api.js";
+import { readProjectMcpServers, setDotMcpServer, removeDotMcpServer } from "./mcp-config-store.js";
 import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model";
 import { fetchOwnerToken, injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
+import { probeGpuStats } from "./hardware-probe.js";
+import type { GpuLiveStats } from "./hardware-probe.js";
 import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";
 import { appRouter, type AppContext } from "@agi/trpc-api";
 import type { HostingManager } from "./hosting-manager.js";
 import { registerHostingRoutes } from "./hosting-api.js";
 import { registerStackRoutes } from "./stack-api.js";
+import { registerMAppStorageRoutes } from "./mapp-storage-routes.js";
 import { safemodeState } from "./safemode-state.js";
-import type { RouteHandler, RuntimeDefinition, RuntimeInstaller, HostingExtension } from "@agi/plugins";
+import type { RouteHandler, RuntimeDefinition } from "@agi/plugins";
 import { categoryToProvides } from "@agi/plugins";
 import type { ServiceManager } from "./service-manager.js";
 import { registerCommsRoutes } from "./comms-api.js";
@@ -65,6 +69,14 @@ import { projectConfigPath } from "./project-config-path.js";
 import type { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import { cadenceToStaggeredCron } from "./iterative-work/cron.js";
 import {
+  listProjectEnvKeys,
+  readProjectEnv,
+  removeProjectEnvVar,
+  resolveDollarVars,
+  resolveDollarVarsObject,
+  setProjectEnvVar,
+} from "./project-env-store.js";
+import {
   ITERATIVE_WORK_ELIGIBLE_CATEGORIES,
   TESTING_UX_ELIGIBLE_CATEGORIES,
   cadenceOptionsFor,
@@ -78,7 +90,15 @@ import type { PmProvider } from "@agi/sdk";
 // Types
 // ---------------------------------------------------------------------------
 
-const SACRED_PROJECT_NAMES = new Set(["agi", "prime", "id", "marketplace", "mapp-marketplace"]);
+// Sacred-project basenames — the gateway never treats these as user projects.
+// Keep in sync with project-config-path.ts and scripts/migrate-projects-s140.sh.
+// Includes (a) the workspace-grouping `_aionima/` container per cycle 150,
+// (b) the Civicognita core 5, (c) the Particle-Academy 4 (5 with fancy-3d).
+const SACRED_PROJECT_NAMES = new Set([
+  "_aionima",
+  "agi", "prime", "id", "marketplace", "mapp-marketplace",
+  "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d",
+]);
 
 function isSacredProjectPath(pathStr: string): boolean {
   return SACRED_PROJECT_NAMES.has(basename(pathStr).toLowerCase());
@@ -165,6 +185,10 @@ export interface RuntimeStateDeps {
   dashboardQueries?: DashboardQueries;
   /** HostingManager — manages Caddy + Node.js process lifecycle for hosted projects. */
   hostingManager?: HostingManager;
+  /** s143 t570 — CircuitBreakerTracker for the /api/services/circuit-breakers
+   *  endpoints. Optional: when omitted, the breaker routes return empty
+   *  state + 503 on reset attempts. */
+  circuitBreaker?: import("./circuit-breaker.js").CircuitBreakerTracker;
   /** IterativeWorkScheduler — exposes status + receives config changes for the
    *  iterative-work API surface. Optional: when omitted, the iterative-work
    *  routes return 503. */
@@ -177,6 +201,9 @@ export interface RuntimeStateDeps {
    *  surface Race-to-DONE counts. Optional: when missing or when the
    *  provider doesn't expose getActiveFocusProgress, the route returns 503. */
   pmProvider?: PmProvider;
+  /** McpClient — used by the per-project MCP tab routes (Wish #7 / s125) to
+   *  register/unregister/test MCP servers + surface listServers state. */
+  mcpClient?: import("@agi/mcp-client").McpClient;
   /** Path to the MApp marketplace directory (for catalog browsing). */
   mappMarketplaceDir?: string;
   /** CommsLog — persistent message log for comms page. */
@@ -187,36 +214,11 @@ export interface RuntimeStateDeps {
   chatPersistence?: ChatPersistence;
   /** ImageBlobStore — file-backed image storage for chat sessions. */
   imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
-  /** PluginRegistry — loaded plugin instances (for GET /api/plugins + HTTP route mounting). */
-  pluginRegistry?: {
-    getAll(): { manifest: { id: string; name: string; version: string; description: string; author?: string; permissions: string[]; category?: string; bakedIn?: boolean; disableable?: boolean }; basePath: string }[];
-    get(id: string): { manifest: { id: string }; instance: { cleanup?(): Promise<{ resources: { id: string; type: string; label: string; removeCommand: string; shared?: boolean }[] }> } } | undefined;
-    getRoutes(): { pluginId: string; method: string; path: string; handler: RouteHandler }[];
-    getRuntimes(): RuntimeDefinition[];
-    getRuntimesForType(projectType: string): RuntimeDefinition[];
-    getHostingExtensions(): HostingExtension[];
-    getRuntimeInstallers(): RuntimeInstaller[];
-    getRuntimeInstaller(language: string): RuntimeInstaller | undefined;
-    getActions(scope?: { type: string; projectType?: string }): { pluginId: string; action: { id: string; label: string; description?: string; icon?: string; scope: { type: string; projectTypes?: string[] }; handler: { kind: string; command?: string; endpoint?: string; hookName?: string }; confirm?: string; group?: string; destructive?: boolean } }[];
-    getPanels(projectType?: string): { pluginId: string; panel: { id: string; label: string; projectTypes: string[]; widgets: unknown[]; position?: number } }[];
-    getSettingsSections(): { pluginId: string; section: { id: string; label: string; description?: string; configPath: string; fields: unknown[]; position?: number } }[];
-    getSidebarSections(): { pluginId: string; section: { id: string; title: string; items: { label: string; to: string; icon?: string; exact?: boolean }[]; position?: number } }[];
-    getThemes(): { pluginId: string; theme: { id: string; name: string; description?: string; dark: boolean; properties: Record<string, string> } }[];
-    getSystemServices(): { pluginId: string; service: { id: string; name: string; description?: string; statusCommand?: string; unitName?: string; startCommand?: string; stopCommand?: string; restartCommand?: string; installCommand?: string; installedCheck?: string; agentAware?: boolean } }[];
-    getScheduledTasks(): { pluginId: string; task: { id: string; name: string; description?: string; cron?: string; intervalMs?: number; enabled?: boolean } }[];
-    getSkills(): { pluginId: string; skill: { name: string; description?: string; domain: string; triggers: string[]; content: string } }[];
-    getKnowledge(): { pluginId: string; namespace: { id: string; label: string; description?: string; contentDir: string; topics: { title: string; path: string; description?: string }[] } }[];
-    getAgentTools(): { pluginId: string; tool: { name: string; description: string; inputSchema: Record<string, unknown>; handler: (input: Record<string, unknown>, context: { sessionId: string; entityId: string }) => Promise<unknown> } }[];
-    getWorkflows(): { pluginId: string; workflow: { id: string; name: string; description?: string; trigger: string; steps: unknown[] } }[];
-    getSettingsPages(): { pluginId: string; page: { id: string; label: string; description?: string; icon?: string; position?: number; sections: unknown[] } }[];
-    getDashboardPages(domain?: string): { pluginId: string; page: { id: string; label: string; description?: string; icon?: string; domain: string; routePath: string; widgets: unknown[]; position?: number } }[];
-    getDashboardDomains(): { pluginId: string; domain: { id: string; title: string; description?: string; icon?: string; routePrefix: string; position?: number; pages: { id: string; label: string; routePath: string; icon?: string; widgets: unknown[]; isIndex?: boolean; position?: number }[] } }[];
-    getStacks(): { pluginId: string; stack: import("./stack-types.js").StackDefinition }[];
-    getServices(): { id: string; name: string; description: string; containerImage: string; defaultPort: number }[];
-    getPluginProvides(pluginId: string): string[];
-    getAllPluginProvides(): Map<string, string[]>;
-    getProviders(): { pluginId: string; provider: { id: string; name: string; description?: string; requiresApiKey: boolean; fields?: { id: string; label: string; type: string; placeholder?: string; description?: string; options?: { value: string; label: string }[]; min?: number; max?: number; step?: number }[]; checkBalance?: (config: Record<string, unknown>) => Promise<number | null> } }[];
-  };
+  /** PluginRegistry — loaded plugin instances (for GET /api/plugins + HTTP route mounting).
+   *  s101 t606 cycle 195 — replaced 29-line inline structural type with the
+   *  imported class type from @agi/plugins. Same hidden-drift risk as the
+   *  cycle-194 marketplace sweep — typecheck surfaces consumer mismatches. */
+  pluginRegistry?: import("@agi/plugins").PluginRegistry;
   /** All discovered plugins (including disabled ones) — for showing full list in GET /api/plugins. */
   discoveredPlugins?: {
     id: string;
@@ -251,16 +253,11 @@ export interface RuntimeStateDeps {
   inferenceGateway?: import("@agi/model-runtime").InferenceGateway;
   /** ModelStore — used for model dependency status checks. */
   modelStore?: import("@agi/model-runtime").ModelStore;
-  mappMarketplaceManager?: {
-    getSources(): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number }[];
-    addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string; lastSyncedAt: string | null; mappCount: number };
-    removeSource(id: number): void;
-    syncSource(id: number): Promise<{ ok: boolean; error?: string; mappCount?: number }>;
-    getCatalogWithInstalled(): Promise<Array<{ id: string; sourceId: number; author: string; description?: string; category?: string; version?: string; sourcePath: string; installed: boolean }>>;
-    install(appId: string, sourceId: number): Promise<{ ok: boolean; error?: string }>;
-    uninstall(appId: string, author: string): { ok: boolean; error?: string };
-    syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
-  };
+  /** s140 t599 cycle 194 — replaced 10-line inline structural type with the
+   *  imported class type from @agi/marketplace. Keeps the dep in sync with
+   *  the source-of-truth API. Cycle-189 t598 spotted this drift; cycle-194
+   *  closes it. */
+  mappMarketplaceManager?: import("@agi/marketplace").MAppMarketplaceManager;
   /** MagicAppStateStore — persistent MApp instance state. */
   magicAppStateStore?: import("./magic-app-state-store.js").MagicAppStateStore;
 
@@ -274,25 +271,10 @@ export interface RuntimeStateDeps {
   aionMicro?: import("./aion-micro-manager.js").AionMicroManager;
   /** Resolved prime directory path. */
   primeDir?: string;
-  /** MarketplaceManager — Claude Code-compatible plugin marketplace. */
-  marketplaceManager?: {
-    getSources(): { id: number; ref: string; sourceType: string; name: string; description?: string; lastSyncedAt: string | null; pluginCount: number }[];
-    addSource(ref: string, name?: string): { id: number; ref: string; sourceType: string; name: string };
-    removeSource(id: number): void;
-    syncSource(id: number): Promise<{ ok: boolean; error?: string; pluginCount?: number }>;
-    searchCatalog(params: { q?: string; type?: string; category?: string; provides?: string }): Promise<{ name: string; sourceId: number; installed: boolean; description?: string; type?: string; version?: string; author?: { name: string; email?: string }; category?: string; provides?: string[]; depends?: string[]; tags?: string[]; keywords?: string[]; license?: string; homepage?: string; source: unknown }[]>;
-    install(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; missingDeps?: string[]; autoInstalled?: string[] }>;
-    uninstall(pluginName: string, force?: boolean): Promise<{ ok: boolean; error?: string; dependents?: string[] }>;
-    getInstalled(): Promise<{ name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }[]>;
-    checkUpdates(): Promise<{ updates: { pluginName: string; currentVersion: string; availableVersion: string; sourceId: number }[]; newInMarketplace: { pluginName: string; version: string; description: string }[] }>;
-    syncLocalCatalog(marketplaceDir: string): Promise<{ ok: boolean; error?: string; pluginCount?: number }>;
-    reconcileInstalled(marketplaceDir: string): Promise<{ updated: string[]; errors: string[] }>;
-    syncAndUpdateAll(): Promise<{ synced: number; updated: string[]; errors: string[] }>;
-    backfillInstalled(item: { name: string; sourceId: number; type: string; version: string; installedAt: string; installPath: string; sourceJson: string }): Promise<void>;
-    updatePlugin(pluginName: string, sourceId: number): Promise<{ ok: boolean; error?: string; installPath?: string; oldVersion: string; newVersion: string }>;
-    rebuildPlugin(name: string): Promise<void>;
-    rebuildAll(): Promise<{ rebuilt: string[]; failed: string[] }>;
-  };
+  /** MarketplaceManager — Claude Code-compatible plugin marketplace.
+   *  s140 t599 cycle 194 — replaced 17-line inline structural type with
+   *  the imported class type from @agi/marketplace. */
+  marketplaceManager?: import("@agi/marketplace").MarketplaceManager;
   /** Callback to hot-load a newly installed plugin (discover, activate, bridge). */
   onPluginInstalled?: (installPath: string) => Promise<{ loaded: boolean; pluginId?: string; error?: string }>;
   /** Callback to hot-reload an updated plugin (with ESM cache busting). */
@@ -1041,7 +1023,18 @@ export async function createGatewayRuntimeState(
       return reply.code(403).send({ error: "Projects API only allowed from private network" });
     }
     const projectDirs = deps.workspaceProjects ?? [];
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string }[] = [];
+    // s140 cycle-168 t591 SECURITY — tynnToken is REDACTED in this response.
+    // The actual secret never leaves disk. Dashboard consumers should read
+    // `tynnTokenSet` (boolean) for "is the token configured" checks; the
+    // `tynnToken` field is kept for backward-compat callers but is always
+    // null. PUT /api/projects/<path> still accepts a `tynnToken` body field
+    // for setting / clearing the secret.
+    // s140 cycle-176 t597 — repos[] includes isDefault + port so the
+    // Configuration sub-tab can render its primary-repo selector without
+    // a second roundtrip. Both fields are optional in the schema; a
+    // missing isDefault means "no explicit primary" (dispatch falls
+    // back to repos[0]).
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; tynnTokenSet: boolean; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string; isDefault?: boolean; port?: number }[]; attachedStacks?: { stackId: string }[]; knowledge?: { pages: number; plans: number; chatSessions: number } }[] = [];
 
     // Expand top-level entries into (fullPath, coreCollection, coreForkSlug) triples.
     // A directory that contains a `collection.json` with
@@ -1057,7 +1050,24 @@ export async function createGatewayRuntimeState(
           if (entry.name.startsWith(".")) continue;
           const fullPath = resolvePath(dir, entry.name);
 
-          // Detect Aionima core collection: walk into it, skip the parent.
+          // s119 t702 (2026-05-09) — _aionima is a single always-present
+          // project once it has been scaffolded with project.json (t701).
+          // When project.json exists, treat _aionima as one project — its
+          // forks live under _aionima/repos/ as repos, not as siblings.
+          // Falls through to the legacy collection-expansion below when
+          // project.json is absent (pre-migration state).
+          if (entry.name === "_aionima") {
+            const aionimaProjectJson = join(fullPath, "project.json");
+            if (existsSync(aionimaProjectJson)) {
+              expanded.push({ fullPath, name: "_aionima", coreCollection: "aionima" });
+              continue;
+            }
+          }
+
+          // Detect Aionima core collection (legacy pre-t703 state): walk
+          // into it, skip the parent. Once t703 migration moves forks
+          // into _aionima/repos/, collection.json gets retired (t705) and
+          // this branch becomes dead code.
           const collectionPath = join(fullPath, "collection.json");
           if (existsSync(collectionPath)) {
             try {
@@ -1066,8 +1076,20 @@ export async function createGatewayRuntimeState(
                 const childEntries = readdirSync(fullPath, { withFileTypes: true });
                 for (const ce of childEntries) {
                   if (!ce.isDirectory() || ce.name.startsWith(".")) continue;
+                  // Positive identification: only list children that look
+                  // like projects — either they have a project.json (the
+                  // post-s140 marker) OR a .git/ directory (a git repo,
+                  // which the core-fork members all are). This filters
+                  // out stray scaffold dirs (e.g. _aionima/k, /repos,
+                  // /sandbox) that an older migration script accidentally
+                  // created inside the collection before SACRED was set.
+                  const childPath = resolvePath(fullPath, ce.name);
+                  const looksLikeProject =
+                    existsSync(join(childPath, "project.json")) ||
+                    existsSync(join(childPath, ".git"));
+                  if (!looksLikeProject) continue;
                   expanded.push({
-                    fullPath: resolvePath(fullPath, ce.name),
+                    fullPath: childPath,
                     name: ce.name,
                     coreCollection: "aionima",
                     coreForkSlug: ce.name,
@@ -1079,7 +1101,8 @@ export async function createGatewayRuntimeState(
           }
 
           // Skip underscore-prefixed (reserved for collections we haven't
-          // identified). Matches hosting-manager's skip rule.
+          // identified). Matches hosting-manager's skip rule. _aionima is
+          // handled above; other underscore-prefixed dirs stay reserved.
           if (entry.name.startsWith("_")) continue;
 
           expanded.push({ fullPath, name: entry.name });
@@ -1089,23 +1112,38 @@ export async function createGatewayRuntimeState(
 
     for (const { fullPath, name: entryName, coreCollection, coreForkSlug } of expanded) {
       try {
-        const hasGit = existsSync(join(fullPath, ".git"));
         let tynnToken: string | null = null;
         let metaType: string | null = null;
         let metaCategory: string | null = null;
         let metaDescription: string | undefined;
         let metaMagicApps: string[] | undefined;
+        let metaRepos: { name: string; url: string; branch?: string }[] | undefined;
+        let metaAttachedStacks: { stackId: string }[] | undefined;
         const metaPath = projectConfigPath(fullPath);
         if (existsSync(metaPath)) {
           try {
-            const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string; magicApps?: string[] };
+            const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { tynnToken?: string; type?: string; category?: string; description?: string; magicApps?: string[]; repos?: { name: string; url: string; branch?: string }[]; hosting?: { stacks?: { stackId: string }[] } };
             tynnToken = meta.tynnToken ?? null;
             metaType = meta.type ?? null;
             metaCategory = meta.category ?? null;
             metaDescription = meta.description;
             metaMagicApps = meta.magicApps;
+            metaRepos = meta.repos;
+            metaAttachedStacks = meta.hosting?.stacks;
           } catch { /* ignore malformed metadata */ }
         }
+        // s140 layout: repos live at <projectPath>/repos/<repoName>/.git/.
+        // Pre-s140 (legacy): repos lived at <projectPath>/.git/. Detect
+        // BOTH so existing projects + new s140-shape projects render as
+        // "has git" in the dashboard. Without the repos[] check the
+        // Repository tab shows the empty-state ("Add Repository / Clone
+        // / Init") even when the repos array is populated — owner-
+        // reported drift cycle 168.
+        const hasGitAtRoot = existsSync(join(fullPath, ".git"));
+        const hasGitInRepos = (metaRepos ?? []).some((r) =>
+          existsSync(join(fullPath, "repos", r.name, ".git")),
+        );
+        const hasGit = hasGitAtRoot || hasGitInRepos;
         const hosting = deps.hostingManager
           ? deps.hostingManager.getProjectHostingInfo(fullPath)
           : { enabled: false, type: "static", hostname: entryName.toLowerCase().replace(/[^a-z0-9]+/g, "-"), docRoot: null, startCommand: null, port: null, mode: "production" as const, internalPort: null, status: "unconfigured" as const, url: null };
@@ -1115,7 +1153,7 @@ export async function createGatewayRuntimeState(
         const projectTypeId = metaType ?? detectedHosting?.projectType ?? "static";
         const registry = deps.hostingManager?.getProjectTypeRegistry();
         const typeDef = registry?.get(projectTypeId);
-        const projectType = typeDef ? { id: typeDef.id, label: typeDef.label, category: typeDef.category, hostable: typeDef.hostable, hasCode: typeDef.hasCode, iterativeWorkEligible: typeDef.iterativeWorkEligible ?? false, testingUxEligible: typeDef.testingUxEligible ?? false, tools: typeDef.tools } : undefined;
+        const projectType = typeDef ? { id: typeDef.id, label: typeDef.label, category: typeDef.category ?? "", hostable: typeDef.hostable, hasCode: typeDef.hasCode, iterativeWorkEligible: typeDef.iterativeWorkEligible ?? false, testingUxEligible: typeDef.testingUxEligible ?? false, tools: typeDef.tools } : undefined;
         const category = metaCategory ?? projectType?.category ?? null;
         // Effective iterativeWorkEligible — true when the EFFECTIVE category
         // (project.json override or projectType default) is in the eligible
@@ -1128,11 +1166,46 @@ export async function createGatewayRuntimeState(
         const testingUxEligible = category !== null
           ? TESTING_UX_ELIGIBLE_CATEGORIES.has(category as ProjectCategory)
           : (projectType?.testingUxEligible ?? false);
+        // s130 t516 slice 6 — knowledge counts. Walk the per-project
+        // k/ subdirs (s130 phase A scaffold) and count files. Cheap +
+        // synchronous; the dirs are typically small. Used by the
+        // Projects browser list view's Knowledge column to surface
+        // each project's knowledge density at a glance.
+        let knowledge: { pages: number; plans: number; chatSessions: number } | undefined;
+        try {
+          // Cycle 135 fix: report knowledge counts whenever the k/
+          // scaffold exists (s130-migrated projects), even when the
+          // counts are all zero. Previously, only non-zero totals
+          // populated the field, which made it impossible to tell
+          // "not migrated" from "migrated but empty" in the dashboard.
+          // Now: presence of k/ dir → ▣ 0 for empty; absence → "—".
+          const kRoot = join(fullPath, "k");
+          if (existsSync(kRoot)) {
+            const countJson = (subdir: string): number => {
+              const dir = join(kRoot, subdir);
+              if (!existsSync(dir)) return 0;
+              try {
+                return readdirSync(dir).filter((f) => f.endsWith(".md") || f.endsWith(".json") || f.endsWith(".mdx")).length;
+              } catch { return 0; }
+            };
+            knowledge = {
+              pages: countJson("knowledge"),
+              plans: countJson("plans"),
+              chatSessions: countJson("chat"),
+            };
+          }
+        } catch { /* k/ scaffold read errored — knowledge stays undefined */ }
+
         projects.push({
           name: entryName,
           path: fullPath,
           hasGit,
-          tynnToken,
+          // s140 cycle-168 t591 SECURITY — never ship the raw token to
+          // the client. `tynnToken: null` is intentional; the real value
+          // stays on disk in project.json. Use `tynnTokenSet` for "is
+          // configured" checks.
+          tynnToken: null,
+          tynnTokenSet: tynnToken !== null,
           hosting,
           detectedHosting,
           projectType,
@@ -1143,6 +1216,9 @@ export async function createGatewayRuntimeState(
           magicApps: metaMagicApps,
           coreCollection,
           coreForkSlug,
+          repos: metaRepos,
+          attachedStacks: metaAttachedStacks,
+          knowledge,
         });
       } catch { /* directory may not exist */ }
     }
@@ -1255,6 +1331,8 @@ export async function createGatewayRuntimeState(
       tynnToken?: string | null;
       category?: string;
       type?: string;
+      /** s150 t636 — free-form Purpose textarea content. Empty string clears. */
+      description?: string;
     };
 
     if (!body.path || typeof body.path !== "string") {
@@ -1304,6 +1382,16 @@ export async function createGatewayRuntimeState(
       const hosting = projectMeta.hosting as Record<string, unknown> | undefined;
       if (hosting) {
         hosting.type = body.type.trim();
+      }
+    }
+    // s150 t636 — free-form description (Purpose textarea). Empty string is
+    // the canonical "cleared" value: delete the key so JSON stays clean.
+    if (body.description !== undefined && typeof body.description === "string") {
+      const trimmed = body.description.trim();
+      if (trimmed.length > 0) {
+        projectMeta.description = trimmed;
+      } else {
+        delete projectMeta.description;
       }
     }
 
@@ -1383,6 +1471,151 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // POST /api/hosting/migrate-folders — s130 cycle 129
+  // Forces every project in workspace.projects to have the s130 folder
+  // layout scaffolded (.agi/, k/{plans,knowledge,pm,memory,chat}/,
+  // repos/, .trash/). Idempotent — already-scaffolded dirs preserved.
+  // Private network only.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/hosting/migrate-folders", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Hosting API only allowed from private network" });
+    }
+    if (!deps.hostingManager) {
+      return reply.code(503).send({ error: "Hosting not enabled on this gateway" });
+    }
+    try {
+      const result = deps.hostingManager.migrateAllProjectsToFolderLayout();
+      return reply.send(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ error: `migrate-folders failed: ${msg}` });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/hosting/migrate-networks — s130 t515 B3d
+  // Restarts every hosted project so existing aionima-network containers
+  // migrate to their per-project agi-net-<hostname> networks. Safe to
+  // re-run; idempotent. Private network only.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/hosting/migrate-networks", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Hosting API only allowed from private network" });
+    }
+    if (!deps.hostingManager) {
+      return reply.code(503).send({ error: "Hosting not enabled on this gateway" });
+    }
+    try {
+      const result = deps.hostingManager.migrateAllProjectsToNetworks();
+      return reply.send(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ error: `migrate-networks failed: ${msg}` });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // s130 t515 B6a — repos[] CRUD for the dashboard editor
+  //
+  // GET    /api/projects/repos?path=     — list repos for a project
+  // POST   /api/projects/repos?path=     — add a new repo (clones via provisionRepos)
+  // PUT    /api/projects/repos/:name?path= — update an existing repo
+  // DELETE /api/projects/repos/:name?path= — remove + soft-delete to .trash/
+  //
+  // All four are private-network-only (matches existing /api/projects/* gates).
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/projects/repos", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const repos = deps.projectConfigManager.getRepos(targetPath);
+    return reply.send({ repos });
+  });
+
+  fastify.post("/api/projects/repos", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const body = request.body as Record<string, unknown>;
+    if (!body || typeof body !== "object") return reply.code(400).send({ error: "request body must be a repo spec" });
+
+    try {
+      const updated = await deps.projectConfigManager.addRepo(targetPath, body as Parameters<typeof deps.projectConfigManager.addRepo>[1]);
+      return reply.send({ ok: true, config: updated });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ error: `addRepo failed: ${msg}` });
+    }
+  });
+
+  fastify.put<{ Params: { name: string } }>("/api/projects/repos/:name", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const { name } = request.params;
+    const body = request.body as Record<string, unknown>;
+    if (!body || typeof body !== "object") return reply.code(400).send({ error: "request body must be a repo patch" });
+
+    try {
+      const updated = await deps.projectConfigManager.updateRepo(targetPath, name, body as Parameters<typeof deps.projectConfigManager.updateRepo>[2]);
+      return reply.send({ ok: true, config: updated });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("not found") ? 404 : 400;
+      return reply.code(code).send({ error: `updateRepo failed: ${msg}` });
+    }
+  });
+
+  fastify.delete<{ Params: { name: string } }>("/api/projects/repos/:name", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const { name } = request.params;
+    try {
+      const updated = await deps.projectConfigManager.removeRepo(targetPath, name);
+      return reply.send({ ok: true, config: updated });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("not found") ? 404 : 400;
+      return reply.code(code).send({ error: `removeRepo failed: ${msg}` });
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // GET /api/projects/info — git details for a project (private network only)
   // -----------------------------------------------------------------------
 
@@ -1453,6 +1686,115 @@ export async function createGatewayRuntimeState(
     } catch (err) {
       return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/projects/activity-summary — daily activity counts (s130 t516 slice 2 prep)
+  // -----------------------------------------------------------------------
+  //
+  // Returns a per-day count array for the last N days (default 30) of
+  // project activity, sourced from git log + chat sessions. Used by the
+  // Projects browser list view to render an activity sparkline column
+  // (fancy-echarts) per row.
+  //
+  // Today: just commits + chat session updatedAt counts. Future:
+  // iterative-work fires, plan transitions, COA chain events.
+  //
+  // Security: uses execFileSync with array args (no shell), so the
+  // targetPath + days values can't escape into shell injection.
+
+  fastify.get("/api/projects/activity-summary", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    const daysParam = Number(query["days"] ?? "30");
+    const days = Number.isFinite(daysParam) && daysParam > 0 && daysParam <= 90 ? Math.floor(daysParam) : 30;
+    if (!pathParam) {
+      return reply.code(400).send({ error: "path query parameter is required" });
+    }
+    const targetPath = resolvePath(pathParam);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    if (!existsSync(targetPath) || !statSync(targetPath).isDirectory()) {
+      return reply.code(404).send({ error: "Project directory does not exist" });
+    }
+
+    // Build date keys for the last N days (oldest first → today last).
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const dayKeys: string[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(today);
+      d.setUTCDate(d.getUTCDate() - i);
+      dayKeys.push(d.toISOString().slice(0, 10));
+    }
+
+    const counts: Record<string, number> = {};
+    for (const k of dayKeys) counts[k] = 0;
+
+    // Git commits — count per day from `git log --since=<N> days
+    // --format=%ad --date=short`. execFileSync with array args (no
+    // shell) prevents injection — targetPath + days are safe even if
+    // the path contains shell metacharacters.
+    if (existsSync(join(targetPath, ".git"))) {
+      try {
+        const out = execFileSync(
+          "git",
+          [
+            "-C", targetPath,
+            "log",
+            `--since=${String(days)}.days`,
+            "--format=%ad",
+            "--date=short",
+          ],
+          { timeout: 5000, stdio: "pipe", encoding: "utf-8" },
+        ).trim();
+        if (out.length > 0) {
+          for (const line of out.split("\n")) {
+            const day = line.trim();
+            if (day in counts) counts[day] = (counts[day] ?? 0) + 1;
+          }
+        }
+      } catch { /* no git log; commits stay 0 */ }
+    }
+
+    // Chat sessions — count files in <projectPath>/k/chat/ whose
+    // updatedAt falls within each day. (s130 phase A.6 reader-flip
+    // landed cycle 100, so per-project chat dirs are populated for
+    // s130-migrated projects.)
+    const chatDir = join(targetPath, "k", "chat");
+    if (existsSync(chatDir)) {
+      try {
+        const files = readdirSync(chatDir).filter((f) => f.endsWith(".json"));
+        for (const file of files) {
+          try {
+            const raw = readFileSync(join(chatDir, file), "utf-8");
+            const session = JSON.parse(raw) as { updatedAt?: string };
+            if (typeof session.updatedAt === "string") {
+              const day = session.updatedAt.slice(0, 10);
+              if (day in counts) counts[day] = (counts[day] ?? 0) + 1;
+            }
+          } catch { /* skip corrupt session file */ }
+        }
+      } catch { /* unreadable chat dir; chat counts stay 0 */ }
+    }
+
+    const dailyCounts = dayKeys.map((k) => counts[k] ?? 0);
+    const total = dailyCounts.reduce((a, b) => a + b, 0);
+
+    return reply.send({
+      path: targetPath,
+      days,
+      total,
+      dailyCounts,
+      dayKeys,
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -1532,10 +1874,13 @@ export async function createGatewayRuntimeState(
     }
 
     // Read current config to access category for eligibility + cadence validation.
+    // s150 (2026-05-07): `category` was dropped from the schema. Legacy values
+    // survive via .passthrough(); read through an unknown-cast for the migration
+    // period until consumers move to deriving from `type` (s150 doc-update task t642).
     let projectCategory: ProjectCategory | undefined;
     try {
       const cur = await deps.projectConfigManager.read(targetPath);
-      projectCategory = cur?.category;
+      projectCategory = (cur as unknown as { category?: ProjectCategory })?.category;
     } catch {
       /* fall through — read errors get caught by update() below */
     }
@@ -1576,6 +1921,92 @@ export async function createGatewayRuntimeState(
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/projects/iterative-work/stop?path=<projectPath> — operator
+  // kill switch (s159 t692). Flips iterativeWork.enabled=false on the
+  // project AND force-clears any in-flight tracking so the scheduler
+  // treats it as never-fired. Use when a project is in a runaway loop
+  // and you don't want to restart the gateway.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/projects/iterative-work/stop", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+
+    let configFlipped = false;
+    try {
+      const cur = await deps.projectConfigManager.read(targetPath);
+      const iw = ((cur as { iterativeWork?: { enabled?: boolean } }).iterativeWork) ?? {};
+      if (iw.enabled !== false) {
+        await deps.projectConfigManager.update(targetPath, { iterativeWork: { ...iw, enabled: false } });
+        configFlipped = true;
+      }
+    } catch (err) {
+      // Continue — the runtime force-clear is the more important hard-stop.
+      deps.logger?.warn?.("iterative-work", `stop: config update for ${targetPath} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    const cleared = deps.iterativeWorkScheduler?.forceClearProject(targetPath) ?? { wasInFlight: false, hadLastFired: false };
+    return reply.send({ ok: true, configFlipped, ...cleared });
+  });
+
+  // -----------------------------------------------------------------------
+  // POST /api/projects/iterative-work/stop-all — nuclear operator kill
+  // switch. Force-clears ALL in-flight tracking AND flips enabled=false
+  // on every project that has iterativeWork configured. For runaway
+  // scenarios where the operator can't pinpoint the looping project.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/projects/iterative-work/stop-all", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    }
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+
+    let configFlippedCount = 0;
+    let configErrorCount = 0;
+    for (const wsDir of projectDirs) {
+      let entries: string[];
+      try {
+        const { readdirSync } = await import("node:fs");
+        entries = readdirSync(wsDir, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+          .map((d) => d.name);
+      } catch {
+        continue;
+      }
+      for (const slug of entries) {
+        const projectPath = resolvePath(`${wsDir}/${slug}`);
+        try {
+          const cur = await deps.projectConfigManager.read(projectPath);
+          const iw = ((cur as { iterativeWork?: { enabled?: boolean } }).iterativeWork);
+          if (iw?.enabled === true) {
+            await deps.projectConfigManager.update(projectPath, { iterativeWork: { ...iw, enabled: false } });
+            configFlippedCount++;
+          }
+        } catch {
+          configErrorCount++;
+        }
+      }
+    }
+
+    const cleared = deps.iterativeWorkScheduler?.forceClearAll() ?? { inFlightCleared: 0, lastFiredCleared: 0 };
+    return reply.send({ ok: true, configFlippedCount, configErrorCount, ...cleared });
   });
 
   // -----------------------------------------------------------------------
@@ -1684,6 +2115,373 @@ export async function createGatewayRuntimeState(
     } catch (err) {
       return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // Per-project MCP routes (Wish #7 / s125 — MCP tab on project detail).
+  //
+  // Surfaces project's MCP servers + .env-backed key storage to the dashboard
+  // MCP tab. Servers are namespaced as `<projectSlug>:<serverId>` when
+  // registered with mcpClient to avoid collision across projects.
+  //
+  // .env values are NEVER returned through these endpoints — only key NAMES.
+  // The project's .env file holds the secrets; dashboard sets values blindly.
+  // -----------------------------------------------------------------------
+
+  // Helper: project namespace prefix for MCP server ids.
+  const mcpServerNs = (projectPath: string, serverId: string): string => {
+    const slug = projectConfigPath(projectPath).split("/").slice(-2, -1)[0] ?? "default";
+    return `${slug}:${serverId}`;
+  };
+
+  // GET /api/projects/mcp/list?path= — list MCP servers + connection state.
+  // s131 t682 — reads via the dual-read API: prefers .mcp.json, falls
+  // back to legacy project.json mcp.servers[] for unmigrated installs.
+  fastify.get("/api/projects/mcp/list", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const cfg = await deps.projectConfigManager.read(targetPath);
+    const legacy = (cfg as { mcp?: { servers?: Array<{ id: string; name?: string; transport: string; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> } }).mcp?.servers;
+    const dualResult = readProjectMcpServers(targetPath, legacy as Parameters<typeof readProjectMcpServers>[1]);
+    const servers = dualResult.servers as typeof legacy & object;
+    // Augment with live connection state from mcpClient.
+    const liveServers = deps.mcpClient?.listServers() ?? [];
+    const liveById = new Map(liveServers.map((s: { id: string; state: string }) => [s.id, s.state]));
+    return reply.send({
+      servers: servers.map((s) => ({
+        id: s.id,
+        name: s.name ?? s.id,
+        transport: s.transport,
+        command: s.command,
+        url: s.url,
+        envKeys: Object.keys(s.env ?? {}),
+        autoConnect: s.autoConnect ?? true,
+        hasAuthToken: typeof s.authToken === "string" && s.authToken.length > 0,
+        state: liveById.get(mcpServerNs(targetPath, s.id)) ?? "not-registered",
+      })),
+    });
+  });
+
+  // PUT /api/projects/mcp/server?path= — add/update a server (writes to project.json).
+  fastify.put("/api/projects/mcp/server", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const body = request.body as { path?: string; server?: { id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string } } | undefined;
+    if (!body?.path || !body.server?.id) return reply.code(400).send({ error: "path + server.id are required" });
+    const targetPath = resolvePath(body.path);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    if (!existsSync(projectConfigPath(targetPath))) return reply.code(404).send({ error: "Project has no project.json" });
+    try {
+      // s131 t682 — write to .mcp.json (Claude Code convention). Legacy
+      // project.json mcp.servers writes are removed; the boot migration
+      // (t681) brings unmigrated projects forward, and the dual-read in
+      // /list keeps them visible until then. Atomic temp+rename inside
+      // setDotMcpServer.
+      setDotMcpServer(targetPath, body.server as Parameters<typeof setDotMcpServer>[1]);
+      // Re-derive the post-write state for the response so callers see
+      // the same shape that /list returns.
+      const cur = await deps.projectConfigManager.read(targetPath);
+      const dualResult = readProjectMcpServers(targetPath, (cur as { mcp?: { servers?: typeof body.server[] } }).mcp?.servers as Parameters<typeof readProjectMcpServers>[1]);
+      const servers = dualResult.servers;
+      const updated = { mcp: { servers } } as { mcp: { servers: typeof servers } };
+      // Re-register with mcpClient under namespaced id (best-effort; surfaces error in response).
+      let registerError: string | null = null;
+      if (deps.mcpClient && (body.server.autoConnect ?? true)) {
+        try {
+          const env = body.server.env ? resolveDollarVarsObject(body.server.env, readProjectEnv(targetPath)) : undefined;
+          const authToken = body.server.authToken ? resolveDollarVars(body.server.authToken, readProjectEnv(targetPath)) : undefined;
+          await deps.mcpClient.registerServer({
+            id: mcpServerNs(targetPath, body.server.id),
+            name: body.server.name,
+            transport: body.server.transport,
+            command: body.server.command,
+            env,
+            url: body.server.url,
+            autoConnect: true,
+            authToken,
+          });
+        } catch (err) {
+          registerError = err instanceof Error ? err.message : String(err);
+        }
+      }
+      return reply.send({ ok: true, mcp: (updated as { mcp?: unknown }).mcp ?? { servers: [] }, registerError });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // DELETE /api/projects/mcp/server?path=&id= — remove server.
+  fastify.delete("/api/projects/mcp/server", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id query params required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    try {
+      // s131 t682 — remove from .mcp.json. No-op when neither .mcp.json
+      // nor legacy mcp.servers carries the id.
+      removeDotMcpServer(targetPath, idParam);
+      // Best-effort unregister.
+      try { await deps.mcpClient?.unregisterServer?.(mcpServerNs(targetPath, idParam)); } catch { /* ignore */ }
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/projects/mcp/env?path= — list .env KEY NAMES (never values).
+  fastify.get("/api/projects/mcp/env", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    return reply.send({ keys: listProjectEnvKeys(targetPath) });
+  });
+
+  // POST /api/projects/mcp/env?path= — body: { key, value }; value is write-only.
+  fastify.post("/api/projects/mcp/env", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const body = request.body as { path?: string; key?: string; value?: string } | undefined;
+    if (!body?.path || !body.key) return reply.code(400).send({ error: "path + key required" });
+    const targetPath = resolvePath(body.path);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    try {
+      setProjectEnvVar(targetPath, body.key, body.value ?? "");
+      return reply.send({ ok: true, keys: listProjectEnvKeys(targetPath) });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // DELETE /api/projects/mcp/env?path=&key= — remove a key from .env.
+  fastify.delete("/api/projects/mcp/env", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    const keyParam = query["key"];
+    if (!pathParam || !keyParam) return reply.code(400).send({ error: "path + key required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    try {
+      removeProjectEnvVar(targetPath, keyParam);
+      return reply.send({ ok: true, keys: listProjectEnvKeys(targetPath) });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/projects/mcp/server/test?path=&id= — try connecting + listTools.
+  fastify.post("/api/projects/mcp/server/test", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const targetPath = resolvePath(pathParam);
+    const nsId = mcpServerNs(targetPath, idParam);
+    try {
+      const tools = await deps.mcpClient.listTools(nsId);
+      return reply.send({ ok: true, toolCount: tools.length, tools: tools.slice(0, 5).map((t: { name: string }) => t.name) });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/projects/mcp/server/tools|prompts|resources?path=&id= — browse what
+  // a connected server provides. Lets the MCPTab UI render the card's expanded
+  // inspector. Errors surface as 502 with the underlying SDK message.
+  // s133 t678 (2026-05-09) — `?fresh=1` on any of these GET endpoints
+  // bypasses the mcp-client cache (forces a re-fetch). Refresh button in
+  // MCPTab passes the param so the user always gets a current snapshot
+  // when explicitly refreshing.
+  const isFreshRequested = (q: Record<string, string>): boolean => {
+    const fresh = q["fresh"];
+    return fresh === "1" || fresh === "true";
+  };
+  fastify.get("/api/projects/mcp/server/tools", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"]; const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const nsId = mcpServerNs(resolvePath(pathParam), idParam);
+    try {
+      const tools = await deps.mcpClient.listTools(nsId, { bypassCache: isFreshRequested(query) });
+      return reply.send({ ok: true, tools });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get("/api/projects/mcp/server/prompts", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"]; const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const nsId = mcpServerNs(resolvePath(pathParam), idParam);
+    try {
+      const prompts = await deps.mcpClient.listPrompts(nsId, { bypassCache: isFreshRequested(query) });
+      return reply.send({ ok: true, prompts });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.get("/api/projects/mcp/server/resources", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"]; const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const nsId = mcpServerNs(resolvePath(pathParam), idParam);
+    try {
+      const resources = await deps.mcpClient.listResources(nsId, { bypassCache: isFreshRequested(query) });
+      return reply.send({ ok: true, resources });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // s133 t679 (2026-05-09) — diagnostic surface for the MCP cache.
+  // Returns per-server hit/miss/bypass/invalidation counts + last-fetch
+  // timestamp; verifies the acceptance criterion "hit ratio > 80% under
+  // normal browsing." Read-only; no UI surface in v1.
+  fastify.get("/api/projects/mcp/server/cache-status", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    return reply.send({ ok: true, servers: deps.mcpClient.getCacheStatus() });
+  });
+
+  // POST /api/projects/mcp/server/call-tool|read-resource — invoke a tool or
+  // read a resource. Body: {path, id, toolName/uri, arguments?}. Lets the user
+  // test individual surfaces from the UI without round-tripping through chat.
+  fastify.post("/api/projects/mcp/server/call-tool", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const body = request.body as { path?: string; id?: string; toolName?: string; arguments?: Record<string, unknown> } | undefined;
+    if (!body?.path || !body.id || !body.toolName) return reply.code(400).send({ error: "path + id + toolName required" });
+    const nsId = mcpServerNs(resolvePath(body.path), body.id);
+    try {
+      const result = await deps.mcpClient.callTool(nsId, body.toolName, body.arguments ?? {});
+      return reply.send({ ok: true, result });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  fastify.post("/api/projects/mcp/server/read-resource", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient) return reply.code(503).send({ error: "MCP client not available" });
+    const body = request.body as { path?: string; id?: string; uri?: string; fresh?: boolean } | undefined;
+    if (!body?.path || !body.id || !body.uri) return reply.code(400).send({ error: "path + id + uri required" });
+    const nsId = mcpServerNs(resolvePath(body.path), body.id);
+    try {
+      // s133 t678 — body.fresh=true bypasses the resource-read cache.
+      const result = await deps.mcpClient.readResource(nsId, body.uri, { bypassCache: body.fresh === true });
+      return reply.send({ ok: true, result });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // POST /api/projects/mcp/server/reconnect?path=&id= — re-register the server
+  // from current project.json + .env state, then attempt connect. Lets the user
+  // recover from an `error` state caused by a transient network blip or a save
+  // race without having to remove + re-add the server.
+  fastify.post("/api/projects/mcp/server/reconnect", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.mcpClient || !deps.projectConfigManager) return reply.code(503).send({ error: "MCP client or project config manager not available" });
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    const idParam = query["id"];
+    if (!pathParam || !idParam) return reply.code(400).send({ error: "path + id required" });
+    const targetPath = resolvePath(pathParam);
+    try {
+      const cur = await deps.projectConfigManager.read(targetPath);
+      const servers = ((cur as { mcp?: { servers?: Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> } }).mcp?.servers ?? []);
+      const target = servers.find((s) => s.id === idParam);
+      if (!target) return reply.code(404).send({ error: `Server "${idParam}" not configured for this project` });
+      const env = target.env ? resolveDollarVarsObject(target.env, readProjectEnv(targetPath)) : undefined;
+      const authToken = target.authToken ? resolveDollarVars(target.authToken, readProjectEnv(targetPath)) : undefined;
+      await deps.mcpClient.registerServer({
+        id: mcpServerNs(targetPath, target.id),
+        name: target.name,
+        transport: target.transport,
+        command: target.command,
+        env,
+        url: target.url,
+        autoConnect: true,
+        authToken,
+      });
+      return reply.send({ ok: true });
+    } catch (err) {
+      return reply.code(502).send({ ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // GET /api/projects/mcp/available — list MCP server templates (built-in + plugin-registered).
+  fastify.get("/api/projects/mcp/available", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    // Built-in templates. Future: plugin-registered MCP service definitions (Wish #8 — Tynn plugin).
+    const builtIn: Array<{ id: string; name: string; description: string; transport: "stdio" | "http" | "websocket"; defaultCommand?: string[]; defaultEnv?: Record<string, string>; defaultUrl?: string; authTokenKey?: string; pluginId?: string }> = [
+      {
+        id: "tynn",
+        name: "Tynn",
+        description: "Tynn-the-service via MCP. Provides PM tools (list-tasks, set-status, add-comment, getActiveFocusProgress, etc) for the agent. Uses HTTP transport with Bearer auth against tynn.ai.",
+        transport: "http",
+        defaultUrl: "https://tynn.ai/mcp/tynn",
+        authTokenKey: "TYNN_API_KEY",
+      },
+    ];
+    // Plugin-registered templates (s127 t489) — registered via
+    // api.registerMcpServerTemplate from a marketplace plugin's activate
+    // body. Appended after built-ins so the dashboard's dropdown shows
+    // built-ins first, then plugin-provided templates in registration order.
+    const pluginTemplates = (deps.pluginRegistry as { getMcpServerTemplates?: () => typeof builtIn } | undefined)?.getMcpServerTemplates?.() ?? [];
+    return reply.send({ templates: [...builtIn, ...pluginTemplates] });
   });
 
   // -----------------------------------------------------------------------
@@ -2228,6 +3026,17 @@ export async function createGatewayRuntimeState(
       const effectiveMarketplaceDir = pickDir(marketplaceDir, "marketplace");
       const effectiveMappMarketplaceDir = pickDir(mappMarketplaceDir, "mapp-marketplace");
 
+      // PAx (Particle-Academy) ADF UI primitive forks — s136 t512. No
+      // /opt/* deploy paths (these aren't production-deployed); the
+      // legacy fallback in pickDir's first arg is the workspace path
+      // itself, so when contributing-mode is off we report them as
+      // unknown gracefully (getRemote on a non-git dir returns "unknown").
+      const paxFallback = projectsRoot ? join(projectsRoot, "_aionima") : workspaceRoot;
+      const reactFancyDir   = pickDir(join(paxFallback, "react-fancy"),   "react-fancy");
+      const fancyCodeDir    = pickDir(join(paxFallback, "fancy-code"),    "fancy-code");
+      const fancySheetsDir  = pickDir(join(paxFallback, "fancy-sheets"),  "fancy-sheets");
+      const fancyEchartsDir = pickDir(join(paxFallback, "fancy-echarts"), "fancy-echarts");
+
       // Phase H.2 — origins alignment check. When Dev Mode is enabled,
       // each /opt/*/.git origin should be pointing at the owner's fork
       // (via v0.4.66's `ensure_origin_remote` in upgrade.sh). If any
@@ -2286,6 +3095,11 @@ export async function createGatewayRuntimeState(
         id: { remote: getRemote(effectiveIdDir), branch: getBranch(effectiveIdDir) },
         marketplace: { remote: getRemote(effectiveMarketplaceDir), branch: getBranch(effectiveMarketplaceDir) },
         mappMarketplace: { remote: getRemote(effectiveMappMarketplaceDir), branch: getBranch(effectiveMappMarketplaceDir) },
+        // PAx (Particle-Academy) ADF UI primitive forks — s136 t512.
+        reactFancy:   { remote: getRemote(reactFancyDir),   branch: getBranch(reactFancyDir) },
+        fancyCode:    { remote: getRemote(fancyCodeDir),    branch: getBranch(fancyCodeDir) },
+        fancySheets:  { remote: getRemote(fancySheetsDir),  branch: getBranch(fancySheetsDir) },
+        fancyEcharts: { remote: getRemote(fancyEchartsDir), branch: getBranch(fancyEchartsDir) },
       });
     });
 
@@ -2494,13 +3308,23 @@ export async function createGatewayRuntimeState(
         const forks = await resolveOrCreateForks(tokenInfo.accessToken, ownerGithubLogin);
         for (const f of forks) {
           if (f.cloneUrl) {
-            // Map slug → dev.*Repo key
+            // Map slug → dev.*Repo key. Civicognita-owned core five
+            // (legacy) + Particle-Academy PAx four (s136 t512). New
+            // entries here must match `CoreRepoSpec.configKey` in
+            // dev-mode-forks.ts AND the field added to DevConfigSchema
+            // in agi/config/src/schema.ts — three places kept in sync
+            // by hand (a future refactor could derive this from the
+            // CORE_REPOS spec list directly).
             const keyMap: Record<string, string> = {
               "agi": "agiRepo",
               "prime": "primeRepo",
               "id": "idRepo",
               "marketplace": "marketplaceRepo",
               "mapp-marketplace": "mappMarketplaceRepo",
+              "react-fancy": "reactFancyRepo",
+              "fancy-code": "fancyCodeRepo",
+              "fancy-sheets": "fancySheetsRepo",
+              "fancy-echarts": "fancyEchartsRepo",
             };
             const cfgKey = keyMap[f.slug];
             if (cfgKey) devRepoPatch[cfgKey] = f.cloneUrl;
@@ -3145,6 +3969,25 @@ export async function createGatewayRuntimeState(
     return usage;
   }
 
+  // Per-core CPU utilization — same delta-based sampling but reported as
+  // one value per logical CPU. Powers the per-core heatmap on the
+  // Resources page.
+  async function getCpuPerCore(): Promise<number[]> {
+    const os = await import("node:os");
+    const cpus1 = os.cpus();
+    await new Promise((r) => setTimeout(r, 100));
+    const cpus2 = os.cpus();
+    const result: number[] = [];
+    for (let i = 0; i < cpus1.length; i++) {
+      const c1 = cpus1[i]!.times;
+      const c2 = cpus2[i]!.times;
+      const idle = c2.idle - c1.idle;
+      const total = (c2.user - c1.user) + (c2.nice - c1.nice) + (c2.sys - c1.sys) + (c2.irq - c1.irq) + idle;
+      result.push(total > 0 ? Math.round(((total - idle) / total) * 100) : 0);
+    }
+    return result;
+  }
+
   // Disk I/O tracking — reads /proc/diskstats for the root volume device
   let rootDiskDevice = "";
   try {
@@ -3254,13 +4097,20 @@ export async function createGatewayRuntimeState(
     // socket CPU aggregate), multi-GPU aggregation.
     const cpuWatts = cpuPowerSampler.sample();
     const gpuWatts = gpuPowerSampler.sample();
+    // Per-GPU live stats (utilization, VRAM, temp, power). NVIDIA only via
+    // nvidia-smi today; AMD ROCm enrichment planned. Empty array on hosts
+    // without nvidia-smi installed.
+    const gpuStats: GpuLiveStats[] = probeGpuStats();
+    // Per-core CPU utilization for the per-core heatmap.
+    const cpuPerCore = await getCpuPerCore();
 
     return reply.send({
-      cpu: { loadAvg, cores, usage: cpuUsage },
+      cpu: { loadAvg, cores, usage: cpuUsage, perCore: cpuPerCore },
       memory: { total: totalMem, free: freeMem, used: usedMem, percent: memPercent },
       disk: { total: diskTotal, used: diskUsed, free: diskFree, percent: diskPercent },
       diskIO,
       power: { cpuWatts, gpuWatts },
+      gpus: gpuStats,
       uptime: os.uptime(),
       hostname: os.hostname(),
     });
@@ -3645,7 +4495,11 @@ export async function createGatewayRuntimeState(
           const sources = mp.getSources();
           Promise.all(sources.map((s) => mp.syncSource(s.id)))
             .then((results) => {
-              const total = results.reduce((n, r) => n + (r.pluginCount ?? 0), 0);
+              // s140 cycle 194 — was r.pluginCount under the inline structural
+               // type; the real CatalogDiff exposes `total` instead. Fix
+               // surfaced when the inline type was replaced with the imported
+               // class type.
+               const total = results.reduce((n, r) => n + (r.diff?.total ?? 0), 0);
               broadcastUpgrade("complete", `Marketplace synced (${total} plugins)`, "marketplace-sync", "ok");
               broadcastUpgrade("complete", "Deploy complete", "complete", "done");
             })
@@ -3867,6 +4721,19 @@ export async function createGatewayRuntimeState(
       });
     }
   }
+
+  // -----------------------------------------------------------------------
+  // MApp storage API (s140 t599 phase 3)
+  // -----------------------------------------------------------------------
+  // Per-project, per-MApp scoped CRUD under
+  //   /api/projects/<slug>/k/mapps/<id>/...        (persistent)
+  //   /api/projects/<slug>/sandbox/mapps/<id>/...  (generated/temporary)
+  // Required for any MApp that wants to persist user content. Same-origin
+  // sandboxed iframes can call directly via fetch; phase 3.5 will add a
+  // postMessage IPC mediation layer for cross-origin / restricted MApps.
+  registerMAppStorageRoutes(fastify, {
+    workspaceProjects: deps.workspaceProjects ?? [],
+  });
 
   // -----------------------------------------------------------------------
   // Plugin extensibility API — declarative plugin data for dashboard
@@ -4724,7 +5591,29 @@ export async function createGatewayRuntimeState(
   // -----------------------------------------------------------------------
 
   if (deps.chatPersistence !== undefined) {
-    registerChatHistoryRoutes(fastify, { chatPersistence: deps.chatPersistence, imageBlobStore: deps.imageBlobStore });
+    // s130 t521 server.ts wire-up (cycle 100 — production reader flip).
+    // perProjectChatDirs returns the list of `<projectPath>/k/chat/`
+    // dirs for s130-migrated projects in the workspace. Filtered by
+    // existsSync(<projectPath>/.agi) — projects without the s130 layout
+    // are skipped (today's behavior preserved for them). The list is
+    // computed FRESH on each call so newly-added/migrated projects
+    // surface without a gateway restart.
+    const perProjectChatDirs = (): string[] => {
+      const projects = deps.workspaceProjects ?? [];
+      const dirs: string[] = [];
+      for (const projectPath of projects) {
+        if (existsSync(join(projectPath, ".agi"))) {
+          const chatDir = join(projectPath, "k", "chat");
+          if (existsSync(chatDir)) dirs.push(chatDir);
+        }
+      }
+      return dirs;
+    };
+    registerChatHistoryRoutes(fastify, {
+      chatPersistence: deps.chatPersistence,
+      imageBlobStore: deps.imageBlobStore,
+      perProjectChatDirs,
+    });
   }
 
   // -----------------------------------------------------------------------
@@ -5193,6 +6082,100 @@ export async function createGatewayRuntimeState(
       log.error(`service restart "${request.params.id}" failed: ${msg}`);
       return reply.code(500).send({ error: msg });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // s143 t570 — Circuit-breaker visibility + reset endpoints.
+  //
+  // The CircuitBreakerTracker (cycle 153) records per-service failures
+  // into gateway.json under services.circuitBreaker.states[serviceId].
+  // Cycle 155-157 saw four projects trip to status=open and stay there
+  // because their build dirs don't exist. The operator's only way to
+  // see + reset breakers today is jq + manual file edit, which violates
+  // the dashboard-UI-only discipline (cycle 156 owner directive).
+  //
+  // These routes surface the same data the dashboard's Services page
+  // (t572) consumes, plus reset affordances. All gated to private
+  // network like the rest of the services API.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/services/circuit-breakers", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Services API only allowed from private network" });
+    }
+    if (!deps.circuitBreaker) {
+      return reply.send({ states: {}, openCount: 0, halfOpenCount: 0, totalCount: 0 });
+    }
+    const states = deps.circuitBreaker.listStates();
+    const entries = Object.values(states);
+    return reply.send({
+      states,
+      openCount: entries.filter((s) => s.status === "open").length,
+      halfOpenCount: entries.filter((s) => s.status === "half-open").length,
+      totalCount: entries.length,
+    });
+  });
+
+  fastify.post<{ Params: { id: string } }>("/api/services/circuit-breakers/:id/reset", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Services API only allowed from private network" });
+    }
+    if (!deps.circuitBreaker) {
+      return reply.code(503).send({ error: "Circuit breaker tracker not wired" });
+    }
+    // The serviceId from the URL contains slashes (e.g. hosting:/home/...)
+    // — fastify's :id captures only one segment. Read the full path from
+    // request.url instead so colons + slashes survive routing.
+    const url = request.url; // e.g. /api/services/circuit-breakers/hosting:%2Fhome%2F.../reset
+    const match = /\/api\/services\/circuit-breakers\/(.+)\/reset$/.exec(url);
+    const serviceId = match ? decodeURIComponent(match[1]!) : request.params.id;
+    deps.circuitBreaker.reset(serviceId);
+    return reply.send({ ok: true, serviceId });
+  });
+
+  fastify.post("/api/services/circuit-breakers/reset-all", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Services API only allowed from private network" });
+    }
+    if (!deps.circuitBreaker) {
+      return reply.code(503).send({ error: "Circuit breaker tracker not wired" });
+    }
+    const count = deps.circuitBreaker.resetAll();
+    return reply.send({ ok: true, count });
+  });
+
+  // s143 t573 — test-VM-only endpoint that synthesizes an "open" breaker
+  // for an arbitrary service id so the e2e can prove force-trip → render
+  // → reset → cleared without breaking a real service. Gated on
+  // AIONIMA_TEST_VM=1 (the same gate FilesystemSecretsBackend uses) so
+  // production cannot reach this surface even from a private network.
+  // The expected service-id prefix is `service:e2e-` — but the endpoint
+  // doesn't enforce a prefix so other tests (channel/plugin/hosting)
+  // can synthesize their own breakers consistently.
+  fastify.post("/api/services/circuit-breakers/force-trip", async (request, reply) => {
+    if (process.env["AIONIMA_TEST_VM"] !== "1") {
+      return reply.code(404).send({ error: "Not Found" });
+    }
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Services API only allowed from private network" });
+    }
+    if (!deps.circuitBreaker) {
+      return reply.code(503).send({ error: "Circuit breaker tracker not wired" });
+    }
+    const body = (request.body ?? {}) as { serviceId?: string; failures?: number };
+    if (typeof body.serviceId !== "string" || body.serviceId.length === 0) {
+      return reply.code(400).send({ error: "serviceId (string) required" });
+    }
+    // Default 3 failures = threshold (matches CircuitBreakerTracker default).
+    const target = Math.max(1, Math.min(20, body.failures ?? 3));
+    for (let i = 0; i < target; i++) {
+      deps.circuitBreaker.recordFailure(body.serviceId, new Error(`e2e force-trip failure ${String(i + 1)}/${String(target)}`));
+    }
+    return reply.send({ ok: true, serviceId: body.serviceId, state: deps.circuitBreaker.getState(body.serviceId) ?? null });
   });
 
   // -----------------------------------------------------------------------
@@ -5906,8 +6889,12 @@ export async function createGatewayRuntimeState(
     fastify.get("/api/mapp-marketplace/catalog", async (_request, reply) => {
       const catalog = await mappMp.getCatalogWithInstalled();
       // Wrap in { apps } for backward compatibility with dashboard
+      // s145 t598: include `name` from the catalog row when present so
+      // dashboard cards show "Admin Editor" rather than the humanize-id
+      // fallback. Older catalog rows have name=null; dashboard's
+      // humanize-fallback (cycle 176) covers those.
       return reply.send({ apps: catalog.map((entry) => ({
-        definition: { id: entry.id, author: entry.author, description: entry.description, category: entry.category, version: entry.version, source: entry.sourcePath },
+        definition: { id: entry.id, name: entry.name, author: entry.author, description: entry.description, category: entry.category, version: entry.version, source: entry.sourcePath },
         source: entry.sourcePath,
         installed: entry.installed,
         sourceId: entry.sourceId,

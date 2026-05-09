@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { Callout } from "@particle-academy/react-fancy";
 import { cn } from "@/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
@@ -309,9 +310,9 @@ export function ChannelsStep({ onNext, onSkip, status }: Props) {
       </div>
 
       {isCompleted && (
-        <div className="p-3 rounded-lg bg-green/5 border border-green/20 text-sm text-muted-foreground onboard-animate-in">
+        <Callout color="green" className="text-sm text-muted-foreground onboard-animate-in">
           Channels already configured. Continue to keep existing connections, or update below.
-        </div>
+        </Callout>
       )}
 
       <div className="flex flex-col gap-2 onboard-animate-in onboard-stagger-1">

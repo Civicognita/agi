@@ -13,7 +13,9 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "../components/ui/button";
+import { Card } from "../components/ui/card";
 import { useIsTestVm } from "../hooks/useRuntimeMode";
+import { DevNote } from "../components/ui/dev-notes";
 
 interface CoreForkStatus {
   slug: string;
@@ -71,12 +73,12 @@ export default function AionimaPage(): JSX.Element {
 
   if (isTestVm) {
     return (
-      <div className="p-4 max-w-4xl" data-testid="aionima-page">
+      <div className="h-full overflow-y-auto p-4 max-w-4xl" data-testid="aionima-page">
         <h1 className="text-[16px] font-semibold mb-2">Aionima Development</h1>
-        <div className="rounded-xl bg-card border border-border p-4 text-[13px] text-muted-foreground">
+        <Card className="p-4 text-[13px] text-muted-foreground">
           Aionima Development is hidden in test-VM mode — this gateway IS the system being developed.
           Switch to a production or dev gateway to access the consolidated view.
-        </div>
+        </Card>
       </div>
     );
   }
@@ -88,9 +90,17 @@ export default function AionimaPage(): JSX.Element {
   const aligned = forksData && forksData.forks.length > 0 && totalAhead === 0 && totalBehind === 0 && totalUncommitted === 0;
 
   return (
-    <div className="p-4 max-w-4xl space-y-6" data-testid="aionima-page">
+    <div className="h-full overflow-y-auto p-4 max-w-4xl space-y-6" data-testid="aionima-page">
       <div>
         <h1 className="text-[16px] font-semibold mb-1">Aionima Development</h1>
+        <DevNote heading="Cycle 131 — overflow + page-fit fix" kind="info" scope="aionima">
+          Outer div has `h-full overflow-y-auto` so the per-fork list scrolls independently of the
+          dashboard chrome (was clipped at viewport in v0.4.390 and earlier).
+        </DevNote>
+        <DevNote heading="Aionima-collection consolidates 5 core repos (s119)" kind="info" scope="aionima">
+          Replaces per-core-repo project tiles with this single rolled-up view. Upstream alignment +
+          PR submission + MINT impact for the five sacred repos. PAx packages (4 more) live at /pax.
+        </DevNote>
         <p className="text-[12px] text-muted-foreground">
           Single consolidated view for the Aionima platform's core forks. Tracking
           upstream-alignment, PR submission, and MINT impact across the five core
@@ -104,7 +114,7 @@ export default function AionimaPage(): JSX.Element {
         {loading && <div className="text-[12px] text-muted-foreground">Loading…</div>}
         {error && <div className="text-[12px] text-red">{error}</div>}
         {forksData && (
-          <div className="rounded-xl bg-card border border-border p-3 text-[13px]">
+          <Card className="p-3 text-[13px]">
             <div className="flex items-center gap-3 mb-2">
               <span
                 className={"px-2 py-0.5 rounded text-[11px] " + (aligned ? "bg-green/20 text-green" : "bg-yellow/20 text-yellow")}
@@ -122,7 +132,7 @@ export default function AionimaPage(): JSX.Element {
               <div><span className="text-muted-foreground">Forks with uncommitted:</span> <span className="font-mono">{totalUncommitted}</span></div>
               <div><span className="text-muted-foreground">Forks with unpushed:</span> <span className="font-mono">{totalUnpushed}</span></div>
             </div>
-          </div>
+          </Card>
         )}
       </section>
 
@@ -173,16 +183,16 @@ export default function AionimaPage(): JSX.Element {
       {/* PR submission entry point */}
       <section data-testid="aionima-pr-flow">
         <h2 className="text-[14px] font-semibold mb-2">Submit PR</h2>
-        <div className="rounded-xl bg-card border border-border p-3 text-[13px] text-muted-foreground">
+        <Card className="p-3 text-[13px] text-muted-foreground">
           When a fork has unpushed commits, use <span className="font-mono">agi push &lt;slug&gt;</span> to push
           the branch + open a PR against upstream. Per-fork CI runs are linked from the per-fork detail above.
-        </div>
+        </Card>
       </section>
 
       {/* MINT($WORK|$K|$RES) integration — placeholder */}
       <section data-testid="aionima-mint-flow">
         <h2 className="text-[14px] font-semibold mb-2">MINT impact for this contribution</h2>
-        <div className="rounded-xl bg-card border border-border p-3 space-y-2">
+        <Card className="p-3 space-y-2">
           <p className="text-[12px] text-muted-foreground">
             After your PR merges upstream, mint the contribution into one of the three Impactivism currencies:
           </p>
@@ -202,7 +212,7 @@ export default function AionimaPage(): JSX.Element {
           <Button disabled data-testid="aionima-mint-submit">
             MINT to ${selectedMint} (wiring lands once Impactium is operational)
           </Button>
-        </div>
+        </Card>
       </section>
     </div>
   );

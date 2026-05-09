@@ -114,6 +114,10 @@ export const mappsMarketplace = pgTable(
     source: marketplaceSourceEnum("source").notNull().default("official"),
     sourceRef: text("source_ref").notNull(),
     author: text("author").notNull().default("civicognita"),
+    /** Human-readable display name from the MApp manifest (s145 t598).
+     *  Nullable for backward compat — older catalogs without this field
+     *  fall back to a humanized id in the dashboard. */
+    name: text("name"),
     description: text("description"),
     category: text("category"),
     version: text("version").notNull(),

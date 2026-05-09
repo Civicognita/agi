@@ -122,6 +122,17 @@ export const connections = pgTable(
     refreshToken: text("refresh_token"),
     tokenExpiresAt: timestamp("token_expires_at", { withTimezone: true }),
     scopes: text("scopes"),
+    /**
+     * For proxied providers (Plaid, Google, Discord per s149 cycle 215):
+     * encrypted DToken (delegation token) instead of holding the raw
+     * provider access_token. The DToken is bound to a connection at
+     * Hive-ID; Local-ID forwards it as a Bearer credential to Hive-ID's
+     * proxy gateway. Public-client providers (GitHub device flow) still
+     * use accessToken for the raw token.
+     *
+     * NULL for public-client providers (GitHub) and pre-s149 connections.
+     */
+    dtoken: text("dtoken"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

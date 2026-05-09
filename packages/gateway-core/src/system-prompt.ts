@@ -46,6 +46,14 @@ export interface ToolManifestEntry {
    * change via `taskmaster_handoff` rather than mutating config directly.
    */
   agentOnly?: boolean;
+  /**
+   * Ops-mode gate (s126). When set, the tool is only available when the
+   * agent is acting on a project whose effective category is in this list.
+   * Used for cross-project + infrastructure tools that should only surface
+   * when the agent is at an ops/administration project. Empty/undefined =
+   * available to all eligible projects (gated only by state + tier).
+   */
+  requiresProjectCategory?: ("ops" | "administration" | "web" | "app" | "literature" | "media" | "monorepo")[];
 }
 
 /** Tier-based autonomy capabilities. */
@@ -141,6 +149,23 @@ export interface SystemPromptContext {
   isOwner?: boolean;
   /** Active project path — when set, injects plan workflow instructions. */
   projectPath?: string;
+  /**
+   * UserNotes for the active project + global notes (s152 t651, 2026-05-09).
+   * Caller (agent-invoker) reads from NotesStore before assembly. Pinned
+   * notes are included first, then most-recently-updated. The assembler
+   * injects them into the project-context section so Aion sees what the
+   * user wrote — closes the user-writes-note → Aion-reads-note loop.
+   */
+  projectNotes?: Array<{ title: string; body: string; pinned: boolean; updatedAt: string; scope: "project" | "global" }>;
+  /**
+   * Active project category — sourced from `project.json`'s `category` field
+   * (literature/app/web/media/administration/ops/monorepo). When the category
+   * is `"ops"` or `"administration"`, the assembler injects an ops-mode
+   * preamble that tells the agent it has cross-project authority + lists the
+   * gated ops tools that just became available (pm_list_all_tasks,
+   * hosting_list_projects, etc.). Drives s126 ops-mode activation.
+   */
+  projectCategory?: string;
   /**
    * Iterative-work prompt content — when present (project has
    * `iterativeWork.enabled: true`), the assembler injects this verbatim into
@@ -573,11 +598,37 @@ export function buildTynnContextSection(ctx: TynnContextSection): string {
 }
 
 /**
+ * Build ops-mode preamble — surfaces only when the active project's category
+ * is `ops` or `administration`. Tells the agent it has been granted
+ * cross-project authority + names the ops-only tools it just gained, so it
+ * doesn't have to discover them by inspection. Pairs with the
+ * `requiresProjectCategory` gate in computeAvailableTools (s126).
+ */
+function buildOpsModeSection(): string {
+  return [
+    "## Ops Mode Active",
+    "",
+    "This project's category is `ops` (or `administration`). You have cross-project authority — your tool palette includes ops-only tools that surface ONLY for ops projects:",
+    "",
+    "- `pm_list_all_tasks` — read tasks across ALL workspace projects (cross-project triage).",
+    "- `pm_bulk_update` — transition tasks across projects in one call.",
+    "- `hosting_list_projects` — see every hosted project + its status.",
+    "- `hosting_restart` / `hosting_stop` / `hosting_deploy` — control hosted-project containers.",
+    "- `stacks_list` / `stacks_add` — read or attach stacks (postgres, redis, etc.) to any project.",
+    "",
+    "Use these tools to coordinate work across the workspace. Every cross-project action is COA-logged back to this ops project + you, so the audit chain stays intact. Do not assume non-ops projects can call these tools — they cannot.",
+  ].join("\n");
+}
+
+/**
  * Build project context section — tells the agent which project it is scoped to.
  * Reads the project's package.json for name/version/description.
  * Injected before plan workflow instructions when projectPath is set.
  */
-function buildProjectContextSection(projectPath: string): string {
+function buildProjectContextSection(
+  projectPath: string,
+  notes?: Array<{ title: string; body: string; pinned: boolean; updatedAt: string; scope: "project" | "global" }>,
+): string {
   const lines: string[] = ["## Active Project"];
   lines.push(`Path: ${projectPath}`);
 
@@ -599,6 +650,31 @@ function buildProjectContextSection(projectPath: string): string {
 
   lines.push("");
   lines.push("You are scoped to this project. All file operations, analysis, and tool use should be relative to this project path. When answering questions, draw on your knowledge of this project's structure and purpose.");
+
+  // s152 t651 — UserNotes injection. The owner writes free-form notes
+  // (markdown) per-project + global; this section surfaces them to Aion
+  // as project context, the same way Dev Notes are consumed.
+  if (notes !== undefined && notes.length > 0) {
+    lines.push("");
+    lines.push("## Project Notes");
+    lines.push("");
+    lines.push("The following notes were written by the owner. Treat them as authoritative project context — they capture intent, decisions, and TODOs that aren't in the code. Pinned notes are listed first.");
+    lines.push("");
+    for (const note of notes) {
+      const scopeTag = note.scope === "global" ? " [global]" : "";
+      const pinTag = note.pinned ? " ★" : "";
+      lines.push(`### ${note.title}${pinTag}${scopeTag}`);
+      lines.push("");
+      const body = note.body.trim();
+      if (body.length > 0) {
+        lines.push(body);
+      } else {
+        lines.push("*(empty)*");
+      }
+      lines.push("");
+    }
+    lines.push(`Use the \`notes\` tool (action=\`read\`/\`search\`/\`append\`) to fetch additional notes or capture new ones for the owner.`);
+  }
 
   return lines.join("\n");
 }
@@ -669,6 +745,7 @@ export function computeAvailableTools(
   _state: GatewayState,
   tier: VerificationTier,
   registeredTools: ToolManifestEntry[],
+  projectCategory?: string,
 ): ToolManifestEntry[] {
   const tierCaps = TIER_CAPABILITIES[tier];
 
@@ -679,7 +756,15 @@ export function computeAvailableTools(
   }
 
   return registeredTools.filter((tool) => {
-    return tool.requiresTier.length === 0 || tool.requiresTier.includes(tier);
+    // Tier gate
+    if (tool.requiresTier.length !== 0 && !tool.requiresTier.includes(tier)) return false;
+    // Ops-mode gate (s126): if a tool requires a specific project category,
+    // hide it unless the agent is acting on a project of that category.
+    if (tool.requiresProjectCategory && tool.requiresProjectCategory.length > 0) {
+      if (!projectCategory) return false;
+      if (!(tool.requiresProjectCategory as string[]).includes(projectCategory)) return false;
+    }
+    return true;
   });
 }
 
@@ -791,7 +876,13 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
   // Project context — for project work. Plan workflow is instruction-heavy
   // and gets dropped in local mode; project path itself is preserved.
   if (rt === "project" && ctx.projectPath !== undefined) {
-    sections.push(buildProjectContextSection(ctx.projectPath));
+    sections.push(buildProjectContextSection(ctx.projectPath, ctx.projectNotes));
+    // Ops-mode preamble — sits next to project context so the agent reads
+    // "this is project X" + "here's the cross-project authority you have"
+    // back-to-back. Gated on category, mirrors requiresProjectCategory tool gate.
+    if (ctx.projectCategory === "ops" || ctx.projectCategory === "administration") {
+      sections.push(buildOpsModeSection());
+    }
     if (!isLocal) {
       sections.push(buildPlanWorkflowSection());
     }
@@ -949,7 +1040,10 @@ export function assembleSystemPromptWithBreakdown(
   }
 
   if (rt === "project" && ctx.projectPath !== undefined) {
-    contextSections.push(buildProjectContextSection(ctx.projectPath));
+    contextSections.push(buildProjectContextSection(ctx.projectPath, ctx.projectNotes));
+    if (ctx.projectCategory === "ops" || ctx.projectCategory === "administration") {
+      contextSections.push(buildOpsModeSection());
+    }
     if (!isLocal) {
       contextSections.push(buildPlanWorkflowSection());
     }

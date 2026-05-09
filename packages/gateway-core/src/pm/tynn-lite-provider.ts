@@ -119,8 +119,15 @@ const EMPTY_STATE: TynnLiteState = {
 // ---------------------------------------------------------------------------
 
 export interface TynnLitePmProviderOpts {
-  /** Absolute path to the project root. .tynn-lite/ lives directly inside. */
+  /** Absolute path to the base directory. When `storageDir` is omitted,
+   *  the provider lands at `<projectRoot>/.tynn-lite/` (legacy default).
+   *  Pair with `storageDir: "k/pm"` to land at `<projectRoot>/k/pm/` per
+   *  the s130 universal-monorepo model (s155 t670, 2026-05-09). */
   projectRoot: string;
+  /** Override the default `.tynn-lite` storage directory name. Pass
+   *  `"k/pm"` to align with the per-project k/ knowledge layer; pass
+   *  an absolute path to land outside `projectRoot` entirely. */
+  storageDir?: string;
   /** Display name for the project (returned by getProject). Defaults to
    *  the project root's basename when omitted. */
   projectName?: string;
@@ -137,13 +144,29 @@ export class TynnLitePmProvider implements PmProvider {
   private readonly projectName: string;
 
   constructor(opts: TynnLitePmProviderOpts) {
-    this.dir = join(opts.projectRoot, ".tynn-lite");
+    // s155 t670 — pluggable storage dir. Absolute paths land as-is so
+    // the caller can target `<projectPath>/k/pm/` (per-project) or any
+    // other location. Relative paths join with projectRoot like the
+    // legacy `.tynn-lite/` default.
+    if (opts.storageDir !== undefined) {
+      this.dir = opts.storageDir.startsWith("/")
+        ? opts.storageDir
+        : join(opts.projectRoot, opts.storageDir);
+    } else {
+      this.dir = join(opts.projectRoot, ".tynn-lite");
+    }
     this.tasksPath = join(this.dir, "tasks.jsonl");
     this.commentsPath = join(this.dir, "comments.jsonl");
     this.wishesPath = join(this.dir, "wishes.jsonl");
     this.statePath = join(this.dir, "state.json");
     this.statePathTmp = `${this.statePath}.tmp`;
     this.projectName = opts.projectName ?? opts.projectRoot.split("/").filter((s) => s.length > 0).pop() ?? "tynn-lite-project";
+  }
+
+  /** s155 t670 — expose the resolved storage directory. Used by the
+   *  migration helper + diagnostic surfaces. */
+  get storageDir(): string {
+    return this.dir;
   }
 
   // -------------------------------------------------------------------------
@@ -390,4 +413,76 @@ export class TynnLitePmProvider implements PmProvider {
     // Story support lands when the schema gains a separate stories.jsonl.
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// s155 t670 — Migration helper: copy legacy .tynn-lite/ → k/pm/
+// ---------------------------------------------------------------------------
+
+export interface TynnLiteMigrationResult {
+  /** True when at least one file was copied this call. */
+  migrated: boolean;
+  /** True when canonical already had content; no copy performed. */
+  skipped: boolean;
+  /** Files that were copied (basenames). */
+  copied: string[];
+  /** Errors encountered (per-file; non-fatal). */
+  errors: Array<{ file: string; reason: string }>;
+}
+
+/**
+ * Idempotently move TynnLite storage from a legacy `.tynn-lite/` directory
+ * into the canonical s130-aligned location (typically `<projectPath>/k/pm/`).
+ *
+ * Files copied: `tasks.jsonl`, `comments.jsonl`, `wishes.jsonl`, `state.json`
+ * (only those that exist in the legacy dir). Skips when the canonical dir
+ * already contains any of those files — caller can move them by hand if
+ * an actual merge is needed (rare; not worth scripting for the one-off
+ * migration). Legacy files are preserved as backup; a follow-up sweep
+ * removes them once stable across upgrades.
+ *
+ * Returns `migrated: true` when something was copied, `skipped: true` when
+ * canonical was already populated, and both `false` when there was no
+ * legacy data to migrate.
+ */
+export function migrateTynnLiteStorage(
+  legacyDir: string,
+  canonicalDir: string,
+): TynnLiteMigrationResult {
+  const out: TynnLiteMigrationResult = { migrated: false, skipped: false, copied: [], errors: [] };
+  if (!existsSync(legacyDir)) return out;
+
+  const known = ["tasks.jsonl", "comments.jsonl", "wishes.jsonl", "state.json"];
+  // Skip if canonical already has any of the four — we don't want to clobber
+  // active per-project data with a stale workspace-level copy.
+  for (const file of known) {
+    if (existsSync(join(canonicalDir, file))) {
+      out.skipped = true;
+      return out;
+    }
+  }
+
+  if (!existsSync(canonicalDir)) {
+    try {
+      mkdirSync(canonicalDir, { recursive: true });
+    } catch (e) {
+      out.errors.push({ file: canonicalDir, reason: e instanceof Error ? e.message : String(e) });
+      return out;
+    }
+  }
+
+  for (const file of known) {
+    const src = join(legacyDir, file);
+    if (!existsSync(src)) continue;
+    try {
+      const content = readFileSync(src, "utf-8");
+      writeFileSync(join(canonicalDir, file), content, "utf-8");
+      out.copied.push(file);
+      out.migrated = true;
+    } catch (e) {
+      out.errors.push({ file: src, reason: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  return out;
 }

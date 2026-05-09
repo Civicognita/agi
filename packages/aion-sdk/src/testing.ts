@@ -52,6 +52,7 @@ export interface MockRegistrations {
   channels: string[];
   providers: LLMProviderDefinition[];
   pmProviders: { id: string; name: string }[];
+  mcpServerTemplates: { id: string; name: string }[];
   scanProviders: ScanProviderDefinition[];
   workers: WorkerDefinition[];
   hooks: { hook: string; handler: unknown }[];
@@ -86,6 +87,7 @@ export function createMockAPI(options: MockAPIOptions = {}): { api: AionimaPlugi
     channels: [],
     providers: [],
     pmProviders: [],
+    mcpServerTemplates: [],
     scanProviders: [],
     workers: [],
     hooks: [],
@@ -109,6 +111,7 @@ export function createMockAPI(options: MockAPIOptions = {}): { api: AionimaPlugi
     registerChannel(_plugin: AionimaChannelPlugin): void { registrations.channels.push(_plugin.id as string); },
     registerProvider(def: LLMProviderDefinition): void { registrations.providers.push(def); },
     registerPmProvider(def: { id: string; name: string }): void { registrations.pmProviders.push({ id: def.id, name: def.name }); },
+    registerMcpServerTemplate(def: { id: string; name: string }): void { registrations.mcpServerTemplates.push({ id: def.id, name: def.name }); },
     registerAction(def: ActionDefinition): void { registrations.actions.push(def); },
     registerProjectPanel(def: ProjectPanelDefinition): void { registrations.panels.push(def); },
     registerSettingsSection(def: SettingsSectionDefinition): void { registrations.settingsSections.push(def); },
