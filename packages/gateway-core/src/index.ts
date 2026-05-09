@@ -452,6 +452,10 @@ export type { HostingConfig, ProjectHostingMeta, HostedProject, InfraStatus, Hos
 export { ServiceManager } from "./service-manager.js";
 export type { ServiceStatus, ServiceManagerDeps } from "./service-manager.js";
 
+// Circuit breaker (s143)
+export { CircuitBreakerTracker } from "./circuit-breaker.js";
+export type { CircuitBreakerDeps, ShouldSkipResult } from "./circuit-breaker.js";
+
 // Terminal
 export { TerminalManager } from "./terminal-manager.js";
 export type { TerminalSession } from "./terminal-manager.js";

@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 
 import type { AionimaChannelPlugin } from "@agi/channel-sdk";
 import { assertValidAdapter } from "@agi/channel-sdk";
+import type { CircuitBreakerTracker } from "./circuit-breaker.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -61,10 +62,21 @@ export class ChannelRegistry extends EventEmitter {
   private readonly channels: Map<string, ChannelEntry> = new Map();
   private readonly health: Map<string, ChannelHealth> = new Map();
   private readonly log: ComponentLogger;
+  private circuitBreaker: CircuitBreakerTracker | null = null;
 
   constructor(logger?: Logger) {
     super();
     this.log = createComponentLogger(logger, "channel-registry");
+  }
+
+  /**
+   * Wire the circuit-breaker tracker after construction. Channels are
+   * registered before the system-config service exists during boot, so the
+   * tracker can't be passed via the constructor — server.ts calls this once
+   * the tracker is built. Service-id format: `channel:<channelId>`. (s143 t569)
+   */
+  setCircuitBreaker(tracker: CircuitBreakerTracker): void {
+    this.circuitBreaker = tracker;
   }
 
   // ---------------------------------------------------------------------------
@@ -150,17 +162,43 @@ export class ChannelRegistry extends EventEmitter {
       throw new Error(`Channel "${channelId}" is not registered`);
     }
 
+    // s143 t569 — circuit-breaker gate. If this channel has tripped the
+    // breaker on previous boots, skip the start attempt entirely so a
+    // permanently broken adapter (bad token, missing secret, dead webhook)
+    // can't burn budget on every gateway boot. The Services page Reset
+    // button (or a fix to the underlying failure) re-arms it.
+    const serviceId = `channel:${channelId}`;
+    if (this.circuitBreaker) {
+      const decision = this.circuitBreaker.shouldSkip(serviceId);
+      if (decision.skip) {
+        const reason = decision.reason ?? "circuit open";
+        entry.status = "error";
+        entry.error = reason;
+        this.log.warn(`[${channelId}] circuit-open — skipping start (${reason})`);
+        this.emit("channel_error", channelId, reason);
+        // Preserve the original throw-on-failure contract so startAll's
+        // Promise.allSettled and any direct callers see a consistent
+        // failure shape regardless of breaker vs runtime cause.
+        throw new Error(reason);
+      }
+      if (decision.transitionedTo) {
+        this.log.info(`[${channelId}] breaker transitioned to ${decision.transitionedTo} — attempting start`);
+      }
+    }
+
     entry.status = "starting";
 
     try {
       await entry.plugin.gateway.start();
       entry.status = "running";
       entry.error = undefined;
+      this.circuitBreaker?.recordSuccess(serviceId);
       this.emit("channel_started", channelId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       entry.status = "error";
       entry.error = message;
+      this.circuitBreaker?.recordFailure(serviceId, err);
       this.emit("channel_error", channelId, message);
       throw err;
     }
