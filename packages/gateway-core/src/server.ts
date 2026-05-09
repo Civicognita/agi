@@ -129,6 +129,7 @@ import { WorkerPromptLoader } from "./worker-prompt-loader.js";
 import { ChatGarbageCollector } from "./chat-garbage-collector.js";
 import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
 import { ensureAionimaSystemProject, ensureWorkspaceSkeleton, projectConfigPath } from "./project-config-path.js";
+import { migrateAionimaSystemForks } from "./aionima-system-migration.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
@@ -1847,6 +1848,29 @@ export async function startGatewayServer(
       logger.warn(
         "migrate",
         `boot-time s119 _aionima scaffold failed for ${workspaceRoot} (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    // s119 t703 (2026-05-09) — hard-move forks from legacy flat layout
+    // (`_aionima/<name>`) into universal monorepo layout
+    // (`_aionima/repos/<name>`). Idempotent + atomic per fork. Runs only
+    // after t701 scaffolder so `repos/` exists. Errors captured per-fork
+    // and logged as warnings; the gateway still boots.
+    try {
+      const r = migrateAionimaSystemForks(workspaceRoot, createComponentLogger(logger, "migrate-aionima-forks"));
+      if (r.moved > 0 || r.errors.length > 0) {
+        logger.info(
+          "migrate",
+          `boot-time s119 fork migration: scanned=${String(r.scanned)} moved=${String(r.moved)} alreadyMigrated=${String(r.alreadyMigrated)} notPresent=${String(r.notPresent)} errors=${String(r.errors.length)}`,
+        );
+        for (const e of r.errors) {
+          logger.warn("migrate", `s119 fork migration error [${e.name}]: ${e.reason}`);
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        "migrate",
+        `boot-time s119 fork migration failed for ${workspaceRoot} (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
