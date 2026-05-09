@@ -292,3 +292,159 @@ describe("McpClient — tool/resource/prompt enumeration (s118 t441)", () => {
     await expect(client.listTools("ghost")).rejects.toThrow(/not registered/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// s133 t677 — TTL'd response caching
+// ---------------------------------------------------------------------------
+
+describe("McpClient — response cache (s133 t677)", () => {
+  let now = 0;
+  let client: McpClient;
+
+  beforeEach(async () => {
+    Object.values(mockClientInstance).forEach((m) => {
+      if (typeof m === "function" && "mockReset" in m) m.mockReset();
+    });
+    mockClientInstance.connect.mockResolvedValue(undefined);
+    mockClientInstance.close.mockResolvedValue(undefined);
+    now = 1_700_000_000_000;
+    client = new McpClient({ now: () => now });
+    await client.registerServer({
+      id: "tynn",
+      transport: "stdio",
+      command: ["./srv"],
+      autoConnect: true,
+    });
+  });
+
+  it("listTools serves the second call from cache (no network re-fetch)", async () => {
+    mockClientInstance.listTools.mockResolvedValue({ tools: [{ name: "t1" }] });
+    const first = await client.listTools("tynn");
+    const second = await client.listTools("tynn");
+    expect(first).toEqual(second);
+    expect(mockClientInstance.listTools).toHaveBeenCalledOnce();
+    const status = client.getCacheStatus().find((s) => s.serverId === "tynn")!;
+    expect(status.hits).toBe(1);
+    expect(status.misses).toBe(1);
+    expect(status.hitRatio).toBeCloseTo(0.5);
+  });
+
+  it("listResources + listPrompts each cache independently", async () => {
+    mockClientInstance.listResources.mockResolvedValue({ resources: [{ uri: "u" }] });
+    mockClientInstance.listPrompts.mockResolvedValue({ prompts: [{ name: "p" }] });
+    await client.listResources("tynn");
+    await client.listResources("tynn");
+    await client.listPrompts("tynn");
+    await client.listPrompts("tynn");
+    expect(mockClientInstance.listResources).toHaveBeenCalledOnce();
+    expect(mockClientInstance.listPrompts).toHaveBeenCalledOnce();
+  });
+
+  it("cache expires after TTL elapses", async () => {
+    mockClientInstance.listTools.mockResolvedValue({ tools: [] });
+    await client.listTools("tynn");
+    expect(mockClientInstance.listTools).toHaveBeenCalledOnce();
+    now += 5 * 60 * 1000 + 1;
+    await client.listTools("tynn");
+    expect(mockClientInstance.listTools).toHaveBeenCalledTimes(2);
+  });
+
+  it("bypassCache forces a fresh fetch + records a bypass", async () => {
+    mockClientInstance.listTools.mockResolvedValue({ tools: [] });
+    await client.listTools("tynn");
+    await client.listTools("tynn", { bypassCache: true });
+    expect(mockClientInstance.listTools).toHaveBeenCalledTimes(2);
+    const status = client.getCacheStatus().find((s) => s.serverId === "tynn")!;
+    expect(status.bypasses).toBe(1);
+    expect(status.misses).toBe(2);
+  });
+
+  it("readResource caches per-URI", async () => {
+    mockClientInstance.readResource
+      .mockResolvedValueOnce({ contents: [{ uri: "a", text: "A" }] })
+      .mockResolvedValueOnce({ contents: [{ uri: "b", text: "B" }] });
+    const r1 = await client.readResource("tynn", "a");
+    const r1b = await client.readResource("tynn", "a");
+    const r2 = await client.readResource("tynn", "b");
+    expect(r1).toEqual(r1b);
+    expect(r2.contents[0]!.text).toBe("B");
+    expect(mockClientInstance.readResource).toHaveBeenCalledTimes(2);
+  });
+
+  it("readResource respects its own TTL (default 30 min) separately from list TTL", async () => {
+    mockClientInstance.readResource.mockResolvedValue({ contents: [{ uri: "a", text: "v1" }] });
+    await client.readResource("tynn", "a");
+    now += 5 * 60 * 1000 + 1;
+    await client.readResource("tynn", "a");
+    expect(mockClientInstance.readResource).toHaveBeenCalledOnce();
+    now += 25 * 60 * 1000;
+    await client.readResource("tynn", "a");
+    expect(mockClientInstance.readResource).toHaveBeenCalledTimes(2);
+  });
+
+  it("disconnect invalidates cache so the next connect re-fetches", async () => {
+    mockClientInstance.listTools.mockResolvedValue({ tools: [] });
+    await client.listTools("tynn");
+    expect(mockClientInstance.listTools).toHaveBeenCalledOnce();
+    await client.disconnect("tynn");
+    await client.connect("tynn");
+    await client.listTools("tynn");
+    expect(mockClientInstance.listTools).toHaveBeenCalledTimes(2);
+    const status = client.getCacheStatus().find((s) => s.serverId === "tynn")!;
+    expect(status.invalidations).toBeGreaterThanOrEqual(1);
+  });
+
+  it("registerServer (re-registration) invalidates cache", async () => {
+    mockClientInstance.listTools.mockResolvedValue({ tools: [] });
+    await client.listTools("tynn");
+    await client.registerServer({
+      id: "tynn",
+      transport: "stdio",
+      command: ["./srv"],
+      autoConnect: true,
+      cacheTtlSec: 10,
+    });
+    await client.listTools("tynn");
+    expect(mockClientInstance.listTools).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidateCache() forces re-fetch", async () => {
+    mockClientInstance.listTools.mockResolvedValue({ tools: [] });
+    await client.listTools("tynn");
+    client.invalidateCache("tynn");
+    await client.listTools("tynn");
+    expect(mockClientInstance.listTools).toHaveBeenCalledTimes(2);
+  });
+
+  it("custom cacheTtlSec on McpServerConfig is honored", async () => {
+    await client.registerServer({
+      id: "fast",
+      transport: "stdio",
+      command: ["./srv"],
+      autoConnect: true,
+      cacheTtlSec: 1,
+    });
+    mockClientInstance.listTools.mockResolvedValue({ tools: [] });
+    await client.listTools("fast");
+    now += 999;
+    await client.listTools("fast");
+    expect(mockClientInstance.listTools).toHaveBeenCalledOnce();
+    now += 2;
+    await client.listTools("fast");
+    expect(mockClientInstance.listTools).toHaveBeenCalledTimes(2);
+  });
+
+  it("getCacheStatus surfaces last-fetch ISO timestamp", async () => {
+    mockClientInstance.listTools.mockResolvedValue({ tools: [] });
+    await client.listTools("tynn");
+    const status = client.getCacheStatus().find((s) => s.serverId === "tynn")!;
+    expect(status.lastFetchAt).toBe(new Date(now).toISOString());
+  });
+
+  it("tool calls remain UNcached", async () => {
+    mockClientInstance.callTool.mockResolvedValue({ content: [], isError: false });
+    await client.callTool("tynn", "do", { x: 1 });
+    await client.callTool("tynn", "do", { x: 1 });
+    expect(mockClientInstance.callTool).toHaveBeenCalledTimes(2);
+  });
+});
