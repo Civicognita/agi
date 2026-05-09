@@ -449,6 +449,16 @@ export type { MagicAppInstanceRecord, CreateInstanceParams } from "./magic-app-s
 export { HostingManager } from "./hosting-manager.js";
 export type { HostingConfig, ProjectHostingMeta, HostedProject, InfraStatus, HostingManagerDeps, InstallActionResult, DetectedProjectConfig } from "./hosting-manager.js";
 
+// MCP project config (s131)
+export {
+  projectMcpPath,
+  mcpEntryToServer,
+  readDotMcpJson,
+  readProjectMcpServers,
+  DotMcpJsonSchema,
+} from "./mcp-config-store.js";
+export type { DotMcpJson, McpServerEntry } from "./mcp-config-store.js";
+
 // Service Manager
 export { ServiceManager } from "./service-manager.js";
 export type { ServiceStatus, ServiceManagerDeps } from "./service-manager.js";
