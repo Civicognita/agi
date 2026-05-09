@@ -511,9 +511,13 @@ EOF
   '
 
   echo "==> Starting AGI gateway..."
+  # AIONIMA_TEST_VM=1 marks this gateway process as "running inside the test
+  # VM" — gates test-only endpoints (e.g. /api/services/circuit-breakers/
+  # force-trip from s143 t573) so production gateways never expose them
+  # even on a private network.
   multipass exec "$VM_NAME" -- bash -c '
     cd /mnt/agi
-    nohup node cli/dist/index.js run > /tmp/agi.log 2>&1 &
+    nohup env AIONIMA_TEST_VM=1 node cli/dist/index.js run > /tmp/agi.log 2>&1 &
     echo $! > /tmp/agi.pid
     sleep 3
     echo "  AGI PID: $(cat /tmp/agi.pid)"

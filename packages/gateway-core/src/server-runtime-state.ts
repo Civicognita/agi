@@ -6030,6 +6030,37 @@ export async function createGatewayRuntimeState(
     return reply.send({ ok: true, count });
   });
 
+  // s143 t573 — test-VM-only endpoint that synthesizes an "open" breaker
+  // for an arbitrary service id so the e2e can prove force-trip → render
+  // → reset → cleared without breaking a real service. Gated on
+  // AIONIMA_TEST_VM=1 (the same gate FilesystemSecretsBackend uses) so
+  // production cannot reach this surface even from a private network.
+  // The expected service-id prefix is `service:e2e-` — but the endpoint
+  // doesn't enforce a prefix so other tests (channel/plugin/hosting)
+  // can synthesize their own breakers consistently.
+  fastify.post("/api/services/circuit-breakers/force-trip", async (request, reply) => {
+    if (process.env["AIONIMA_TEST_VM"] !== "1") {
+      return reply.code(404).send({ error: "Not Found" });
+    }
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Services API only allowed from private network" });
+    }
+    if (!deps.circuitBreaker) {
+      return reply.code(503).send({ error: "Circuit breaker tracker not wired" });
+    }
+    const body = (request.body ?? {}) as { serviceId?: string; failures?: number };
+    if (typeof body.serviceId !== "string" || body.serviceId.length === 0) {
+      return reply.code(400).send({ error: "serviceId (string) required" });
+    }
+    // Default 3 failures = threshold (matches CircuitBreakerTracker default).
+    const target = Math.max(1, Math.min(20, body.failures ?? 3));
+    for (let i = 0; i < target; i++) {
+      deps.circuitBreaker.recordFailure(body.serviceId, new Error(`e2e force-trip failure ${String(i + 1)}/${String(target)}`));
+    }
+    return reply.send({ ok: true, serviceId: body.serviceId, state: deps.circuitBreaker.getState(body.serviceId) ?? null });
+  });
+
   // -----------------------------------------------------------------------
   // Federation & Identity routes
   // -----------------------------------------------------------------------

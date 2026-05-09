@@ -55,8 +55,15 @@ export default function ServicesPage() {
   const visibleServices = services.filter((svc) => svc.imageAvailable !== false);
 
   if (visibleServices.length === 0) {
+    // s143 t573 — render the CircuitBreakerSection BEFORE the empty-state
+    // early-return so circuit-broken services are visible even when no
+    // service plugin is registered. Previously, breakers were hidden
+    // behind this branch — a real UX gap caught while wiring the e2e.
+    // CircuitBreakerSection internally returns null when totalCount === 0,
+    // so the empty-state stays clean for the actually-empty case.
     return (
       <PageScroll>
+      <CircuitBreakerSection />
       <div className="text-center py-12">
         <div className="text-[13px] text-muted-foreground mb-2">No services registered</div>
         <div className="text-[11px] text-muted-foreground">
@@ -183,7 +190,20 @@ function CircuitBreakerSection(): React.ReactElement | null {
     return null;
   }
 
-  const entries = Object.entries(data.states);
+  // s143 t573 — section title is "Circuit-broken services". Only render
+  // rows whose breaker is open or half-open. Reset writes status=closed
+  // but does NOT delete the entry (intentional — operators see when each
+  // breaker was last reset), so closed entries leak into the list
+  // otherwise. Hiding closed ones makes the UI self-clearing after Reset
+  // is clicked, and keeps the count summary honest ("N open · M
+  // half-open"). The full state map is still available via API for any
+  // diagnostic surface that wants the full history.
+  const entries = Object.entries(data.states).filter(
+    ([, state]) => state.status === "open" || state.status === "half-open",
+  );
+  if (entries.length === 0) {
+    return null;
+  }
 
   async function handleReset(serviceId: string): Promise<void> {
     setBusy(serviceId);
