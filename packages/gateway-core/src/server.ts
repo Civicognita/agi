@@ -128,7 +128,7 @@ import { ImageBlobStore } from "./image-blob-store.js";
 import { WorkerPromptLoader } from "./worker-prompt-loader.js";
 import { ChatGarbageCollector } from "./chat-garbage-collector.js";
 import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
-import { ensureWorkspaceSkeleton, projectConfigPath } from "./project-config-path.js";
+import { ensureAionimaSystemProject, ensureWorkspaceSkeleton, projectConfigPath } from "./project-config-path.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
@@ -1828,6 +1828,25 @@ export async function startGatewayServer(
       logger.warn(
         "migrate",
         `boot-time s150 skeleton seed failed for ${workspaceRoot} (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    // s119 t701 (2026-05-09) — always-present `_aionima` meta-project
+    // scaffold. Idempotent; creates the universal monorepo layout
+    // beneath `<workspaceRoot>/_aionima/` if missing. Aion chat on this
+    // project lets the owner work on the Aionima system itself.
+    try {
+      const r = ensureAionimaSystemProject(workspaceRoot);
+      if (r.projectJsonCreated || r.scaffoldedFolders.length > 0) {
+        logger.info(
+          "migrate",
+          `boot-time s119 _aionima scaffold: ${r.projectPath} (project.json=${String(r.projectJsonCreated)}, folders=${String(r.scaffoldedFolders.length)})`,
+        );
+      }
+    } catch (err) {
+      logger.warn(
+        "migrate",
+        `boot-time s119 _aionima scaffold failed for ${workspaceRoot} (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }

@@ -323,6 +323,85 @@ export function scaffoldProjectFolders(projectPath: string): { created: string[]
 }
 
 /**
+ * Resolve the always-present `_aionima` system project path beneath a
+ * workspace root. The folder is reserved (per SACRED_PROJECT_NAMES) so
+ * the regular project-enumeration paths skip it; this helper hands the
+ * path to callers that explicitly want to address it (boot-time
+ * scaffolder + always-present injection in t702).
+ */
+export function aionimaSystemProjectPath(workspaceRoot: string): string {
+  return resolvePath(workspaceRoot, "_aionima");
+}
+
+export interface EnsureAionimaSystemResult {
+  /** Resolved `<workspaceRoot>/_aionima` path. */
+  projectPath: string;
+  /** Whether project.json was created this call. */
+  projectJsonCreated: boolean;
+  /** New folders created beneath the project (relative to projectPath). */
+  scaffoldedFolders: string[];
+}
+
+/**
+ * Idempotent boot-time scaffolder for the always-present `_aionima/`
+ * meta-project (s119 t701). Creates the universal monorepo layout
+ * (k/{plans,knowledge,pm,memory,chat}, repos/, sandbox/, .trash/) and
+ * a starter project.json declaring `type: aionima-system`,
+ * `name: "Aionima"` if missing.
+ *
+ * Non-destructive: existing files (including the legacy 9 forks
+ * currently at `_aionima/{agi,prime,...}` pre-t703-migration) are
+ * left alone. Once t703 runs, the forks live under `_aionima/repos/`
+ * and the new layout is the canonical shape.
+ *
+ * Bypasses the SACRED_PROJECT_NAMES guard intentionally — this is the
+ * meta-project's own scaffolder, not a generic per-project migration.
+ */
+export function ensureAionimaSystemProject(
+  workspaceRoot: string,
+): EnsureAionimaSystemResult {
+  const projectPath = aionimaSystemProjectPath(workspaceRoot);
+  if (!existsSync(projectPath)) {
+    mkdirSync(projectPath, { recursive: true });
+  }
+
+  // Scaffold the universal monorepo layout. Inline the layout list rather
+  // than calling scaffoldProjectFolders() because the latter sacred-skips
+  // _aionima — and the meta-project IS sacred (no auto-migration of its
+  // forks), but the layout itself is exactly what we want here.
+  const scaffoldedFolders: string[] = [];
+  const layout = findProjectSkeletonRoot();
+  if (layout) {
+    const created = copySkeletonInto(layout, projectPath);
+    for (const c of created) scaffoldedFolders.push(c.replace(`${projectPath}/`, ""));
+  } else {
+    for (const rel of PROJECT_FOLDER_LAYOUT_FALLBACK) {
+      const abs = join(projectPath, rel);
+      if (!existsSync(abs)) {
+        mkdirSync(abs, { recursive: true });
+        scaffoldedFolders.push(rel);
+      }
+    }
+  }
+
+  // Create starter project.json if missing. Type + name are pinned per
+  // s119 t700 (aionima-system type registered in project-types.ts).
+  const projectJsonPath = join(projectPath, "project.json");
+  let projectJsonCreated = false;
+  if (!existsSync(projectJsonPath)) {
+    const starter = {
+      name: "Aionima",
+      type: "aionima-system",
+      createdAt: new Date().toISOString(),
+    };
+    writeFileSync(projectJsonPath, JSON.stringify(starter, null, 2) + "\n", "utf-8");
+    projectJsonCreated = true;
+  }
+
+  return { projectPath, projectJsonCreated, scaffoldedFolders };
+}
+
+/**
  * Idempotent migration helper. If the legacy config exists and the new
  * one doesn't, copy the file (creating `<projectPath>/.agi/` if needed)
  * and scaffold the s130 folder layout. Returns details about what
