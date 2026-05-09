@@ -408,6 +408,7 @@ export type { ProjectTypeDefinition, ProjectTypeTool, ContainerConfig, ProjectCa
 
 // Stacks
 export { StackRegistry } from "./stack-registry.js";
+export { filterStackActionsForRepo } from "./stack-types.js";
 export type {
   StackCategory, StackRequirement, StackGuide,
   StackContainerContext, StackContainerConfig, StackDatabaseConfig,

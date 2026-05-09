@@ -95,6 +95,27 @@ export interface StackInstallAction {
   command: string;
   /** If true, skip on error and continue with next action. */
   optional?: boolean;
+  /**
+   * Per-repo visibility filter (s141 t553). When set, the action only
+   * surfaces for repos where `whenRepo(ctx)` returns true. When unset,
+   * the action shows on every repo with the stack attached (backward
+   * compat — covers the project-level intent).
+   *
+   * Plugin authors decide whether their actions are project-level or
+   * repo-level. Examples:
+   *   - "Run migrations" on a `database` stack: project-level (one DB,
+   *     one set of migrations) — leave whenRepo unset.
+   *   - "Restart vite dev server" on a framework stack: repo-level
+   *     (each repo has its own dev server) — `whenRepo: ({ repoName })
+   *     => Boolean(repoName)` shows it only when called with a real
+   *     repo context.
+   *
+   * `repoName` is empty string when the caller is a project-level
+   * surface (the legacy stack-card actions list); `repoCount` is the
+   * total number of repos on the project so plugin authors can short-
+   * circuit single-repo projects with `repoCount === 1`.
+   */
+  whenRepo?: (ctx: { projectPath: string; repoName: string; repoCount: number }) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +141,25 @@ export interface StackScaffoldingConfig {
   description?: string;
   command: string[];
   expectedOutput?: string[];
+}
+
+/**
+ * Filter a stack's install actions by per-repo predicate (s141 t553).
+ *
+ * Default (no `whenRepo`): action shows on every repo with the stack —
+ * preserves the project-level legacy semantics.
+ *
+ * @param actions     The stack's `installActions` (or undefined).
+ * @param ctx         Repo context: `repoName` is empty string for
+ *                    project-level surfaces; `repoCount` is the total
+ *                    number of repos on the project.
+ */
+export function filterStackActionsForRepo(
+  actions: StackInstallAction[] | undefined,
+  ctx: { projectPath: string; repoName: string; repoCount: number },
+): StackInstallAction[] {
+  if (!actions || actions.length === 0) return [];
+  return actions.filter((a) => (a.whenRepo === undefined ? true : a.whenRepo(ctx)));
 }
 
 // ---------------------------------------------------------------------------

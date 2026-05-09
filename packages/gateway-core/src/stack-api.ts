@@ -10,6 +10,7 @@ import type { StackRegistry } from "./stack-registry.js";
 import type { SharedContainerManager } from "./shared-container-manager.js";
 import type { HostingManager } from "./hosting-manager.js";
 import type { ProjectCategory } from "./project-types.js";
+import { filterStackActionsForRepo } from "./stack-types.js";
 import type { StackCategory } from "./stack-types.js";
 import type { ComponentLogger } from "./logger.js";
 import type { RuntimeDefinition } from "@agi/plugins";
@@ -145,6 +146,43 @@ export function registerStackRoutes(app: FastifyInstance, deps: StackApiDeps): v
 
     const stacks = hostingManager.getProjectStacks(query.path);
     reply.send({ stacks });
+  });
+
+  // GET /api/hosting/stacks/actions — list stack install actions visible to a
+  // specific repo within a project (s141 t553). Filters each stack's
+  // installActions through `whenRepo({projectPath, repoName, repoCount})`.
+  // When `repo` is omitted, returns the project-level surface
+  // (`repoName: ""`) — preserves the legacy stack-card actions list.
+  app.get("/api/hosting/stacks/actions", async (request, reply) => {
+    const query = request.query as { path?: string; repo?: string };
+    if (!query.path) {
+      reply.code(400).send({ error: "path query parameter required" });
+      return;
+    }
+
+    const projectPath = query.path;
+    const repoName = query.repo ?? "";
+    const instances = hostingManager.getProjectStacks(projectPath);
+    // Count repos via the existing config-manager accessor (no new method
+    // on HostingManager). projectConfigManager isn't directly on
+    // StackApiDeps, so route through hostingManager which holds it.
+    const repoCount = (hostingManager as unknown as {
+      configMgr: { getRepos(p: string): unknown[] } | undefined;
+    }).configMgr?.getRepos(projectPath).length ?? 0;
+    const ctx = { projectPath, repoName, repoCount };
+
+    const result = instances.map((instance) => {
+      const def = stackRegistry.get(instance.stackId);
+      const actions = def ? filterStackActionsForRepo(def.installActions, ctx) : [];
+      return {
+        stackId: instance.stackId,
+        actions: actions.map(({ id, label, description, optional }) => ({
+          id, label, description, optional,
+        })),
+      };
+    });
+
+    reply.send({ stacks: result, repoCount });
   });
 
   // GET /api/stacks/compatible-runtimes — runtimes filtered by installed stacks' compatibleLanguages
