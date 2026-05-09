@@ -131,7 +131,7 @@ describe("LayeredPmProvider", () => {
     primary.getActiveFocusProgress = vi.fn(async () => { throw new Error("offline"); });
     const fallback = makeMockProvider("fallback");
     fallback.getActiveFocusProgress = vi.fn(async () => ({
-      totalTasks: 5, doneTasks: 2, qaTasks: 1, doingTasks: 1, backlogTasks: 1, blockedTasks: 0, inProgressTasks: 2,
+      totalTasks: 5, doneTasks: 2, qaTasks: 1, doingTasks: 1, backlogTasks: 1, blockedTasks: 0, inProgressTasks: 2, percentComplete: 40,
     }));
     const layered = new LayeredPmProvider({ primary, fallback });
 

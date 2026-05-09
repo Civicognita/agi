@@ -150,6 +150,67 @@ export async function fetchProjects(): Promise<ProjectInfo[]> {
   return res.json() as Promise<ProjectInfo[]>;
 }
 
+// ---------------------------------------------------------------------------
+// PM-Lite — Wish #17 / s155 t671. Owner directive: "always available file-
+// based PM workflow + UI" with DONE/CURRENT/NEXT views.
+// ---------------------------------------------------------------------------
+
+export type PmView = "done" | "current" | "next";
+
+export interface PmTaskLite {
+  id: string;
+  number: number;
+  storyId: string;
+  title: string;
+  status: string;
+  description?: string;
+  priority?: "active" | "qa" | "blocked";
+  verificationSteps?: string[];
+  codeArea?: string;
+}
+
+export interface PmPlanLite {
+  id: string;
+  title: string;
+  status: string;
+  projectPath: string;
+  createdAt: string;
+  updatedAt: string;
+  steps: Array<{ id: string; title: string; type: string; status: string }>;
+  body: string;
+}
+
+export async function fetchPmView(view: PmView, opts: { storyId?: string; limit?: number } = {}): Promise<{ view: PmView; tasks: PmTaskLite[]; providerId: string }> {
+  const params = new URLSearchParams({ view });
+  if (opts.storyId !== undefined) params.set("storyId", opts.storyId);
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  const res = await fetch(`/api/pm/view?${params.toString()}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ view: PmView; tasks: PmTaskLite[]; providerId: string }>;
+}
+
+export async function fetchPmPlans(projectPath: string): Promise<PmPlanLite[]> {
+  const res = await fetch(`/api/pm/plans?projectPath=${encodeURIComponent(projectPath)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { plans: PmPlanLite[] };
+  return data.plans;
+}
+
+export async function fetchPmPlan(projectPath: string, planId: string): Promise<PmPlanLite> {
+  const res = await fetch(`/api/pm/plans/${encodeURIComponent(planId)}?projectPath=${encodeURIComponent(projectPath)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<PmPlanLite>;
+}
+
 export async function createProject(params: {
   name: string;
   tynnToken?: string;

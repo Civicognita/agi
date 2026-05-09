@@ -23,6 +23,7 @@ import { CoreForkRepoPanel } from "./CoreForkRepoPanel.js";
 import { HostingPanel } from "./HostingPanel.js";
 import { EnvManager } from "./EnvManager.js";
 import { TaskmasterTab } from "./TaskmasterTab.js";
+import { PmLitePanel } from "./PmLitePanel.js";
 import { IterativeWorkTab } from "./IterativeWorkTab.js";
 import { MCPTab } from "./MCPTab.js";
 import { ProjectActivityTab } from "./ProjectActivityTab.js";
@@ -83,6 +84,9 @@ const CANVAS_LABELS: Record<string, string> = {
   // s150 t637 — "magic-apps" tab dropped; MApps config now lives inside the
   // Hosting tab when type is Desktop-served. Label removed from this map.
   taskmaster: "TaskMaster",
+  // Wish #17 / s155 t671 — Plans tab. Always available file-based PM-Lite
+  // surface with DONE/CURRENT/NEXT views.
+  plans: "Plans",
   security: "Security",
   activity: "Activity",
 };
@@ -200,6 +204,8 @@ export function ProjectDetail({
     // s150 t637 — "magic-apps" tab dropped; MApps config now lives inside the
     // Hosting tab when type is Desktop-served.
     "taskmaster": "coordinate",
+    // Wish #17 / s155 t671 — Plans tab in coordinate mode (PM workflow).
+    "plans": "coordinate",
     "security": "insight",
     "activity": "insight",
   };
@@ -216,7 +222,7 @@ export function ProjectDetail({
   useEffect(() => {
     if (!tabBelongsToMode(activeTab)) {
       // Find first tab in current mode (prefer the canonical first one)
-      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "taskmaster", "security", "activity"];
+      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "taskmaster", "plans", "security", "activity"];
       const firstInMode = candidates.find((id) => TAB_MODES[id] === currentMode);
       if (firstInMode) setActiveTab(firstInMode);
     }
@@ -691,6 +697,9 @@ export function ProjectDetail({
                 entries.push({ value: "environment", label: "Environment" });
               }
               if (tabBelongsToMode("taskmaster")) entries.push({ value: "taskmaster", label: "TaskMaster" });
+              // Wish #17 / s155 t671 — Plans entry. Available for every
+              // project (no hasCode gate) since PM-Lite is universal.
+              if (tabBelongsToMode("plans")) entries.push({ value: "plans", label: "Plans" });
               if (
                 tabBelongsToMode("iterative-work")
                 && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible)
@@ -1407,6 +1416,13 @@ export function ProjectDetail({
           <Card className="p-4">
             <TaskmasterTab projectPath={project.path} />
           </Card>
+        </TabsContent>
+
+        {/* Wish #17 / s155 t671 — Plans tab (PM-Lite). Always available;
+            DONE/CURRENT/NEXT views over the layered PM provider, plus a
+            file-based plan list straight from <projectPath>/k/plans/. */}
+        <TabsContent value="plans" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <PmLitePanel projectPath={project.path} />
         </TabsContent>
 
         {(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
