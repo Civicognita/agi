@@ -150,6 +150,14 @@ export interface SystemPromptContext {
   /** Active project path — when set, injects plan workflow instructions. */
   projectPath?: string;
   /**
+   * UserNotes for the active project + global notes (s152 t651, 2026-05-09).
+   * Caller (agent-invoker) reads from NotesStore before assembly. Pinned
+   * notes are included first, then most-recently-updated. The assembler
+   * injects them into the project-context section so Aion sees what the
+   * user wrote — closes the user-writes-note → Aion-reads-note loop.
+   */
+  projectNotes?: Array<{ title: string; body: string; pinned: boolean; updatedAt: string; scope: "project" | "global" }>;
+  /**
    * Active project category — sourced from `project.json`'s `category` field
    * (literature/app/web/media/administration/ops/monorepo). When the category
    * is `"ops"` or `"administration"`, the assembler injects an ops-mode
@@ -617,7 +625,10 @@ function buildOpsModeSection(): string {
  * Reads the project's package.json for name/version/description.
  * Injected before plan workflow instructions when projectPath is set.
  */
-function buildProjectContextSection(projectPath: string): string {
+function buildProjectContextSection(
+  projectPath: string,
+  notes?: Array<{ title: string; body: string; pinned: boolean; updatedAt: string; scope: "project" | "global" }>,
+): string {
   const lines: string[] = ["## Active Project"];
   lines.push(`Path: ${projectPath}`);
 
@@ -639,6 +650,31 @@ function buildProjectContextSection(projectPath: string): string {
 
   lines.push("");
   lines.push("You are scoped to this project. All file operations, analysis, and tool use should be relative to this project path. When answering questions, draw on your knowledge of this project's structure and purpose.");
+
+  // s152 t651 — UserNotes injection. The owner writes free-form notes
+  // (markdown) per-project + global; this section surfaces them to Aion
+  // as project context, the same way Dev Notes are consumed.
+  if (notes !== undefined && notes.length > 0) {
+    lines.push("");
+    lines.push("## Project Notes");
+    lines.push("");
+    lines.push("The following notes were written by the owner. Treat them as authoritative project context — they capture intent, decisions, and TODOs that aren't in the code. Pinned notes are listed first.");
+    lines.push("");
+    for (const note of notes) {
+      const scopeTag = note.scope === "global" ? " [global]" : "";
+      const pinTag = note.pinned ? " ★" : "";
+      lines.push(`### ${note.title}${pinTag}${scopeTag}`);
+      lines.push("");
+      const body = note.body.trim();
+      if (body.length > 0) {
+        lines.push(body);
+      } else {
+        lines.push("*(empty)*");
+      }
+      lines.push("");
+    }
+    lines.push(`Use the \`notes\` tool (action=\`read\`/\`search\`/\`append\`) to fetch additional notes or capture new ones for the owner.`);
+  }
 
   return lines.join("\n");
 }
@@ -840,7 +876,7 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
   // Project context — for project work. Plan workflow is instruction-heavy
   // and gets dropped in local mode; project path itself is preserved.
   if (rt === "project" && ctx.projectPath !== undefined) {
-    sections.push(buildProjectContextSection(ctx.projectPath));
+    sections.push(buildProjectContextSection(ctx.projectPath, ctx.projectNotes));
     // Ops-mode preamble — sits next to project context so the agent reads
     // "this is project X" + "here's the cross-project authority you have"
     // back-to-back. Gated on category, mirrors requiresProjectCategory tool gate.
@@ -1004,7 +1040,7 @@ export function assembleSystemPromptWithBreakdown(
   }
 
   if (rt === "project" && ctx.projectPath !== undefined) {
-    contextSections.push(buildProjectContextSection(ctx.projectPath));
+    contextSections.push(buildProjectContextSection(ctx.projectPath, ctx.projectNotes));
     if (ctx.projectCategory === "ops" || ctx.projectCategory === "administration") {
       contextSections.push(buildOpsModeSection());
     }
