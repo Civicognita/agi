@@ -138,6 +138,22 @@ The dump path is printed on stdout; share the file with whoever is helping
 diagnose. Sensitive values are redacted but log tails are not — review the
 bundle before sharing externally.
 
+#### agi doctor logs
+
+Tail recent logs and surface known crash patterns. Each match category
+includes a count, sample lines, and a pointer to the relevant repair
+surface. Categories: schema-error (ZodError / ZodIssue), port-conflict
+(EADDRINUSE), segfault, unhandled-rejection, container-exit-nonzero,
+restart-loop / fuse-popped, OOM.
+
+```bash
+agi doctor logs                # default 500 lines per file
+agi doctor logs --lines 2000   # cap is 5000 per file
+```
+
+Reads from `~/.agi/logs/` (top 5 most-recent .log/.jsonl files) and
+`/tmp/agi.log`. Pure pattern matching — no journalctl shell-out yet.
+
 ---
 
 ### agi config

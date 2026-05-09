@@ -985,6 +985,73 @@ export function redactConfig(value: unknown): unknown {
   return value;
 }
 
+// ---------------------------------------------------------------------------
+// `agi doctor logs` — Tail recent logs and classify by crash pattern (s144 t581)
+// ---------------------------------------------------------------------------
+
+/**
+ * Known crash patterns surfaced by `agi doctor logs`. The order is
+ * load-bearing: earlier entries win on ambiguous lines (e.g. a ZodError
+ * mention in an unhandledRejection log line classifies as schema-error,
+ * which is the more actionable category).
+ */
+export const LOG_PATTERNS = [
+  {
+    id: "schema-error",
+    label: "Schema validation error",
+    regex: /\bZod(Error|Issue)\b|schema validation (?:rejected|failed)/i,
+    repair: "Run `agi doctor schema` for the offending file. Cycle 150 caught a project.json drift this way.",
+  },
+  {
+    id: "port-conflict",
+    label: "Port already in use",
+    regex: /\bEADDRINUSE\b/i,
+    repair: "Another process is bound to the gateway port (default 3100). `lsof -iTCP:3100 -sTCP:LISTEN` to identify; stop it or change `gateway.port` in gateway.json.",
+  },
+  {
+    id: "segfault",
+    label: "Segfault / SIGSEGV",
+    regex: /\bsegfault\b|signal: SIGSEGV|core dumped/i,
+    repair: "Native crash. Capture `agi doctor dump` and the journalctl tail; likely a node-pty / podman / hf-runtime issue. Open an incident.",
+  },
+  {
+    id: "unhandled-rejection",
+    label: "Unhandled promise rejection",
+    regex: /unhandled\s*(?:promise\s*)?rejection|unhandledrejection/i,
+    repair: "Async error escaped a handler. Capture `agi doctor dump` for the stack; root-cause via the surrounding log lines.",
+  },
+  {
+    id: "container-exit-nonzero",
+    label: "Container exited non-zero",
+    regex: /\bexited (?:with )?(?:status |code )(?:[1-9]|\d{2,})\b|\bcontainer\b[^\n]*?\bexit\s+code\s+(?:[1-9]|\d{2,})\b/i,
+    repair: "A hosted-project or system-service container failed. `agi doctor` repos / hosting groups + `podman logs <name>` for context.",
+  },
+  {
+    id: "restart-loop",
+    label: "Restart loop / fuse popped",
+    regex: /restart\s*(?:count|loop)|fuse popped/i,
+    repair: "podman --restart=always is cycling a broken container. Hosting circuit-breaker (s143) should trip after 3 failures; if not, check the breaker state and reset.",
+  },
+  {
+    id: "oom",
+    label: "Out of memory",
+    regex: /\b(?:out of memory|OOM(?:Killer)?)\b|killed.*(?:memory|by\s+OOM)/i,
+    repair: "OOM killer activated. Check `free -m` and lemonade/HF model RAM ceilings; reduce model concurrency.",
+  },
+] as const;
+
+/**
+ * Classify a single log line by the first matching crash pattern.
+ * Returns `null` when no pattern matches. Pure function — pulled out
+ * for unit testing.
+ */
+export function classifyLogLine(line: string): string | null {
+  for (const p of LOG_PATTERNS) {
+    if (p.regex.test(line)) return p.id;
+  }
+  return null;
+}
+
 /** Read up to N most-recent lines of a file (best-effort). Returns [] on any error. */
 function tailFile(path: string, lines: number): string[] {
   try {
@@ -1240,6 +1307,76 @@ export function registerDoctorCommand(program: Command): void {
       } catch (err) {
         console.error(`${red("✗")} failed to write bundle: ${err instanceof Error ? err.message : String(err)}`);
         process.exitCode = 1;
+      }
+    });
+
+  // s144 t581 — `agi doctor logs` tails recent logs and classifies any
+  // matching crash patterns, with a repair pointer per pattern.
+  doctor
+    .command("logs")
+    .description("Tail recent logs and surface known crash patterns (ZodError, EADDRINUSE, segfault, OOM, container exit, restart loop)")
+    .option("--lines <n>", "Lines to inspect per log file (default 500)", "500")
+    .action((cmdOpts: { lines?: string }) => {
+      const linesPerFile = Math.max(50, Math.min(5000, Number(cmdOpts.lines ?? 500)));
+      const sources: { path: string; lines: string[] }[] = [];
+
+      // Collect from the same locations as `agi doctor dump`.
+      const logsDir = join(homedir(), ".agi", "logs");
+      if (existsSync(logsDir)) {
+        try {
+          const entries = readdirSync(logsDir).filter((f) => f.endsWith(".log") || f.endsWith(".jsonl"));
+          const ranked = entries.map((f) => {
+            const p = join(logsDir, f);
+            try { return { f, mtime: statSync(p).mtimeMs, path: p }; } catch { return { f, mtime: 0, path: p }; }
+          }).sort((a, b) => b.mtime - a.mtime).slice(0, 5);
+          for (const r of ranked) sources.push({ path: r.path, lines: tailFile(r.path, linesPerFile) });
+        } catch {
+          // ignore
+        }
+      }
+      const tmpLog = "/tmp/agi.log";
+      if (existsSync(tmpLog)) sources.push({ path: tmpLog, lines: tailFile(tmpLog, linesPerFile) });
+
+      // Bucket lines by pattern id.
+      const buckets = new Map<string, { count: number; samples: string[]; sources: Set<string> }>();
+      let totalLines = 0;
+      for (const src of sources) {
+        for (const raw of src.lines) {
+          if (raw.length === 0) continue;
+          totalLines++;
+          const id = classifyLogLine(raw);
+          if (!id) continue;
+          let bucket = buckets.get(id);
+          if (!bucket) {
+            bucket = { count: 0, samples: [], sources: new Set() };
+            buckets.set(id, bucket);
+          }
+          bucket.count++;
+          bucket.sources.add(src.path);
+          if (bucket.samples.length < 3) bucket.samples.push(raw.slice(0, 200));
+        }
+      }
+
+      console.log();
+      console.log(bold("  agi doctor logs"));
+      console.log(`  ${dim(`scanned ${String(totalLines)} lines across ${String(sources.length)} log file(s)`)}`);
+      console.log();
+
+      if (buckets.size === 0) {
+        console.log(`  ${green("No known crash patterns found")}`);
+        console.log();
+        return;
+      }
+
+      for (const pattern of LOG_PATTERNS) {
+        const bucket = buckets.get(pattern.id);
+        if (!bucket) continue;
+        console.log(`  ${red("✗")} ${bold(pattern.label)} ${dim(`(${String(bucket.count)} hit${bucket.count === 1 ? "" : "s"} across ${String(bucket.sources.size)} file${bucket.sources.size === 1 ? "" : "s"})`)}`);
+        for (const sample of bucket.samples) {
+          console.log(`    ${dim(sample)}`);
+        }
+        console.log(`    ${yellow("→")} ${pattern.repair}`);
+        console.log();
       }
     });
 }
