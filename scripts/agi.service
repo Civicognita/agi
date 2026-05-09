@@ -18,7 +18,14 @@ Environment=NODE_EXTRA_CA_CERTS=/var/lib/caddy/.local/share/caddy/pki/authoritie
 # --- END CREDENTIALS ---
 
 ExecStart=/usr/bin/node /opt/agi/cli/dist/index.js run
-Restart=on-failure
+# Restart=always (not on-failure) — the dashboard's Gateway Restart button
+# (POST /api/gateway/restart) and `agi restart` both send SIGTERM to the
+# process, which the gateway handles as a clean shutdown (exit 0). With
+# Restart=on-failure, systemd treats clean exits as success and does NOT
+# bring the service back up — meaning Restart became Stop in practice.
+# Restart=always brings it back regardless of exit code; `systemctl stop
+# agi` still stops it (state transition, not exit-code-driven).
+Restart=always
 RestartSec=5
 TimeoutStopSec=10
 KillMode=mixed
