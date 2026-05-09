@@ -2327,6 +2327,12 @@ export async function startGatewayServer(
   try {
     const { readProjectEnv, resolveDollarVars, resolveDollarVarsObject } = await import("./project-env-store.js");
     const { projectConfigPath: pcp, projectSlug: pslug } = await import("./project-config-path.js");
+    // s131 t682 — read MCP servers via the dual-read API. Prefers
+    // `<projectPath>/.mcp.json` (Claude Code convention) over the legacy
+    // `project.json mcp.servers[]` block. Boot-time migration (t681)
+    // already brings unmigrated projects forward, so by this point most
+    // projects read from .mcp.json directly.
+    const { readProjectMcpServers: readMcpDual } = await import("./mcp-config-store.js");
     for (const projectDir of projectPaths) {
       try {
         const { readdirSync, statSync } = await import("node:fs");
@@ -2336,8 +2342,12 @@ export async function startGatewayServer(
           const cfgPath = pcp(fullPath);
           if (!existsSync(cfgPath)) continue;
           const raw = JSON.parse(readFileSync(cfgPath, "utf-8")) as { mcp?: { servers?: Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> } };
-          const projectServers = raw.mcp?.servers ?? [];
+          const dualResult = readMcpDual(fullPath, raw.mcp?.servers as Parameters<typeof readMcpDual>[1]);
+          const projectServers = dualResult.servers as Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }>;
           if (projectServers.length === 0) continue;
+          if (dualResult.source === "legacy") {
+            log.info(`mcp: project ${entry} still using legacy project.json mcp.servers — migration will run on next restart`);
+          }
           const projectEnv = readProjectEnv(fullPath);
           // s128 cycle 86 — per-project secret resolver. $VAR reads from the
           // project's .env (legacy); vault://<id> resolves through VaultResolver

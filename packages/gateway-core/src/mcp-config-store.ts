@@ -41,7 +41,7 @@
  * verbatim.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import type { ProjectMcpServer } from "@agi/config";
@@ -166,4 +166,73 @@ export function readProjectMcpServers(
   if (fromDot !== null) return { servers: fromDot, source: "dotmcp" };
   if (legacyServers && legacyServers.length > 0) return { servers: legacyServers, source: "legacy" };
   return { servers: [], source: "none" };
+}
+
+/**
+ * Inverse of `mcpEntryToServer` — translate one internal ProjectMcpServer
+ * into the Claude-Code-shaped `.mcp.json` entry. Lives here (not in the
+ * migration module) so the write helpers below can call it without a
+ * circular import. The migration module re-exports it for back-compat.
+ *
+ * - `transport` → `type`
+ * - `command: string[]` → split into `{ command, args }` (head + tail)
+ * - `authToken` → `headers: { Authorization: "Bearer <token>" }` for
+ *   http/websocket only (stdio keeps authToken in env there)
+ */
+export function serverToMcpEntry(server: ProjectMcpServer): McpServerEntry {
+  const entry: McpServerEntry = {
+    type: server.transport,
+    autoConnect: server.autoConnect,
+  };
+  if (server.name !== undefined) entry.name = server.name;
+  if (server.url !== undefined) entry.url = server.url;
+  if (server.command !== undefined && server.command.length > 0) {
+    entry.command = server.command[0];
+    if (server.command.length > 1) entry.args = server.command.slice(1);
+  }
+  if (server.env !== undefined) entry.env = server.env;
+  if (server.authToken !== undefined && (server.transport === "http" || server.transport === "websocket")) {
+    entry.headers = { Authorization: `Bearer ${server.authToken}` };
+  }
+  return entry;
+}
+
+/**
+ * Write the full set of servers to `.mcp.json`, replacing any existing
+ * file. Atomic via temp + rename so a SIGINT mid-write can't leave a
+ * torn file. Pass an empty array to write `{ mcpServers: {} }` (used
+ * when the last server is removed).
+ */
+export function writeDotMcpJson(projectPath: string, servers: readonly ProjectMcpServer[]): void {
+  const path = projectMcpPath(projectPath);
+  const mcpServers: Record<string, McpServerEntry> = {};
+  for (const server of servers) mcpServers[server.id] = serverToMcpEntry(server);
+  const payload: DotMcpJson = { mcpServers };
+  // Atomic write — temp + rename so a torn file can't surface mid-write.
+  const tmp = `${path}.tmp.${String(process.pid)}`;
+  writeFileSync(tmp, JSON.stringify(payload, null, 2) + "\n", "utf-8");
+  renameSync(tmp, path);
+}
+
+/**
+ * Add or update a single server in `.mcp.json`. Reads existing entries,
+ * upserts by id, writes the merged set. Idempotent on re-add of the
+ * same id with the same payload.
+ */
+export function setDotMcpServer(projectPath: string, server: ProjectMcpServer): void {
+  const existing = readDotMcpJson(projectPath) ?? [];
+  const filtered = existing.filter((s) => s.id !== server.id);
+  filtered.push(server);
+  writeDotMcpJson(projectPath, filtered);
+}
+
+/**
+ * Remove a server from `.mcp.json` by id. No-op when the file or id
+ * doesn't exist (caller doesn't need to check first).
+ */
+export function removeDotMcpServer(projectPath: string, id: string): void {
+  const existing = readDotMcpJson(projectPath);
+  if (existing === null) return;
+  const filtered = existing.filter((s) => s.id !== id);
+  writeDotMcpJson(projectPath, filtered);
 }
