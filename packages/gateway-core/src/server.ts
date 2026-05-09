@@ -50,6 +50,7 @@ import { BackupManager } from "./backup-manager.js";
 import { registerComplianceRoutes } from "./compliance-api.js";
 import { registerSecurityRoutes } from "./security-api.js";
 import { registerProvidersRoutes } from "./providers-api.js";
+import { registerPmRoutes } from "./pm-api.js";
 import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
 import { COAChainLogger } from "@agi/coa-chain";
@@ -2962,6 +2963,15 @@ export async function startGatewayServer(
             const provider = getLLMProvider();
             return provider instanceof AgentRouter ? provider.getRecentDecisions(limit) : [];
           },
+        }),
+        // s155 t671 — PM REST surface. Mirrors the agent's `pm` tool but
+        // for the dashboard PM-Lite panel (DONE/CURRENT/NEXT views).
+        // Wraps the same LayeredPmProvider so reads + plan lookups always
+        // succeed, even if no remote PM provider is configured.
+        (f) => registerPmRoutes(f, {
+          pmProvider,
+          planStore,
+          workspaceProjects: projectPaths,
         }),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
