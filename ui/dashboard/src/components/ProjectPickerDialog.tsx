@@ -13,7 +13,7 @@
  */
 
 import { useState } from "react";
-import { Modal } from "@particle-academy/react-fancy";
+import { Modal, Input } from "@particle-academy/react-fancy";
 import { Button } from "@/components/ui/button.js";
 import type { MagicAppInfo, ProjectInfo } from "@/types.js";
 
@@ -50,12 +50,15 @@ export function ProjectPickerDialog({ open, onSelect, onClose, projects, title, 
         <div>
           <h3 className="text-sm font-semibold text-foreground">{title ?? "Select a Project"}</h3>
           <p className="text-[11px] text-muted-foreground mt-0.5">MagicApps are project-anchored — choose which project to open this app for.</p>
-          <input
-            type="text"
+          {/* s142 t561 — PAx Input. Brings consistent focus styles +
+              affix-slot scaffolding (leading/trailing) for free + a
+              proper onValueChange callback shape. */}
+          <Input
+            type="search"
             placeholder="Search projects..."
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="mt-2 w-full px-2.5 py-1.5 rounded-md border border-border bg-background text-foreground text-xs"
+            onValueChange={setFilter}
+            className="mt-2 w-full"
             autoFocus
           />
         </div>
