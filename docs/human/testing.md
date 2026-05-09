@@ -167,17 +167,30 @@ When to use which:
 
 Pattern arg matches against spec filename (case-insensitive substring); omit to run all specs.
 
-#### Dev-side spec discovery — `AGI_TEST_DEV_REPO_DIR`
+#### Dev-side spec discovery (auto-prefers `~/temp_core/agi`)
 
-`agi test --e2e <pattern>` resolves specs against `/opt/agi/` by default (where `agi-cli.sh` lives). During /loop sessions where the dev tree at `~/temp_core/agi/` runs ahead of `/opt/agi/` between owner-triggered upgrades, brand-new specs added on dev source are invisible to the wrapper.
+`agi test <pattern>` runs from the deployed install (`/opt/agi/`) but auto-prefers the host dev tree at `~/temp_core/agi/` for spec discovery when that tree exists. This means brand-new specs added on dev source are runnable pre-deploy without any extra ceremony — the wrapper sees them automatically.
 
-Set `AGI_TEST_DEV_REPO_DIR` to point at the dev tree to make `find e2e -iname …` resolve from there:
+The detection order:
+
+1. **`AGI_TEST_DEV_REPO_DIR=<path>`** explicit override — when set + valid (directory containing `package.json`), wins over everything else.
+2. **Auto-prefer `$HOME/temp_core/agi/`** — when the script runs from `/opt/agi*` AND that dev tree exists with a `package.json`, it becomes `REPO_DIR`. This is the default for normal dev workflow on the owner machine. Logged at run time so you can see which tree resolved.
+3. **`/opt/agi/` fallback** — production-only installs (no dev tree) keep the legacy behavior.
+
+Examples:
 
 ```bash
-AGI_TEST_DEV_REPO_DIR=$HOME/temp_core/agi agi test --e2e walk/my-new-spec
+# Default: dev tree auto-preferred when present
+agi test --e2e walk/my-new-spec
+
+# Explicit override (e.g. testing a different dev branch)
+AGI_TEST_DEV_REPO_DIR=$HOME/projects/agi-fork agi test --e2e walk/my-new-spec
+
+# Force production-only discovery (rare)
+AGI_TEST_DEV_REPO_DIR=/opt/agi agi test --e2e walk/my-new-spec
 ```
 
-The wrapper validates the path (must be a directory + contain `package.json`); falls back to the default if invalid. The test VM mounts dev source live, so the runtime target already matches dev — only the spec-discovery path needed the override. Same env var works for unit specs (`--unit`) too.
+The test VM mounts dev source live, so the runtime target already matches dev — only the spec-discovery path needed the override. Same behavior for unit specs (`--unit`) too.
 
 #### Auto-skip when VM > host
 
