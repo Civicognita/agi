@@ -471,6 +471,116 @@ function inspectCertFile(path: string): { subject: string; daysUntilExpiry: numb
   }
 }
 
+// ---------------------------------------------------------------------------
+// Container diagnostics — agi-* podman containers (s144 t576)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-container summary derived from `podman ps -a --format json`.
+ * Pulled out as a typed shape so the parser can be unit-tested without
+ * a real podman call.
+ */
+export interface ContainerSummary {
+  name: string;
+  status: string;
+  state: string;
+  exitCode: number;
+  restartCount: number;
+  startedAt: string;
+}
+
+/**
+ * Normalize a single entry from `podman ps -a --format json` into the
+ * fields we surface. podman's JSON output has historically varied across
+ * versions in casing (Names vs names, ExitCode vs exitcode); this
+ * accepts the union shapes and falls back to safe defaults.
+ */
+export function normalizePodmanEntry(entry: Record<string, unknown>): ContainerSummary {
+  const namesField = (entry["Names"] ?? entry["names"]) as unknown;
+  const name = Array.isArray(namesField)
+    ? (namesField[0] as string | undefined) ?? "(unknown)"
+    : typeof namesField === "string" ? namesField : "(unknown)";
+  const status = String(entry["Status"] ?? entry["status"] ?? "");
+  const state = String(entry["State"] ?? entry["state"] ?? "");
+  const exitCodeRaw = entry["ExitCode"] ?? entry["exitcode"] ?? entry["exitCode"] ?? 0;
+  const exitCode = typeof exitCodeRaw === "number" ? exitCodeRaw : Number(exitCodeRaw) || 0;
+  const restartRaw = entry["RestartCount"] ?? entry["restartcount"] ?? entry["restartCount"] ?? 0;
+  const restartCount = typeof restartRaw === "number" ? restartRaw : Number(restartRaw) || 0;
+  const startedAt = String(entry["StartedAt"] ?? entry["startedat"] ?? entry["startedAt"] ?? "");
+  return { name, status, state, exitCode, restartCount, startedAt };
+}
+
+/**
+ * Classify a container as healthy / warn / failing for the diagnostic.
+ *   - failing: state !== running AND exitCode !== 0 (truly broken)
+ *   - warn:    running but restartCount > 3 (flapping under --restart=always)
+ *   - ok:      everything else
+ */
+export function classifyContainer(c: ContainerSummary): { ok: boolean; warn: boolean; reason: string } {
+  const stateLower = c.state.toLowerCase();
+  const isRunning = stateLower === "running" || c.status.toLowerCase().startsWith("up");
+  if (!isRunning && c.exitCode !== 0) {
+    return {
+      ok: false,
+      warn: false,
+      reason: `${c.state || "stopped"} (exit ${String(c.exitCode)})`,
+    };
+  }
+  if (isRunning && c.restartCount > 3) {
+    return {
+      ok: false,
+      warn: true,
+      reason: `running but flapping (${String(c.restartCount)} restarts)`,
+    };
+  }
+  return {
+    ok: true,
+    warn: false,
+    reason: isRunning ? "running" : c.state || c.status || "stopped",
+  };
+}
+
+function containerChecks(): CheckGroup | null {
+  let raw = "";
+  try {
+    raw = execFileSync("podman", ["ps", "-a", "--filter", "name=agi-", "--format", "json"], {
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+  } catch {
+    return null; // podman not installed or not reachable — surfaced by core checks
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+
+  const containers = parsed.map((e) => normalizePodmanEntry(e as Record<string, unknown>));
+  if (containers.length === 0) {
+    // No agi-* containers — fresh install or all stopped + removed. Don't
+    // emit an empty group; surface only when there's something material.
+    return null;
+  }
+
+  const checks: Check[] = [];
+  for (const c of containers) {
+    const verdict = classifyContainer(c);
+    checks.push({
+      name: `${c.name} — ${verdict.reason}`,
+      ok: verdict.ok,
+      warn: verdict.warn,
+      fix: verdict.ok ? undefined : "Repair: force-remove / recreate / podman logs <name> via `agi doctor` TUI (s144 t574)",
+    });
+  }
+
+  return { title: "Containers (agi-*)", checks };
+}
+
 function networkChecks(): CheckGroup | null {
   const checks: Check[] = [];
 
@@ -1082,6 +1192,8 @@ async function runDoctorDump(opts: { config?: string }): Promise<string> {
     groups.push(pluginChecks());
     const network = networkChecks();
     if (network) groups.push(network);
+    const containers = containerChecks();
+    if (containers) groups.push(containers);
     const hosting = hostingChecks(config);
     if (hosting) groups.push(hosting);
     const shape = await projectShapeChecks(config);
@@ -1193,6 +1305,9 @@ export function registerDoctorCommand(program: Command): void {
 
         const network = networkChecks();
         if (network) groups.push(network);
+
+        const containers = containerChecks();
+        if (containers) groups.push(containers);
 
         const hosting = hostingChecks(config);
         if (hosting) groups.push(hosting);
