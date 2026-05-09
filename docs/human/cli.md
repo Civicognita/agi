@@ -120,6 +120,24 @@ discovered `<workspace>/<project>/project.json` (ProjectConfigSchema). Exits
 with code 1 when any error is found. Plugin manifests are validated in a
 follow-up slice once their schema lands.
 
+#### agi doctor dump
+
+Write a diagnostic bundle to `~/.agi/doctor-dumps/dump-<timestamp>.json` for
+incident triage. The bundle includes the full diagnostic-check output, a
+sanitized copy of `gateway.json` (secret-bearing keys redacted by name —
+`password`, `apiKey`, `token`, `*Secret*`, `*credential*`, `private_key`),
+system info (OS / Node / podman / git versions + memory), tails of recent
+logs from `~/.agi/logs/` and `/tmp/agi.log`, and per-project type info from
+the workspace.
+
+```bash
+agi doctor dump
+```
+
+The dump path is printed on stdout; share the file with whoever is helping
+diagnose. Sensitive values are redacted but log tails are not — review the
+bundle before sharing externally.
+
 ---
 
 ### agi config
