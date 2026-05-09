@@ -46,9 +46,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # (typically ~/temp_core/agi). Closes the spec-discovery gap that blocked
 # /loop verification of brand-new specs across cycles 178/179/183/185 —
 # the test VM already mounts dev source live so the runtime target
-# matches; only this script's `find e2e -iname ...` step needed to know
-# about the dev path. Validated below; falls back to default if the
-# override is set but invalid.
+# matches; only this script's `find … -iname …` step needed to know
+# about the dev path.
+#
+# s148 (2026-05-09): when the env var isn't set AND the script is running
+# from /opt/agi (the deployed tree), AUTO-prefer ~/temp_core/agi as
+# REPO_DIR if it looks like a valid dev tree. Owner directive: "agi test
+# should discover specs from host dev source, not /opt/agi production
+# tree" — make this the default behavior so devs don't need to remember
+# the env var. /opt/agi remains the fallback when no dev tree exists
+# (production-only installs).
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [ -n "${AGI_TEST_DEV_REPO_DIR:-}" ]; then
   if [ -d "$AGI_TEST_DEV_REPO_DIR" ] && [ -f "$AGI_TEST_DEV_REPO_DIR/package.json" ]; then
@@ -56,6 +63,14 @@ if [ -n "${AGI_TEST_DEV_REPO_DIR:-}" ]; then
     echo "[agi test] AGI_TEST_DEV_REPO_DIR set; resolving specs from $REPO_DIR" >&2
   else
     echo "[agi test] AGI_TEST_DEV_REPO_DIR='$AGI_TEST_DEV_REPO_DIR' invalid (not a dir or missing package.json); using default $REPO_DIR" >&2
+  fi
+elif [[ "$REPO_DIR" == /opt/agi* ]]; then
+  # s148 — auto-prefer the dev tree for spec discovery so brand-new specs
+  # are runnable pre-deploy without extra env-var ceremony.
+  CANDIDATE_DEV="${HOME:-/root}/temp_core/agi"
+  if [ -d "$CANDIDATE_DEV" ] && [ -f "$CANDIDATE_DEV/package.json" ]; then
+    REPO_DIR="$(cd "$CANDIDATE_DEV" && pwd)"
+    echo "[agi test] auto-preferring dev tree for spec discovery: $REPO_DIR (override with AGI_TEST_DEV_REPO_DIR or run from a tree that doesn't have $CANDIDATE_DEV)" >&2
   fi
 fi
 VM_NAME="agi-test"
