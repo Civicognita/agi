@@ -397,6 +397,154 @@ function gitStateChecks(config: AionimaConfig): CheckGroup {
   return { title: "Git state", checks };
 }
 
+// ---------------------------------------------------------------------------
+// Network — Caddyfile parse + TLS cert expiry (s144 t580)
+// ---------------------------------------------------------------------------
+
+const CADDYFILE_PATH = "/etc/caddy/Caddyfile";
+const CADDY_CERT_ROOTS = [
+  "/var/lib/caddy/.local/share/caddy/certificates",
+  // Fallback for non-systemd installs (Caddy run as the invoking user).
+  join(homedir(), ".local/share/caddy/certificates"),
+];
+/** Warn when a cert is within this many days of expiring. */
+const CERT_EXPIRY_WARN_DAYS = 7;
+
+/**
+ * Walk the Caddy certificates dir tree and return the deepest matching
+ * .crt files. Caddy's layout is:
+ *   <root>/acme-v02.api.letsencrypt.org-directory/<hostname>/<hostname>.crt
+ * Returns up to 32 cert paths total to keep the diagnostic bounded.
+ */
+function findCaddyCerts(): string[] {
+  const results: string[] = [];
+  const walk = (dir: string, depth: number): void => {
+    if (results.length >= 32 || depth > 4 || !existsSync(dir)) return;
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return; // permission denied (typical for /var/lib/caddy from non-root) — skip
+    }
+    for (const name of entries) {
+      if (results.length >= 32) break;
+      const full = join(dir, name);
+      let isDir = false;
+      try {
+        isDir = statSync(full).isDirectory();
+      } catch {
+        continue;
+      }
+      if (isDir) {
+        walk(full, depth + 1);
+      } else if (name.endsWith(".crt")) {
+        results.push(full);
+      }
+    }
+  };
+  for (const root of CADDY_CERT_ROOTS) walk(root, 0);
+  return results;
+}
+
+/**
+ * Parse a PEM cert and return `(hostname, daysUntilExpiry)`.
+ * Returns `null` on any parse error so the caller can surface a warning
+ * without poisoning the rest of the check group.
+ */
+function inspectCertFile(path: string): { subject: string; daysUntilExpiry: number } | null {
+  try {
+    const pem = readFileSync(path, "utf-8");
+    // Avoid a top-level dynamic import — crypto is synchronous available.
+    // X509Certificate is sync-capable; parsing is fast (<1ms per cert).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { X509Certificate } = require("node:crypto") as typeof import("node:crypto");
+    const cert = new X509Certificate(pem);
+    const validTo = Date.parse(cert.validTo);
+    if (!Number.isFinite(validTo)) return null;
+    const daysUntilExpiry = Math.floor((validTo - Date.now()) / (1000 * 60 * 60 * 24));
+    // Subject like "CN=foo.ai.on" — extract the CN.
+    const cnMatch = /CN=([^,/\n]+)/.exec(cert.subject);
+    const subject = cnMatch?.[1] ?? cert.subject ?? "(unknown)";
+    return { subject, daysUntilExpiry };
+  } catch {
+    return null;
+  }
+}
+
+function networkChecks(): CheckGroup | null {
+  const checks: Check[] = [];
+
+  // 1. Caddyfile presence + parse via `caddy validate`. Skip silently when
+  //    the file isn't there (caddy may not be configured on this host).
+  if (existsSync(CADDYFILE_PATH)) {
+    let validateOk = true;
+    let validateErr = "";
+    try {
+      execFileSync("caddy", ["validate", "--config", CADDYFILE_PATH], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+    } catch (err) {
+      validateOk = false;
+      // execFileSync.error.stderr captures caddy's diagnostic output.
+      const e = err as { stderr?: Buffer | string; message?: string };
+      validateErr = (typeof e.stderr === "string" ? e.stderr : e.stderr?.toString("utf-8")) ?? e.message ?? "";
+    }
+    checks.push({
+      name: validateOk ? "Caddyfile parses (caddy validate)" : `Caddyfile parse error: ${validateErr.split("\n")[0]?.trim() ?? "unknown"}`,
+      ok: validateOk,
+      fix: validateOk ? undefined : "Repair: regenerate Caddyfile via `agi doctor` TUI (s144 t574); current contents at /etc/caddy/Caddyfile",
+    });
+  } else {
+    // No Caddyfile — surfaces in core checks (Caddy active/inactive). Skip silently here.
+  }
+
+  // 2. TLS certs — surface ones near expiry.
+  const certs = findCaddyCerts();
+  if (certs.length === 0) {
+    // Either no certs yet (fresh install / never reached ACME) or
+    // permissions blocked enumeration. Either way, don't add a check —
+    // surfacing "0 certs" here would noise up healthy fresh installs.
+  } else {
+    for (const certPath of certs) {
+      const info = inspectCertFile(certPath);
+      if (info === null) {
+        checks.push({
+          name: `Cert parse failed: ${certPath}`,
+          ok: false,
+          warn: true,
+          fix: "Caddy will retry; if persistent, regenerate via `agi doctor` TUI (s144 t574)",
+        });
+        continue;
+      }
+      const { subject, daysUntilExpiry } = info;
+      if (daysUntilExpiry < 0) {
+        checks.push({
+          name: `Cert EXPIRED: ${subject} (${String(Math.abs(daysUntilExpiry))}d ago)`,
+          ok: false,
+          fix: "Repair: request fresh cert via `agi doctor` TUI (s144 t574)",
+        });
+      } else if (daysUntilExpiry <= CERT_EXPIRY_WARN_DAYS) {
+        checks.push({
+          name: `Cert expiring soon: ${subject} (${String(daysUntilExpiry)}d remaining)`,
+          ok: false,
+          warn: true,
+          fix: "Caddy auto-renews ~30 days before expiry; if no renewal, check ACME logs",
+        });
+      } else {
+        checks.push({
+          name: `Cert OK: ${subject} (${String(daysUntilExpiry)}d remaining)`,
+          ok: true,
+        });
+      }
+    }
+  }
+
+  if (checks.length === 0) return null;
+  return { title: "Network", checks };
+}
+
 function pluginChecks(): CheckGroup {
   const checks: Check[] = [];
 
@@ -865,6 +1013,8 @@ async function runDoctorDump(opts: { config?: string }): Promise<string> {
     groups.push(repoChecks(config));
     groups.push(gitStateChecks(config));
     groups.push(pluginChecks());
+    const network = networkChecks();
+    if (network) groups.push(network);
     const hosting = hostingChecks(config);
     if (hosting) groups.push(hosting);
     const shape = await projectShapeChecks(config);
@@ -973,6 +1123,9 @@ export function registerDoctorCommand(program: Command): void {
         groups.push(repoChecks(config));
         groups.push(gitStateChecks(config));
         groups.push(pluginChecks());
+
+        const network = networkChecks();
+        if (network) groups.push(network);
 
         const hosting = hostingChecks(config);
         if (hosting) groups.push(hosting);
