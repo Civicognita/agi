@@ -922,6 +922,13 @@ export async function startGatewayServer(
   });
   log.info(`memory adapter initialized (dir: ${memoryDir})`);
 
+  // s152 t651 — UserNotes store. Constructed here (before AgentInvoker)
+  // so the invoker can read notes per project + global on each turn and
+  // inject them into the system-prompt project-context section. Closes
+  // the user-writes-note → Aion-reads-note loop.
+  const { NotesStore } = await import("./notes-store.js");
+  const notesStore = new NotesStore(db);
+
   const agentInvoker = new AgentInvoker({
     stateMachine,
     apiClient: getLLMProvider,
@@ -936,6 +943,7 @@ export async function startGatewayServer(
     userContextStore,
     primeLoader,
     projectConfigManager,
+    notesStore,
     workspaceRoot,
     projectPaths,
     ownerConfig: ownerConfig !== undefined ? {
@@ -2654,6 +2662,89 @@ export async function startGatewayServer(
     },
   );
 
+  // s152 t652 — `notes` agent tool. The owner writes UserNotes via the
+  // dashboard; t651 injects them into the system-prompt on every turn.
+  // This tool lets Aion fetch/search additional notes on demand and
+  // append to existing notes (e.g. when the user says "add this to my
+  // notes for kronos_trader"). All actions are project-scope-gated:
+  // pass projectPath for per-project, omit for global.
+  toolRegistry.register(
+    {
+      name: "notes",
+      description:
+        "User-authored markdown notes — read, search, or append. The owner writes notes via the dashboard's Notes tab (per-project) or the global Notes page; Aion sees them as project context automatically. Actions: 'read' (list notes for a scope), 'get' (fetch a single note by id), 'search' (substring match across title+body), 'append' (add text to an existing note's body). Notes are file-of-record for owner intent + decisions + TODOs that aren't in the code.",
+      requiresState: [],
+      requiresTier: [],
+    },
+    async (input: Record<string, unknown>) => {
+      const action = String(input.action ?? "read");
+      const ownerEntityId = "~$U0"; // single-owner alpha; mirrors notes-api ALPHA_OWNER_ENTITY_ID
+      try {
+        switch (action) {
+          case "read": {
+            // projectPath optional: omitted = global, set = per-project, "all" = both
+            const scope = input.scope as string | undefined;
+            const projectPath = typeof input.projectPath === "string" && input.projectPath.length > 0 ? input.projectPath : null;
+            if (scope === "all") {
+              const all = await notesStore.list(ownerEntityId);
+              return JSON.stringify({ scope: "all", notes: all });
+            }
+            const list = await notesStore.list(ownerEntityId, projectPath);
+            return JSON.stringify({ scope: projectPath === null ? "global" : "project", projectPath, notes: list });
+          }
+          case "get": {
+            const noteId = String(input.noteId ?? "");
+            if (noteId.length === 0) return JSON.stringify({ error: "noteId is required for get" });
+            const note = await notesStore.get(noteId);
+            if (note === null) return JSON.stringify({ error: `note ${noteId} not found` });
+            if (note.userEntityId !== ownerEntityId) return JSON.stringify({ error: "note is owned by another user" });
+            return JSON.stringify(note);
+          }
+          case "search": {
+            const query = String(input.query ?? "").trim().toLowerCase();
+            if (query.length === 0) return JSON.stringify({ error: "query is required for search" });
+            const projectPath = typeof input.projectPath === "string" && input.projectPath.length > 0 ? input.projectPath : undefined;
+            const candidates = await notesStore.list(ownerEntityId, projectPath);
+            const matches = candidates.filter(
+              (n) => n.title.toLowerCase().includes(query) || n.body.toLowerCase().includes(query),
+            );
+            return JSON.stringify({ query, matches: matches.length, notes: matches });
+          }
+          case "append": {
+            const noteId = String(input.noteId ?? "");
+            const text = String(input.text ?? "");
+            if (noteId.length === 0 || text.length === 0) {
+              return JSON.stringify({ error: "noteId and text are required for append" });
+            }
+            const existing = await notesStore.get(noteId);
+            if (existing === null) return JSON.stringify({ error: `note ${noteId} not found` });
+            if (existing.userEntityId !== ownerEntityId) return JSON.stringify({ error: "note is owned by another user" });
+            const separator = existing.body.endsWith("\n\n") ? "" : existing.body.endsWith("\n") ? "\n" : "\n\n";
+            const newBody = `${existing.body}${separator}${text}`;
+            const updated = await notesStore.update(noteId, { body: newBody });
+            return JSON.stringify(updated);
+          }
+          default:
+            return JSON.stringify({ error: `unknown action: ${action}. Valid: read, get, search, append` });
+        }
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+    {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["read", "get", "search", "append"], description: "Notes operation to perform" },
+        projectPath: { type: "string", description: "Absolute project path for per-project scope (omit for global)" },
+        scope: { type: "string", enum: ["all"], description: "Pass 'all' on read to merge per-project + global" },
+        noteId: { type: "string", description: "Note id (required for get / append)" },
+        query: { type: "string", description: "Substring match query (required for search)" },
+        text: { type: "string", description: "Text to append (required for append)" },
+      },
+      required: ["action"],
+    },
+  );
+
   // Register HF model management tool for the agent
   toolRegistry.register(
     {
@@ -2735,10 +2826,10 @@ export async function startGatewayServer(
   const { MagicAppStateStore } = await import("./magic-app-state-store.js");
   const magicAppStateStore = new MagicAppStateStore(db);
 
-  // s152 — UserNotes store (markdown notepad surface, per-project + global).
-  // Storage round-trips through agi_data per single-source-of-truth.
-  const { NotesStore } = await import("./notes-store.js");
-  const notesStore = new NotesStore(db);
+  // s152 — UserNotes store moved earlier in boot (was here, now lives
+  // before AgentInvoker construction so the invoker can inject project
+  // notes into the system prompt — t651). The reference is reused here
+  // by the late dashboard runtime wiring.
 
   const { httpServer, wsServer } = await createGatewayRuntimeState(
     {
