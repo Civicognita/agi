@@ -2500,19 +2500,23 @@ export async function startGatewayServer(
     {
       name: "pm",
       description:
-        "The single project-management entryway with many functions. " +
-        "Always works — the file-based PM-Lite floor handles every read/write when no remote PM provider " +
-        "(tynn / linear / jira / …) is configured or reachable. " +
+        "The single project-management entryway. ALWAYS available — no flag, no fallback to invent your own tracking. " +
+        "PM-Lite (file-based, per-project k/pm/) is wired as a permanent floor on top of which the configured remote provider " +
+        "(tynn / linear / jira / GitHub Projects / …) layers when reachable; reads fall through to PM-Lite on remote failure, " +
+        "writes always land in PM-Lite (and propagate to remote when configured). PM-Lite is part of the contract, not a fallback. " +
         "Tasks/stories/comments: 'next' (active version + top story + tasks), 'task'/'story' (lookup by id or number), " +
         "'find-tasks' (filtered list), 'comments' (entity audit trail), " +
         "'start-task'/'testing'/'finished'/'block' (status transitions), " +
-        "'update-task' (modify fields), 'create-task'/'comment'/'iwish' (create entities), " +
+        "'update-task' (modify fields), 'create-task'/'comment' (create entities), " +
+        "'iwish' (declare an outcome the agent doesn't know how to action yet — captures intent for later triage), " +
         "'progress' (race-to-DONE counts for active focus). " +
-        "Plans (file-based, per-project k/plans/, ALWAYS available regardless of remote provider): " +
+        "Plans (file-based, per-project k/plans/, ALWAYS available regardless of remote provider's capabilities — " +
+        "remote PM tools rarely model plans, so plans live in PM-Lite by definition): " +
         "'plan-list' (list all plans for a projectPath), 'plan-get' (fetch by planId), " +
         "'plan-create' (new plan), 'plan-update' (status/steps/body). " +
         "Use this tool whenever you need to query or update the project's tracked work or recall a plan — " +
-        "never invent your own task tracking, and never assume tynn is the only PM provider.",
+        "never invent your own task tracking, never assume tynn (or any single backend) is the only provider, " +
+        "never wait for a remote PM to be reachable before recording state — PM-Lite always accepts the write.",
       requiresState: [],
       requiresTier: [],
     },
