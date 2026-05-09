@@ -262,6 +262,141 @@ function repoChecks(config: AionimaConfig): CheckGroup {
   return { title: "Multi-Repo", checks };
 }
 
+// ---------------------------------------------------------------------------
+// Git state — per-project + sacred repos (s144 t577)
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of inspecting a single repo's git state. `null` when the path
+ * isn't a git working tree (or git is unavailable / the call fails).
+ */
+export interface GitRepoState {
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  upstreamSet: boolean;
+  ahead: number;
+  behind: number;
+}
+
+/**
+ * Parse `git status --porcelain=v2 --branch` output into a GitRepoState.
+ * Pure function — pulled out for unit testing without shelling out.
+ */
+export function parseGitPorcelainV2(out: string): GitRepoState {
+  const lines = out.split("\n");
+  let staged = 0;
+  let unstaged = 0;
+  let untracked = 0;
+  let upstreamSet = false;
+  let ahead = 0;
+  let behind = 0;
+
+  for (const line of lines) {
+    if (line.startsWith("# branch.upstream ")) {
+      upstreamSet = true;
+    } else if (line.startsWith("# branch.ab ")) {
+      // Format: "# branch.ab +N -M"
+      const m = /^# branch\.ab \+(\d+) -(\d+)$/.exec(line);
+      if (m) {
+        ahead = Number(m[1]);
+        behind = Number(m[2]);
+      }
+    } else if (line.startsWith("1 ") || line.startsWith("2 ")) {
+      // Tracked-changed entry. Field 2 is the XY status (e.g. ".M", "M.", "MM").
+      const parts = line.split(" ");
+      const xy = parts[1] ?? "..";
+      const indexFlag = xy[0] ?? ".";
+      const worktreeFlag = xy[1] ?? ".";
+      if (indexFlag !== "." && indexFlag !== "?") staged++;
+      if (worktreeFlag !== "." && worktreeFlag !== "?") unstaged++;
+    } else if (line.startsWith("? ")) {
+      untracked++;
+    }
+  }
+
+  return { staged, unstaged, untracked, upstreamSet, ahead, behind };
+}
+
+function readGitState(repoPath: string): GitRepoState | null {
+  try {
+    const out = execFileSync("git", ["status", "--porcelain=v2", "--branch"], {
+      cwd: repoPath,
+      encoding: "utf8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    return parseGitPorcelainV2(out);
+  } catch {
+    return null;
+  }
+}
+
+/** Render a one-line summary of a repo's git state (or `null` if not git). */
+function summarizeGitState(state: GitRepoState | null): { ok: boolean; warn: boolean; summary: string } {
+  if (state === null) return { ok: true, warn: false, summary: "not a git repo (skipping)" };
+
+  const parts: string[] = [];
+  const dirty = state.staged > 0 || state.unstaged > 0 || state.untracked > 0;
+  if (state.staged > 0) parts.push(`${String(state.staged)} staged`);
+  if (state.unstaged > 0) parts.push(`${String(state.unstaged)} unstaged`);
+  if (state.untracked > 0) parts.push(`${String(state.untracked)} untracked`);
+  if (!state.upstreamSet) parts.push("no upstream");
+  else if (state.ahead > 0) parts.push(`${String(state.ahead)} unpushed`);
+  if (state.behind > 0) parts.push(`${String(state.behind)} behind`);
+
+  if (parts.length === 0) return { ok: true, warn: false, summary: "clean + in sync" };
+
+  // Mix of staged + unstaged is a warning (looks like a half-finished commit).
+  const stagedMix = state.staged > 0 && state.unstaged > 0;
+  return {
+    ok: !dirty && state.upstreamSet && state.ahead === 0,
+    warn: stagedMix || !state.upstreamSet,
+    summary: parts.join(", "),
+  };
+}
+
+function gitStateChecks(config: AionimaConfig): CheckGroup {
+  const checks: Check[] = [];
+
+  // Sacred repos (mirror the set in repoChecks, which only verifies existence).
+  const mappMarketplaceConfig = (config as Record<string, unknown>).mappMarketplace as Record<string, string> | undefined;
+  const sacred = [
+    { name: "PRIME corpus", path: config.prime?.dir ?? "/opt/agi-prime" },
+    { name: "Plugin Marketplace", path: config.marketplace?.dir ?? "/opt/agi-marketplace" },
+    { name: "MApp Marketplace", path: mappMarketplaceConfig?.dir ?? "/opt/agi-mapp-marketplace" },
+    { name: "ID service", path: config.idService?.dir ?? "/opt/agi-local-id" },
+  ];
+
+  for (const repo of sacred) {
+    if (!dirExists(repo.path)) continue; // existence-warning surfaced by repoChecks
+    const state = readGitState(repo.path);
+    const { ok, warn, summary } = summarizeGitState(state);
+    checks.push({
+      name: `${repo.name} — ${summary}`,
+      ok,
+      warn,
+      fix: ok ? undefined : "Repair actions land with `agi doctor` TUI (s144 t574)",
+    });
+  }
+
+  // Workspace projects.
+  const workspaceProjects = config.workspace?.projects ?? [];
+  for (const projectPath of workspaceProjects) {
+    if (!dirExists(projectPath)) continue;
+    const state = readGitState(projectPath);
+    const { ok, warn, summary } = summarizeGitState(state);
+    checks.push({
+      name: `${projectPath} — ${summary}`,
+      ok,
+      warn,
+      fix: ok ? undefined : "Repair actions land with `agi doctor` TUI (s144 t574)",
+    });
+  }
+
+  return { title: "Git state", checks };
+}
+
 function pluginChecks(): CheckGroup {
   const checks: Check[] = [];
 
@@ -728,6 +863,7 @@ async function runDoctorDump(opts: { config?: string }): Promise<string> {
   if (config && configOk) {
     groups.push(authChecks(config));
     groups.push(repoChecks(config));
+    groups.push(gitStateChecks(config));
     groups.push(pluginChecks());
     const hosting = hostingChecks(config);
     if (hosting) groups.push(hosting);
@@ -835,6 +971,7 @@ export function registerDoctorCommand(program: Command): void {
       if (config && configOk) {
         groups.push(authChecks(config));
         groups.push(repoChecks(config));
+        groups.push(gitStateChecks(config));
         groups.push(pluginChecks());
 
         const hosting = hostingChecks(config);
