@@ -37,6 +37,7 @@ import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, mar
 import type { ProviderBalance } from "@/api.js";
 import { LoginPage } from "@/components/LoginPage.js";
 import type { ActivityEntry, DashboardEvent, Notification, ProjectActivity, TimeBucket, UpdateCheck } from "@/types.js";
+import { resolveHelpContext } from "@/lib/help-context.js";
 
 export type View = "overview" | "entity" | "coa" | "settings" | "logs" | "projects" | "system";
 
@@ -757,7 +758,11 @@ export default function RootLayout() {
                 as the agent can read it. */}
             <button
               onClick={() => {
-                setChatContext(`help:${location.pathname}`);
+                // s137 t530 — resolve route → human-readable help context
+                // string instead of the raw pathname. The help agent gets
+                // a stable description (e.g. "providers + models
+                // management") regardless of dynamic segments in the URL.
+                setChatContext(`help:${resolveHelpContext(location.pathname)}`);
                 setChatOpen(true);
               }}
               className="p-2 rounded-lg transition-colors text-subtext0 hover:bg-surface0 hover:text-text"
