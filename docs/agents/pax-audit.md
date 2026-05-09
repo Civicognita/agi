@@ -131,6 +131,22 @@ list-shaped UIs route through Table when they need single-column +
 clickable selection. fancy-sheets' Spreadsheet/Sheet are overkill for
 flat lists. Sidebar is for nav-shaped lists.
 
+## 8. PmLitePanel + ProjectDetail tab-trim re-audit (resolved 2026-05-09 cycle 264, s156 t676)
+
+Re-audit per CLAUDE.md § 1.5 mandate after the cycle 263 flat-tabs nuke.
+
+- **PmLitePanel** — Card is PAx-backed via the local
+  `components/ui/card.tsx` adapter. View-pills (NEXT/CURRENT/DONE) are
+  filter-shaped, not navigational tabs — using the PAx Tabs primitive
+  would imply panel-switching semantics that don't apply here. Lists
+  are read-only flat display with semantic `<ul>/<li>` — no selection
+  affordance needed; Table would force header-row semantics for no
+  gain. **Conclusion: acceptable as-is.**
+
+- **ProjectDetail tab-trim** — was the s150 t638 primary/secondary
+  split with a "More…" Select dropdown. Cycle 263 (PR #97) nuked the
+  dropdown entirely; all sub-tabs render flat. Audit moot.
+
 ---
 
 ## Process
