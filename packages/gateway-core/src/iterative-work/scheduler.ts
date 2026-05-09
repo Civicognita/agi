@@ -48,6 +48,21 @@ const DEFAULT_TICK_MS = 30_000;
 const MIN_TICK_MS = 1_000;
 const DEFAULT_LOG_BUFFER = 50;
 
+/**
+ * s159 t693 — fire-rate observability constants. The scheduler tracks
+ * timestamps of recent fires per project; if more than
+ * FIRE_RATE_WARN_THRESHOLD fires occur within FIRE_RATE_WINDOW_MS, a
+ * WARN log surfaces the runaway pattern. Pure observability — does not
+ * gate the fire (that's t695 idempotency + t696 cooldown's job).
+ *
+ * Threshold of 5 fires/60s is intentionally permissive — the
+ * scheduler ticks every 30s by default so legitimate per-minute crons
+ * fire 1×/min for one project, well under the threshold. A loop that
+ * trips this is firing every 10-15s (4-6 per minute) — clearly broken.
+ */
+const FIRE_RATE_WINDOW_MS = 60_000;
+const FIRE_RATE_WARN_THRESHOLD = 5;
+
 export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerEvents> {
   private timer?: ReturnType<typeof setInterval>;
   private readonly inFlight = new Set<string>();
@@ -59,6 +74,11 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
   private readonly iterationLog = new Map<string, IterativeWorkLogEntry[]>();
   /** Per-project timestamp of the in-flight fire, used to compute durationMs at completion. */
   private readonly inFlightStartedAt = new Map<string, Date>();
+  /**
+   * s159 t693 — sliding window of recent fire timestamps per project,
+   * for the runaway-loop WARN log + future dashboard surface.
+   */
+  private readonly recentFiresByProject = new Map<string, number[]>();
 
   constructor(private readonly deps: IterativeWorkSchedulerDeps) {
     super();
@@ -190,6 +210,24 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
       this.inFlight.add(projectPath);
       this.inFlightStartedAt.set(projectPath, now);
       this.lastFiredAt.set(projectPath, now);
+
+      // s159 t693 — fire-rate tracking. Push the firedAt timestamp into
+      // a 60s sliding window per project; if the window contains
+      // FIRE_RATE_WARN_THRESHOLD or more entries, emit a WARN log so
+      // the next runaway loop is visible BEFORE it becomes a crisis.
+      // Pure observability — does not gate the fire itself (that's the
+      // job of t695 idempotency + t696 cooldown).
+      const recent = this.recentFiresByProject.get(projectPath) ?? [];
+      const cutoffMs = now.getTime() - FIRE_RATE_WINDOW_MS;
+      const pruned = recent.filter((t) => t >= cutoffMs);
+      pruned.push(now.getTime());
+      this.recentFiresByProject.set(projectPath, pruned);
+      if (pruned.length >= FIRE_RATE_WARN_THRESHOLD) {
+        this.log.warn(
+          `fire-rate: ${projectPath} fired ${String(pruned.length)} times in the last ${String(FIRE_RATE_WINDOW_MS / 1000)}s — possible runaway loop. ` +
+          `Use \`agi iw stop --project ${projectPath}\` to break it without restarting the gateway.`,
+        );
+      }
       // Push a "running" entry to the per-project ring buffer. recordCompletion
       // mutates this head entry when the consumer reports status; until then
       // the log surface shows the in-flight iteration as running.
@@ -212,6 +250,19 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
   /** Diagnostic: snapshot of current in-flight project paths. */
   getInFlight(): string[] {
     return [...this.inFlight];
+  }
+
+  /**
+   * Diagnostic: how many times this project has fired in the rolling
+   * 60s window. > FIRE_RATE_WARN_THRESHOLD means the scheduler logged
+   * a WARN on the most recent fire. Caller (e.g. dashboard tile, doctor
+   * check) can surface the same data ahead of crisis. (s159 t693)
+   */
+  getRecentFireCount(projectPath: string, now: Date = new Date()): number {
+    const recent = this.recentFiresByProject.get(projectPath);
+    if (!recent) return 0;
+    const cutoffMs = now.getTime() - FIRE_RATE_WINDOW_MS;
+    return recent.filter((t) => t >= cutoffMs).length;
   }
 
   /**

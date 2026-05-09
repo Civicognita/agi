@@ -560,3 +560,45 @@ describe("IterativeWorkScheduler operator kill switch (s159 t692)", () => {
     expect(fires).toHaveLength(2);
   });
 });
+
+describe("IterativeWorkScheduler fire-rate observability (s159 t693)", () => {
+  it("getRecentFireCount returns 0 for a project that has never fired", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({}),
+      listProjectPaths: () => [],
+    });
+    expect(scheduler.getRecentFireCount("/p/never")).toBe(0);
+  });
+
+  it("getRecentFireCount returns 1 after a normal fire", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    scheduler.tick(new Date("2026-04-27T05:30:00.000Z"));
+    expect(scheduler.getRecentFireCount("/p/a", new Date("2026-04-27T05:30:30.000Z"))).toBe(1);
+  });
+
+  it("getRecentFireCount drops timestamps older than the 60s window", () => {
+    const scheduler = new IterativeWorkScheduler({
+      projectConfigManager: makeConfigManager({
+        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      }),
+      listProjectPaths: () => ["/p/a"],
+    });
+    scheduler.tick(new Date("2026-04-27T05:00:00.000Z"));
+    // 90s later, the recorded fire timestamp is outside the 60s window.
+    expect(scheduler.getRecentFireCount("/p/a", new Date("2026-04-27T05:01:30.000Z"))).toBe(0);
+  });
+
+  // NOTE: testing the "5 fires in 60s → WARN" runaway path against
+  // scheduler.tick directly is tricky because the natural scheduler.tick
+  // path is rate-limited by the cron's next-fire-time gate AND lastFiredAt
+  // tracking. The runaway scenario reported by owner (Wish #20 / s159)
+  // is downstream of scheduler.tick — at the agent-invoker / Taskmaster
+  // worker level. This counter is observability for IF the scheduler
+  // itself ever loops (defense in depth); the actual reported bug needs
+  // tracing in agent-invoker (s159 t693 follow-up) + reproducer (t694).
+});
