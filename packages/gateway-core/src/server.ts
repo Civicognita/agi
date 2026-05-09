@@ -798,6 +798,20 @@ export async function startGatewayServer(
     ? new SystemConfigService({ configPath: opts.configPath, logger })
     : null;
 
+  // s143 t567/t568/t569 — persistent circuit-breaker tracker for boot-time
+  // service failures. Constructed early (right after SystemConfigService)
+  // so it can be wired into ChannelRegistry, plugin-loader, and
+  // hosting-manager — all of which start before/at boot. The v0.4.431
+  // try/catch fallback in hosting still applies when systemConfigService is
+  // null (no persistence available). Service-id prefix conventions live in
+  // circuit-breaker.ts: hosting:/channel:/plugin:/service:/mcp:.
+  const circuitBreakerTracker = systemConfigService
+    ? new CircuitBreakerTracker({ configService: systemConfigService, logger })
+    : undefined;
+  if (circuitBreakerTracker) {
+    channelRegistry.setCircuitBreaker(circuitBreakerTracker);
+  }
+
   // Iterative-work scheduler — walks workspace projects each tick, decides
   // who's due based on their iterativeWork.cron config, emits fire events.
   // The fire→AgentInvoker handler is installed below (after agentInvoker
@@ -1597,6 +1611,7 @@ export async function startGatewayServer(
         pluginPriorities,
         channelRegistry,
         channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+        circuitBreaker: circuitBreakerTracker,
       });
       log.info(`plugins: ${String(result.loaded.length)} loaded, ${String(result.failed.length)} failed`);
       if (discovered.plugins.length > enabledPlugins.length) {
@@ -1655,6 +1670,7 @@ export async function startGatewayServer(
                       ),
                       channelRegistry,
                       channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+                      circuitBreaker: circuitBreakerTracker,
                     });
                     bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
                     // Retry provider creation now that the plugin is loaded
@@ -1751,14 +1767,8 @@ export async function startGatewayServer(
     }
   }
 
-  // s143 t567/t568 — persistent circuit-breaker tracker for boot-time service
-  // failures. Wired in only when SystemConfigService is available (i.e. we
-  // know where gateway.json lives); otherwise the v0.4.431 try/catch fallback
-  // path keeps the gateway from hanging on a broken project even without
-  // persistence.
-  const circuitBreakerTracker = systemConfigService
-    ? new CircuitBreakerTracker({ configService: systemConfigService, logger })
-    : undefined;
+  // (s143 circuitBreakerTracker constructed earlier — see § "s143 t567/t568/t569"
+  // right after systemConfigService.)
 
   const hostingManager = new HostingManager({
     config: {
@@ -2912,6 +2922,7 @@ export async function startGatewayServer(
             ),
             channelRegistry,
             channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+            circuitBreaker: circuitBreakerTracker,
           });
           if (result.loaded.length > 0) {
             // Bridge newly registered capabilities and sync stacks to the registry
@@ -2955,6 +2966,7 @@ export async function startGatewayServer(
             ),
             channelRegistry,
             channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+            circuitBreaker: circuitBreakerTracker,
           }, { bustCache: true });
           if (result.loaded.length > 0) {
             bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
