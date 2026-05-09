@@ -1050,7 +1050,24 @@ export async function createGatewayRuntimeState(
           if (entry.name.startsWith(".")) continue;
           const fullPath = resolvePath(dir, entry.name);
 
-          // Detect Aionima core collection: walk into it, skip the parent.
+          // s119 t702 (2026-05-09) — _aionima is a single always-present
+          // project once it has been scaffolded with project.json (t701).
+          // When project.json exists, treat _aionima as one project — its
+          // forks live under _aionima/repos/ as repos, not as siblings.
+          // Falls through to the legacy collection-expansion below when
+          // project.json is absent (pre-migration state).
+          if (entry.name === "_aionima") {
+            const aionimaProjectJson = join(fullPath, "project.json");
+            if (existsSync(aionimaProjectJson)) {
+              expanded.push({ fullPath, name: "_aionima", coreCollection: "aionima" });
+              continue;
+            }
+          }
+
+          // Detect Aionima core collection (legacy pre-t703 state): walk
+          // into it, skip the parent. Once t703 migration moves forks
+          // into _aionima/repos/, collection.json gets retired (t705) and
+          // this branch becomes dead code.
           const collectionPath = join(fullPath, "collection.json");
           if (existsSync(collectionPath)) {
             try {
@@ -1084,7 +1101,8 @@ export async function createGatewayRuntimeState(
           }
 
           // Skip underscore-prefixed (reserved for collections we haven't
-          // identified). Matches hosting-manager's skip rule.
+          // identified). Matches hosting-manager's skip rule. _aionima is
+          // handled above; other underscore-prefixed dirs stay reserved.
           if (entry.name.startsWith("_")) continue;
 
           expanded.push({ fullPath, name: entry.name });
