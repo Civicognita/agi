@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { Table } from "@particle-academy/react-fancy";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -196,27 +197,37 @@ export function NotesPanel({ projectPath }: NotesPanelProps): ReactElement {
               No notes yet. Click + New to start one.
             </p>
           )}
-          <ul className="space-y-1" data-testid="notes-list">
-            {notes.map((note) => {
-              const isSelected = note.id === selectedId;
-              return (
-                <li key={note.id}>
-                  <button
-                    type="button"
-                    className={`w-full text-left px-2 py-1.5 rounded text-[13px] flex items-center gap-2 ${
+          {/* s156 t675 — list rendered via PAx Table for selection
+              affordance + a11y. Each row's onClick selects the note;
+              the row className highlights the selected one. Pin
+              indicator is the leading cell. */}
+          <Table className="border-0" data-testid="notes-list">
+            <Table.Body>
+              {notes.map((note) => {
+                const isSelected = note.id === selectedId;
+                return (
+                  <Table.Row
+                    key={note.id}
+                    onClick={() => setSelectedId(note.id)}
+                    className={`cursor-pointer text-[13px] ${
                       isSelected ? "bg-foreground text-background" : "hover:bg-secondary/40"
                     }`}
-                    onClick={() => setSelectedId(note.id)}
                     data-testid="notes-list-item"
                     data-note-id={note.id}
                   >
-                    {note.pinned && <span title="Pinned" className="text-yellow text-[10px]">★</span>}
-                    <span className="flex-1 truncate" title={note.title}>{note.title || "Untitled"}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+                    <Table.Cell className="w-4 px-1.5 py-1.5">
+                      {note.pinned ? (
+                        <span title="Pinned" className="text-yellow text-[10px]">★</span>
+                      ) : null}
+                    </Table.Cell>
+                    <Table.Cell className="px-1 py-1.5">
+                      <span className="truncate block" title={note.title}>{note.title || "Untitled"}</span>
+                    </Table.Cell>
+                  </Table.Row>
+                );
+              })}
+            </Table.Body>
+          </Table>
         </div>
       </Card>
 
@@ -272,6 +283,12 @@ export function NotesPanel({ projectPath }: NotesPanelProps): ReactElement {
                 Delete
               </Button>
             </div>
+            {/* s156 t675 — body editor stays as raw <textarea> until
+                Particle-Academy/fancy-code ships a MarkdownEditor
+                primitive. Tracked at:
+                https://github.com/Particle-Academy/fancy-code/issues/2
+                When that primitive lands, swap this for
+                <MarkdownEditor value={draftBody} onValueChange={...}>. */}
             <textarea
               ref={bodyRef}
               value={draftBody}
