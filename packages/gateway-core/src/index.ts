@@ -458,6 +458,12 @@ export {
   DotMcpJsonSchema,
 } from "./mcp-config-store.js";
 export type { DotMcpJson, McpServerEntry } from "./mcp-config-store.js";
+export {
+  serverToMcpEntry,
+  migrateProjectMcpConfig,
+  migrateAllProjectMcpConfigs,
+} from "./mcp-config-migration.js";
+export type { McpMigrationResult, McpSweepResult } from "./mcp-config-migration.js";
 
 // Service Manager
 export { ServiceManager } from "./service-manager.js";

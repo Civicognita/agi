@@ -132,6 +132,7 @@ import { ensureWorkspaceSkeleton, projectConfigPath } from "./project-config-pat
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
+import { migrateAllProjectMcpConfigs } from "./mcp-config-migration.js";
 import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import { listProjectsWithConfig } from "./iterative-work/list-projects.js";
 import { projectSlug } from "./project-config-path.js";
@@ -1922,6 +1923,26 @@ export async function startGatewayServer(
     logger.warn(
       "migrate",
       `boot-time s150 shape sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // s131 t681 — MCP config migration. Walk projects and rewrite
+  // `project.json mcp.servers[]` → top-level `.mcp.json` (Claude Code
+  // convention). Idempotent; already-migrated projects are skipped.
+  // Same boot-stage as the s150 shape sweep above so MCP wiring further
+  // down (line 2243+) can rely on either source via the dual-read API.
+  try {
+    const mcpResult = migrateAllProjectMcpConfigs(projectPaths);
+    if (mcpResult.migrated > 0 || mcpResult.errors > 0) {
+      logger.info(
+        "migrate",
+        `boot-time s131 mcp sweep: ${String(mcpResult.scanned)} scanned, ${String(mcpResult.migrated)} migrated (${String(mcpResult.totalServers)} server(s) total), ${String(mcpResult.errors)} error(s)`,
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      "migrate",
+      `boot-time s131 mcp sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
