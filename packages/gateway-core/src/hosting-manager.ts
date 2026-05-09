@@ -24,7 +24,9 @@ import type { StackRegistry } from "./stack-registry.js";
 import type { SharedContainerManager } from "./shared-container-manager.js";
 import type { ProjectStackInstance, StackContainerContext, StackDefinition, StackContainerConfig } from "./stack-types.js";
 import type { ProjectConfigManager } from "./project-config-manager.js";
-import type { MagicAppContainerConfig, MagicAppContainerContext } from "./magic-app-types.js";
+// s151 (2026-05-09) — magic-app-types imports removed. The single-viewer
+// MagicApp dispatch path was deleted; the Desktop+tiles container is the
+// unified path for every Desktop-served project.
 import {
   buildMAppContainerArgsPure,
   generateMAppDesktopHtml,
@@ -1799,66 +1801,14 @@ export class HostingManager {
    * Resolve container config from the project's installed stacks.
    * Returns the first per-project (shared === false) stack container config,
    * or null if no stack provides one.
+   *
+   * **s151 (2026-05-09)** — `resolveMagicAppContainerConfig` and
+   * `mappContainerToConfig` were deleted. Owner UX call unified the
+   * single-viewer MApp dispatch path into the Desktop+tiles container.
+   * Projects that used `hosting.viewer` (e.g. bliss_chronicles with the
+   * `reader` MApp) now route through the Desktop-served branch above,
+   * with their viewer rendered as a tile on the Aion Desktop.
    */
-  /**
-   * Resolve container config from a registered MagicApp for this project type.
-   * MagicApps serve non-dev project types (literature, media, etc.).
-   */
-  /**
-   * Resolve MagicApp container config. Priority:
-   * 1. Project-specific viewer (hosting.viewer) — exact MagicApp ID
-   * 2. Type-based fallback — first MagicApp registered for this project type
-   */
-  /**
-   * Resolve MApp container config from standalone MAppRegistry.
-   * Priority: viewer field → type-based fallback.
-   */
-  private resolveMagicAppContainerConfig(hosted: HostedProject): MagicAppContainerConfig | null {
-    if (!this.mappReg) return null;
-
-    // 1. Check viewer field (project-specific MApp selection)
-    const viewerId = hosted.meta.viewer;
-    if (viewerId) {
-      const viewerApp = this.mappReg.get(viewerId);
-      if (viewerApp?.container) {
-        // Convert MApp container template strings to functions
-        return this.mappContainerToConfig(viewerApp.container);
-      }
-    }
-
-    // 2. Fallback: first MApp registered for this project type
-    const apps = this.mappReg.getForType(hosted.meta.type);
-    if (apps.length === 0) return null;
-    const first = apps[0]!;
-    if (!first.container) return null;
-    return this.mappContainerToConfig(first.container);
-  }
-
-  /**
-   * Convert MApp container config (template strings) to the function-based
-   * MagicAppContainerConfig used by startContainer().
-   */
-  private mappContainerToConfig(container: import("@agi/sdk").MAppContainerConfig): MagicAppContainerConfig {
-    return {
-      image: container.image,
-      internalPort: container.internalPort,
-      volumeMounts: (ctx) => container.volumeMounts.map((v) =>
-        v.replace(/\{projectPath\}/g, ctx.projectPath)
-          .replace(/\{projectHostname\}/g, ctx.projectHostname),
-      ),
-      env: (ctx) => {
-        const env: Record<string, string> = {};
-        for (const [k, v] of Object.entries(container.env ?? {})) {
-          env[k] = v.replace(/\{projectPath\}/g, ctx.projectPath)
-            .replace(/\{projectHostname\}/g, ctx.projectHostname);
-        }
-        return env;
-      },
-      command: container.command ? () => container.command! : undefined,
-      healthCheck: container.healthCheck,
-    };
-  }
-
   private resolveStackContainerConfig(hosted: HostedProject): StackContainerConfig | null {
     if (!this.stackReg) return null;
 
@@ -2088,78 +2038,13 @@ export class HostingManager {
       return;
     }
 
-    // -----------------------------------------------------------------------
-    // MagicApp path: resolve container config from registered MagicApps
-    // (non-dev project types like literature/media use MagicApps, not stacks)
-    // -----------------------------------------------------------------------
-
-    const magicAppConfig = this.resolveMagicAppContainerConfig(hosted);
-    if (magicAppConfig) {
-      const ctx: MagicAppContainerContext = {
-        // s141 t552 — feed the rebased content path so MagicApp volumeMounts
-        // and {projectPath} template substitutions resolve into
-        // <projectPath>/repos/<repoName> when repos[] is populated.
-        projectPath: contentBase.base,
-        projectHostname: hosted.meta.hostname,
-        allocatedPort: hosted.meta.port,
-        mode: hosted.meta.mode,
-      };
-
-      // Ensure meta.internalPort reflects the effective port so the
-      // regenerated Caddyfile routes to the right container port.
-      // Takes effect on next project write via updateProject.
-      hosted.meta.internalPort = hosted.meta.internalPort ?? magicAppConfig.internalPort;
-
-      const args: string[] = [
-        "run", "-d",
-        "--name", containerName,
-        "--restart=always",
-        "--label", "agi.managed=true",
-        "--label", `agi.hostname=${hosted.meta.hostname}`,
-        "--label", `agi.project=${hosted.path}`,
-        // s130 t515 B3b — per-project podman network for isolation.
-        // Each project gets its own `agi-net-<hostname>` network; Caddy
-        // joins via ensureProjectNetworkForHosted (called from
-        // execContainerStart). Cross-project reachability blocked.
-        // No `-p` mapping — only AGI binds host ports.
-        `--network=${projectNetworkName(hosted.meta.hostname)}`,
-      ];
-
-      for (const vol of magicAppConfig.volumeMounts(ctx)) {
-        args.push("-v", vol);
-      }
-      for (const [key, value] of Object.entries(magicAppConfig.env(ctx))) {
-        args.push("-e", `${key}=${value}`);
-      }
-
-      const magicTunnelOrigin = this.computeTunnelOrigin(hosted);
-      if (magicTunnelOrigin) {
-        args.push("-e", `HOSTNAME_ALLOWED_ORIGIN=${magicTunnelOrigin}`);
-      }
-
-      // Inject AI model env vars and dataset volume mounts
-      args.push(...aiBindingArgs.volumeArgs);
-      args.push(...aiBindingArgs.envArgs);
-
-      args.push(magicAppConfig.image);
-
-      // Resolve via the same precedence ladder as stack projects; magic apps have no
-      // devCommands, so devCommands step is skipped and the ladder collapses to
-      // override > magic-app-config.command > image default.
-      const magicResolved = resolveContainerStartCommand({
-        userStartCommand: hosted.meta.startCommand,
-        stackCommand: magicAppConfig.command?.(ctx) ?? null,
-        stackId: `magic-app:${hosted.meta.viewer ?? hosted.meta.type}`,
-        mode: hosted.meta.mode,
-      });
-      this.log.info(`[${hosted.meta.hostname}] start command source: ${magicResolved.sourceLabel}`);
-      const cmdTokens = magicResolved.tokens;
-      const wrapped = this.wrapResilient(cmdTokens);
-      if (wrapped) args.push(...wrapped);
-
-      this.execContainerStart(hosted, containerName, args, "magic-app");
-      return;
-    }
+    // s151 (2026-05-09) — single-viewer MagicApp dispatch path REMOVED.
+    // Owner UX call: Desktop+tiles is the unified path for every Desktop-
+    // served project type. Projects that previously routed here (writing/
+    // art/literature with a registered MApp viewer) now route through the
+    // Desktop-served branch above (isDesktopServed → desktop+tiles
+    // container) since "writing" + "art" joined DESKTOP_SERVED_TYPES.
+    // resolveMagicAppContainerConfig + mappContainerToConfig deleted.
 
     // -----------------------------------------------------------------------
     // Stack path: resolve container config from installed stacks

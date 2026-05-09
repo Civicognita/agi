@@ -121,6 +121,14 @@ export const DESKTOP_SERVED_TYPES: ReadonlySet<string> = new Set([
   "literature",
   "documentation",
   "backup-aggregator",
+  // s151 (2026-05-09) — owner UX call unified single-viewer projects under
+  // Desktop-served. `writing` (e.g. bliss_chronicles) and `art` projects
+  // now render the Aion Desktop with their configured `magicApps[]` as
+  // tiles instead of inlining a single MApp at /. The hosting.type is
+  // what dispatch reads, so projects whose hosting.type stays "static-site"
+  // (my_art's case) remain code-served.
+  "writing",
+  "art",
 ]);
 
 /**
@@ -137,8 +145,10 @@ export const CODE_SERVED_TYPES: ReadonlySet<string> = new Set([
   // per the universal-monorepo directive; a sibling "monorepo" type as a
   // peer of web-app/static-site/etc. contradicts the model. The s150 t632
   // shape sweep remaps existing type="monorepo" projects to "web-app".
-  "art",
-  "writing",
+  // s151 (2026-05-09) — "art" + "writing" MOVED to DESKTOP_SERVED_TYPES.
+  // Owner UX call unified single-viewer projects under the Desktop+tiles
+  // dispatch path. Projects whose hosting.type is "static-site" still
+  // route here (my_art's case).
 ]);
 
 /**
