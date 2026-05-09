@@ -24,6 +24,7 @@ import { HostingPanel } from "./HostingPanel.js";
 import { EnvManager } from "./EnvManager.js";
 import { TaskmasterTab } from "./TaskmasterTab.js";
 import { PmLitePanel } from "./PmLitePanel.js";
+import { NotesPanel } from "./NotesPanel.js";
 import { IterativeWorkTab } from "./IterativeWorkTab.js";
 import { MCPTab } from "./MCPTab.js";
 import { ProjectActivityTab } from "./ProjectActivityTab.js";
@@ -87,6 +88,9 @@ const CANVAS_LABELS: Record<string, string> = {
   // Wish #17 / s155 t671 — Plans tab. Always available file-based PM-Lite
   // surface with DONE/CURRENT/NEXT views.
   plans: "Plans",
+  // s152 — Notes tab. Per-project markdown notepad surface; agent reads
+  // these as project context.
+  notes: "Notes",
   security: "Security",
   activity: "Activity",
 };
@@ -206,6 +210,8 @@ export function ProjectDetail({
     "taskmaster": "coordinate",
     // Wish #17 / s155 t671 — Plans tab in coordinate mode (PM workflow).
     "plans": "coordinate",
+    // s152 — Notes tab in coordinate mode (knowledge capture for the project).
+    "notes": "coordinate",
     "security": "insight",
     "activity": "insight",
   };
@@ -222,7 +228,7 @@ export function ProjectDetail({
   useEffect(() => {
     if (!tabBelongsToMode(activeTab)) {
       // Find first tab in current mode (prefer the canonical first one)
-      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "taskmaster", "plans", "security", "activity"];
+      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "taskmaster", "plans", "notes", "security", "activity"];
       const firstInMode = candidates.find((id) => TAB_MODES[id] === currentMode);
       if (firstInMode) setActiveTab(firstInMode);
     }
@@ -700,6 +706,9 @@ export function ProjectDetail({
               // Wish #17 / s155 t671 — Plans entry. Available for every
               // project (no hasCode gate) since PM-Lite is universal.
               if (tabBelongsToMode("plans")) entries.push({ value: "plans", label: "Plans" });
+              // s152 — Notes entry. Available for every project; markdown
+              // notepad surface, agent-readable.
+              if (tabBelongsToMode("notes")) entries.push({ value: "notes", label: "Notes" });
               if (
                 tabBelongsToMode("iterative-work")
                 && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible)
@@ -1423,6 +1432,12 @@ export function ProjectDetail({
             file-based plan list straight from <projectPath>/k/plans/. */}
         <TabsContent value="plans" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <PmLitePanel projectPath={project.path} />
+        </TabsContent>
+
+        {/* s152 — Notes tab. Per-project markdown notepad surface. The
+            global Notes page lands in the next slice (main nav). */}
+        <TabsContent value="notes" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <NotesPanel projectPath={project.path} />
         </TabsContent>
 
         {(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (

@@ -89,3 +89,43 @@ export const meta = pgTable("meta", {
   value: jsonb("value").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * UserNotes — first-class notes surface for end users (s152, 2026-05-09).
+ *
+ * Two scopes: per-project (projectPath set) and global (projectPath null).
+ * Single mode for v1 (markdown notepad); whiteboard mode lands in a
+ * follow-up. Aion reads these notes as context the same way Dev Notes
+ * are consumed.
+ *
+ * Storage round-trips through agi_data per single-source-of-truth (see
+ * memory `feedback_single_source_of_truth_db`) — never write notes to
+ * disk-only locations like `~/.agi/notes/` that would drift from the DB.
+ */
+export const userNotes = pgTable(
+  "user_notes",
+  {
+    id: text("id").primaryKey(),
+    /** Owning user (entity id). Multi-user support arrives via Hive-ID;
+     *  for the single-owner alpha, every note is owned by `~$U0`. */
+    userEntityId: text("user_entity_id").notNull(),
+    /** Per-project notes set this to the absolute project path. Global
+     *  notes (the global scope from the s152 spec) leave it NULL. */
+    projectPath: text("project_path"),
+    /** Display title — short, single-line. */
+    title: text("title").notNull(),
+    /** Markdown body. */
+    body: text("body").notNull().default(""),
+    /** Sort order within a scope. Lower = earlier. */
+    sortOrder: integer("sort_order").notNull().default(0),
+    /** Optional pinned flag — pinned notes float to the top. */
+    pinned: boolean("pinned").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    userIdx: index("user_notes_user_idx").on(t.userEntityId),
+    projectIdx: index("user_notes_project_idx").on(t.projectPath),
+    pinnedIdx: index("user_notes_pinned_idx").on(t.pinned),
+  }),
+);

@@ -23,6 +23,7 @@ import AdminPage from "./routes/admin.js";
 import AdminDashboardPage from "./routes/admin-dashboard.js";
 import KnowledgePage from "./routes/knowledge.js";
 import DocsPage from "./routes/docs.js";
+import NotesPage from "./routes/notes.js";
 import SettingsLayout from "./routes/settings-layout.js";
 import SettingsGatewayPage from "./routes/settings-gateway.js";
 import SettingsDynamicPage from "./routes/settings-dynamic.js";
@@ -79,6 +80,7 @@ export const router = createBrowserRouter([
       { path: "magic-apps/:id", element: <MagicAppDetailPage /> },
       // Knowledge
       { path: "knowledge", element: <KnowledgePage /> },
+      { path: "notes", element: <NotesPage /> },
       // Documentation
       { path: "docs", element: <DocsPage /> },
       // Gateway
