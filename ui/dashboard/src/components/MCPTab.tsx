@@ -377,11 +377,16 @@ function McpServerCard({
 
   const isConnected = server.state === "connected";
 
-  const loadTab = async (tab: CardTab): Promise<void> => {
+  // s133 t678 (2026-05-09) — pass `fresh=true` to bypass the gateway-side
+  // mcp-client cache. Tab switches consume cache; the explicit Refresh
+  // button below always force-fetches.
+  const loadTab = async (tab: CardTab, opts: { fresh?: boolean } = {}): Promise<void> => {
     setBrowsing(true);
     setBrowseError(null);
     try {
-      const url = `/api/projects/mcp/server/${tab}?path=${encodeURIComponent(projectPath)}&id=${encodeURIComponent(server.id)}`;
+      const params = new URLSearchParams({ path: projectPath, id: server.id });
+      if (opts.fresh === true) params.set("fresh", "1");
+      const url = `/api/projects/mcp/server/${tab}?${params.toString()}`;
       const res = await fetch(url);
       const body = await res.json() as { ok: boolean; tools?: McpToolDescriptor[]; prompts?: McpPromptDescriptor[]; resources?: McpResourceDescriptor[]; error?: string };
       if (!body.ok) {
@@ -413,6 +418,17 @@ function McpServerCard({
     if (tab === "tools" && tools === null) await loadTab("tools");
     if (tab === "prompts" && prompts === null) await loadTab("prompts");
     if (tab === "resources" && resources === null) await loadTab("resources");
+  };
+
+  // s133 t678 — explicit Refresh button: drop the locally-stashed list +
+  // force-fetch from the gateway with `fresh=1` so the response also
+  // bypasses the mcp-client cache. Without this dual reset, the user's
+  // Refresh would just re-render the same cached data.
+  const onRefreshTab = async (): Promise<void> => {
+    if (activeTab === "tools") setTools(null);
+    else if (activeTab === "prompts") setPrompts(null);
+    else if (activeTab === "resources") setResources(null);
+    await loadTab(activeTab, { fresh: true });
   };
 
   const onCallTool = async (toolName: string): Promise<void> => {
@@ -449,6 +465,10 @@ function McpServerCard({
     setCalling(true);
     setCallResult(null);
     try {
+      // s133 t678 — readResource consumes cache by default; user-driven
+      // resource read is treated as "I want to see this now", but explicit
+      // Refresh of the resources tab already invalidates via fresh=1 list
+      // re-fetch. No fresh flag here in v1.
       const res = await fetch(`/api/projects/mcp/server/read-resource`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -538,9 +558,10 @@ function McpServerCard({
                   </TabsTrigger>
                 </TabsList>
                 <button
-                  onClick={() => { void loadTab(activeTab); }}
+                  onClick={() => { void onRefreshTab(); }}
                   disabled={browsing}
                   className="ml-auto text-[10px] text-muted-foreground hover:text-foreground"
+                  title="Force-fetch from the MCP server (bypass the gateway response cache)"
                 >
                   {browsing ? "Loading…" : "Refresh"}
                 </button>
