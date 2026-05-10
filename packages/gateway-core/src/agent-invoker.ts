@@ -37,6 +37,7 @@ import {
 import type { SystemPromptContext, EntityContextSection, RequestType, SystemPromptTokenBreakdown } from "./system-prompt.js";
 import { gateInvocation, isHumanCommand } from "./invocation-gate.js";
 import { sanitize } from "./sanitizer.js";
+import { helpModeFiltersTool, isHelpModeContext } from "./help-mode-config.js";
 
 import type { LLMProvider, LLMToolCall, LLMToolResult, LLMMessage, LLMContentBlock } from "./llm/index.js";
 import type { UserContextStore } from "./user-context-store.js";
@@ -246,6 +247,13 @@ export interface InvocationRequest {
   projectContext?: string;
   /** BuilderChat mode — loads builder system prompt and designer tools. */
   builderMode?: "create" | "update" | "review";
+  /**
+   * s137 t532 Phase 2 — when this string starts with `help:`, load the
+   * help-mode system prompt + restrict tools to the read-only allowlist.
+   * Mirrors the dashboard's `chatContext` (set when the user clicks the
+   * `?` icon in the header).
+   */
+  helpContext?: string;
   /** Pre-saved image references for this invocation (from ImageBlobStore). */
   imageRefs?: import("./agent-session.js").ImageRef[];
   /** Chat session ID used for image blob resolution. */
@@ -437,12 +445,19 @@ export class AgentInvoker extends EventEmitter {
       : null;
     const projectCategory = (projectConfigForTurn as { category?: string } | null | undefined)?.category;
 
-    const availableTools = computeAvailableTools(
+    const availableToolsBase = computeAvailableTools(
       state,
       entity.verificationTier,
       this.deps.toolRegistry.getManifests(),
       projectCategory,
     );
+    // s137 t532 Phase 2 — when invocation is help-mode, drop tools that
+    // would mutate state. helpModeFiltersTool defaults to deny so the
+    // budget naturally tightens as new tools are added.
+    const helpMode = isHelpModeContext(request.helpContext);
+    const availableTools = helpMode
+      ? availableToolsBase.filter((t) => !helpModeFiltersTool(t.name))
+      : availableToolsBase;
 
     const entityCtx: EntityContextSection = {
       entityId: entity.id,
@@ -625,6 +640,24 @@ export class AgentInvoker extends EventEmitter {
         const builderPrompt = readFileSync(builderPromptPath, "utf-8");
         systemPrompt = builderPrompt + "\n\n---\n\n" + systemPrompt;
       } catch { /* proceed without builder prompt */ }
+    }
+
+    // s137 t532 Phase 2 — help-mode prompt prepended for `help:<page>`
+    // contexts (mirrors builderMode shape; both can in principle compose
+    // but help-mode restricts the tool budget more aggressively, which
+    // wins per `helpModeFiltersTool`).
+    if (helpMode) {
+      try {
+        const { readFileSync } = await import("node:fs");
+        const { resolve: resolvePath } = await import("node:path");
+        const helpPromptPath = resolvePath(process.cwd(), "prompts/help-mode.md");
+        const helpPrompt = readFileSync(helpPromptPath, "utf-8");
+        const pageContext = (request.helpContext as string).slice("help:".length);
+        const contextNote = pageContext
+          ? `\n\n## Current page\n\nThe user is asking about: \`${pageContext}\`\n`
+          : "";
+        systemPrompt = helpPrompt + contextNote + "\n\n---\n\n" + systemPrompt;
+      } catch { /* proceed without help-mode prompt */ }
     }
 
     const systemPromptTokens = estimateTokens(systemPrompt);
