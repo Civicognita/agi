@@ -1049,7 +1049,7 @@ export async function createGatewayRuntimeState(
     // a second roundtrip. Both fields are optional in the schema; a
     // missing isDefault means "no explicit primary" (dispatch falls
     // back to repos[0]).
-    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; tynnTokenSet: boolean; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string; isDefault?: boolean; port?: number }[]; attachedStacks?: { stackId: string }[]; knowledge?: { pages: number; plans: number; chatSessions: number } }[] = [];
+    const projects: { name: string; path: string; hasGit: boolean; tynnToken: string | null; tynnTokenSet: boolean; hosting: unknown; detectedHosting?: { projectType: string; suggestedStacks: string[]; docRoot: string; startCommand: string | null }; projectType?: { id: string; label: string; category: string; hostable: boolean; hasCode: boolean; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; tools: { id: string; label: string; description: string; action: string; command?: string; endpoint?: string }[] }; category?: string; iterativeWorkEligible?: boolean; testingUxEligible?: boolean; description?: string; magicApps?: string[]; coreCollection?: string; coreForkSlug?: string; repos?: { name: string; url: string; branch?: string; isDefault?: boolean; port?: number }[]; attachedStacks?: { stackId: string }[]; knowledge?: { pages: number; plans: number; chatSessions: number }; tynnSlice?: { open: number; doing: number } }[] = [];
 
     // Expand top-level entries into (fullPath, coreCollection, coreForkSlug) triples.
     // A directory that contains a `collection.json` with
@@ -1172,6 +1172,43 @@ export async function createGatewayRuntimeState(
           }
         } catch { /* k/ scaffold read errored — knowledge stays undefined */ }
 
+        // s139 t541 — tynnSlice column. Read TynnLite's tasks.jsonl
+        // (preferred at <projectPath>/k/pm/; fallback to legacy
+        // <projectPath>/.tynn-lite/) and compute open + doing counts
+        // per the canonical buckets:
+        //   open  = backlog
+        //   doing = starting + doing + testing
+        // Folds snapshots by task id last-wins to get current state.
+        // Cheap synchronous read; per-project list is typically small.
+        let tynnSlice: { open: number; doing: number } | undefined;
+        try {
+          const candidates = [
+            join(fullPath, "k", "pm", "tasks.jsonl"),
+            join(fullPath, ".tynn-lite", "tasks.jsonl"),
+          ];
+          const tasksPath = candidates.find((p) => existsSync(p));
+          if (tasksPath !== undefined) {
+            const raw = readFileSync(tasksPath, "utf-8");
+            const folded = new Map<string, string>(); // id → latest status
+            for (const line of raw.split("\n")) {
+              if (line.trim() === "") continue;
+              try {
+                const r = JSON.parse(line) as { id?: string; status?: string };
+                if (typeof r.id === "string" && typeof r.status === "string") {
+                  folded.set(r.id, r.status);
+                }
+              } catch { /* skip malformed line */ }
+            }
+            let open = 0;
+            let doing = 0;
+            for (const status of folded.values()) {
+              if (status === "backlog") open++;
+              else if (status === "starting" || status === "doing" || status === "testing") doing++;
+            }
+            tynnSlice = { open, doing };
+          }
+        } catch { /* TynnLite read errored — tynnSlice stays undefined */ }
+
         projects.push({
           name: entryName,
           path: fullPath,
@@ -1195,6 +1232,7 @@ export async function createGatewayRuntimeState(
           repos: metaRepos,
           attachedStacks: metaAttachedStacks,
           knowledge,
+          tynnSlice,
         });
       } catch { /* directory may not exist */ }
     }
