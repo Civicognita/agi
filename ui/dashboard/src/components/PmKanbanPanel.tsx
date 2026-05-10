@@ -21,7 +21,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import { Kanban } from "@particle-academy/react-fancy";
+import { Kanban, Modal } from "@particle-academy/react-fancy";
 
 interface PmTask {
   id: string;
@@ -30,6 +30,8 @@ interface PmTask {
   title: string;
   status: string;
   description?: string;
+  verificationSteps?: string[];
+  codeArea?: string;
 }
 
 interface FindTasksResponse {
@@ -56,6 +58,11 @@ export function PmKanbanPanel() {
   // s139 t537 — list-view toggle. Defaults to kanban; swaps to table
   // when the user wants a denser scannable view.
   const [viewMode, setViewMode] = useState<ViewMode>("kanban");
+  // s139 t539 Phase 1 — card detail modal. Click a card → see its full
+  // body (title / description / status / codeArea / verificationSteps).
+  // Read-only; edit functionality + missing-field schema work (priority
+  // / points / due / assignee / subtasks) follow in Phase 2+.
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -213,7 +220,11 @@ export function PmKanbanPanel() {
               </Kanban.ColumnHandle>
               {columnTasks.map((task) => (
                 <Kanban.Card key={task.id} id={task.id}>
-                  <div className="text-[11px] p-2 border border-border rounded bg-card" data-testid="kanban-card">
+                  <div
+                    className="text-[11px] p-2 border border-border rounded bg-card cursor-pointer hover:border-yellow"
+                    data-testid="kanban-card"
+                    onClick={() => { setSelectedTaskId(task.id); }}
+                  >
                     <div className="font-medium truncate">{task.title}</div>
                     <div className="text-muted-foreground text-[10px] mt-1">
                       #{String(task.number)} · {task.status}
@@ -226,6 +237,60 @@ export function PmKanbanPanel() {
         })}
       </Kanban>
       )}
+
+      {/* s139 t539 Phase 1 — card detail modal */}
+      {selectedTaskId !== null && (() => {
+        const task = tasks.find((t) => t.id === selectedTaskId);
+        if (!task) return null;
+        return (
+          <Modal open onClose={() => { setSelectedTaskId(null); }} size="md">
+            <Modal.Title>
+              <div className="flex items-center gap-2 text-[14px]">
+                <span className="font-mono text-muted-foreground">#{String(task.number)}</span>
+                <span className="font-semibold">{task.title}</span>
+              </div>
+            </Modal.Title>
+            <Modal.Body>
+              <div className="space-y-3 text-[12px]" data-testid="kanban-card-modal">
+                <div>
+                  <div className="text-muted-foreground text-[11px] mb-0.5">Status</div>
+                  <div>{task.status}</div>
+                </div>
+                {task.description !== undefined && task.description.length > 0 && (
+                  <div>
+                    <div className="text-muted-foreground text-[11px] mb-0.5">Description</div>
+                    <div className="whitespace-pre-wrap">{task.description}</div>
+                  </div>
+                )}
+                {task.codeArea !== undefined && task.codeArea.length > 0 && (
+                  <div>
+                    <div className="text-muted-foreground text-[11px] mb-0.5">Code area</div>
+                    <code className="text-[11px]">{task.codeArea}</code>
+                  </div>
+                )}
+                {task.verificationSteps !== undefined && task.verificationSteps.length > 0 && (
+                  <div>
+                    <div className="text-muted-foreground text-[11px] mb-0.5">Verification steps</div>
+                    <ul className="list-disc pl-5 space-y-0.5">
+                      {task.verificationSteps.map((step, i) => (
+                        <li key={i}>{step}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </Modal.Body>
+            <Modal.Footer>
+              <button
+                onClick={() => { setSelectedTaskId(null); }}
+                className="text-[12px] px-3 py-1 rounded border border-border hover:bg-secondary"
+              >
+                Close
+              </button>
+            </Modal.Footer>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
