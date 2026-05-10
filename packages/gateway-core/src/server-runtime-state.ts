@@ -67,6 +67,8 @@ import type { FederationRouter as FedRouter } from "./federation-router.js";
 import { appendUpgradeLog, clearUpgradeLog, getUpgradeLog } from "./upgrade-log.js";
 import { projectConfigPath } from "./project-config-path.js";
 import {
+  buildCandidatePayload,
+  findPromotionCandidates,
   listIssues as listIssuesStore,
   logIssue as logIssueStore,
   readIssue as readIssueStore,
@@ -2028,6 +2030,41 @@ export async function createGatewayRuntimeState(
     const query = (request.query as Record<string, string>)["q"] ?? "";
     const hits = searchIssuesStore(v.targetPath, query);
     return reply.send({ hits });
+  });
+
+  // Wish #21 Slice 6 — promote bash audit-log entries to issues.
+  // POST body: { days?: number (default 7), promote?: boolean (default true) }.
+  // When promote=false, returns just the candidate list (dry run).
+  fastify.post("/api/projects/issues/from-bash-log", async (request, reply) => {
+    const v = validateIssueProjectPath(request, reply);
+    if (!v.ok) return v.sent;
+    const body = (request.body as Record<string, unknown> | null) ?? {};
+    const daysRaw = body["days"];
+    const days = typeof daysRaw === "number" && Number.isFinite(daysRaw) && daysRaw > 0 ? Math.floor(daysRaw) : 7;
+    const promote = body["promote"] !== false; // default true
+    const candidates = findPromotionCandidates(days);
+    if (!promote) {
+      return reply.send({ daysScanned: days, candidates, promoted: 0, appended: 0, dryRun: true });
+    }
+    let promoted = 0;
+    let appended = 0;
+    const results: { id: string; outcome: string; occurrences: number }[] = [];
+    for (const c of candidates) {
+      const payload = buildCandidatePayload(c);
+      const result = logIssueStore(v.targetPath, {
+        title: payload.title,
+        symptom: payload.symptom,
+        tool: payload.tool,
+        exit_code: payload.exit_code,
+        tags: payload.tags,
+        body: payload.body,
+        agent: "audit-promotion",
+      });
+      if (result.outcome === "created") promoted++;
+      else appended++;
+      results.push({ id: result.id, outcome: result.outcome, occurrences: result.occurrences });
+    }
+    return reply.send({ daysScanned: days, candidates: candidates.length, promoted, appended, results });
   });
 
   fastify.get<{ Params: { id: string } }>("/api/projects/issues/:id", async (request, reply) => {

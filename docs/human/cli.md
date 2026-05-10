@@ -232,6 +232,13 @@ agi issue file --project /home/wishborn/_projects/_aionima \
 # Mark as fixed with a resolution note
 agi issue fix i-001 --project /home/wishborn/_projects/_aionima \
   --resolution "Fixed in agi v0.4.x via per-key cooldown"
+
+# Slice 6: backfill from ~/.agi/logs/agi-bash-*.jsonl audit log.
+# Promotes blocked + non-zero-exit entries to issues; symptom-hash
+# auto-dedups so recurring patterns roll up.
+agi issue from-bash-log --project /home/wishborn/_projects/_aionima              # last 7 days
+agi issue from-bash-log --project /home/wishborn/_projects/_aionima --days 30
+agi issue from-bash-log --project /home/wishborn/_projects/_aionima --dry-run    # preview candidates
 ```
 
 **Dedup model.** Filing computes a `symptom_hash` from the normalized
