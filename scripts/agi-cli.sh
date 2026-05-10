@@ -2173,6 +2173,7 @@ cmd_help() {
   echo "                    (no arg)                     Full grouped self-diagnostic (core/auth/repos/git/plugins/network/containers/hosting/dev/gateway/lemonade)"
   echo "                    [--json]                     Bare-form supports JSON output for scripting"
   echo "                    [--with-aion]                Bare-form supports aion-micro-powered analysis"
+  echo "                    menu                         Interactive category menu (Phase 1 — number-pick once)"
   echo "                    health                       Legacy 5-check infra health (Node, podman, hosted projects, flapping)"
   echo "                    schema [--json]              Validate every gateway-loaded config against its Zod schema"
   echo "                    dump                         Write redacted diagnostic bundle to ~/.agi/doctor-dumps/"
@@ -2265,13 +2266,10 @@ case "${1:-help}" in
         shift; shift
         cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts schema validate "$@"
         ;;
-      dump|logs|config)
+      dump|logs|config|menu)
         # s144 t582 forward-compat — route the TS commander subcommands
-        # (dump t579, logs t581, config t578) through bash to the cli/src/
-        # commander surface where they live. Pre-t582 they were
-        # silently routed to bare-form cmd_doctor (which doesn't know
-        # about them) — drift caught while shipping t583's spec. Bash
-        # is now the bridge; TS cli is the canonical entrypoint.
+        # (dump t579, logs t581, config t578, menu t574 Phase 1) through
+        # bash to the cli/src/ commander surface where they live.
         local _doctor_sub="${2:-}"
         shift; shift
         cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts doctor "$_doctor_sub" "$@"
