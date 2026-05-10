@@ -19,7 +19,7 @@
  *   - Phase 6: raw-tier promote affordance (uses Slice 5 routes)
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 interface IssueIndexEntry {
   id: string;
@@ -37,10 +37,17 @@ interface AggregateResponse {
   issues: IssueIndexEntry[];
 }
 
+const STATUS_OPTIONS = ["all", "open", "known", "fixed", "wont-fix"] as const;
+type StatusFilter = typeof STATUS_OPTIONS[number];
+
 export function IssuesPanel() {
   const [issues, setIssues] = useState<IssueIndexEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // s4 Phase 2 — filter state
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [projectFilter, setProjectFilter] = useState<string>("all");
+  const [tagFilter, setTagFilter] = useState<string>("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -62,6 +69,29 @@ export function IssuesPanel() {
     return () => { cancelled = true; };
   }, []);
 
+  // Compute available projects + tags from the loaded issues
+  const projectOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const i of issues) if (i.project) set.add(i.project);
+    return ["all", ...[...set].sort()];
+  }, [issues]);
+
+  const tagOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const i of issues) for (const t of i.tags) set.add(t);
+    return ["all", ...[...set].sort()];
+  }, [issues]);
+
+  // Apply filters
+  const filteredIssues = useMemo(() => {
+    return issues.filter((i) => {
+      if (statusFilter !== "all" && i.status !== statusFilter) return false;
+      if (projectFilter !== "all" && i.project !== projectFilter) return false;
+      if (tagFilter !== "all" && !i.tags.includes(tagFilter)) return false;
+      return true;
+    });
+  }, [issues, statusFilter, projectFilter, tagFilter]);
+
   if (loading) {
     return <p className="text-[12px] text-muted-foreground">Loading issues…</p>;
   }
@@ -80,9 +110,9 @@ export function IssuesPanel() {
     );
   }
 
-  // Group by project (entries without a `project` field group under "(global)")
+  // Group filteredIssues by project (entries without a `project` field group under "(unknown)")
   const groups = new Map<string, IssueIndexEntry[]>();
-  for (const issue of issues) {
+  for (const issue of filteredIssues) {
     const key = issue.project ?? "(unknown)";
     const existing = groups.get(key) ?? [];
     existing.push(issue);
@@ -91,8 +121,44 @@ export function IssuesPanel() {
 
   return (
     <div className="space-y-6" data-testid="issues-panel">
+      {/* s4 Phase 2 — filter strip */}
+      <div className="flex flex-wrap items-center gap-3" data-testid="issues-filters">
+        <label className="flex items-center gap-1 text-[12px] text-muted-foreground">
+          Status:
+          <select
+            value={statusFilter}
+            onChange={(e) => { setStatusFilter(e.target.value as StatusFilter); }}
+            className="bg-secondary text-foreground border border-border rounded-md px-2 py-1 text-[12px]"
+            data-testid="filter-status"
+          >
+            {STATUS_OPTIONS.map((s) => (<option key={s} value={s}>{s}</option>))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1 text-[12px] text-muted-foreground">
+          Project:
+          <select
+            value={projectFilter}
+            onChange={(e) => { setProjectFilter(e.target.value); }}
+            className="bg-secondary text-foreground border border-border rounded-md px-2 py-1 text-[12px]"
+            data-testid="filter-project"
+          >
+            {projectOptions.map((p) => (<option key={p} value={p}>{p}</option>))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1 text-[12px] text-muted-foreground">
+          Tag:
+          <select
+            value={tagFilter}
+            onChange={(e) => { setTagFilter(e.target.value); }}
+            className="bg-secondary text-foreground border border-border rounded-md px-2 py-1 text-[12px]"
+            data-testid="filter-tag"
+          >
+            {tagOptions.map((t) => (<option key={t} value={t}>{t}</option>))}
+          </select>
+        </label>
+      </div>
       <div className="text-[12px] text-muted-foreground">
-        {String(issues.length)} issue{issues.length === 1 ? "" : "s"} across {String(groups.size)} project{groups.size === 1 ? "" : "s"}
+        Showing {String(filteredIssues.length)} of {String(issues.length)} issue{issues.length === 1 ? "" : "s"} across {String(groups.size)} project{groups.size === 1 ? "" : "s"}
       </div>
       {[...groups.entries()].map(([project, projectIssues]) => (
         <section key={project} data-project={project}>
