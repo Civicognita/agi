@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DevNotes } from "@/components/ui/dev-notes";
-import { SACRED_PROJECTS, PAX_SACRED_PROJECTS, isSacredProject, isPaxProject, matchSacredProject, matchPaxProjects } from "@/lib/sacred-projects.js";
+import { SACRED_PROJECTS, PAX_SACRED_PROJECTS, isSacredProject, isPaxProject, matchSacredProject } from "@/lib/sacred-projects.js";
 import { Table } from "@particle-academy/react-fancy";
 import { fetchProjectActivitySummary, type ProjectActivitySummary } from "../api.js";
 import {
@@ -79,11 +79,10 @@ export function Projects({
     : [];
 
   const isAionimaProject = (p: ProjectInfo) => isSacredProject(p) || p.projectType?.id === "aionima";
-  // s136 t522 — PAx forks (react-fancy/fancy-code/fancy-sheets/fancy-echarts)
-  // are also filtered out of regular tiles. They render as the PAx sacred
-  // portal card below, mirroring the Aionima consolidation pattern.
+  // s119 t705 — PAx forks live as repos under `_aionima/repos/` now,
+  // not as standalone projects. They never appear as their own tiles;
+  // the single Aionima sacred card (above) is the entry point.
   const visibleProjects = projects.filter((p) => !isAionimaProject(p) && !isPaxProject(p));
-  const paxProjects = isContributing ? matchPaxProjects(projects) : [];
 
   // s130 t516 slice 2 — batch-fetch 30-day activity summaries for the
   // visible projects. Runs once when the visible-projects set changes.
@@ -263,9 +262,15 @@ export function Projects({
             <Star className="h-4 w-4 text-yellow" />
             <h3 className="text-[13px] font-semibold text-foreground">Sacred</h3>
           </div>
+          {/* s119 t705 — Aionima is now a self-managed project at
+              `_aionima`. The legacy /aionima consolidated view + the
+              separate /pax tile collapsed into this single card; both
+              routes redirect to `/projects/_aionima`. PAx repos live as
+              repos under `_aionima/repos/<name>` alongside the 5
+              Civicognita cores. */}
           <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
             <div
-              onClick={() => { void navigate("/aionima"); }}
+              onClick={() => { void navigate("/projects/_aionima"); }}
               className={cn(
                 "rounded-xl border transition-colors duration-150 cursor-pointer hover:border-yellow",
                 "bg-indigo-50/70 border-indigo-200/80",
@@ -282,46 +287,11 @@ export function Projects({
                   </span>
                 </div>
                 <div className="text-[11px] text-muted-foreground">
-                  Platform contribution portal — upstream alignment, PR submission, MINT impact ($WORK / $K / $RES). Wraps the {sacredEntries.length} core forks (agi, prime, id, marketplace, mapp-marketplace) as one user-facing surface.
+                  Platform contribution portal — upstream alignment, PR submission, MINT impact ($WORK / $K / $RES). Wraps the {sacredEntries.length} core forks + {PAX_SACRED_PROJECTS.length} Particle-Academy ADF UI primitives as a single self-managed project (`_aionima/repos/`).
                 </div>
-                <div className="text-[11px] text-yellow mt-2 font-medium">Open Aionima Development →</div>
+                <div className="text-[11px] text-yellow mt-2 font-medium">Open Aionima →</div>
               </div>
             </div>
-
-            {/* PAx — Particle-Academy ADF UI primitives sacred card
-                (s136 t522). Mirrors the Aionima consolidation pattern.
-                Only renders in contributing-mode (forks aren't
-                provisioned otherwise). */}
-            {isContributing && (
-              <div
-                onClick={() => { void navigate("/pax"); }}
-                className={cn(
-                  "rounded-xl border transition-colors duration-150 cursor-pointer hover:border-yellow",
-                  "bg-indigo-50/70 border-indigo-200/80",
-                  "dark:bg-indigo-950/40 dark:border-indigo-700/60",
-                )}
-                data-testid="project-card-pax"
-              >
-                <div className="p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Star className="h-4 w-4 text-yellow" />
-                    <span className="text-[15px] font-semibold text-card-foreground">PAx</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">
-                      primitives
-                    </span>
-                    {paxProjects.length > 0 && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-green/15 text-green font-semibold">
-                        {paxProjects.length}/{PAX_SACRED_PROJECTS.length} provisioned
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    ADF UI primitive maintenance portal — wraps the {PAX_SACRED_PROJECTS.length} Particle-Academy packages (react-fancy, fancy-code, fancy-sheets, fancy-echarts) consumed by the dashboard, plugins, MApps, and locally-hosted apps. File issues + open PRs via the maintenance loop at agi/docs/agents/contributing-to-adf-packages.md.
-                  </div>
-                  <div className="text-[11px] text-yellow mt-2 font-medium">Open PAx →</div>
-                </div>
-              </div>
-            )}
           </div>
         </div>
       )}
