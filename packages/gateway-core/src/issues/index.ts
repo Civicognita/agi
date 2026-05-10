@@ -28,3 +28,11 @@ export {
 
 export type { IssueSearchHit, IssueSearchHitWithBody } from "./search.js";
 export { parseSearchQuery, searchIssues } from "./search.js";
+
+export type { BashAuditEntry, CandidatePayload, PromotionCandidate } from "./bash-log-promotion.js";
+export {
+  bashLogDir,
+  buildCandidatePayload,
+  findPromotionCandidates,
+  listBashLogFiles,
+} from "./bash-log-promotion.js";

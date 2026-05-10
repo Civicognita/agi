@@ -1320,6 +1320,38 @@ req=urllib.request.Request(sys.argv[6],data=data,headers={'Content-Type':'applic
 with urllib.request.urlopen(req) as r: print(r.read().decode())
 " "$title" "$symptom" "$tool" "$exit_code" "$tags" "$gw_url/api/projects/issues?path=$encoded" | ($fmt)
       ;;
+    from-bash-log)
+      # Wish #21 Slice 6 — promote bash audit-log entries to issues.
+      # Scans ~/.agi/logs/agi-bash-*.jsonl for the last --days N days,
+      # groups blocked + non-zero-exit entries, files them via logIssue
+      # (which auto-dedups via symptom-hash). Use --dry-run to see the
+      # candidate list without filing.
+      local project=""
+      local days="7"
+      local dryrun=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) project="${2:-}"; shift 2 ;;
+          --days) days="${2:-}"; shift 2 ;;
+          --dry-run) dryrun="true"; shift ;;
+          *) err "Unknown flag: $1"; exit 1 ;;
+        esac
+      done
+      if [ -z "$project" ]; then
+        err "Usage: agi issue from-bash-log --project <absolute-path> [--days N] [--dry-run]"
+        exit 1
+      fi
+      local encoded
+      encoded="$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$project")"
+      python3 -c "
+import json,sys,urllib.request
+body={'days':int(sys.argv[1])}
+if sys.argv[2]=='true': body['promote']=False
+data=json.dumps(body).encode()
+req=urllib.request.Request(sys.argv[3],data=data,headers={'Content-Type':'application/json'},method='POST')
+with urllib.request.urlopen(req) as r: print(r.read().decode())
+" "$days" "$dryrun" "$gw_url/api/projects/issues/from-bash-log?path=$encoded" | ($fmt)
+      ;;
     fix)
       local id="${1:-}"
       shift || true
@@ -1349,7 +1381,7 @@ with urllib.request.urlopen(req) as r: print(r.read().decode())
       ;;
     *)
       err "Unknown issue action: $action"
-      echo "  Actions: list [--project <path>] | search <query> --project <path> | show <id> --project <path> | file --project <path> --title <t> --symptom <s> [--tool] [--exit] [--tags] | fix <id> --project <path> [--resolution]"
+      echo "  Actions: list [--project <path>] | search <query> --project <path> | show <id> --project <path> | file --project <path> --title <t> --symptom <s> [--tool] [--exit] [--tags] | fix <id> --project <path> [--resolution] | from-bash-log --project <path> [--days N] [--dry-run]"
       exit 1
       ;;
   esac
@@ -2103,6 +2135,8 @@ cmd_help() {
   echo "                       [--tool t] [--exit n] [--tags a,b,c]   Log issue (auto-dedup)"
   echo "                    fix <id> --project <path> [--resolution <text>]"
   echo "                                                  Mark fixed + append resolution"
+  echo "                    from-bash-log --project <path> [--days N] [--dry-run]"
+  echo "                                                  Promote ~/.agi/logs/agi-bash-*.jsonl entries"
   echo "  models CMD      HF model management — pulled/cached/installed models"
   echo "                  (list|running|status|install|start|stop|remove|search|hardware)."
   echo "                  For provider/router config (which Provider, cost-mode), use"
