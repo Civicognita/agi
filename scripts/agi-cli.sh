@@ -1320,6 +1320,58 @@ req=urllib.request.Request(sys.argv[6],data=data,headers={'Content-Type':'applic
 with urllib.request.urlopen(req) as r: print(r.read().decode())
 " "$title" "$symptom" "$tool" "$exit_code" "$tags" "$gw_url/api/projects/issues?path=$encoded" | ($fmt)
       ;;
+    raw)
+      # Wish #21 Slice 5 — raw-tier auto-capture management.
+      # Subcommands: list / promote <id> / clear
+      local sub="${1:-list}"
+      shift || true
+      local project=""
+      local title=""
+      local tags=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) project="${2:-}"; shift 2 ;;
+          --title) title="${2:-}"; shift 2 ;;
+          --tags) tags="${2:-}"; shift 2 ;;
+          *) break ;;
+        esac
+      done
+      if [ -z "$project" ]; then
+        err "Usage: agi issue raw <list|promote <id>|clear> --project <absolute-path>"
+        exit 1
+      fi
+      local encoded
+      encoded="$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$project")"
+      case "$sub" in
+        list)
+          curl -s "$gw_url/api/projects/issues/raw?path=$encoded" | ($fmt)
+          ;;
+        promote)
+          local raw_id="$1"
+          if [ -z "$raw_id" ]; then
+            err "Usage: agi issue raw promote <raw-id> --project <path> [--title <t>] [--tags a,b,c]"
+            exit 1
+          fi
+          python3 -c "
+import json,sys,urllib.request
+body={}
+if sys.argv[1]: body['title']=sys.argv[1]
+if sys.argv[2]: body['tags']=[t.strip() for t in sys.argv[2].split(',') if t.strip()]
+data=json.dumps(body).encode()
+req=urllib.request.Request(sys.argv[3],data=data,headers={'Content-Type':'application/json'},method='POST')
+with urllib.request.urlopen(req) as r: print(r.read().decode())
+" "$title" "$tags" "$gw_url/api/projects/issues/raw/$raw_id/promote?path=$encoded" | ($fmt)
+          ;;
+        clear)
+          curl -s -X DELETE "$gw_url/api/projects/issues/raw?path=$encoded" | ($fmt)
+          ;;
+        *)
+          err "Unknown raw subcommand: $sub"
+          echo "  Subcommands: list | promote <id> | clear" >&2
+          exit 1
+          ;;
+      esac
+      ;;
     from-bash-log)
       # Wish #21 Slice 6 — promote bash audit-log entries to issues.
       # Scans ~/.agi/logs/agi-bash-*.jsonl for the last --days N days,
@@ -1381,7 +1433,7 @@ with urllib.request.urlopen(req) as r: print(r.read().decode())
       ;;
     *)
       err "Unknown issue action: $action"
-      echo "  Actions: list [--project <path>] | search <query> --project <path> | show <id> --project <path> | file --project <path> --title <t> --symptom <s> [--tool] [--exit] [--tags] | fix <id> --project <path> [--resolution] | from-bash-log --project <path> [--days N] [--dry-run]"
+      echo "  Actions: list [--project <path>] | search <query> --project <path> | show <id> --project <path> | file --project <path> --title <t> --symptom <s> [--tool] [--exit] [--tags] | fix <id> --project <path> [--resolution] | from-bash-log --project <path> [--days N] [--dry-run] | raw <list|promote <id>|clear> --project <path>"
       exit 1
       ;;
   esac
@@ -2137,6 +2189,8 @@ cmd_help() {
   echo "                                                  Mark fixed + append resolution"
   echo "                    from-bash-log --project <path> [--days N] [--dry-run]"
   echo "                                                  Promote ~/.agi/logs/agi-bash-*.jsonl entries"
+  echo "                    raw <list|promote <id>|clear> --project <path>"
+  echo "                                                  Manage raw-tier auto-capture sink"
   echo "  models CMD      HF model management — pulled/cached/installed models"
   echo "                  (list|running|status|install|start|stop|remove|search|hardware)."
   echo "                  For provider/router config (which Provider, cost-mode), use"

@@ -239,6 +239,13 @@ agi issue fix i-001 --project /home/wishborn/_projects/_aionima \
 agi issue from-bash-log --project /home/wishborn/_projects/_aionima              # last 7 days
 agi issue from-bash-log --project /home/wishborn/_projects/_aionima --days 30
 agi issue from-bash-log --project /home/wishborn/_projects/_aionima --dry-run    # preview candidates
+
+# Slice 5: raw-tier auto-capture sink. Tools/agents record failures via
+# recordRawCapture() (JSONL append-only at <project>/k/issues/raw.jsonl);
+# operator triages the list + promotes interesting captures to curated.
+agi issue raw list --project /home/wishborn/_projects/_aionima                   # list captures
+agi issue raw promote r-abc123-001 --project /home/wishborn/_projects/_aionima   # promote one
+agi issue raw clear --project /home/wishborn/_projects/_aionima                  # operator reset
 ```
 
 **Dedup model.** Filing computes a `symptom_hash` from the normalized
