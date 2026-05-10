@@ -5,10 +5,11 @@
  * the SyncReplayWorker. Mirror of /issues's shape.
  */
 
+import type { ReactElement } from "react";
 import { SyncConflictsPanel } from "@/components/SyncConflictsPanel.js";
 import { PageScroll } from "@/components/PageScroll.js";
 
-export default function SyncConflictsPage(): JSX.Element {
+export default function SyncConflictsPage(): ReactElement {
   return (
     <PageScroll>
       <div className="space-y-4">

@@ -15,6 +15,7 @@
  * implemented — currently empty for this surface.
  */
 
+import type { ReactElement } from "react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import type { ProjectInfo } from "../types";
@@ -70,7 +71,7 @@ async function setPluginEnabled(id: string, enabled: boolean): Promise<void> {
   await fetch(`/api/dashboard/scheduled-tasks/${id}/${action}`, { method: "POST" });
 }
 
-export default function ScheduledJobsPage(): JSX.Element {
+export default function ScheduledJobsPage(): ReactElement {
   const [pluginTasks, setPluginTasks] = useState<PluginScheduledTask[]>([]);
   const [projectIws, setProjectIws] = useState<ProjectIwInfo[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
