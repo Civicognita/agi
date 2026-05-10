@@ -110,7 +110,40 @@ export function PmKanbanPanel() {
           Show blocked + archived
         </label>
       </div>
-      <Kanban onCardMove={() => { /* Phase 2: persist via setTaskStatus */ }}>
+      <Kanban
+        onCardMove={(cardId, fromColumn, toColumn) => {
+          // s139 t536 Phase 2 — persist column moves via setTaskStatus.
+          // Map target column to its first canonical status (per
+          // DEFAULT_TYNN_KANBAN_CONFIG buckets); within-column moves
+          // (fromColumn === toColumn) skip the API call.
+          if (fromColumn === toColumn) return;
+          const target = COLUMNS.find((c) => c.id === toColumn);
+          if (!target || target.statuses.length === 0) return;
+          const newStatus = target.statuses[0];
+          // Optimistic update
+          setTasks((prev) => prev.map((t) => (t.id === cardId ? { ...t, status: newStatus! } : t)));
+          // Persist; on error, revert (pull tasks fresh from API)
+          void (async () => {
+            try {
+              const r = await fetch(`/api/pm/tasks/${cardId}/status`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ status: newStatus }),
+              });
+              if (!r.ok) throw new Error(`HTTP ${String(r.status)}`);
+            } catch {
+              // Revert: refetch
+              try {
+                const r = await fetch("/api/pm/find-tasks?limit=200");
+                if (r.ok) {
+                  const body = (await r.json()) as FindTasksResponse;
+                  setTasks(body.tasks ?? []);
+                }
+              } catch { /* swallow */ }
+            }
+          })();
+        }}
+      >
         {visibleColumns.map((col) => {
           const columnTasks = tasksByColumn.get(col.id) ?? [];
           return (

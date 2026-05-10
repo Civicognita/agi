@@ -280,4 +280,66 @@ describe("pm-api routes", () => {
       expect(body.error).toContain("not found");
     });
   });
+
+  describe("s139 t536 Phase 2 — POST /api/pm/tasks/:id/status", () => {
+    it("returns 200 + updated task on valid status", async () => {
+      const r = await app.inject({
+        method: "POST",
+        url: "/api/pm/tasks/t-1/status",
+        payload: { status: "doing" },
+      });
+      expect(r.statusCode).toBe(200);
+      const body = r.json() as { task: { id: string; status: string } };
+      expect(body.task.id).toBe("t-1");
+      expect(body.task.status).toBe("doing");
+    });
+
+    it("returns 400 on missing status", async () => {
+      const r = await app.inject({
+        method: "POST",
+        url: "/api/pm/tasks/t-1/status",
+        payload: {},
+      });
+      expect(r.statusCode).toBe(400);
+    });
+
+    it("returns 400 on invalid status", async () => {
+      const r = await app.inject({
+        method: "POST",
+        url: "/api/pm/tasks/t-1/status",
+        payload: { status: "totally-bogus" },
+      });
+      expect(r.statusCode).toBe(400);
+    });
+
+    it("forwards optional note to setTaskStatus", async () => {
+      const r = await app.inject({
+        method: "POST",
+        url: "/api/pm/tasks/t-1/status",
+        payload: { status: "finished", note: "shipped via PR #X" },
+      });
+      expect(r.statusCode).toBe(200);
+    });
+
+    it("returns 404 when provider throws 'unknown task'", async () => {
+      // Re-create the app with a provider that throws
+      const failApp = Fastify();
+      const failProvider = makeProvider({
+        setTaskStatus: async () => { throw new Error("tynn-lite: unknown task t-bogus"); },
+      });
+      registerPmRoutes(failApp, {
+        pmProvider: failProvider,
+        planStore,
+        workspaceProjects: [workspace],
+      });
+      await failApp.ready();
+      const r = await failApp.inject({
+        method: "POST",
+        url: "/api/pm/tasks/t-bogus/status",
+        payload: { status: "doing" },
+      });
+      expect(r.statusCode).toBe(404);
+      await failApp.close();
+    });
+  });
 });

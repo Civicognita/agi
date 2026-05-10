@@ -212,6 +212,36 @@ export function registerPmRoutes(app: FastifyInstance, deps: PmApiDeps): void {
     }
     return { resolved: id };
   });
+
+  // -------------------------------------------------------------------------
+  // s139 t536 Phase 2 — task status mutation REST surface
+  //
+  // Used by the /pm/kanban page's drag-drop handler to persist column
+  // moves. Body: { status: PmStatus, note?: string }. Returns the
+  // updated task. 404 when task is unknown; 400 on invalid status.
+  // -------------------------------------------------------------------------
+
+  const VALID_STATUSES: PmStatus[] = ["backlog", "starting", "doing", "testing", "finished", "blocked", "archived"];
+
+  app.post<{ Params: { id: string } }>("/api/pm/tasks/:id/status", async (request, reply) => {
+    const { id } = request.params;
+    const body = (request.body as Record<string, unknown> | null) ?? {};
+    const statusRaw = body["status"];
+    if (typeof statusRaw !== "string" || !(VALID_STATUSES as string[]).includes(statusRaw)) {
+      return reply.code(400).send({ error: `status must be one of ${VALID_STATUSES.join(", ")}` });
+    }
+    const note = typeof body["note"] === "string" ? body["note"] : undefined;
+    try {
+      const updated = await deps.pmProvider.setTaskStatus(id, statusRaw as PmStatus, note);
+      return { task: updated };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("unknown task") || msg.includes("not found")) {
+        return reply.code(404).send({ error: msg });
+      }
+      return reply.code(500).send({ error: msg });
+    }
+  });
 }
 
 function isInsideWorkspace(projectPath: string, workspaceProjects: readonly string[]): boolean {
