@@ -16,6 +16,7 @@
 #   agi config [key]    — read config value (dot-path, e.g. agi config hosting.enabled)
 #   agi projects        — list hosted projects with status
 #   agi iw stop --project <path>  — STOP iterative-work on one project
+#   agi issue list / show / file / fix — per-project issue registry (Wish #21)
 #                                    (kill switch — runs without gateway restart)
 #   agi iw stop --all   — STOP iterative-work on ALL projects (nuclear option)
 # ---------------------------------------------------------------------------
@@ -1216,6 +1217,121 @@ cmd_iw() {
   esac
 }
 
+cmd_issue() {
+  # Wish #21 Slice 1 — agent-curated issue registry CLI.
+  # Reads/writes per-project k/issues/ via the gateway HTTP API so
+  # concurrency control + index maintenance stay server-side.
+  local action="${1:-list}"
+  shift || true
+  local gw_url="http://127.0.0.1:3100"
+  local fmt
+  fmt="$(command -v jq >/dev/null && echo "jq ." || echo "cat")"
+
+  case "$action" in
+    list)
+      local project=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) project="${2:-}"; shift 2 ;;
+          *) err "Unknown flag: $1"; exit 1 ;;
+        esac
+      done
+      if [ -n "$project" ]; then
+        local encoded
+        encoded="$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$project")"
+        curl -s "$gw_url/api/projects/issues?path=$encoded" | ($fmt)
+      else
+        curl -s "$gw_url/api/issues" | ($fmt)
+      fi
+      ;;
+    show)
+      local id="${1:-}"
+      shift || true
+      local project=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) project="${2:-}"; shift 2 ;;
+          *) err "Unknown flag: $1"; exit 1 ;;
+        esac
+      done
+      if [ -z "$id" ] || [ -z "$project" ]; then
+        err "Usage: agi issue show <id> --project <absolute-path>"
+        exit 1
+      fi
+      local encoded
+      encoded="$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$project")"
+      curl -s "$gw_url/api/projects/issues/$id?path=$encoded" | ($fmt)
+      ;;
+    file)
+      local project=""
+      local title=""
+      local symptom=""
+      local tool=""
+      local exit_code=""
+      local tags=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) project="${2:-}"; shift 2 ;;
+          --title) title="${2:-}"; shift 2 ;;
+          --symptom) symptom="${2:-}"; shift 2 ;;
+          --tool) tool="${2:-}"; shift 2 ;;
+          --exit) exit_code="${2:-}"; shift 2 ;;
+          --tags) tags="${2:-}"; shift 2 ;;
+          *) err "Unknown flag: $1"; exit 1 ;;
+        esac
+      done
+      if [ -z "$project" ] || [ -z "$title" ] || [ -z "$symptom" ]; then
+        err "Usage: agi issue file --project <absolute-path> --title <t> --symptom <s> [--tool <t>] [--exit <n>] [--tags a,b,c]"
+        exit 1
+      fi
+      local encoded
+      encoded="$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$project")"
+      python3 -c "
+import json,sys,urllib.request
+body={'title':sys.argv[1],'symptom':sys.argv[2]}
+if sys.argv[3]: body['tool']=sys.argv[3]
+if sys.argv[4]: body['exit_code']=int(sys.argv[4])
+if sys.argv[5]: body['tags']=[t.strip() for t in sys.argv[5].split(',') if t.strip()]
+data=json.dumps(body).encode()
+req=urllib.request.Request(sys.argv[6],data=data,headers={'Content-Type':'application/json'},method='POST')
+with urllib.request.urlopen(req) as r: print(r.read().decode())
+" "$title" "$symptom" "$tool" "$exit_code" "$tags" "$gw_url/api/projects/issues?path=$encoded" | ($fmt)
+      ;;
+    fix)
+      local id="${1:-}"
+      shift || true
+      local project=""
+      local resolution=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) project="${2:-}"; shift 2 ;;
+          --resolution) resolution="${2:-}"; shift 2 ;;
+          *) err "Unknown flag: $1"; exit 1 ;;
+        esac
+      done
+      if [ -z "$id" ] || [ -z "$project" ]; then
+        err "Usage: agi issue fix <id> --project <absolute-path> [--resolution <text>]"
+        exit 1
+      fi
+      local encoded
+      encoded="$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$project")"
+      python3 -c "
+import json,sys,urllib.request
+body={'status':'fixed'}
+if sys.argv[1]: body['resolution']=sys.argv[1]
+data=json.dumps(body).encode()
+req=urllib.request.Request(sys.argv[2],data=data,headers={'Content-Type':'application/json'},method='PATCH')
+with urllib.request.urlopen(req) as r: print(r.read().decode())
+" "$resolution" "$gw_url/api/projects/issues/$id?path=$encoded" | ($fmt)
+      ;;
+    *)
+      err "Unknown issue action: $action"
+      echo "  Actions: list [--project <path>] | show <id> --project <path> | file --project <path> --title <t> --symptom <s> [--tool] [--exit] [--tags] | fix <id> --project <path> [--resolution]"
+      exit 1
+      ;;
+  esac
+}
+
 cmd_projects() {
   # Accept subcommands. Default (no arg) lists all projects.
   case "${1:-list}" in
@@ -1956,6 +2072,13 @@ cmd_help() {
   echo "  iw <CMD>        Iterative-work operator commands (s159 t692 kill switch):"
   echo "                    stop --project <path>         Stop iterative-work on one project"
   echo "                    stop --all                    Stop iterative-work on ALL projects"
+  echo "  issue <CMD>     Per-project issue registry (Wish #21):"
+  echo "                    list [--project <path>]       List all issues (or one project)"
+  echo "                    show <id> --project <path>    Read full issue body"
+  echo "                    file --project <path> --title <t> --symptom <s>"
+  echo "                       [--tool t] [--exit n] [--tags a,b,c]   Log issue (auto-dedup)"
+  echo "                    fix <id> --project <path> [--resolution <text>]"
+  echo "                                                  Mark fixed + append resolution"
   echo "  models CMD      HF model management — pulled/cached/installed models"
   echo "                  (list|running|status|install|start|stop|remove|search|hardware)."
   echo "                  For provider/router config (which Provider, cost-mode), use"
@@ -2032,6 +2155,7 @@ case "${1:-help}" in
   config)   cmd_config "${2:-}" ;;
   projects) shift; cmd_projects "$@" ;;
   iw)       shift; cmd_iw "$@" ;;
+  issue)    shift; cmd_issue "$@" ;;
   models)    shift; cmd_models "$@" ;;
   providers) shift; cmd_providers "$@" ;;
   marketplace) shift; cmd_marketplace "$@" ;;

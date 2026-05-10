@@ -200,6 +200,51 @@ identify the looping project from logs alone.
 
 ---
 
+### agi issue — per-project issue registry (Wish #21)
+
+Agent-curated registry for failures Aion (or Claude Code) hits when
+attempting an expected action. Each project has its own
+`<projectPath>/k/issues/` directory: one Markdown file per issue
+(frontmatter + body), plus `index.json` for fast hash lookup.
+
+```bash
+# List issues across all projects (aggregate)
+agi issue list
+
+# List issues for one project
+agi issue list --project /home/wishborn/_projects/_aionima
+
+# Show full issue body
+agi issue show i-001 --project /home/wishborn/_projects/_aionima
+
+# File a new issue (auto-dedups via symptom-hash)
+agi issue file --project /home/wishborn/_projects/_aionima \
+  --title "Taskmaster runaway loop" \
+  --symptom "Same job re-queued every 30s; only fix is gateway restart" \
+  --tool taskmaster --exit 1 --tags taskmaster,runaway-loop
+
+# Mark as fixed with a resolution note
+agi issue fix i-001 --project /home/wishborn/_projects/_aionima \
+  --resolution "Fixed in agi v0.4.x via per-key cooldown"
+```
+
+**Dedup model.** Filing computes a `symptom_hash` from the normalized
+symptom + tool + exit_code. If the hash matches an existing issue in
+the project's `index.json`, the existing issue's `occurrences` is
+incremented + an "Investigation log" entry appended. Otherwise a new
+file is created with id `i-NNN`.
+
+**Statuses.** `open` (default on creation) → `known` (acknowledged but
+not yet fixed) → `fixed` (closed via `agi issue fix`). `wont-fix`
+available for issues we explicitly accept.
+
+**Where to file:** the project where the failure occurred. For
+Aionima-system failures (Aion failing to ingest a model, gateway boot
+issues, etc.) file against `_aionima`. Per-app failures file against
+the app project.
+
+---
+
 ### agi config
 
 Read configuration values from `~/.agi/gateway.json`.
