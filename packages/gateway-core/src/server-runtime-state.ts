@@ -1059,53 +1059,14 @@ export async function createGatewayRuntimeState(
           const fullPath = resolvePath(dir, entry.name);
 
           // s119 t702 (2026-05-09) — _aionima is a single always-present
-          // project once it has been scaffolded with project.json (t701).
-          // When project.json exists, treat _aionima as one project — its
-          // forks live under _aionima/repos/ as repos, not as siblings.
-          // Falls through to the legacy collection-expansion below when
-          // project.json is absent (pre-migration state).
+          // project. The t701 scaffolder ensures `project.json` exists on
+          // boot; the t703 fork migration moves the 11 forks into
+          // `_aionima/repos/`. From t705 onwards, `_aionima` is enumerated
+          // as a single project here — there is no longer a parallel
+          // "collection-expansion" branch that walks into the dir.
           if (entry.name === "_aionima") {
-            const aionimaProjectJson = join(fullPath, "project.json");
-            if (existsSync(aionimaProjectJson)) {
-              expanded.push({ fullPath, name: "_aionima", coreCollection: "aionima" });
-              continue;
-            }
-          }
-
-          // Detect Aionima core collection (legacy pre-t703 state): walk
-          // into it, skip the parent. Once t703 migration moves forks
-          // into _aionima/repos/, collection.json gets retired (t705) and
-          // this branch becomes dead code.
-          const collectionPath = join(fullPath, "collection.json");
-          if (existsSync(collectionPath)) {
-            try {
-              const collection = JSON.parse(readFileSync(collectionPath, "utf-8")) as { type?: string };
-              if (collection.type === "aionima-collection") {
-                const childEntries = readdirSync(fullPath, { withFileTypes: true });
-                for (const ce of childEntries) {
-                  if (!ce.isDirectory() || ce.name.startsWith(".")) continue;
-                  // Positive identification: only list children that look
-                  // like projects — either they have a project.json (the
-                  // post-s140 marker) OR a .git/ directory (a git repo,
-                  // which the core-fork members all are). This filters
-                  // out stray scaffold dirs (e.g. _aionima/k, /repos,
-                  // /sandbox) that an older migration script accidentally
-                  // created inside the collection before SACRED was set.
-                  const childPath = resolvePath(fullPath, ce.name);
-                  const looksLikeProject =
-                    existsSync(join(childPath, "project.json")) ||
-                    existsSync(join(childPath, ".git"));
-                  if (!looksLikeProject) continue;
-                  expanded.push({
-                    fullPath: childPath,
-                    name: ce.name,
-                    coreCollection: "aionima",
-                    coreForkSlug: ce.name,
-                  });
-                }
-                continue;
-              }
-            } catch { /* malformed collection.json — fall through and treat as normal project */ }
+            expanded.push({ fullPath, name: "_aionima", coreCollection: "aionima" });
+            continue;
           }
 
           // Skip underscore-prefixed (reserved for collections we haven't

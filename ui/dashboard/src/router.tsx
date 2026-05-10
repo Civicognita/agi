@@ -34,8 +34,8 @@ import SettingsHFPage from "./routes/settings-hf.js";
 import SettingsProvidersPage from "./routes/settings-providers.js";
 import SettingsVaultPage from "./routes/settings-vault.js";
 import ScheduledJobsPage from "./routes/settings-scheduled-jobs.js";
-import AionimaPage from "./routes/aionima.js";
-import PaxPage from "./routes/pax.js";
+// /aionima → /projects/_aionima redirect (s119 t705).
+// /pax route retired entirely — PAx repos live as repos under _aionima.
 import { OnboardingPage } from "./routes/onboarding.js";
 import { GatewayOnboardingPage } from "./routes/gateway-onboarding.js";
 import ReportsPage from "./routes/reports.js";
@@ -89,8 +89,11 @@ export const router = createBrowserRouter([
       { path: "gateway/logs", element: <LogsPage /> },
       { path: "gateway/marketplace", element: <MarketplacePage /> },
       { path: "hf-marketplace", element: <HFMarketplacePage /> },
-      { path: "aionima", element: <AionimaPage /> },
-      { path: "pax", element: <PaxPage /> },
+      // s119 t705 — Aionima is a self-managed project; the legacy
+      // /aionima consolidated view collapses into /projects/_aionima.
+      // /pax is retired entirely (PAx repos live under _aionima/repos/).
+      { path: "aionima", element: <Navigate to="/projects/_aionima" replace /> },
+      { path: "pax", element: <Navigate to="/projects/_aionima" replace /> },
       { path: "gateway/onboarding", element: <GatewayOnboardingPage /> },
       // Redirect old settings path
       { path: "gateway/settings", element: <Navigate to="/settings/gateway" replace /> },
