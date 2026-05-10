@@ -2169,7 +2169,14 @@ cmd_help() {
   echo "  restart         Restart the gateway service"
   echo "  start           Start the gateway service"
   echo "  stop            Stop the gateway service"
-  echo "  doctor          Check infrastructure health"
+  echo "  doctor [CMD]    Diagnostic commands (s144):"
+  echo "                    (no arg)                     Infra health check (Node, podman, hosted projects)"
+  echo "                    health                       Explicit form of the bare-form check (forward-compat)"
+  echo "                    schema [--json]              Validate every gateway-loaded config against its Zod schema"
+  echo "                    dump                         Write redacted diagnostic bundle to ~/.agi/doctor-dumps/"
+  echo "                    logs [--lines N]             Tail recent logs + surface known crash patterns"
+  echo "                    config get <key>             Read a gateway.json dotted key with validation"
+  echo "                    config set <key> <value>     Write a gateway.json key (atomic + Zod pre-validation)"
   echo "  safemode        Show safemode status (or: safemode exit)"
   echo "  incidents       List incident reports (or: incidents view <id>)"
   echo "  config [key]    Read config (full or dot-path key)"
@@ -2255,6 +2262,25 @@ case "${1:-help}" in
         # BEFORE attempting upgrade or restart.
         shift; shift
         cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts schema validate "$@"
+        ;;
+      dump|logs|config)
+        # s144 t582 forward-compat — route the TS commander subcommands
+        # (dump t579, logs t581, config t578) through bash to the cli/src/
+        # commander surface where they live. Pre-t582 they were
+        # silently routed to bare-form cmd_doctor (which doesn't know
+        # about them) — drift caught while shipping t583's spec. Bash
+        # is now the bridge; TS cli is the canonical entrypoint.
+        local _doctor_sub="${2:-}"
+        shift; shift
+        cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts doctor "$_doctor_sub" "$@"
+        ;;
+      health)
+        # s144 t582 forward-compat alias — `agi doctor health` is the
+        # explicit name for today's bare-form health check (Node /
+        # pnpm / Caddy / hosted-projects / flapping). When t574 lands
+        # the TUI shell, the bare `agi doctor` flips to TUI-open and
+        # this alias remains as the explicit-form for scripts/CI.
+        cmd_doctor
         ;;
       *)
         cmd_doctor
