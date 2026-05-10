@@ -130,6 +130,7 @@ import { ChatGarbageCollector } from "./chat-garbage-collector.js";
 import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
 import { ensureAionimaSystemProject, ensureWorkspaceSkeleton, projectConfigPath } from "./project-config-path.js";
 import { migrateAionimaSystemForks } from "./aionima-system-migration.js";
+import { migrateAionimaMemoryDir } from "./aionima-memory-migration.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
@@ -1871,6 +1872,28 @@ export async function startGatewayServer(
       logger.warn(
         "migrate",
         `boot-time s119 fork migration failed for ${workspaceRoot} (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    // s119 t704 (2026-05-09) — move Aion memory files from legacy
+    // ~/.agi/memory/ into _aionima/k/memory/. Per-file atomic rename;
+    // idempotent (already-migrated files skipped). Source dir is left
+    // intact even after all files migrate to leave a recovery anchor.
+    try {
+      const r = migrateAionimaMemoryDir(workspaceRoot, createComponentLogger(logger, "migrate-aionima-memory"));
+      if (r.moved > 0 || r.errors.length > 0) {
+        logger.info(
+          "migrate",
+          `boot-time s119 memory migration: scanned=${String(r.scanned)} moved=${String(r.moved)} alreadyMigrated=${String(r.alreadyMigrated)} skippedNonFile=${String(r.skippedNonFile)} errors=${String(r.errors.length)}`,
+        );
+        for (const e of r.errors) {
+          logger.warn("migrate", `s119 memory migration error [${e.name}]: ${e.reason}`);
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        "migrate",
+        `boot-time s119 memory migration failed for ${workspaceRoot} (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
