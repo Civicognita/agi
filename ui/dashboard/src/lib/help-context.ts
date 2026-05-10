@@ -21,6 +21,7 @@ const STATIC_ROUTES: Record<string, string> = {
   "/marketplace/mapps": "MApp Marketplace catalog",
   "/aionima": "Aionima self-managed project (redirects to /projects/_aionima)",
   "/pax": "PAx primitives — now repos under _aionima (redirects to /projects/_aionima)",
+  "/issues": "agent-curated issue registry (system-aggregate view; per-project k/issues/)",
   "/comms": "comms (channels) overview",
   "/workflows": "workflow definitions",
   "/logs": "logs viewer",
