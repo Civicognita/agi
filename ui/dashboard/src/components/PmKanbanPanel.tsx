@@ -84,14 +84,34 @@ export function PmKanbanPanel() {
     return () => { cancelled = true; };
   }, []);
 
-  // Bucket tasks by column. A task whose status doesn't match any
-  // column lands in the first column with no statuses (catch-all);
+  // s139 t540 Phase 1 — apply filter strip to tasks before bucketing.
+  const filteredTasks = useMemo(() => {
+    const titleQuery = titleFilter.trim().toLowerCase();
+    return tasks.filter((task) => {
+      if (titleQuery !== "" && !task.title.toLowerCase().includes(titleQuery)) return false;
+      if (codeAreaFilter !== "all" && task.codeArea !== codeAreaFilter) return false;
+      return true;
+    });
+  }, [tasks, titleFilter, codeAreaFilter]);
+
+  // s139 t540 Phase 1 — codeArea options (computed from full task set
+  // so the dropdown doesn't change as the filter narrows).
+  const codeAreaOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const task of tasks) {
+      if (task.codeArea !== undefined && task.codeArea.length > 0) set.add(task.codeArea);
+    }
+    return ["all", ...[...set].sort()];
+  }, [tasks]);
+
+  // Bucket FILTERED tasks by column. A task whose status doesn't match
+  // any column lands in the first column with no statuses (catch-all);
   // none in the default config — those tasks are silently dropped
   // (unusual; defensive in case future PmStatus values appear).
   const tasksByColumn = useMemo(() => {
     const map = new Map<string, PmTask[]>();
     for (const col of COLUMNS) map.set(col.id, []);
-    for (const task of tasks) {
+    for (const task of filteredTasks) {
       for (const col of COLUMNS) {
         if (col.statuses.includes(task.status)) {
           (map.get(col.id) ?? []).push(task);
@@ -100,7 +120,7 @@ export function PmKanbanPanel() {
       }
     }
     return map;
-  }, [tasks]);
+  }, [filteredTasks]);
 
   if (loading) return <p className="text-[12px] text-muted-foreground">Loading kanban…</p>;
   if (error) return <p className="text-[12px] text-destructive">Error loading tasks: {error}</p>;
@@ -110,8 +130,36 @@ export function PmKanbanPanel() {
 
   return (
     <div className="space-y-3" data-testid="pm-kanban-panel">
+      {/* s139 t540 Phase 1 — filter strip */}
+      <div className="flex flex-wrap items-center gap-3" data-testid="kanban-filters">
+        <input
+          type="text"
+          placeholder="Search title…"
+          value={titleFilter}
+          onChange={(e) => { setTitleFilter(e.target.value); }}
+          className="text-[12px] bg-secondary text-foreground border border-border rounded-md px-2 py-1 w-[220px]"
+          data-testid="filter-title"
+        />
+        {codeAreaOptions.length > 1 && (
+          <label className="flex items-center gap-1 text-[12px] text-muted-foreground">
+            Code area:
+            <select
+              value={codeAreaFilter}
+              onChange={(e) => { setCodeAreaFilter(e.target.value); }}
+              className="bg-secondary text-foreground border border-border rounded-md px-2 py-1 text-[12px]"
+              data-testid="filter-code-area"
+            >
+              {codeAreaOptions.map((c) => (<option key={c} value={c}>{c}</option>))}
+            </select>
+          </label>
+        )}
+      </div>
       <div className="flex items-center gap-3">
-        <span className="text-[12px] text-muted-foreground">{String(totalCards)} task{totalCards === 1 ? "" : "s"}</span>
+        <span className="text-[12px] text-muted-foreground">
+          {filteredTasks.length === totalCards
+            ? `${String(totalCards)} task${totalCards === 1 ? "" : "s"}`
+            : `Showing ${String(filteredTasks.length)} of ${String(totalCards)} task${totalCards === 1 ? "" : "s"}`}
+        </span>
         <label className="flex items-center gap-1 text-[12px] text-muted-foreground cursor-pointer">
           <input
             type="checkbox"
