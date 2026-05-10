@@ -68,10 +68,14 @@ import { appendUpgradeLog, clearUpgradeLog, getUpgradeLog } from "./upgrade-log.
 import { projectConfigPath } from "./project-config-path.js";
 import {
   buildCandidatePayload,
+  clearRawCaptures,
   findPromotionCandidates,
   listIssues as listIssuesStore,
+  listRawCaptures,
   logIssue as logIssueStore,
+  promoteRawCapture as promoteRawCaptureStore,
   readIssue as readIssueStore,
+  recordRawCapture as recordRawCaptureStore,
   searchIssues as searchIssuesStore,
   updateIssueStatus as updateIssueStatusStore,
   type IssueIndexEntry,
@@ -2030,6 +2034,49 @@ export async function createGatewayRuntimeState(
     const query = (request.query as Record<string, string>)["q"] ?? "";
     const hits = searchIssuesStore(v.targetPath, query);
     return reply.send({ hits });
+  });
+
+  // Wish #21 Slice 5 — raw-tier auto-capture endpoints.
+  // GET    /api/projects/issues/raw                  — list raw captures
+  // POST   /api/projects/issues/raw                  — record (body: {source, summary, details?})
+  // POST   /api/projects/issues/raw/:id/promote      — promote one to curated
+  // DELETE /api/projects/issues/raw                  — clear all
+  fastify.get("/api/projects/issues/raw", async (request, reply) => {
+    const v = validateIssueProjectPath(request, reply);
+    if (!v.ok) return v.sent;
+    return reply.send({ captures: listRawCaptures(v.targetPath) });
+  });
+
+  fastify.post("/api/projects/issues/raw", async (request, reply) => {
+    const v = validateIssueProjectPath(request, reply);
+    if (!v.ok) return v.sent;
+    const body = (request.body as Record<string, unknown> | null) ?? {};
+    const source = typeof body["source"] === "string" ? body["source"] : "";
+    const summary = typeof body["summary"] === "string" ? body["summary"] : "";
+    if (!source || !summary) return reply.code(400).send({ error: "source and summary are required" });
+    const detailsRaw = body["details"];
+    const details = detailsRaw && typeof detailsRaw === "object" ? (detailsRaw as Record<string, unknown>) : undefined;
+    const entry = recordRawCaptureStore(v.targetPath, { source, summary, details });
+    return reply.send({ entry });
+  });
+
+  fastify.post<{ Params: { id: string } }>("/api/projects/issues/raw/:id/promote", async (request, reply) => {
+    const v = validateIssueProjectPath(request, reply);
+    if (!v.ok) return v.sent;
+    const body = (request.body as Record<string, unknown> | null) ?? {};
+    const title = typeof body["title"] === "string" ? body["title"] : undefined;
+    const tagsRaw = body["tags"];
+    const tags = Array.isArray(tagsRaw) ? tagsRaw.filter((t): t is string => typeof t === "string") : undefined;
+    const result = promoteRawCaptureStore(v.targetPath, request.params.id, { title, tags });
+    if (!result) return reply.code(404).send({ error: "Raw capture not found" });
+    return reply.send(result);
+  });
+
+  fastify.delete("/api/projects/issues/raw", async (request, reply) => {
+    const v = validateIssueProjectPath(request, reply);
+    if (!v.ok) return v.sent;
+    const cleared = clearRawCaptures(v.targetPath);
+    return reply.send({ cleared });
   });
 
   // Wish #21 Slice 6 — promote bash audit-log entries to issues.

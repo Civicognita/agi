@@ -36,3 +36,12 @@ export {
   findPromotionCandidates,
   listBashLogFiles,
 } from "./bash-log-promotion.js";
+
+export type { RawCaptureEntry } from "./raw-capture.js";
+export {
+  clearRawCaptures,
+  listRawCaptures,
+  promoteRawCapture,
+  rawCapturePath,
+  recordRawCapture,
+} from "./raw-capture.js";
