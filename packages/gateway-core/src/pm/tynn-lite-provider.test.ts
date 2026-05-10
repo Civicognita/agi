@@ -424,6 +424,56 @@ describe("TynnLitePmProvider — pluggable storageDir (s155 t670)", () => {
   });
 });
 
+describe("TynnLitePmProvider — per-field timestamps (s155 t672 Phase 3)", () => {
+  it("getTaskFieldTimestamps returns null for unknown task", () => {
+    expect(provider.getTaskFieldTimestamps("t-bogus")).toBeNull();
+  });
+
+  it("after createTask: every field timestamp falls back to createdAt", async () => {
+    const t = await provider.createTask({ storyId: "", title: "T", description: "D" });
+    const ts = provider.getTaskFieldTimestamps(t.id);
+    expect(ts).not.toBeNull();
+    // No directly-set fields yet — all should equal the record's createdAt
+    expect(ts?.title).toBe(ts?.status);
+    expect(ts?.description).toBe(ts?.status);
+  });
+
+  it("setTaskStatus stamps the status timestamp", async () => {
+    const t = await provider.createTask({ storyId: "", title: "T", description: "D" });
+    const before = provider.getTaskFieldTimestamps(t.id);
+    await new Promise((r) => setTimeout(r, 5));
+    await provider.setTaskStatus(t.id, "doing");
+    const after = provider.getTaskFieldTimestamps(t.id);
+    expect(after?.status).not.toBe(before?.status);
+    // Title/description NOT touched — should remain at floor
+    expect(after?.title).toBe(before?.title);
+  });
+
+  it("updateTask stamps each mutated field independently", async () => {
+    const t = await provider.createTask({ storyId: "", title: "T", description: "D" });
+    await new Promise((r) => setTimeout(r, 5));
+    await provider.updateTask(t.id, { title: "T2" });
+    const tsAfterTitle = provider.getTaskFieldTimestamps(t.id);
+    await new Promise((r) => setTimeout(r, 5));
+    await provider.updateTask(t.id, { description: "D2" });
+    const tsAfterDesc = provider.getTaskFieldTimestamps(t.id);
+    // title should be unchanged from when it was last stamped
+    expect(tsAfterDesc?.title).toBe(tsAfterTitle?.title);
+    // description should be newer than the title's stamp
+    expect(tsAfterDesc?.description.localeCompare(tsAfterDesc?.title ?? "")).toBeGreaterThan(0);
+  });
+
+  it("timestamps carry through subsequent snapshots (fold preserves)", async () => {
+    const t = await provider.createTask({ storyId: "", title: "T", description: "D" });
+    await provider.updateTask(t.id, { title: "T2" });
+    const tsAfterTitle = provider.getTaskFieldTimestamps(t.id);
+    // Now mutate a different field — title timestamp should NOT change
+    await provider.setTaskStatus(t.id, "doing");
+    const tsFinal = provider.getTaskFieldTimestamps(t.id);
+    expect(tsFinal?.title).toBe(tsAfterTitle?.title);
+  });
+});
+
 describe("migrateTynnLiteStorage (s155 t670)", () => {
   let testRoot: string;
   beforeEach(() => {

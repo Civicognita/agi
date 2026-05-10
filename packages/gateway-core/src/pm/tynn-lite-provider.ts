@@ -70,6 +70,30 @@ interface TynnLiteTaskRecord {
   codeArea?: string;
   /** Optional: verification steps mirroring PmTask.verificationSteps. */
   verificationSteps?: string[];
+  /**
+   * s155 t672 Phase 3 — per-field updated-at timestamps for the
+   * conflict-resolution layer (Phase 4 reads these to detect divergence
+   * vs primary). Optional/sparse: a missing key means "never directly
+   * set" (defaults to record's createdAt for the conflict-detection
+   * fold). When a setter mutates a field, it stamps the corresponding
+   * key. Inherited timestamps carry forward across snapshot writes.
+   */
+  updatedAt?: {
+    title?: string;
+    description?: string;
+    status?: string;
+    codeArea?: string;
+    verificationSteps?: string;
+  };
+}
+
+/** Per-field timestamps surfaced by getTaskFieldTimestamps for Phase 4 conflict-detection. */
+export interface TaskFieldTimestamps {
+  title: string;
+  description: string;
+  status: string;
+  codeArea: string;
+  verificationSteps: string;
 }
 
 /** One line in comments.jsonl — append-only, never mutated. */
@@ -336,6 +360,7 @@ export class TynnLitePmProvider implements PmProvider {
       status,
       startedAt: status === "doing" && current.startedAt === null ? now : current.startedAt,
       finishedAt: (status === "finished" || status === "archived") && current.finishedAt === null ? now : current.finishedAt,
+      updatedAt: { ...(current.updatedAt ?? {}), status: now },
     };
     this.appendRecord(updated);
     const refolded = [...this.foldRecords().values()];
@@ -369,16 +394,47 @@ export class TynnLitePmProvider implements PmProvider {
     const folded = this.foldRecords();
     const current = folded.get(taskId);
     if (current === undefined) throw new Error(`tynn-lite: unknown task ${taskId}`);
+    const now = new Date().toISOString();
+    const newTimestamps: NonNullable<TynnLiteTaskRecord["updatedAt"]> = { ...(current.updatedAt ?? {}) };
+    if (fields.title !== undefined) newTimestamps.title = now;
+    if (fields.description !== undefined) newTimestamps.description = now;
+    if (fields.verificationSteps !== undefined) newTimestamps.verificationSteps = now;
+    if (fields.codeArea !== undefined) newTimestamps.codeArea = now;
     const updated: TynnLiteTaskRecord = {
       ...current,
       title: fields.title ?? current.title,
       description: fields.description ?? current.description,
       verificationSteps: fields.verificationSteps ?? current.verificationSteps,
       codeArea: fields.codeArea ?? current.codeArea,
+      updatedAt: newTimestamps,
     };
     this.appendRecord(updated);
     const refolded = [...this.foldRecords().values()];
     return this.toPmTask(updated, refolded.findIndex((r) => r.id === updated.id) + 1);
+  }
+
+  /**
+   * s155 t672 Phase 3 — surface per-field updated-at timestamps for
+   * the Phase 4 read-back diff routine. Returns an exhaustive map
+   * with createdAt as the floor for any field that's never been
+   * directly mutated (so callers can diff against any field without
+   * undefined-checks).
+   *
+   * Returns null when the task is unknown.
+   */
+  getTaskFieldTimestamps(taskId: string): TaskFieldTimestamps | null {
+    const folded = this.foldRecords();
+    const record = folded.get(taskId);
+    if (record === undefined) return null;
+    const floor = record.createdAt;
+    const ts = record.updatedAt ?? {};
+    return {
+      title: ts.title ?? floor,
+      description: ts.description ?? floor,
+      status: ts.status ?? floor,
+      codeArea: ts.codeArea ?? floor,
+      verificationSteps: ts.verificationSteps ?? floor,
+    };
   }
 
   async iWish(input: PmIWishInput): Promise<{ id: string; title: string }> {
