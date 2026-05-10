@@ -40,6 +40,7 @@ import { OnboardingPage } from "./routes/onboarding.js";
 import { GatewayOnboardingPage } from "./routes/gateway-onboarding.js";
 import ReportsPage from "./routes/reports.js";
 import ReportDetailPage from "./routes/report-detail.js";
+import IssuesPage from "./routes/issues.js";
 import ChangelogPage from "./routes/system-changelog.js";
 import IncidentsPage from "./routes/system-incidents.js";
 import VendorsPage from "./routes/system-vendors.js";
@@ -68,6 +69,7 @@ export const router = createBrowserRouter([
       { index: true, element: <OverviewPage /> },
       { path: "coa", element: <COAPage /> },
       { path: "reports", element: <ReportsPage /> },
+      { path: "issues", element: <IssuesPage /> },
       { path: "reports/:coaReqId", element: <ReportDetailPage /> },
       { path: "entity/:id", element: <EntityPage /> },
       { path: "projects", element: <ProjectsPage /> },
