@@ -17,6 +17,7 @@ import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks
 import type { EffectiveStartCommand } from "../api.js";
 import { ProjectToolbar } from "./ProjectToolbar.js";
 import { StackManager } from "./StackManager.js";
+import { HostingRepoGrid } from "./HostingRepoGrid.js";
 import { DatabaseCard } from "./DatabaseCard.js";
 import { TerminalArea } from "./TerminalArea.js";
 
@@ -237,6 +238,12 @@ export function HostingPanel({
           Hosting infrastructure not configured. Run setup first.
         </div>
       )}
+
+      {/* s141 t554 Phase 1 — per-repo grid for multi-repo projects.
+          Renders nothing for single-repo projects (legacy single-stack
+          UX kicks in below). Phase 2+ extends with attachedStacks
+          badges + per-repo stack assignment. */}
+      <HostingRepoGrid projectPath={projectPath} className="mb-3" />
 
       {/* Container status + actions — at the top */}
       <div className="mb-3 pb-2 border-b border-border">
