@@ -5,10 +5,11 @@
  * Mirrors /reports's shape (PageScroll wrapper around a list panel).
  */
 
+import type { ReactElement } from "react";
 import { IssuesPanel } from "@/components/IssuesPanel.js";
 import { PageScroll } from "@/components/PageScroll.js";
 
-export default function IssuesPage(): JSX.Element {
+export default function IssuesPage(): ReactElement {
   return (
     <PageScroll>
       <div className="space-y-4">

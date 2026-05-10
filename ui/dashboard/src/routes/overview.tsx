@@ -38,7 +38,7 @@ export default function OverviewPage() {
   return (
     <PageScroll>
       <Tabs defaultValue="usage">
-        <TabsList variant="line">
+        <TabsList>
           <TabsTrigger value="usage">Usage &amp; Cost</TabsTrigger>
           <TabsTrigger value="impactinomics">Impactinomics</TabsTrigger>
         </TabsList>

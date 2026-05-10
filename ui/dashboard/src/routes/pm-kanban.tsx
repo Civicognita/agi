@@ -5,10 +5,11 @@
  * Mirrors the /issues + /sync-conflicts page shape.
  */
 
+import type { ReactElement } from "react";
 import { PmKanbanPanel } from "@/components/PmKanbanPanel.js";
 import { PageScroll } from "@/components/PageScroll.js";
 
-export default function PmKanbanPage(): JSX.Element {
+export default function PmKanbanPage(): ReactElement {
   return (
     <PageScroll>
       <div className="space-y-4">
