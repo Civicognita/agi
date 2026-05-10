@@ -243,4 +243,41 @@ describe("pm-api routes", () => {
       expect(r.statusCode).toBe(403);
     });
   });
+
+  describe("s155 t672 Phase 5a — sync queue + conflicts REST", () => {
+    it("GET /api/pm/sync-queue returns empty entries when queue is empty", async () => {
+      const r = await app.inject({ method: "GET", url: "/api/pm/sync-queue" });
+      expect(r.statusCode).toBe(200);
+      const body = r.json() as { entries: unknown[] };
+      expect(Array.isArray(body.entries)).toBe(true);
+    });
+
+    it("GET /api/pm/sync-queue?projectPath=... filters by project", async () => {
+      // No entries yet — both queries should return empty arrays
+      const all = await app.inject({ method: "GET", url: "/api/pm/sync-queue" });
+      const filtered = await app.inject({
+        method: "GET",
+        url: `/api/pm/sync-queue?projectPath=${encodeURIComponent(projectPath)}`,
+      });
+      expect(all.statusCode).toBe(200);
+      expect(filtered.statusCode).toBe(200);
+    });
+
+    it("GET /api/pm/sync-conflicts returns empty conflicts when log is empty", async () => {
+      const r = await app.inject({ method: "GET", url: "/api/pm/sync-conflicts" });
+      expect(r.statusCode).toBe(200);
+      const body = r.json() as { conflicts: unknown[] };
+      expect(Array.isArray(body.conflicts)).toBe(true);
+    });
+
+    it("POST /api/pm/sync-conflicts/:id/resolve returns 404 for unknown id", async () => {
+      const r = await app.inject({
+        method: "POST",
+        url: "/api/pm/sync-conflicts/c-bogus/resolve",
+      });
+      expect(r.statusCode).toBe(404);
+      const body = r.json() as { error: string };
+      expect(body.error).toContain("not found");
+    });
+  });
 });
