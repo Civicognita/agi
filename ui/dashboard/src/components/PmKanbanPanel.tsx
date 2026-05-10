@@ -46,11 +46,16 @@ const COLUMNS: { id: string; name: string; statuses: string[]; hiddenByDefault?:
   { id: "archived", name: "Archived", statuses: ["archived"], hiddenByDefault: true },
 ];
 
+type ViewMode = "kanban" | "list";
+
 export function PmKanbanPanel() {
   const [tasks, setTasks] = useState<PmTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
+  // s139 t537 — list-view toggle. Defaults to kanban; swaps to table
+  // when the user wants a denser scannable view.
+  const [viewMode, setViewMode] = useState<ViewMode>("kanban");
 
   useEffect(() => {
     let cancelled = false;
@@ -109,7 +114,59 @@ export function PmKanbanPanel() {
           />
           Show blocked + archived
         </label>
+        {/* s139 t537 — view mode toggle */}
+        <div className="ml-auto flex items-center gap-1 text-[11px]" data-testid="view-mode-toggle">
+          <button
+            onClick={() => { setViewMode("kanban"); }}
+            className={`px-2 py-0.5 rounded border ${
+              viewMode === "kanban"
+                ? "border-yellow bg-yellow/15 text-yellow"
+                : "border-border text-muted-foreground hover:bg-secondary"
+            }`}
+            data-testid="view-mode-kanban"
+          >
+            Kanban
+          </button>
+          <button
+            onClick={() => { setViewMode("list"); }}
+            className={`px-2 py-0.5 rounded border ${
+              viewMode === "list"
+                ? "border-yellow bg-yellow/15 text-yellow"
+                : "border-border text-muted-foreground hover:bg-secondary"
+            }`}
+            data-testid="view-mode-list"
+          >
+            List
+          </button>
+        </div>
       </div>
+
+      {viewMode === "list" && (
+        <table className="w-full border-collapse text-[12px]" data-testid="pm-kanban-list">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="text-left py-1 px-2 font-medium text-muted-foreground">#</th>
+              <th className="text-left py-1 px-2 font-medium text-muted-foreground">Title</th>
+              <th className="text-left py-1 px-2 font-medium text-muted-foreground">Column</th>
+              <th className="text-left py-1 px-2 font-medium text-muted-foreground">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleColumns.flatMap((col) =>
+              (tasksByColumn.get(col.id) ?? []).map((task) => (
+                <tr key={task.id} className="border-b border-border/50" data-testid="pm-kanban-list-row">
+                  <td className="py-1 px-2 font-mono text-muted-foreground tabular-nums">#{String(task.number)}</td>
+                  <td className="py-1 px-2 truncate max-w-[400px]">{task.title}</td>
+                  <td className="py-1 px-2">{col.name}</td>
+                  <td className="py-1 px-2 text-muted-foreground">{task.status}</td>
+                </tr>
+              )),
+            )}
+          </tbody>
+        </table>
+      )}
+
+      {viewMode === "kanban" && (
       <Kanban
         onCardMove={(cardId, fromColumn, toColumn) => {
           // s139 t536 Phase 2 — persist column moves via setTaskStatus.
@@ -168,6 +225,7 @@ export function PmKanbanPanel() {
           );
         })}
       </Kanban>
+      )}
     </div>
   );
 }
