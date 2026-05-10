@@ -38,7 +38,7 @@ describe("issue tool — input validation (Wish #21 Slice 3)", () => {
     expect((r as { error?: string }).error).toMatch(/action must be one of/);
   });
 
-  it("rejects missing projectPath", async () => {
+  it("rejects missing projectPath when no default configured", async () => {
     const r = await call({ action: "list" });
     expect((r as { error?: string }).error).toMatch(/projectPath is required/);
   });
@@ -46,6 +46,31 @@ describe("issue tool — input validation (Wish #21 Slice 3)", () => {
   it("rejects projectPath outside workspace", async () => {
     const r = await call({ action: "list", projectPath: "/tmp/not-in-workspace" });
     expect((r as { error?: string }).error).toMatch(/not inside a configured workspace/);
+  });
+
+  // s161 path-A — defaultProjectPath fallback for project-less callers
+  it("falls back to defaultProjectPath when projectPath omitted", async () => {
+    const fallback = join(workspace, "_aionima");
+    mkdirSync(fallback, { recursive: true });
+    const handlerWithDefault = createIssueHandler({
+      workspaceProjects: () => [workspace],
+      defaultProjectPath: () => fallback,
+    });
+    const out = await Promise.resolve(handlerWithDefault({ action: "list" }));
+    const r = JSON.parse(out) as { action?: string; issues?: unknown[]; error?: string };
+    expect(r.error).toBeUndefined();
+    expect(r.action).toBe("list");
+    expect(Array.isArray(r.issues)).toBe(true);
+  });
+
+  it("rejects when defaultProjectPath returns null", async () => {
+    const handlerWithNullDefault = createIssueHandler({
+      workspaceProjects: () => [workspace],
+      defaultProjectPath: () => null,
+    });
+    const out = await Promise.resolve(handlerWithNullDefault({ action: "list" }));
+    const r = JSON.parse(out) as { error?: string };
+    expect(r.error).toMatch(/projectPath is required/);
   });
 });
 
