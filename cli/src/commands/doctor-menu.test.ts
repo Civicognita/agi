@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { MENU_ITEMS, pickMenuItem, renderMenu } from "./doctor-menu.js";
+import { MENU_ITEMS, classifyMenuTurn, pickMenuItem, renderMenu } from "./doctor-menu.js";
 
 describe("MENU_ITEMS (s144 t574)", () => {
   it("includes a quit option at number 0", () => {
@@ -67,6 +67,36 @@ describe("pickMenuItem (s144 t574)", () => {
   it("returns null for out-of-range numbers", () => {
     expect(pickMenuItem("99")).toBeNull();
     expect(pickMenuItem("-1")).toBeNull();
+  });
+});
+
+describe("classifyMenuTurn (s144 t574 Phase 2)", () => {
+  it("classifies '0' as quit", () => {
+    expect(classifyMenuTurn("0")).toEqual({ kind: "quit" });
+  });
+
+  it("classifies a known number as ran", () => {
+    const outcome = classifyMenuTurn("2");
+    expect(outcome.kind).toBe("ran");
+    if (outcome.kind === "ran") {
+      expect(outcome.item.id).toBe("schema");
+    }
+  });
+
+  it("classifies unknown input as invalid with raw preserved", () => {
+    expect(classifyMenuTurn("xyz")).toEqual({ kind: "invalid", raw: "xyz" });
+  });
+
+  it("classifies empty input as invalid", () => {
+    expect(classifyMenuTurn("")).toEqual({ kind: "invalid", raw: "" });
+  });
+
+  it("classifies out-of-range as invalid", () => {
+    expect(classifyMenuTurn("99")).toEqual({ kind: "invalid", raw: "99" });
+  });
+
+  it("tolerates whitespace around quit", () => {
+    expect(classifyMenuTurn("  0  ")).toEqual({ kind: "quit" });
   });
 });
 

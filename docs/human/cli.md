@@ -106,7 +106,7 @@ Exits 0 on all-pass, 1 when any failed (warnings don't fail).
 
 #### agi doctor menu
 
-Interactive category menu (s144 t574 Phase 1). Prints a numbered list of diagnostic categories; you type a number, hit Enter, and the matching sub-command runs once before the menu exits.
+Interactive category menu (s144 t574). Prints a numbered list of diagnostic categories; you type a number, hit Enter, and the matching sub-command runs. After each pick, the menu prompts "Press Enter to continue…" and re-renders, so the diagnostic output isn't immediately scrolled away. Pick 0 (or Ctrl-D / Ctrl-C) to quit.
 
 ```bash
 agi doctor menu
@@ -114,7 +114,7 @@ agi doctor menu
 
 Categories: `Run all checks` (bare doctor) · `Validate config schemas` (schema) · `Write diagnostic bundle` (dump) · `Tail logs + crash-pattern detection` (logs) · `Read a gateway.json key` (config get) · `Legacy 5-check health` (health) · `Quit` (0).
 
-Phase 1 is read-once-and-exit. Phase 2+ adds arrow-key navigation, sub-menus, looped re-prompt, and Esc-to-back. For scripting, prefer the explicit sub-commands directly (`agi doctor schema`, `agi doctor dump`, etc.) — the menu is a discovery aid, not a scriptable surface.
+Phase 2 ships the loop + invalid-input retry. Phase 3+ adds arrow-key navigation, sub-menus per category, and Esc-to-back. For scripting, prefer the explicit sub-commands directly (`agi doctor schema`, `agi doctor dump`, etc.) — the menu is a discovery aid, not a scriptable surface.
 
 #### agi doctor health
 

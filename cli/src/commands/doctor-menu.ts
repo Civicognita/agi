@@ -133,10 +133,30 @@ export function renderMenu(): string {
   return lines.join("\n");
 }
 
+/** Classification of one menu turn's outcome — exposed for unit tests. */
+export type MenuTurnOutcome =
+  | { kind: "quit" }
+  | { kind: "invalid"; raw: string }
+  | { kind: "ran"; item: MenuItem };
+
 /**
- * Run the menu interactively. Reads one selection from stdin, routes
- * to the matching `agi doctor <args>` call via spawnSync, then returns.
- * Returns the picked item id (or "quit" if the user picked 0 / EOF / invalid).
+ * Pure classifier — turn one user input string into a menu-turn outcome.
+ * Used by both the interactive loop and the unit tests for invalid /
+ * valid / quit branches.
+ */
+export function classifyMenuTurn(input: string): MenuTurnOutcome {
+  const item = pickMenuItem(input);
+  if (!item) return { kind: "invalid", raw: input };
+  if (item.id === "quit") return { kind: "quit" };
+  return { kind: "ran", item };
+}
+
+/**
+ * Run the menu interactively. Phase 2 (s144 t574, 2026-05-10) — wraps
+ * Phase 1's read-once in a while loop so the menu stays open until the
+ * user picks Quit (or hits Ctrl-D / Ctrl-C). After each sub-command
+ * finishes, prompts "Press Enter to continue…" before re-rendering the
+ * menu, so the diagnostic output isn't immediately scrolled away.
  *
  * Spawns the same `agi` binary that's currently running so the routing
  * goes back through the existing CLI surface (bash → TS commander).
@@ -144,18 +164,38 @@ export function renderMenu(): string {
  */
 export async function runDoctorMenu(opts?: { agiBin?: string }): Promise<MenuItemId> {
   const bin = opts?.agiBin ?? "agi";
-  process.stdout.write(renderMenu());
   const rl = createInterface({ input: process.stdin, output: process.stdout });
+  let lastRan: MenuItemId = "quit";
   try {
-    const answer = await rl.question("  Pick a number (0 to quit): ");
-    const item = pickMenuItem(answer);
-    if (!item || item.id === "quit") {
+    while (true) {
+      process.stdout.write(renderMenu());
+      let answer: string;
+      try {
+        answer = await rl.question("  Pick a number (0 to quit): ");
+      } catch {
+        // EOF / Ctrl-D / Ctrl-C abort — treat as quit.
+        process.stdout.write("\n");
+        return lastRan;
+      }
+      const outcome = classifyMenuTurn(answer);
+      if (outcome.kind === "quit") {
+        process.stdout.write("\n");
+        return "quit";
+      }
+      if (outcome.kind === "invalid") {
+        process.stdout.write(`\n  Unknown selection: ${JSON.stringify(answer)}. Try again.\n`);
+        continue;
+      }
       process.stdout.write("\n");
-      return "quit";
+      spawnSync(bin, ["doctor", ...outcome.item.args], { stdio: "inherit" });
+      lastRan = outcome.item.id;
+      try {
+        await rl.question("\n  Press Enter to continue… ");
+      } catch {
+        process.stdout.write("\n");
+        return lastRan;
+      }
     }
-    process.stdout.write("\n");
-    spawnSync(bin, ["doctor", ...item.args], { stdio: "inherit" });
-    return item.id;
   } finally {
     rl.close();
   }
