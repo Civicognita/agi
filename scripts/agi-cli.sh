@@ -2170,8 +2170,10 @@ cmd_help() {
   echo "  start           Start the gateway service"
   echo "  stop            Stop the gateway service"
   echo "  doctor [CMD]    Diagnostic commands (s144):"
-  echo "                    (no arg)                     Infra health check (Node, podman, hosted projects)"
-  echo "                    health                       Explicit form of the bare-form check (forward-compat)"
+  echo "                    (no arg)                     Full grouped self-diagnostic (core/auth/repos/git/plugins/network/containers/hosting/dev/gateway/lemonade)"
+  echo "                    [--json]                     Bare-form supports JSON output for scripting"
+  echo "                    [--with-aion]                Bare-form supports aion-micro-powered analysis"
+  echo "                    health                       Legacy 5-check infra health (Node, podman, hosted projects, flapping)"
   echo "                    schema [--json]              Validate every gateway-loaded config against its Zod schema"
   echo "                    dump                         Write redacted diagnostic bundle to ~/.agi/doctor-dumps/"
   echo "                    logs [--lines N]             Tail recent logs + surface known crash patterns"
@@ -2275,15 +2277,21 @@ case "${1:-help}" in
         cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts doctor "$_doctor_sub" "$@"
         ;;
       health)
-        # s144 t582 forward-compat alias — `agi doctor health` is the
-        # explicit name for today's bare-form health check (Node /
-        # pnpm / Caddy / hosted-projects / flapping). When t574 lands
-        # the TUI shell, the bare `agi doctor` flips to TUI-open and
-        # this alias remains as the explicit-form for scripts/CI.
+        # s144 t582 — `agi doctor health` is the legacy bash 5-check
+        # form (Node / pnpm / Caddy / hosted-projects / flapping). Kept
+        # as the explicit-form for scripts/CI continuity now that bare
+        # `agi doctor` runs the full TS commander surface.
         cmd_doctor
         ;;
       *)
-        cmd_doctor
+        # s144 t582 cutover — bare `agi doctor` routes to the TS
+        # commander grouped diagnostic (core / auth / repos / git /
+        # plugins / network / containers / hosting / project-shape /
+        # dev / gateway / lemonade). Replaces the legacy 5-check bash
+        # form which is now reachable via `agi doctor health`. Flag
+        # passthrough (--json, --with-aion) preserved.
+        shift
+        cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts doctor "$@"
         ;;
     esac
     ;;
