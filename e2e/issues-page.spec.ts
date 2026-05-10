@@ -41,4 +41,33 @@ test.describe("/issues page (Wish #21 Slice 4 Phase 1)", () => {
     await expect(rows.first()).toBeVisible({ timeout: 10_000 });
     expect(await rows.count()).toBeGreaterThanOrEqual(1);
   });
+
+  test("Phase 2 — filter strip surfaces 3 selects (status / project / tag)", async ({ page }) => {
+    const apiR = await page.request.get("/api/issues");
+    if (!apiR.ok()) test.skip(true, "API not reachable");
+    const body = await apiR.json() as { issues: { id: string }[] };
+    if (body.issues.length === 0) {
+      test.skip(true, "No issues — filter strip only renders with populated data");
+    }
+
+    await page.goto("/issues", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("issues-filters")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("filter-status")).toBeVisible();
+    await expect(page.getByTestId("filter-project")).toBeVisible();
+    await expect(page.getByTestId("filter-tag")).toBeVisible();
+  });
+
+  test("Phase 2 — selecting status:fixed narrows row count", async ({ page }) => {
+    const apiR = await page.request.get("/api/issues");
+    if (!apiR.ok()) test.skip(true, "API not reachable");
+    const body = await apiR.json() as { issues: { status: string }[] };
+    if (body.issues.length === 0) test.skip(true, "Empty registry");
+    const fixedCount = body.issues.filter((i) => i.status === "fixed").length;
+    if (fixedCount === body.issues.length) test.skip(true, "All issues already fixed — no narrowing to assert");
+
+    await page.goto("/issues", { waitUntil: "domcontentloaded" });
+    await page.getByTestId("filter-status").selectOption("fixed");
+    const rows = page.getByTestId("issue-row");
+    expect(await rows.count()).toBe(fixedCount);
+  });
 });
