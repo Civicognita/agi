@@ -81,6 +81,8 @@ import {
   type IssueIndexEntry,
   type IssueStatus,
 } from "./issues/index.js";
+import { dispatchJobsDir } from "./dispatch-paths.js";
+import { summarizeQueue, type DispatchJobLike } from "./taskmaster-queue-diagnostic.js";
 import type { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import { cadenceToStaggeredCron } from "./iterative-work/cron.js";
 import {
@@ -2227,6 +2229,53 @@ export async function createGatewayRuntimeState(
       }
     }
     return reply.send({ issues: aggregated });
+  });
+
+  // s159 t689 — Taskmaster queue diagnostic surface (private network
+  // only). Reads dispatch job files from `~/.agi/{slug}/dispatch/jobs/`
+  // and rolls them up into a status-count summary + duplicate-group
+  // detection (same {planRef.planId, planRef.stepId} or same description
+  // hash across 2+ non-terminal jobs). Observability before action —
+  // operators can see queue-stacking forming BEFORE it's a crisis,
+  // ahead of the t695/t696/t697 idempotency/cooldown/breaker gates
+  // (which are blocked pending reproducer t694).
+  fastify.get("/api/taskmaster/queue", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Taskmaster queue API only allowed from private network" });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    if (!pathParam) {
+      return reply.code(400).send({ error: "path query parameter is required" });
+    }
+    const targetPath = resolvePath(pathParam);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const jobsDir = dispatchJobsDir(targetPath);
+    const jobs: DispatchJobLike[] = [];
+    try {
+      const files = readdirSync(jobsDir).filter((f) => f.endsWith(".json"));
+      for (const file of files) {
+        try {
+          const raw = readFileSync(`${jobsDir}/${file}`, "utf-8");
+          const parsed = JSON.parse(raw) as DispatchJobLike;
+          if (typeof parsed.id === "string") jobs.push(parsed);
+        } catch {
+          // Skip unreadable job files
+        }
+      }
+    } catch (err) {
+      const isNotFound = err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT";
+      if (!isNotFound) {
+        return reply.code(500).send({ error: `Failed to read jobs directory: ${err instanceof Error ? err.message : String(err)}` });
+      }
+      // ENOENT → empty queue
+    }
+    return reply.send({ projectPath: targetPath, summary: summarizeQueue(jobs), jobCount: jobs.length });
   });
 
   // -----------------------------------------------------------------------
