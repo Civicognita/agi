@@ -130,7 +130,7 @@ import { ImageBlobStore } from "./image-blob-store.js";
 import { WorkerPromptLoader } from "./worker-prompt-loader.js";
 import { ChatGarbageCollector } from "./chat-garbage-collector.js";
 import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
-import { ensureAionimaSystemProject, ensureWorkspaceSkeleton, projectConfigPath } from "./project-config-path.js";
+import { aionimaSystemProjectPath, ensureAionimaSystemProject, ensureWorkspaceSkeleton, projectConfigPath } from "./project-config-path.js";
 import { migrateAionimaSystemForks } from "./aionima-system-migration.js";
 import { migrateAionimaMemoryDir } from "./aionima-memory-migration.js";
 import { HostingManager } from "./hosting-manager.js";
@@ -2899,6 +2899,14 @@ export async function startGatewayServer(
     ISSUE_TOOL_MANIFEST,
     createIssueHandler({
       workspaceProjects: () => Array.isArray(config.workspace?.projects) ? config.workspace.projects : [],
+      // s161 path-A — default to `<workspaceRoot>/_aionima` when caller
+      // omits projectPath. The first configured workspace.projects dir
+      // is the conventional workspaceRoot; fall through to null when
+      // nothing is configured (handler returns the standard error).
+      defaultProjectPath: () => {
+        const projects = Array.isArray(config.workspace?.projects) ? config.workspace.projects : [];
+        return projects.length > 0 ? aionimaSystemProjectPath(projects[0]!) : null;
+      },
     }),
     ISSUE_TOOL_INPUT_SCHEMA,
   );

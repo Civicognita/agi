@@ -38,6 +38,16 @@ import {
 export interface CreateIssueHandlerConfig {
   /** Workspace project paths used to validate `projectPath` input. */
   workspaceProjects: () => string[];
+  /**
+   * Optional default project path used when caller omits `projectPath`.
+   * s161 path-A — when Aion fires this tool from a chat without project
+   * context (or explicitly wants the system-fallback bucket), the call
+   * defaults to `<workspaceRoot>/_aionima` so the issue lands in the
+   * always-present meta-project's k/issues/ registry rather than failing.
+   * Mirrors the canonical s130/s150/s160 architecture: per-project for
+   * projects + `_aionima` as the system-fallback project.
+   */
+  defaultProjectPath?: () => string | null;
   /** Optional override for resolve+normalize behavior; defaults to identity. */
   normalizePath?: (p: string) => string;
 }
@@ -62,9 +72,15 @@ export function createIssueHandler(config: CreateIssueHandlerConfig): ToolHandle
     if (!VALID_ACTIONS.has(action)) {
       return err(`action must be one of ${[...VALID_ACTIONS].join(", ")}`);
     }
-    const projectPath = typeof input.projectPath === "string" ? input.projectPath.trim() : "";
+    let projectPath = typeof input.projectPath === "string" ? input.projectPath.trim() : "";
     if (!projectPath) {
-      return err("projectPath is required");
+      // s161 path-A — fall back to `<workspaceRoot>/_aionima` when caller
+      // omits projectPath. Project-less callers (chat without project
+      // context, system-level Aion tool fires) land in the always-present
+      // meta-project's k/issues/ rather than erroring.
+      const fallback = config.defaultProjectPath?.() ?? null;
+      if (!fallback) return err("projectPath is required");
+      projectPath = fallback;
     }
     if (!isInWorkspace(projectPath)) {
       return err("projectPath is not inside a configured workspace.projects directory");
@@ -143,7 +159,7 @@ export const ISSUE_TOOL_INPUT_SCHEMA = {
     },
     projectPath: {
       type: "string",
-      description: "Absolute path of the project whose registry to operate on. Must be inside a workspace.projects directory.",
+      description: "Absolute path of the project whose registry to operate on. Must be inside a workspace.projects directory. Optional: when omitted, defaults to <workspaceRoot>/_aionima (the always-present meta-project's k/issues/) so project-less callers don't error.",
     },
     query: {
       type: "string",
@@ -188,5 +204,5 @@ export const ISSUE_TOOL_INPUT_SCHEMA = {
       description: "(fix) Optional resolution note appended to the issue body.",
     },
   },
-  required: ["action", "projectPath"],
+  required: ["action"],
 };
