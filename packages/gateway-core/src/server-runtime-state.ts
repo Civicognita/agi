@@ -66,6 +66,14 @@ import type { DashboardSession } from "./dashboard-user-store.js";
 import type { FederationRouter as FedRouter } from "./federation-router.js";
 import { appendUpgradeLog, clearUpgradeLog, getUpgradeLog } from "./upgrade-log.js";
 import { projectConfigPath } from "./project-config-path.js";
+import {
+  listIssues as listIssuesStore,
+  logIssue as logIssueStore,
+  readIssue as readIssueStore,
+  updateIssueStatus as updateIssueStatusStore,
+  type IssueIndexEntry,
+  type IssueStatus,
+} from "./issues/index.js";
 import type { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
 import { cadenceToStaggeredCron } from "./iterative-work/cron.js";
 import {
@@ -2007,6 +2015,123 @@ export async function createGatewayRuntimeState(
 
     const cleared = deps.iterativeWorkScheduler?.forceClearAll() ?? { inFlightCleared: 0, lastFiredCleared: 0 };
     return reply.send({ ok: true, configFlippedCount, configErrorCount, ...cleared });
+  });
+
+  // -----------------------------------------------------------------------
+  // Issue registry — Wish #21 Slice 1.
+  // Per-project k/issues/ surface. Three routes:
+  //   GET   /api/projects/issues?path=<projectPath>           — list summaries
+  //   GET   /api/projects/issues/:id?path=<projectPath>       — read full issue
+  //   POST  /api/projects/issues?path=<projectPath>           — log (create or append)
+  //   PATCH /api/projects/issues/:id?path=<projectPath>       — update status (+resolution)
+  //   GET   /api/issues                                        — aggregate across all workspace projects
+  // Private-network-only; same workspace-projects scoping as the
+  // iterative-work routes above.
+  // -----------------------------------------------------------------------
+
+  function validateIssueProjectPath(request: { raw: IncomingMessage; query: unknown }, reply: { code: (n: number) => { send: (b: unknown) => unknown } }):
+    | { ok: true; targetPath: string }
+    | { ok: false; sent: unknown } {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return { ok: false, sent: reply.code(403).send({ error: "Issues API only allowed from private network" }) };
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const query = request.query as Record<string, string>;
+    const pathParam = query["path"];
+    if (!pathParam) {
+      return { ok: false, sent: reply.code(400).send({ error: "path query parameter is required" }) };
+    }
+    const targetPath = resolvePath(pathParam);
+    const isInWorkspace = projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)));
+    if (!isInWorkspace) {
+      return { ok: false, sent: reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" }) };
+    }
+    return { ok: true, targetPath };
+  }
+
+  fastify.get("/api/projects/issues", async (request, reply) => {
+    const v = validateIssueProjectPath(request, reply);
+    if (!v.ok) return v.sent;
+    const issues = listIssuesStore(v.targetPath);
+    return reply.send({ issues });
+  });
+
+  fastify.get<{ Params: { id: string } }>("/api/projects/issues/:id", async (request, reply) => {
+    const v = validateIssueProjectPath(request, reply);
+    if (!v.ok) return v.sent;
+    const issue = readIssueStore(v.targetPath, request.params.id);
+    if (!issue) return reply.code(404).send({ error: "Issue not found" });
+    return reply.send({ issue });
+  });
+
+  fastify.post("/api/projects/issues", async (request, reply) => {
+    const v = validateIssueProjectPath(request, reply);
+    if (!v.ok) return v.sent;
+    const body = request.body as Record<string, unknown> | null;
+    if (!body || typeof body !== "object") {
+      return reply.code(400).send({ error: "JSON body required" });
+    }
+    const title = typeof body["title"] === "string" ? body["title"] : "";
+    const symptom = typeof body["symptom"] === "string" ? body["symptom"] : "";
+    if (!title || !symptom) {
+      return reply.code(400).send({ error: "title and symptom are required" });
+    }
+    const tool = typeof body["tool"] === "string" ? body["tool"] : undefined;
+    const exitRaw = body["exit_code"];
+    const exit_code = typeof exitRaw === "number" ? exitRaw : undefined;
+    const tagsRaw = body["tags"];
+    const tags = Array.isArray(tagsRaw) ? tagsRaw.filter((t): t is string => typeof t === "string") : undefined;
+    const agentRaw = body["agent"];
+    const agent = typeof agentRaw === "string" ? agentRaw : undefined;
+    const result = logIssueStore(v.targetPath, { title, symptom, tool, exit_code, tags, agent });
+    return reply.send(result);
+  });
+
+  fastify.patch<{ Params: { id: string } }>("/api/projects/issues/:id", async (request, reply) => {
+    const v = validateIssueProjectPath(request, reply);
+    if (!v.ok) return v.sent;
+    const body = request.body as Record<string, unknown> | null;
+    if (!body || typeof body !== "object") {
+      return reply.code(400).send({ error: "JSON body required" });
+    }
+    const status = body["status"];
+    const validStatuses: IssueStatus[] = ["open", "known", "fixed", "wont-fix"];
+    if (typeof status !== "string" || !validStatuses.includes(status as IssueStatus)) {
+      return reply.code(400).send({ error: `status must be one of ${validStatuses.join(", ")}` });
+    }
+    const resolutionRaw = body["resolution"];
+    const resolution = typeof resolutionRaw === "string" ? resolutionRaw : undefined;
+    const updated = updateIssueStatusStore(v.targetPath, request.params.id, status as IssueStatus, resolution);
+    if (!updated) return reply.code(404).send({ error: "Issue not found" });
+    return reply.send({ issue: updated });
+  });
+
+  fastify.get("/api/issues", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Issues API only allowed from private network" });
+    }
+    const projectDirs = deps.workspaceProjects ?? [];
+    const aggregated: Array<IssueIndexEntry & { project: string }> = [];
+    for (const wsDir of projectDirs) {
+      let entries: string[];
+      try {
+        entries = readdirSync(wsDir);
+      } catch {
+        continue;
+      }
+      for (const slug of entries) {
+        const projectPath = resolvePath(`${wsDir}/${slug}`);
+        try {
+          const issues = listIssuesStore(projectPath);
+          for (const i of issues) aggregated.push({ ...i, project: slug });
+        } catch {
+          // skip projects without issues directory
+        }
+      }
+    }
+    return reply.send({ issues: aggregated });
   });
 
   // -----------------------------------------------------------------------

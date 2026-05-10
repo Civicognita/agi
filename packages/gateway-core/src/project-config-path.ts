@@ -132,6 +132,7 @@ const PROJECT_FOLDER_LAYOUT_FALLBACK: readonly string[] = Object.freeze([
   "k/pm",
   "k/memory",
   "k/chat",
+  "k/issues",
   "repos",
   "sandbox",
   ".trash",
