@@ -292,8 +292,8 @@ describe("LayeredPmProvider — Phase 2 layered writes (s155 t672)", () => {
     await layered.setTaskStatus("t", "doing");
     await layered.addComment("task", "t", "hello");
     await layered.updateTask("t", { title: "x" });
-    await layered.createTask({ title: "new", storyId: "s" });
-    await layered.iWish({ title: "wish", category: "feedback" });
+    await layered.createTask({ title: "new", storyId: "s", description: "" });
+    await layered.iWish({ title: "wish", needs: "test" });
 
     const queue = readSyncQueue();
     expect(queue.map((e) => e.method)).toEqual([
