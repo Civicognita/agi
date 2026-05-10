@@ -1492,6 +1492,19 @@ export function registerDoctorCommand(program: Command): void {
       if (totalFailed > 0) process.exitCode = 1;
     });
 
+  // s144 t574 Phase 1 — `agi doctor menu` interactive category picker.
+  // Reads one selection via Node readline, routes to the matching
+  // sub-command. Phase 2+ adds arrow-key nav + sub-menus + looped
+  // re-prompt; Phase 1 ships the smallest meaningful primitive without
+  // pulling in ink/blessed.
+  doctor
+    .command("menu")
+    .description("Interactive category menu — pick a number, run that diagnostic, exit")
+    .action(async () => {
+      const { runDoctorMenu } = await import("./doctor-menu.js");
+      await runDoctorMenu();
+    });
+
   // s144 t579 — `agi doctor dump` writes a diagnostic bundle to
   // ~/.agi/doctor-dumps/dump-<timestamp>.json. Hands the path back so an
   // operator can attach it to a bug report or share it with support.
