@@ -42,6 +42,7 @@ import ReportsPage from "./routes/reports.js";
 import ReportDetailPage from "./routes/report-detail.js";
 import IssuesPage from "./routes/issues.js";
 import SyncConflictsPage from "./routes/sync-conflicts.js";
+import PmKanbanPage from "./routes/pm-kanban.js";
 import ChangelogPage from "./routes/system-changelog.js";
 import IncidentsPage from "./routes/system-incidents.js";
 import VendorsPage from "./routes/system-vendors.js";
@@ -72,6 +73,7 @@ export const router = createBrowserRouter([
       { path: "reports", element: <ReportsPage /> },
       { path: "issues", element: <IssuesPage /> },
       { path: "sync-conflicts", element: <SyncConflictsPage /> },
+      { path: "pm/kanban", element: <PmKanbanPage /> },
       { path: "reports/:coaReqId", element: <ReportDetailPage /> },
       { path: "entity/:id", element: <EntityPage /> },
       { path: "projects", element: <ProjectsPage /> },

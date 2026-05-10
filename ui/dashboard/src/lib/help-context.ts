@@ -23,6 +23,7 @@ const STATIC_ROUTES: Record<string, string> = {
   "/pax": "PAx primitives — now repos under _aionima (redirects to /projects/_aionima)",
   "/issues": "agent-curated issue registry (system-aggregate view; per-project k/issues/)",
   "/sync-conflicts": "layered-PM sync conflict log (primary vs TynnLite divergence detected by sync-replay worker)",
+  "/pm/kanban": "PM kanban board — tasks from the active provider bucketed into the canonical 6-column tynn-shape board",
   "/comms": "comms (channels) overview",
   "/workflows": "workflow definitions",
   "/logs": "logs viewer",
