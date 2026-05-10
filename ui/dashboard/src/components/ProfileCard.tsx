@@ -76,7 +76,12 @@ export interface ProfileCardTheme {
 export interface ProfileCardProps {
   displayName: string;
   tagline?: string;
-  channels?: Record<string, string | undefined>;
+  /** Channel id → display value. Accepts both the named-key `OwnerChannels`
+   *  interface (telegram/discord/signal/whatsapp/email) and the generic
+   *  index-signature shape via overlapping intersection. The component
+   *  iterates entries indiscriminately, so any object with string-or-undefined
+   *  values is safe. */
+  channels?: { readonly [key: string]: string | undefined };
   dmPolicy?: "pairing" | "open";
   theme?: ProfileCardTheme;
   className?: string;

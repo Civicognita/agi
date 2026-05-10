@@ -575,6 +575,11 @@ export interface OwnerChannels {
   signal?: string;
   whatsapp?: string;
   email?: string;
+  /** Index signature lets the shape interop with `Record<string, string | undefined>`
+   *  consumers (e.g. ProfileCard) without per-call casts. Future channels added
+   *  to the named-key list are still type-checked via the explicit optional
+   *  properties above. */
+  [key: string]: string | undefined;
 }
 
 export interface OwnerConfig {

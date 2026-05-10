@@ -33,7 +33,7 @@ import { ProfileCard } from "@/components/ProfileCard.js";
 import { useConfig, useDashboardWS, useHosting, useIsMobile, useLogStream, useOverview, useProjectConfigWS, useProjects } from "@/hooks.js";
 import { useTheme } from "@/lib/theme-provider";
 import { Chart, Icon } from "@particle-academy/react-fancy";
-import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, logoutDashboard, fetchProviderBalances, fetchBalanceHistory } from "@/api.js";
+import { checkForUpdates, startUpgrade, fetchUpgradeLog, fetchNotifications, markNotificationsRead, markAllNotificationsRead, executeProjectTool, fetchOnboardingState, fetchAuthStatus, fetchCurrentUser, fetchProviderBalances, fetchBalanceHistory } from "@/api.js";
 import type { ProviderBalance } from "@/api.js";
 import { LoginPage } from "@/components/LoginPage.js";
 import type { ActivityEntry, DashboardEvent, Notification, ProjectActivity, TimeBucket, UpdateCheck } from "@/types.js";
@@ -262,8 +262,8 @@ export default function RootLayout() {
   // If a recent upgrade happened, restore logs so the user sees the full history.
   useEffect(() => {
     fetchUpgradeLog().then((entries) => {
-      if (entries.length === 0) return;
       const last = entries[entries.length - 1];
+      if (!last) return;
       // Skip stale logs (older than 5 minutes)
       const lastTs = new Date(last.timestamp).getTime();
       if (Date.now() - lastTs > 5 * 60_000) return;
@@ -372,13 +372,6 @@ export default function RootLayout() {
     setUnreadCount(0);
   }, []);
 
-  const handleLogout = useCallback(() => {
-    logoutDashboard().then(() => {
-      setAuthenticated(false);
-      setCurrentUser(null);
-    }).catch(() => {});
-  }, []);
-
   // Real-time WebSocket updates
   const handleEvent = useCallback((event: DashboardEvent) => {
     if (event.type === "impact:recorded") {
@@ -477,8 +470,8 @@ export default function RootLayout() {
     const poll = setInterval(() => {
       fetchUpgradeLog()
         .then((entries) => {
-          if (entries.length === 0) return;
           const last = entries[entries.length - 1];
+          if (!last) return;
           if (last.step === "complete" && last.status === "done") {
             clearInterval(poll);
             upgradePollRef.current = null;
