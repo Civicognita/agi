@@ -642,6 +642,53 @@ export interface LLMProviderDefinition {
 
 export type PmProviderFactory = (config: Record<string, unknown>) => unknown;
 
+/**
+ * Kanban column descriptor (s139 t535). One column on the PM-Lite
+ * Kanban board. The `statuses` field maps the column to one or more
+ * canonical PmStatus values — letting providers (tynn, Linear, Jira,
+ * etc.) bucket their native states into a 3-7 column display without
+ * losing fidelity at the data layer.
+ */
+export interface PmKanbanColumn {
+  /** Stable column id used by drag-drop + URL state (e.g. `"todo"`). */
+  id: string;
+  /** Display label (e.g. `"To do"`). */
+  name: string;
+  /** Render order (low → high, left → right). */
+  order: number;
+  /** Optional theme color hint (Tailwind-friendly token: `"yellow"`,
+   *  `"blue"`, `"green"`, `"slate"`, etc.). Dashboard maps to its theme. */
+  color?: string;
+  /** Canonical PmStatus values that bucket into this column. A task
+   *  with one of these statuses appears in this column. Empty/undefined
+   *  means the column accepts any status not claimed by another column
+   *  (the catch-all). At most one column should be a catch-all. */
+  statuses?: string[];
+  /** When true, column is hidden by default and surfaced via a toggle
+   *  (e.g. archived/blocked columns). */
+  hiddenByDefault?: boolean;
+}
+
+/**
+ * Kanban board configuration supplied by a PM provider. Owners override
+ * via project config; provider-supplied config is the default seed.
+ *
+ * `definePmKanbanConfig()` in @agi/sdk is the type-safe builder.
+ */
+export interface PmKanbanConfig {
+  /** Column definitions in render order. */
+  columns: PmKanbanColumn[];
+  /** Default priority assigned to newly-created cards (when card editor
+   *  doesn't specify one explicitly). */
+  defaultPriority?: "low" | "normal" | "high" | "urgent";
+  /** Available labels for cards (provider-suggested vocabulary). Owners
+   *  can extend this list per-project. */
+  labels?: { id: string; name: string; color?: string }[];
+  /** Top-of-board filter strip definitions (priority/assignee/etc).
+   *  An empty array means "no provider-supplied filters". */
+  filters?: { id: string; label: string; type: "priority" | "assignee" | "label" | "subtasks" | "overdue" }[];
+}
+
 export interface PmProviderDefinition {
   /** Unique provider id used by `config.agent.pm.provider` to select this
    *  implementation (e.g. "linear", "jira", "github-projects"). Must not
@@ -654,6 +701,11 @@ export interface PmProviderDefinition {
    *  same shape as ProviderField for visual + storage consistency. */
   fields?: ProviderField[];
   factory: PmProviderFactory;
+  /** s139 t535 — provider-supplied default Kanban board config. Owners
+   *  override via project config; this is the seed. Optional: providers
+   *  without a Kanban surface can omit it (the dashboard falls back to a
+   *  minimal default 3-column layout). */
+  kanbanConfig?: PmKanbanConfig;
 }
 
 // ---------------------------------------------------------------------------

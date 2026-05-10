@@ -52,6 +52,8 @@ export type {
   LLMProviderFactory,
   PmProviderDefinition,
   PmProviderFactory,
+  PmKanbanColumn,
+  PmKanbanConfig,
   McpServerTemplate,
   ProviderField,
   ProviderModelInfo,
