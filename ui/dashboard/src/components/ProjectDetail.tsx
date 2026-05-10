@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { cn } from "@/lib/utils";
+import { computeVisibleModes, fallbackModeForCategory } from "@/lib/project-mode-narrowing";
 import { Callout } from "@particle-academy/react-fancy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -241,17 +242,13 @@ export function ProjectDetail({
   }, [currentMode]);
 
   // s134 t517 slice 4 — auto-redirect when the default mode is hidden
-  // by the project's category (literature/media/administration). Pick
-  // the first visible mode for that category.
+  // by the project's category. See lib/project-mode-narrowing.ts for
+  // the rule (literature/media/administration hide develop; literature
+  // and media also hide operate).
   useEffect(() => {
     const cat = project?.category ?? project?.projectType?.category;
-    const hideDevelop = cat === "literature" || cat === "media" || cat === "administration";
-    const hideOperate = cat === "literature" || cat === "media";
-    if (currentMode === "develop" && hideDevelop) {
-      setCurrentMode(hideOperate ? "coordinate" : "operate");
-    } else if (currentMode === "operate" && hideOperate) {
-      setCurrentMode("coordinate");
-    }
+    const fallback = fallbackModeForCategory(currentMode, cat);
+    if (fallback !== null) setCurrentMode(fallback);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.category, project?.projectType?.category]);
 
@@ -598,13 +595,7 @@ export function ProjectDetail({
           - Otherwise (web/app/monorepo/ops): all 4 modes visible */}
       {!isCoreFork && (() => {
         const cat = project.category ?? project.projectType?.category;
-        const hideDevelop = cat === "literature" || cat === "media" || cat === "administration";
-        const hideOperate = cat === "literature" || cat === "media";
-        const visibleModes = (["develop", "operate", "coordinate", "insight"] as const).filter((m) => {
-          if (m === "develop" && hideDevelop) return false;
-          if (m === "operate" && hideOperate) return false;
-          return true;
-        });
+        const visibleModes = computeVisibleModes(cat);
         return (
           <div className="flex items-center gap-1 mb-3 border-b border-border" data-testid="project-mode-picker">
             {visibleModes.map((mode) => (
