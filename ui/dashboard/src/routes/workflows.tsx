@@ -54,7 +54,7 @@ export default function WorkflowsPage() {
   return (
     <PageScroll>
       <Tabs defaultValue="topology">
-        <TabsList variant="line">
+        <TabsList>
           <TabsTrigger value="topology">Topology</TabsTrigger>
           <TabsTrigger value="taskmaster">Taskmaster</TabsTrigger>
           <TabsTrigger value="workers">Workers</TabsTrigger>

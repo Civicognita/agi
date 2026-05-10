@@ -95,7 +95,7 @@ export default function SystemAgentsPage() {
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-4 text-xs text-muted-foreground mt-2">
-                      {agent.uptime !== undefined && (
+                      {agent.uptime != null && (
                         <span className="flex items-center gap-1">
                           <Clock className="w-3 h-3" /> {formatUptime(agent.uptime)}
                         </span>

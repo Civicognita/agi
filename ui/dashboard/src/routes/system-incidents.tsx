@@ -9,7 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
-import { fetchIncidents, createIncident, updateIncidentStatus, updateIncidentBreach } from "../api.js";
+import { fetchIncidents, createIncident, updateIncidentStatus } from "../api.js";
 
 interface Incident {
   id: string;

@@ -969,7 +969,7 @@ export default function SettingsProvidersPage() {
             local models. HF Marketplace remains the discovery/download
             flow; lifecycle (start/stop/uninstall) lives here. */}
       <Tabs defaultValue="providers">
-        <TabsList variant="line">
+        <TabsList>
           <TabsTrigger value="providers" data-testid="providers-tab-providers">Providers</TabsTrigger>
           <TabsTrigger value="models" data-testid="providers-tab-models">Models</TabsTrigger>
         </TabsList>
