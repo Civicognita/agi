@@ -171,3 +171,166 @@ describe("LayeredPmProvider", () => {
     expect(info).toHaveBeenCalledWith(expect.stringContaining("primary threw for getNext"));
   });
 });
+
+// ---------------------------------------------------------------------------
+// s155 t672 Phase 2 — layered-write enqueue tests
+// ---------------------------------------------------------------------------
+
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, beforeEach } from "vitest";
+import { _resetSyncSeqForTest, clearSyncQueue, readSyncQueue } from "./sync-queue.js";
+
+describe("LayeredPmProvider — Phase 2 layered writes (s155 t672)", () => {
+  let tmp: string;
+  let originalHome: string | undefined;
+
+  beforeEach(() => {
+    tmp = join(tmpdir(), `lpm-phase2-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`);
+    mkdirSync(tmp, { recursive: true });
+    originalHome = process.env["HOME"];
+    process.env["HOME"] = join(tmp, "home");
+    mkdirSync(process.env["HOME"], { recursive: true });
+    _resetSyncSeqForTest();
+    clearSyncQueue();
+  });
+
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env["HOME"];
+    else process.env["HOME"] = originalHome;
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("default-off: primary failure does NOT enqueue (Phase 1 behavior intact)", async () => {
+    const primary = makeMockProvider("primary", {
+      setTaskStatus: vi.fn(async () => { throw new Error("offline"); }),
+    });
+    const fallback = makeMockProvider("fallback");
+    // No enableLayeredWrites option set
+    const layered = new LayeredPmProvider({ primary, fallback });
+
+    await layered.setTaskStatus("t-1", "doing");
+    expect(readSyncQueue()).toEqual([]);
+  });
+
+  it("flag-on + primary failure: enqueues the call for replay", async () => {
+    const primary = makeMockProvider("primary", {
+      setTaskStatus: vi.fn(async () => { throw new Error("offline"); }),
+    });
+    const fallback = makeMockProvider("fallback");
+    const layered = new LayeredPmProvider({
+      primary,
+      fallback,
+      enableLayeredWrites: true,
+      projectPath: "/projects/myproj",
+    });
+
+    await layered.setTaskStatus("t-1", "doing", "starting work");
+    const queue = readSyncQueue();
+    expect(queue).toHaveLength(1);
+    expect(queue[0]?.method).toBe("setTaskStatus");
+    expect(queue[0]?.args).toEqual(["t-1", "doing", "starting work"]);
+    expect(queue[0]?.projectPath).toBe("/projects/myproj");
+    expect(queue[0]?.failureReason).toContain("offline");
+    expect(queue[0]?.attempts).toBe(0);
+  });
+
+  it("flag-on + primary success: does NOT enqueue", async () => {
+    const primary = makeMockProvider("primary"); // succeeds
+    const fallback = makeMockProvider("fallback");
+    const layered = new LayeredPmProvider({
+      primary,
+      fallback,
+      enableLayeredWrites: true,
+      projectPath: "/projects/myproj",
+    });
+
+    await layered.setTaskStatus("t-1", "doing");
+    expect(readSyncQueue()).toEqual([]);
+  });
+
+  it("flag-on + error-shaped payload: enqueues + falls through to fallback", async () => {
+    const primary = makeMockProvider("primary", {
+      // The "looks like error payload" path — primary returns instead of throws
+      // Using `as never` because PmProvider.setTaskStatus is typed PmTask but
+      // looksLikeErrorPayload accepts unknown shapes.
+      setTaskStatus: vi.fn(async () => ({ error: "tynn unavailable" } as never)),
+    });
+    const fallback = makeMockProvider("fallback");
+    const layered = new LayeredPmProvider({
+      primary,
+      fallback,
+      enableLayeredWrites: true,
+      projectPath: "/projects/p",
+    });
+
+    await layered.setTaskStatus("t-1", "doing");
+    expect(fallback.setTaskStatus).toHaveBeenCalledOnce();
+    const queue = readSyncQueue();
+    expect(queue).toHaveLength(1);
+    expect(queue[0]?.failureReason).toContain("error-shaped");
+  });
+
+  it("flag-on captures all 5 write methods (setTaskStatus/addComment/updateTask/createTask/iWish)", async () => {
+    const fail = vi.fn(async () => { throw new Error("offline"); });
+    const primary = makeMockProvider("primary", {
+      setTaskStatus: fail,
+      addComment: fail,
+      updateTask: fail,
+      createTask: fail,
+      iWish: fail,
+    });
+    const fallback = makeMockProvider("fallback");
+    const layered = new LayeredPmProvider({
+      primary,
+      fallback,
+      enableLayeredWrites: true,
+      projectPath: "/p",
+    });
+
+    await layered.setTaskStatus("t", "doing");
+    await layered.addComment("task", "t", "hello");
+    await layered.updateTask("t", { title: "x" });
+    await layered.createTask({ title: "new", storyId: "s" });
+    await layered.iWish({ title: "wish", category: "feedback" });
+
+    const queue = readSyncQueue();
+    expect(queue.map((e) => e.method)).toEqual([
+      "setTaskStatus",
+      "addComment",
+      "updateTask",
+      "createTask",
+      "iWish",
+    ]);
+  });
+
+  it("primary === fallback (single-provider config): enqueue not invoked", async () => {
+    const provider = makeMockProvider("solo");
+    const layered = new LayeredPmProvider({
+      primary: provider,
+      fallback: provider,
+      enableLayeredWrites: true,
+      projectPath: "/p",
+    });
+    await layered.setTaskStatus("t", "doing");
+    expect(readSyncQueue()).toEqual([]);
+  });
+
+  it("uses '(unknown)' projectPath when omitted under flag-on", async () => {
+    const primary = makeMockProvider("primary", {
+      setTaskStatus: vi.fn(async () => { throw new Error("offline"); }),
+    });
+    const fallback = makeMockProvider("fallback");
+    const layered = new LayeredPmProvider({
+      primary,
+      fallback,
+      enableLayeredWrites: true,
+      // projectPath intentionally omitted
+    });
+
+    await layered.setTaskStatus("t", "doing");
+    const queue = readSyncQueue();
+    expect(queue[0]?.projectPath).toBe("(unknown)");
+  });
+});

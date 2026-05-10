@@ -42,6 +42,8 @@ import type {
   PmIWishInput,
 } from "@agi/sdk";
 
+import { enqueueSync } from "./sync-queue.js";
+
 export interface LayeredPmProviderOptions {
   /** The configured primary (e.g. TynnPmProvider). All reads + writes try here first. */
   primary: PmProvider;
@@ -49,6 +51,23 @@ export interface LayeredPmProviderOptions {
   fallback: PmProvider;
   /** Optional logger for fallback events. */
   logger?: { info(msg: string): void; warn(msg: string): void };
+  /**
+   * s155 t672 Phase 2 — when true, write methods that succeed via the
+   * fallback path (primary unreachable / errored) also enqueue the
+   * original call to `~/.agi/sync-queue.jsonl` so it can be replayed
+   * against primary later. Default `false` keeps Phase 1 / pre-flag
+   * behavior intact. Owner enables once Phase 3 (per-field timestamps)
+   * + Phase 4 (read-back diff) ship.
+   */
+  enableLayeredWrites?: boolean;
+  /**
+   * Project path for sync-queue scoping. Required when
+   * `enableLayeredWrites` is true; otherwise the queue can't filter
+   * replays per-project. When omitted (or flag off), queue entries
+   * carry the literal "(unknown)" string and surface as a soft
+   * diagnostic warning.
+   */
+  projectPath?: string;
 }
 
 function looksLikeErrorPayload(value: unknown): boolean {
@@ -70,11 +89,15 @@ export class LayeredPmProvider implements PmProvider {
   private readonly primary: PmProvider;
   private readonly fallback: PmProvider;
   private readonly logger?: { info(msg: string): void; warn(msg: string): void };
+  private readonly enableLayeredWrites: boolean;
+  private readonly projectPath: string;
 
   constructor(opts: LayeredPmProviderOptions) {
     this.primary = opts.primary;
     this.fallback = opts.fallback;
     this.logger = opts.logger;
+    this.enableLayeredWrites = opts.enableLayeredWrites ?? false;
+    this.projectPath = opts.projectPath ?? "(unknown)";
     // Prefer primary's id for logging; the layering is invisible to consumers.
     this.providerId = `layered(${opts.primary.providerId}+${opts.fallback.providerId})`;
   }
@@ -92,6 +115,54 @@ export class LayeredPmProvider implements PmProvider {
       this.logger?.info(`pm-layer: primary threw for ${label} (${err instanceof Error ? err.message : String(err)}); trying fallback`);
       return await op(this.fallback);
     }
+  }
+
+  /**
+   * Phase 2 — write wrapper. Mirrors `withFallback` but additionally
+   * enqueues the original call to the sync-queue when:
+   *   - `enableLayeredWrites` is true
+   *   - primary failed (threw OR returned error-shape)
+   *   - fallback succeeded
+   *
+   * Side-channel discipline: enqueue NEVER affects the call's return
+   * path. Queue failures are silent (sync-queue.ts swallows fs errors
+   * by design).
+   */
+  private async withFallbackWrite<T>(
+    method: string,
+    args: unknown[],
+    op: (p: PmProvider) => Promise<T>,
+  ): Promise<T> {
+    if (this.primary === this.fallback) return op(this.primary);
+    let primaryFailed = false;
+    let failureReason = "";
+    try {
+      const result = await op(this.primary);
+      if (looksLikeErrorPayload(result)) {
+        primaryFailed = true;
+        failureReason = "error-shaped payload from primary";
+        this.logger?.info(`pm-layer: primary returned error-shaped payload for ${method}; trying fallback`);
+      } else {
+        return result;
+      }
+    } catch (err) {
+      primaryFailed = true;
+      failureReason = err instanceof Error ? err.message : String(err);
+      this.logger?.info(`pm-layer: primary threw for ${method} (${failureReason}); trying fallback`);
+    }
+
+    // Primary path failed — fallback is now the source of truth for
+    // this call. If layered-writes is enabled, enqueue for replay.
+    const fallbackResult = await op(this.fallback);
+    if (this.enableLayeredWrites && primaryFailed) {
+      enqueueSync({
+        method,
+        args,
+        projectPath: this.projectPath,
+        failureReason,
+      });
+    }
+    return fallbackResult;
   }
 
   // ---- Reads (each falls through to fallback on primary failure) ----
@@ -120,29 +191,29 @@ export class LayeredPmProvider implements PmProvider {
     return this.withFallback("getComments", (p) => p.getComments(entityType, entityId));
   }
 
-  // ---- Writes (route through primary; fallback only on primary failure) ----
+  // ---- Writes (Phase 2 — withFallbackWrite enqueues on primary failure when enableLayeredWrites=true) ----
 
   setTaskStatus(taskId: string, status: PmStatus, note?: string): Promise<PmTask> {
-    return this.withFallback("setTaskStatus", (p) => p.setTaskStatus(taskId, status, note));
+    return this.withFallbackWrite("setTaskStatus", [taskId, status, note], (p) => p.setTaskStatus(taskId, status, note));
   }
 
   addComment(entityType: "task" | "story" | "version", entityId: string, body: string): Promise<PmComment> {
-    return this.withFallback("addComment", (p) => p.addComment(entityType, entityId, body));
+    return this.withFallbackWrite("addComment", [entityType, entityId, body], (p) => p.addComment(entityType, entityId, body));
   }
 
   updateTask(
     taskId: string,
     fields: Partial<Pick<PmTask, "title" | "description" | "verificationSteps" | "codeArea">>,
   ): Promise<PmTask> {
-    return this.withFallback("updateTask", (p) => p.updateTask(taskId, fields));
+    return this.withFallbackWrite("updateTask", [taskId, fields], (p) => p.updateTask(taskId, fields));
   }
 
   createTask(input: PmCreateTaskInput): Promise<PmTask> {
-    return this.withFallback("createTask", (p) => p.createTask(input));
+    return this.withFallbackWrite("createTask", [input], (p) => p.createTask(input));
   }
 
   iWish(input: PmIWishInput): Promise<{ id: string; title: string }> {
-    return this.withFallback("iWish", (p) => p.iWish(input));
+    return this.withFallbackWrite("iWish", [input], (p) => p.iWish(input));
   }
 
   async getActiveFocusProgress(): ReturnType<NonNullable<PmProvider["getActiveFocusProgress"]>> {
