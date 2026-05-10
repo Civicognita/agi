@@ -1824,6 +1824,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
       <>
         <div
           data-testid="chat-flyout"
+          data-chat-context={openWithContext ?? undefined}
           className="flex h-full border-l border-border bg-background"
           style={{ width: "50%" }}
         >
@@ -1853,6 +1854,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     <>
       <div
         data-testid="chat-flyout"
+        data-chat-context={openWithContext ?? undefined}
         className="fixed inset-x-0 top-12 md:top-14 bottom-0 z-[200] flex justify-end pointer-events-none"
       >
         {!isFullscreen && (
