@@ -66,6 +66,7 @@ import { McpClient } from "@agi/mcp-client";
 import { TynnPmProvider } from "./pm/tynn-provider.js";
 import { TynnLitePmProvider } from "./pm/tynn-lite-provider.js";
 import { LayeredPmProvider } from "./pm/layered-pm-provider.js";
+import { SyncReplayWorker } from "./pm/sync-replay-worker.js";
 import type { PmProvider, PmStatus } from "@agi/sdk";
 
 import type { AionimaConfig, ConfigReloadEvent } from "@agi/config";
@@ -2473,10 +2474,21 @@ export async function startGatewayServer(
   // which implementation backs the canonical tynn workflow. Built-in ids
   // resolve to bundled classes; any other id is looked up against plugins
   // that called api.registerPmProvider() with that id.
-  const pmConfig = (config as { agent?: { pm?: { provider?: string; config?: Record<string, unknown> } } })
-    .agent?.pm ?? {};
+  const pmConfig = (config as {
+    agent?: {
+      pm?: {
+        provider?: string;
+        config?: Record<string, unknown>;
+        enableLayeredWrites?: boolean;
+        syncReplay?: { enabled?: boolean; tickIntervalMs?: number };
+      };
+    };
+  }).agent?.pm ?? {};
   const pmProviderId = pmConfig.provider ?? "tynn";
   const pmProviderConfig = pmConfig.config ?? {};
+  const pmEnableLayeredWrites = pmConfig.enableLayeredWrites ?? false;
+  const pmSyncReplayEnabled = pmConfig.syncReplay?.enabled ?? false;
+  const pmSyncReplayTickMs = pmConfig.syncReplay?.tickIntervalMs;
 
   // Wish #17 (2026-05-08) — PM-Lite is ALWAYS available as the file-based
   // floor, regardless of which remote provider (if any) the user has
@@ -2509,8 +2521,30 @@ export async function startGatewayServer(
     primary: pmPrimary,
     fallback: tynnLiteFloor,
     logger: { info: (m) => log.info(m), warn: (m) => log.warn(m) },
+    // s155 t672 Phase 2 — opt-in dual-write semantics. Default false
+    // keeps Phase 1 behavior; owner enables in gateway.json once they
+    // want primary-failure replays.
+    enableLayeredWrites: pmEnableLayeredWrites,
+    projectPath: pmLiteRoot,
   });
-  log.info(`pm provider resolved: primary=${pmPrimary.providerId}, fallback=${tynnLiteFloor.providerId}, exposed=${pmProvider.providerId}`);
+  log.info(`pm provider resolved: primary=${pmPrimary.providerId}, fallback=${tynnLiteFloor.providerId}, exposed=${pmProvider.providerId}, enableLayeredWrites=${String(pmEnableLayeredWrites)}`);
+
+  // s155 t672 Phase 6 — SyncReplayWorker activation. Default disabled.
+  // When enabled (gateway.json `agent.pm.syncReplay.enabled: true`),
+  // the worker periodically replays sync-queue.jsonl entries against
+  // primary + diffs read-back vs TynnLite to record conflicts.
+  // Tests reach into the worker via tick(); production uses start().
+  const syncReplayWorker = new SyncReplayWorker({
+    enabled: pmSyncReplayEnabled,
+    tickIntervalMs: pmSyncReplayTickMs,
+    primary: pmPrimary,
+    lite: tynnLiteFloor,
+    logger: { info: (m) => log.info(m), warn: (m) => log.warn(m) },
+  });
+  syncReplayWorker.start();
+  if (pmSyncReplayEnabled) {
+    log.info(`pm sync-replay worker started (tickIntervalMs=${String(pmSyncReplayTickMs ?? "default")})`);
+  }
 
   // s126 — Ops-mode tools (cross-project + infrastructure) registered after
   // pmProvider is resolved. requiresProjectCategory: [ops, administration]
@@ -5142,6 +5176,11 @@ export async function startGatewayServer(
     closed = true;
 
     log.info("shutting down...");
+
+    // s155 t672 Phase 6 — stop the sync-replay worker before any
+    // subsystem teardown so an in-flight tick doesn't try to call
+    // into a half-disposed primary provider.
+    syncReplayWorker.stop();
 
     // Step -1: Write shutdown marker FIRST — captures running project + model
     // containers so the next boot can tell this was a graceful exit and can
