@@ -70,6 +70,7 @@ import {
   listIssues as listIssuesStore,
   logIssue as logIssueStore,
   readIssue as readIssueStore,
+  searchIssues as searchIssuesStore,
   updateIssueStatus as updateIssueStatusStore,
   type IssueIndexEntry,
   type IssueStatus,
@@ -2016,6 +2017,17 @@ export async function createGatewayRuntimeState(
     if (!v.ok) return v.sent;
     const issues = listIssuesStore(v.targetPath);
     return reply.send({ issues });
+  });
+
+  // Wish #21 Slice 2 — free-text search over title + body + tags with
+  // tag:/status: structured filters. Linear scan; FTS index deferred
+  // until usage proves it's needed.
+  fastify.get("/api/projects/issues/search", async (request, reply) => {
+    const v = validateIssueProjectPath(request, reply);
+    if (!v.ok) return v.sent;
+    const query = (request.query as Record<string, string>)["q"] ?? "";
+    const hits = searchIssuesStore(v.targetPath, query);
+    return reply.send({ hits });
   });
 
   fastify.get<{ Params: { id: string } }>("/api/projects/issues/:id", async (request, reply) => {

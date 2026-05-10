@@ -25,3 +25,6 @@ export {
   readIssue,
   updateIssueStatus,
 } from "./store.js";
+
+export type { IssueSearchHit, IssueSearchHitWithBody } from "./search.js";
+export { parseSearchQuery, searchIssues } from "./search.js";

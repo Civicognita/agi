@@ -1244,6 +1244,29 @@ cmd_issue() {
         curl -s "$gw_url/api/issues" | ($fmt)
       fi
       ;;
+    search)
+      # Wish #21 Slice 2 — free-text search across title + body + tags
+      # with tag:/status: structured filters.
+      local project=""
+      local query=""
+      while [ "$#" -gt 0 ]; do
+        case "$1" in
+          --project) project="${2:-}"; shift 2 ;;
+          *) query="${query:+$query }$1"; shift ;;
+        esac
+      done
+      if [ -z "$project" ] || [ -z "$query" ]; then
+        err "Usage: agi issue search <query> --project <absolute-path>"
+        echo "  Examples:" >&2
+        echo "    agi issue search 'plaid webhook' --project /path/to/proj" >&2
+        echo "    agi issue search 'tag:auth status:open' --project /path/to/proj" >&2
+        exit 1
+      fi
+      local encoded_path encoded_q
+      encoded_path="$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$project")"
+      encoded_q="$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$query")"
+      curl -s "$gw_url/api/projects/issues/search?path=$encoded_path&q=$encoded_q" | ($fmt)
+      ;;
     show)
       local id="${1:-}"
       shift || true
@@ -1326,7 +1349,7 @@ with urllib.request.urlopen(req) as r: print(r.read().decode())
       ;;
     *)
       err "Unknown issue action: $action"
-      echo "  Actions: list [--project <path>] | show <id> --project <path> | file --project <path> --title <t> --symptom <s> [--tool] [--exit] [--tags] | fix <id> --project <path> [--resolution]"
+      echo "  Actions: list [--project <path>] | search <query> --project <path> | show <id> --project <path> | file --project <path> --title <t> --symptom <s> [--tool] [--exit] [--tags] | fix <id> --project <path> [--resolution]"
       exit 1
       ;;
   esac
@@ -2074,6 +2097,7 @@ cmd_help() {
   echo "                    stop --all                    Stop iterative-work on ALL projects"
   echo "  issue <CMD>     Per-project issue registry (Wish #21):"
   echo "                    list [--project <path>]       List all issues (or one project)"
+  echo "                    search <q> --project <path>   Free-text search (tag:/status: filters)"
   echo "                    show <id> --project <path>    Read full issue body"
   echo "                    file --project <path> --title <t> --symptom <s>"
   echo "                       [--tool t] [--exit n] [--tags a,b,c]   Log issue (auto-dedup)"

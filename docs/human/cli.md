@@ -214,6 +214,12 @@ agi issue list
 # List issues for one project
 agi issue list --project /home/wishborn/_projects/_aionima
 
+# Free-text search (Slice 2): tokens AND-combined; case-insensitive;
+# tag:<name> + status:<s> structured filters
+agi issue search "plaid webhook" --project /home/wishborn/_projects/_aionima
+agi issue search "tag:auth status:open" --project /home/wishborn/_projects/_aionima
+agi issue search "deadlock tag:postgres" --project /home/wishborn/_projects/_aionima
+
 # Show full issue body
 agi issue show i-001 --project /home/wishborn/_projects/_aionima
 
