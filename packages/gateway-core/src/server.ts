@@ -100,6 +100,7 @@ import { ToolRegistry } from "./tool-registry.js";
 import { AgentInvoker } from "./agent-invoker.js";
 import { ChatEventBuffer } from "./chat-event-buffer.js";
 import { registerAllTools, registerAgentTools } from "./tools/index.js";
+import { createIssueHandler, ISSUE_TOOL_MANIFEST, ISSUE_TOOL_INPUT_SCHEMA } from "./tools/issue-tools.js";
 import { SkillRegistry } from "@agi/skills";
 import { CompositeMemoryAdapter } from "@agi/memory";
 import {
@@ -2854,6 +2855,18 @@ export async function startGatewayServer(
       },
       required: ["action"],
     },
+  );
+
+  // Wish #21 Slice 3 — issue registry tool. Per-project k/issues/
+  // surface (log/search/show/list/fix). Same store as Slices 1+2 and
+  // the agi CLI; this binding lets Aion self-serve without bouncing
+  // through the CLI.
+  toolRegistry.register(
+    ISSUE_TOOL_MANIFEST,
+    createIssueHandler({
+      workspaceProjects: () => Array.isArray(config.workspace?.projects) ? config.workspace.projects : [],
+    }),
+    ISSUE_TOOL_INPUT_SCHEMA,
   );
 
   // Register HF model management tool for the agent
