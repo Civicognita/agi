@@ -92,15 +92,25 @@ agi stop        # stop the service
 
 ### agi doctor
 
-Run infrastructure health checks.
+Run grouped self-diagnostic checks (s144 t582 — bare form now routes to the TS commander surface).
 
 ```bash
-agi doctor
+agi doctor              # full grouped diagnostic
+agi doctor --json       # machine-readable for scripting / CI
+agi doctor --with-aion  # appends aion-micro-powered analysis of failures
 ```
 
-Checks: Node.js version, pnpm, deploy directory, config file, Caddy, Podman (rootless), Ollama, dnsmasq, gateway HTTP response, NPU readiness (when available), Lemonade backend, disk usage, **hosted-project state** (`N/M up` summary with names of any down projects — see `agi projects` for the full list), **flapping projects** (running but with `RestartCount > 3` — surfaces containers that are technically "up" but crash-looping under podman's `--restart=always` policy).
+Check groups: **core** (config file + Zod validation), **auth** (Local-ID reachable, sealed credentials), **repos** (per-project clone state), **git state** (branch + remotes per repo), **plugins** (cache integrity), **network** (ports / certificates / Caddy parse-errors), **containers** (running + flapping + orphan analysis), **hosting** (per-project hostname + breaker state), **project shape** (s150 t641 per-project layout validation), **dev** (PAx fork checkouts when contributing mode active), **gateway** (HTTP reachability + state), **lemonade** (backend reachable + model cache).
 
-Exits with the issue count as a one-line summary at the bottom.
+Exits 0 on all-pass, 1 when any failed (warnings don't fail).
+
+#### agi doctor health
+
+The legacy 5-check infra health surface (Node.js / pnpm / Caddy / podman / hosted projects / flapping). Pre-s144-t582 this was the bare-form behavior; kept available for scripts/CI continuity that depended on the older shape.
+
+```bash
+agi doctor health
+```
 
 #### agi doctor schema
 
