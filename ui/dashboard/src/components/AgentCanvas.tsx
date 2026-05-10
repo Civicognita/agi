@@ -24,6 +24,7 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { PlanPane } from "./PlanPane.js";
 import { IterativeWorkArtifactCard } from "./IterativeWorkArtifactCard.js";
+import { SupportCanvas } from "./SupportCanvas.js";
 import type { Notification } from "../types.js";
 
 /** What's currently rendered inside the canvas. Add a new variant here when
@@ -31,7 +32,8 @@ import type { Notification } from "../types.js";
 export type CanvasSurface =
   | { kind: "empty" }
   | { kind: "plan"; planId: string; projectPath: string }
-  | { kind: "iteration-artifact"; notification: Notification };
+  | { kind: "iteration-artifact"; notification: Notification }
+  | { kind: "support"; initialPath?: string };
 
 interface AgentCanvasProps {
   surface: CanvasSurface;
@@ -93,6 +95,14 @@ export function AgentCanvas({
         <div className="flex-1 min-h-0 overflow-y-auto p-4">
           <IterativeWorkArtifactCard notification={surface.notification} />
         </div>
+      )}
+
+      {/* s137 t531 — SupportCanvas surface for help-mode chat. The chat
+          layer sets this when isHelpModeContext(session.context) is true;
+          the page-context can pre-resolve initialPath but the user can
+          still navigate the full docs tree. */}
+      {surface.kind === "support" && (
+        <SupportCanvas initialPath={surface.initialPath} className="flex-1" />
       )}
     </div>
   );
