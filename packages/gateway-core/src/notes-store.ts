@@ -19,11 +19,26 @@ import { ulid } from "ulid";
 import type { Db } from "@agi/db-schema/client";
 import { userNotes } from "@agi/db-schema";
 
+/**
+ * Note kind discriminator (s157, 2026-05-10).
+ *   - `markdown`: body is Markdown source (s152 default).
+ *   - `whiteboard`: body is JSON serialization of canvas state.
+ */
+export type UserNoteKind = "markdown" | "whiteboard";
+
+export const USER_NOTE_KINDS: readonly UserNoteKind[] = ["markdown", "whiteboard"] as const;
+
+export function isUserNoteKind(value: unknown): value is UserNoteKind {
+  return typeof value === "string" && (USER_NOTE_KINDS as readonly string[]).includes(value);
+}
+
 export interface UserNoteRecord {
   id: string;
   userEntityId: string;
   projectPath: string | null;
   title: string;
+  /** s157 — note kind discriminator. Defaults to `markdown` for s152 compat. */
+  kind: UserNoteKind;
   body: string;
   sortOrder: number;
   pinned: boolean;
@@ -35,6 +50,8 @@ export interface CreateNoteInput {
   userEntityId: string;
   projectPath: string | null;
   title: string;
+  /** s157 — defaults to `markdown` when omitted. */
+  kind?: UserNoteKind;
   body?: string;
   sortOrder?: number;
   pinned?: boolean;
@@ -42,6 +59,8 @@ export interface CreateNoteInput {
 
 export interface UpdateNoteInput {
   title?: string;
+  /** s157 — flipping kind also rewrites body interpretation; UI handles. */
+  kind?: UserNoteKind;
   body?: string;
   sortOrder?: number;
   pinned?: boolean;
@@ -53,6 +72,7 @@ function rowToRecord(row: typeof userNotes.$inferSelect): UserNoteRecord {
     userEntityId: row.userEntityId,
     projectPath: row.projectPath,
     title: row.title,
+    kind: isUserNoteKind(row.kind) ? row.kind : "markdown",
     body: row.body,
     sortOrder: row.sortOrder,
     pinned: row.pinned,
@@ -100,6 +120,7 @@ export class NotesStore {
       userEntityId: input.userEntityId,
       projectPath: input.projectPath,
       title: input.title,
+      kind: input.kind ?? "markdown",
       body: input.body ?? "",
       sortOrder: input.sortOrder ?? 0,
       pinned: input.pinned ?? false,
@@ -118,6 +139,7 @@ export class NotesStore {
     if (existing === null) return null;
     const updates: Partial<typeof userNotes.$inferInsert> = { updatedAt: new Date() };
     if (patch.title !== undefined) updates.title = patch.title;
+    if (patch.kind !== undefined) updates.kind = patch.kind;
     if (patch.body !== undefined) updates.body = patch.body;
     if (patch.sortOrder !== undefined) updates.sortOrder = patch.sortOrder;
     if (patch.pinned !== undefined) updates.pinned = patch.pinned;

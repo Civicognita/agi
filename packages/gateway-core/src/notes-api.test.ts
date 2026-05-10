@@ -43,6 +43,7 @@ class InMemoryNotesStore implements Pick<NotesStore, "list" | "get" | "create" |
       userEntityId: input.userEntityId,
       projectPath: input.projectPath,
       title: input.title,
+      kind: input.kind ?? "markdown",
       body: input.body ?? "",
       sortOrder: input.sortOrder ?? 0,
       pinned: input.pinned ?? false,
@@ -59,6 +60,7 @@ class InMemoryNotesStore implements Pick<NotesStore, "list" | "get" | "create" |
     const updated: UserNoteRecord = {
       ...existing,
       ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.kind !== undefined ? { kind: patch.kind } : {}),
       ...(patch.body !== undefined ? { body: patch.body } : {}),
       ...(patch.sortOrder !== undefined ? { sortOrder: patch.sortOrder } : {}),
       ...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),

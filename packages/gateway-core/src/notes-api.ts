@@ -17,6 +17,7 @@
 
 import type { FastifyInstance } from "fastify";
 import type { NotesStore, CreateNoteInput, UpdateNoteInput, UserNoteRecord } from "./notes-store.js";
+import { isUserNoteKind } from "./notes-store.js";
 
 /** Single-owner alpha — every note is owned by this entity id. */
 export const ALPHA_OWNER_ENTITY_ID = "~$U0";
@@ -105,6 +106,8 @@ export function registerNotesRoutes(app: FastifyInstance, deps: NotesApiDeps): v
       projectPath,
       title: body.title.trim(),
       body: typeof body.body === "string" ? body.body : "",
+      // s157 — accept `kind` field; defaults to markdown when omitted/invalid.
+      ...(isUserNoteKind(body.kind) ? { kind: body.kind } : {}),
       ...(typeof body.pinned === "boolean" ? { pinned: body.pinned } : {}),
       ...(typeof body.sortOrder === "number" ? { sortOrder: body.sortOrder } : {}),
     });
@@ -129,6 +132,7 @@ export function registerNotesRoutes(app: FastifyInstance, deps: NotesApiDeps): v
     const body = request.body as UpdateNoteInput;
     const patch: UpdateNoteInput = {};
     if (typeof body.title === "string") patch.title = body.title.trim();
+    if (isUserNoteKind(body.kind)) patch.kind = body.kind;
     if (typeof body.body === "string") patch.body = body.body;
     if (typeof body.sortOrder === "number") patch.sortOrder = body.sortOrder;
     if (typeof body.pinned === "boolean") patch.pinned = body.pinned;

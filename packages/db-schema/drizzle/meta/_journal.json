@@ -15,6 +15,13 @@
       "when": 1777768000000,
       "tag": "0001_mapps_marketplace_name",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778760000000,
+      "tag": "0002_user_notes_kind",
+      "breakpoints": true
     }
   ]
 }
