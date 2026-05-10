@@ -24,6 +24,7 @@ import { HostingPanel } from "./HostingPanel.js";
 import { EnvManager } from "./EnvManager.js";
 import { TaskmasterTab } from "./TaskmasterTab.js";
 import { PmLitePanel } from "./PmLitePanel.js";
+import { PmKanbanPanel } from "./PmKanbanPanel.js";
 import { NotesPanel } from "./NotesPanel.js";
 import { IterativeWorkTab } from "./IterativeWorkTab.js";
 import { MCPTab } from "./MCPTab.js";
@@ -212,6 +213,10 @@ export function ProjectDetail({
     "plans": "coordinate",
     // s152 — Notes tab in coordinate mode (knowledge capture for the project).
     "notes": "coordinate",
+    // s139 t538 — PM kanban tab in coordinate mode. Reuses PmKanbanPanel
+    // (the system-aggregate /pm/kanban view) — per-project filtering is a
+    // future phase; today the tab shows the same all-tasks view.
+    "pm": "coordinate",
     "security": "insight",
     "activity": "insight",
   };
@@ -674,6 +679,9 @@ export function ProjectDetail({
               )}
               {tabBelongsToMode("plans") && (
                 <TabsTrigger value="plans" className={SUB_PILL_CLASS} data-testid="project-tab-plans">Plans</TabsTrigger>
+              )}
+              {tabBelongsToMode("pm") && (
+                <TabsTrigger value="pm" className={SUB_PILL_CLASS} data-testid="project-tab-pm">PM</TabsTrigger>
               )}
               {tabBelongsToMode("notes") && (
                 <TabsTrigger value="notes" className={SUB_PILL_CLASS} data-testid="project-tab-notes">Notes</TabsTrigger>
@@ -1396,6 +1404,13 @@ export function ProjectDetail({
             file-based plan list straight from <projectPath>/k/plans/. */}
         <TabsContent value="plans" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <PmLitePanel projectPath={project.path} />
+        </TabsContent>
+
+        {/* s139 t538 — PM kanban sub-surface in coordinate mode. Reuses
+            the system-aggregate PmKanbanPanel; per-project filtering
+            (filter by task.projectPath) is a future phase. */}
+        <TabsContent value="pm" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <PmKanbanPanel />
         </TabsContent>
 
         {/* s152 — Notes tab. Per-project markdown notepad surface. The
