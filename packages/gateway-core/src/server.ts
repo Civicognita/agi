@@ -3716,8 +3716,14 @@ export async function startGatewayServer(
         const chatContextRaw = chatPayload?.context ?? "general";
         const isBuilderMode = chatContextRaw.startsWith("builder:");
         const isMappContext = chatContextRaw.startsWith("mapp:");
+        // s137 t532 chat-layer wiring — `help:<page>` context activates
+        // help-mode at the agent-invoker layer (Phase 2 PR #128). The
+        // raw value flows through unchanged — agent-invoker reads the
+        // `help:` prefix via isHelpModeContext().
+        const isHelpMode = chatContextRaw.startsWith("help:");
         const builderMode = isBuilderMode ? chatContextRaw.split(":")[1] as "create" | "update" | "review" : undefined;
-        let chatProjectPath = (!isBuilderMode && !isMappContext && chatContextRaw !== "general") ? chatContextRaw : undefined;
+        const helpContext = isHelpMode ? chatContextRaw : undefined;
+        let chatProjectPath = (!isBuilderMode && !isMappContext && !isHelpMode && chatContextRaw !== "general") ? chatContextRaw : undefined;
 
         // Emit invocation_start to project activity indicators.
         if (chatProjectPath !== undefined) {
@@ -3901,6 +3907,7 @@ export async function startGatewayServer(
             sessionKey,
             projectContext: chatProjectPath,
             builderMode,
+            helpContext,
             imageRefs: chatImageRefs.length > 0 ? chatImageRefs : undefined,
             chatSessionId,
             abortSignal: abortController.signal,
