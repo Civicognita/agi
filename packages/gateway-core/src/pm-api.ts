@@ -23,6 +23,13 @@
 import type { FastifyInstance } from "fastify";
 import type { PmProvider, PmStatus } from "@agi/sdk";
 import type { PlanStore } from "./plan-store.js";
+import {
+  readSyncConflicts,
+  readSyncConflictsForProject,
+  readSyncQueue,
+  readSyncQueueForProject,
+  resolveSyncConflict,
+} from "./pm/sync-queue.js";
 
 export interface PmApiDeps {
   pmProvider: PmProvider;
@@ -169,6 +176,41 @@ export function registerPmRoutes(app: FastifyInstance, deps: PmApiDeps): void {
       return reply.code(404).send({ error: `plan ${planId} not found in ${projectPath}` });
     }
     return plan;
+  });
+
+  // -------------------------------------------------------------------------
+  // s155 t672 Phase 5a — sync queue + conflicts REST surface
+  //
+  // Read-only view of the layered-write retry queue + soft-conflict log
+  // populated by the SyncReplayWorker. POST .../resolve removes a conflict
+  // entry (owner has triaged it). The dashboard "⚠ Conflicts" panel
+  // (Phase 5b, follow-on UI cycle) consumes these.
+  // -------------------------------------------------------------------------
+
+  app.get("/api/pm/sync-queue", async (request) => {
+    const query = request.query as { projectPath?: string };
+    const projectPath = typeof query.projectPath === "string" ? query.projectPath : "";
+    if (projectPath.length === 0) {
+      return { entries: readSyncQueue() };
+    }
+    return { entries: readSyncQueueForProject(projectPath) };
+  });
+
+  app.get("/api/pm/sync-conflicts", async (request) => {
+    const query = request.query as { projectPath?: string };
+    const projectPath = typeof query.projectPath === "string" ? query.projectPath : "";
+    if (projectPath.length === 0) {
+      return { conflicts: readSyncConflicts() };
+    }
+    return { conflicts: readSyncConflictsForProject(projectPath) };
+  });
+
+  app.post<{ Params: { id: string } }>("/api/pm/sync-conflicts/:id/resolve", async (request, reply) => {
+    const { id } = request.params;
+    if (!resolveSyncConflict(id)) {
+      return reply.code(404).send({ error: `sync conflict ${id} not found` });
+    }
+    return { resolved: id };
   });
 }
 
