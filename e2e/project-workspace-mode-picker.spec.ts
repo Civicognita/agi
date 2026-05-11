@@ -247,4 +247,43 @@ test.describe("Project workspace mode picker (s134 t517)", () => {
     await expect(aside).toContainText(/Chat/);
     await expect(page.getByTestId("project-chat-aside-open")).toBeVisible();
   });
+
+  // -----------------------------------------------------------------------
+  // Cycle 195 — core-fork branch verification. Core forks (agi/prime/id/
+  // marketplace/mapp-marketplace/_aionima) suppress the workspace mode
+  // picker AND the chat aside; only the simpler Editor/Repository tabs
+  // are exposed. Pre-AccordionFlyout-integration (s134 item 5) this is the
+  // ground-truth shape that the integration must preserve.
+  // -----------------------------------------------------------------------
+
+  async function findCoreForkProject(page: Page): Promise<string | null> {
+    const apiResponse = await page.request.get("/api/projects");
+    if (!apiResponse.ok()) return null;
+    const projects = await apiResponse.json() as Array<{
+      name: string;
+      path: string;
+      coreForkSlug?: string | null;
+      projectType?: { id?: string };
+    }>;
+    const match = projects.find((p) => Boolean(p.coreForkSlug) || p.projectType?.id === "aionima");
+    if (!match) return null;
+    return match.path.split("/").pop() ?? match.name;
+  }
+
+  test("core-fork project hides mode picker + chat aside (cycle 195)", async ({ page }) => {
+    const slug = await findCoreForkProject(page);
+    test.skip(!slug, "no core-fork project available in test workspace");
+
+    await page.goto(`/projects/${String(slug)}`);
+    // Core forks skip the mode picker entirely — only the simple Editor/
+    // Repository TabsList renders. Wait on the flyout-shell wrapper since
+    // it's present regardless (just sans aside).
+    await page.getByTestId("project-flyout-shell").waitFor({ state: "visible", timeout: 15_000 });
+
+    await expect(page.getByTestId("project-mode-picker")).toHaveCount(0);
+    await expect(page.getByTestId("project-chat-aside")).toHaveCount(0);
+    // Editor + Repository tabs are the core-fork surface.
+    await expect(page.getByRole("tab", { name: "Editor" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Repository" })).toBeVisible();
+  });
 });
