@@ -241,6 +241,128 @@ export function canUseRawTty(): boolean {
   return process.stdin.isTTY === true;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 3c — Esc timeout disambiguation buffer (pure logic; s144 t574)
+//
+// Problem solved: in Phase 3b, a standalone Esc quits immediately while arrow
+// keys ALSO start with \x1b. If the arrow-key sequence's three bytes arrive
+// split across multiple `data` events (slow terminals, network shells), the
+// wrapper sees \x1b first and quits before the follow-up bytes arrive.
+//
+// Solution: buffer \x1b. If a follow-up byte arrives within ESCAPE_BUFFER_-
+// TIMEOUT_MS, build the full sequence and dispatch as one key. If no follow-up
+// arrives, the wrapper's scheduled flush emits a standalone Esc.
+//
+// State machine is pure; the wrapper owns the setTimeout/clearTimeout
+// orchestration. Time is injected for tests (no fake timers needed).
+// ---------------------------------------------------------------------------
+
+/** How long the buffer waits for a follow-up byte after \x1b before flushing as standalone Esc. */
+export const ESCAPE_BUFFER_TIMEOUT_MS = 50;
+
+export interface EscapeBufferState {
+  /** Bytes accumulated since the last \x1b. Empty when no escape is pending. */
+  pending: string;
+  /** Epoch ms when the \x1b arrived, used by flushEscapeBuffer's timeout check. */
+  startedAt: number | null;
+}
+
+export interface BufferKeyResult {
+  newState: EscapeBufferState;
+  /** Complete key sequence to dispatch to applyMenuKey, or null when more bytes are still pending. */
+  emit: string | null;
+}
+
+export function initialEscapeBufferState(): EscapeBufferState {
+  return { pending: "", startedAt: null };
+}
+
+/**
+ * Feed one byte into the buffer. Returns the next state + the key sequence
+ * to dispatch (or null if still pending).
+ *
+ * Pure function. Time injection lets tests cover the timeout-already-exceeded
+ * branch without sleeping.
+ */
+export function bufferKey(
+  state: EscapeBufferState,
+  byte: string,
+  now: number = Date.now(),
+): BufferKeyResult {
+  // Case A — nothing pending, byte is \x1b → start buffering.
+  if (state.pending === "" && byte === "\x1b") {
+    return {
+      newState: { pending: "\x1b", startedAt: now },
+      emit: null,
+    };
+  }
+
+  // Case B — pending is just \x1b, follow-up byte arrived.
+  if (state.pending === "\x1b" && state.startedAt !== null) {
+    if (now - state.startedAt > ESCAPE_BUFFER_TIMEOUT_MS) {
+      // Timeout already exceeded — emit standalone Esc now. The new byte
+      // either starts a fresh escape (\x1b) or dispatches immediately.
+      if (byte === "\x1b") {
+        return {
+          newState: { pending: "\x1b", startedAt: now },
+          emit: "\x1b",
+        };
+      }
+      return {
+        newState: { pending: "", startedAt: null },
+        emit: "\x1b",
+      };
+    }
+    // CSI lead: \x1b[ needs one more byte.
+    if (byte === "[") {
+      return {
+        newState: { pending: "\x1b[", startedAt: state.startedAt },
+        emit: null,
+      };
+    }
+    // Other Esc-X variants (Esc-O, Alt-key sequences) dispatch as 2-byte.
+    return {
+      newState: { pending: "", startedAt: null },
+      emit: state.pending + byte,
+    };
+  }
+
+  // Case C — pending is \x1b[, third byte is the CSI final char.
+  if (state.pending === "\x1b[") {
+    return {
+      newState: { pending: "", startedAt: null },
+      emit: state.pending + byte,
+    };
+  }
+
+  // Case D — no pending escape, regular byte → emit immediately.
+  return {
+    newState: { pending: "", startedAt: null },
+    emit: byte,
+  };
+}
+
+/**
+ * Called by the wrapper when its setTimeout fires. Emits a standalone Esc if
+ * the buffer still holds just \x1b and the timeout has elapsed.
+ */
+export function flushEscapeBuffer(
+  state: EscapeBufferState,
+  now: number = Date.now(),
+): BufferKeyResult {
+  if (
+    state.pending === "\x1b" &&
+    state.startedAt !== null &&
+    now - state.startedAt >= ESCAPE_BUFFER_TIMEOUT_MS
+  ) {
+    return {
+      newState: { pending: "", startedAt: null },
+      emit: "\x1b",
+    };
+  }
+  return { newState: state, emit: null };
+}
+
 /**
  * Render the menu with an arrow-key highlight marker. Pure function —
  * the interactive wrapper calls it on every state change.
@@ -289,38 +411,40 @@ export async function runArrowKeyMenu(opts?: { agiBin?: string }): Promise<MenuI
   stdin.resume();
   stdin.setEncoding("utf8");
 
-  let state = initialMenuState();
+  let menuState = initialMenuState();
+  let bufferState = initialEscapeBufferState();
+  let escapeTimer: NodeJS.Timeout | null = null;
   let lastResolution: MenuItemId = "quit";
 
   function render(): void {
-    process.stdout.write(renderArrowMenu(state));
+    process.stdout.write(renderArrowMenu(menuState));
   }
 
   return new Promise<MenuItemId>((resolve) => {
     function cleanup(): void {
+      if (escapeTimer !== null) {
+        clearTimeout(escapeTimer);
+        escapeTimer = null;
+      }
       stdin.setRawMode(false);
       stdin.pause();
       stdin.removeListener("data", onData);
     }
 
-    function onData(key: string): void {
-      const action = applyMenuKey(state, key);
+    function dispatchKey(key: string): boolean {
+      // Returns true when the wrapper should keep listening (i.e., not quit).
+      const action = applyMenuKey(menuState, key);
       switch (action.kind) {
-        case "quit": {
+        case "quit":
           cleanup();
           process.stdout.write("\n");
           resolve("quit");
-          return;
-        }
-        case "move": {
-          state = { selectedIndex: action.newSelectedIndex };
+          return false;
+        case "move":
+          menuState = { selectedIndex: action.newSelectedIndex };
           render();
-          return;
-        }
-        case "commit": {
-          // Suspend raw-mode + data listener while the child runs with
-          // inherit stdio. spawnSync blocks the event loop, which is what
-          // we want — no risk of overlapping menu input.
+          return true;
+        case "commit":
           stdin.setRawMode(false);
           stdin.removeListener("data", onData);
           process.stdout.write("\n");
@@ -329,18 +453,48 @@ export async function runArrowKeyMenu(opts?: { agiBin?: string }): Promise<MenuI
           stdin.setRawMode(true);
           stdin.on("data", onData);
           render();
-          return;
-        }
+          return true;
         case "noop":
         default:
-          return;
+          return true;
+      }
+    }
+
+    function scheduleEscapeFlush(): void {
+      if (escapeTimer !== null) clearTimeout(escapeTimer);
+      escapeTimer = setTimeout(() => {
+        escapeTimer = null;
+        const flush = flushEscapeBuffer(bufferState);
+        bufferState = flush.newState;
+        if (flush.emit !== null) dispatchKey(flush.emit);
+      }, ESCAPE_BUFFER_TIMEOUT_MS + 5);
+    }
+
+    function onData(key: string): void {
+      // Each `data` event may deliver one or more bytes. Feed them through
+      // the buffer one at a time so the state machine sees genuine
+      // single-byte transitions. Most terminals deliver arrow keys as a
+      // 3-byte chunk; some deliver byte-by-byte. Both work.
+      for (const byte of key) {
+        const result = bufferKey(bufferState, byte);
+        bufferState = result.newState;
+        if (result.emit !== null) {
+          const keepListening = dispatchKey(result.emit);
+          if (!keepListening) return;
+        }
+      }
+      // If we just buffered a fresh \x1b (no follow-up emitted), arm the
+      // flush timer so a standalone Esc eventually quits.
+      if (bufferState.pending !== "") {
+        scheduleEscapeFlush();
+      } else if (escapeTimer !== null) {
+        clearTimeout(escapeTimer);
+        escapeTimer = null;
       }
     }
 
     stdin.on("data", onData);
     render();
-    // Resolution is owned by the quit handler in onData; if stdin closes
-    // unexpectedly the lastResolution value tracks the most recent commit.
     stdin.once("end", () => {
       cleanup();
       resolve(lastResolution);
