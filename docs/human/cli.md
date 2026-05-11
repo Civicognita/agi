@@ -106,15 +106,18 @@ Exits 0 on all-pass, 1 when any failed (warnings don't fail).
 
 #### agi doctor menu
 
-Interactive category menu (s144 t574). Prints a numbered list of diagnostic categories; you type a number, hit Enter, and the matching sub-command runs. After each pick, the menu prompts "Press Enter to continue…" and re-renders, so the diagnostic output isn't immediately scrolled away. Pick 0 (or Ctrl-D / Ctrl-C) to quit.
+Interactive category menu (s144 t574). Prints a numbered list of diagnostic categories; you type a number, hit Enter, and the matching sub-command runs. After each pick, the menu prompts "Press Enter to continue…" and re-renders so the diagnostic output isn't immediately scrolled away. Pick 0 (or Ctrl-D / Ctrl-C) to quit.
 
 ```bash
 agi doctor menu
+agi doctor menu --arrows  # Phase 3b TUI — arrow-key navigation
 ```
 
 Categories: `Run all checks` (bare doctor) · `Validate config schemas` (schema) · `Write diagnostic bundle` (dump) · `Tail logs + crash-pattern detection` (logs) · `Read a gateway.json key` (config get) · `Legacy 5-check health` (health) · `Quit` (0).
 
-Phase 2 ships the loop + invalid-input retry. Phase 3+ adds arrow-key navigation, sub-menus per category, and Esc-to-back. For scripting, prefer the explicit sub-commands directly (`agi doctor schema`, `agi doctor dump`, etc.) — the menu is a discovery aid, not a scriptable surface.
+The default flow is the numbered-input loop (Phase 2 — solid, line-mode, scriptable-friendly). The `--arrows` flag enables Phase 3b: a raw-mode TTY surface where up/down arrows move the highlight and Enter commits. Numeric jump (`0`-`9` shortcut to a menu item) still works in arrow mode. Esc, Ctrl-C, q, or Q quit. Arrow mode is currently manual-smoke-tested only; the numbered default is the reliable surface for production scripts.
+
+Phase 3c+ may polish: timeout-based Esc disambiguation (so a standalone Esc waits to confirm it's not an arrow-key prefix), per-category sub-menus, and screen-clear between renders. For scripting, prefer the explicit sub-commands directly (`agi doctor schema`, `agi doctor dump`, etc.) — the menu is a discovery aid, not a scriptable surface.
 
 #### agi doctor health
 

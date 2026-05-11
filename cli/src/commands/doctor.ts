@@ -1499,10 +1499,15 @@ export function registerDoctorCommand(program: Command): void {
   // pulling in ink/blessed.
   doctor
     .command("menu")
-    .description("Interactive category menu — pick a number, run that diagnostic, exit")
-    .action(async () => {
-      const { runDoctorMenu } = await import("./doctor-menu.js");
-      await runDoctorMenu();
+    .description("Interactive category menu — pick a number, run that diagnostic. Pass --arrows for arrow-key navigation (Phase 3b TUI, manual-smoke-tested).")
+    .option("--arrows", "Use arrow-key navigation instead of the numbered-input loop")
+    .action(async (cmdOpts: { arrows?: boolean }) => {
+      const { runDoctorMenu, runArrowKeyMenu } = await import("./doctor-menu.js");
+      if (cmdOpts.arrows === true) {
+        await runArrowKeyMenu();
+      } else {
+        await runDoctorMenu();
+      }
     });
 
   // s144 t579 — `agi doctor dump` writes a diagnostic bundle to
