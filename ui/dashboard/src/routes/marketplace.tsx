@@ -438,7 +438,7 @@ function PluginDetailDialog({
           )}
         </div>
 
-        <DialogFooter showCloseButton>
+        <DialogFooter>
           {onAction && actionLabel && (
             <Button
               variant={actionLabel === "Uninstall" ? "destructive" : "default"}
@@ -672,7 +672,7 @@ function InstalledTab() {
   const { toast } = useToast();
   const [items, setItems] = useState<PluginMarketplaceInstalledItem[]>([]);
   const [updates, setUpdates] = useState<PluginMarketplaceUpdate[]>([]);
-  const [newInMarketplace, setNewInMarketplace] = useState<{ pluginName: string; version: string; description: string }[]>([]);
+  const [, setNewInMarketplace] = useState<{ pluginName: string; version: string; description: string }[]>([]);
   const [catalog, setCatalog] = useState<PluginMarketplaceCatalogItem[]>([]);
   const [sources, setSources] = useState<PluginMarketplaceSource[]>([]);
   const [uninstalling, setUninstalling] = useState<string | null>(null);

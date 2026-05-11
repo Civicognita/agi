@@ -59,11 +59,11 @@ export default function MagicAppDetailPage() {
       <div className="grid grid-cols-2 gap-4 mb-6">
         <Card className="p-4">
           <div className="text-xs text-muted-foreground mb-1">Project Types</div>
-          <div className="text-sm font-semibold">{app.projectTypes.join(", ") || "None"}</div>
+          <div className="text-sm font-semibold">{(app.projectTypes ?? []).join(", ") || "None"}</div>
         </Card>
         <Card className="p-4">
           <div className="text-xs text-muted-foreground mb-1">Categories</div>
-          <div className="text-sm font-semibold">{app.projectCategories.join(", ") || "None"}</div>
+          <div className="text-sm font-semibold">{(app.projectCategories ?? []).join(", ") || "None"}</div>
         </Card>
         <Card className="p-4">
           <div className="text-xs text-muted-foreground mb-1">Agent Prompts</div>
