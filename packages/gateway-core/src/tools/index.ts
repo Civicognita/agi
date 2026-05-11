@@ -12,6 +12,7 @@ import type { ToolManifestEntry } from "../system-prompt.js";
 import { createShellExecHandler, SHELL_EXEC_MANIFEST, SHELL_EXEC_INPUT_SCHEMA } from "./shell-exec.js";
 import { createFileReadHandler, FILE_READ_MANIFEST, FILE_READ_INPUT_SCHEMA } from "./file-read.js";
 import { createFileWriteHandler, FILE_WRITE_MANIFEST, FILE_WRITE_INPUT_SCHEMA } from "./file-write.js";
+import { createDirCreateHandler, DIR_CREATE_MANIFEST, DIR_CREATE_INPUT_SCHEMA } from "./dir-create.js";
 import { createDirListHandler, DIR_LIST_MANIFEST, DIR_LIST_INPUT_SCHEMA } from "./dir-list.js";
 import { createGrepSearchHandler, GREP_SEARCH_MANIFEST, GREP_SEARCH_INPUT_SCHEMA } from "./grep-search.js";
 
@@ -259,6 +260,7 @@ export function registerAllTools(
   register(SHELL_EXEC_MANIFEST as ToolManifestEntry, createShellExecHandler(toolConfig), SHELL_EXEC_INPUT_SCHEMA);
   register(FILE_READ_MANIFEST as ToolManifestEntry, createFileReadHandler(toolConfig), FILE_READ_INPUT_SCHEMA);
   register(FILE_WRITE_MANIFEST as ToolManifestEntry, createFileWriteHandler(toolConfig), FILE_WRITE_INPUT_SCHEMA);
+  register(DIR_CREATE_MANIFEST as ToolManifestEntry, createDirCreateHandler(toolConfig), DIR_CREATE_INPUT_SCHEMA);
   register(DIR_LIST_MANIFEST as ToolManifestEntry, createDirListHandler(toolConfig), DIR_LIST_INPUT_SCHEMA);
   register(GREP_SEARCH_MANIFEST as ToolManifestEntry, createGrepSearchHandler(toolConfig), GREP_SEARCH_INPUT_SCHEMA);
 
