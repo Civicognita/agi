@@ -26,7 +26,6 @@ import {
   useHFHardwareProfile,
   useHFModels,
   useHFInstalledModels,
-  useHFRunningModels,
   useHFDatasets,
   useHFInstalledDatasets,
   useFineTuneJobs,
@@ -49,7 +48,6 @@ import {
 import type {
   HFModelSearchResult,
   HFInstalledModel,
-  HFRunningModel,
   HFCompatibility,
   HFModelStatus,
   HFModelDetail,
@@ -168,6 +166,7 @@ function getStatusLabel(s: HFModelStatus): string {
     case "running": return "Running";
     case "stopping": return "Stopping...";
     case "error": return "Error";
+    case "failed": return "Failed";
     case "removing": return "Removing...";
   }
 }
@@ -181,15 +180,6 @@ function getTierColor(tier: HFHardwareTier): string {
   }
 }
 
-function formatUptime(startedAt: string): string {
-  const ms = Date.now() - new Date(startedAt).getTime();
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ${s % 60}s`;
-  const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m`;
-}
 
 /** Returns a plain-English quality label for a quantization level. */
 function getQuantLabel(q: HFQuantization | null): string {
@@ -515,7 +505,7 @@ function ModelWizardDialog({
                   <p className="text-[11px] text-muted-foreground">
                     {(analysis.customDefinition["description"] as string | undefined) ?? "This model uses a custom container runtime."}
                   </p>
-                  {analysis.customDefinition["sourceRepo"] && (
+                  {Boolean(analysis.customDefinition["sourceRepo"]) && (
                     <p className="text-[10px] text-muted-foreground">
                       Source: <span className="font-mono">{analysis.customDefinition["sourceRepo"] as string}</span>
                     </p>
@@ -539,7 +529,7 @@ function ModelWizardDialog({
                   <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
                     {analysis.customDefinition && (
                       <>
-                        {analysis.customDefinition["sourceRepo"] && (
+                        {Boolean(analysis.customDefinition["sourceRepo"]) && (
                           <div>
                             <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Source Repository</p>
                             <p className="text-[12px] font-mono mt-0.5">{analysis.customDefinition["sourceRepo"] as string}</p>
