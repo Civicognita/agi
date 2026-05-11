@@ -566,6 +566,14 @@ const DevConfigSchema = z
     fancy3dRepo: z.string().default("git@github.com:wishborn/fancy-3d.git"),
     /** Git remote URL for fancy-screens fork (s146 t604 cycle 199 — 6th PAx package). */
     fancyScreensRepo: z.string().default("git@github.com:wishborn/fancy-screens.git"),
+    /** Git remote URL for fancy-whiteboard fork (s157 cycle 197 — 7th PAx package).
+     *  Whiteboard primitives: sticky notes + diagramming + freeform drawing +
+     *  presence cursors. Powers UserNotes Phase 2 (whiteboard mode). */
+    fancyWhiteboardRepo: z.string().default("git@github.com:wishborn/fancy-whiteboard.git"),
+    /** Git remote URL for agent-integrations fork (s157 cycle 197 — 8th PAx package).
+     *  MCP-driven agent presence in collab sessions: per-session micro-MCP
+     *  bridges to fancy-* packages. Lets Aion join shared whiteboards. */
+    agentIntegrationsRepo: z.string().default("git@github.com:wishborn/agent-integrations.git"),
   })
   .strict();
 

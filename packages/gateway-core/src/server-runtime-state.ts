@@ -3594,6 +3594,10 @@ export async function createGatewayRuntimeState(
               "fancy-code": "fancyCodeRepo",
               "fancy-sheets": "fancySheetsRepo",
               "fancy-echarts": "fancyEchartsRepo",
+              "fancy-3d": "fancy3dRepo",
+              "fancy-screens": "fancyScreensRepo",
+              "fancy-whiteboard": "fancyWhiteboardRepo",
+              "agent-integrations": "agentIntegrationsRepo",
             };
             const cfgKey = keyMap[f.slug];
             if (cfgKey) devRepoPatch[cfgKey] = f.cloneUrl;
