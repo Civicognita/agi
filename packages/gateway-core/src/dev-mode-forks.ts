@@ -45,7 +45,9 @@ export interface CoreRepoSpec {
     | "fancy-sheets"
     | "fancy-echarts"
     | "fancy-3d"
-    | "fancy-screens";
+    | "fancy-screens"
+    | "fancy-whiteboard"
+    | "agent-integrations";
   /** Repo name on GitHub (NOT the slug — sometimes diverges, e.g. prime
    *  → aionima, id → agi-local-id). */
   upstream: string;
@@ -66,7 +68,9 @@ export interface CoreRepoSpec {
     | "fancySheetsRepo"
     | "fancyEchartsRepo"
     | "fancy3dRepo"
-    | "fancyScreensRepo";
+    | "fancyScreensRepo"
+    | "fancyWhiteboardRepo"
+    | "agentIntegrationsRepo";
 }
 
 export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
@@ -94,6 +98,16 @@ export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
   // application surface with scoped state, typed ports, hibernation,
   // schema-driven rendering, agent-introspectable registry.
   { slug: "fancy-screens", upstream: "fancy-screens", upstreamOrg: "Particle-Academy", displayName: "fancy-screens", configKey: "fancyScreensRepo" },
+
+  // s157 cycle 197 — fancy-whiteboard + agent-integrations added to PAx
+  // (8 packages total). Owner-confirmed 2026-05-11: s157 Phase 2 (whiteboard
+  // mode for UserNotes) builds on @particle-academy/fancy-whiteboard's
+  // canvas primitives + sticky-notes + diagramming + freeform drawing +
+  // presence cursors. agent-integrations provides per-session micro-MCP
+  // bridges so Aion can participate in shared whiteboard sessions through
+  // the same channels other collaborators use (panel + on-canvas cursor).
+  { slug: "fancy-whiteboard",   upstream: "fancy-whiteboard",   upstreamOrg: "Particle-Academy", displayName: "fancy-whiteboard",   configKey: "fancyWhiteboardRepo" },
+  { slug: "agent-integrations", upstream: "agent-integrations", upstreamOrg: "Particle-Academy", displayName: "agent-integrations", configKey: "agentIntegrationsRepo" },
 ] as const);
 
 export interface ForkResolveResult {
