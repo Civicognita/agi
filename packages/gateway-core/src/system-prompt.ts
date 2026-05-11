@@ -11,7 +11,7 @@
  * @see docs/governance/agent-invocation-spec.md §1
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { hostname } from "node:os";
 import type { VerificationTier } from "@agi/entity-model";
@@ -621,6 +621,93 @@ function buildOpsModeSection(): string {
 }
 
 /**
+ * Folders whose children are deserving of a second-level expansion in
+ * the architecture tree. Keeping this list short avoids ballooning the
+ * prompt with deep checkouts (each `repos/<repo>` may itself be a huge
+ * tree; we only show its top-level children, not its descendants).
+ */
+const ARCHITECTURE_EXPAND_DIRS = new Set<string>(["k", "repos", "sandbox", ".agi"]);
+
+/** Folders pruned entirely from the architecture tree — noisy/transient. */
+const ARCHITECTURE_PRUNE_DIRS = new Set<string>([
+  "node_modules", ".git", ".turbo", ".next", ".vite", "dist", "build", ".cache",
+]);
+
+/** Cap per-level entry count so a folder with hundreds of children
+ *  doesn't dominate the prompt. */
+const ARCHITECTURE_MAX_ENTRIES_PER_DIR = 40;
+
+/**
+ * Build a compact two-level tree of the project's structure. Top-level
+ * shows every immediate child (folder or file); children of folders in
+ * `ARCHITECTURE_EXPAND_DIRS` get a second-level expansion. Anything
+ * deeper is summarized via a `… (N more)` count.
+ *
+ * Returns the tree as lines (no surrounding fences — caller wraps in
+ * ```text``` block).
+ */
+function buildProjectArchitectureTree(projectPath: string): string[] {
+  let topLevel: string[];
+  try {
+    topLevel = readdirSync(projectPath).filter((n) => !ARCHITECTURE_PRUNE_DIRS.has(n));
+  } catch {
+    return [];
+  }
+  topLevel.sort();
+
+  const lines: string[] = [];
+  const trimmed = topLevel.slice(0, ARCHITECTURE_MAX_ENTRIES_PER_DIR);
+  const overflow = topLevel.length - trimmed.length;
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const name = trimmed[i]!;
+    const abs = join(projectPath, name);
+    const isLast = i === trimmed.length - 1 && overflow === 0;
+    const prefix = isLast ? "└── " : "├── ";
+    let isDir = false;
+    try {
+      isDir = statSync(abs).isDirectory();
+    } catch {
+      // not statable — render as a leaf
+    }
+    lines.push(`${prefix}${name}${isDir ? "/" : ""}`);
+
+    if (isDir && ARCHITECTURE_EXPAND_DIRS.has(name)) {
+      const indent = isLast ? "    " : "│   ";
+      let children: string[];
+      try {
+        children = readdirSync(abs).filter((n) => !ARCHITECTURE_PRUNE_DIRS.has(n));
+      } catch {
+        continue;
+      }
+      children.sort();
+      const childTrimmed = children.slice(0, ARCHITECTURE_MAX_ENTRIES_PER_DIR);
+      const childOverflow = children.length - childTrimmed.length;
+      for (let j = 0; j < childTrimmed.length; j++) {
+        const cName = childTrimmed[j]!;
+        const cAbs = join(abs, cName);
+        const cIsLast = j === childTrimmed.length - 1 && childOverflow === 0;
+        const cPrefix = cIsLast ? "└── " : "├── ";
+        let cIsDir = false;
+        try {
+          cIsDir = statSync(cAbs).isDirectory();
+        } catch {
+          // not statable — leaf
+        }
+        lines.push(`${indent}${cPrefix}${cName}${cIsDir ? "/" : ""}`);
+      }
+      if (childOverflow > 0) {
+        lines.push(`${indent}└── … (${String(childOverflow)} more)`);
+      }
+    }
+  }
+  if (overflow > 0) {
+    lines.push(`└── … (${String(overflow)} more)`);
+  }
+  return lines;
+}
+
+/**
  * Build project context section — tells the agent which project it is scoped to.
  * Reads the project's package.json for name/version/description.
  * Injected before plan workflow instructions when projectPath is set.
@@ -650,6 +737,23 @@ function buildProjectContextSection(
 
   lines.push("");
   lines.push("You are scoped to this project. All file operations, analysis, and tool use should be relative to this project path. When answering questions, draw on your knowledge of this project's structure and purpose.");
+
+  // s134 cycle 198 — owner directive: the existence of the project
+  // architecture should be part of the compiled system prompt. Render a
+  // compact two-level tree so Aion knows the folder layout without
+  // having to dir_list every time. Children of select folders (k/, repos/,
+  // sandbox/) are listed; everything else stays one-deep.
+  const tree = buildProjectArchitectureTree(projectPath);
+  if (tree.length > 0) {
+    lines.push("");
+    lines.push("### Project Architecture");
+    lines.push("");
+    lines.push("```");
+    lines.push(...tree);
+    lines.push("```");
+    lines.push("");
+    lines.push("Tree is rendered fresh on every turn. Use `dir_list` / `file_read` / `grep_search` for deeper navigation. Note: writing files directly at the project root is restricted to `project.json` only; place all other content under a subfolder (k/, repos/<repo>/, sandbox/, etc.). Use `dir_create` to scaffold empty folders.");
+  }
 
   // s152 t651 — UserNotes injection. The owner writes free-form notes
   // (markdown) per-project + global; this section surfaces them to Aion
