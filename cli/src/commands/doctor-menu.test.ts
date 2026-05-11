@@ -7,7 +7,14 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { MENU_ITEMS, classifyMenuTurn, pickMenuItem, renderMenu } from "./doctor-menu.js";
+import {
+  MENU_ITEMS,
+  applyMenuKey,
+  classifyMenuTurn,
+  initialMenuState,
+  pickMenuItem,
+  renderMenu,
+} from "./doctor-menu.js";
 
 describe("MENU_ITEMS (s144 t574)", () => {
   it("includes a quit option at number 0", () => {
@@ -114,5 +121,75 @@ describe("renderMenu (s144 t574)", () => {
 
   it("ends with a trailing newline", () => {
     expect(renderMenu()).toMatch(/\n$/);
+  });
+});
+
+describe("initialMenuState (s144 t574 Phase 3a)", () => {
+  it("selects the first non-quit menu item", () => {
+    const state = initialMenuState();
+    const item = MENU_ITEMS[state.selectedIndex];
+    expect(item?.id).not.toBe("quit");
+  });
+});
+
+describe("applyMenuKey (s144 t574 Phase 3a)", () => {
+  it("up arrow moves selection back, wrapping at top", () => {
+    const action = applyMenuKey({ selectedIndex: 0 }, "\x1b[A");
+    expect(action).toEqual({ kind: "move", newSelectedIndex: MENU_ITEMS.length - 1 });
+  });
+
+  it("down arrow moves selection forward, wrapping at bottom", () => {
+    const action = applyMenuKey({ selectedIndex: MENU_ITEMS.length - 1 }, "\x1b[B");
+    expect(action).toEqual({ kind: "move", newSelectedIndex: 0 });
+  });
+
+  it("down arrow increments selectedIndex by 1 mid-list", () => {
+    const action = applyMenuKey({ selectedIndex: 2 }, "\x1b[B");
+    expect(action).toEqual({ kind: "move", newSelectedIndex: 3 });
+  });
+
+  it("Enter commits the highlighted non-quit item", () => {
+    // MENU_ITEMS[0] is run-all per the items array; commit returns that item.
+    const action = applyMenuKey({ selectedIndex: 0 }, "\r");
+    expect(action.kind).toBe("commit");
+    if (action.kind === "commit") {
+      expect(action.item.id).toBe("run-all");
+    }
+  });
+
+  it("Enter on quit-highlight emits quit (not commit)", () => {
+    const quitIdx = MENU_ITEMS.findIndex((m) => m.id === "quit");
+    const action = applyMenuKey({ selectedIndex: quitIdx }, "\r");
+    expect(action).toEqual({ kind: "quit" });
+  });
+
+  it("'\\n' is treated as Enter", () => {
+    const action = applyMenuKey({ selectedIndex: 0 }, "\n");
+    expect(action.kind).toBe("commit");
+  });
+
+  it("Esc, Ctrl-C, 'q', 'Q' all quit", () => {
+    expect(applyMenuKey({ selectedIndex: 0 }, "\x1b")).toEqual({ kind: "quit" });
+    expect(applyMenuKey({ selectedIndex: 0 }, "\x03")).toEqual({ kind: "quit" });
+    expect(applyMenuKey({ selectedIndex: 0 }, "q")).toEqual({ kind: "quit" });
+    expect(applyMenuKey({ selectedIndex: 0 }, "Q")).toEqual({ kind: "quit" });
+  });
+
+  it("numeric key jumps highlight to that MenuItem.number", () => {
+    const action = applyMenuKey({ selectedIndex: 0 }, "3");
+    expect(action.kind).toBe("move");
+    if (action.kind === "move") {
+      const target = MENU_ITEMS[action.newSelectedIndex];
+      expect(target?.number).toBe(3);
+    }
+  });
+
+  it("numeric jump to out-of-range number is noop", () => {
+    expect(applyMenuKey({ selectedIndex: 0 }, "9")).toEqual({ kind: "noop" });
+  });
+
+  it("unknown sequence is noop (e.g., left arrow)", () => {
+    expect(applyMenuKey({ selectedIndex: 0 }, "\x1b[D")).toEqual({ kind: "noop" });
+    expect(applyMenuKey({ selectedIndex: 0 }, "x")).toEqual({ kind: "noop" });
   });
 });

@@ -151,6 +151,96 @@ export function classifyMenuTurn(input: string): MenuTurnOutcome {
   return { kind: "ran", item };
 }
 
+// ---------------------------------------------------------------------------
+// Phase 3a — arrow-key keypress state machine (pure logic; s144 t574)
+//
+// The interactive raw-mode wrapper that consumes this state machine lands in
+// Phase 3b. Keeping the byte-sequence → action mapping as a pure function
+// means the keymap is testable without a TTY fixture, and the wrapper code
+// stays a thin adapter over stdin's data event.
+//
+// Byte sequences recognized:
+//   "\x1b[A" — up arrow
+//   "\x1b[B" — down arrow
+//   "\r" or "\n" — Enter (commit current selection)
+//   "0".."9" — direct numeric jump (matches a MenuItem.number)
+//   "\x1b" (alone, immediate) — Escape (quit). Escape sequences for arrows
+//     start with "\x1b" too — the wrapper distinguishes by reading the
+//     follow-up bytes within a short timeout.
+//   "\x03" — Ctrl-C (quit, mirrors EOF semantics from Phase 2)
+//   "q", "Q" — letter quit (defensive; some terminals don't pass Esc cleanly)
+//
+// The state machine doesn't own the timeout-based Esc disambiguation — that's
+// the wrapper's job. The pure function classifies finished sequences only.
+// ---------------------------------------------------------------------------
+
+export interface MenuKeyState {
+  /** Index into MENU_ITEMS for the currently-highlighted entry. */
+  selectedIndex: number;
+}
+
+/** Action emitted by the state machine for one finished keypress sequence. */
+export type MenuKeyAction =
+  | { kind: "noop" }
+  | { kind: "move"; newSelectedIndex: number }
+  | { kind: "commit"; item: MenuItem }
+  | { kind: "quit" };
+
+/**
+ * Initialize the menu state. Default selection lands on the first non-quit
+ * item (i.e., the most prominent "Run all checks" option).
+ */
+export function initialMenuState(): MenuKeyState {
+  const idx = MENU_ITEMS.findIndex((m) => m.id !== "quit");
+  return { selectedIndex: idx < 0 ? 0 : idx };
+}
+
+/**
+ * Apply one finished key sequence to the menu state. Returns the action the
+ * wrapper should take (no-op / move highlight / commit selection / quit).
+ *
+ * Bounds the selectedIndex within MENU_ITEMS — wrapping at both ends so
+ * the menu feels predictable on long lists. Up/down skip nothing; even if
+ * the highlight lands on Quit, that's a valid commit (== quit).
+ */
+export function applyMenuKey(state: MenuKeyState, key: string): MenuKeyAction {
+  if (key === "\x1b" || key === "q" || key === "Q" || key === "\x03") {
+    return { kind: "quit" };
+  }
+  if (key === "\x1b[A") {
+    const next = (state.selectedIndex - 1 + MENU_ITEMS.length) % MENU_ITEMS.length;
+    return { kind: "move", newSelectedIndex: next };
+  }
+  if (key === "\x1b[B") {
+    const next = (state.selectedIndex + 1) % MENU_ITEMS.length;
+    return { kind: "move", newSelectedIndex: next };
+  }
+  if (key === "\r" || key === "\n") {
+    const item = MENU_ITEMS[state.selectedIndex];
+    if (!item) return { kind: "noop" };
+    if (item.id === "quit") return { kind: "quit" };
+    return { kind: "commit", item };
+  }
+  // Numeric jump: "0".."9" hops the highlight to that MenuItem.number.
+  if (/^\d$/.test(key)) {
+    const n = Number(key);
+    const targetIdx = MENU_ITEMS.findIndex((m) => m.number === n);
+    if (targetIdx < 0) return { kind: "noop" };
+    return { kind: "move", newSelectedIndex: targetIdx };
+  }
+  return { kind: "noop" };
+}
+
+/**
+ * Detect whether the current process can support arrow-key TTY navigation.
+ * False when stdin isn't a TTY (piped input, CI, non-interactive shell).
+ * The interactive wrapper falls back to the Phase 2 numbered-input flow
+ * when this returns false.
+ */
+export function canUseRawTty(): boolean {
+  return process.stdin.isTTY === true;
+}
+
 /**
  * Run the menu interactively. Phase 2 (s144 t574, 2026-05-10) — wraps
  * Phase 1's read-once in a while loop so the menu stays open until the
