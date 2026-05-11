@@ -62,7 +62,10 @@ export function ServiceControlSection({ serviceIds }: Props) {
   // Group: show a single install banner if any service in the group is not installed
   const anyNotInstalled = services.some((s) => s.installed === false);
   const anyInstallable = services.some((s) => s.installable);
-  const allInstalled = services.every((s) => s.installed !== false);
+  // allInstalled was previously surfaced as a "all systems healthy" indicator.
+  // Currently no consumer reads it; kept the predicate scoped (commented) for
+  // when a future "All installed" callout returns.
+  // const allInstalled = services.every((s) => s.installed !== false);
 
   return (
     <div className="grid gap-3">

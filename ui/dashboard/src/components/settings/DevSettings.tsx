@@ -3,6 +3,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Link } from "react-router";
 import { Callout } from "@particle-academy/react-fancy";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";

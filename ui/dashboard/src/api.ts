@@ -844,6 +844,9 @@ export interface TestVmStatus {
     postgres: string;
     caddy: string;
     agi: string;
+    /** Local-ID service status. Optional for back-compat with older
+     *  /api/test-vm/status responses that don't surface it yet. */
+    id?: string;
   };
 }
 
