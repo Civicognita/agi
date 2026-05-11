@@ -242,6 +242,113 @@ export function canUseRawTty(): boolean {
 }
 
 /**
+ * Render the menu with an arrow-key highlight marker. Pure function —
+ * the interactive wrapper calls it on every state change.
+ *
+ * Exposed for testability. The interactive wrapper is responsible for
+ * clearing the screen / repositioning the cursor between renders.
+ */
+export function renderArrowMenu(state: MenuKeyState): string {
+  const lines: string[] = [];
+  lines.push("");
+  lines.push("  agi doctor — diagnostic menu (arrow keys to navigate, Enter to select, Esc/q to quit)");
+  lines.push("");
+  MENU_ITEMS.forEach((item, idx) => {
+    const num = String(item.number).padStart(1, " ");
+    const marker = idx === state.selectedIndex ? "▶ " : "  ";
+    lines.push(`  ${marker}${num}  ${item.label}`);
+    lines.push(`       ${item.description}`);
+  });
+  lines.push("");
+  return lines.join("\n");
+}
+
+/**
+ * Arrow-key TUI wrapper around the state machine. Phase 3b — consumes
+ * `applyMenuKey` and emits raw-mode reads. Falls back to the Phase 2
+ * numbered loop when stdin isn't a TTY.
+ *
+ * Limitations (Phase 3b ships these; Phase 3c+ may polish):
+ *   - No timeout-based Esc disambiguation. Standalone Esc quits
+ *     immediately; arrow keys (also start with \x1b) are recognized
+ *     when the wrapper receives the full 3-byte sequence in one chunk
+ *     (the common case for terminal input).
+ *   - Sub-command spawning: raw mode is dropped during spawnSync and
+ *     restored on return. The next render redraws the menu.
+ *   - No screen-clear between renders — the menu accumulates on stdout.
+ *     Acceptable for the early-2026 TUI; cleaner rendering follows.
+ */
+export async function runArrowKeyMenu(opts?: { agiBin?: string }): Promise<MenuItemId> {
+  if (!canUseRawTty()) {
+    // Non-TTY (piped, CI) — fall back to Phase 2 numbered loop.
+    return runDoctorMenu(opts);
+  }
+  const bin = opts?.agiBin ?? "agi";
+  const stdin = process.stdin;
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdin.setEncoding("utf8");
+
+  let state = initialMenuState();
+  let lastResolution: MenuItemId = "quit";
+
+  function render(): void {
+    process.stdout.write(renderArrowMenu(state));
+  }
+
+  return new Promise<MenuItemId>((resolve) => {
+    function cleanup(): void {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener("data", onData);
+    }
+
+    function onData(key: string): void {
+      const action = applyMenuKey(state, key);
+      switch (action.kind) {
+        case "quit": {
+          cleanup();
+          process.stdout.write("\n");
+          resolve("quit");
+          return;
+        }
+        case "move": {
+          state = { selectedIndex: action.newSelectedIndex };
+          render();
+          return;
+        }
+        case "commit": {
+          // Suspend raw-mode + data listener while the child runs with
+          // inherit stdio. spawnSync blocks the event loop, which is what
+          // we want — no risk of overlapping menu input.
+          stdin.setRawMode(false);
+          stdin.removeListener("data", onData);
+          process.stdout.write("\n");
+          spawnSync(bin, ["doctor", ...action.item.args], { stdio: "inherit" });
+          lastResolution = action.item.id;
+          stdin.setRawMode(true);
+          stdin.on("data", onData);
+          render();
+          return;
+        }
+        case "noop":
+        default:
+          return;
+      }
+    }
+
+    stdin.on("data", onData);
+    render();
+    // Resolution is owned by the quit handler in onData; if stdin closes
+    // unexpectedly the lastResolution value tracks the most recent commit.
+    stdin.once("end", () => {
+      cleanup();
+      resolve(lastResolution);
+    });
+  });
+}
+
+/**
  * Run the menu interactively. Phase 2 (s144 t574, 2026-05-10) — wraps
  * Phase 1's read-once in a while loop so the menu stays open until the
  * user picks Quit (or hits Ctrl-D / Ctrl-C). After each sub-command
