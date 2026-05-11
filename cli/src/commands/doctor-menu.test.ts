@@ -8,9 +8,13 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  ESCAPE_BUFFER_TIMEOUT_MS,
   MENU_ITEMS,
   applyMenuKey,
+  bufferKey,
   classifyMenuTurn,
+  flushEscapeBuffer,
+  initialEscapeBufferState,
   initialMenuState,
   pickMenuItem,
   renderMenu,
@@ -191,5 +195,83 @@ describe("applyMenuKey (s144 t574 Phase 3a)", () => {
   it("unknown sequence is noop (e.g., left arrow)", () => {
     expect(applyMenuKey({ selectedIndex: 0 }, "\x1b[D")).toEqual({ kind: "noop" });
     expect(applyMenuKey({ selectedIndex: 0 }, "x")).toEqual({ kind: "noop" });
+  });
+});
+
+describe("bufferKey + flushEscapeBuffer (s144 t574 Phase 3c)", () => {
+  it("regular byte passes through unbuffered", () => {
+    const result = bufferKey(initialEscapeBufferState(), "a", 1000);
+    expect(result.emit).toBe("a");
+    expect(result.newState.pending).toBe("");
+  });
+
+  it("Esc byte alone starts buffering, emits nothing yet", () => {
+    const result = bufferKey(initialEscapeBufferState(), "\x1b", 1000);
+    expect(result.emit).toBeNull();
+    expect(result.newState.pending).toBe("\x1b");
+    expect(result.newState.startedAt).toBe(1000);
+  });
+
+  it("Esc + [ within timeout buffers CSI lead", () => {
+    const s1 = bufferKey(initialEscapeBufferState(), "\x1b", 1000).newState;
+    const s2 = bufferKey(s1, "[", 1010);
+    expect(s2.emit).toBeNull();
+    expect(s2.newState.pending).toBe("\x1b[");
+  });
+
+  it("Esc + [ + A emits full up-arrow sequence", () => {
+    const s1 = bufferKey(initialEscapeBufferState(), "\x1b", 1000).newState;
+    const s2 = bufferKey(s1, "[", 1010).newState;
+    const s3 = bufferKey(s2, "A", 1020);
+    expect(s3.emit).toBe("\x1b[A");
+    expect(s3.newState.pending).toBe("");
+  });
+
+  it("Esc + non-bracket emits 2-byte sequence (Alt-key / Esc-O)", () => {
+    const s1 = bufferKey(initialEscapeBufferState(), "\x1b", 1000).newState;
+    const s2 = bufferKey(s1, "f", 1010);
+    expect(s2.emit).toBe("\x1bf");
+  });
+
+  it("standalone Esc + late follow-up emits Esc, then routes new byte", () => {
+    const s1 = bufferKey(initialEscapeBufferState(), "\x1b", 1000).newState;
+    // Follow-up arrives AFTER timeout
+    const s2 = bufferKey(s1, "x", 1000 + ESCAPE_BUFFER_TIMEOUT_MS + 10);
+    expect(s2.emit).toBe("\x1b");
+    expect(s2.newState.pending).toBe("");
+  });
+
+  it("standalone Esc + late Esc starts fresh buffer", () => {
+    const s1 = bufferKey(initialEscapeBufferState(), "\x1b", 1000).newState;
+    const s2 = bufferKey(s1, "\x1b", 1000 + ESCAPE_BUFFER_TIMEOUT_MS + 10);
+    expect(s2.emit).toBe("\x1b"); // flushed the original
+    expect(s2.newState.pending).toBe("\x1b"); // new escape pending
+  });
+
+  it("flushEscapeBuffer emits pending Esc after timeout", () => {
+    const buffered = bufferKey(initialEscapeBufferState(), "\x1b", 1000).newState;
+    const flush = flushEscapeBuffer(buffered, 1000 + ESCAPE_BUFFER_TIMEOUT_MS);
+    expect(flush.emit).toBe("\x1b");
+    expect(flush.newState.pending).toBe("");
+  });
+
+  it("flushEscapeBuffer is noop when nothing pending", () => {
+    const result = flushEscapeBuffer(initialEscapeBufferState(), 1000);
+    expect(result.emit).toBeNull();
+  });
+
+  it("flushEscapeBuffer is noop when timeout not yet exceeded", () => {
+    const buffered = bufferKey(initialEscapeBufferState(), "\x1b", 1000).newState;
+    const flush = flushEscapeBuffer(buffered, 1010);
+    expect(flush.emit).toBeNull();
+    expect(flush.newState.pending).toBe("\x1b");
+  });
+
+  it("flushEscapeBuffer is noop when only CSI lead pending (waiting for final byte)", () => {
+    const s1 = bufferKey(initialEscapeBufferState(), "\x1b", 1000).newState;
+    const s2 = bufferKey(s1, "[", 1010).newState;
+    const flush = flushEscapeBuffer(s2, 1000 + ESCAPE_BUFFER_TIMEOUT_MS + 100);
+    // pending is "\x1b[" not just "\x1b" — timeout flush only handles standalone Esc.
+    expect(flush.emit).toBeNull();
   });
 });
