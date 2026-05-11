@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.652",
+  "version": "0.4.653",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -92,7 +92,9 @@
       "uuid": ">=11.0.0",
       "lodash": ">=4.18.0",
       "postcss": ">=8.5.10",
-      "esbuild": ">=0.25.0"
+      "esbuild": ">=0.25.0",
+      "@babel/plugin-transform-modules-systemjs": ">=7.29.4",
+      "fast-uri": ">=3.1.2"
     },
     "peerDependencyRules": {
       "allowedVersions": {
