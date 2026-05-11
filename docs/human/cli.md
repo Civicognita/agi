@@ -115,9 +115,9 @@ agi doctor menu --arrows  # Phase 3b TUI — arrow-key navigation
 
 Categories: `Run all checks` (bare doctor) · `Validate config schemas` (schema) · `Write diagnostic bundle` (dump) · `Tail logs + crash-pattern detection` (logs) · `Read a gateway.json key` (config get) · `Legacy 5-check health` (health) · `Quit` (0).
 
-The default flow is the numbered-input loop (Phase 2 — solid, line-mode, scriptable-friendly). The `--arrows` flag enables Phase 3b: a raw-mode TTY surface where up/down arrows move the highlight and Enter commits. Numeric jump (`0`-`9` shortcut to a menu item) still works in arrow mode. Esc, Ctrl-C, q, or Q quit. Arrow mode is currently manual-smoke-tested only; the numbered default is the reliable surface for production scripts.
+The default flow is the numbered-input loop (Phase 2 — solid, line-mode, scriptable-friendly). The `--arrows` flag enables the TUI surface: up/down arrows move a `▶` highlight; Enter commits the selection; the menu redraws in place after each sub-command runs (no scroll-spam). Numeric jump (`0`-`9` shortcut to a menu item) still works in arrow mode. Esc waits ~50ms for a follow-up byte before quitting, so a standalone Esc keypress quits but an arrow-key sequence completes correctly even on slow terminals. Ctrl-C, q, and Q quit immediately.
 
-Phase 3c+ may polish: timeout-based Esc disambiguation (so a standalone Esc waits to confirm it's not an arrow-key prefix), per-category sub-menus, and screen-clear between renders. For scripting, prefer the explicit sub-commands directly (`agi doctor schema`, `agi doctor dump`, etc.) — the menu is a discovery aid, not a scriptable surface.
+Phase 3d+ may polish: per-category sub-menus, mouse-click selection. For scripting, prefer the explicit sub-commands directly (`agi doctor schema`, `agi doctor dump`, etc.) — the menu is a discovery aid, not a scriptable surface.
 
 #### agi doctor health
 
