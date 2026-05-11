@@ -9,7 +9,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { builtInThemes, SEMANTIC_KEYS } from "../themes/index.js";
-import type { BuiltInTheme } from "../themes/index.js";
 import { safeArray } from "./utils.js";
 
 // ---------------------------------------------------------------------------

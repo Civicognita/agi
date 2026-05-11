@@ -11,8 +11,8 @@
  * (no jsdom needed) — validates prop shapes against known contracts.
  */
 
-import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { describe, it } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, extname } from "node:path";
 
 // ---------------------------------------------------------------------------

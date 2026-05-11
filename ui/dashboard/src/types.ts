@@ -711,6 +711,9 @@ export interface ServiceInfo {
   enabled: boolean;
   /** When false, the container image is not locally available. Omitting the field is treated as true (backward compat). */
   imageAvailable?: boolean;
+  /** Optional service-kind label (e.g., "database", "cache"). Consumer
+   *  defaults to "service" when absent. */
+  type?: string;
   /** Extension capabilities provided by this service (e.g. pgvector, PostGIS). */
   extensions?: string[];
 }

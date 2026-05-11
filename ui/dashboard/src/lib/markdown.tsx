@@ -100,7 +100,7 @@ function MockupBlock({ json }: { json: string }) {
           </div>
         </div>
       </div>
-      {data.description && (
+      {Boolean(data.description) && (
         <p style={{ fontSize: "12px", color: "var(--color-subtext0)", margin: "4px 0 8px" }}>{String(data.description)}</p>
       )}
       <div style={{ fontSize: "10px", color: "var(--color-muted-foreground)", fontFamily: "monospace", background: "var(--color-surface0)", borderRadius: "4px", padding: "6px 8px", maxHeight: "200px", overflow: "auto" }}>
