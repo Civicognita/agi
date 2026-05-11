@@ -7,7 +7,7 @@
 
 import { Modal } from "@particle-academy/react-fancy";
 import { cn } from "@particle-academy/react-fancy";
-import type { ComponentProps, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 interface DialogProps {
   open?: boolean;
@@ -17,7 +17,7 @@ interface DialogProps {
 
 function Dialog({ open, onOpenChange, children }: DialogProps) {
   return (
-    <Modal open={open} onClose={() => onOpenChange?.(false)}>
+    <Modal open={open ?? false} onClose={() => onOpenChange?.(false)}>
       {children}
     </Modal>
   );

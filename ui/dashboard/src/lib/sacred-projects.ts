@@ -20,8 +20,10 @@ export const PAX_SACRED_PROJECTS = [
   { id: "fancy-echarts", name: "fancy-echarts" },
 ] as const;
 
-const SACRED_IDS = new Set(SACRED_PROJECTS.map((p) => p.id));
-const PAX_IDS = new Set(PAX_SACRED_PROJECTS.map((p) => p.id));
+// Widen Set element type to string so .has(arbitraryString) typechecks
+// against the literal-typed `as const` source arrays.
+const SACRED_IDS = new Set<string>(SACRED_PROJECTS.map((p) => p.id));
+const PAX_IDS = new Set<string>(PAX_SACRED_PROJECTS.map((p) => p.id));
 
 function normalize(value: string | undefined | null): string {
   return (value ?? "").trim().toLowerCase();
