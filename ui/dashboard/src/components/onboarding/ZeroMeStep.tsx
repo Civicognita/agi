@@ -19,11 +19,14 @@ interface Message {
   content: string;
 }
 
-const DOMAIN_LABELS: Record<"MIND" | "SOUL" | "SKILL", string> = {
-  MIND: "Intellectual Interests",
-  SOUL: "Purpose & Values",
-  SKILL: "Skills & Expertise",
-};
+// DOMAIN_LABELS was previously shown beneath the wizard step. Kept commented
+// in case the UI surfaces the long-form labels again — the inline short labels
+// are sufficient today.
+// const DOMAIN_LABELS: Record<"MIND" | "SOUL" | "SKILL", string> = {
+//   MIND: "Intellectual Interests",
+//   SOUL: "Purpose & Values",
+//   SKILL: "Skills & Expertise",
+// };
 
 const DOMAIN_COPY: Record<"MIND" | "SOUL" | "SKILL", { headline: string; subtitle: string }> = {
   MIND: {
