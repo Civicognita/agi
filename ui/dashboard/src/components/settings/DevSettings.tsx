@@ -7,9 +7,8 @@ import { Link } from "react-router";
 import { Callout } from "@particle-academy/react-fancy";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { SectionHeading, FieldGroup } from "./SettingsShared.js";
+import { SectionHeading } from "./SettingsShared.js";
 import { fetchDevStatus, switchDevMode, fetchTestVmStatus, runTestVmCommand, fetchTestResults } from "../../api.js";
 import type { TestVmStatus, TestResults } from "../../api.js";
 import type { DevStatus, AionimaConfig } from "../../types.js";
@@ -38,10 +37,13 @@ function RepoCard({ name, remote, branch, entries, isOwnerFork }: {
   );
 }
 
-export function DevSettings({ config, update }: {
+export function DevSettings(_props: {
   config: AionimaConfig;
   update: (fn: (prev: AionimaConfig) => AionimaConfig) => void;
 }) {
+  // config + update were used by an earlier inline form. Today the page is
+  // status + repo cards only; the props remain in the signature for
+  // call-site contract stability.
   const [devStatus, setDevStatus] = useState<DevStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [switching, setSwitching] = useState(false);

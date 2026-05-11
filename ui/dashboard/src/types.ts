@@ -1105,6 +1105,13 @@ export type PanelWidget =
   | { type: "code-editor"; language?: string; defaultValue?: string; readOnly?: boolean; height?: string; maxHeight?: string }
   | { type: "tree-nav"; dataEndpoint?: string; title?: string }
   | { type: "layout"; direction: "horizontal" | "vertical" | "grid"; sizes?: string[]; gap?: string; height?: string; children: PanelWidget[] };
+  // Future widgets (chart, timeline, kanban, editor, diagram) are PARTIALLY
+  // implemented in WidgetRenderer but their bodies reference react-fancy
+  // primitives whose props have drifted (e.g., Timeline.Item without `title`,
+  // Kanban.Card with `id` instead of children). The type union deliberately
+  // omits them until the widget bodies are realigned with react-fancy@2.9 —
+  // adding the union variants without fixing the bodies caused a 4-error
+  // cascade in cycle 194's drift broom 7 attempt.
 
 export interface PluginPanel {
   id: string;
