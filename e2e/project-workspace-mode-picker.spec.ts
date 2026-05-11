@@ -145,6 +145,91 @@ test.describe("Project workspace mode picker (s134 t517)", () => {
     }
   });
 
+  // -----------------------------------------------------------------------
+  // Cycle 188 — mode-narrowing render verification for restricted categories
+  // (literature / media / administration). The pure-logic helper at
+  // `lib/project-mode-narrowing.ts` is unit-tested separately (cycle 182,
+  // 12 unit tests). These e2e probes verify the helper's output actually
+  // surfaces correctly in the rendered mode-picker DOM.
+  //
+  // Each test skips when no project of the relevant category exists — the
+  // test VM's fixture set may or may not include them.
+  // -----------------------------------------------------------------------
+
+  async function findProjectByCategory(page: Page, category: string): Promise<string | null> {
+    const apiResponse = await page.request.get("/api/projects");
+    if (!apiResponse.ok()) return null;
+    const projects = await apiResponse.json() as Array<{
+      name: string;
+      path: string;
+      coreForkSlug?: string | null;
+      category?: string;
+      projectType?: { id?: string; category?: string };
+    }>;
+    const match = projects.find((p) => {
+      if (p.coreForkSlug) return false;
+      if (p.projectType?.id === "aionima") return false;
+      const cat = p.category ?? p.projectType?.category;
+      return cat === category;
+    });
+    if (!match) return null;
+    return match.path.split("/").pop() ?? match.name;
+  }
+
+  test("literature project hides develop + operate modes (cycle 188)", async ({ page }) => {
+    const slug = await findProjectByCategory(page, "literature");
+    test.skip(!slug, "no literature-category project available in test workspace");
+
+    await page.goto(`/projects/${String(slug)}`);
+    await page.getByTestId("project-mode-picker").waitFor({ state: "visible", timeout: 15_000 });
+
+    // Coordinate + Insight visible; Develop + Operate absent.
+    await expect(page.getByTestId("project-mode-coordinate")).toBeVisible();
+    await expect(page.getByTestId("project-mode-insight")).toBeVisible();
+    await expect(page.getByTestId("project-mode-develop")).toHaveCount(0);
+    await expect(page.getByTestId("project-mode-operate")).toHaveCount(0);
+  });
+
+  test("media project hides develop + operate modes (cycle 188)", async ({ page }) => {
+    const slug = await findProjectByCategory(page, "media");
+    test.skip(!slug, "no media-category project available in test workspace");
+
+    await page.goto(`/projects/${String(slug)}`);
+    await page.getByTestId("project-mode-picker").waitFor({ state: "visible", timeout: 15_000 });
+
+    await expect(page.getByTestId("project-mode-coordinate")).toBeVisible();
+    await expect(page.getByTestId("project-mode-insight")).toBeVisible();
+    await expect(page.getByTestId("project-mode-develop")).toHaveCount(0);
+    await expect(page.getByTestId("project-mode-operate")).toHaveCount(0);
+  });
+
+  test("administration project hides develop but keeps operate (cycle 188)", async ({ page }) => {
+    const slug = await findProjectByCategory(page, "administration");
+    test.skip(!slug, "no administration-category project available in test workspace");
+
+    await page.goto(`/projects/${String(slug)}`);
+    await page.getByTestId("project-mode-picker").waitFor({ state: "visible", timeout: 15_000 });
+
+    // Develop hidden; Operate + Coordinate + Insight visible.
+    await expect(page.getByTestId("project-mode-operate")).toBeVisible();
+    await expect(page.getByTestId("project-mode-coordinate")).toBeVisible();
+    await expect(page.getByTestId("project-mode-insight")).toBeVisible();
+    await expect(page.getByTestId("project-mode-develop")).toHaveCount(0);
+  });
+
+  test("administration project default-mode auto-redirects from develop to operate (cycle 188)", async ({ page }) => {
+    const slug = await findProjectByCategory(page, "administration");
+    test.skip(!slug, "no administration-category project available in test workspace");
+
+    await page.goto(`/projects/${String(slug)}`);
+    await page.getByTestId("project-mode-picker").waitFor({ state: "visible", timeout: 15_000 });
+
+    // `develop` is the component-state default, but it's hidden for this
+    // category → fallbackModeForCategory redirects to `operate` (the first
+    // visible mode in ALL_PROJECT_MODES order after the develop filter).
+    await expect(page.getByTestId("project-mode-operate")).toHaveAttribute("aria-pressed", "true");
+  });
+
   test("flyout-shell wraps Canvas + Chat aside (slice 5c phase 2)", async ({ page }) => {
     const found = await navigateToFullModeProject(page);
     test.skip(!found, "no full-mode project available");
