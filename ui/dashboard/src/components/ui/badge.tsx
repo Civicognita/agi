@@ -7,7 +7,7 @@
 
 import { Badge as FancyBadge } from "@particle-academy/react-fancy";
 import { cn } from "@particle-academy/react-fancy";
-import type { ComponentProps, ReactNode } from "react";
+import type { ComponentProps } from "react";
 
 type FancyBadgeProps = ComponentProps<typeof FancyBadge>;
 

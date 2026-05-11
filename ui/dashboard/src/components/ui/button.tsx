@@ -11,6 +11,12 @@ import { cn } from "@particle-academy/react-fancy";
 import type { ComponentProps } from "react";
 
 type ActionProps = ComponentProps<typeof Action>;
+// react-fancy's Action narrowed its `variant` union in 2.9+ (default | circle |
+// ghost only). "outline" and "link" remain meaningful in our wrapper API and
+// react-fancy still accepts them at runtime (passes through to the rendered
+// element's class). Alias the type to keep TS satisfied without losing the
+// passthrough semantics.
+type ActionVariantWide = ActionProps["variant"] | "outline" | "link";
 
 type ButtonVariant = "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
 type ButtonSize = "default" | "xs" | "sm" | "lg" | "icon" | "icon-xs" | "icon-sm" | "icon-lg";
@@ -29,7 +35,7 @@ function Button({ variant = "default", size = "default", className, ...rest }: B
       actionProps.color = "red";
       break;
     case "outline":
-      actionProps.variant = "outline";
+      actionProps.variant = "outline" as ActionVariantWide as ActionProps["variant"];
       actionProps.color = "zinc";
       break;
     case "secondary":
@@ -39,7 +45,7 @@ function Button({ variant = "default", size = "default", className, ...rest }: B
       actionProps.variant = "ghost";
       break;
     case "link":
-      actionProps.variant = "link";
+      actionProps.variant = "link" as ActionVariantWide as ActionProps["variant"];
       break;
     default:
       // "default" — solid blue (react-fancy default)

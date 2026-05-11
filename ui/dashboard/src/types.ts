@@ -593,6 +593,12 @@ export interface GatewayConfig {
   port: number;
   state: "ONLINE" | "LIMBO" | "OFFLINE" | "UNKNOWN";
   updateChannel?: "main" | "dev";
+  /** When true (default), the gateway periodically pulls fresh manifests
+   *  from configured Plugin/MApp Marketplace sources. Surfaced as an
+   *  owner-toggleable switch in settings. */
+  autoSyncMarketplace?: boolean;
+  /** Cap on consecutive tool calls per agent turn. 0 = unlimited. */
+  maxToolLoops?: number;
 }
 
 export interface WorkerModelOverride {
