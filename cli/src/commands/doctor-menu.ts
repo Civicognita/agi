@@ -242,6 +242,41 @@ export function canUseRawTty(): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3d — cursor rewind for inter-render screen clear (pure logic; s144 t574)
+//
+// Each render of the arrow-key menu now sits in a fixed region of the terminal.
+// Before redrawing, the wrapper emits `eraseLines(lastLineCount)` to move the
+// cursor up and clear the screen from there. The result is a stable menu that
+// updates in place instead of scrolling new copies onto stdout.
+// ---------------------------------------------------------------------------
+
+/**
+ * Return an ANSI escape sequence that moves the cursor up `n` lines (to the
+ * start of that line) and clears from there to the end of the screen.
+ * Returns "" for n <= 0 — initial render needs no prior erase.
+ *
+ * `\x1b[<N>F` — Cursor Previous Line: moves the cursor to the start of N
+ * lines up. `\x1b[0J` — Erase in Display: clears from cursor to end of screen.
+ * Both are widely supported on every modern terminal emulator.
+ */
+export function eraseLines(n: number): string {
+  if (n <= 0) return "";
+  return `\x1b[${String(n)}F\x1b[0J`;
+}
+
+/**
+ * Count the visible terminal lines a rendered menu output spans. Used by the
+ * wrapper to pass the right `n` to `eraseLines` on the next render. Counts
+ * trailing newline correctly — a string ending in "\n" spans `split("\n").length - 1`
+ * visible lines, while one without spans `split("\n").length`.
+ */
+export function countRenderLines(rendered: string): number {
+  if (rendered.length === 0) return 0;
+  const parts = rendered.split("\n");
+  return rendered.endsWith("\n") ? parts.length - 1 : parts.length;
+}
+
+// ---------------------------------------------------------------------------
 // Phase 3c — Esc timeout disambiguation buffer (pure logic; s144 t574)
 //
 // Problem solved: in Phase 3b, a standalone Esc quits immediately while arrow
@@ -415,9 +450,19 @@ export async function runArrowKeyMenu(opts?: { agiBin?: string }): Promise<MenuI
   let bufferState = initialEscapeBufferState();
   let escapeTimer: NodeJS.Timeout | null = null;
   let lastResolution: MenuItemId = "quit";
+  let lastRenderedLines = 0;
 
   function render(): void {
-    process.stdout.write(renderArrowMenu(menuState));
+    const erase = eraseLines(lastRenderedLines);
+    const body = renderArrowMenu(menuState);
+    process.stdout.write(erase + body);
+    lastRenderedLines = countRenderLines(body);
+  }
+
+  function resetRender(): void {
+    // Called after a sub-command runs with inherit stdio — the screen below
+    // the menu has scrolled, so the next render must skip the rewind.
+    lastRenderedLines = 0;
   }
 
   return new Promise<MenuItemId>((resolve) => {
@@ -452,6 +497,9 @@ export async function runArrowKeyMenu(opts?: { agiBin?: string }): Promise<MenuI
           lastResolution = action.item.id;
           stdin.setRawMode(true);
           stdin.on("data", onData);
+          // Sub-command output scrolled the terminal; subsequent render
+          // must draw fresh below it, not rewind.
+          resetRender();
           render();
           return true;
         case "noop":
