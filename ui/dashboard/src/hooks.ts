@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { DashboardEvent, LogEntry, AionimaConfig, ReportSummary, ReportDetail, HFModelSearchResult, CoreForkStatus } from "./types.js";
+import type { DashboardEvent, LogEntry, AionimaConfig, HFModelSearchResult, CoreForkStatus } from "./types.js";
 import {
   fetchOverview, fetchConfig, saveConfig,
   fetchProjects, createProject, updateProject, deleteProject,

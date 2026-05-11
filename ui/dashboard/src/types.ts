@@ -1438,7 +1438,7 @@ export interface ScanProvider {
 // ---------------------------------------------------------------------------
 
 export type HFCompatibility = "compatible" | "limited" | "incompatible";
-export type HFModelStatus = "downloading" | "ready" | "starting" | "running" | "stopping" | "error" | "removing";
+export type HFModelStatus = "downloading" | "ready" | "starting" | "running" | "stopping" | "error" | "failed" | "removing";
 export type HFModelFormat = "gguf" | "safetensors" | "pytorch" | "onnx" | "tensorflow";
 export type HFQuantization = "Q2_K" | "Q3_K_S" | "Q3_K_M" | "Q3_K_L" | "Q4_0" | "Q4_K_S" | "Q4_K_M" | "Q5_0" | "Q5_K_S" | "Q5_K_M" | "Q6_K" | "Q8_0" | "F16" | "F32";
 export type HFCapabilityStatus = "on" | "limited" | "off";
@@ -1534,7 +1534,7 @@ export interface HFInstalledModel {
   revision: string;
   displayName: string;
   pipelineTag: string;
-  runtimeType: "llm" | "diffusion" | "general";
+  runtimeType: "llm" | "diffusion" | "general" | "ollama" | "custom";
   filePath: string;
   modelFilename?: string;
   fileSizeBytes: number;
@@ -1553,7 +1553,7 @@ export interface HFRunningModel {
   containerId: string;
   containerName: string;
   port: number;
-  runtimeType: "llm" | "diffusion" | "general";
+  runtimeType: "llm" | "diffusion" | "general" | "ollama" | "custom";
   startedAt: string;
   status: "running" | "stopped" | "error";
   /** Result of a live /health probe at the moment this record was fetched. */
