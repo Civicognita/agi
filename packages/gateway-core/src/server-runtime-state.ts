@@ -4176,6 +4176,14 @@ export async function createGatewayRuntimeState(
   const STATS_HISTORY_MAX = 2880;
   const STATS_RECORD_INTERVAL_MS = 30_000;
   const STATS_FLUSH_INTERVAL_MS = 5 * 60 * 1000; // Write to disk every 5 minutes
+
+  // CPU sustained-high watchdog (owner directive 2026-05-12, after the
+  // 324-stuck-multipass-exec incident pushed load avg to 329). Fires when
+  // CPU stays ≥90% for 3 minutes (6 consecutive 30s samples); clears
+  // after 2 minutes <70%. Pure state machine in `./cpu-watchdog.ts`.
+  const { CpuWatchdog, DEFAULT_CPU_WATCHDOG_CONFIG } = await import("./cpu-watchdog.js");
+  const cpuWatchdog = new CpuWatchdog(DEFAULT_CPU_WATCHDOG_CONFIG);
+  const watchdogLog = createComponentLogger(deps.logger, "cpu-watchdog");
   type StatsPoint = { ts: string; cpu: number; mem: number; disk: number; diskRead: number; diskWrite: number; load1: number; load5: number; load15: number; cpuWatts?: number; gpuWatts?: number };
   const statsHistory: StatsPoint[] = [];
 
@@ -4432,6 +4440,25 @@ export async function createGatewayRuntimeState(
       });
       if (statsHistory.length > STATS_HISTORY_MAX) {
         statsHistory.splice(0, statsHistory.length - STATS_HISTORY_MAX);
+      }
+
+      // CPU watchdog feed — observes each 30s CPU sample, transitions on
+      // sustained-high vs cleared, logs WARN on fire and INFO on clear.
+      // Wire to dashboard notifications via DashboardEvent if deps surface
+      // an emitter; pure log-only otherwise.
+      const wdEvt = cpuWatchdog.feed(cpuUsage);
+      if (wdEvt !== null) {
+        const cores = Math.max(1, (await import("node:os")).cpus().length);
+        const load1Now = Math.round(loadAvg[0]! * 100) / 100;
+        if (wdEvt.kind === "alert-fired") {
+          watchdogLog.warn(
+            `🚨 SUSTAINED HIGH CPU — ${String(wdEvt.cpuPercent)}% for ${String(wdEvt.sustainedSamples)} consecutive 30s samples (load1=${String(load1Now)}, cores=${String(cores)}). Investigate: \`ps -eo pid,pcpu,etime,command --sort=-pcpu | head -20\` then \`agi doctor\`.`,
+          );
+        } else {
+          watchdogLog.info(
+            `CPU watchdog cleared — ${String(wdEvt.cpuPercent)}% after ${String(wdEvt.clearedSamples)} consecutive low samples.`,
+          );
+        }
       }
     } catch { /* stats recording failed — non-fatal */ }
   }
