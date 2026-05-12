@@ -21,6 +21,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createNote, deleteNote, fetchNotes, updateNote, type UserNote } from "../api.js";
+import { WhiteboardEditor } from "./WhiteboardEditor.js";
 
 export interface NotesPanelProps {
   /** Per-project: pass the absolute project path. Global: pass null. */
@@ -300,24 +301,12 @@ export function NotesPanel({ projectPath }: NotesPanelProps): ReactElement {
                 Delete
               </Button>
             </div>
-            {/* s157 Phase 2 — whiteboard kind renders a placeholder Card
-                until the fancy-whiteboard Canvas + agent-integrations
-                bridge land in Phase 2b. The textarea (s156 t675 raw
-                Markdown editor) renders for the default markdown kind. */}
+            {/* s157 Phase 2b — whiteboard kind renders the full
+                SharedWhiteboard (fancy-whiteboard primitives + in-page
+                MicroMcpServer + AgentPanel). State is session-ephemeral
+                in this slice; persistence + relay broker land in Phase 2c. */}
             {selected.kind === "whiteboard" ? (
-              <div
-                className="flex-1 flex flex-col items-center justify-center rounded border border-dashed border-input bg-secondary/10 p-6 text-center"
-                data-testid="notes-whiteboard-placeholder"
-              >
-                <p className="text-[12px] font-semibold text-foreground mb-2">Whiteboard mode</p>
-                <p className="text-[11px] text-muted-foreground max-w-[320px] mb-3">
-                  This note is a whiteboard. The fancy-whiteboard Canvas + agent-integrations
-                  bridge will render here in Phase 2b. Body JSON shape is preserved across saves.
-                </p>
-                <code className="text-[10px] font-mono text-muted-foreground/70 break-all max-w-full overflow-hidden">
-                  {draftBody.slice(0, 200)}
-                </code>
-              </div>
+              <WhiteboardEditor body={draftBody} />
             ) : (
               <textarea
                 ref={bodyRef}
