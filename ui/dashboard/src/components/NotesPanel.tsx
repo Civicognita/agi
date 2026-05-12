@@ -81,19 +81,22 @@ export function NotesPanel({ projectPath }: NotesPanelProps): ReactElement {
     return draftTitle !== selected.title || draftBody !== selected.body;
   }, [selected, draftTitle, draftBody]);
 
-  const handleNew = useCallback(async () => {
+  const handleNew = useCallback(async (kind: "markdown" | "whiteboard" = "markdown") => {
     setSaving(true);
     setError(null);
     try {
       const created = await createNote({
         projectPath,
-        title: "Untitled",
-        body: "",
+        title: kind === "whiteboard" ? "Untitled whiteboard" : "Untitled",
+        kind,
+        body: kind === "whiteboard" ? "{}" : "",
       });
       setNotes((prev) => [created, ...prev]);
       setSelectedId(created.id);
-      // Defer focus until the textarea remounts.
-      setTimeout(() => bodyRef.current?.focus(), 0);
+      // Defer focus until the textarea remounts (markdown only).
+      if (kind === "markdown") {
+        setTimeout(() => bodyRef.current?.focus(), 0);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -172,16 +175,30 @@ export function NotesPanel({ projectPath }: NotesPanelProps): ReactElement {
           <h3 className="text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">
             {projectPath !== null ? "Project Notes" : "Global Notes"}
           </h3>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => void handleNew()}
-            disabled={saving}
-            data-testid="notes-new-button"
-            className="text-[11px] h-7"
-          >
-            + New
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void handleNew("markdown")}
+              disabled={saving}
+              data-testid="notes-new-button"
+              className="text-[11px] h-7"
+            >
+              + Note
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => void handleNew("whiteboard")}
+              disabled={saving}
+              data-testid="notes-new-whiteboard-button"
+              className="text-[11px] h-7"
+              title="Create a whiteboard note (canvas mode)"
+            >
+              + Board
+            </Button>
+          </div>
         </div>
 
         {error !== null && (
@@ -283,24 +300,42 @@ export function NotesPanel({ projectPath }: NotesPanelProps): ReactElement {
                 Delete
               </Button>
             </div>
-            {/* s156 t675 — body editor stays as raw <textarea> until
-                Particle-Academy/fancy-code ships a MarkdownEditor
-                primitive. Tracked at:
-                https://github.com/Particle-Academy/fancy-code/issues/2
-                When that primitive lands, swap this for
-                <MarkdownEditor value={draftBody} onValueChange={...}>. */}
-            <textarea
-              ref={bodyRef}
-              value={draftBody}
-              onChange={(e) => setDraftBody(e.target.value)}
-              onKeyDown={handleEditorKeyDown}
-              placeholder="Markdown body…"
-              className="flex-1 rounded border border-input bg-background px-3 py-2 text-[13px] font-mono leading-relaxed resize-none disabled:opacity-50"
-              data-testid="notes-body-textarea"
-            />
+            {/* s157 Phase 2 — whiteboard kind renders a placeholder Card
+                until the fancy-whiteboard Canvas + agent-integrations
+                bridge land in Phase 2b. The textarea (s156 t675 raw
+                Markdown editor) renders for the default markdown kind. */}
+            {selected.kind === "whiteboard" ? (
+              <div
+                className="flex-1 flex flex-col items-center justify-center rounded border border-dashed border-input bg-secondary/10 p-6 text-center"
+                data-testid="notes-whiteboard-placeholder"
+              >
+                <p className="text-[12px] font-semibold text-foreground mb-2">Whiteboard mode</p>
+                <p className="text-[11px] text-muted-foreground max-w-[320px] mb-3">
+                  This note is a whiteboard. The fancy-whiteboard Canvas + agent-integrations
+                  bridge will render here in Phase 2b. Body JSON shape is preserved across saves.
+                </p>
+                <code className="text-[10px] font-mono text-muted-foreground/70 break-all max-w-full overflow-hidden">
+                  {draftBody.slice(0, 200)}
+                </code>
+              </div>
+            ) : (
+              <textarea
+                ref={bodyRef}
+                value={draftBody}
+                onChange={(e) => setDraftBody(e.target.value)}
+                onKeyDown={handleEditorKeyDown}
+                placeholder="Markdown body…"
+                className="flex-1 rounded border border-input bg-background px-3 py-2 text-[13px] font-mono leading-relaxed resize-none disabled:opacity-50"
+                data-testid="notes-body-textarea"
+              />
+            )}
             <div className="flex items-center justify-between text-[10px] text-muted-foreground/70">
               <span>{dirty ? "Unsaved changes — ⌘S to save" : `Saved ${new Date(selected.updatedAt).toLocaleString()}`}</span>
-              <span className="font-mono">{String(draftBody.length)} chars</span>
+              <span className="font-mono">
+                {selected.kind === "whiteboard"
+                  ? `whiteboard · ${String(draftBody.length)} JSON chars`
+                  : `${String(draftBody.length)} chars`}
+              </span>
             </div>
           </>
         )}

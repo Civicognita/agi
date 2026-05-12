@@ -215,11 +215,18 @@ export async function fetchPmPlan(projectPath: string, planId: string): Promise<
 // UserNotes — s152. Markdown notepad surface, per-project + global scopes.
 // ---------------------------------------------------------------------------
 
+/** Note kind discriminator (s157 Phase 1 server-side; Phase 2 client-side wiring).
+ *  - `markdown`: body is Markdown source (s152 default).
+ *  - `whiteboard`: body is JSON serialization of fancy-whiteboard canvas state. */
+export type UserNoteKind = "markdown" | "whiteboard";
+
 export interface UserNote {
   id: string;
   userEntityId: string;
   projectPath: string | null;
   title: string;
+  /** s157 Phase 2 — kind discriminator. Server default `markdown` for s152 compat. */
+  kind: UserNoteKind;
   body: string;
   sortOrder: number;
   pinned: boolean;
@@ -241,7 +248,7 @@ export async function fetchNotes(projectPath: string | null): Promise<UserNote[]
   return data.notes;
 }
 
-export async function createNote(input: { projectPath: string | null; title: string; body?: string; pinned?: boolean }): Promise<UserNote> {
+export async function createNote(input: { projectPath: string | null; title: string; kind?: UserNoteKind; body?: string; pinned?: boolean }): Promise<UserNote> {
   const res = await fetch("/api/notes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -254,7 +261,7 @@ export async function createNote(input: { projectPath: string | null; title: str
   return res.json() as Promise<UserNote>;
 }
 
-export async function updateNote(id: string, patch: { title?: string; body?: string; pinned?: boolean; sortOrder?: number }): Promise<UserNote> {
+export async function updateNote(id: string, patch: { title?: string; kind?: UserNoteKind; body?: string; pinned?: boolean; sortOrder?: number }): Promise<UserNote> {
   const res = await fetch(`/api/notes/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
