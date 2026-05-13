@@ -403,20 +403,22 @@ Phased migration:
 
 ---
 
-## 10. Open questions for owner sign-off
+## 10. Open questions — owner answers (2026-05-13)
 
-| # | Decision | Default if not answered |
-|---|----------|------------------------|
-| **OQ-1** | **Multi-binding default** — does a project's "Coordinate → Channels" tab show ALL bound rooms across all channels, or one tab per channel (Discord tab / Slack tab / Email tab)? | All bound rooms in one unified tab; channel-specific panels nest within |
-| **OQ-2** | **Owner-can-override `readAllMessages`** — should this be per-guild (Discord) / per-workspace (Slack) / global? Owner directive 2026-05-12 ("Aion to read all messages even those it is not tagged in") implies global-on, but Discord ToS suggests per-room consent | Per-room with bot-presence implying consent on public channels; private rooms require explicit toggle |
-| **OQ-3** | **Pending-entity owner approval surface** — is this its own dashboard page (`/identity/pending`) or a tile on the Aionima system page? | New page under `/identity/pending`, with notification badge on the dashboard nav |
-| **OQ-4** | **Channel-tool exposure to non-Discord-origin chats** — if Aion is chatting in dashboard with project context, can it still call `discord_post_message`? Or only when chat originates from Discord? | Available based on project's `rooms[]` bindings — if the project is bound to a Discord room, `discord_*` tools are in the kit |
-| **OQ-5** | **Scrum-master skill scope** — is this a skill bundled with the channel plugin (each channel ships its own scrum-master tools) or a single cross-channel skill that calls bridge tools generically? | Cross-channel skill in `prompts/skills/scrum-master.md`, uses bridge-tool primitives, channel-agnostic |
-| **OQ-6** | **MApp-driven workflows** — when a workflow is bound to a channel/role, where does the workflow LIVE? Plugin Marketplace MApp? Per-project MApp? Owner-authored skill? | Plugin Marketplace MApp first (reusable across projects); per-project overrides shipped Phase 4+ |
-| **OQ-7** | **Migration to ADF Intelligence Protocols** — is `ChannelProtocol extends IntelligenceProtocol` literal subclassing, or are they parallel interfaces with overlapping shape? | Parallel for now; both share `coa-chain` tagging via the same protocol-context object |
-| **OQ-8** | **Per-project channel-credentials override** — can a project specify its own Discord bot for its rooms (multi-bot setup)? | One bot per channel globally for Phase 1; per-project bots deferred to Phase 5+ if needed |
-| **OQ-9** | **Voice + audio support** — Discord supports voice channels; do we need voice-message handling beyond the existing audio-attachment shape? | Audio attachments only for Phase 1; voice-channel join is its own future scope |
-| **OQ-10** | **Channel marketplace** — do new channels (Matrix, IRC, Mastodon) install from the marketplace, or do all channels ship with core agi? | Core 5 (discord, telegram, slack, gmail, signal) ship with agi; new channels via Plugin Marketplace under a new "channel" category |
+Eight of ten OQs answered via AskUserQuestion on 2026-05-13. OQ-9 + OQ-10 deferred per §12 (out-of-scope).
+
+| # | Decision | **Owner answer** |
+|---|----------|------------------|
+| **OQ-1** | Multi-binding default for project-page Channels UI | **Unified Channels tab with channel sections.** One tab on Coordinate mode; channels with bindings render as sections inside. |
+| **OQ-2** | Read-all-messages consent scope | **Per-room toggle with bot-presence implying consent on public channels.** Private rooms / DMs require explicit per-room toggle. |
+| **OQ-3** | Pending-entity owner approval surface | **New page at `/identity/pending` with nav badge.** Sidebar shows red dot + count when count > 0. Per-row approve / reject / defer. |
+| **OQ-4** | Channel-tool exposure rules | **Project-binding-based.** When chat's project context has at least one Discord room bound in `project.json.rooms[]`, `discord_*` tools register on the agent invoker for that chat. |
+| **OQ-5** | Scrum-master skill scope | **Cross-channel skill using bridge-tool primitives.** Single `prompts/skills/scrum-master.md`; calls `<channel>_aggregate_stats` generically; Aion picks the right tool based on bound rooms. |
+| **OQ-6** | Where role/channel-bound workflows live | **Plugin Marketplace MApp first.** Workflows are MApps from the marketplace. Settings binds `role:Intern → mapp:onboarding`. Per-project overrides deferred to Phase 4+. |
+| **OQ-7** | ChannelProtocol vs IntelligenceProtocol shape | **Parallel interfaces, share COA tagging only.** No literal subclassing. Channels can evolve independent of MPx's shape. |
+| **OQ-8** | Per-project channel-credentials override | **One bot per channel globally, no per-project override** for Phase 1. Per-project bots deferred. |
+| OQ-9 | Voice + audio support | **Deferred** per §12. Audio attachments only this phase. |
+| OQ-10 | Channel marketplace category | **Deferred.** Core 5 ship with agi; channel marketplace category considered later. |
 
 ---
 
@@ -457,17 +459,29 @@ Once this design doc is signed off, work decomposes into tynn stories:
 
 ## 13. Ratification
 
-This doc is a draft. Owner signs off section-by-section:
+§10 owner answers locked 2026-05-13. Remaining sections need explicit owner sign-off before their tier ships:
 
 - [ ] §2 — Channel-as-Application thesis
-- [ ] §3 — `defineChannel` SDK contract
-- [ ] §4 — Room abstraction per-channel mapping
-- [ ] §5 — Project ↔ Room binding contract
-- [ ] §6 — Channel-internal management page
-- [ ] §7 — Bridge tool family
-- [ ] §8 — Cage + entity flow
+- [ ] §3 — `defineChannel` SDK contract *(blocks CHN-A)*
+- [ ] §4 — Room abstraction per-channel mapping *(blocks CHN-A)*
+- [ ] §5 — Project ↔ Room binding contract *(blocks CHN-D)*
+- [ ] §6 — Channel-internal management page *(blocks settings UI work)*
+- [ ] §7 — Bridge tool family *(partially shipped in v0.4.661 Discord update — 4 tools registered against old SDK; full family lands with CHN-A)*
+- [ ] §8 — Cage + entity flow *(blocks CHN-E)*
 - [ ] §9 — Migration plan (5 adapters, 6 phases)
-- [ ] §10 — Open questions answered
+- [x] §10 — Open questions answered (8/10; OQ-9 + OQ-10 deferred per §12)
 - [ ] §11 — Implementation tier breakdown
 
-Once §2-§11 are signed off, CHN-A (SDK contract) can ship as the first PR. Without sign-off the design churns expensively after code lands; with sign-off the migration debt is bounded.
+## 14. What's unblocked now (post-OQ answers)
+
+With OQ-1 through OQ-8 answered + §10 ratified, the implementation tiers split into:
+
+**Unblocked — can start in any order:**
+- **CHN-E** (pending-from-discord entity flow) — `/identity/pending` page + nav badge + entity-registry extension. OQ-3 + OQ-7 answered.
+- **CHN-G** (scrum-master skill) — `prompts/skills/scrum-master.md` cross-channel + `discord_aggregate_stats` bridge tool. OQ-5 answered.
+- **CHN-F** (role/channel → workflow binding) — Marketplace MApp resolver + Settings UI. OQ-6 answered.
+
+**Still gated on §3 + §4 sign-off (SDK contract + room abstraction):**
+- CHN-A, CHN-B (full Discord rewrite), CHN-C, CHN-D, CHN-I-M (other channel migrations).
+
+CHN-B partial already shipped as v0.4.661 against the old SDK — privileged intents + 4 bridge tools. The remaining CHN-B work (room-model + `defineChannel` contract) waits on §3 sign-off.
