@@ -33,6 +33,7 @@ import {
   isGuildAllowed,
   isChannelAllowed,
 } from "./security.js";
+import { buildDiscordBridgeTools } from "./aion-tools.js";
 
 // Re-exports for consumer convenience
 export type { DiscordConfig } from "./config.js";
@@ -276,17 +277,26 @@ async function handleGuildJoin(
  */
 export function createDiscordPlugin(
   config: DiscordConfig,
-): AionimaChannelPlugin {
+): AionimaChannelPlugin & { __client: Client; __config: DiscordConfig } {
   if (!isDiscordConfig(config)) {
     throw new Error("Invalid Discord config: botToken is required");
   }
 
+  // Owner directive 2026-05-13: Aion needs richer Discord context —
+  // user profiles, roles, presence, all messages with time-window search.
+  // GuildMembers + GuildPresences are PRIVILEGED intents — must be
+  // enabled in the Discord developer portal for the bot before this
+  // client can connect with them. If the bot login fails with a
+  // privileged-intent error, the operator needs to toggle them on at
+  // https://discord.com/developers/applications/<applicationId>/bot.
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.DirectMessages,
+      GatewayIntentBits.GuildMembers,    // roles + member metadata (privileged)
+      GatewayIntentBits.GuildPresences,  // online state + activity (privileged)
     ],
   });
 
@@ -503,6 +513,12 @@ export function createDiscordPlugin(
     },
 
     security,
+    // Internal escape hatches — used by the activate() function below to
+    // register bridge tools against the live Client. Marked as `__` to
+    // discourage consumer use; not part of the public AionimaChannelPlugin
+    // contract.
+    __client: client,
+    __config: config,
   };
 }
 
@@ -518,5 +534,15 @@ export default {
       channelConfig.config as unknown as DiscordConfig,
     );
     api.registerChannel(plugin);
+
+    // s157-sibling Discord update 2026-05-13 — register bridge tools so
+    // Aion can read message history, profiles, roles, and presence from
+    // Discord. These are READ-side tools; response gating still goes
+    // through the existing `mentionOnly` config (Aion only POSTS when
+    // @-mentioned). See OQ-2 in docs/agents/channel-plugin-redesign.md.
+    const bridgeTools = buildDiscordBridgeTools({ client: plugin.__client, config: plugin.__config });
+    for (const tool of bridgeTools) {
+      api.registerAgentTool(tool);
+    }
   },
 } satisfies AionimaPlugin;
