@@ -3049,6 +3049,7 @@ export async function startGatewayServer(
       circuitBreaker: circuitBreakerTracker,
       iterativeWorkScheduler,
       projectConfigManager,
+      pendingApprovalStore: inboundPendingApprovalStore,
       pmProvider,
       mcpClient,
       commsLog,

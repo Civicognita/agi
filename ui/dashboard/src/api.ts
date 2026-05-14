@@ -3783,3 +3783,50 @@ export async function resolveChannelRoom(
   const data = await res.json() as { resolved: { projectPath: string; binding: ProjectRoomBinding } | null };
   return data.resolved;
 }
+
+// CHN-E (s166) slice 3 — pending-approval queue client.
+export interface PendingApproval {
+  id: string;
+  channelId: string;
+  roomId: string;
+  channelUserId: string;
+  displayName: string;
+  projectPath: string;
+  firstMessagePreview: string;
+  createdAt: string;
+}
+
+export async function fetchPendingApprovals(opts: { project?: string } = {}): Promise<PendingApproval[]> {
+  const url = opts.project !== undefined
+    ? `/api/identity/pending?project=${encodeURIComponent(opts.project)}`
+    : "/api/identity/pending";
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { pending: PendingApproval[]; count: number };
+  return data.pending;
+}
+
+export async function approvePendingApproval(id: string): Promise<PendingApproval> {
+  const url = `/api/identity/pending/${encodeURIComponent(id)}/approve`;
+  const res = await fetch(url, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { ok: true; approval: PendingApproval };
+  return data.approval;
+}
+
+export async function rejectPendingApproval(id: string): Promise<PendingApproval> {
+  const url = `/api/identity/pending/${encodeURIComponent(id)}/reject`;
+  const res = await fetch(url, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { ok: true; approval: PendingApproval };
+  return data.approval;
+}

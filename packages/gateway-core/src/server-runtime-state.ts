@@ -101,6 +101,7 @@ import {
   type ProjectCategory,
 } from "./project-types.js";
 import type { ProjectConfigManager } from "./project-config-manager.js";
+import type { PendingApprovalStore } from "./pending-approval-store.js";
 import type { PmProvider } from "@agi/sdk";
 
 // ---------------------------------------------------------------------------
@@ -214,6 +215,10 @@ export interface RuntimeStateDeps {
    *  persist iterativeWork config changes through the same atomic-write path
    *  as other project metadata mutations. */
   projectConfigManager?: ProjectConfigManager;
+  /** PendingApprovalStore — surfaces pending-from-channel approval records
+   *  via GET /api/identity/pending + approve/reject endpoints. CHN-E
+   *  (s166) slice 3 — 2026-05-14. */
+  pendingApprovalStore?: PendingApprovalStore;
   /** PmProvider — used by the iterative-work progress route (t439) to
    *  surface Race-to-DONE counts. Optional: when missing or when the
    *  provider doesn't expose getActiveFocusProgress, the route returns 503. */
@@ -1764,6 +1769,61 @@ export async function createGatewayRuntimeState(
         binding: result.binding,
       },
     });
+  });
+
+  // -----------------------------------------------------------------------
+  // CHN-E (s166) slice 3 — pending-from-channel approval queue API
+  //
+  // GET    /api/identity/pending                 — list all pending approvals
+  // GET    /api/identity/pending?project=<path>  — filtered to one project
+  // POST   /api/identity/pending/:id/approve     — promote (UI slice handles
+  //                                                 entity-tier update separately)
+  // POST   /api/identity/pending/:id/reject      — drop + flag source
+  //
+  // Private-network gated. Returns 503 when pendingApprovalStore isn't
+  // wired (Aion gateway running without inbound channels configured).
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/identity/pending", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+    if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+    const query = request.query as Record<string, string>;
+    const projectFilter = query["project"];
+    const pending = typeof projectFilter === "string" && projectFilter.length > 0
+      ? deps.pendingApprovalStore.listForProject(projectFilter)
+      : deps.pendingApprovalStore.list();
+    return reply.send({ pending, count: pending.length });
+  });
+
+  fastify.post<{ Params: { id: string } }>("/api/identity/pending/:id/approve", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+    if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+    const { id } = request.params;
+    try {
+      const { approval, decision } = deps.pendingApprovalStore.approve(id);
+      return reply.send({ ok: true, approval, decision });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("not found") ? 404 : 400;
+      return reply.code(code).send({ error: `approve failed: ${msg}` });
+    }
+  });
+
+  fastify.post<{ Params: { id: string } }>("/api/identity/pending/:id/reject", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+    if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+    const { id } = request.params;
+    try {
+      const { approval, decision } = deps.pendingApprovalStore.reject(id);
+      return reply.send({ ok: true, approval, decision });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("not found") ? 404 : 400;
+      return reply.code(code).send({ error: `reject failed: ${msg}` });
+    }
   });
 
   // -----------------------------------------------------------------------
