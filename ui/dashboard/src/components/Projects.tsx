@@ -27,9 +27,13 @@ import { HostingSetupBanner } from "./HostingSetupBanner.js";
 import { SetupTerminal } from "./SetupTerminal.js";
 import type { HostingStatus } from "../api.js";
 
-/** Derive a URL slug from a project path (last segment, lowercased, alphanumeric + dashes). */
+/** Derive a URL slug from a project path. Last segment, lowercased.
+ *  Preserves alphanumerics + dashes + underscores so the meta-project
+ *  `_aionima` (owner-managed local-customizations root) keeps its leading
+ *  underscore in the URL. The Sacred card navigates to `/projects/_aionima`
+ *  and the project-detail route resolves the same slug back. */
 export function projectSlug(path: string): string {
-  return path.split("/").pop()?.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") ?? "";
+  return path.split("/").pop()?.toLowerCase().replace(/[^a-z0-9_]+/g, "-").replace(/^-|-$/g, "") ?? "";
 }
 
 export interface ProjectsProps {
@@ -78,7 +82,20 @@ export function Projects({
       }))
     : [];
 
-  const isAionimaProject = (p: ProjectInfo) => isSacredProject(p) || p.projectType?.id === "aionima";
+  // Owner directive 2026-05-13: `_aionima/` is the meta-project and must
+  // never appear in the regular projects list — only as the Sacred card.
+  // Backend stamping of projectType.id===\"aionima-system\" is the canonical
+  // signal; the path-basename fallback covers the case where the boot
+  // scaffolder hasn't yet written project.json so the gateway has
+  // auto-detected the directory with a wrong type.
+  const isAionimaProject = (p: ProjectInfo) => {
+    if (isSacredProject(p)) return true;
+    const typeId = p.projectType?.id;
+    if (typeId === "aionima" || typeId === "aionima-system") return true;
+    const basename = p.path.split("/").pop() ?? "";
+    if (basename === "_aionima") return true;
+    return false;
+  };
   // s119 t705 — PAx forks live as repos under `_aionima/repos/` now,
   // not as standalone projects. They never appear as their own tiles;
   // the single Aionima sacred card (above) is the entry point.

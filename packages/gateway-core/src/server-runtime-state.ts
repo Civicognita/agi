@@ -1128,7 +1128,14 @@ export async function createGatewayRuntimeState(
         const detectedHosting = deps.hostingManager
           ? deps.hostingManager.detectProjectDefaults(fullPath)
           : undefined;
-        const projectTypeId = metaType ?? detectedHosting?.projectType ?? "static";
+        // Owner directive 2026-05-13: `_aionima/` is the meta-project, always
+        // type "aionima-system" regardless of what (if anything) is on disk.
+        // Covers the case where the t701 boot scaffolder hasn't yet written
+        // project.json — the dashboard's Aionima Sacred card route depends on
+        // this type stamp to render the right (slimmed) project UX.
+        const projectTypeId = entryName === "_aionima"
+          ? "aionima-system"
+          : (metaType ?? detectedHosting?.projectType ?? "static");
         const registry = deps.hostingManager?.getProjectTypeRegistry();
         const typeDef = registry?.get(projectTypeId);
         const projectType = typeDef ? { id: typeDef.id, label: typeDef.label, category: typeDef.category ?? "", hostable: typeDef.hostable, hasCode: typeDef.hasCode, iterativeWorkEligible: typeDef.iterativeWorkEligible ?? false, testingUxEligible: typeDef.testingUxEligible ?? false, tools: typeDef.tools } : undefined;
