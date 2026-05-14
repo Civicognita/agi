@@ -75,12 +75,15 @@ export function Projects({
   const navigate = useNavigate();
   const isContributing = Boolean(contributingEnabled);
 
-  const sacredEntries = isContributing
-    ? SACRED_PROJECTS.map((sacred) => ({
-        sacred,
-        project: matchSacredProject(projects, sacred.id),
-      }))
-    : [];
+  // Owner directive 2026-05-13: `_aionima` is the Sacred project and must be
+  // present + visible regardless of dev/contributing mode. Dev mode now only
+  // gates fork-population into `_aionima/repos/`, not card visibility.
+  // sacredEntries enumerated unconditionally; counts in the card description
+  // reflect what's actually cloned (0 when contributing-mode off + no forks).
+  const sacredEntries = SACRED_PROJECTS.map((sacred) => ({
+    sacred,
+    project: matchSacredProject(projects, sacred.id),
+  }));
 
   // Owner directive 2026-05-13: `_aionima/` is the meta-project and must
   // never appear in the regular projects list — only as the Sacred card.
@@ -265,16 +268,11 @@ export function Projects({
           Replaces the per-core-repo sacred tiles. Users don't ship updates
           per package; they contribute across channels through the
           consolidated /aionima view (upstream alignment + PR + MINT).
-          Impactium-blockchain COA<>COI ties back to THIS single entry. */}
-      {isContributing && (
-        // Aionima + PAx render in a single Sacred row (owner directive
-        // 2026-04-29 cycle ~121): the two consolidation cards belong on
-        // the same row, not stacked. The auto-fill grid degrades to 1
-        // column at narrow widths and pairs them side-by-side at wider
-        // widths. Each card self-identifies via its name + badge so the
-        // per-section h3 ("Aionima", "PAx · ADF UI primitives") is
-        // dropped in favor of one shared "Sacred" header.
-        <div className="mb-6">
+          Impactium-blockchain COA<>COI ties back to THIS single entry.
+          Visible unconditionally per owner directive 2026-05-13: dev/
+          contributing mode only controls whether owner forks get cloned
+          into `_aionima/repos/`, not whether the Sacred card renders. */}
+      <div className="mb-6">
           <div className="flex items-center gap-2 mb-3">
             <Star className="h-4 w-4 text-yellow" />
             <h3 className="text-[13px] font-semibold text-foreground">Sacred</h3>
@@ -304,14 +302,15 @@ export function Projects({
                   </span>
                 </div>
                 <div className="text-[11px] text-muted-foreground">
-                  Platform contribution portal — upstream alignment, PR submission, MINT impact ($WORK / $K / $RES). Wraps the {sacredEntries.length} core forks + {PAX_SACRED_PROJECTS.length} Particle-Academy ADF UI primitives as a single self-managed project (`_aionima/repos/`).
+                  Platform contribution portal — upstream alignment, PR submission, MINT impact ($WORK / $K / $RES). {isContributing
+                    ? <>Wraps the {sacredEntries.filter((e) => e.project !== null).length} core forks + {PAX_SACRED_PROJECTS.length} Particle-Academy ADF UI primitives as a single self-managed project (`_aionima/repos/`).</>
+                    : <>Enable contributing mode in Settings to clone the {SACRED_PROJECTS.length} core Aionima forks + {PAX_SACRED_PROJECTS.length} Particle-Academy ADF UI primitives into <code>_aionima/repos/</code>.</>}
                 </div>
                 <div className="text-[11px] text-yellow mt-2 font-medium">Open Aionima →</div>
               </div>
             </div>
           </div>
         </div>
-      )}
 
       {/* s130 t516 slice 1 (cycle 102) — list view via react-fancy Table.
           Matches projects-ux-v2/projects-browser-v2.html mockup. Activity
