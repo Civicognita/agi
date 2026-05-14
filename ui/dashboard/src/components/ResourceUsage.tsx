@@ -1,10 +1,10 @@
 /**
  * ResourceUsage — system resource monitoring with historical charts.
- * Uses @particle-academy/react-echarts with gauge meters and area charts.
+ * Uses @particle-academy/fancy-echarts with gauge meters and area charts.
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { EChart } from "@particle-academy/react-echarts";
+import { EChart } from "@particle-academy/fancy-echarts";
 
 import { Card } from "@/components/ui/card";
 import { useSystemStats } from "../hooks.js";

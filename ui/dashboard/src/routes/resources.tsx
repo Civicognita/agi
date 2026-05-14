@@ -11,9 +11,9 @@ import { Card } from "@/components/ui/card.js";
 import { fetchDatabaseStorage } from "@/api.js";
 import { useHFContainerStats, useMachineHardware } from "@/hooks.js";
 import type { HFContainerStats } from "@/api.js";
-// fancy-echarts (npm published as @particle-academy/react-echarts pending
-// rename per CLAUDE.md § 1.5 — package is the canonical PAx EChart wrapper).
-import { EChart } from "@particle-academy/react-echarts";
+// fancy-echarts (rename from @particle-academy/react-echarts finalized
+// 2026-05-14; canonical PAx EChart wrapper).
+import { EChart } from "@particle-academy/fancy-echarts";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
