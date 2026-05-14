@@ -218,6 +218,55 @@ function buildGetUserActivityTool(ctx: BridgeToolContext): AgentToolDefinition {
 }
 
 /**
+ * CHN-B (s163) slice 2 — `discord_resolve_project`. Aion calls this to
+ * learn which (if any) project owns a given Discord room. Inputs accept
+ * either a raw roomId (`${guildId}:${channelId}` format) OR the pair as
+ * separate fields. Returns `null` if no binding exists.
+ *
+ * In-process call: hits the local /api/channels/resolve-room endpoint
+ * over localhost. The gateway port is read from process.env.AGI_PORT
+ * (set by the gateway at boot) or defaults to 3100.
+ */
+function buildResolveProjectTool(_ctx: BridgeToolContext): AgentToolDefinition {
+  return {
+    name: "discord_resolve_project",
+    description:
+      "Resolve a Discord room to its bound Aionima project. Pass either `roomId` (already encoded as `guildId:channelId`) OR the `guildId` + `channelId` pair. Returns the project path + binding metadata, or `null` if the room isn't bound to any project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        roomId: { type: "string", description: "Pre-encoded room id (`guildId:channelId`). Mutually exclusive with the guildId+channelId pair." },
+        guildId: { type: "string", description: "Discord guild (server) id. Required when roomId is omitted." },
+        channelId: { type: "string", description: "Discord channel id. Required when roomId is omitted." },
+      },
+    },
+    handler: async (input) => {
+      const port = process.env["AGI_PORT"] ?? "3100";
+      const inputObj = input as Record<string, unknown>;
+      const inputRoomId = typeof inputObj["roomId"] === "string" ? (inputObj["roomId"] as string) : null;
+      const guildId = typeof inputObj["guildId"] === "string" ? (inputObj["guildId"] as string) : null;
+      const channelId = typeof inputObj["channelId"] === "string" ? (inputObj["channelId"] as string) : null;
+      let roomId: string;
+      if (inputRoomId !== null && inputRoomId.length > 0) {
+        roomId = inputRoomId;
+      } else if (guildId !== null && channelId !== null) {
+        roomId = `${guildId}:${channelId}`;
+      } else {
+        throw new Error("discord_resolve_project: must provide either roomId or (guildId + channelId)");
+      }
+      const url = `http://127.0.0.1:${port}/api/channels/resolve-room?channelId=discord&roomId=${encodeURIComponent(roomId)}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${String(res.status)}`);
+      }
+      const data = await res.json() as { resolved: { projectPath: string; binding: unknown } | null };
+      return data.resolved;
+    },
+  };
+}
+
+/**
  * Build the full set of Discord bridge tools for registration with the
  * agent tool registry. Caller (channel plugin's `start()`) iterates and
  * calls `api.registerAgentTool(def)` for each.
@@ -228,5 +277,6 @@ export function buildDiscordBridgeTools(ctx: BridgeToolContext): AgentToolDefini
     buildGetUserTool(ctx),
     buildListMembersTool(ctx),
     buildGetUserActivityTool(ctx),
+    buildResolveProjectTool(ctx),
   ];
 }

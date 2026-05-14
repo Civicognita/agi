@@ -43,6 +43,12 @@ export function normalizeMessage(msg: Message): AionimaMessage | null {
       username: msg.author.username,
       discriminator: msg.author.discriminator,
       displayName: buildDisplayName(msg),
+      // CHN-B (s163) slice 2 — roomId encoding matches the picker's
+      // `${guildId}:${channelId}` shape (see flattenStateToAvailableRooms
+      // in ./state.ts). Downstream consumers (inboundRouter, future
+      // dispatcher wire-up) call /api/channels/resolve-room with this
+      // value to find the bound project. DMs (no guildId) get undefined.
+      roomId: msg.guildId !== null ? `${msg.guildId}:${msg.channelId}` : undefined,
     },
   };
 }
