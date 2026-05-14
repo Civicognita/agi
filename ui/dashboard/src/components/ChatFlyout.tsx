@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useIsMobile, useConfig } from "@/hooks.js";
-import { ContentRenderer, Textarea } from "@particle-academy/react-fancy";
+import { ContentRenderer, Textarea, PromptInput } from "@particle-academy/react-fancy";
 import { Copy as CopyIcon, Check as CheckIcon } from "lucide-react";
 import { PlansDrawer } from "./PlansDrawer.js";
 
@@ -1217,9 +1217,6 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // Derived send-button state
   // -------------------------------------------------------------------------
 
-  const canSend = activeSession != null
-    && (input.trim().length > 0 || attachments.length > 0);
-
   if (!open && !docked) return null;
 
   // Shared header for docked and overlay modes
@@ -1733,35 +1730,45 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
             >
               &#128206;
             </button>
-            <Textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder="Message Aionima..."
-              rows={1}
-              className="flex-1 text-[13px] resize-none min-h-[44px] max-h-[100px]"
-            />
             {activeSession?.thinking ? (
-              <button
-                onClick={cancelInvocation}
-                className="px-3.5 py-2 rounded-[10px] border-none text-[13px] font-semibold bg-red text-white cursor-pointer"
-              >
-                Stop
-              </button>
+              // While Aion is thinking, keep the textarea (with paste / file
+              // attach context the existing handlers expect) plus a prominent
+              // Stop button. PromptInput doesn't have a "thinking" mode; the
+              // legacy composer stays during that window so cancel UX is
+              // unambiguous.
+              <>
+                <Textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  placeholder="Message Aionima…"
+                  rows={1}
+                  className="flex-1 text-[13px] resize-none min-h-[44px] max-h-[100px]"
+                />
+                <button
+                  onClick={cancelInvocation}
+                  className="px-3.5 py-2 rounded-[10px] border-none text-[13px] font-semibold bg-red text-white cursor-pointer"
+                >
+                  Stop
+                </button>
+              </>
             ) : (
-              <button
-                onClick={() => sendMessage(input)}
-                disabled={!canSend}
-                className={cn(
-                  "px-3.5 py-2 rounded-[10px] border-none text-[13px] font-semibold",
-                  canSend
-                    ? "bg-primary text-primary-foreground cursor-pointer"
-                    : "bg-secondary text-muted-foreground cursor-default",
-                )}
-              >
-                Send
-              </button>
+              // Idle: render PromptInput from @particle-academy/react-fancy
+              // for slash-command + @-mention pickers + drop-to-attach +
+              // ⌘/Ctrl+Enter semantics. Attachments from PromptInput's drop
+              // area flow into sendMessage; the paperclip button on the left
+              // remains as an explicit file-picker affordance for users who
+              // prefer it. CHN-B fix v0.4.691 — moves the v0.4.666 swap from
+              // the orphan Chat.tsx into the real surface (ChatFlyout.tsx).
+              <div className="flex-1 min-w-0">
+                <PromptInput
+                  budgetTokens={32_000}
+                  placeholder="Message Aionima…"
+                  showHint
+                  onSubmit={(text) => sendMessage(text)}
+                />
+              </div>
             )}
           </div>
         )}
