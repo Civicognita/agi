@@ -94,6 +94,26 @@ export { defineKnowledge } from "./define-knowledge.js";
 export { defineWorkflow } from "./define-workflow.js";
 export { defineSidebar } from "./define-sidebar.js";
 export { defineChannel } from "./define-channel.js";
+// CHN-A (s162) — new ChannelDefinition contract per
+// agi/docs/agents/channel-plugin-redesign.md §3. Coexists with the
+// legacy AionimaChannelPlugin shape; CHN-M (s174) deletes the legacy.
+export { defineChannelV2 } from "./define-channel-v2.js";
+export type {
+  ChannelDefinition,
+  ChannelProtocol,
+  ChannelContext,
+  ChannelCage,
+  ChannelEntityBinding,
+  ChannelRoom,
+  ChannelUser,
+  ChannelMessage,
+  ChannelMessageAttachment,
+  ChannelEvent,
+  ChannelBridgeToolDefinition,
+  ChannelReadPolicy,
+  ChannelSettingsPageProps,
+  ChannelProjectPanelProps,
+} from "./channel-v2-types.js";
 export { defineProvider } from "./define-provider.js";
 export { definePmProvider, definePmKanbanConfig, DEFAULT_TYNN_KANBAN_CONFIG } from "./define-pm-provider.js";
 export type { PmProviderDefinition, PmProviderFactory, PmKanbanColumn, PmKanbanConfig } from "./define-pm-provider.js";
