@@ -35,23 +35,44 @@ VM_DISK="${VM_DISK:-20G}"
 # Structured JSON emitter for gateway streaming
 emit_json() { echo "{\"phase\":\"$1\",\"status\":\"$2\",\"details\":\"${3:-}\"}"; }
 
-# Detect paths: AGI repo dir and workspace root (parent of agi/).
+# Detect paths: AGI repo dir and workspace root.
+#
+# Resolution order (Wish #25 fix, 2026-05-14):
+#   1. $AGI_DEV_SOURCE env var (preferred — owner/agi-cli sets this)
+#   2. dirname-based detection, with THREE possible shapes:
+#      a. POST-t703 dev workspace: <ws>/_aionima/repos/<name>/
+#         (script lives at <ws>/_aionima/repos/agi/scripts/test-vm.sh;
+#          siblings are <ws>/_aionima/repos/prime, /id, /marketplace, ...)
+#      b. PRE-t703 dev workspace: <ws>/_aionima/<name>/
+#         (legacy flat layout; siblings are <ws>/_aionima/prime, /id, ...)
+#      c. Ops / vanilla install: /opt/agi + /opt/agi-prime + /opt/agi-local-id
+#         (dashed names under /opt)
+#
 # Use `-P` so symlinks get resolved — if this script is invoked via a
-# symlinked path (e.g. a user-workspace convenience link like
-# ~/temp_core/agi → ~/_projects/_aionima/agi), we still want the VM
-# mounts anchored at the *physical* Dev-Mode workspace, NOT the user's
-# scratchpad. temp_core is the user's workspace, not AGI's.
-REPO_DIR="$(cd -P "$(dirname "$0")/.." && pwd)"
-WORKSPACE_DIR="$(cd -P "$REPO_DIR/.." && pwd)"
+# symlinked path, we want the VM mounts anchored at the *physical*
+# Dev-Mode workspace, NOT the user's scratchpad.
 
-# Sibling layout detection: Dev-Mode provisioned workspace uses slugs
-# (prime, id, marketplace, mapp-marketplace) under `_aionima/`. Ops /
-# vanilla installs use the legacy dashed names (agi-prime, agi-local-id)
-# under /opt. Pick the right set for mount sources.
-if [ "$(basename "$WORKSPACE_DIR")" = "_aionima" ]; then
+if [ -n "${AGI_DEV_SOURCE:-}" ] && [ -d "$AGI_DEV_SOURCE" ]; then
+  # Env-var override (highest precedence).
+  REPO_DIR="$(cd -P "$AGI_DEV_SOURCE" && pwd)"
+else
+  REPO_DIR="$(cd -P "$(dirname "$0")/.." && pwd)"
+fi
+WORKSPACE_DIR="$(cd -P "$REPO_DIR/.." && pwd)"
+WORKSPACE_BASENAME="$(basename "$WORKSPACE_DIR")"
+
+if [ "$WORKSPACE_BASENAME" = "repos" ] && [ "$(basename "$(dirname "$WORKSPACE_DIR")")" = "_aionima" ]; then
+  # Shape (a): POST-t703 dev workspace. Siblings live alongside agi/
+  # inside _aionima/repos/.
+  PRIME_PATH="$WORKSPACE_DIR/prime"
+  ID_PATH="$WORKSPACE_DIR/id"
+elif [ "$WORKSPACE_BASENAME" = "_aionima" ]; then
+  # Shape (b): PRE-t703 dev workspace (legacy flat layout). Siblings
+  # under _aionima/ directly.
   PRIME_PATH="$WORKSPACE_DIR/prime"
   ID_PATH="$WORKSPACE_DIR/id"
 else
+  # Shape (c): Ops / vanilla install. Dashed names under the parent.
   PRIME_PATH="$WORKSPACE_DIR/agi-prime"
   ID_PATH="$WORKSPACE_DIR/agi-local-id"
 fi

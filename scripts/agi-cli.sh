@@ -1026,7 +1026,41 @@ cmd_test_vm() {
     err "test-vm.sh not found at $script"
     exit 1
   fi
-  bash "$script" "$subcmd" "$@"
+  # Wish #25 fix (2026-05-14): pass the dev source path through.
+  # Resolution order:
+  #   1. $AGI_DEV_SOURCE env var (caller override)
+  #   2. config.workspace.devSource in gateway.json (explicit owner setting)
+  #   3. config.workspace.selfRepo if it points OUTSIDE /opt (dev install)
+  #   4. Convention: <workspace.projects[0]>/_aionima/repos/agi
+  # Without this, test-vm.sh's REPO_DIR resolves to /opt/agi (the deployed
+  # copy) and mounts the wrong source. test-vm.sh's env-var override
+  # (AGI_DEV_SOURCE) takes precedence over its dirname-based fallback.
+  local dev_source="${AGI_DEV_SOURCE:-}"
+  if [ -z "$dev_source" ] && [ -f "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+    # Try explicit workspace.devSource first.
+    dev_source="$(jq -r '.workspace.devSource // empty' "$CONFIG_FILE" 2>/dev/null || true)"
+    # Fall back to workspace.selfRepo when it's NOT the deployed copy.
+    if [ -z "$dev_source" ]; then
+      local self_repo
+      self_repo="$(jq -r '.workspace.selfRepo // empty' "$CONFIG_FILE" 2>/dev/null || true)"
+      if [ -n "$self_repo" ] && [ "$self_repo" != "/opt/agi" ] && [ -d "$self_repo" ]; then
+        dev_source="$self_repo"
+      fi
+    fi
+    # Convention: <workspace.projects[0]>/_aionima/repos/agi
+    if [ -z "$dev_source" ]; then
+      local first_project
+      first_project="$(jq -r '.workspace.projects[0] // empty' "$CONFIG_FILE" 2>/dev/null || true)"
+      if [ -n "$first_project" ] && [ -d "$first_project/_aionima/repos/agi" ]; then
+        dev_source="$first_project/_aionima/repos/agi"
+      fi
+    fi
+  fi
+  if [ -n "$dev_source" ] && [ -d "$dev_source" ]; then
+    AGI_DEV_SOURCE="$dev_source" bash "$script" "$subcmd" "$@"
+  else
+    bash "$script" "$subcmd" "$@"
+  fi
 }
 
 # Resolve a project slug or name to its container name (agi-<hostname>).
