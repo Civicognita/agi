@@ -360,7 +360,7 @@ export class TynnLitePmProvider implements PmProvider {
       status,
       startedAt: status === "doing" && current.startedAt === null ? now : current.startedAt,
       finishedAt: (status === "finished" || status === "archived") && current.finishedAt === null ? now : current.finishedAt,
-      updatedAt: { ...(current.updatedAt ?? {}), status: now },
+      updatedAt: { ...current.updatedAt, status: now },
     };
     this.appendRecord(updated);
     const refolded = [...this.foldRecords().values()];
@@ -395,7 +395,7 @@ export class TynnLitePmProvider implements PmProvider {
     const current = folded.get(taskId);
     if (current === undefined) throw new Error(`tynn-lite: unknown task ${taskId}`);
     const now = new Date().toISOString();
-    const newTimestamps: NonNullable<TynnLiteTaskRecord["updatedAt"]> = { ...(current.updatedAt ?? {}) };
+    const newTimestamps: NonNullable<TynnLiteTaskRecord["updatedAt"]> = { ...current.updatedAt };
     if (fields.title !== undefined) newTimestamps.title = now;
     if (fields.description !== undefined) newTimestamps.description = now;
     if (fields.verificationSteps !== undefined) newTimestamps.verificationSteps = now;

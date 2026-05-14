@@ -28,7 +28,10 @@ import {
   buildSearchOptions,
   normalizeUserPresence,
   normalizeMemberRoles,
+  buildAggregateStatsOptions,
+  aggregateChannelStats,
   type DiscordSearchOptions,
+  type MessageForStats,
 } from "./aion-tools-logic.js";
 
 interface BridgeToolContext {
@@ -267,6 +270,66 @@ function buildResolveProjectTool(_ctx: BridgeToolContext): AgentToolDefinition {
 }
 
 /**
+ * CHN-G (s168) slice 1 — `discord_aggregate_stats`. Scrum-master skill
+ * calls this for stand-up summaries: returns messageCount + uniqueAuthors
+ * + top-5 authors + first/last message timestamps for a channel over a
+ * day window. Bot-author messages are filtered out (scrum-master cares
+ * about human activity). Default look-back: 7 days, max 90.
+ */
+function buildAggregateStatsTool(ctx: BridgeToolContext): AgentToolDefinition {
+  return {
+    name: "discord_aggregate_stats",
+    description:
+      "Aggregate engagement metrics for a Discord channel over a day window. Returns messageCount, uniqueAuthors, top-5 authors by message count, firstMessageAt/lastMessageAt, and bot-message exclusion count. Used by the scrum-master skill (s168) for stand-up summaries and activity reports.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        channelId: { type: "string", description: "Discord channel ID to aggregate over." },
+        days: { type: "number", description: "Look-back window in days. Default 7; min 1, max 90." },
+        limit: { type: "number", description: "Max messages to scan. Default 500, max 1000." },
+      },
+      required: ["channelId"],
+    },
+    handler: async (input) => {
+      const opts = buildAggregateStatsOptions(input as Record<string, unknown>);
+      const channel = await ctx.client.channels.fetch(opts.channelId);
+      if (channel === null || !("messages" in channel)) {
+        throw new Error(`Channel not found or not message-capable: ${opts.channelId}`);
+      }
+      // discord.js MessageManager: fetch newest-first with limit cap 100/page.
+      // Paginate via `before` cursor to reach the configured limit.
+      const collected: MessageForStats[] = [];
+      let beforeId: string | undefined;
+      while (collected.length < opts.limit) {
+        const pageSize = Math.min(100, opts.limit - collected.length);
+        const fetchOpts: { limit: number; before?: string } = { limit: pageSize };
+        if (beforeId !== undefined) fetchOpts.before = beforeId;
+        const page = await (channel as { messages: { fetch: (o: typeof fetchOpts) => Promise<Map<string, unknown>> } }).messages.fetch(fetchOpts);
+        if (page.size === 0) break;
+        let oldestIdInPage: string | undefined;
+        for (const msg of page.values()) {
+          const m = msg as {
+            id: string;
+            createdAt: Date;
+            author: { id: string; username: string; bot: boolean; globalName?: string | null };
+          };
+          collected.push({
+            authorId: m.author.id,
+            authorName: m.author.globalName ?? m.author.username,
+            createdAtMs: m.createdAt.getTime(),
+            isBot: m.author.bot,
+          });
+          oldestIdInPage = m.id;
+        }
+        if (page.size < pageSize) break; // hit channel start
+        beforeId = oldestIdInPage;
+      }
+      return aggregateChannelStats(opts.channelId, opts.days, collected);
+    },
+  };
+}
+
+/**
  * Build the full set of Discord bridge tools for registration with the
  * agent tool registry. Caller (channel plugin's `start()`) iterates and
  * calls `api.registerAgentTool(def)` for each.
@@ -278,5 +341,6 @@ export function buildDiscordBridgeTools(ctx: BridgeToolContext): AgentToolDefini
     buildListMembersTool(ctx),
     buildGetUserActivityTool(ctx),
     buildResolveProjectTool(ctx),
+    buildAggregateStatsTool(ctx),
   ];
 }

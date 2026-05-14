@@ -121,3 +121,128 @@ describe("normalizeMemberRoles", () => {
     expect(normalizeMemberRoles(m).map((r) => r.name)).toEqual(["Aye", "Bee"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// CHN-G (s168) slice 1 — aggregate_stats helpers
+// ---------------------------------------------------------------------------
+
+import {
+  buildAggregateStatsOptions,
+  aggregateChannelStats,
+  type MessageForStats,
+} from "./aion-tools-logic.js";
+
+describe("buildAggregateStatsOptions", () => {
+  it("requires channelId", () => {
+    expect(() => buildAggregateStatsOptions({})).toThrow(/channelId is required/);
+    expect(() => buildAggregateStatsOptions({ channelId: "" })).toThrow(/channelId is required/);
+  });
+
+  it("defaults days to 7 + limit to 500", () => {
+    const opts = buildAggregateStatsOptions({ channelId: "c1" });
+    expect(opts.days).toBe(7);
+    expect(opts.limit).toBe(500);
+  });
+
+  it("clamps days to [1, 90]", () => {
+    expect(buildAggregateStatsOptions({ channelId: "c1", days: 0 }).days).toBe(1);
+    expect(buildAggregateStatsOptions({ channelId: "c1", days: 500 }).days).toBe(90);
+    expect(buildAggregateStatsOptions({ channelId: "c1", days: 30 }).days).toBe(30);
+  });
+
+  it("clamps limit to [1, 1000]", () => {
+    expect(buildAggregateStatsOptions({ channelId: "c1", limit: 0 }).limit).toBe(1);
+    expect(buildAggregateStatsOptions({ channelId: "c1", limit: 10000 }).limit).toBe(1000);
+  });
+
+  it("floors fractional days/limit", () => {
+    expect(buildAggregateStatsOptions({ channelId: "c1", days: 7.9, limit: 100.5 }).days).toBe(7);
+    expect(buildAggregateStatsOptions({ channelId: "c1", days: 7.9, limit: 100.5 }).limit).toBe(100);
+  });
+});
+
+describe("aggregateChannelStats", () => {
+  function makeMessage(authorId: string, authorName: string, daysAgo: number, isBot = false): MessageForStats {
+    return {
+      authorId,
+      authorName,
+      createdAtMs: Date.now() - daysAgo * 24 * 60 * 60 * 1000,
+      isBot,
+    };
+  }
+
+  it("returns zeros for empty input", () => {
+    const out = aggregateChannelStats("c1", 7, []);
+    expect(out.messageCount).toBe(0);
+    expect(out.uniqueAuthors).toBe(0);
+    expect(out.topAuthors).toEqual([]);
+    expect(out.firstMessageAt).toBeNull();
+    expect(out.lastMessageAt).toBeNull();
+    expect(out.botMessagesExcluded).toBe(0);
+  });
+
+  it("filters out messages outside the day window", () => {
+    const msgs = [
+      makeMessage("u1", "Alice", 1),  // in
+      makeMessage("u1", "Alice", 5),  // in
+      makeMessage("u1", "Alice", 10), // OUT — beyond 7 days
+    ];
+    const out = aggregateChannelStats("c1", 7, msgs);
+    expect(out.messageCount).toBe(2);
+  });
+
+  it("excludes bot messages + counts them separately", () => {
+    const msgs = [
+      makeMessage("u1", "Alice", 1),
+      makeMessage("bot1", "Aionima", 1, true),
+      makeMessage("bot1", "Aionima", 2, true),
+    ];
+    const out = aggregateChannelStats("c1", 7, msgs);
+    expect(out.messageCount).toBe(1);
+    expect(out.uniqueAuthors).toBe(1);
+    expect(out.botMessagesExcluded).toBe(2);
+  });
+
+  it("ranks topAuthors by messageCount desc, ties broken by name", () => {
+    const msgs = [
+      makeMessage("u1", "Alice", 1),
+      makeMessage("u1", "Alice", 1),
+      makeMessage("u1", "Alice", 1),
+      makeMessage("u2", "Bob", 1),
+      makeMessage("u2", "Bob", 1),
+      makeMessage("u3", "Carol", 1),
+      makeMessage("u4", "Charlie", 1),
+      makeMessage("u4", "Charlie", 1),
+      makeMessage("u4", "Charlie", 1),
+    ];
+    const out = aggregateChannelStats("c1", 7, msgs);
+    expect(out.topAuthors.map((a) => a.authorName)).toEqual(["Alice", "Charlie", "Bob", "Carol"]);
+  });
+
+  it("caps topAuthors at 5", () => {
+    const msgs = ["u1", "u2", "u3", "u4", "u5", "u6", "u7"].map((id, i) => makeMessage(id, `User ${String(i)}`, 1));
+    const out = aggregateChannelStats("c1", 7, msgs);
+    expect(out.topAuthors.length).toBe(5);
+    expect(out.uniqueAuthors).toBe(7);
+  });
+
+  it("populates dayRange string (last N day(s))", () => {
+    expect(aggregateChannelStats("c1", 1, []).dayRange).toBe("last 1 day");
+    expect(aggregateChannelStats("c1", 7, []).dayRange).toBe("last 7 days");
+    expect(aggregateChannelStats("c1", 30, []).dayRange).toBe("last 30 days");
+  });
+
+  it("first/lastMessageAt reflect window-filtered messages", () => {
+    const msgs = [
+      makeMessage("u1", "Alice", 0.1),
+      makeMessage("u1", "Alice", 6),
+      makeMessage("u1", "Alice", 100),
+    ];
+    const out = aggregateChannelStats("c1", 7, msgs);
+    expect(out.firstMessageAt).not.toBeNull();
+    expect(out.lastMessageAt).not.toBeNull();
+    const diffMs = new Date(out.lastMessageAt!).getTime() - new Date(out.firstMessageAt!).getTime();
+    expect(diffMs).toBeGreaterThan(5 * 24 * 60 * 60 * 1000);
+    expect(diffMs).toBeLessThan(7 * 24 * 60 * 60 * 1000);
+  });
+});
