@@ -1803,7 +1803,22 @@ export async function createGatewayRuntimeState(
     const { id } = request.params;
     try {
       const { approval, decision } = deps.pendingApprovalStore.approve(id);
-      return reply.send({ ok: true, approval, decision });
+      // CHN-E slice 5: composite entity-tier promotion. When an entity
+      // already exists for this (channelId, channelUserId), bump its
+      // verificationTier to "verified". Approval = verified is the
+      // contract; doing it here keeps "approve" atomic from the
+      // caller's perspective.
+      let entityPromoted: { id: string; tier: string } | null = null;
+      if (deps.entityStore !== undefined) {
+        const entity = await deps.entityStore.resolveEntityByChannel(approval.channelId, approval.channelUserId);
+        if (entity !== null && entity.verificationTier !== "verified") {
+          await deps.entityStore.updateEntity(entity.id, { verificationTier: "verified" });
+          entityPromoted = { id: entity.id, tier: "verified" };
+        } else if (entity !== null) {
+          entityPromoted = { id: entity.id, tier: entity.verificationTier };
+        }
+      }
+      return reply.send({ ok: true, approval, decision, entityPromoted });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const code = msg.includes("not found") ? 404 : 400;

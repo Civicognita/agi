@@ -28,6 +28,9 @@ interface NavItem {
   label: string;
   exact?: boolean;
   icon?: LucideIcon;
+  /** When present + > 0, renders a count badge next to the label.
+   *  CHN-E (s166) slice 5 — surfaces pending-from-channel count. */
+  badge?: number;
 }
 
 interface NavSection {
@@ -57,6 +60,7 @@ const builtinSections: NavSectionWithMode[] = [
   ]},
   { mode: "main", title: "Communication", items: [
     { to: "/comms", label: "All Messages", exact: true, icon: Inbox },
+    { to: "/identity/pending", label: "Pending Identity", icon: Fingerprint },
   ]},
   { mode: "main", title: "Knowledge", items: [
     { to: "/knowledge", label: "Browse", icon: Compass },
@@ -166,6 +170,25 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = fa
     fetchPluginDashboardDomains().then(setPluginDomains).catch(() => {});
   }, []);
 
+  // CHN-E (s166) slice 5 — sidebar nav badge for /identity/pending count.
+  // 30s polling keeps the badge fresh without WebSocket complexity. Silent
+  // on errors (no pending store wired → 503 → 0 count).
+  const [pendingIdentityCount, setPendingIdentityCount] = useState<number>(0);
+  useEffect(() => {
+    const fetchCount = (): void => {
+      void fetch("/api/identity/pending")
+        .then((res) => res.ok ? res.json() : { count: 0 })
+        .then((data) => {
+          const count = (data as { count?: unknown } | null)?.count;
+          setPendingIdentityCount(typeof count === "number" ? count : 0);
+        })
+        .catch(() => setPendingIdentityCount(0));
+    };
+    fetchCount();
+    const interval = setInterval(fetchCount, 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
   const sections = useMemo(() => {
     const baseSections: (NavSectionWithMode & { position: number })[] = [
       ...builtinSections.map((s, i) => ({ ...s, position: (i + 1) * 10 })),
@@ -238,6 +261,7 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = fa
                 ? currentPath === item.to
                 : currentPath === item.to || currentPath.startsWith(item.to + "/");
               const Icon = item.icon;
+              const badgeCount = item.to === "/identity/pending" ? pendingIdentityCount : (item.badge ?? 0);
               return (
                 <MobileMenu.Item
                   key={item.to}
@@ -245,7 +269,14 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = fa
                   icon={Icon ? <Icon className="w-4 h-4" /> : undefined}
                   onClick={() => { navigate(item.to); onMobileClose(); }}
                 >
-                  {item.label}
+                  <span className="flex items-center gap-1.5 w-full">
+                    <span className="flex-1 truncate">{item.label}</span>
+                    {badgeCount > 0 && (
+                      <span className="text-[9px] font-bold px-1.5 py-0 rounded-full bg-yellow/20 text-yellow shrink-0">
+                        {badgeCount}
+                      </span>
+                    )}
+                  </span>
                 </MobileMenu.Item>
               );
             })}
@@ -302,6 +333,7 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = fa
               : currentPath === item.to || currentPath.startsWith(item.to + "/");
             const Icon = item.icon;
             const testId = deriveNavTestId(item.to, item.label);
+            const badgeCount = item.to === "/identity/pending" ? pendingIdentityCount : (item.badge ?? 0);
             return (
               <Sidebar.Item
                 key={item.to}
@@ -310,7 +342,18 @@ export function AppSidebar({ isMobile, mobileOpen, onMobileClose, hfEnabled = fa
                 onClick={() => navigate(item.to)}
                 data-testid={testId}
               >
-                {item.label}
+                <span className="flex items-center gap-1.5 w-full">
+                  <span className="flex-1 truncate">{item.label}</span>
+                  {badgeCount > 0 && (
+                    <span
+                      className="text-[9px] font-bold px-1.5 py-0 rounded-full bg-yellow/20 text-yellow shrink-0"
+                      aria-label={`${String(badgeCount)} pending`}
+                      data-testid={`${testId}-badge`}
+                    >
+                      {badgeCount}
+                    </span>
+                  )}
+                </span>
               </Sidebar.Item>
             );
           })}
