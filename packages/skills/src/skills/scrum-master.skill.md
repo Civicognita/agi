@@ -24,8 +24,8 @@ When the entity asks for a stand-up summary, channel activity, or "who was activ
 ## Process
 
 1. **Identify the channel.** The entity may name a channel ("#general", "the dev channel") or imply one from the project context. Resolve to a concrete `channelId`:
-   - If the channel name is explicit, ask the bridge tool family for an `_available_rooms` listing (e.g. `discord_available_rooms`) and match by display name.
    - If a channel is bound to the current project via `project.json rooms[]` (see CHN-D), the gateway already knows which `channelId` to use — prefer that binding over fuzzy name match.
+   - Otherwise call `discord_available_rooms({query: "<name>"})` (or the equivalent tool for whichever channel the entity asked about). The tool tolerates a leading `#` and matches against both room label and guild name. Pick the unique result.
    - If still ambiguous (multiple matches, no project binding), ask the entity which channel to use.
 
 2. **Pick the window.** Default to **last 7 days** unless the entity specifies:

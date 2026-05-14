@@ -167,6 +167,56 @@ export interface AggregateStats {
  * messageCount + uniqueAuthors + top-5 authors. Returns nulls for
  * empty windows so consumers can render "no activity" cleanly.
  */
+// ---------------------------------------------------------------------------
+// CHN-G (s168) slice 3 — available_rooms filter
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimal shape needed by the filter — matches AvailableRoomDescriptor's
+ * surface but stays decoupled so the pure-logic module doesn't import
+ * from `./state.ts`.
+ */
+export interface RoomForFilter {
+  channelId: string;
+  roomId: string;
+  label: string;
+  kind: string;
+  privacy: "public" | "private" | "secret";
+  group: string;
+  parent?: string;
+}
+
+export interface AvailableRoomsFilter {
+  /** Substring (case-insensitive) match against label OR group. Optional. */
+  query?: string;
+  /** Restrict to a specific guild/server group. Optional. */
+  group?: string;
+}
+
+/**
+ * Pure-logic filter applied to AvailableRoomDescriptor[] before the bridge
+ * tool returns it. Keeps the discord.js side trivial (just gather, then
+ * delegate). Tests pass plain objects.
+ */
+export function filterAvailableRooms(
+  rooms: RoomForFilter[],
+  filter: AvailableRoomsFilter,
+): RoomForFilter[] {
+  const q = filter.query?.trim().toLowerCase() ?? "";
+  const g = filter.group?.trim() ?? "";
+  return rooms.filter((r) => {
+    if (g.length > 0 && r.group !== g) return false;
+    if (q.length > 0) {
+      const label = r.label.toLowerCase();
+      const group = r.group.toLowerCase();
+      // Match a leading "#" so the agent can pass "#general" or "general".
+      const qStripped = q.startsWith("#") ? q.slice(1) : q;
+      if (!label.includes(qStripped) && !group.includes(qStripped)) return false;
+    }
+    return true;
+  });
+}
+
 export function aggregateChannelStats(
   channelId: string,
   days: number,

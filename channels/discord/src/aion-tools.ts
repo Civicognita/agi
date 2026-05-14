@@ -30,9 +30,11 @@ import {
   normalizeMemberRoles,
   buildAggregateStatsOptions,
   aggregateChannelStats,
+  filterAvailableRooms,
   type DiscordSearchOptions,
   type MessageForStats,
 } from "./aion-tools-logic.js";
+import { getDiscordAvailableRooms } from "./state.js";
 
 interface BridgeToolContext {
   client: Client;
@@ -330,6 +332,39 @@ function buildAggregateStatsTool(ctx: BridgeToolContext): AgentToolDefinition {
 }
 
 /**
+ * CHN-G (s168) slice 3 — `discord_available_rooms`. Returns the flat
+ * list of bindable rooms the bot can see (text channels across all
+ * guilds it's a member of, voice channels filtered out). Optional
+ * `query` substring match (case-insensitive, "#" prefix tolerated) and
+ * `group` restrict-to-server. Used by the scrum-master skill (and any
+ * future skill) to resolve "#general" → roomId without round-tripping
+ * through `project.json rooms[]`.
+ */
+function buildAvailableRoomsTool(ctx: BridgeToolContext): AgentToolDefinition {
+  return {
+    name: "discord_available_rooms",
+    description:
+      "List rooms (text channels) the Discord bot can see across all guilds it's a member of. Returns an array of {channelId, roomId, label, kind, privacy, group, parent}. Optional `query` does a case-insensitive substring match against label or group (a leading '#' is tolerated). Optional `group` restricts results to a single guild. Voice channels and categories are excluded.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional case-insensitive substring match against room label or guild name. A leading '#' is tolerated." },
+        group: { type: "string", description: "Optional guild name to restrict results to a single server." },
+      },
+    },
+    handler: async (input) => {
+      const raw = input as Record<string, unknown>;
+      const filter = {
+        query: typeof raw["query"] === "string" ? (raw["query"] as string) : undefined,
+        group: typeof raw["group"] === "string" ? (raw["group"] as string) : undefined,
+      };
+      const rooms = getDiscordAvailableRooms(ctx.client);
+      return filterAvailableRooms(rooms, filter);
+    },
+  };
+}
+
+/**
  * Build the full set of Discord bridge tools for registration with the
  * agent tool registry. Caller (channel plugin's `start()`) iterates and
  * calls `api.registerAgentTool(def)` for each.
@@ -342,5 +377,6 @@ export function buildDiscordBridgeTools(ctx: BridgeToolContext): AgentToolDefini
     buildGetUserActivityTool(ctx),
     buildResolveProjectTool(ctx),
     buildAggregateStatsTool(ctx),
+    buildAvailableRoomsTool(ctx),
   ];
 }

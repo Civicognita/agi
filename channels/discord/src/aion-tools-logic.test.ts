@@ -129,7 +129,9 @@ describe("normalizeMemberRoles", () => {
 import {
   buildAggregateStatsOptions,
   aggregateChannelStats,
+  filterAvailableRooms,
   type MessageForStats,
+  type RoomForFilter,
 } from "./aion-tools-logic.js";
 
 describe("buildAggregateStatsOptions", () => {
@@ -244,5 +246,46 @@ describe("aggregateChannelStats", () => {
     const diffMs = new Date(out.lastMessageAt!).getTime() - new Date(out.firstMessageAt!).getTime();
     expect(diffMs).toBeGreaterThan(5 * 24 * 60 * 60 * 1000);
     expect(diffMs).toBeLessThan(7 * 24 * 60 * 60 * 1000);
+  });
+});
+
+describe("filterAvailableRooms", () => {
+  const sample: RoomForFilter[] = [
+    { channelId: "discord", roomId: "g1:c1", label: "general", kind: "channel", privacy: "public", group: "Aionima HQ" },
+    { channelId: "discord", roomId: "g1:c2", label: "dev/backend", kind: "channel", privacy: "public", group: "Aionima HQ", parent: "dev" },
+    { channelId: "discord", roomId: "g1:c3", label: "dev/frontend", kind: "channel", privacy: "public", group: "Aionima HQ", parent: "dev" },
+    { channelId: "discord", roomId: "g2:c1", label: "lobby", kind: "channel", privacy: "public", group: "Civicognita" },
+  ];
+
+  it("returns all rooms when no filter passed", () => {
+    expect(filterAvailableRooms(sample, {}).length).toBe(4);
+  });
+
+  it("matches query substring (case-insensitive)", () => {
+    expect(filterAvailableRooms(sample, { query: "DEV" }).map((r) => r.roomId)).toEqual(["g1:c2", "g1:c3"]);
+  });
+
+  it("tolerates leading '#' in query", () => {
+    expect(filterAvailableRooms(sample, { query: "#general" }).map((r) => r.roomId)).toEqual(["g1:c1"]);
+  });
+
+  it("matches against group name", () => {
+    expect(filterAvailableRooms(sample, { query: "civic" }).map((r) => r.roomId)).toEqual(["g2:c1"]);
+  });
+
+  it("restricts to a single group when `group` passed", () => {
+    expect(filterAvailableRooms(sample, { group: "Civicognita" }).map((r) => r.roomId)).toEqual(["g2:c1"]);
+  });
+
+  it("combines group + query (AND)", () => {
+    expect(filterAvailableRooms(sample, { group: "Aionima HQ", query: "dev" }).map((r) => r.roomId)).toEqual(["g1:c2", "g1:c3"]);
+  });
+
+  it("returns empty when query matches nothing", () => {
+    expect(filterAvailableRooms(sample, { query: "nonexistent" })).toEqual([]);
+  });
+
+  it("ignores whitespace-only query/group", () => {
+    expect(filterAvailableRooms(sample, { query: "   ", group: "   " }).length).toBe(4);
   });
 });
