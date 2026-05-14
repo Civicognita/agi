@@ -202,6 +202,9 @@ importers:
       '@agi/plugins':
         specifier: workspace:*
         version: link:../../packages/plugins
+      '@agi/sdk':
+        specifier: workspace:*
+        version: link:../../packages/aion-sdk
       discord.js:
         specifier: ^14.18.0
         version: 14.25.1
