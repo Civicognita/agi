@@ -3738,3 +3738,29 @@ export async function removeProjectRoom(
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
 }
+
+// CHN-D slice 3b — available rooms picker. The channels-specific
+// endpoint (e.g. /api/channels/discord/rooms) emits a flat list of
+// bindable rooms; the picker dialog shows them grouped + indicates
+// which are already bound.
+export interface AvailableChannelRoom {
+  channelId: string;
+  roomId: string;
+  label: string;
+  kind?: string;
+  privacy?: "public" | "private" | "secret";
+  /** Grouping label (e.g. guild/server name for Discord, workspace for Slack). */
+  group: string;
+  parent?: string;
+}
+
+export async function fetchAvailableChannelRooms(channelId: string): Promise<AvailableChannelRoom[]> {
+  const url = `/api/channels/${encodeURIComponent(channelId)}/rooms`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { rooms: AvailableChannelRoom[] };
+  return data.rooms;
+}

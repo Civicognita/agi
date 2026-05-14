@@ -553,5 +553,14 @@ export default {
       const { getDiscordState } = await import("./state.js");
       reply.send(getDiscordState(plugin.__client));
     });
+
+    // CHN-D slice 3b 2026-05-14 — flat list of bindable rooms for the
+    // dashboard's project-room picker. Filters out voice channels +
+    // categories; emits {channelId, roomId, label, kind, privacy, group}
+    // sorted by (guild, parent, label).
+    api.registerHttpRoute("GET", "/api/channels/discord/rooms", async (_req, reply) => {
+      const { getDiscordAvailableRooms } = await import("./state.js");
+      reply.send({ rooms: getDiscordAvailableRooms(plugin.__client) });
+    });
   },
 } satisfies AionimaPlugin;

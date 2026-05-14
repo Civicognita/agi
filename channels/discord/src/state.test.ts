@@ -2,7 +2,12 @@
  * state.ts pure-helper tests.
  */
 import { describe, it, expect } from "vitest";
-import { channelKindFromType, describeClientState, describeGuildChannels } from "./state.js";
+import {
+  channelKindFromType,
+  describeClientState,
+  describeGuildChannels,
+  flattenStateToAvailableRooms,
+} from "./state.js";
 
 describe("channelKindFromType", () => {
   it("maps known Discord channel types", () => {
@@ -93,5 +98,76 @@ describe("describeClientState", () => {
     expect(out.guilds[0]?.memberCount).toBe(42);
     expect(out.guilds[0]?.iconUrl).toBe("https://cdn.discord/g1.png");
     expect(out.guilds[1]?.iconUrl).toBeUndefined();
+  });
+});
+
+describe("flattenStateToAvailableRooms (CHN-D slice 3b)", () => {
+  it("returns empty array when client is disconnected", () => {
+    const out = flattenStateToAvailableRooms({ connected: false, guilds: [], snapshotAt: "" });
+    expect(out).toEqual([]);
+  });
+
+  it("flattens guilds.channels into a sorted list, filters voice", () => {
+    const out = flattenStateToAvailableRooms({
+      connected: true,
+      user: { id: "u", tag: "Aion#1" },
+      snapshotAt: "2026-05-14T13:00:00Z",
+      guilds: [
+        {
+          id: "g1",
+          name: "Server B",
+          channels: [
+            { id: "c1", name: "general", kind: "text" },
+            { id: "c2", name: "lobby", kind: "voice" }, // filtered
+            { id: "c3", name: "bug-reports", kind: "forum", parent: "Support" },
+          ],
+        },
+        {
+          id: "g2",
+          name: "Server A",
+          channels: [
+            { id: "c4", name: "announcements", kind: "text", parent: "Info" },
+          ],
+        },
+      ],
+    });
+    // Voice excluded → 3 rooms total
+    expect(out).toHaveLength(3);
+    // Sorted by group (Server A before Server B)
+    expect(out[0]?.group).toBe("Server A");
+    expect(out[0]?.label).toBe("Info/announcements");
+    // Within Server B, parent "Support" sorts before default ""
+    expect(out[1]?.group).toBe("Server B");
+    expect(out[1]?.label).toBe("Support/bug-reports");
+    expect(out[2]?.label).toBe("general"); // no parent — sorts last for empty-parent
+  });
+
+  it("encodes roomId as `<guildId>:<channelId>` for round-trip persistence", () => {
+    const out = flattenStateToAvailableRooms({
+      connected: true,
+      user: { id: "u", tag: "Aion#1" },
+      snapshotAt: "",
+      guilds: [
+        {
+          id: "12345",
+          name: "Test",
+          channels: [{ id: "67890", name: "ch", kind: "text" }],
+        },
+      ],
+    });
+    expect(out[0]?.roomId).toBe("12345:67890");
+  });
+
+  it("always stamps channelId='discord' + privacy='public' (no presence yet)", () => {
+    const out = flattenStateToAvailableRooms({
+      connected: true,
+      user: { id: "u", tag: "Aion#1" },
+      snapshotAt: "",
+      guilds: [
+        { id: "g", name: "S", channels: [{ id: "c", name: "ch", kind: "text" }] },
+      ],
+    });
+    expect(out[0]?.channelId).toBe("discord");
+    expect(out[0]?.privacy).toBe("public");
   });
 });

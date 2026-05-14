@@ -21,6 +21,7 @@ import {
   removeProjectRoom,
   type ProjectRoomBinding,
 } from "../api";
+import { RoomPickerDialog } from "./RoomPickerDialog.js";
 
 interface ChannelsPanelProps {
   projectPath: string;
@@ -54,6 +55,7 @@ export function ChannelsPanel({ projectPath }: ChannelsPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -97,10 +99,27 @@ export function ChannelsPanel({ projectPath }: ChannelsPanelProps) {
             Rooms bound to this project. Inbound events from these rooms route here.
           </p>
         </div>
-        <Button variant="outline" size="xs" onClick={() => void load()} disabled={loading}>
-          {loading ? "Loading…" : "Refresh"}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="xs" onClick={() => void load()} disabled={loading}>
+            {loading ? "Loading…" : "Refresh"}
+          </Button>
+          <Button
+            size="xs"
+            onClick={() => setPickerOpen(true)}
+            data-testid="channels-panel-add-binding"
+          >
+            + Add Binding
+          </Button>
+        </div>
       </div>
+
+      <RoomPickerDialog
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        projectPath={projectPath}
+        boundRooms={bindings}
+        onBound={() => { void load(); }}
+      />
 
       {error !== null && (
         <div className="text-[12px] text-red mb-3" data-testid="channels-panel-error">

@@ -145,6 +145,69 @@ export function describeClientState(input: ClientStateInput): DiscordStateDescri
 }
 
 /**
+ * Available-room descriptor for the dashboard room picker.
+ *
+ * CHN-D slice 3b — flat list of bindable rooms across all guilds the bot
+ * is a member of. Matches the shape consumed by the dashboard's picker
+ * dialog (channel-agnostic; same shape will be emitted by Telegram/Slack/
+ * Email when CHN-I/J/K/L migrate).
+ */
+export interface AvailableRoomDescriptor {
+  /** Channel id (always "discord" for this module). */
+  channelId: "discord";
+  /** Room id — the value we persist into project.json rooms[].roomId. */
+  roomId: string;
+  /** Display label (e.g. "#general"). */
+  label: string;
+  /** Room kind (channel / forum / voice / etc.). */
+  kind: DiscordChannelKind;
+  /** Visibility scope — Discord doesn't expose this on cached channels yet, so default to "public". */
+  privacy: "public" | "private" | "secret";
+  /** Grouping label for the picker (e.g. "My Server"). */
+  group: string;
+  /** Optional parent category for nested display. */
+  parent?: string;
+}
+
+/**
+ * Pure-logic extractor: turn a populated DiscordStateDescriptor into a
+ * flat list of bindable rooms. Filters out voice channels (not bindable
+ * for chat-event routing) and categories. Sorted by (group, parent, label).
+ */
+export function flattenStateToAvailableRooms(state: DiscordStateDescriptor): AvailableRoomDescriptor[] {
+  const out: AvailableRoomDescriptor[] = [];
+  if (!state.connected) return out;
+  for (const guild of state.guilds) {
+    for (const ch of guild.channels) {
+      // Voice channels can't carry text events — filter them.
+      if (ch.kind === "voice") continue;
+      out.push({
+        channelId: "discord",
+        roomId: `${guild.id}:${ch.id}`,
+        label: ch.parent !== undefined ? `${ch.parent}/${ch.name}` : ch.name,
+        kind: ch.kind,
+        privacy: "public",
+        group: guild.name,
+        parent: ch.parent,
+      });
+    }
+  }
+  out.sort((a, b) => {
+    if (a.group !== b.group) return a.group.localeCompare(b.group);
+    const pa = a.parent ?? "";
+    const pb = b.parent ?? "";
+    if (pa !== pb) return pa.localeCompare(pb);
+    return a.label.localeCompare(b.label);
+  });
+  return out;
+}
+
+/** Type-safe wrapper: extract state, flatten to picker shape. */
+export function getDiscordAvailableRooms(client: Client): AvailableRoomDescriptor[] {
+  return flattenStateToAvailableRooms(getDiscordState(client));
+}
+
+/**
  * Type-safe wrapper around describeClientState for the real discord.js
  * Client. Resolves avatar/icon URLs and channel descriptors, then hands
  * pre-typed data to the pure extractor. Called from the HTTP route handler.
