@@ -136,6 +136,7 @@ import { migrateAionimaMemoryDir } from "./aionima-memory-migration.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
+import { PendingApprovalStore } from "./pending-approval-store.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
 import { migrateAllProjectMcpConfigs } from "./mcp-config-migration.js";
 import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
@@ -656,6 +657,13 @@ export async function startGatewayServer(
     workspaceProjects: inboundWorkspaceProjects,
   });
 
+  // s166 CHN-E slice 2 (2026-05-14) — pending-approval store. When an
+  // unknown user posts in a project-bound channel room, the router
+  // captures a pending record so owner can review via /identity/pending
+  // (UI in slice 3+). In-memory this version; persists to disk in a
+  // future slice (~/.agi/pending-approvals.json, mirroring pairingStore).
+  const inboundPendingApprovalStore = new PendingApprovalStore({ logger });
+
   // Inbound router — created after outbound so we can wire the sender for pairing.
   const inboundRouter = new InboundRouter({
     entityStore,
@@ -670,6 +678,7 @@ export async function startGatewayServer(
     ownerEntityId,
     commsLog,
     channelEventDispatcher: inboundChannelEventDispatcher,
+    pendingApprovalStore: inboundPendingApprovalStore,
     logger,
     outboundSender: async (channelId, channelUserId, content) => {
       await outboundDispatcher.dispatch({

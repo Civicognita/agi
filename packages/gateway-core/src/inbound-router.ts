@@ -5,6 +5,7 @@ import type { VoicePipeline, VoiceGatewayState, AudioFormat } from "@agi/voice";
 import type { PairingStore } from "./pairing-store.js";
 import type { OwnerConfig } from "@agi/config";
 import type { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
+import type { PendingApprovalStore } from "./pending-approval-store.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -47,6 +48,15 @@ export interface InboundRouterDeps {
    * — 2026-05-14.
    */
   channelEventDispatcher?: ChannelEventDispatcher;
+  /**
+   * Optional pending-approval store. When set + a message arrives in a
+   * project-bound room (i.e. dispatcher resolved a projectPath), the
+   * router captures a pending-approval record so owner can see + act
+   * on the contact via /identity/pending. CHN-E (s166) slice 2 —
+   * data-collection only: this slice does NOT gate the message; routing
+   * proceeds normally. Slice 3+ wires the gate-and-drop + UI together.
+   */
+  pendingApprovalStore?: PendingApprovalStore;
   /** Optional logger instance. */
   logger?: Logger;
 }
@@ -92,6 +102,7 @@ export class InboundRouter {
   private readonly outboundSender: OutboundSender | undefined;
   private readonly commsLog: CommsLog | undefined;
   private readonly channelEventDispatcher: ChannelEventDispatcher | undefined;
+  private readonly pendingApprovalStore: PendingApprovalStore | undefined;
   private readonly log: ComponentLogger;
   constructor(deps: InboundRouterDeps) {
     this.entityStore = deps.entityStore;
@@ -105,6 +116,7 @@ export class InboundRouter {
     this.outboundSender = deps.outboundSender;
     this.commsLog = deps.commsLog;
     this.channelEventDispatcher = deps.channelEventDispatcher;
+    this.pendingApprovalStore = deps.pendingApprovalStore;
     this.log = createComponentLogger(deps.logger, "inbound");
   }
 
@@ -425,15 +437,48 @@ export class InboundRouter {
     // path flows into the enqueued payload so the agent invocation runs
     // inside that project's scope.
     let projectPath: string | undefined;
+    let resolvedRoomId: string | undefined;
     if (this.channelEventDispatcher !== undefined && typeof routedMessage.metadata === "object" && routedMessage.metadata !== null) {
       const roomId = (routedMessage.metadata as Record<string, unknown>)["roomId"];
       if (typeof roomId === "string" && roomId.length > 0) {
         const dispatch = this.channelEventDispatcher.dispatch(channelId, roomId);
         if (dispatch !== null) {
           projectPath = dispatch.projectPath;
+          resolvedRoomId = roomId;
           this.log.info(`channel-event routed to project: ${channelId}::${roomId} → ${projectPath}`);
         }
       }
+    }
+
+    // Step 2c (CHN-E s166 slice 2) — pending-approval capture for
+    // unknown contacts in project-bound rooms. Idempotent: same triple
+    // refreshes display/preview, keeps original createdAt. Owner sees
+    // the captured records via /identity/pending (UI in slice 3+).
+    //
+    // Slice 2 is DATA-COLLECTION ONLY: routing proceeds normally even
+    // when a pending record is captured. Slice 3+ adds the gate-and-
+    // drop behavior + the promote-to-verified-entity flow.
+    if (
+      projectPath !== undefined &&
+      resolvedRoomId !== undefined &&
+      this.pendingApprovalStore !== undefined
+    ) {
+      const displayName = typeof routedMessage.metadata === "object" && routedMessage.metadata !== null
+        ? (routedMessage.metadata as Record<string, unknown>)["displayName"] as string | undefined
+          ?? (routedMessage.metadata as Record<string, unknown>)["username"] as string | undefined
+          ?? "Unknown"
+        : "Unknown";
+      const preview = routedMessage.content.type === "text"
+        ? (routedMessage.content as { text: string }).text
+        : `[${routedMessage.content.type}]`;
+      this.pendingApprovalStore.capture({
+        channelId,
+        roomId: resolvedRoomId,
+        channelUserId: routedMessage.channelUserId,
+        displayName,
+        projectPath,
+        firstMessagePreview: preview,
+      });
     }
 
     // Step 3 — enqueue for agent processing
