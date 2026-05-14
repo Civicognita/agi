@@ -463,7 +463,7 @@ export class InboundRouter {
       resolvedRoomId !== undefined &&
       this.pendingApprovalStore !== undefined
     ) {
-      const displayName = typeof routedMessage.metadata === "object" && routedMessage.metadata !== null
+      const captureDisplayName = typeof routedMessage.metadata === "object" && routedMessage.metadata !== null
         ? (routedMessage.metadata as Record<string, unknown>)["displayName"] as string | undefined
           ?? (routedMessage.metadata as Record<string, unknown>)["username"] as string | undefined
           ?? "Unknown"
@@ -475,10 +475,48 @@ export class InboundRouter {
         channelId,
         roomId: resolvedRoomId,
         channelUserId: routedMessage.channelUserId,
-        displayName,
+        displayName: captureDisplayName,
         projectPath,
         firstMessagePreview: preview,
       });
+    }
+
+    // Step 2d (CHN-E s166 slice 6) — gate-and-drop unverified senders
+    // in project-bound rooms. Messages from unverified entities are
+    // captured (step 2c above) but DROPPED here so they don't reach
+    // the agent until owner approves via /identity/pending.
+    //
+    // Exemptions:
+    //  - Owner (already routed past Step 0a's owner-command branch with
+    //    fall-through; we don't gate the owner here)
+    //  - Rejected sender — also dropped, but with a "rejected" log line
+    //  - Verified entities — proceed to enqueue normally
+    //  - No projectPath (room isn't bound) — proceed normally (this
+    //    gate only applies to bound rooms)
+    //  - No pendingApprovalStore wired — proceed normally (gate disabled)
+    if (
+      projectPath !== undefined &&
+      resolvedRoomId !== undefined &&
+      this.pendingApprovalStore !== undefined &&
+      !this.isOwner(channelId, routedMessage.channelUserId)
+    ) {
+      const decision = this.pendingApprovalStore.decisionFor(
+        channelId,
+        resolvedRoomId,
+        routedMessage.channelUserId,
+      );
+      if (decision !== null && decision.status === "rejected") {
+        this.log.info(
+          `drop message from REJECTED sender: ${channelId}::${resolvedRoomId}::${routedMessage.channelUserId}`,
+        );
+        return null;
+      }
+      if (entity.verificationTier !== "verified" && entity.verificationTier !== "sealed") {
+        this.log.info(
+          `hold message from UNVERIFIED sender (pending approval): ${channelId}::${resolvedRoomId}::${routedMessage.channelUserId}`,
+        );
+        return null;
+      }
     }
 
     // Step 3 — enqueue for agent processing
