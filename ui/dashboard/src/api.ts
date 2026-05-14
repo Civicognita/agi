@@ -3764,3 +3764,22 @@ export async function fetchAvailableChannelRooms(channelId: string): Promise<Ava
   const data = await res.json() as { rooms: AvailableChannelRoom[] };
   return data.rooms;
 }
+
+/**
+ * CHN-C slice 3 — resolve a (channelId, roomId) pair to its bound project.
+ * Returns `null` when no project binds the room. Surfaces what the gateway-
+ * side ChannelEventDispatcher returns; channel-agnostic.
+ */
+export async function resolveChannelRoom(
+  channelId: string,
+  roomId: string,
+): Promise<{ projectPath: string; binding: ProjectRoomBinding } | null> {
+  const url = `/api/channels/resolve-room?channelId=${encodeURIComponent(channelId)}&roomId=${encodeURIComponent(roomId)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { resolved: { projectPath: string; binding: ProjectRoomBinding } | null };
+  return data.resolved;
+}

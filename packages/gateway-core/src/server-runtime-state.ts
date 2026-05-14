@@ -1723,6 +1723,50 @@ export async function createGatewayRuntimeState(
   );
 
   // -----------------------------------------------------------------------
+  // CHN-C (s164) slice 3 — channel-event dispatcher query endpoint
+  //
+  // GET /api/channels/resolve-room?channelId=&roomId=
+  //
+  // Returns { projectPath, binding } when a project binds the (channelId,
+  // roomId) pair; { resolved: null } when no binding exists. Channel-
+  // agnostic — works across Discord/Telegram/Slack/Email once their
+  // adapters emit roomIds matching what owner bound via /api/projects/rooms.
+  //
+  // Consumers:
+  //  - Dashboard: pre-flight check before showing "which project this
+  //    Discord channel routes to"
+  //  - Agents: bridge tools can call this to learn project context
+  //  - CHN-B Discord rewrite: in MessageCreate handler, before dispatch
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/channels/resolve-room", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Channels API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const query = request.query as Record<string, string>;
+    const channelId = query["channelId"];
+    const roomId = query["roomId"];
+    if (!channelId || !roomId) {
+      return reply.code(400).send({ error: "channelId and roomId query parameters are required" });
+    }
+    const { ChannelEventDispatcher } = await import("./channel-event-dispatcher.js");
+    const dispatcher = new ChannelEventDispatcher({
+      projectConfigManager: deps.projectConfigManager,
+      workspaceProjects: deps.workspaceProjects ?? [],
+    });
+    const result = dispatcher.dispatch(channelId, roomId);
+    if (result === null) {
+      return reply.send({ resolved: null });
+    }
+    return reply.send({
+      resolved: {
+        projectPath: result.projectPath,
+        binding: result.binding,
+      },
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // GET /api/projects/info — git details for a project (private network only)
   // -----------------------------------------------------------------------
 
