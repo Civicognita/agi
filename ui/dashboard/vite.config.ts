@@ -36,7 +36,7 @@ export default defineConfig({
         // JS/CSS files have content hashes so cached versions are naturally unique.
         globPatterns: ["**/*.{js,css,ico,png,svg,woff2}"],
         navigateFallback: null,
-        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+        maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,

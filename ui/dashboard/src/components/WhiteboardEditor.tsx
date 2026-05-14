@@ -32,7 +32,10 @@
  */
 
 import { useMemo } from "react";
-import { SharedWhiteboard, type SharedWhiteboardProps } from "@particle-academy/agent-integrations";
+// agent-integrations 0.6.x moved heavy composites to subpath imports
+// to keep the main barrel light. See upstream README:
+//   import { SharedWhiteboard } from "@particle-academy/agent-integrations/components/shared-whiteboard";
+import { SharedWhiteboard, type SharedWhiteboardProps } from "@particle-academy/agent-integrations/components/shared-whiteboard";
 
 interface WhiteboardEditorProps {
   /** JSON-serialized board state from the note's body. May be empty/invalid. */
