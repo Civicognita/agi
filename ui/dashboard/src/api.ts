@@ -3686,3 +3686,55 @@ export async function removeProjectRepo(projectPath: string, name: string): Prom
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
 }
+
+// CHN-D (s165) slice 3a — channel-room binding client helpers.
+// Mirrors the ProjectRepo shape above but for project.json `rooms[]`.
+export interface ProjectRoomBinding {
+  channelId: string;
+  roomId: string;
+  label?: string;
+  kind?: string;
+  privacy?: "public" | "private" | "secret";
+  boundAt: string;
+  meta?: Record<string, unknown>;
+}
+
+export async function fetchProjectRooms(projectPath: string): Promise<ProjectRoomBinding[]> {
+  const url = `/api/projects/rooms?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { rooms: ProjectRoomBinding[] };
+  return data.rooms;
+}
+
+export async function addProjectRoom(
+  projectPath: string,
+  binding: Omit<ProjectRoomBinding, "boundAt"> & { boundAt?: string },
+): Promise<void> {
+  const url = `/api/projects/rooms?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(binding),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function removeProjectRoom(
+  projectPath: string,
+  channelId: string,
+  roomId: string,
+): Promise<void> {
+  const url = `/api/projects/rooms/${encodeURIComponent(channelId)}/${encodeURIComponent(roomId)}?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}

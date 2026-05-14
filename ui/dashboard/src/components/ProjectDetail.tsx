@@ -27,6 +27,7 @@ import { TaskmasterTab } from "./TaskmasterTab.js";
 import { PmLitePanel } from "./PmLitePanel.js";
 import { PmKanbanPanel } from "./PmKanbanPanel.js";
 import { NotesPanel } from "./NotesPanel.js";
+import { ChannelsPanel } from "./ChannelsPanel.js";
 import { IterativeWorkTab } from "./IterativeWorkTab.js";
 import { MCPTab } from "./MCPTab.js";
 import { ProjectActivityTab } from "./ProjectActivityTab.js";
@@ -218,6 +219,9 @@ export function ProjectDetail({
     // (the system-aggregate /pm/kanban view) — per-project filtering is a
     // future phase; today the tab shows the same all-tasks view.
     "pm": "coordinate",
+    // s165 CHN-D slice 3a — Channels tab in coordinate mode (project↔room
+    // bindings list; picker dialog lands in slice 3b).
+    "channels": "coordinate",
     "security": "insight",
     "activity": "insight",
   };
@@ -234,7 +238,7 @@ export function ProjectDetail({
   useEffect(() => {
     if (!tabBelongsToMode(activeTab)) {
       // Find first tab in current mode (prefer the canonical first one)
-      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "taskmaster", "plans", "notes", "security", "activity"];
+      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "taskmaster", "plans", "notes", "channels", "security", "activity"];
       const firstInMode = candidates.find((id) => TAB_MODES[id] === currentMode);
       if (firstInMode) setActiveTab(firstInMode);
     }
@@ -676,6 +680,9 @@ export function ProjectDetail({
               )}
               {tabBelongsToMode("notes") && (
                 <TabsTrigger value="notes" className={SUB_PILL_CLASS} data-testid="project-tab-notes">Notes</TabsTrigger>
+              )}
+              {tabBelongsToMode("channels") && (
+                <TabsTrigger value="channels" className={SUB_PILL_CLASS} data-testid="project-tab-channels">Channels</TabsTrigger>
               )}
               {tabBelongsToMode("taskmaster") && (
                 <TabsTrigger value="taskmaster" className={SUB_PILL_CLASS} data-testid="project-tab-taskmaster">TaskMaster</TabsTrigger>
@@ -1408,6 +1415,13 @@ export function ProjectDetail({
             global Notes page lands in the next slice (main nav). */}
         <TabsContent value="notes" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <NotesPanel projectPath={project.path} />
+        </TabsContent>
+
+        {/* s165 CHN-D slice 3a — Channels tab. Read-only listing of
+            channel-room bindings for this project. Picker dialog lands
+            in slice 3b. */}
+        <TabsContent value="channels" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <ChannelsPanel projectPath={project.path} />
         </TabsContent>
 
         {(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
