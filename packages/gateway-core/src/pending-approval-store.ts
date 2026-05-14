@@ -23,6 +23,8 @@
  * entity flow); story s166 acceptance criteria.
  */
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -57,8 +59,21 @@ export interface PendingApprovalDecision {
 }
 
 export interface PendingApprovalStoreConfig {
+  /**
+   * Path to persist approvals + decisions across gateway restarts.
+   * When unset, the store is in-memory only (loses state on restart).
+   * Convention path: `~/.agi/pending-approvals.json` (mirrors paired.json).
+   * CHN-E (s166) slice 7 — 2026-05-14.
+   */
+  persistPath?: string;
   /** Optional logger instance. */
   logger?: Logger;
+}
+
+/** On-disk shape — two arrays. */
+interface PersistShape {
+  approvals: PendingApproval[];
+  decisions: Array<[string, PendingApprovalDecision]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -84,10 +99,63 @@ export function pendingApprovalId(
 export class PendingApprovalStore {
   private readonly approvals = new Map<string, PendingApproval>();
   private readonly decisions = new Map<string, PendingApprovalDecision>();
+  private readonly persistPath: string | null;
   private readonly log: ComponentLogger;
 
   constructor(config: PendingApprovalStoreConfig = {}) {
     this.log = createComponentLogger(config.logger, "pending-approval");
+    this.persistPath = config.persistPath ?? null;
+    if (this.persistPath !== null) {
+      this.load();
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Persistence (CHN-E s166 slice 7)
+  // -------------------------------------------------------------------------
+
+  /** Read approvals + decisions from disk into memory. Silent on missing file. */
+  private load(): void {
+    if (this.persistPath === null) return;
+    if (!existsSync(this.persistPath)) return;
+    try {
+      const raw = readFileSync(this.persistPath, "utf-8");
+      const data = JSON.parse(raw) as PersistShape;
+      if (Array.isArray(data.approvals)) {
+        for (const a of data.approvals) {
+          this.approvals.set(a.id, a);
+        }
+      }
+      if (Array.isArray(data.decisions)) {
+        for (const [id, decision] of data.decisions) {
+          this.decisions.set(id, decision);
+        }
+      }
+      this.log.info(
+        `loaded ${String(this.approvals.size)} pending + ${String(this.decisions.size)} decisions from ${this.persistPath}`,
+      );
+    } catch (err) {
+      this.log.warn(
+        `failed to load pending-approvals from ${this.persistPath} (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /** Write current state to disk. Idempotent; safe to call after every mutation. */
+  private save(): void {
+    if (this.persistPath === null) return;
+    try {
+      mkdirSync(dirname(this.persistPath), { recursive: true });
+      const data: PersistShape = {
+        approvals: [...this.approvals.values()],
+        decisions: [...this.decisions.entries()],
+      };
+      writeFileSync(this.persistPath, JSON.stringify(data, null, 2), "utf-8");
+    } catch (err) {
+      this.log.error(
+        `failed to save pending-approvals to ${String(this.persistPath)}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /**
@@ -113,6 +181,7 @@ export class PendingApprovalStore {
         firstMessagePreview: input.firstMessagePreview,
       };
       this.approvals.set(id, refreshed);
+      this.save();
       return refreshed;
     }
     const fresh: PendingApproval = {
@@ -127,6 +196,7 @@ export class PendingApprovalStore {
     };
     this.approvals.set(id, fresh);
     this.log.info(`pending approval captured: ${id} (${input.displayName}, ${input.projectPath})`);
+    this.save();
     return fresh;
   }
 
@@ -158,6 +228,7 @@ export class PendingApprovalStore {
     this.approvals.delete(id);
     this.decisions.set(id, decision);
     this.log.info(`pending approval APPROVED: ${id}`);
+    this.save();
     return { approval, decision };
   }
 
@@ -174,6 +245,7 @@ export class PendingApprovalStore {
     this.approvals.delete(id);
     this.decisions.set(id, decision);
     this.log.info(`pending approval REJECTED: ${id}`);
+    this.save();
     return { approval, decision };
   }
 
@@ -189,9 +261,10 @@ export class PendingApprovalStore {
     return this.decisions.get(id) ?? null;
   }
 
-  /** Test-only: clear all state. */
+  /** Test-only: clear all state (in-memory + persisted, if configured). */
   reset(): void {
     this.approvals.clear();
     this.decisions.clear();
+    this.save();
   }
 }

@@ -1,7 +1,10 @@
 /**
- * PendingApprovalStore tests (CHN-E s166 slice 1).
+ * PendingApprovalStore tests (CHN-E s166 slice 1 + slice 7 persistence).
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdirSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { PendingApprovalStore, pendingApprovalId } from "./pending-approval-store.js";
 
 describe("pendingApprovalId", () => {
@@ -165,5 +168,101 @@ describe("PendingApprovalStore — approve/reject", () => {
 
   it("decisionFor returns null when no decision recorded", () => {
     expect(store.decisionFor("discord", "guild-1:channel-x", "bob")).toBeNull();
+  });
+});
+
+describe("PendingApprovalStore — persistence (slice 7)", () => {
+  let tmpDir: string;
+  let persistPath: string;
+
+  beforeEach(() => {
+    tmpDir = join(tmpdir(), `pas-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(tmpDir, { recursive: true });
+    persistPath = join(tmpDir, "pending-approvals.json");
+  });
+
+  afterEach(() => {
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* cleanup */ }
+  });
+
+  it("creates the persist file on first capture", () => {
+    const store = new PendingApprovalStore({ persistPath });
+    expect(existsSync(persistPath)).toBe(false);
+    store.capture({
+      channelId: "discord", roomId: "r", channelUserId: "u",
+      displayName: "U", projectPath: "/p", firstMessagePreview: "hi",
+    });
+    expect(existsSync(persistPath)).toBe(true);
+  });
+
+  it("loads pending approvals from disk into a fresh store", () => {
+    const a = new PendingApprovalStore({ persistPath });
+    a.capture({
+      channelId: "discord", roomId: "r1", channelUserId: "u1",
+      displayName: "Alice", projectPath: "/proj", firstMessagePreview: "first",
+    });
+    a.capture({
+      channelId: "telegram", roomId: "r2", channelUserId: "u2",
+      displayName: "Bob", projectPath: "/proj", firstMessagePreview: "second",
+    });
+    // New store reads the same file
+    const b = new PendingApprovalStore({ persistPath });
+    expect(b.list()).toHaveLength(2);
+    const fromB = b.get("discord::r1::u1");
+    expect(fromB?.displayName).toBe("Alice");
+  });
+
+  it("persists approve/reject decisions across instances", () => {
+    const a = new PendingApprovalStore({ persistPath });
+    const approval = a.capture({
+      channelId: "discord", roomId: "r", channelUserId: "u",
+      displayName: "U", projectPath: "/p", firstMessagePreview: "",
+    });
+    a.approve(approval.id);
+    // Re-open
+    const b = new PendingApprovalStore({ persistPath });
+    expect(b.list()).toHaveLength(0); // approved → removed from pending
+    expect(b.decisionFor("discord", "r", "u")?.status).toBe("approved");
+  });
+
+  it("survives a reject across instances", () => {
+    const a = new PendingApprovalStore({ persistPath });
+    const approval = a.capture({
+      channelId: "discord", roomId: "r", channelUserId: "u",
+      displayName: "U", projectPath: "/p", firstMessagePreview: "",
+    });
+    a.reject(approval.id);
+    const b = new PendingApprovalStore({ persistPath });
+    expect(b.decisionFor("discord", "r", "u")?.status).toBe("rejected");
+  });
+
+  it("write produces valid JSON with both arrays", () => {
+    const store = new PendingApprovalStore({ persistPath });
+    const approval = store.capture({
+      channelId: "discord", roomId: "r", channelUserId: "u",
+      displayName: "U", projectPath: "/p", firstMessagePreview: "",
+    });
+    store.approve(approval.id);
+    const raw = readFileSync(persistPath, "utf-8");
+    const parsed = JSON.parse(raw) as { approvals: unknown[]; decisions: unknown[] };
+    expect(Array.isArray(parsed.approvals)).toBe(true);
+    expect(Array.isArray(parsed.decisions)).toBe(true);
+    expect(parsed.approvals).toHaveLength(0);
+    expect(parsed.decisions).toHaveLength(1);
+  });
+
+  it("silently starts empty when the persist file doesn't exist", () => {
+    expect(existsSync(persistPath)).toBe(false);
+    const store = new PendingApprovalStore({ persistPath });
+    expect(store.list()).toEqual([]);
+  });
+
+  it("in-memory mode (no persistPath) doesn't write any file", () => {
+    const store = new PendingApprovalStore(); // no persistPath
+    store.capture({
+      channelId: "discord", roomId: "r", channelUserId: "u",
+      displayName: "U", projectPath: "/p", firstMessagePreview: "",
+    });
+    expect(existsSync(persistPath)).toBe(false);
   });
 });

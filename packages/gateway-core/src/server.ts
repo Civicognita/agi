@@ -659,10 +659,13 @@ export async function startGatewayServer(
 
   // s166 CHN-E slice 2 (2026-05-14) — pending-approval store. When an
   // unknown user posts in a project-bound channel room, the router
-  // captures a pending record so owner can review via /identity/pending
-  // (UI in slice 3+). In-memory this version; persists to disk in a
-  // future slice (~/.agi/pending-approvals.json, mirroring pairingStore).
-  const inboundPendingApprovalStore = new PendingApprovalStore({ logger });
+  // captures a pending record so owner can review via /identity/pending.
+  // Slice 7 added persistence to ~/.agi/pending-approvals.json so
+  // records survive gateway restarts (mirrors pairingStore's paired.json).
+  const inboundPendingApprovalStore = new PendingApprovalStore({
+    logger,
+    persistPath: `${homedir()}/.agi/pending-approvals.json`,
+  });
 
   // Inbound router — created after outbound so we can wire the sender for pairing.
   const inboundRouter = new InboundRouter({
