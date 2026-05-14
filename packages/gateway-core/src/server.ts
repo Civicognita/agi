@@ -135,6 +135,7 @@ import { migrateAionimaSystemForks } from "./aionima-system-migration.js";
 import { migrateAionimaMemoryDir } from "./aionima-memory-migration.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
+import { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
 import { migrateAllProjectMcpConfigs } from "./mcp-config-migration.js";
 import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
@@ -639,6 +640,22 @@ export async function startGatewayServer(
     logger,
   });
 
+  // s163 CHN-B slice 4 (2026-05-14) — channel-event dispatcher for the
+  // inbound router. The dispatcher resolves (channelId, roomId) →
+  // bound project so messages from a bound Discord room flow into that
+  // project's cage. Constructed here (before InboundRouter) so it can
+  // be passed as a dep. Uses an early projectConfigManager + workspace
+  // project list; the canonical projectConfigManager declared later
+  // (~line 800) is a separate-but-equivalent instance — both read the
+  // same project.json files. Future consolidation: thread the single
+  // manager all the way through this boot path.
+  const inboundProjectConfigManager = new ProjectConfigManager({ logger });
+  const inboundWorkspaceProjects = config.workspace?.projects ?? [];
+  const inboundChannelEventDispatcher = new ChannelEventDispatcher({
+    projectConfigManager: inboundProjectConfigManager,
+    workspaceProjects: inboundWorkspaceProjects,
+  });
+
   // Inbound router — created after outbound so we can wire the sender for pairing.
   const inboundRouter = new InboundRouter({
     entityStore,
@@ -652,6 +669,7 @@ export async function startGatewayServer(
     pairingStore,
     ownerEntityId,
     commsLog,
+    channelEventDispatcher: inboundChannelEventDispatcher,
     logger,
     outboundSender: async (channelId, channelUserId, content) => {
       await outboundDispatcher.dispatch({
