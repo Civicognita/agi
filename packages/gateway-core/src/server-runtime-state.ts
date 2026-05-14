@@ -1639,6 +1639,90 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // CHN-D (s165) slice 2 — channel-room binding CRUD per project
+  //
+  // GET    /api/projects/rooms?path=<projectPath>            — list bindings
+  // POST   /api/projects/rooms?path=<projectPath>            — add a binding
+  //                                                            (body = ProjectRoomBinding)
+  // DELETE /api/projects/rooms/:channelId/:roomId?path=<...> — remove a binding
+  //
+  // Mirrors the /api/projects/repos pattern (private-network gate +
+  // workspace-dir validation + 400/403/404 error contract).
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/projects/rooms", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const rooms = deps.projectConfigManager.listRoomBindings(targetPath);
+    return reply.send({ rooms });
+  });
+
+  fastify.post("/api/projects/rooms", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const body = request.body as Record<string, unknown>;
+    if (!body || typeof body !== "object") return reply.code(400).send({ error: "request body must be a binding spec" });
+
+    // Stamp boundAt server-side when the caller omits it (most common pattern).
+    if (typeof body["boundAt"] !== "string") {
+      body["boundAt"] = new Date().toISOString();
+    }
+
+    try {
+      const updated = await deps.projectConfigManager.addRoomBinding(
+        targetPath,
+        body as Parameters<typeof deps.projectConfigManager.addRoomBinding>[1],
+      );
+      return reply.send({ ok: true, config: updated });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("already exists") ? 409 : 400;
+      return reply.code(code).send({ error: `addRoomBinding failed: ${msg}` });
+    }
+  });
+
+  fastify.delete<{ Params: { channelId: string; roomId: string } }>(
+    "/api/projects/rooms/:channelId/:roomId",
+    async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+      if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+      const projectDirs = deps.workspaceProjects ?? [];
+      const pathParam = (request.query as Record<string, string>)["path"];
+      if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+      const targetPath = resolvePath(pathParam);
+      if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+        return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+      }
+      const { channelId, roomId } = request.params;
+      try {
+        const updated = await deps.projectConfigManager.removeRoomBinding(targetPath, channelId, roomId);
+        return reply.send({ ok: true, config: updated });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const code = msg.includes("not found") ? 404 : 400;
+        return reply.code(code).send({ error: `removeRoomBinding failed: ${msg}` });
+      }
+    },
+  );
+
+  // -----------------------------------------------------------------------
   // GET /api/projects/info — git details for a project (private network only)
   // -----------------------------------------------------------------------
 

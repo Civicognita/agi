@@ -20,6 +20,7 @@ import {
   type ProjectHosting,
   type ProjectStackInstance,
   type ProjectRepo,
+  type ProjectRoomBinding,
 } from "@agi/config";
 import { projectConfigPath } from "./project-config-path.js";
 import { createComponentLogger } from "./logger.js";
@@ -308,6 +309,75 @@ export class ProjectConfigManager extends EventEmitter {
   /** Read just the repos[] array for a project — convenience for the API surface. */
   getRepos(projectPath: string): ProjectRepo[] {
     return this.read(projectPath)?.repos ?? [];
+  }
+
+  // -------------------------------------------------------------------------
+  // Channel-room bindings — CHN-D (s165) slice 2, 2026-05-14
+  //
+  // Mirrors the repos-collection helpers above. Bindings are simpler:
+  // no checkout dir, no clone side-effect, no soft-delete — they're
+  // pure JSON entries. Uniqueness is enforced at schema-validate time
+  // (ProjectConfigSchema.refine — no two bindings share channelId+roomId).
+  // -------------------------------------------------------------------------
+
+  /** Read just the rooms[] array for a project — convenience for the API surface. */
+  listRoomBindings(projectPath: string): ProjectRoomBinding[] {
+    return this.read(projectPath)?.rooms ?? [];
+  }
+
+  /**
+   * Add a channel-room binding to the project's `rooms[]`. Throws if
+   * the (channelId, roomId) pair already exists (uniqueness invariant).
+   * Returns the updated config.
+   *
+   * The caller typically stamps `boundAt` to the current ISO timestamp;
+   * the schema accepts any non-empty string so test fixtures can pin it.
+   */
+  async addRoomBinding(
+    projectPath: string,
+    binding: ProjectRoomBinding,
+  ): Promise<ProjectConfig> {
+    const resolved = resolvePath(projectPath);
+    const existing = this.read(resolved);
+    if (existing === null) throw new Error(`Project config not found at ${resolved}`);
+
+    const rooms = existing.rooms ?? [];
+    const duplicate = rooms.find(
+      (r) => r.channelId === binding.channelId && r.roomId === binding.roomId,
+    );
+    if (duplicate !== undefined) {
+      throw new Error(
+        `Binding already exists: ${binding.channelId}::${binding.roomId} — remove the existing one first`,
+      );
+    }
+
+    const newRooms = [...rooms, binding];
+    return this.update(resolved, { rooms: newRooms });
+  }
+
+  /**
+   * Remove a channel-room binding by (channelId, roomId). Throws when
+   * the binding isn't found. Returns the updated config.
+   */
+  async removeRoomBinding(
+    projectPath: string,
+    channelId: string,
+    roomId: string,
+  ): Promise<ProjectConfig> {
+    const resolved = resolvePath(projectPath);
+    const existing = this.read(resolved);
+    if (existing === null) throw new Error(`Project config not found at ${resolved}`);
+
+    const rooms = existing.rooms ?? [];
+    const idx = rooms.findIndex(
+      (r) => r.channelId === channelId && r.roomId === roomId,
+    );
+    if (idx === -1) {
+      throw new Error(`Binding not found: ${channelId}::${roomId}`);
+    }
+
+    const newRooms = rooms.filter((_, i) => i !== idx);
+    return this.update(resolved, { rooms: newRooms });
   }
 
   // -------------------------------------------------------------------------
