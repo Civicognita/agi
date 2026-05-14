@@ -355,4 +355,80 @@ describe("ProjectConfigManager", () => {
       expect(mgr2.listRoomBindings(projectPath)).toHaveLength(1);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // CHN-C (s164) slice 1 — findProjectByRoom dispatcher primitive
+  // -------------------------------------------------------------------------
+  describe("findProjectByRoom (CHN-C)", () => {
+    let projectA: string;
+    let projectB: string;
+
+    beforeEach(async () => {
+      projectA = join(tmpDir, "proj-a");
+      projectB = join(tmpDir, "proj-b");
+      mkdirSync(projectA, { recursive: true });
+      mkdirSync(projectB, { recursive: true });
+      mgr.create(projectA, "Project A");
+      mgr.create(projectB, "Project B");
+      await mgr.addRoomBinding(projectA, {
+        channelId: "discord",
+        roomId: "guild-1:channel-1",
+        label: "#general",
+        boundAt: "2026-05-14T12:00:00Z",
+      });
+      await mgr.addRoomBinding(projectB, {
+        channelId: "telegram",
+        roomId: "@channel-2",
+        boundAt: "2026-05-14T12:00:00Z",
+      });
+    });
+
+    it("returns the project + binding for a matching (channelId, roomId)", () => {
+      const result = mgr.findProjectByRoom("discord", "guild-1:channel-1", [projectA, projectB]);
+      expect(result).not.toBeNull();
+      expect(result?.projectPath).toBe(projectA);
+      expect(result?.binding.label).toBe("#general");
+    });
+
+    it("matches across multiple candidates (returns project B for telegram)", () => {
+      const result = mgr.findProjectByRoom("telegram", "@channel-2", [projectA, projectB]);
+      expect(result?.projectPath).toBe(projectB);
+    });
+
+    it("returns null when no project binds the room", () => {
+      const result = mgr.findProjectByRoom("slack", "C9999", [projectA, projectB]);
+      expect(result).toBeNull();
+    });
+
+    it("returns null when channelId matches but roomId doesn't", () => {
+      const result = mgr.findProjectByRoom("discord", "wrong-id", [projectA, projectB]);
+      expect(result).toBeNull();
+    });
+
+    it("skips candidates whose project.json doesn't exist or is invalid", () => {
+      const ghost = join(tmpDir, "no-such-project");
+      const result = mgr.findProjectByRoom("discord", "guild-1:channel-1", [ghost, projectA]);
+      expect(result?.projectPath).toBe(projectA);
+    });
+
+    it("returns null on empty candidate list", () => {
+      const result = mgr.findProjectByRoom("discord", "anything", []);
+      expect(result).toBeNull();
+    });
+
+    it("first-match-wins when two candidates bind the same room (shouldn't happen but is graceful)", async () => {
+      // Force a duplicate across projects (schema doesn't enforce cross-
+      // project uniqueness, only within-project)
+      await mgr.addRoomBinding(projectB, {
+        channelId: "discord",
+        roomId: "guild-1:channel-1",
+        boundAt: "2026-05-14T12:01:00Z",
+      });
+      const result = mgr.findProjectByRoom("discord", "guild-1:channel-1", [projectA, projectB]);
+      // Candidate order determines winner
+      expect(result?.projectPath).toBe(projectA);
+      const reversed = mgr.findProjectByRoom("discord", "guild-1:channel-1", [projectB, projectA]);
+      expect(reversed?.projectPath).toBe(projectB);
+    });
+  });
 });

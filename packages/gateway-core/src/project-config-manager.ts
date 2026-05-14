@@ -380,6 +380,44 @@ export class ProjectConfigManager extends EventEmitter {
     return this.update(resolved, { rooms: newRooms });
   }
 
+  /**
+   * Find the project bound to a given (channelId, roomId) pair, if any.
+   * CHN-C slice 1 (s164) primitive — the gateway dispatcher uses this to
+   * route inbound channel events to the right project's cage.
+   *
+   * `candidatePaths` is the list of project paths to scan; the manager
+   * does NOT enumerate workspace roots itself (that's the caller's job,
+   * typically by walking `config.workspace.projects[]` sub-directories).
+   *
+   * Uniqueness across PROJECTS is not enforced by the schema — only
+   * uniqueness within ONE project. If two projects bind the same room
+   * (which shouldn't happen but is technically allowed), the first
+   * project scanned wins. Returns null when no binding matches.
+   *
+   * O(N*M) worst case (N candidates, M bindings/candidate). Realistic
+   * project counts make this trivially fast; caching can land later if
+   * dispatch latency ever matters.
+   */
+  findProjectByRoom(
+    channelId: string,
+    roomId: string,
+    candidatePaths: string[],
+  ): { projectPath: string; binding: ProjectRoomBinding } | null {
+    for (const candidate of candidatePaths) {
+      const resolved = resolvePath(candidate);
+      const config = this.read(resolved);
+      if (config === null) continue;
+      const rooms = config.rooms ?? [];
+      const match = rooms.find(
+        (r) => r.channelId === channelId && r.roomId === roomId,
+      );
+      if (match !== undefined) {
+        return { projectPath: resolved, binding: match };
+      }
+    }
+    return null;
+  }
+
   // -------------------------------------------------------------------------
   // Hosting sub-object
   // -------------------------------------------------------------------------
