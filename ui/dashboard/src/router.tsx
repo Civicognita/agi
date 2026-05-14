@@ -50,6 +50,7 @@ import BackupsPage from "./routes/system-backups.js";
 import SecuritySettingsPage from "./routes/settings-security.js";
 import SystemSecurityPage from "./routes/system-security.js";
 import IdentityServicePage from "./routes/system-identity.js";
+import IdentityPendingPage from "./routes/identity-pending.js";
 import SystemAgentsPage from "./routes/system-agents.js";
 import PromptInspectorPage from "./routes/prompt-inspector.js";
 import MagicAppsPage from "./routes/magic-apps.js";
@@ -139,6 +140,8 @@ export const router = createBrowserRouter([
       { path: "system/logs", element: <Navigate to="/gateway/logs" replace /> },
       { path: "system/settings", element: <Navigate to="/settings/gateway" replace /> },
       { path: "system/comms", element: <Navigate to="/comms" replace /> },
+      // CHN-E (s166) slice 4 — pending-from-channel approval queue
+      { path: "identity/pending", element: <IdentityPendingPage /> },
       // Communication
       { path: "comms", element: <CommsPage /> },
       { path: "comms/telegram", element: <CommsTelegramPage /> },
