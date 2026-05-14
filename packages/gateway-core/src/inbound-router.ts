@@ -4,6 +4,7 @@ import type { COAChainLogger } from "@agi/coa-chain";
 import type { VoicePipeline, VoiceGatewayState, AudioFormat } from "@agi/voice";
 import type { PairingStore } from "./pairing-store.js";
 import type { OwnerConfig } from "@agi/config";
+import type { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -37,6 +38,15 @@ export interface InboundRouterDeps {
   ownerEntityId?: string;
   /** Optional CommsLog instance for logging inbound messages. */
   commsLog?: CommsLog;
+  /**
+   * Optional channel-event dispatcher. When set + a message arrives
+   * carrying `metadata.roomId`, the router asks the dispatcher whether
+   * a project binds (channelId, roomId). If yes, the bound project's
+   * path is attached to the enqueued payload so downstream agent-
+   * invocation runs inside that project's scope. CHN-B (s163) slice 3
+   * — 2026-05-14.
+   */
+  channelEventDispatcher?: ChannelEventDispatcher;
   /** Optional logger instance. */
   logger?: Logger;
 }
@@ -46,6 +56,13 @@ export interface InboundResult {
   entityId: string;
   coaFingerprint: string;
   queueMessageId: string;
+  /**
+   * Project path resolved via the ChannelEventDispatcher when the
+   * message carries a roomId that binds to a project. Absent when
+   * no dispatcher is configured OR the room isn't bound. CHN-B
+   * (s163) slice 3 — 2026-05-14.
+   */
+  projectPath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +91,7 @@ export class InboundRouter {
   private readonly pairingStore: PairingStore | undefined;
   private readonly outboundSender: OutboundSender | undefined;
   private readonly commsLog: CommsLog | undefined;
+  private readonly channelEventDispatcher: ChannelEventDispatcher | undefined;
   private readonly log: ComponentLogger;
   constructor(deps: InboundRouterDeps) {
     this.entityStore = deps.entityStore;
@@ -86,6 +104,7 @@ export class InboundRouter {
     this.pairingStore = deps.pairingStore;
     this.outboundSender = deps.outboundSender;
     this.commsLog = deps.commsLog;
+    this.channelEventDispatcher = deps.channelEventDispatcher;
     this.log = createComponentLogger(deps.logger, "inbound");
   }
 
@@ -400,11 +419,33 @@ export class InboundRouter {
     // its response (the DONE signal in agent-invoker.ts).
     const coaFingerprint = `${this.resourceId}.${entity.coaAlias}.${this.nodeId}.pending`;
 
+    // Step 2b (CHN-B s163 slice 3) — channel-room → project dispatch.
+    // When the message carries metadata.roomId AND a dispatcher is wired,
+    // ask which project binds (channelId, roomId). The bound project's
+    // path flows into the enqueued payload so the agent invocation runs
+    // inside that project's scope.
+    let projectPath: string | undefined;
+    if (this.channelEventDispatcher !== undefined && typeof routedMessage.metadata === "object" && routedMessage.metadata !== null) {
+      const roomId = (routedMessage.metadata as Record<string, unknown>)["roomId"];
+      if (typeof roomId === "string" && roomId.length > 0) {
+        const dispatch = this.channelEventDispatcher.dispatch(channelId, roomId);
+        if (dispatch !== null) {
+          projectPath = dispatch.projectPath;
+          this.log.info(`channel-event routed to project: ${channelId}::${roomId} → ${projectPath}`);
+        }
+      }
+    }
+
     // Step 3 — enqueue for agent processing
     const queued = await this.messageQueue.enqueue({
       channel: channelId,
       direction: "inbound",
-      payload: { message: routedMessage, entityId: entity.id, coaFingerprint },
+      payload: {
+        message: routedMessage,
+        entityId: entity.id,
+        coaFingerprint,
+        ...(projectPath !== undefined ? { projectPath } : {}),
+      },
     });
 
     // Step 4 — log to comms log (non-blocking, best-effort)
@@ -436,6 +477,7 @@ export class InboundRouter {
       entityId: entity.id,
       coaFingerprint,
       queueMessageId: queued.id,
+      ...(projectPath !== undefined ? { projectPath } : {}),
     };
   }
 }
