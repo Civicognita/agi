@@ -544,5 +544,14 @@ export default {
     for (const tool of bridgeTools) {
       api.registerAgentTool(tool);
     }
+
+    // CHN-B slice 2026-05-14 (s163) — owner-facing introspection endpoint
+    // for the dashboard's Discord status card. Returns the live bot
+    // connection state, guild list, and per-guild channel/forum listing.
+    // Cheap to call; reads from the in-process discord.js Client cache.
+    api.registerHttpRoute("GET", "/api/channels/discord/state", async (_req, reply) => {
+      const { getDiscordState } = await import("./state.js");
+      reply.send(getDiscordState(plugin.__client));
+    });
   },
 } satisfies AionimaPlugin;
