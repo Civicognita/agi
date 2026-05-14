@@ -19,6 +19,7 @@ import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
 import type { ToolCard } from "./ToolCards.js";
 import { PlanViewer } from "./PlanViewer.js";
 import { ChatHistory } from "./ChatHistory.js";
+import { LoopProgressBar } from "./LoopProgressBar.js";
 import { applyInjectionConsumed, shouldShowLivePill, applyStallTimeout, groupByThoughtBoundary } from "./chat-flyout-reducers.js";
 import type { ChatSessionShape, ChatMessageShape } from "./chat-flyout-reducers.js";
 import { cn } from "@/lib/utils";
@@ -1247,6 +1248,14 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // Panel body: everything below the header (shared between docked and overlay modes)
   const panelBody = (
     <div className="relative flex flex-col flex-1 min-h-0">
+        {/* s120 t452 — Loop progress bar mirrors the Claude Code statusline.
+            Restored in v0.4.692 after the orphan-audit cycle 247 fix deleted
+            Chat.tsx (its only prior consumer); LoopProgressBar belongs on
+            the real chat surface, which is THIS file. */}
+        <div className="px-3 pt-2">
+          <LoopProgressBar />
+        </div>
+
         {/* Chat history overlay */}
         <ChatHistory
           open={historyOpen}
