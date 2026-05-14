@@ -428,6 +428,9 @@ export type { ProjectConfigManagerDeps, ProjectConfigChangeEvent, ProjectConfigC
 // roomId) event to its bound project by walking workspace.projects[].
 export { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
 export type { ChannelEventDispatcherDeps, DispatchResult } from "./channel-event-dispatcher.js";
+// CHN-E (s166) slice 1 — pending-from-channel approval queue.
+export { PendingApprovalStore, pendingApprovalId } from "./pending-approval-store.js";
+export type { PendingApproval, PendingApprovalDecision, PendingApprovalStoreConfig } from "./pending-approval-store.js";
 
 // System Config Service
 export { SystemConfigService } from "./system-config-service.js";
