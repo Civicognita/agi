@@ -3,9 +3,16 @@
  *
  * Uses WebSocket (chat:send / chat:response) to communicate with the agent
  * pipeline. Shares the owner's session across all channels.
+ *
+ * Cycle 226 (2026-05-14): composer swapped from hand-rolled textarea+button
+ * to @particle-academy/react-fancy `PromptInput`. Brings slash-command +
+ * @-mention pickers, drop-to-attach, token-budget meter, and Cmd/Ctrl+Enter
+ * for free. Per CLAUDE.md § 1.5 — audit PAx first; the textarea was the
+ * last hand-rolled chat composer in the dashboard.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PromptInput } from "@particle-academy/react-fancy";
 import type { ChatMessage } from "../hooks.js";
 import { LoopProgressBar } from "./LoopProgressBar.js";
 
@@ -18,7 +25,6 @@ export interface ChatProps {
 }
 
 export function Chat({ messages, thinking, error, onSend, theme }: ChatProps) {
-  const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -38,33 +44,28 @@ export function Chat({ messages, thinking, error, onSend, theme }: ChatProps) {
     }
   }, [messages, thinking, autoScroll]);
 
-  const handleSend = useCallback(() => {
-    const text = input.trim();
-    if (!text || thinking) return;
-    onSend(text);
-    setInput("");
-  }, [input, thinking, onSend]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
+  // PromptInput owns its own composer state. We just gate the send on
+  // `thinking` and drop attachments for now — CHN-B (s163) will wire
+  // attachment forwarding into the chat backend once the SDK lands.
+  const handleSubmit = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (trimmed.length === 0 || thinking) return;
+      onSend(trimmed);
     },
-    [handleSend],
+    [thinking, onSend],
   );
 
-  // Colors — use CSS variables to follow Catppuccin theme
+  // Bubble colors — kept as inline styles because the message bubbles
+  // pre-date the PAx primitives. Slated for a follow-up swap to Callout
+  // or Card once a chat-bubble primitive lands upstream.
   const d = theme === "dark";
-  const surface = d ? "#1e1e2e" : "#ffffff";
   const surface0 = d ? "#313244" : "#e6e9ef";
   const border = d ? "#313244" : "#e6e9ef";
   const text = d ? "#cdd6f4" : "#4c4f69";
   const subtext = d ? "#a6adc8" : "#6c6f85";
   const userBubble = d ? "#89b4fa" : "#1e66f5";
   const userText = d ? "#1e1e2e" : "#ffffff";
-  const inputBg = d ? "#181825" : "#f5f5f5";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -159,54 +160,18 @@ export function Chat({ messages, thinking, error, onSend, theme }: ChatProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input bar */}
-      <div
-        style={{
-          padding: "12px 16px",
-          borderTop: `1px solid ${border}`,
-          background: surface,
-          display: "flex",
-          gap: "8px",
-          alignItems: "flex-end",
-        }}
-      >
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Message Aionima..."
-          rows={1}
-          style={{
-            flex: 1,
-            padding: "10px 14px",
-            borderRadius: "12px",
-            border: `1px solid ${border}`,
-            background: inputBg,
-            color: text,
-            fontSize: "14px",
-            fontFamily: "inherit",
-            resize: "none",
-            outline: "none",
-            minHeight: "40px",
-            maxHeight: "120px",
-          }}
+      {/* PromptInput from @particle-academy/react-fancy — replaces the
+          hand-rolled textarea+button. Slash commands, @-mentions, file
+          drop-to-attach, and the token-budget meter come built-in.
+          budgetTokens is a placeholder until the Provider router exposes
+          the active model's context window via dashboard hooks. */}
+      <div style={{ padding: "12px 16px", borderTop: `1px solid ${border}` }}>
+        <PromptInput
+          budgetTokens={32_000}
+          placeholder="Message Aionima…"
+          showHint
+          onSubmit={handleSubmit}
         />
-        <button
-          onClick={handleSend}
-          disabled={thinking || input.trim().length === 0}
-          style={{
-            padding: "10px 18px",
-            borderRadius: "12px",
-            border: "none",
-            background: thinking || input.trim().length === 0 ? surface0 : userBubble,
-            color: thinking || input.trim().length === 0 ? subtext : userText,
-            fontSize: "14px",
-            fontWeight: 600,
-            cursor: thinking || input.trim().length === 0 ? "default" : "pointer",
-          }}
-        >
-          Send
-        </button>
       </div>
     </div>
   );
