@@ -155,6 +155,18 @@ export function Projects({
         <div className="flex items-center gap-2">
           <h2 className="text-xl font-bold text-foreground">Projects</h2>
           <DevNotes title="Projects browser — dev notes">
+            <DevNotes.Item kind="info" heading="Cycle 226 — Sacred Aionima card always visible">
+              v0.4.664 — owner directive: the Sacred Aionima card is now visible
+              regardless of dev/contributing mode. Dev mode only controls whether
+              owner forks get cloned into <code>_aionima/repos/</code>, not whether
+              the card renders. Description text branches on mode — "Wraps N forks"
+              when populated, "Enable contributing mode to clone…" when not.
+              Paired with the underlying ESM <code>__dirname</code> fix in
+              <code>project-config-path.ts</code> that unblocked the boot
+              scaffolder. New regression e2es in <code>aionima-self-managed.spec.ts</code>
+              cover the click→ProjectDetail-render roundtrip and the filter that
+              keeps <code>_aionima</code> out of the regular projects list.
+            </DevNotes.Item>
             <DevNotes.Item kind="info" heading="Cycle 136 — click-to-expand row tray (mockup B)">
               Each row expands to a 4-quadrant grid (Repos / Stacks / Aion context / Knowledge) +
               a 5-button action row (Open workspace / Open chat / Configure repos / Manage stacks /

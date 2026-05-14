@@ -47,4 +47,32 @@ test.describe("Aionima self-managed project (s119 t706)", () => {
     // project type / capability flags.
     await expect(page.getByRole("tab", { name: /Details/i }).first()).toBeVisible({ timeout: 15_000 });
   });
+
+  // Regression for v0.4.664 fix (Wish #22/#23) — the existing "click navigates
+  // to URL" test passes even when ProjectDetail can't resolve the slug back
+  // to a project. The owner-reported bug was: click → URL `/projects/_aionima`
+  // → ProjectDetail fallback to 404 because `projectSlug()` regex stripped the
+  // leading underscore. This test asserts the FULL roundtrip: click → URL →
+  // ProjectDetail actually renders (Details tab visible).
+  test("clicking Sacred card renders ProjectDetail end-to-end (slug roundtrip regression)", async ({ page }) => {
+    await page.goto("/projects", { waitUntil: "domcontentloaded" });
+    await page.getByTestId("project-card-aionima").click();
+    await expect(page).toHaveURL(/\/projects\/_aionima(\?|#|$)/, { timeout: 10_000 });
+    await expect(page.getByRole("tab", { name: /Details/i }).first()).toBeVisible({ timeout: 15_000 });
+  });
+
+  // Regression for v0.4.664 filter fix — `_aionima/` is the meta-project and
+  // must NEVER appear in the regular projects list (only as the Sacred card).
+  // Pre-fix: `_aionima` enumerated with auto-detected type "static-site",
+  // bypassed the isAionimaProject filter, and rendered as a regular row.
+  test("_aionima must not appear in the regular projects list/grid", async ({ page }) => {
+    await page.goto("/projects", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("project-card-aionima")).toBeVisible({ timeout: 10_000 });
+    // No regular project tile/row should carry an _aionima slug. The list view
+    // emits stable testids `project-repos-{slug}`, `project-stacks-{slug}`,
+    // etc. — none of those should appear for `_aionima`.
+    expect(await page.getByTestId("project-repos-_aionima").count()).toBe(0);
+    expect(await page.getByTestId("project-stacks-_aionima").count()).toBe(0);
+    expect(await page.getByTestId("project-tynn-_aionima").count()).toBe(0);
+  });
 });
