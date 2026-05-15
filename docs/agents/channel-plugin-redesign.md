@@ -462,12 +462,12 @@ Once this design doc is signed off, work decomposes into tynn stories:
 §10 owner answers locked 2026-05-13. Remaining sections need explicit owner sign-off before their tier ships:
 
 - [ ] §2 — Channel-as-Application thesis
-- [ ] §3 — `defineChannel` SDK contract *(blocks CHN-A)*
-- [ ] §4 — Room abstraction per-channel mapping *(blocks CHN-A)*
-- [ ] §5 — Project ↔ Room binding contract *(blocks CHN-D)*
-- [ ] §6 — Channel-internal management page *(blocks settings UI work)*
-- [ ] §7 — Bridge tool family *(partially shipped in v0.4.661 Discord update — 4 tools registered against old SDK; full family lands with CHN-A)*
-- [ ] §8 — Cage + entity flow *(blocks CHN-E)*
+- [ ] §3 — `defineChannel` SDK contract *(blocks CHN-A)* — **VALIDATED IN PRACTICE:** CHN-B (s163), CHN-C (s164), CHN-D (s165), CHN-E (s166), CHN-F (s167), CHN-G (s168) all shipped against v2 contract. Formal owner sign-off pending (Q-18 in pending-questions.mdc).*
+- [ ] §4 — Room abstraction per-channel mapping *(blocks CHN-A)* — **VALIDATED IN PRACTICE:** Discord room mapping live in channels/discord/src/channel-def.ts + state.ts; CHN-D (s165) project-binding UI consumes it.*
+- [ ] §5 — Project ↔ Room binding contract *(blocks CHN-D)* — **SHIPPED:** project.json rooms[] schema + Channels tab + room picker (CHN-D s165, v0.4.702).*
+- [ ] §6 — Channel-internal management page *(blocks settings UI work)* — **PARTIALLY:** ChannelSettings in settings-gateway.tsx is the working fallback; ChannelDefinition.SettingsPage component injection into the dashboard deferred.*
+- [x] §7 — Bridge tool family *(shipped: discord_aggregate_stats, discord_available_rooms, discord_message_history, discord_user_info, discord_list_members — CHN-B s163 + CHN-G s168 v0.4.709)*
+- [ ] §8 — Cage + entity flow *(blocks CHN-E)* — **PARTIALLY SHIPPED:** /identity/pending page + approval queue + Local-ID promotion flow (CHN-E s166, v0.4.707); full cage binding for channel events deferred.*
 - [ ] §9 — Migration plan (5 adapters, 6 phases)
 - [x] §10 — Open questions answered (8/10; OQ-9 + OQ-10 deferred per §12)
 - [ ] §11 — Implementation tier breakdown
