@@ -321,6 +321,7 @@ export function createDiscordChannelDefV2(config: DiscordConfig): ChannelDefinit
       canReadRoles: { configurable: true, defaultOn: true },
       nativeIntents: ["Guilds", "GuildMessages", "MessageContent", "GuildMembers", "GuildPresences"],
     },
+    roomDiscovery: { model: "enumerable" },
   });
 }
 
@@ -346,5 +347,6 @@ export function createDiscordChannelDefV2WithTools(
       canReadRoles: { configurable: true, defaultOn: true },
       nativeIntents: ["Guilds", "GuildMessages", "MessageContent", "GuildMembers", "GuildPresences"],
     },
+    roomDiscovery: { model: "enumerable" },
   });
 }

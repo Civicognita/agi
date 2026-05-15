@@ -272,5 +272,6 @@ export function createTelegramChannelDefV2(config: TelegramConfig): ChannelDefin
       canReadRoles: { configurable: false, defaultOn: false },
       nativeIntents: [],
     },
+    roomDiscovery: { model: "seen-rooms", dynamicRooms: true },
   });
 }

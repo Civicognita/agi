@@ -291,5 +291,6 @@ export function createSignalChannelDefV2(config: SignalConfig): ChannelDefinitio
       canReadRoles: { configurable: false, defaultOn: false },
       nativeIntents: [],
     },
+    roomDiscovery: { model: "seen-rooms", dynamicRooms: true },
   });
 }

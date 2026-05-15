@@ -113,6 +113,8 @@ export type {
   ChannelReadPolicy,
   ChannelSettingsPageProps,
   ChannelProjectPanelProps,
+  ChannelRoomDiscoveryModel,
+  ChannelRoomDiscovery,
 } from "./channel-v2-types.js";
 export { defineProvider } from "./define-provider.js";
 export { definePmProvider, definePmKanbanConfig, DEFAULT_TYNN_KANBAN_CONFIG } from "./define-pm-provider.js";

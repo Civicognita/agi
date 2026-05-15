@@ -176,6 +176,29 @@ export interface ChannelDefinition {
     /** Vendor-specific intents the plugin needs (Discord intents, Slack scopes). */
     nativeIntents?: string[];
   };
+
+  /**
+   * Room discovery model declaration. Defaults to "enumerable" when absent.
+   * Callers (room picker, project binding UI) read this to adapt UX without
+   * hard-coding per-channel knowledge.
+   *
+   * - **"enumerable"** — stable, complete room list (Discord, Slack).
+   *   `listRooms()` returns the full set; a room picker works.
+   * - **"seen-rooms"** — rooms appear only after a message arrives from an
+   *   unknown contact (Telegram private, WhatsApp, Signal).
+   *   `listRooms()` returns rooms seen so far. Room picker shows:
+   *   "Rooms appear as contacts message you."
+   * - **"category-based"** — rooms are structural categories native to the
+   *   channel (Gmail labels, email folders).
+   *   `listRooms()` returns the category list, NOT individual conversations.
+   *
+   * `dynamicRooms: true` (seen-rooms channels only) signals that external
+   * senders can create new rooms by messaging the bot.
+   */
+  roomDiscovery?: {
+    model: "enumerable" | "seen-rooms" | "category-based";
+    dynamicRooms?: boolean;
+  };
 }
 
 /** Context handed to createProtocol — gateway primitives + plugin config. */
@@ -239,6 +262,26 @@ How each of the existing 5 channels maps its native vocabulary to `ChannelRoom`:
 | **Signal** | Group | `group` | `group:<groupV2Id>` | `memberCount`, `groupName` |
 
 This is the unified contract callers see. Plugin internals translate.
+
+### Room discovery models
+
+Channels are NOT all the same — most do not share a Discord-like "list all channels in a guild" primitive. Each channel declares its discovery model in `ChannelDefinition.roomDiscovery` so callers (room picker, project binding UI) can adapt without hard-coding channel-specific knowledge.
+
+| Channel | `roomDiscovery.model` | `dynamicRooms` | Room picker UX |
+|---------|-----------------------|---------------|----------------|
+| **Discord** | `"enumerable"` | — | Full list; user picks from tree |
+| **Slack** | `"enumerable"` | — | Full list; user picks from list |
+| **Telegram** | `"seen-rooms"` | `true` | "Rooms appear as contacts message you" |
+| **WhatsApp** | `"seen-rooms"` | `true` | "Rooms appear as contacts message you" |
+| **Signal** | `"seen-rooms"` | `true` | "Rooms appear as contacts message you" |
+| **Gmail** | `"category-based"` | — | Label/folder picker (static, no individual threads) |
+
+**Model semantics:**
+- **`"enumerable"`** — `listRooms()` returns the stable full set. Room picker works conventionally.
+- **`"seen-rooms"`** — `listRooms()` returns only rooms seen so far (populated as messages arrive). The set grows at runtime. Room picker shows a notice: *"Rooms appear as contacts message you."*
+- **`"category-based"`** — `listRooms()` returns structural categories (Gmail labels), NOT individual conversations. Messages within a category arrive via the category's `roomId`. Room picker shows the category list.
+
+When `roomDiscovery` is absent, callers default to `"enumerable"` for backwards compatibility.
 
 ---
 

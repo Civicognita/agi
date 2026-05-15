@@ -212,6 +212,49 @@ export interface ChannelContext {
 }
 
 // ---------------------------------------------------------------------------
+// Room discovery model — how rooms are found / enumerated per channel
+// ---------------------------------------------------------------------------
+
+/**
+ * Room discovery model. Channels are NOT all the same — most do not share
+ * a Discord-like "list all channels in a guild" primitive. Each channel
+ * declares its model so callers (gateway room-picker, project binding UI)
+ * can adapt without hard-coding channel-specific knowledge.
+ *
+ * - **"enumerable"** — stable, complete room list (Discord guilds, Slack
+ *   workspaces). `listRooms()` returns the full set; a room picker works.
+ *
+ * - **"seen-rooms"** — rooms appear only after a message arrives from an
+ *   unknown contact (WhatsApp 1-1, Signal DM, Telegram private). `listRooms()`
+ *   returns rooms seen so far; the set grows as messages arrive. Room picker
+ *   shows "Rooms appear as contacts message you."
+ *
+ * - **"category-based"** — rooms are structural categories native to the
+ *   channel (Gmail labels, email folders). `listRooms()` returns the category
+ *   list, NOT individual conversations. Messages within a category arrive via
+ *   the category's roomId.
+ */
+export type ChannelRoomDiscoveryModel =
+  | "enumerable"
+  | "seen-rooms"
+  | "category-based";
+
+/**
+ * Room discovery declaration for `ChannelDefinition.roomDiscovery`.
+ * When absent, callers assume "enumerable".
+ */
+export interface ChannelRoomDiscovery {
+  model: ChannelRoomDiscoveryModel;
+  /**
+   * True when external senders can create new rooms by messaging the bot
+   * (a contact sending a first message creates a new seen-room). Applies to
+   * "seen-rooms" channels (WhatsApp, Signal). False for enumerable and
+   * category-based channels where rooms are pre-configured or structural.
+   */
+  dynamicRooms?: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // The protocol surface — what every channel implements
 // ---------------------------------------------------------------------------
 
@@ -330,4 +373,16 @@ export interface ChannelDefinition {
 
   /** Privileged-intents / read-policy declaration (see ChannelReadPolicy). */
   readPolicy: ChannelReadPolicy;
+
+  /**
+   * How rooms are discovered for this channel. Defaults to "enumerable" when
+   * absent for backwards compatibility. Callers (gateway room-picker, project
+   * binding UI) read this to adapt their UX without hard-coding per-channel
+   * knowledge.
+   *
+   * - "enumerable" — Discord guilds, Slack workspaces: stable complete list.
+   * - "seen-rooms" — WhatsApp/Signal/Telegram private: rooms appear as msgs arrive.
+   * - "category-based" — Gmail labels, email folders: structural categories only.
+   */
+  roomDiscovery?: ChannelRoomDiscovery;
 }

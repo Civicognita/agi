@@ -294,5 +294,6 @@ export function createWhatsAppChannelDefV2(config: WhatsAppConfig): ChannelDefin
       canReadRoles: { configurable: false, defaultOn: false },
       nativeIntents: ["whatsapp_business_messaging"],
     },
+    roomDiscovery: { model: "seen-rooms", dynamicRooms: true },
   });
 }

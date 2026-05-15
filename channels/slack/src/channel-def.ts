@@ -400,5 +400,6 @@ export function createSlackChannelDefV2(config: SlackConfig): ChannelDefinition 
         "mpim:history",
       ],
     },
+    roomDiscovery: { model: "enumerable" },
   });
 }
