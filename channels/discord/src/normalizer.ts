@@ -1,7 +1,16 @@
 import type { Message } from "discord.js";
 import type { ChannelId, AionimaMessage, MessageContent } from "@agi/channel-sdk";
+import type { ChannelMessageAttachment } from "@agi/sdk";
 
 export const DISCORD_CHANNEL_ID = "discord" as ChannelId;
+
+/** Map a MIME type string to a ChannelMessageAttachment kind. */
+export function classifyAttachmentMime(mimeType: string): ChannelMessageAttachment["kind"] {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  return "file";
+}
 
 // ---------------------------------------------------------------------------
 // Normalizer: Discord Message → AionimaMessage

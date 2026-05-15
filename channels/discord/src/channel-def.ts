@@ -52,13 +52,14 @@ import {
   type ChannelContext,
   type ChannelEvent,
   type ChannelMessage,
+  type ChannelMessageAttachment,
   type ChannelRoom,
   type ChannelUser,
   type ChannelBridgeToolDefinition,
 } from "@agi/sdk";
 
 import type { DiscordConfig } from "./config.js";
-import { DISCORD_CHANNEL_ID, normalizeMessage } from "./normalizer.js";
+import { DISCORD_CHANNEL_ID, normalizeMessage, classifyAttachmentMime } from "./normalizer.js";
 import { sendOutbound } from "./outbound.js";
 import { getDiscordAvailableRooms } from "./state.js";
 import { buildDiscordBridgeTools } from "./aion-tools.js";
@@ -88,15 +89,24 @@ function parseRoomId(roomId: string): { guildId?: string; channelId: string; isD
 function aionimaMessageToChannel(msg: Message): ChannelMessage | null {
   const normalized = normalizeMessage(msg);
   if (normalized === null) return null;
-  // normalized.content is { type: "text"; text: string } (or a media
-  // variant). For the v2 ChannelMessage we surface text only; media goes
-  // into attachments[] in a later slice.
-  const text = normalized.content.type === "text" ? normalized.content.text : "";
+  const text = normalized.content.type === "text"
+    ? normalized.content.text
+    : normalized.content.type === "media" && normalized.content.caption
+      ? normalized.content.caption
+      : "";
+
+  // CHN-B (s163) slice 6 — surface attachments through ChannelMessageAttachment[].
+  const attachments: ChannelMessageAttachment[] = [...msg.attachments.values()].map((a) => {
+    const mime = a.contentType ?? "application/octet-stream";
+    return { kind: classifyAttachmentMime(mime), url: a.url, mime: a.contentType ?? undefined };
+  });
+
   return {
     messageId: msg.id,
     roomId: msg.guildId !== null ? `${msg.guildId}:${msg.channelId}` : `dm:${msg.author.id}`,
     authorId: msg.author.id,
     text,
+    ...(attachments.length > 0 ? { attachments } : {}),
     sentAt: new Date(msg.createdTimestamp).toISOString(),
     mentionsBot: msg.mentions.users.size > 0,
   };

@@ -364,7 +364,15 @@ export async function startGatewaySidecars(
             content: { type: "text", text: msg.text },
             replyTo: msg.replyToMessageId,
             threadId: msg.threadRootMessageId,
-            metadata: { roomId: msg.roomId, mentionsBot: msg.mentionsBot },
+            // CHN-B (s163) slice 6 — attachments flow via metadata since
+            // MessageContent has no multi-attachment variant yet.
+            metadata: {
+              roomId: msg.roomId,
+              mentionsBot: msg.mentionsBot,
+              ...(msg.attachments !== undefined && msg.attachments.length > 0
+                ? { attachments: msg.attachments }
+                : {}),
+            },
           };
           const preview = msg.text.slice(0, 80);
           log.info(`[v2 inbound] ${def.id}: message from ${msg.authorId} in ${msg.roomId} — "${preview}"`);

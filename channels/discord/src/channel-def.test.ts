@@ -12,6 +12,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { createDiscordChannelDefV2 } from "./channel-def.js";
+import { classifyAttachmentMime } from "./normalizer.js";
 import type { DiscordConfig } from "./config.js";
 
 function makeConfig(): DiscordConfig {
@@ -66,5 +67,30 @@ describe("createDiscordChannelDefV2 — contract conformance", () => {
     expect(typeof protocol.searchMessages).toBe("function");
     expect(typeof protocol.getUser).toBe("function");
     expect(typeof protocol.listMembers).toBe("function");
+  });
+});
+
+describe("classifyAttachmentMime — CHN-B s163 slice 6", () => {
+  it("classifies image/* as image", () => {
+    expect(classifyAttachmentMime("image/png")).toBe("image");
+    expect(classifyAttachmentMime("image/jpeg")).toBe("image");
+    expect(classifyAttachmentMime("image/gif")).toBe("image");
+    expect(classifyAttachmentMime("image/webp")).toBe("image");
+  });
+
+  it("classifies audio/* as audio", () => {
+    expect(classifyAttachmentMime("audio/ogg")).toBe("audio");
+    expect(classifyAttachmentMime("audio/mpeg")).toBe("audio");
+  });
+
+  it("classifies video/* as video", () => {
+    expect(classifyAttachmentMime("video/mp4")).toBe("video");
+    expect(classifyAttachmentMime("video/webm")).toBe("video");
+  });
+
+  it("classifies unknown / application types as file", () => {
+    expect(classifyAttachmentMime("application/octet-stream")).toBe("file");
+    expect(classifyAttachmentMime("application/pdf")).toBe("file");
+    expect(classifyAttachmentMime("text/plain")).toBe("file");
   });
 });
