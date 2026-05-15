@@ -61,6 +61,19 @@ test.describe("Aionima self-managed project (s119 t706)", () => {
     await expect(page.getByRole("tab", { name: /Details/i }).first()).toBeVisible({ timeout: 15_000 });
   });
 
+  // Regression for v0.4.720 fix (s175) — _aionima was misidentified as a
+  // core-fork (isCoreFork=true) due to coreCollection:"aionima" matching the
+  // container itself, rendering the reduced two-tab Editor+Repository UX
+  // instead of the full project detail with Details tab.
+  test("/projects/_aionima renders full project detail (not core-fork two-tab UX)", async ({ page }) => {
+    await page.goto("/projects/_aionima", { waitUntil: "domcontentloaded" });
+    // Full project detail exposes a sub-surface tab strip with Details.
+    // Core-fork mode renders a plain TabsList with only Editor + Repository
+    // and no "project-sub-surface" testid.
+    await expect(page.getByTestId("project-sub-surface")).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("tab", { name: /Details/i }).first()).toBeVisible();
+  });
+
   // Regression for v0.4.664 filter fix — `_aionima/` is the meta-project and
   // must NEVER appear in the regular projects list (only as the Sacred card).
   // Pre-fix: `_aionima` enumerated with auto-detected type "static-site",

@@ -116,13 +116,23 @@ export function ProjectDetail({
 }: ProjectDetailProps) {
   const { slug } = useParams<{ slug: string }>();
   const project = projects.find((p) => projectSlug(p.path) === slug);
-  const isSacred = project ? (isSacredProject(project) || project.projectType?.id === "aionima") : false;
-  const canViewSacred = Boolean(contributingEnabled);
-  // Core fork = provisioned by Dev Mode into the `_aionima/` collection.
-  // These get a drastically reduced UX — only Editor + Repository tabs.
-  // No hosting, no environment, no taskmaster, no plugins — they are
-  // source trees the owner submits PRs from, not deployables.
-  const isCoreFork = project?.coreCollection === "aionima" || project?.projectType?.id === "aionima";
+  // s175 (2026-05-15): include "aionima-system" in the sacred check.
+  // _aionima meta-project has type "aionima-system", not "aionima".
+  const isSacred = project ? (
+    isSacredProject(project) ||
+    project.projectType?.id === "aionima" ||
+    project.projectType?.id === "aionima-system"
+  ) : false;
+  // Owner directive 2026-05-13: _aionima (type "aionima-system") is always
+  // viewable regardless of contributing mode. Contributing mode gates only
+  // fork-population into _aionima/repos/, not card/detail visibility.
+  const canViewSacred = project?.projectType?.id === "aionima-system" || Boolean(contributingEnabled);
+  // Core fork = a fork provisioned by Dev Mode into _aionima/repos/. These
+  // get reduced UX (Editor + Repository only — no hosting, env, plugins).
+  // s175 fix: do NOT catch the _aionima container itself (coreCollection is
+  // "aionima" on the container too, but only actual forks have
+  // projectType "aionima"). Using only the type check avoids the false match.
+  const isCoreFork = project?.projectType?.id === "aionima";
 
   const [editName, setEditName] = useState<string | null>(null);
   // s140 cycle-169 t591 — Tynn token state removed; token now lives in
@@ -459,6 +469,16 @@ export function ProjectDetail({
             individual repos, not to the project. Multi-repo single-container hosting UI extends
             with per-repo {"{config, start, dev, stack-actions}"} surfaces. Migration runs as a
             dry-run report first; no file moves until owner sign-off.
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="Cycle 228 — _aionima Sacred card 404 regression fixed (s175)">
+            Three stale checks caused the Sacred meta-project to render incorrectly: (1) isSacred
+            only checked for type "aionima" but _aionima gets type "aionima-system" — Sacred
+            badge/locks were absent. (2) isCoreFork checked coreCollection === "aionima" which
+            matched the container itself (not just forks inside it), rendering the reduced
+            two-tab UX instead of the full project detail. (3) canViewSacred blocked "aionima-system"
+            projects behind contributing mode. Root cause was the ESM __dirname bug (now fixed at
+            project-config-path.ts:41) which prevented project.json creation → _aionima had no
+            project type on disk → cascade of wrong detections. All three guards tightened.
           </DevNotes.Item>
         </DevNotes>
         {project.category && (
