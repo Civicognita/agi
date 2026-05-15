@@ -176,21 +176,10 @@ export function Projects({
               Hosting health surfaced as a compact icon column. ✓ green = container running &
               reachable. ⚠ amber = degraded. ⚠ red = error. — = not hosted.
             </DevNotes.Item>
-            <DevNotes.Item kind="info" heading="Cycle 133 — Tynn column">
-              `open|doing` two-tone counts per project. **Currently shows `—` for all projects** —
-              backend population deferred to PM-Lite slice (s139 forthcoming). The reframe today
-              shifts this from a remote-tynn fetch to a local PM-Lite store read.
-            </DevNotes.Item>
-            <DevNotes.Item kind="todo" heading="PM-Lite kanban incoming (s139)">
-              The Tynn column in this browser will populate from the local PM-Lite store once
-              s139 ships. The PM-Lite kanban itself surfaces in the Operate tab inside each
-              project's workspace. Codename was tynn-lite; user-facing name is PM-Lite.
-            </DevNotes.Item>
-            <DevNotes.Item kind="warning" heading="Project folder structure migrating (s140)">
-              All non-sacred projects will be restructured to {"{k/, repos/, sandbox/}"} at
-              the project root (chat stays at k/chat/) with a single `project.json` config file at
-              the root holding both project- and per-repo-config. Migration runs as a dry-run
-              report first; no file moves until owner sign-off.
+            <DevNotes.Item kind="info" heading="Cycle 222 — Tynn column live (s130 t524)">
+              `open|doing` counts now populate from each project's `k/pm/tasks.jsonl` (or
+              `.tynn-lite/tasks.jsonl` legacy path). Shows `—` when no PM-Lite store exists
+              for that project. s139 (PM-Lite kanban) and s140 (k/ folder structure) both shipped.
             </DevNotes.Item>
             <DevNotes.Item kind="deferred" heading="COA chain dots in Knowledge column">
               Per cycle-128 audit, the Knowledge column should also show a small COA-chain
