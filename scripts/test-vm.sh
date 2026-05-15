@@ -425,6 +425,8 @@ systemctl restart caddy'
     cd /mnt/agi-local-id
     npm install
     npm run build
+    # Mirror the Dockerfile COPY step: tsc does not copy HTML views to dist/
+    mkdir -p dist/views && cp src/views/*.html dist/views/
 
     # Generate encryption key
     ENC_KEY=$(openssl rand -hex 32)
@@ -521,6 +523,7 @@ cmd_services_start() {
 DATABASE_URL=postgres://agi:aionima@localhost:5432/agi_data
 ENCRYPTION_KEY=${ENC_KEY}
 ID_SERVICE_MODE=local
+PORT=4100
 EOF
     fi
     cd /mnt/agi-local-id
