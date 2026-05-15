@@ -102,6 +102,7 @@ import {
 } from "./project-types.js";
 import type { ProjectConfigManager } from "./project-config-manager.js";
 import type { PendingApprovalStore } from "./pending-approval-store.js";
+import type { ChannelWorkflowBindingStore } from "./channel-workflow-binding-store.js";
 import type { PmProvider } from "@agi/sdk";
 
 // ---------------------------------------------------------------------------
@@ -219,6 +220,9 @@ export interface RuntimeStateDeps {
    *  via GET /api/identity/pending + approve/reject endpoints. CHN-E
    *  (s166) slice 3 — 2026-05-14. */
   pendingApprovalStore?: PendingApprovalStore;
+  /** ChannelWorkflowBindingStore — role/channel → MApp dispatch table.
+   *  Surfaced via GET/POST/DELETE /api/channels/workflow-bindings. CHN-F (s167). */
+  channelWorkflowBindingStore?: ChannelWorkflowBindingStore;
   /** PmProvider — used by the iterative-work progress route (t439) to
    *  surface Race-to-DONE counts. Optional: when missing or when the
    *  provider doesn't expose getActiveFocusProgress, the route returns 503. */
@@ -1839,6 +1843,56 @@ export async function createGatewayRuntimeState(
       const code = msg.includes("not found") ? 404 : 400;
       return reply.code(code).send({ error: `reject failed: ${msg}` });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // CHN-F (s167) — channel workflow bindings CRUD (private network only)
+  //
+  // GET    /api/channels/workflow-bindings                — list all
+  // GET    /api/channels/workflow-bindings?channel=<id>  — filtered by channel
+  // POST   /api/channels/workflow-bindings               — add a binding
+  // DELETE /api/channels/workflow-bindings/:id           — remove by id
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/channels/workflow-bindings", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Channels API only allowed from private network" });
+    if (!deps.channelWorkflowBindingStore) return reply.code(503).send({ error: "Workflow-binding store not available" });
+    const q = request.query as Record<string, string>;
+    const bindings = deps.channelWorkflowBindingStore.list(q["channel"]);
+    return reply.send({ bindings });
+  });
+
+  fastify.post("/api/channels/workflow-bindings", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Channels API only allowed from private network" });
+    if (!deps.channelWorkflowBindingStore) return reply.code(503).send({ error: "Workflow-binding store not available" });
+    const body = request.body as Record<string, unknown>;
+    if (!body || typeof body.channelId !== "string" || typeof body.mappId !== "string") {
+      return reply.code(400).send({ error: "channelId (string) and mappId (string) are required" });
+    }
+    try {
+      const binding = deps.channelWorkflowBindingStore.add({
+        channelId: body.channelId,
+        mappId: body.mappId,
+        roomId: typeof body.roomId === "string" ? body.roomId : undefined,
+        roleId: typeof body.roleId === "string" ? body.roleId : undefined,
+        messagePattern: typeof body.messagePattern === "string" ? body.messagePattern : undefined,
+        label: typeof body.label === "string" ? body.label : undefined,
+      });
+      return reply.code(201).send({ binding });
+    } catch (err) {
+      return reply.code(400).send({ error: `addWorkflowBinding failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  });
+
+  fastify.delete<{ Params: { id: string } }>("/api/channels/workflow-bindings/:id", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Channels API only allowed from private network" });
+    if (!deps.channelWorkflowBindingStore) return reply.code(503).send({ error: "Workflow-binding store not available" });
+    const { id } = request.params;
+    const removed = deps.channelWorkflowBindingStore.remove(id);
+    return reply.code(removed ? 200 : 404).send({ ok: removed });
   });
 
   // -----------------------------------------------------------------------

@@ -137,6 +137,7 @@ import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
 import { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
 import { PendingApprovalStore } from "./pending-approval-store.js";
+import { ChannelWorkflowBindingStore } from "./channel-workflow-binding-store.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
 import { migrateAllProjectMcpConfigs } from "./mcp-config-migration.js";
 import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
@@ -665,6 +666,14 @@ export async function startGatewayServer(
   const inboundPendingApprovalStore = new PendingApprovalStore({
     logger,
     persistPath: `${homedir()}/.agi/pending-approvals.json`,
+  });
+
+  // s167 CHN-F slice 1 (2026-05-14) — workflow binding store. Owner-declared
+  // channel-role → MApp dispatch table. Persists across restarts alongside
+  // the pending-approval store.
+  const channelWorkflowBindingStore = new ChannelWorkflowBindingStore({
+    logger,
+    persistPath: `${homedir()}/.agi/channel-workflow-bindings.json`,
   });
 
   // Inbound router — created after outbound so we can wire the sender for pairing.
@@ -3053,6 +3062,7 @@ export async function startGatewayServer(
       iterativeWorkScheduler,
       projectConfigManager,
       pendingApprovalStore: inboundPendingApprovalStore,
+      channelWorkflowBindingStore,
       pmProvider,
       mcpClient,
       commsLog,

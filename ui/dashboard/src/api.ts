@@ -3830,3 +3830,47 @@ export async function rejectPendingApproval(id: string): Promise<PendingApproval
   const data = await res.json() as { ok: true; approval: PendingApproval };
   return data.approval;
 }
+
+// CHN-F (s167) slice 1 — channel workflow binding client.
+
+export interface ChannelWorkflowBinding {
+  id: string;
+  channelId: string;
+  roomId?: string;
+  roleId?: string;
+  messagePattern?: string;
+  mappId: string;
+  label?: string;
+  createdAt: string;
+}
+
+export async function listWorkflowBindings(channelId?: string): Promise<ChannelWorkflowBinding[]> {
+  const url = channelId
+    ? `/api/channels/workflow-bindings?channel=${encodeURIComponent(channelId)}`
+    : "/api/channels/workflow-bindings";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json() as { bindings: ChannelWorkflowBinding[] };
+  return data.bindings;
+}
+
+export async function addWorkflowBinding(
+  input: Omit<ChannelWorkflowBinding, "id" | "createdAt">,
+): Promise<ChannelWorkflowBinding> {
+  const res = await fetch("/api/channels/workflow-bindings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { binding: ChannelWorkflowBinding };
+  return data.binding;
+}
+
+export async function deleteWorkflowBinding(id: string): Promise<void> {
+  const res = await fetch(`/api/channels/workflow-bindings/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
