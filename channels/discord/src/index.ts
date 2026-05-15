@@ -535,6 +535,15 @@ export default {
     );
     api.registerChannel(plugin);
 
+    // CHN-B s163 slice 2 (2026-05-14) — register the v2 ChannelDefinition
+    // in PARALLEL to the legacy registerChannel() above. The dispatcher
+    // still consumes the legacy path; the v2 registry holds the shadow
+    // entry for slice 3, when the dispatcher switches over. No behavior
+    // change in this slice — just registry presence.
+    const { createDiscordChannelDefV2WithTools } = await import("./channel-def.js");
+    const v2Def = createDiscordChannelDefV2WithTools(plugin.__config, plugin.__client);
+    api.registerChannelV2(v2Def);
+
     // s157-sibling Discord update 2026-05-13 — register bridge tools so
     // Aion can read message history, profiles, roles, and presence from
     // Discord. These are READ-side tools; response gating still goes

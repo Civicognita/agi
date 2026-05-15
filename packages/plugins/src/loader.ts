@@ -249,6 +249,14 @@ function createPluginAPI(
       deps.pluginRegistry.addChannel(pluginId, plugin.id as string);
     },
 
+    registerChannelV2(def: { id: string }): void {
+      // CHN-B s163 slice 2 — register the v2 definition for later
+      // dispatcher consumption (slice 3). Today the runtime channel is
+      // still the legacy registerChannel() path; this is the parallel
+      // shadow registry.
+      deps.pluginRegistry.addChannelV2(pluginId, def.id, def);
+    },
+
     registerProvider(def: LLMProviderDefinition): void {
       deps.pluginRegistry.addProvider(pluginId, def);
     },
