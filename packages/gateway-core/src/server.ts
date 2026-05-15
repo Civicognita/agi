@@ -1588,9 +1588,26 @@ export async function startGatewayServer(
     }
   }
 
-  // Channel plugins are installed from the marketplace like all other plugins.
-  // The channels/ directory in the repo is the source for marketplace packaging
-  // — it is NOT auto-discovered at boot. Install channels via the dashboard.
+  // Discover built-in channel plugins from the channels/ directory co-deployed
+  // with AGI. These are the canonical channel adapters (Discord, Telegram, Gmail,
+  // Signal, WhatsApp) updated by the upgrade pipeline on every git pull. They
+  // have their own node_modules (pnpm workspace links) and dist/index.js bundles.
+  // Marketplace-installed channel overrides in pluginCacheDir take precedence via
+  // the seenIds dedup above.
+  {
+    const channelsDir = join(installDir, "channels");
+    const channelDiscovery = discoverPlugins([channelsDir]);
+    for (const cp of channelDiscovery.plugins) {
+      if (!seenIds.has(cp.manifest.id)) {
+        discovered.plugins.push(cp);
+        seenIds.add(cp.manifest.id);
+      }
+    }
+    discovered.errors.push(...channelDiscovery.errors);
+    if (channelDiscovery.plugins.length > 0) {
+      log.info(`channels: discovered ${String(channelDiscovery.plugins.length)} built-in channel plugins`);
+    }
+  }
 
   const pluginPrefs = (config as Record<string, unknown>).plugins as Record<string, { enabled?: boolean; priority?: number }> | undefined;
   {
