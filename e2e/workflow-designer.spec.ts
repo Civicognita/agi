@@ -6,7 +6,11 @@ import { test, expect } from "@playwright/test";
  * Verifies the Designer tab renders the two-panel layout, allows creating
  * and selecting workflows, and shows the FlowEditor for a selected workflow.
  * Destructive/mutation tests use the API to clean up after themselves.
+ *
+ * NOTE: PAx Tabs.Tab renders as role="tab", not role="button".
  */
+
+const DESIGNER_TAB = { name: "Designer", exact: true };
 
 test.describe("Workflow Designer tab", () => {
   test.beforeEach(async ({ page }) => {
@@ -14,28 +18,29 @@ test.describe("Workflow Designer tab", () => {
   });
 
   test("Designer tab trigger is visible", async ({ page }) => {
-    await expect(page.getByTestId("workflow-designer-tab")).toBeVisible();
+    await expect(page.getByRole("tab", DESIGNER_TAB)).toBeVisible();
   });
 
   test("clicking Designer tab shows the designer panel", async ({ page }) => {
-    await page.getByTestId("workflow-designer-tab").click();
+    await page.getByRole("tab", DESIGNER_TAB).click();
     await expect(page.getByTestId("workflow-designer")).toBeVisible();
   });
 
   test("empty state shown when no workflow is selected", async ({ page }) => {
-    await page.getByTestId("workflow-designer-tab").click();
+    await page.getByRole("tab", DESIGNER_TAB).click();
     await expect(page.getByTestId("workflow-empty-state")).toBeVisible();
   });
 
   test("can open new workflow input via + New button", async ({ page }) => {
-    await page.getByTestId("workflow-designer-tab").click();
-    await page.getByRole("button", { name: /\+ New/i }).click();
+    await page.getByRole("tab", DESIGNER_TAB).click();
+    // "+ New" header button vs "+ New Workflow" empty-state button — select by exact text
+    await page.getByRole("button", { name: "+ New", exact: true }).click();
     await expect(page.getByTestId("workflow-name-input")).toBeVisible();
   });
 
   test("can create a workflow and it appears in the list", async ({ page, request }) => {
-    await page.getByTestId("workflow-designer-tab").click();
-    await page.getByRole("button", { name: /\+ New/i }).click();
+    await page.getByRole("tab", DESIGNER_TAB).click();
+    await page.getByRole("button", { name: "+ New", exact: true }).click();
     await page.getByTestId("workflow-name-input").fill("E2E Test Workflow");
     await page.getByRole("button", { name: "Create" }).click();
 
@@ -59,7 +64,7 @@ test.describe("Workflow Designer tab", () => {
     const record = await created.json() as { id: string };
 
     await page.reload();
-    await page.getByTestId("workflow-designer-tab").click();
+    await page.getByRole("tab", DESIGNER_TAB).click();
     await expect(page.getByTestId(`workflow-item-${record.id}`)).toBeVisible();
     await page.getByTestId(`workflow-item-${record.id}`).click();
     await expect(page.getByTestId("workflow-empty-state")).not.toBeVisible();
