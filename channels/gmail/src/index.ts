@@ -185,9 +185,17 @@ export default {
   async activate(api: AionimaPluginAPI): Promise<void> {
     const channelConfig = api.getChannelConfig("gmail");
     if (!channelConfig?.enabled) return;
-    const plugin = createEmailPlugin(
-      channelConfig.config as unknown as EmailConfig,
-    );
+    const config = channelConfig.config as unknown as EmailConfig;
+    const plugin = createEmailPlugin(config);
     api.registerChannel(plugin);
+
+    // CHN-J s171 (2026-05-15) — register the v2 ChannelDefinition in PARALLEL
+    // to the legacy registerChannel() above. The dispatcher still consumes the
+    // legacy path; the v2 registry holds the shadow entry. No behavior change
+    // in this slice — createProtocol() is only called by the dispatcher, so no
+    // second polling timer is started. Full legacy-path removal deferred to s174.
+    const { createGmailChannelDefV2 } = await import("./channel-def.js");
+    const v2Def = createGmailChannelDefV2(config);
+    api.registerChannelV2(v2Def);
   },
 } satisfies AionimaPlugin;

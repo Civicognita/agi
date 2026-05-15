@@ -128,9 +128,13 @@ export function buildDisplayName(fromHeader: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Extract the text body from a Gmail message payload.
+ * Extract the text body from a Gmail message payload (exported for channel-def.ts).
  * Prefers text/plain, falls back to text/html with tag stripping.
  */
+export function extractBodyText(payload: gmail_v1.Schema$MessagePart): string | null {
+  return extractBody(payload);
+}
+
 function extractBody(payload: gmail_v1.Schema$MessagePart): string | null {
   // Simple single-part message
   if (payload.mimeType === "text/plain" && payload.body?.data) {
