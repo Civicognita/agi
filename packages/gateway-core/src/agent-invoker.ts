@@ -593,6 +593,7 @@ export class AgentInvoker extends EventEmitter {
         projectNotes = ordered.map((n) => ({
           title: n.title,
           body: n.body,
+          kind: n.kind,
           pinned: n.pinned,
           updatedAt: n.updatedAt,
           scope: n.projectPath === null ? "global" as const : "project" as const,

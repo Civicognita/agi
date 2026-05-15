@@ -156,7 +156,7 @@ export interface SystemPromptContext {
    * injects them into the project-context section so Aion sees what the
    * user wrote — closes the user-writes-note → Aion-reads-note loop.
    */
-  projectNotes?: Array<{ title: string; body: string; pinned: boolean; updatedAt: string; scope: "project" | "global" }>;
+  projectNotes?: Array<{ title: string; body: string; kind: "markdown" | "whiteboard"; pinned: boolean; updatedAt: string; scope: "project" | "global" }>;
   /**
    * Active project category — sourced from `project.json`'s `category` field
    * (literature/app/web/media/administration/ops/monorepo). When the category
@@ -708,13 +708,47 @@ function buildProjectArchitectureTree(projectPath: string): string[] {
 }
 
 /**
+ * Extract human-readable text from a whiteboard JSON body for agent context.
+ * Returns sticky note text + shape labels; falls back to a placeholder on
+ * parse error or empty board. Exported for testability.
+ */
+export function summarizeWhiteboardBody(json: string): string {
+  try {
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+    const lines: string[] = [];
+    const notes = Array.isArray(parsed["notes"])
+      ? (parsed["notes"] as Array<Record<string, unknown>>)
+      : [];
+    const shapes = Array.isArray(parsed["shapes"])
+      ? (parsed["shapes"] as Array<Record<string, unknown>>)
+      : [];
+    for (const n of notes) {
+      const text =
+        typeof n["text"] === "string"
+          ? n["text"].trim()
+          : typeof n["content"] === "string"
+            ? n["content"].trim()
+            : "";
+      if (text.length > 0) lines.push(text);
+    }
+    for (const s of shapes) {
+      const label = typeof s["label"] === "string" ? s["label"].trim() : "";
+      if (label.length > 0) lines.push(label);
+    }
+    return lines.length > 0 ? lines.join("\n") : "(empty whiteboard)";
+  } catch {
+    return "(whiteboard — unable to parse)";
+  }
+}
+
+/**
  * Build project context section — tells the agent which project it is scoped to.
  * Reads the project's package.json for name/version/description.
  * Injected before plan workflow instructions when projectPath is set.
  */
 function buildProjectContextSection(
   projectPath: string,
-  notes?: Array<{ title: string; body: string; pinned: boolean; updatedAt: string; scope: "project" | "global" }>,
+  notes?: Array<{ title: string; body: string; kind: "markdown" | "whiteboard"; pinned: boolean; updatedAt: string; scope: "project" | "global" }>,
 ): string {
   const lines: string[] = ["## Active Project"];
   lines.push(`Path: ${projectPath}`);
@@ -767,9 +801,13 @@ function buildProjectContextSection(
     for (const note of notes) {
       const scopeTag = note.scope === "global" ? " [global]" : "";
       const pinTag = note.pinned ? " ★" : "";
-      lines.push(`### ${note.title}${pinTag}${scopeTag}`);
+      const kindTag = note.kind === "whiteboard" ? " [whiteboard]" : "";
+      lines.push(`### ${note.title}${pinTag}${scopeTag}${kindTag}`);
       lines.push("");
-      const body = note.body.trim();
+      const body =
+        note.kind === "whiteboard"
+          ? summarizeWhiteboardBody(note.body)
+          : note.body.trim();
       if (body.length > 0) {
         lines.push(body);
       } else {
