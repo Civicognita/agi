@@ -52,6 +52,7 @@ import { registerSecurityRoutes } from "./security-api.js";
 import { registerProvidersRoutes } from "./providers-api.js";
 import { registerPmRoutes } from "./pm-api.js";
 import { registerNotesRoutes } from "./notes-api.js";
+import { registerWorkflowsRoutes } from "./workflows-api.js";
 import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
 import { COAChainLogger } from "@agi/coa-chain";
@@ -3288,6 +3289,7 @@ export async function startGatewayServer(
           notesStore,
           workspaceProjects: projectPaths,
         }),
+        (f) => registerWorkflowsRoutes(f),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
         (f) => registerLemonadeRoutes(f, {

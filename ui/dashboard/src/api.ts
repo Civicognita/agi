@@ -3874,3 +3874,56 @@ export async function deleteWorkflowBinding(id: string): Promise<void> {
   const res = await fetch(`/api/channels/workflow-bindings/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
+
+// ---------------------------------------------------------------------------
+// Workflow Designer API (s176 — ~/.agi/workflows/)
+// ---------------------------------------------------------------------------
+
+export interface WorkflowSummary {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowRecord extends WorkflowSummary {
+  graph: { nodes: unknown[]; edges: unknown[] };
+}
+
+export async function listWorkflows(): Promise<WorkflowSummary[]> {
+  const res = await fetch("/api/workflows");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json() as { workflows: WorkflowSummary[] };
+  return data.workflows;
+}
+
+export async function getWorkflow(id: string): Promise<WorkflowRecord> {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<WorkflowRecord>;
+}
+
+export async function createWorkflow(name: string): Promise<WorkflowRecord> {
+  const res = await fetch("/api/workflows", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<WorkflowRecord>;
+}
+
+export async function updateWorkflow(id: string, patch: { name?: string; graph?: unknown }): Promise<WorkflowRecord> {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<WorkflowRecord>;
+}
+
+export async function deleteWorkflow(id: string): Promise<void> {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
+}

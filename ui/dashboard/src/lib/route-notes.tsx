@@ -130,9 +130,9 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
     body: "Reconstructs the system prompt + tool budget for a given agent invocation. Useful for understanding why a specific provider/model was picked + why tools fired.",
   },
   "/workflows": {
-    heading: "Workflows — HF + agent workflows registry",
+    heading: "Workflows — topology, designer, workers, prompts",
     kind: "info",
-    body: "Plugin-contributed workflow definitions. HF model-fine-tune workflows live here alongside other registered flows.",
+    body: "Cycle 222 — Designer tab added (s176): create/edit FlowGraph workflows backed by fancy-flow 0.2.2. Auto-saves on change (800 ms debounce). Workflows persist to ~/.agi/workflows/{id}.json. Other tabs: Topology, Taskmaster, Workers, System Prompt, PRIME Truth, Agents, HF Models.",
   },
 
   // ----- Plugin/MApp marketplaces -----
