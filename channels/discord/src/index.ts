@@ -34,6 +34,8 @@ import {
   isChannelAllowed,
 } from "./security.js";
 import { buildDiscordBridgeTools } from "./aion-tools.js";
+import { createDiscordChannelDefV2WithTools } from "./channel-def.js";
+import { getDiscordState, getDiscordAvailableRooms } from "./state.js";
 
 // Re-exports for consumer convenience
 export type { DiscordConfig } from "./config.js";
@@ -296,7 +298,8 @@ export function createDiscordPlugin(
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.DirectMessages,
       GatewayIntentBits.GuildMembers,    // roles + member metadata (privileged)
-      GatewayIntentBits.GuildPresences,  // online state + activity (privileged)
+      // GuildPresences requires Presence Intent enabled in the developer portal.
+      // Disabled until explicitly needed — enable in portal first, then re-add.
     ],
   });
 
@@ -540,7 +543,6 @@ export default {
     // still consumes the legacy path; the v2 registry holds the shadow
     // entry for slice 3, when the dispatcher switches over. No behavior
     // change in this slice — just registry presence.
-    const { createDiscordChannelDefV2WithTools } = await import("./channel-def.js");
     const v2Def = createDiscordChannelDefV2WithTools(plugin.__config, plugin.__client);
     api.registerChannelV2(v2Def);
 
@@ -559,7 +561,6 @@ export default {
     // connection state, guild list, and per-guild channel/forum listing.
     // Cheap to call; reads from the in-process discord.js Client cache.
     api.registerHttpRoute("GET", "/api/channels/discord/state", async (_req, reply) => {
-      const { getDiscordState } = await import("./state.js");
       reply.send(getDiscordState(plugin.__client));
     });
 
@@ -568,7 +569,6 @@ export default {
     // categories; emits {channelId, roomId, label, kind, privacy, group}
     // sorted by (guild, parent, label).
     api.registerHttpRoute("GET", "/api/channels/discord/rooms", async (_req, reply) => {
-      const { getDiscordAvailableRooms } = await import("./state.js");
       reply.send({ rooms: getDiscordAvailableRooms(plugin.__client) });
     });
   },

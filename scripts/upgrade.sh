@@ -487,6 +487,38 @@ else
   emit "build" "skip" "Build up to date (source unchanged)"
 fi
 
+# 7b. Rebuild channel plugins whose source changed since last dist build.
+# Each channel package with a "build" script in package.json is rebuilt
+# when its src/ hash has changed. Dist files are gitignored and must be
+# rebuilt after any source-level additions or dynamic→static import changes.
+# ---------------------------------------------------------------------------
+CHANNEL_DIR="$DEPLOY_DIR/channels"
+if [ -d "$CHANNEL_DIR" ]; then
+  for ch_dir in "$CHANNEL_DIR"/*/; do
+    ch_name="$(basename "$ch_dir")"
+    ch_pkg="$ch_dir/package.json"
+    # Only rebuild if package.json has a "build" script
+    if [ -f "$ch_pkg" ] && grep -q '"build"' "$ch_pkg"; then
+      ch_hash_file="$ch_dir/.src-hash"
+      ch_src_hash="$(find "$ch_dir/src" -type f -name '*.ts' ! -name '*.test.ts' \
+        -exec md5sum {} + 2>/dev/null | sort | md5sum | cut -d' ' -f1)"
+      ch_prev_hash=""
+      [ -f "$ch_hash_file" ] && ch_prev_hash="$(cat "$ch_hash_file")"
+      if [ "$ch_src_hash" != "$ch_prev_hash" ] || [ ! -f "$ch_dir/dist/index.js" ]; then
+        emit "build-channel-${ch_name}" "start" "Building channel plugin: $ch_name"
+        if (cd "$ch_dir" && PATH="$DEPLOY_DIR/node_modules/.bin:$PATH" NO_COLOR=1 pnpm build 2>&1 | sed 's/\x1b\[[0-9;]*m//g'); then
+          echo "$ch_src_hash" > "$ch_hash_file"
+          emit "build-channel-${ch_name}" "done" "Channel $ch_name built"
+        else
+          emit "build-channel-${ch_name}" "error" "Channel $ch_name build failed — skipping"
+        fi
+      else
+        emit "build-channel-${ch_name}" "skip" "Channel $ch_name dist up to date"
+      fi
+    fi
+  done
+fi
+
 # Apply DB schema changes via the targeted psql migration script.
 # drizzle-kit push doesn't work (CJS/NodeNext mismatch in schema files);
 # migrate-db.sh runs idempotent ALTER TABLE … IF NOT EXISTS statements
