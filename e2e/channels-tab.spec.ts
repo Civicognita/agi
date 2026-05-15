@@ -27,35 +27,39 @@ import { test, expect } from "@playwright/test";
  */
 
 test.describe("Channels tab + room picker (s165 CHN-D)", () => {
-  // Resolve a project path to navigate to. The test VM bootstrap creates
-  // _aionima (always-present meta-project). Most projects work; we pick
-  // the first non-Aionima project tile when present, otherwise fall back
-  // to _aionima itself (the Channels tab is universally available across
-  // project types as long as the project is in coordinate mode).
+  // Navigate to sample-monorepo — a non-core-fork fixture project (web-app type)
+  // that always exists in the test VM. Core-fork projects (e.g. _aionima, which
+  // has projectType.id === "aionima") suppress the mode picker via isCoreFork,
+  // so coordinate mode is never entered and the Channels tab never renders.
+  // Non-core-fork projects always expose the four-mode picker including coordinate.
   async function openFirstProjectChannelsTab(page: import("@playwright/test").Page): Promise<void> {
-    await page.goto("/projects", { waitUntil: "domcontentloaded" });
-    // Click into _aionima — guaranteed to exist; coordinate mode is supported.
-    await page.getByTestId("project-card-aionima").click();
-    await expect(page).toHaveURL(/\/projects\/_aionima(\?|#|$)/, { timeout: 10_000 });
+    await page.goto("/projects/sample-monorepo", { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(/\/projects\/sample-monorepo(\?|#|$)/, { timeout: 10_000 });
 
-    // Switch to coordinate mode (where Channels tab lives) if a mode picker is present.
-    // The active mode is reflected in the sub-surface label.
+    // Switch to coordinate mode (where Channels tab lives).
+    // Non-core-fork projects always show the four-mode picker.
     const coordinateButton = page.getByTestId("project-mode-coordinate");
-    if (await coordinateButton.count() > 0) {
-      await coordinateButton.first().click();
-    }
+    await expect(coordinateButton).toBeVisible({ timeout: 8_000 });
+    await coordinateButton.click();
 
-    // The Channels tab trigger has a stable testid.
-    await expect(page.getByTestId("project-tab-channels")).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId("project-tab-channels").click();
+    // Use getByRole("tab") — TabsTrigger (react-fancy Tabs.Tab) does not forward
+    // data-testid to the underlying <button>; role+name is the correct selector.
+    const channelsTab = page.getByRole("tab", { name: "Channels" });
+    await expect(channelsTab).toBeVisible({ timeout: 15_000 });
+    await channelsTab.click();
 
     // Verify panel mounted
     await expect(page.getByTestId("channels-panel")).toBeVisible({ timeout: 10_000 });
+
+    // Wait for the panel data to load. While fetching, neither channels-panel-empty
+    // nor channels-panel-list is rendered. The Refresh button text changes from
+    // "Loading…" to "Refresh" when the fetch settles — use that as the ready signal.
+    await page.getByRole("button", { name: "Refresh", exact: true }).waitFor({ state: "visible", timeout: 8_000 });
   }
 
   test("Channels tab is present on the project tab strip in coordinate mode", async ({ page }) => {
     await openFirstProjectChannelsTab(page);
-    // The tab trigger has the data-testid project-tab-channels — verified inside helper.
+    // Tab navigation verified inside helper via getByRole("tab", { name: "Channels" }).
     // Additionally, the panel header reads "Channel Rooms".
     await expect(page.getByText("Channel Rooms")).toBeVisible();
   });
@@ -76,14 +80,15 @@ test.describe("Channels tab + room picker (s165 CHN-D)", () => {
   test("clicking + Add Binding opens the room picker dialog", async ({ page }) => {
     await openFirstProjectChannelsTab(page);
     await page.getByTestId("channels-panel-add-binding").click();
-    // Picker mounts. Modal shape from react-fancy.
-    await expect(page.getByTestId("room-picker-dialog")).toBeVisible({ timeout: 10_000 });
+    // Picker mounts. Modal (react-fancy) renders with role="dialog"; data-testid
+    // is not forwarded to the DOM by ModalRoot, so use role-based selector.
+    await expect(page.getByRole("dialog")).toBeVisible({ timeout: 10_000 });
   });
 
   test("room picker has the Discord channel button + Refresh action", async ({ page }) => {
     await openFirstProjectChannelsTab(page);
     await page.getByTestId("channels-panel-add-binding").click();
-    await expect(page.getByTestId("room-picker-dialog")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("dialog")).toBeVisible({ timeout: 10_000 });
     // Discord is the only currently-available channel (Telegram/Slack/etc.
     // migrate to defineChannelV2 in CHN-I/J/K/L). The discord chip must be present.
     await expect(page.getByTestId("room-picker-channel-discord")).toBeVisible();
@@ -92,7 +97,7 @@ test.describe("Channels tab + room picker (s165 CHN-D)", () => {
   test("room picker shows the empty-state OR a list when Discord is queried", async ({ page }) => {
     await openFirstProjectChannelsTab(page);
     await page.getByTestId("channels-panel-add-binding").click();
-    await expect(page.getByTestId("room-picker-dialog")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("dialog")).toBeVisible({ timeout: 10_000 });
 
     // After load, the picker either shows the empty-state (Discord
     // offline / no guilds) OR a list of rooms grouped by guild.
@@ -122,10 +127,10 @@ test.describe("Channels tab + room picker (s165 CHN-D)", () => {
     const emptyBefore = await page.getByTestId("channels-panel-empty").count();
 
     await page.getByTestId("channels-panel-add-binding").click();
-    await expect(page.getByTestId("room-picker-dialog")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("dialog")).toBeVisible({ timeout: 10_000 });
     await page.getByRole("button", { name: /Done/i }).click();
     // Picker should disappear
-    await expect(page.getByTestId("room-picker-dialog")).not.toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole("dialog")).not.toBeVisible({ timeout: 5_000 });
 
     // State should be the same as before
     const listAfter = await page.getByTestId("channels-panel-list").count();
