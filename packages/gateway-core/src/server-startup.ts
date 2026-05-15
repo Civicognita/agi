@@ -17,6 +17,7 @@ import type { AgentSessionManager } from "./agent-session.js";
 import type { SessionStore } from "./session-store.js";
 import type { DashboardEventBroadcaster } from "./dashboard-events.js";
 import type { InboundRouter } from "./inbound-router.js";
+import type { ChannelWorkflowBinding, ChannelWorkflowBindingStore } from "./channel-workflow-binding-store.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -169,6 +170,14 @@ export interface GatewaySidecarsDeps {
   logger?: Logger;
   /** v2 channel registry — channels registered via api.registerChannelV2 (CHN-B s163 slice 3). */
   pluginRegistry?: PluginRegistryV2Surface;
+  /** Binding store — matched against v2 channel events for MApp dispatch. CHN-F (s167) slice 2. */
+  channelWorkflowBindingStore?: ChannelWorkflowBindingStore;
+  /**
+   * Callback invoked when one or more workflow bindings match an inbound
+   * channel event. Caller (server.ts) owns the MApp executor logic so
+   * server-startup stays free of executor deps. CHN-F (s167) slice 2.
+   */
+  onWorkflowMatch?: (bindings: ChannelWorkflowBinding[], msg: AionimaMessage, entityId: string) => void;
 }
 
 export interface ChannelEntry {
@@ -220,6 +229,8 @@ export async function startGatewaySidecars(
     dashboardBroadcaster,
     httpServer,
     pluginRegistry,
+    channelWorkflowBindingStore,
+    onWorkflowMatch,
   } = deps;
 
   const log = createComponentLogger(deps.logger, "server-startup");
@@ -360,8 +371,30 @@ export async function startGatewaySidecars(
           inboundRouter.route(aionimaMsg).then((result) => {
             if (result === null) {
               log.info(`[v2 inbound] ${def.id}: handled inline`);
-            } else {
-              log.info(`[v2 inbound] ${def.id}: routed → entity=${result.entityId} queue=${result.queueMessageId}`);
+              return;
+            }
+            log.info(`[v2 inbound] ${def.id}: routed → entity=${result.entityId} queue=${result.queueMessageId}`);
+
+            // CHN-F (s167) slice 2 — workflow binding dispatch.
+            // After routing completes, check for channel-workflow bindings that
+            // match this event. Caller (server.ts) owns executor logic via callback.
+            if (channelWorkflowBindingStore !== undefined && onWorkflowMatch !== undefined) {
+              const roomId = typeof aionimaMsg.metadata === "object" && aionimaMsg.metadata !== null
+                ? (aionimaMsg.metadata as Record<string, unknown>)["roomId"] as string | undefined
+                : undefined;
+              const messageText = aionimaMsg.content.type === "text"
+                ? (aionimaMsg.content as { type: "text"; text: string }).text
+                : undefined;
+              const matched = channelWorkflowBindingStore.match({
+                channelId: def.id,
+                roomId,
+                roles: [],  // CHN-E (s166) wires entity roles; empty = role-id bindings skip for now
+                messageText,
+              });
+              if (matched.length > 0) {
+                log.info(`[workflow] ${def.id}: ${String(matched.length)} binding(s) matched (mappIds: ${matched.map((b) => b.mappId).join(", ")})`);
+                onWorkflowMatch(matched, aionimaMsg, result.entityId);
+              }
             }
           }).catch((err: unknown) => {
             log.error(`[v2 inbound] ${def.id}: routing error: ${err instanceof Error ? err.message : String(err)}`);

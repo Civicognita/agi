@@ -138,6 +138,7 @@ import { ProjectConfigManager } from "./project-config-manager.js";
 import { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
 import { PendingApprovalStore } from "./pending-approval-store.js";
 import { ChannelWorkflowBindingStore } from "./channel-workflow-binding-store.js";
+import { runWorkflow } from "./mapp-executor.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
 import { migrateAllProjectMcpConfigs } from "./mcp-config-migration.js";
 import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
@@ -4982,6 +4983,37 @@ export async function startGatewayServer(
       entityStore,
       logger,
       pluginRegistry,
+      channelWorkflowBindingStore,
+      // CHN-F (s167) slice 2 — dispatch matched channel-workflow bindings to MApp executor.
+      onWorkflowMatch: (bindings, msg, entityId) => {
+        for (const binding of bindings) {
+          const mappDef = mappRegistry.get(binding.mappId);
+          if (mappDef === undefined) {
+            log.warn(`[workflow] MApp "${binding.mappId}" not installed — skipping binding ${binding.id}`);
+            continue;
+          }
+          const manualWf = (mappDef.workflows ?? []).find((w) => w.trigger === "manual");
+          if (manualWf === undefined) {
+            log.info(`[workflow] MApp "${binding.mappId}" has no manual workflow — binding ${binding.id} matched, nothing dispatched`);
+            continue;
+          }
+          const roomId = typeof msg.metadata === "object" && msg.metadata !== null
+            ? (msg.metadata as Record<string, unknown>)["roomId"] as string | undefined
+            : undefined;
+          const ctx: Record<string, unknown> = {
+            channelId: msg.channelId as string,
+            roomId,
+            messageText: msg.content.type === "text" ? (msg.content as { type: "text"; text: string }).text : "",
+            entityId,
+            bindingId: binding.id,
+          };
+          runWorkflow(mappDef, manualWf.id, ctx).then((wfResult) => {
+            log.info(`[workflow] MApp "${binding.mappId}" workflow "${manualWf.id}" dispatched: ${wfResult.status}`);
+          }).catch((err: unknown) => {
+            log.error(`[workflow] MApp "${binding.mappId}" workflow error: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        }
+      },
     },
     {
       channels: config.channels.map((ch: { id: string; enabled?: boolean; config?: Record<string, unknown> }) => ({
