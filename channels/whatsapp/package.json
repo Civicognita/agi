@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@agi/channel-sdk": "workspace:*",
-    "@agi/plugins": "workspace:*"
+    "@agi/plugins": "workspace:*",
+    "@agi/sdk": "workspace:*"
   }
 }
