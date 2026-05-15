@@ -42,6 +42,7 @@ import { isSacredProject } from "@/lib/sacred-projects.js";
 import { SecurityTab } from "./SecurityTab.js";
 import { MagicAppPicker } from "./MagicAppPicker.js";
 import { isDesktopServedType } from "@/lib/project-type-classifier";
+import { AionimaSystemReposPanel } from "./AionimaSystemReposPanel.js";
 
 export interface ProjectDetailProps {
   projects: ProjectInfo[];
@@ -133,6 +134,9 @@ export function ProjectDetail({
   // "aionima" on the container too, but only actual forks have
   // projectType "aionima"). Using only the type check avoids the false match.
   const isCoreFork = project?.projectType?.id === "aionima";
+  // s179: the _aionima meta-project itself (type "aionima-system") gets a
+  // dedicated Repos/Details/Editor tab set — no stack strip, no mode picker.
+  const isAionimaContainer = project?.projectType?.id === "aionima-system";
 
   const [editName, setEditName] = useState<string | null>(null);
   // s140 cycle-169 t591 — Tynn token state removed; token now lives in
@@ -243,6 +247,12 @@ export function ProjectDetail({
     }
     return TAB_MODES[tabId] === currentMode;
   };
+  // s179: default to "repos" tab for the _aionima container project.
+  useEffect(() => {
+    if (isAionimaContainer && activeTab === "details") setActiveTab("repos");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAionimaContainer]);
+
   // Auto-switch activeTab when mode changes if the current tab is no
   // longer in the active mode.
   useEffect(() => {
@@ -439,6 +449,12 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
+          <DevNotes.Item kind="info" heading="s179 (2026-05-15) — Aionima-system container UX">
+            aionima-system project type now gets a dedicated 3-tab view (Repos | Details | Editor)
+            instead of the full mode-picker + all tabs. Stack strip and mode picker hidden.
+            AionimaSystemReposPanel shows all five core forks with ahead/behind badges,
+            a file browser toggle, and a Talk-to-project button.
+          </DevNotes.Item>
           <DevNotes.Item kind="info" heading="Cycles 144-148 — Canvas + Chat split (slice 5c phases 1-3)">
             Mockup B's flyout-shell shape is in: Canvas section header reads `Canvas · {"{tab}"}`,
             tabs sit on the left (flex-1), chat aside sits on the right (280px, lg+ only). The
@@ -562,7 +578,7 @@ export function ProjectDetail({
           postgres + redis, so a cache-invalidation step is feasible").
           Skipped for core forks (aionima collection) since they're
           source trees, not deployable services. */}
-      {!isCoreFork && project.projectType?.hasCode && (
+      {!isCoreFork && !isAionimaContainer && project.projectType?.hasCode && (
         <div
           className="flex items-center gap-2 px-3 py-2 mb-3 rounded-md bg-indigo-500/5 border border-indigo-500/20"
           data-testid="project-stack-strip"
@@ -617,7 +633,7 @@ export function ProjectDetail({
             (no code → no editor/hosting tabs)
           - administration: hide Develop (no code)
           - Otherwise (web/app/monorepo/ops): all 4 modes visible */}
-      {!isCoreFork && (() => {
+      {!isCoreFork && !isAionimaContainer && (() => {
         const cat = project.category ?? project.projectType?.category;
         const visibleModes = computeVisibleModes(cat);
         return (
@@ -667,6 +683,13 @@ export function ProjectDetail({
           <TabsList>
             <TabsTrigger value="files">Editor</TabsTrigger>
             <TabsTrigger value="repository">Repository</TabsTrigger>
+          </TabsList>
+        ) : isAionimaContainer ? (
+          // s179: _aionima meta-project — Repos | Details | Editor only
+          <TabsList>
+            <TabsTrigger value="repos" data-testid="project-tab-repos">Repos</TabsTrigger>
+            <TabsTrigger value="details">Details</TabsTrigger>
+            <TabsTrigger value="files">Editor</TabsTrigger>
           </TabsList>
         ) : (
           <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border flex-wrap" data-testid="project-sub-surface">
@@ -1264,6 +1287,16 @@ export function ProjectDetail({
                 </div>
               )}
             </div>
+          </Card>
+        </TabsContent>
+
+        {/* s179: _aionima container — repos overview panel */}
+        <TabsContent value="repos" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <Card className="p-4">
+            <AionimaSystemReposPanel
+              projectPath={project.path}
+              onOpenChat={() => onOpenChat(project.path)}
+            />
           </Card>
         </TabsContent>
 
