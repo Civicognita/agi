@@ -132,7 +132,7 @@ if [ "$LIST_MODE" -eq 1 ]; then
       ;;
     *)
       echo "# unit specs (vitest, matched by filename)"
-      (cd "$REPO_DIR" && find packages cli config -type f -name "*.test.ts" 2>/dev/null | sort)
+      (cd "$REPO_DIR" && find packages cli config channels -type f -name "*.test.ts" 2>/dev/null | sort)
       ;;
   esac
   exit 0
@@ -209,12 +209,12 @@ resolve_unit_spec() {
   # so a `/` in the pattern always misses. Try -iwholename first when
   # pattern contains a slash; fall back to -iname for plain names.
   if [[ "$pat" == */* ]]; then
-    found="$(cd "$REPO_DIR" && find packages cli config -type f -iwholename "*${pat// /*}*.test.ts" 2>/dev/null | sort | head -1)"
+    found="$(cd "$REPO_DIR" && find packages cli config channels -type f -iwholename "*${pat// /*}*.test.ts" 2>/dev/null | sort | head -1)"
     if [ -n "$found" ]; then echo "$found"; return 0; fi
   fi
-  found="$(cd "$REPO_DIR" && find packages cli config -type f -iname "*${pat// /*}*.test.ts" 2>/dev/null | sort | head -1)"
+  found="$(cd "$REPO_DIR" && find packages cli config channels -type f -iname "*${pat// /*}*.test.ts" 2>/dev/null | sort | head -1)"
   if [ -n "$found" ]; then echo "$found"; return 0; fi
-  found="$(cd "$REPO_DIR" && find packages cli config -type f -name "*.test.ts" -exec grep -l -iE "$pat" {} \; 2>/dev/null | sort | head -1)"
+  found="$(cd "$REPO_DIR" && find packages cli config channels -type f -name "*.test.ts" -exec grep -l -iE "$pat" {} \; 2>/dev/null | sort | head -1)"
   if [ -n "$found" ]; then echo "$found"; return 0; fi
   return 1
 }
