@@ -9,6 +9,7 @@
 import type { Server as HttpServer, IncomingMessage, ServerResponse } from "node:http";
 
 import type { AionimaChannelPlugin, AionimaMessage } from "@agi/channel-sdk";
+import type { ChannelDefinition, ChannelContext, ChannelEvent } from "@agi/sdk";
 
 import type { ChannelRegistry } from "./channel-registry.js";
 import type { QueueConsumer } from "./queue-consumer.js";
@@ -18,6 +19,13 @@ import type { DashboardEventBroadcaster } from "./dashboard-events.js";
 import type { InboundRouter } from "./inbound-router.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
+
+// Minimal structural slice of PluginRegistry needed for v2 channel dispatch.
+// gateway-core already depends on @agi/plugins but using a structural interface
+// here keeps the coupling explicit and lets tests pass a minimal stub.
+interface PluginRegistryV2Surface {
+  getChannelsV2(): Array<{ channelId: string; definition: unknown }>;
+}
 
 // ---------------------------------------------------------------------------
 // Channel factory type
@@ -159,6 +167,8 @@ export interface GatewaySidecarsDeps {
   entityStore?: PhoneHashStore;
   /** Optional logger instance. */
   logger?: Logger;
+  /** v2 channel registry — channels registered via api.registerChannelV2 (CHN-B s163 slice 3). */
+  pluginRegistry?: PluginRegistryV2Surface;
 }
 
 export interface ChannelEntry {
@@ -175,6 +185,8 @@ export interface GatewaySidecarsOptions {
 export interface GatewaySidecarsResult {
   channelsStarted: string[];
   channelsSkipped: string[];
+  /** Stop all v2-protocol channels. Called by server.ts teardown alongside channelRegistry.stopAll(). */
+  stopV2Channels: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +219,7 @@ export async function startGatewaySidecars(
     sessionStore,
     dashboardBroadcaster,
     httpServer,
+    pluginRegistry,
   } = deps;
 
   const log = createComponentLogger(deps.logger, "server-startup");
@@ -220,25 +233,39 @@ export async function startGatewaySidecars(
   // -------------------------------------------------------------------------
 
   // -------------------------------------------------------------------------
-  // (b) Start all registered channels with restart-on-failure backoff
-  //
-  // startAll() already catches individual channel failures internally and
-  // emits "channel_error" events. We wire an error listener to each channel
-  // to trigger exponential backoff restart on runtime failures.
+  // (b) Start legacy channels, skipping any that have a v2 registration.
+  //     v2-registered channels start via the v2 block below (a2) to avoid
+  //     double-connecting the underlying transport (e.g. two discord.js
+  //     client.login() calls from the same token).
   // -------------------------------------------------------------------------
 
-  // Wire error listener before startAll() so runtime errors are caught
+  const v2ChannelIds = new Set(
+    pluginRegistry ? pluginRegistry.getChannelsV2().map((e) => e.channelId) : [],
+  );
+
+  // Wire error listener before start so runtime errors are caught
   channelRegistry.on("channel_error", (channelId: string, _message: string) => {
+    if (v2ChannelIds.has(channelId)) return; // v2 channels manage their own restart
     const entry = channelRegistry.getChannel(channelId);
     if (entry === undefined) return;
-    // Only schedule restart if registry knows about this channel
     scheduleChannelRestart(channelId, channelRegistry, 0, log);
   });
 
   try {
-    await channelRegistry.startAll();
+    // Start legacy channels only (skip v2 counterparts)
+    const legacyIds = channelRegistry.getChannels()
+      .map((e) => e.plugin.id as string)
+      .filter((id) => !v2ChannelIds.has(id));
 
-    // Wire inbound router to all registered channels' messaging adapters
+    await Promise.allSettled(
+      legacyIds.map((id) =>
+        channelRegistry.startChannel(id).catch((err: unknown) => {
+          log.error(`failed to start "${id}": ${err instanceof Error ? err.message : String(err)}`);
+        }),
+      ),
+    );
+
+    // Wire inbound router to all running legacy channels
     for (const running of channelRegistry.getRunningChannels()) {
       const id = running.plugin.id as string;
       running.plugin.messaging.onMessage(async (message: AionimaMessage) => {
@@ -269,10 +296,84 @@ export async function startGatewaySidecars(
       }
     }
   } catch (err) {
-    // startAll() is designed to never throw — this catch is belt-and-suspenders
     log.error(
-      `unexpected error during channelRegistry.startAll(): ${err instanceof Error ? err.message : String(err)}`,
+      `unexpected error during legacy channel start: ${err instanceof Error ? err.message : String(err)}`,
     );
+  }
+
+  // -------------------------------------------------------------------------
+  // (a2) Start v2 channels — registered via api.registerChannelV2 (CHN-B s163)
+  //
+  // Each v2 entry carries an opaque `definition: unknown` at the @agi/plugins
+  // boundary. Here in gateway-core (which imports both @agi/plugins AND @agi/sdk)
+  // we safely cast to ChannelDefinition and drive the full ChannelProtocol
+  // lifecycle. Legacy registration for the same channel is skipped above.
+  // -------------------------------------------------------------------------
+
+  const v2StopHandles = new Map<string, () => Promise<void>>();
+
+  if (pluginRegistry) {
+    for (const v2Entry of pluginRegistry.getChannelsV2()) {
+      const def = v2Entry.definition as ChannelDefinition;
+      const channelOpts = opts.channels.find((c) => c.id === def.id);
+      const channelConfig: Record<string, unknown> = channelOpts?.config ?? {};
+      const channelLog = createComponentLogger(deps.logger, `channel-v2:${def.id}`);
+
+      const ctx: ChannelContext = {
+        config: channelConfig,
+        logger: {
+          info: (msg, meta) => channelLog.info(meta ? `${msg} ${JSON.stringify(meta)}` : msg),
+          warn: (msg, meta) => channelLog.warn(meta ? `${msg} ${JSON.stringify(meta)}` : msg),
+          error: (msg, meta) => channelLog.error(meta ? `${msg} ${JSON.stringify(meta)}` : msg),
+        },
+        // CHN-C (s164) wires real cage bindings; stubs return null until then
+        cageProvider: (_roomId) => null,
+        // CHN-E (s166) wires real entity resolution; stubs pending until then
+        resolveEntity: async (userId) => ({
+          entityId: `pending-from-${def.id}:${userId}`,
+          isPending: true,
+        }),
+      };
+
+      try {
+        const protocol = def.createProtocol(ctx);
+        const handle = await protocol.start();
+        v2StopHandles.set(def.id, handle.stop);
+        channelsStarted.push(def.id);
+
+        // Bridge v2 ChannelEvent → AionimaMessage → InboundRouter
+        protocol.onEvent((event: ChannelEvent) => {
+          if (event.kind !== "message") return;
+          const msg = event.message;
+          const aionimaMsg: AionimaMessage = {
+            id: msg.messageId,
+            channelId: def.id as AionimaMessage["channelId"],
+            channelUserId: msg.authorId,
+            timestamp: msg.sentAt,
+            content: { type: "text", text: msg.text },
+            replyTo: msg.replyToMessageId,
+            threadId: msg.threadRootMessageId,
+            metadata: { roomId: msg.roomId, mentionsBot: msg.mentionsBot },
+          };
+          const preview = msg.text.slice(0, 80);
+          log.info(`[v2 inbound] ${def.id}: message from ${msg.authorId} in ${msg.roomId} — "${preview}"`);
+          inboundRouter.route(aionimaMsg).then((result) => {
+            if (result === null) {
+              log.info(`[v2 inbound] ${def.id}: handled inline`);
+            } else {
+              log.info(`[v2 inbound] ${def.id}: routed → entity=${result.entityId} queue=${result.queueMessageId}`);
+            }
+          }).catch((err: unknown) => {
+            log.error(`[v2 inbound] ${def.id}: routing error: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        });
+
+        log.info(`[v2] channel "${def.id}" started`);
+      } catch (err) {
+        log.error(`[v2] failed to start "${def.id}": ${err instanceof Error ? err.message : String(err)}`);
+        channelsSkipped.push(def.id);
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -304,5 +405,15 @@ export async function startGatewaySidecars(
     log.info("dashboard event broadcaster active");
   }
 
-  return { channelsStarted, channelsSkipped };
+  const stopV2Channels = async (): Promise<void> => {
+    await Promise.allSettled(
+      Array.from(v2StopHandles.entries()).map(([id, stop]) =>
+        stop().catch((err: unknown) => {
+          log.error(`[v2] failed to stop "${id}": ${err instanceof Error ? err.message : String(err)}`);
+        }),
+      ),
+    );
+  };
+
+  return { channelsStarted, channelsSkipped, stopV2Channels };
 }

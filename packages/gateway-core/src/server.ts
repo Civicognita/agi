@@ -4971,6 +4971,7 @@ export async function startGatewayServer(
       httpServer,
       entityStore,
       logger,
+      pluginRegistry,
     },
     {
       channels: config.channels.map((ch: { id: string; enabled?: boolean; config?: Record<string, unknown> }) => ({
@@ -5268,11 +5269,16 @@ export async function startGatewayServer(
       log.error(`error stopping queue consumer: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // Step 2: Stop all channels
+    // Step 2: Stop all channels (legacy + v2)
     try {
       await channelRegistry.stopAll();
     } catch (err) {
       log.error(`error stopping channels: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      await sidecarsResult.stopV2Channels();
+    } catch (err) {
+      log.error(`error stopping v2 channels: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // Step 3: Stop AgentSessionManager sweep
