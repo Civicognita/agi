@@ -537,6 +537,10 @@ EOF
   # force-trip from s143 t573) so production gateways never expose them
   # even on a private network.
   multipass exec "$VM_NAME" -- bash -c '
+    if [ ! -f /mnt/agi/cli/dist/index.js ]; then
+      echo "  ERROR: cli/dist/index.js not found — run services-setup or pnpm build on host first"
+      exit 1
+    fi
     cd /mnt/agi
     nohup env AIONIMA_TEST_VM=1 node cli/dist/index.js run > /tmp/agi.log 2>&1 &
     echo $! > /tmp/agi.pid
@@ -544,24 +548,28 @@ EOF
     echo "  AGI PID: $(cat /tmp/agi.pid)"
   '
 
-  # Ensure Ollama + the acceptance-test local model are installed and running.
-  # Phase 10 (#322) of the alpha-stable-1 sweep — Aion must be able to reach
-  # a local model when costMode=local. Idempotent: the install script + the
-  # pull are both skip-if-present. The initial pull is ~1.9 GB for qwen2.5:3b.
-  echo "==> Ensuring Ollama + qwen2.5:3b..."
+  # Ensure Ollama is running. The initial qwen2.5:3b pull (~1.9 GB) is kicked
+  # off in the background so services-start returns quickly — callers that need
+  # the model should poll /api/tags until it appears. Idempotent: the install
+  # and pull are both skip-if-present.
+  echo "==> Ensuring Ollama is running..."
   multipass exec "$VM_NAME" -- bash -lc '
     if ! which ollama >/dev/null 2>&1; then
-      curl -fsSL https://ollama.com/install.sh | sh >/dev/null 2>&1
+      echo "  Ollama not installed — installing (may take a minute)..."
+      timeout 120 bash -c "curl -fsSL https://ollama.com/install.sh | sh" >/dev/null 2>&1 \
+        || { echo "  WARN: Ollama install timed out or failed — skipping"; exit 0; }
     fi
     sudo systemctl enable --now ollama >/dev/null 2>&1 || true
     for i in 1 2 3 4 5; do
-      curl -s -o /dev/null http://127.0.0.1:11434/api/tags && break
+      curl -s --max-time 3 -o /dev/null http://127.0.0.1:11434/api/tags && break
       sleep 2
     done
     if ! ollama list 2>/dev/null | grep -q "qwen2.5:3b"; then
-      ollama pull qwen2.5:3b >/dev/null 2>&1
+      echo "  qwen2.5:3b absent — pulling in background (1.9 GB, see /tmp/ollama-pull.log)"
+      nohup ollama pull qwen2.5:3b >/tmp/ollama-pull.log 2>&1 &
+      echo "  pull PID: $!"
     fi
-    echo "    ollama: $(systemctl is-active ollama) · models: $(ollama list 2>/dev/null | tail -n +2 | awk "{print \$1}" | paste -sd, -)"
+    echo "  ollama: $(systemctl is-active ollama 2>/dev/null || echo unknown) · models: $(ollama list 2>/dev/null | tail -n +2 | awk "{print \$1}" | paste -sd, - || echo none)"
   '
 
   # Seed the owner entity so chat:send doesn't error "Owner not configured".
@@ -619,8 +627,8 @@ PYEOF
   echo "==> Checking health..."
   multipass exec "$VM_NAME" -- bash -c '
     sleep 2
-    echo "  AGI:  $(curl -sk https://ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
-    echo "  ID:   $(curl -sk https://id.ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
+    echo "  AGI:  $(curl -sk --connect-timeout 5 --max-time 10 https://ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
+    echo "  ID:   $(curl -sk --connect-timeout 5 --max-time 10 https://id.ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
   '
 
   # Categorize the sample project fixtures so every official MApp has at
@@ -758,8 +766,8 @@ cmd_services_status() {
     echo "ID:         $([ -f /tmp/agi-local-id.pid ] && kill -0 $(cat /tmp/agi-local-id.pid) 2>/dev/null && echo "running (PID $(cat /tmp/agi-local-id.pid))" || echo "stopped")"
     echo ""
     echo "Health checks:"
-    echo "  AGI:  $(curl -sk https://ai.on/health 2>/dev/null || echo "unreachable")"
-    echo "  ID:   $(curl -sk https://id.ai.on/health 2>/dev/null || echo "unreachable")"
+    echo "  AGI:  $(curl -sk --connect-timeout 5 --max-time 10 https://ai.on/health 2>/dev/null || echo "unreachable")"
+    echo "  ID:   $(curl -sk --connect-timeout 5 --max-time 10 https://id.ai.on/health 2>/dev/null || echo "unreachable")"
   '
 }
 
