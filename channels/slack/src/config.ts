@@ -1,5 +1,3 @@
-import type { ChannelConfigAdapter } from "@agi/channel-sdk";
-
 // ---------------------------------------------------------------------------
 // Slack config
 // ---------------------------------------------------------------------------
@@ -44,10 +42,3 @@ export function isSlackConfig(value: unknown): value is SlackConfig {
   return true;
 }
 
-/** ChannelConfigAdapter for the Slack channel. */
-export function createConfigAdapter(): ChannelConfigAdapter {
-  return {
-    validate: (config: unknown) => isSlackConfig(config),
-    getDefaults: () => ({ rateLimitPerMinute: 20 }),
-  };
-}

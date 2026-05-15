@@ -1,6 +1,7 @@
 {
   "name": "@agi/channel-sdk",
   "version": "0.1.0",
+  "deprecated": "Superseded by defineChannel in @agi/sdk. Full deletion after Gmail (s171) migrates to v2. See agi/docs/agents/channel-plugin-redesign.md §11 (CHN-M).",
   "private": true,
   "type": "module",
   "exports": {
