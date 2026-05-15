@@ -196,9 +196,6 @@ importers:
 
   channels/discord:
     dependencies:
-      '@agi/channel-sdk':
-        specifier: workspace:*
-        version: link:../../packages/channel-sdk
       '@agi/plugins':
         specifier: workspace:*
         version: link:../../packages/plugins
@@ -211,9 +208,6 @@ importers:
 
   channels/gmail:
     dependencies:
-      '@agi/channel-sdk':
-        specifier: workspace:*
-        version: link:../../packages/channel-sdk
       '@agi/plugins':
         specifier: workspace:*
         version: link:../../packages/plugins
@@ -223,9 +217,6 @@ importers:
 
   channels/signal:
     dependencies:
-      '@agi/channel-sdk':
-        specifier: workspace:*
-        version: link:../../packages/channel-sdk
       '@agi/plugins':
         specifier: workspace:*
         version: link:../../packages/plugins
@@ -235,9 +226,6 @@ importers:
 
   channels/slack:
     dependencies:
-      '@agi/channel-sdk':
-        specifier: workspace:*
-        version: link:../../packages/channel-sdk
       '@agi/plugins':
         specifier: workspace:*
         version: link:../../packages/plugins
@@ -250,9 +238,6 @@ importers:
 
   channels/telegram:
     dependencies:
-      '@agi/channel-sdk':
-        specifier: workspace:*
-        version: link:../../packages/channel-sdk
       '@agi/plugins':
         specifier: workspace:*
         version: link:../../packages/plugins
@@ -265,9 +250,6 @@ importers:
 
   channels/whatsapp:
     dependencies:
-      '@agi/channel-sdk':
-        specifier: workspace:*
-        version: link:../../packages/channel-sdk
       '@agi/plugins':
         specifier: workspace:*
         version: link:../../packages/plugins
@@ -292,12 +274,12 @@ importers:
 
   packages/agent-bridge:
     dependencies:
-      '@agi/channel-sdk':
-        specifier: workspace:*
-        version: link:../channel-sdk
       '@agi/entity-model':
         specifier: workspace:*
         version: link:../entity-model
+      '@agi/plugins':
+        specifier: workspace:*
+        version: link:../plugins
 
   packages/aion-sdk:
     dependencies:
@@ -310,12 +292,6 @@ importers:
       '@agi/security':
         specifier: workspace:*
         version: link:../security
-
-  packages/channel-sdk:
-    dependencies:
-      zod:
-        specifier: ^3.24.0
-        version: 3.25.76
 
   packages/coa-chain:
     dependencies:
@@ -359,9 +335,6 @@ importers:
 
   packages/gateway-core:
     dependencies:
-      '@agi/channel-sdk':
-        specifier: workspace:*
-        version: link:../channel-sdk
       '@agi/coa-chain':
         specifier: workspace:*
         version: link:../coa-chain
@@ -511,9 +484,6 @@ importers:
 
   packages/plugins:
     dependencies:
-      '@agi/channel-sdk':
-        specifier: workspace:*
-        version: link:../channel-sdk
       '@agi/gateway-core':
         specifier: workspace:*
         version: link:../gateway-core
