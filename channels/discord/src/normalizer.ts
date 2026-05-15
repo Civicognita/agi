@@ -1,5 +1,5 @@
 import type { Message } from "discord.js";
-import type { ChannelId, AionimaMessage, MessageContent } from "@agi/channel-sdk";
+import type { ChannelId, AionimaMessage, MessageContent } from "@agi/sdk";
 import type { ChannelMessageAttachment } from "@agi/sdk";
 
 export const DISCORD_CHANNEL_ID = "discord" as ChannelId;

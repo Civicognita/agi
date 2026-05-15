@@ -1,6 +1,6 @@
 // @ts-nocheck -- blocks on pg-backed test harness; tracked in _plans/phase2-tests-pg.md
 import { describe, it, expect, beforeEach } from "vitest";
-import type { AionimaChannelPlugin, ChannelId } from "@agi/channel-sdk";
+import type { AionimaChannelPlugin, ChannelId } from "@agi/plugins";
 import { EntityStore, MessageQueue, createDatabase } from "@agi/entity-model";
 import type { Database } from "@agi/entity-model";
 import { COAChainLogger } from "@agi/coa-chain";

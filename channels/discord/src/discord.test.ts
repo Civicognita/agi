@@ -14,8 +14,6 @@ import {
   isChannelAllowed,
 } from "./security.js";
 import { createDiscordPlugin } from "./index.js";
-import { validateAdapter } from "@agi/channel-sdk";
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -919,12 +917,6 @@ describe("createDiscordPlugin", () => {
     expect(typeof plugin.outbound.send).toBe("function");
   });
 
-  it("passes validateAdapter from channel-sdk", () => {
-    const plugin = createDiscordPlugin({ botToken: "Bot fake-token" });
-    const result = validateAdapter(plugin);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-  });
 });
 
 // ---------------------------------------------------------------------------

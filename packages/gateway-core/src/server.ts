@@ -56,7 +56,7 @@ import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
 import { COAChainLogger } from "@agi/coa-chain";
 import { PairingStore } from "./pairing-store.js";
-import type { AionimaMessage } from "@agi/channel-sdk";
+import type { AionimaMessage } from "@agi/plugins";
 import { createLogger, createComponentLogger } from "./logger.js";
 import type { Logger, LogEntry } from "./logger.js";
 import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";

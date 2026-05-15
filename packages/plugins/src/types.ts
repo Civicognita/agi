@@ -6,7 +6,7 @@ import type { ProjectTypeDefinition, ProjectTypeTool } from "@agi/gateway-core";
 export type { LogSourceDefinition } from "@agi/gateway-core";
 import type { ComponentLogger } from "@agi/gateway-core";
 import type { StackDefinition } from "@agi/gateway-core";
-import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import type { AionimaChannelPlugin } from "./channel-plugin-types.js";
 import type { ScanProviderDefinition } from "@agi/security";
 
 // ---------------------------------------------------------------------------

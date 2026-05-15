@@ -8,7 +8,6 @@
   },
   "dependencies": {
     "@agi/gateway-core": "workspace:*",
-    "@agi/channel-sdk": "workspace:*",
     "@agi/security": "workspace:*"
   },
   "devDependencies": {

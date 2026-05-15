@@ -16,7 +16,7 @@ import type {
 import type {
   AionimaChannelPlugin,
   AionimaMessage,
-} from "@agi/channel-sdk";
+} from "@agi/sdk";
 
 import {
   type DiscordConfig,

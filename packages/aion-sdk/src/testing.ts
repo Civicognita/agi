@@ -26,7 +26,7 @@ import type {
   LLMProviderDefinition,
 } from "@agi/plugins";
 import type { ProjectTypeDefinition, ProjectTypeTool, StackDefinition } from "@agi/gateway-core";
-import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import type { AionimaChannelPlugin } from "@agi/plugins";
 import type { ScanProviderDefinition } from "@agi/security";
 import type { WorkerDefinition } from "@agi/plugins";
 

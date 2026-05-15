@@ -1,7 +1,6 @@
 import { EventEmitter } from "node:events";
 
-import type { AionimaChannelPlugin } from "@agi/channel-sdk";
-import { assertValidAdapter } from "@agi/channel-sdk";
+import type { AionimaChannelPlugin } from "@agi/plugins";
 import type { CircuitBreakerTracker } from "./circuit-breaker.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
@@ -101,8 +100,18 @@ export class ChannelRegistry extends EventEmitter {
       throw new Error(`Channel "${id}" is already registered`);
     }
 
-    // Throws with a descriptive message on any validation failure
-    assertValidAdapter(plugin);
+    // Minimal runtime guard — TypeScript guarantees shape at compile time;
+    // this catches dynamically-loaded plugins with missing required fields.
+    const p = plugin as unknown as Record<string, unknown>;
+    if (
+      typeof plugin !== "object" || plugin === null ||
+      typeof p["id"] !== "string" ||
+      typeof p["gateway"] !== "object" || p["gateway"] === null ||
+      typeof p["outbound"] !== "object" || p["outbound"] === null ||
+      typeof p["messaging"] !== "object" || p["messaging"] === null
+    ) {
+      throw new Error(`Invalid channel plugin: required fields missing (id, gateway, outbound, messaging)`);
+    }
 
     const entry: ChannelEntry = {
       plugin,

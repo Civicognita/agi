@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { createComponentLogger } from "@agi/gateway-core";
 import { scanPluginSource } from "./scanner.js";
 import type { Logger, ComponentLogger, ProjectTypeRegistry, ProjectTypeDefinition, ProjectTypeTool, CircuitBreakerTracker } from "@agi/gateway-core";
-import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import type { AionimaChannelPlugin } from "./channel-plugin-types.js";
 import type { DiscoveredPlugin } from "./discovery.js";
 import { HookBus } from "./hooks.js";
 import { PluginRegistry } from "./registry.js";

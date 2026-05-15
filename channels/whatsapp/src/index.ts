@@ -20,7 +20,7 @@
 import type {
   AionimaChannelPlugin,
   AionimaMessage,
-} from "@agi/channel-sdk";
+} from "@agi/sdk";
 import type { AionimaPlugin, AionimaPluginAPI } from "@agi/plugins";
 
 import {

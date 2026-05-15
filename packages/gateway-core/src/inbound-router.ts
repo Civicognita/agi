@@ -1,4 +1,4 @@
-import type { AionimaMessage, OutboundContent } from "@agi/channel-sdk";
+import type { AionimaMessage, OutboundContent } from "@agi/plugins";
 import type { EntityStore, MessageQueue, CommsLog } from "@agi/entity-model";
 import type { COAChainLogger } from "@agi/coa-chain";
 import type { VoicePipeline, VoiceGatewayState, AudioFormat } from "@agi/voice";

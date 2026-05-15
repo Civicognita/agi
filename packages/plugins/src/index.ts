@@ -94,3 +94,23 @@ export type { PluginLoaderDeps, LoadResult } from "./loader.js";
 // Scanner
 export { scanPluginSource } from "./scanner.js";
 export type { ScanResult, ScanWarning } from "./scanner.js";
+
+// Channel plugin types (migrated from @agi/channel-sdk — s174 CHN-M)
+export type {
+  ChannelId,
+  ChannelMeta,
+  ChannelCapabilities,
+  AionimaMessage,
+  MessageContent,
+  ChannelConfigAdapter,
+  ChannelGatewayAdapter,
+  ChannelOutboundAdapter,
+  OutboundContent,
+  ChannelMessagingAdapter,
+  ChannelSecurityAdapter,
+  EntityResolverAdapter,
+  ImpactHookAdapter,
+  ImpactClassification,
+  COAEmitterAdapter,
+  AionimaChannelPlugin,
+} from "./channel-plugin-types.js";
