@@ -67,10 +67,17 @@ if [ -n "${AGI_TEST_DEV_REPO_DIR:-}" ]; then
 elif [[ "$REPO_DIR" == /opt/agi* ]]; then
   # s148 — auto-prefer the dev tree for spec discovery so brand-new specs
   # are runnable pre-deploy without extra env-var ceremony.
-  CANDIDATE_DEV="${HOME:-/root}/temp_core/agi"
+  # s177 — check t703 layout (_aionima/repos/agi) before legacy flat layout.
+  CANDIDATE_DEV="${HOME:-/root}/temp_core/_aionima/repos/agi"
+  if [ ! -d "$CANDIDATE_DEV" ] || [ ! -f "$CANDIDATE_DEV/package.json" ]; then
+    CANDIDATE_DEV="${HOME:-/root}/_projects/_aionima/repos/agi"
+  fi
+  if [ ! -d "$CANDIDATE_DEV" ] || [ ! -f "$CANDIDATE_DEV/package.json" ]; then
+    CANDIDATE_DEV="${HOME:-/root}/temp_core/agi"  # legacy pre-t703 fallback
+  fi
   if [ -d "$CANDIDATE_DEV" ] && [ -f "$CANDIDATE_DEV/package.json" ]; then
     REPO_DIR="$(cd "$CANDIDATE_DEV" && pwd)"
-    echo "[agi test] auto-preferring dev tree for spec discovery: $REPO_DIR (override with AGI_TEST_DEV_REPO_DIR or run from a tree that doesn't have $CANDIDATE_DEV)" >&2
+    echo "[agi test] auto-preferring dev tree for spec discovery: $REPO_DIR (override with AGI_TEST_DEV_REPO_DIR)" >&2
   fi
 fi
 VM_NAME="agi-test"
@@ -173,14 +180,15 @@ preflight() {
     newer="$(printf '%s\n%s\n' "$host_version" "$vm_version" | sort -V | tail -1)"
     if [ "$newer" = "$vm_version" ] && [ "$vm_version" != "$host_version" ]; then
       log "VM at v${vm_version} > host at v${host_version} (dev ahead of /opt/agi/) — skipping services-align (auto)"
-      log "set AGI_TEST_DEV_REPO_DIR to resolve specs from your dev tree (e.g. ~/temp_core/agi)"
+      log "set AGI_TEST_DEV_REPO_DIR to resolve specs from your dev tree (e.g. ~/temp_core/_aionima/repos/agi)"
       return 0
     fi
     log "VM at v${vm_version}, host at v${host_version} — running services-align (set AGI_TEST_SKIP_ALIGN=1 to skip)"
     # Keep stderr visible — silent failures hid a 30+ cycle build-skip bug
     # (cycle 119 root cause). pipefail propagates the actual exit status.
+    # s177 — forward AGI_DEV_SOURCE so test-vm.sh uses the dev tree, not /opt/agi.
     set -o pipefail
-    if ! bash "$VM_TEST_SCRIPT" services-align 2>&1 | tail -8; then
+    if ! AGI_DEV_SOURCE="$REPO_DIR" bash "$VM_TEST_SCRIPT" services-align 2>&1 | tail -8; then
       log "services-align failed; running tests against potentially stale VM"
     fi
     set +o pipefail
