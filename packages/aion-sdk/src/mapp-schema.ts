@@ -193,12 +193,19 @@ export interface MAppWorkflowStep {
   dependsOn?: string[];
 }
 
-/** Multi-step automation triggered manually, on file change, or on schedule. */
+/** Multi-step automation triggered manually, on file change, on schedule, or by a channel message. */
 export interface MAppWorkflow {
   id: string;
   name: string;
   description?: string;
-  trigger: "manual" | "on-file-change" | "scheduled";
+  /**
+   * - "manual"          — owner triggers explicitly via UI or API.
+   * - "on-file-change"  — file-watcher fires on project file changes.
+   * - "scheduled"       — cron-based schedule.
+   * - "channel-message" — inbound channel message matching a binding fires this
+   *   workflow. Wired by the gateway's onWorkflowMatch dispatcher (CHN-H s169).
+   */
+  trigger: "manual" | "on-file-change" | "scheduled" | "channel-message";
   steps: MAppWorkflowStep[];
 }
 

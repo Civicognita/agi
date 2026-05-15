@@ -4985,7 +4985,7 @@ export async function startGatewayServer(
       logger,
       pluginRegistry,
       channelWorkflowBindingStore,
-      // CHN-F (s167) slice 2 — dispatch matched channel-workflow bindings to MApp executor.
+      // CHN-F (s167) slice 2 + CHN-H (s169) — dispatch matched channel-workflow bindings to MApp executor.
       onWorkflowMatch: (bindings, msg, entityId) => {
         for (const binding of bindings) {
           const mappDef = mappRegistry.get(binding.mappId);
@@ -4993,9 +4993,14 @@ export async function startGatewayServer(
             log.warn(`[workflow] MApp "${binding.mappId}" not installed — skipping binding ${binding.id}`);
             continue;
           }
-          const manualWf = (mappDef.workflows ?? []).find((w) => w.trigger === "manual");
-          if (manualWf === undefined) {
-            log.info(`[workflow] MApp "${binding.mappId}" has no manual workflow — binding ${binding.id} matched, nothing dispatched`);
+          // CHN-H (s169): prefer trigger="channel-message"; fall back to "manual" for
+          // MApps authored before the channel-message trigger type existed (backwards compat).
+          const workflows = mappDef.workflows ?? [];
+          const selectedWf =
+            workflows.find((w) => w.trigger === "channel-message") ??
+            workflows.find((w) => w.trigger === "manual");
+          if (selectedWf === undefined) {
+            log.info(`[workflow] MApp "${binding.mappId}" has no channel-message or manual workflow — binding ${binding.id} matched, nothing dispatched`);
             continue;
           }
           const roomId = typeof msg.metadata === "object" && msg.metadata !== null
@@ -5008,8 +5013,8 @@ export async function startGatewayServer(
             entityId,
             bindingId: binding.id,
           };
-          runWorkflow(mappDef, manualWf.id, ctx).then((wfResult) => {
-            log.info(`[workflow] MApp "${binding.mappId}" workflow "${manualWf.id}" dispatched: ${wfResult.status}`);
+          runWorkflow(mappDef, selectedWf.id, ctx).then((wfResult) => {
+            log.info(`[workflow] MApp "${binding.mappId}" workflow "${selectedWf.id}" (${selectedWf.trigger}) dispatched: ${wfResult.status}`);
           }).catch((err: unknown) => {
             log.error(`[workflow] MApp "${binding.mappId}" workflow error: ${err instanceof Error ? err.message : String(err)}`);
           });

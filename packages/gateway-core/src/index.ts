@@ -446,6 +446,8 @@ export { serializeMagicApp } from "./magic-app-types.js";
 export type {
   MagicAppContainerContext,
   MagicAppDefinition as LegacyMagicAppDefinition,
+  MagicAppWorkflow,
+  MagicAppChannelTrigger,
 } from "./magic-app-types.js";
 
 // MApp State Store
