@@ -1267,7 +1267,7 @@ export async function startGatewayServer(
       outboundDispatcher,
       onInbound: async (message) => {
         queueLog.info(`processing message ${message.id} on channel ${message.channel}`);
-        const payload = message.payload as { entityId?: string; coaFingerprint?: string; message?: unknown };
+        const payload = message.payload as { entityId?: string; coaFingerprint?: string; message?: unknown; projectPath?: string };
         const entityId = payload.entityId;
 
         if (entityId === undefined) {
@@ -1303,6 +1303,7 @@ export async function startGatewayServer(
             queueMessageId: message.id,
             devMode,
             isOwner: ownerEntityId !== undefined && entityId === ownerEntityId,
+            ...(payload.projectPath !== undefined ? { projectContext: payload.projectPath } : {}),
           });
 
           queueLog.info(`agent outcome: ${outcome.type}`);
