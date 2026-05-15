@@ -13,6 +13,13 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FieldGroup } from "./SettingsShared.js";
+import { DevNote } from "@/components/ui/dev-notes";
+import {
+  listWorkflowBindings,
+  addWorkflowBinding,
+  deleteWorkflowBinding,
+  type ChannelWorkflowBinding,
+} from "../../api.js";
 import type { AionimaConfig, ChannelConfig } from "../../types.js";
 
 interface DiscordChannelDescriptor {
@@ -35,6 +42,178 @@ interface DiscordStateDescriptor {
   user?: { id: string; tag: string; avatarUrl?: string };
   guilds: DiscordGuildDescriptor[];
   snapshotAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// WorkflowBindingsBlock — CHN-F s167 slice 3
+// ---------------------------------------------------------------------------
+
+const EMPTY_FORM = { mappId: "", label: "", roomId: "", roleId: "", messagePattern: "" };
+
+function WorkflowBindingsBlock({ channelId }: { channelId: string }) {
+  const [bindings, setBindings] = useState<ChannelWorkflowBinding[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const bs = await listWorkflowBindings(channelId);
+      setBindings(bs);
+      setError(null);
+    } catch {
+      setError("Failed to load bindings");
+    } finally {
+      setLoading(false);
+    }
+  }, [channelId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.mappId.trim()) { setAddError("MApp ID is required"); return; }
+    setAdding(true);
+    setAddError(null);
+    try {
+      await addWorkflowBinding({
+        channelId,
+        mappId: form.mappId.trim(),
+        label: form.label.trim() || undefined,
+        roomId: form.roomId.trim() || undefined,
+        roleId: form.roleId.trim() || undefined,
+        messagePattern: form.messagePattern.trim() || undefined,
+      });
+      setForm(EMPTY_FORM);
+      setShowAdd(false);
+      await load();
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "Failed to add binding");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await deleteWorkflowBinding(id);
+      setBindings((prev) => prev.filter((b) => b.id !== id));
+    } catch {
+      setError("Failed to delete binding");
+    }
+  }
+
+  return (
+    <div className="mt-6 pt-4 border-t border-border" data-testid="workflow-bindings-block">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm font-semibold text-card-foreground">Workflow Bindings</span>
+        <Button variant="outline" size="xs" onClick={() => { setShowAdd((v) => !v); setAddError(null); }}>
+          {showAdd ? "Cancel" : "Add"}
+        </Button>
+      </div>
+
+      {showAdd && (
+        <form onSubmit={(e) => { void handleAdd(e); }} className="mb-4 p-3 rounded border border-border bg-muted/30 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <FieldGroup label="MApp ID *">
+              <Input
+                value={form.mappId}
+                onChange={(e) => setForm((f) => ({ ...f, mappId: e.target.value }))}
+                placeholder="e.g. my-mapp"
+                className="font-mono text-xs"
+                data-testid="binding-mapp-id"
+              />
+            </FieldGroup>
+            <FieldGroup label="Label">
+              <Input
+                value={form.label}
+                onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+                placeholder="Optional display name"
+                className="text-xs"
+                data-testid="binding-label"
+              />
+            </FieldGroup>
+            <FieldGroup label="Room ID">
+              <Input
+                value={form.roomId}
+                onChange={(e) => setForm((f) => ({ ...f, roomId: e.target.value }))}
+                placeholder="Discord channel ID (optional)"
+                className="font-mono text-xs"
+                data-testid="binding-room-id"
+              />
+            </FieldGroup>
+            <FieldGroup label="Role ID">
+              <Input
+                value={form.roleId}
+                onChange={(e) => setForm((f) => ({ ...f, roleId: e.target.value }))}
+                placeholder="Discord role ID (optional)"
+                className="font-mono text-xs"
+                data-testid="binding-role-id"
+              />
+            </FieldGroup>
+          </div>
+          <FieldGroup label="Message Pattern (regex)">
+            <Input
+              value={form.messagePattern}
+              onChange={(e) => setForm((f) => ({ ...f, messagePattern: e.target.value }))}
+              placeholder="e.g. ^!command or leave empty to match all"
+              className="font-mono text-xs"
+              data-testid="binding-pattern"
+            />
+          </FieldGroup>
+          {addError !== null && <p className="text-xs text-red">{addError}</p>}
+          <Button type="submit" size="xs" disabled={adding} data-testid="binding-add-submit">
+            {adding ? "Adding…" : "Add Binding"}
+          </Button>
+        </form>
+      )}
+
+      {loading && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {error !== null && <p className="text-xs text-red">{error}</p>}
+
+      {!loading && bindings.length === 0 && (
+        <p className="text-xs text-muted-foreground" data-testid="binding-empty">
+          No bindings. Add one to dispatch Discord messages to a MApp workflow.
+        </p>
+      )}
+
+      {bindings.length > 0 && (
+        <div className="space-y-2" data-testid="binding-list">
+          {bindings.map((b) => (
+            <div key={b.id} className="flex items-start justify-between gap-2 p-2 rounded border border-border text-xs" data-testid="binding-row">
+              <div className="flex-1 min-w-0 space-y-0.5">
+                <div className="font-mono font-semibold truncate">{b.label ?? b.mappId}</div>
+                <div className="text-muted-foreground space-x-2">
+                  <span>MApp: <span className="font-mono">{b.mappId}</span></span>
+                  {b.roomId !== undefined && <span>Room: <span className="font-mono">{b.roomId}</span></span>}
+                  {b.roleId !== undefined && <span>Role: <span className="font-mono">{b.roleId}</span></span>}
+                  {b.messagePattern !== undefined && <span>Pattern: <span className="font-mono">{b.messagePattern}</span></span>}
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="xs"
+                className="shrink-0 text-red hover:bg-red/10"
+                onClick={() => { void handleDelete(b.id); }}
+                data-testid="binding-delete"
+              >
+                Delete
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <DevNote heading="Cycle 254 — Workflow binding table (CHN-F s167)" kind="info" scope="channel-settings">
+        Discord channel settings now shows a Workflow Bindings table. Add a binding to dispatch matching Discord
+        messages to a MApp's manual workflow. Filters: room ID, role ID, message pattern regex. Runtime resolver
+        fires after inbound routing completes (v0.4.701).
+      </DevNote>
+    </div>
+  );
 }
 
 function DiscordStatusBlock({ enabled }: { enabled: boolean }) {
@@ -275,6 +454,7 @@ export function ChannelSettings({ config, update }: Props) {
           </FieldGroup>
         </div>
         <DiscordStatusBlock enabled={discord.enabled} />
+        <WorkflowBindingsBlock channelId="discord" />
       </Card>
     </>
   );
