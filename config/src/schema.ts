@@ -532,20 +532,20 @@ const DevConfigSchema = z
     agiRepo: z.string().default("git@github.com:wishborn/agi.git"),
     /** Git remote URL for PRIME repo fork. */
     primeRepo: z.string().default("git@github.com:wishborn/aionima.git"),
-    /** Dev directory for PRIME fork. */
-    primeDir: z.string().default("/opt/agi-prime_dev"),
+    /** Dev directory for PRIME fork (optional — resolve-paths.ts resolves to canonical /opt/agi-prime). */
+    primeDir: z.string().optional(),
     /** Git remote URL for marketplace fork. */
     marketplaceRepo: z.string().default("git@github.com:wishborn/agi-marketplace.git"),
-    /** Dev directory for marketplace fork. */
-    marketplaceDir: z.string().default("/opt/agi-marketplace_dev"),
+    /** Dev directory for marketplace fork (optional — resolve-paths.ts resolves to canonical /opt/agi-marketplace). */
+    marketplaceDir: z.string().optional(),
     /** Git remote URL for ID service fork. */
     idRepo: z.string().default("git@github.com:wishborn/agi-local-id.git"),
-    /** Dev directory for ID service fork. */
-    idDir: z.string().default("/opt/agi-local-id_dev"),
+    /** Dev directory for ID service fork (optional — resolve-paths.ts resolves to canonical /opt/agi-local-id). */
+    idDir: z.string().optional(),
     /** Git remote URL for MApp marketplace fork. */
     mappMarketplaceRepo: z.string().default("git@github.com:wishborn/agi-mapp-marketplace.git"),
-    /** Dev directory for MApp marketplace fork. */
-    mappMarketplaceDir: z.string().default("/opt/agi-mapp-marketplace_dev"),
+    /** Dev directory for MApp marketplace fork (optional — resolve-paths.ts resolves to canonical /opt/agi-mapp-marketplace). */
+    mappMarketplaceDir: z.string().optional(),
 
     // PAx (Particle-Academy) ADF UI primitive forks — workspace-resident
     // per CLAUDE.md § 1.5. Provisioned by the same Dev Mode toggle that
