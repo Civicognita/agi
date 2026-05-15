@@ -6743,6 +6743,66 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // TEST-VM ONLY: Taskmaster dispatch-guard e2e helpers (s159 t699)
+  //
+  // POST /api/taskmaster/test/seed-jobs   — write synthetic job files
+  // POST /api/taskmaster/test/dispatch    — invoke worker-dispatch handler
+  //
+  // Both gated on AIONIMA_TEST_VM=1. Production returns 404.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/taskmaster/test/seed-jobs", async (request, reply) => {
+    if (process.env["AIONIMA_TEST_VM"] !== "1") {
+      return reply.code(404).send({ error: "Not Found" });
+    }
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Taskmaster test API only allowed from private network" });
+    }
+    interface SeedJob {
+      id: string;
+      description?: string;
+      status: string;
+      planRef?: { planId: string; stepId: string };
+      createdAt?: string;
+      completedAt?: string;
+    }
+    const body = (request.body ?? {}) as { projectPath?: string; jobs?: SeedJob[] };
+    if (typeof body.projectPath !== "string" || body.projectPath.length === 0) {
+      return reply.code(400).send({ error: "projectPath (string) required" });
+    }
+    if (!Array.isArray(body.jobs) || body.jobs.length === 0) {
+      return reply.code(400).send({ error: "jobs (non-empty array) required" });
+    }
+    const jobsDir = dispatchJobsDir(body.projectPath);
+    mkdirSync(jobsDir, { recursive: true });
+    const written: string[] = [];
+    for (const j of body.jobs) {
+      if (typeof j.id !== "string" || j.id.length === 0) continue;
+      const filePath = `${jobsDir}/${j.id}.json`;
+      writeFileSync(filePath, JSON.stringify({ projectPath: body.projectPath, ...j }, null, 2), "utf-8");
+      written.push(j.id);
+    }
+    return reply.send({ ok: true, jobsDir, written });
+  });
+
+  fastify.post("/api/taskmaster/test/dispatch", async (request, reply) => {
+    if (process.env["AIONIMA_TEST_VM"] !== "1") {
+      return reply.code(404).send({ error: "Not Found" });
+    }
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Taskmaster test API only allowed from private network" });
+    }
+    const { createWorkerDispatchHandler } = await import("./tools/worker-dispatch.js");
+    const handler = createWorkerDispatchHandler({});
+    const input = (request.body ?? {}) as Record<string, unknown>;
+    const result = await handler(input, undefined);
+    // result is a JSON string — parse it so the test can destructure directly
+    return reply.send(JSON.parse(result) as Record<string, unknown>);
+  });
+
+  // -----------------------------------------------------------------------
   // Federation & Identity routes
   // -----------------------------------------------------------------------
 
