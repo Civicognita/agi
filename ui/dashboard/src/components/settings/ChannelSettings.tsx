@@ -2,9 +2,10 @@
  * ChannelSettings — Telegram + Discord channel configuration cards.
  *
  * Cycle 226 (2026-05-14) — Discord status card added below the token
- * fields. Fetches `/api/channels/discord/state` to show live connection
- * state + guild list + per-guild channel/forum listing. Owner-facing
- * surface for the "setup before bed" UX (s163 CHN-B partial slice).
+ * fields. Fetches `/api/channels/discord/state` (→ generic `/api/channels/:id/state`)
+ * to show live connection state. Guilds/user populated only when the plugin
+ * exposes `getExtendedState()` — currently shows connected/disconnected only.
+ * Route added in v0.4.733 (was returning 404 HTML → JSON parse error).
  */
 
 import { useCallback, useEffect, useState } from "react";

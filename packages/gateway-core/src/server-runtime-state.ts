@@ -978,6 +978,32 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // GET /api/channels/:id/state — live connection snapshot
+  //
+  // Returns a JSON snapshot of the channel's connection state. The
+  // `connected` field derives from the registry status; channel-specific
+  // fields (e.g. Discord guilds / user tag) are populated only when the
+  // channel plugin exposes a `getExtendedState()` method on its plugin
+  // object — otherwise they default to empty/absent so the UI degrades
+  // gracefully without crashing.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/channels/:id/state", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const entry = channelRegistry.getChannel(id);
+    const connected = entry?.status === "running";
+    const base = {
+      connected,
+      snapshotAt: new Date().toISOString(),
+    };
+    // When the plugin exposes a getExtendedState() method, merge its payload.
+    type ExtendedPlugin = { getExtendedState?: () => Record<string, unknown> };
+    const plugin = entry?.plugin as ExtendedPlugin | undefined;
+    const extended = typeof plugin?.getExtendedState === "function" ? plugin.getExtendedState() : {};
+    return reply.send({ ...base, guilds: [], user: undefined, ...extended });
+  });
+
+  // -----------------------------------------------------------------------
   // POST /api/channels/:id/start|stop|restart
   // -----------------------------------------------------------------------
 
