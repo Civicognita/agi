@@ -948,14 +948,50 @@ export async function createGatewayRuntimeState(
   // -----------------------------------------------------------------------
   // GET /api/channels
   // -----------------------------------------------------------------------
+  // Source of truth = discoveredPlugins filtered to id prefix "channel-".
+  // This is fully plugin-driven: no hardcoded channel list. Runtime status
+  // (registered/running/error/stopped) is overlaid from channelRegistry;
+  // enabled + config are read from gateway.json. Channels that are discovered
+  // but not configured yet show as status "stopped" and enabled=false.
 
   fastify.get("/api/channels", async (_request, reply) => {
-    const channels = channelRegistry.getChannels().map((entry) => ({
-      id: entry.plugin.id,
-      status: entry.status,
-      registeredAt: entry.registeredAt,
-    }));
-    return reply.send(channels);
+    // 1. All installed channel plugins (discovered, prefix "channel-")
+    const discoveredChannels = (deps.discoveredPlugins ?? []).filter((p) =>
+      p.id.startsWith("channel-"),
+    );
+
+    // 2. Config entries from gateway.json (enabled flag + current config)
+    type GwChannelEntry = { id: string; enabled?: boolean; config?: Record<string, unknown> };
+    let configEntries: GwChannelEntry[] = [];
+    if (deps.configPath) {
+      try {
+        const raw = JSON.parse(readFileSync(deps.configPath, "utf-8")) as Record<string, unknown>;
+        configEntries = ((raw.channels ?? []) as GwChannelEntry[]);
+      } catch { /* config unreadable — proceed without */ }
+    }
+
+    // 3. Runtime registry (only channels that successfully registered)
+    // Cast key to string to avoid branded-type friction when looking up by discovered plugin ID
+    const registryMap = new Map(channelRegistry.getChannels().map((e) => [e.plugin.id as string, e]));
+
+    // 4. Strip "channel-" prefix to get the logical channel id
+    const result = discoveredChannels.map((plugin) => {
+      const channelId = plugin.id.replace(/^channel-/, "");
+      const cfgEntry = configEntries.find((c) => c.id === channelId);
+      const regEntry = registryMap.get(plugin.id); // look up by full plugin ID
+      return {
+        id: channelId,
+        pluginId: plugin.id,
+        name: plugin.name,
+        version: plugin.version,
+        description: plugin.description,
+        status: regEntry ? regEntry.status : "stopped",
+        enabled: cfgEntry?.enabled ?? false,
+        registeredAt: regEntry?.registeredAt ?? null,
+      };
+    });
+
+    return reply.send(result);
   });
 
   // -----------------------------------------------------------------------
@@ -965,16 +1001,22 @@ export async function createGatewayRuntimeState(
   fastify.get("/api/channels/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const entry = channelRegistry.getChannel(id);
-    if (!entry) {
-      return reply.code(404).send({ error: `Channel "${id}" not found` });
+    if (entry) {
+      return reply.send({
+        id: entry.plugin.id,
+        status: entry.status,
+        registeredAt: entry.registeredAt,
+        error: entry.error ?? null,
+        capabilities: entry.plugin.capabilities ?? null,
+      });
     }
-    return reply.send({
-      id: entry.plugin.id,
-      status: entry.status,
-      registeredAt: entry.registeredAt,
-      error: entry.error ?? null,
-      capabilities: entry.plugin.capabilities ?? null,
-    });
+    // Channel not in registry — check if it's a discovered plugin. If so,
+    // return a synthetic "stopped" entry so the UI can still show it.
+    const discovered = (deps.discoveredPlugins ?? []).find(
+      (p) => p.id === `channel-${id}` || p.id === id,
+    );
+    if (!discovered) return reply.code(404).send({ error: `Channel "${id}" not found` });
+    return reply.send({ id, status: "stopped", registeredAt: null, error: null, capabilities: null });
   });
 
   // -----------------------------------------------------------------------
@@ -1043,11 +1085,17 @@ export async function createGatewayRuntimeState(
 
   fastify.get("/api/channels/:id/config", async (request, reply) => {
     const { id } = request.params as { id: string };
+    // Config is readable regardless of whether the channel is registered.
+    // Defaults come from the registered plugin when available; fall back to {}
+    // for channels that are discovered but not yet activated (no config/disabled).
+    const discovered = (deps.discoveredPlugins ?? []).find(
+      (p) => p.id === `channel-${id}` || p.id === id,
+    );
     const entry = channelRegistry.getChannel(id);
-    if (!entry) return reply.code(404).send({ error: `Channel "${id}" not found` });
+    if (!discovered && !entry) return reply.code(404).send({ error: `Channel "${id}" not found` });
 
     let defaults: Record<string, unknown> = {};
-    try { defaults = entry.plugin.config.getDefaults(); } catch { /* plugin may not expose */ }
+    try { if (entry) defaults = entry.plugin.config.getDefaults(); } catch { /* plugin may not expose */ }
 
     let currentConfig: Record<string, unknown> = {};
     let enabled = true;
@@ -1074,7 +1122,11 @@ export async function createGatewayRuntimeState(
 
   fastify.patch("/api/channels/:id/config", async (request, reply) => {
     const { id } = request.params as { id: string };
-    if (!channelRegistry.getChannel(id)) {
+    // Allow PATCH for any discovered channel, not just registered ones —
+    // so users can configure a channel before it's active.
+    const isKnown = channelRegistry.getChannel(id) !== undefined
+      || (deps.discoveredPlugins ?? []).some((p) => p.id === `channel-${id}` || p.id === id);
+    if (!isKnown) {
       return reply.code(404).send({ error: `Channel "${id}" not found` });
     }
     if (!deps.configPath) return reply.code(503).send({ error: "Config file not available" });

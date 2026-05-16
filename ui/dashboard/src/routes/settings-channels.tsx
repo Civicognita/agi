@@ -1,7 +1,8 @@
 /**
  * Settings → Channels route
  *
- * One tab per registered channel plugin. Each tab shows:
+ * One tab per installed channel plugin (derived from discoveredPlugins, fully
+ * plugin-driven — no hardcoded channel list). Each tab shows:
  *   - Connection status + start / stop / restart controls
  *   - Config form (fields derived from the plugin's getDefaults() template,
  *     populated with values from gateway.json)
@@ -33,14 +34,14 @@ import type { ChannelDetail } from "@/types.js";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function statusColor(status: ChannelDetail["status"]): string {
+function statusColor(status: string): string {
   if (status === "running") return "bg-emerald-500";
   if (status === "error") return "bg-red-500";
   if (status === "starting" || status === "stopping") return "bg-amber-400";
   return "bg-secondary";
 }
 
-function statusLabel(status: ChannelDetail["status"]): string {
+function statusLabel(status: string): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
@@ -58,19 +59,25 @@ function isSensitive(key: string): boolean {
   return k.includes("token") || k.includes("secret") || k.includes("password") || k.includes("key");
 }
 
+/** Strip trailing " Channel" suffix from plugin display name. */
+function shortName(name: string): string {
+  return name.replace(/\s+Channel$/i, "");
+}
+
 // ---------------------------------------------------------------------------
 // ChannelTab — config + controls for one channel
 // ---------------------------------------------------------------------------
 
 interface ChannelTabProps {
   id: string;
+  initialEnabled: boolean;
 }
 
-function ChannelTab({ id }: ChannelTabProps) {
+function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
   const [detail, setDetail] = useState<ChannelDetail | null>(null);
   const [cfgResponse, setCfgResponse] = useState<ChannelConfigResponse | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
-  const [enabled, setEnabled] = useState(true);
+  const [enabled, setEnabled] = useState(initialEnabled);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [controlling, setControlling] = useState(false);
@@ -152,14 +159,7 @@ function ChannelTab({ id }: ChannelTabProps) {
     }
   };
 
-  if (error && !detail) {
-    return (
-      <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-[13px] text-destructive">
-        {error}
-      </div>
-    );
-  }
-
+  const currentStatus = detail?.status ?? "stopped";
   const fieldKeys = cfgResponse
     ? [...new Set([...Object.keys(cfgResponse.defaults), ...Object.keys(cfgResponse.config)])]
     : [];
@@ -170,32 +170,33 @@ function ChannelTab({ id }: ChannelTabProps) {
       <Card className="p-4">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
-            <span className={`w-2.5 h-2.5 rounded-full ${detail ? statusColor(detail.status) : "bg-muted"}`} />
-            <span className="text-[13px] font-medium">
-              {detail ? statusLabel(detail.status) : "Loading…"}
-            </span>
+            <span className={`w-2.5 h-2.5 rounded-full ${statusColor(currentStatus)}`} />
+            <span className="text-[13px] font-medium">{statusLabel(currentStatus)}</span>
           </div>
           {detail?.error && (
             <span className="text-[12px] text-destructive truncate max-w-xs">{detail.error}</span>
           )}
+          {error && (
+            <span className="text-[12px] text-destructive truncate max-w-xs">{error}</span>
+          )}
           <div className="ml-auto flex items-center gap-2">
             <button
               onClick={() => handleControl("start")}
-              disabled={controlling || detail?.status === "running"}
+              disabled={controlling || currentStatus === "running"}
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               Start
             </button>
             <button
               onClick={() => handleControl("stop")}
-              disabled={controlling || detail?.status !== "running"}
+              disabled={controlling || currentStatus !== "running"}
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-secondary text-foreground hover:bg-secondary/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               Stop
             </button>
             <button
               onClick={() => handleControl("restart")}
-              disabled={controlling || detail?.status !== "running"}
+              disabled={controlling || currentStatus !== "running"}
               className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-secondary text-foreground hover:bg-secondary/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               Restart
@@ -224,7 +225,9 @@ function ChannelTab({ id }: ChannelTabProps) {
           </label>
         </div>
 
-        {fieldKeys.length === 0 ? (
+        {cfgResponse === null ? (
+          <p className="text-[13px] text-muted-foreground">Loading configuration…</p>
+        ) : fieldKeys.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">No configuration fields for this channel.</p>
         ) : (
           <div className="grid grid-cols-1 gap-3">
@@ -257,7 +260,7 @@ function ChannelTab({ id }: ChannelTabProps) {
               {saveMsg}
             </span>
           )}
-          {detail?.status === "running" && !saveMsg && (
+          {currentStatus === "running" && !saveMsg && (
             <span className="text-[11px] text-muted-foreground">
               Saving will restart the channel to apply new credentials.
             </span>
@@ -287,16 +290,17 @@ export default function SettingsChannelsPage() {
       <div>
         <h1 className="text-xl font-bold text-foreground">Channel Settings</h1>
         <p className="text-[13px] text-muted-foreground mt-1">
-          Configure authentication and options for each communication channel.
+          Configure authentication and options for each communication channel plugin.
         </p>
       </div>
 
       <DevNote title="Channels">
         <DevNote.Item kind="info" heading="Cycle 223 — Settings page">
-          Channels moved from the Comms hub to a dedicated settings page. Each registered
-          channel plugin gets its own tab with status controls and a config form. Config
-          is persisted to gateway.json via PATCH /api/channels/:id/config; a running
-          channel is automatically restarted when you save so new credentials take effect.
+          Channels moved from the Comms hub to a dedicated settings page. Each installed
+          channel plugin gets its own tab. Channel list is fully plugin-driven (no hardcoded
+          IDs) — derived from discoveredPlugins. Config persists to gateway.json via PATCH
+          /api/channels/:id/config; a running channel is automatically restarted on save
+          so new credentials take effect immediately.
         </DevNote.Item>
       </DevNote>
 
@@ -308,7 +312,7 @@ export default function SettingsChannelsPage() {
         <div className="text-[13px] text-muted-foreground">Loading channels…</div>
       ) : channels.length === 0 ? (
         <Card className="p-8 text-center">
-          <p className="text-[14px] font-medium text-foreground">No channel plugins registered</p>
+          <p className="text-[14px] font-medium text-foreground">No channel plugins installed</p>
           <p className="text-[13px] text-muted-foreground mt-1">
             Install a channel plugin from the Plugin Marketplace to get started.
           </p>
@@ -317,14 +321,19 @@ export default function SettingsChannelsPage() {
         <Tabs defaultValue={channels[0].id}>
           <TabsList className="mb-4">
             {channels.map((ch) => (
-              <TabsTrigger key={ch.id} value={ch.id} className="capitalize">
-                {ch.id}
+              <TabsTrigger key={ch.id} value={ch.id}>
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${ch.status === "running" ? "bg-emerald-500" : ch.status === "error" ? "bg-red-500" : "bg-secondary"}`}
+                  />
+                  {ch.name ? shortName(ch.name) : ch.id}
+                </span>
               </TabsTrigger>
             ))}
           </TabsList>
           {channels.map((ch) => (
             <TabsContent key={ch.id} value={ch.id}>
-              <ChannelTab id={ch.id} />
+              <ChannelTab id={ch.id} initialEnabled={ch.enabled} />
             </TabsContent>
           ))}
         </Tabs>

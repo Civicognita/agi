@@ -1634,8 +1634,13 @@ export async function fetchCommsLog(opts?: {
 
 export interface ChannelListEntry {
   id: string;
+  pluginId: string;
+  name: string;
+  version: string;
+  description: string;
   status: "registered" | "starting" | "running" | "stopping" | "stopped" | "error";
-  registeredAt: string;
+  enabled: boolean;
+  registeredAt: string | null;
 }
 
 export interface ChannelConfigResponse {
