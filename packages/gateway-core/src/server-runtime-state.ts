@@ -56,6 +56,8 @@ import { registerHandoffRoutes, startHandoffCleanup } from "./handoff-api.js";
 import { registerDeviceFlowRoutes } from "./device-flow-api.js";
 import { registerConnectionsRoutes } from "./connections-api.js";
 import { resolveEncryptionKey } from "./crypto-tokens.js";
+import { registerEntityManagementRoutes } from "./entity-management-api.js";
+import { registerLocalFederationRoutes } from "./local-federation-api.js";
 import type { SecretsManager } from "./secrets.js";
 import { DashboardUserStore, hasRole } from "./dashboard-user-store.js";
 import { LocalIdAuthProvider } from "./local-id-auth-provider.js";
@@ -6369,7 +6371,8 @@ export async function createGatewayRuntimeState(
     gatewayBaseUrl,
   });
 
-  // Handoff, device-flow, and connections routes (absorbed from agi-local-id Phase 2)
+  // Handoff, device-flow, connections, entity management, and federation routes
+  // (absorbed from agi-local-id Phases 2 and 3)
   if (deps.db && encryptionKey) {
     registerHandoffRoutes(fastify, {
       db: deps.db,
@@ -6383,6 +6386,16 @@ export async function createGatewayRuntimeState(
       logger: deps.logger,
     });
     registerConnectionsRoutes(fastify, { db: deps.db });
+    registerEntityManagementRoutes(fastify, {
+      db: deps.db,
+      encKey: encryptionKey,
+      logger: deps.logger,
+    });
+    registerLocalFederationRoutes(fastify, {
+      db: deps.db,
+      gatewayBaseUrl,
+      nodeId: deps.nodeId,
+    });
     startHandoffCleanup(deps.db);
   }
 
