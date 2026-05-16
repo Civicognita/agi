@@ -1632,6 +1632,49 @@ export async function fetchCommsLog(opts?: {
 // Channels API — /api/channels
 // ---------------------------------------------------------------------------
 
+export interface ChannelListEntry {
+  id: string;
+  status: "registered" | "starting" | "running" | "stopping" | "stopped" | "error";
+  registeredAt: string;
+}
+
+export interface ChannelConfigResponse {
+  enabled: boolean;
+  config: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+}
+
+export async function fetchChannels(): Promise<ChannelListEntry[]> {
+  const res = await fetch("/api/channels");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ChannelListEntry[]>;
+}
+
+export async function fetchChannelConfig(id: string): Promise<ChannelConfigResponse> {
+  const res = await fetch(`/api/channels/${encodeURIComponent(id)}/config`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ChannelConfigResponse>;
+}
+
+export async function updateChannelConfig(id: string, payload: { enabled?: boolean; config?: Record<string, unknown> }): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/channels/${encodeURIComponent(id)}/config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
 export async function fetchChannelDetail(id: string): Promise<import("./types.js").ChannelDetail> {
   const res = await fetch(`/api/channels/${encodeURIComponent(id)}`);
   if (!res.ok) {

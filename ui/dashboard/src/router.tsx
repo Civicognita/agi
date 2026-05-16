@@ -32,6 +32,7 @@ import MarketplacePage from "./routes/marketplace.js";
 import HFMarketplacePage from "./routes/hf-marketplace.js";
 import SettingsHFPage from "./routes/settings-hf.js";
 import SettingsProvidersPage from "./routes/settings-providers.js";
+import SettingsChannelsPage from "./routes/settings-channels.js";
 import SettingsVaultPage from "./routes/settings-vault.js";
 import ScheduledJobsPage from "./routes/settings-scheduled-jobs.js";
 // /aionima → /projects/_aionima redirect (s119 t705).
@@ -112,6 +113,7 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="/settings/gateway" replace /> },
           { path: "gateway", element: <SettingsGatewayPage /> },
           { path: "providers", element: <SettingsProvidersPage /> },
+          { path: "channels", element: <SettingsChannelsPage /> },
           { path: "vault", element: <SettingsVaultPage /> },
           { path: "scheduled-jobs", element: <ScheduledJobsPage /> },
           { path: "security", element: <SecuritySettingsPage /> },

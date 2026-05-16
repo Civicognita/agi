@@ -1038,6 +1038,72 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // GET /api/channels/:id/config — current config values + defaults template
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/channels/:id/config", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const entry = channelRegistry.getChannel(id);
+    if (!entry) return reply.code(404).send({ error: `Channel "${id}" not found` });
+
+    let defaults: Record<string, unknown> = {};
+    try { defaults = entry.plugin.config.getDefaults(); } catch { /* plugin may not expose */ }
+
+    let currentConfig: Record<string, unknown> = {};
+    let enabled = true;
+    if (deps.configPath) {
+      try {
+        const raw = readFileSync(deps.configPath, "utf-8");
+        const cfg = JSON.parse(raw) as Record<string, unknown>;
+        type ChanEntry = { id: string; enabled?: boolean; config?: Record<string, unknown> };
+        const channels = ((cfg.channels ?? []) as ChanEntry[]);
+        const found = channels.find((c) => c.id === id);
+        if (found) {
+          enabled = found.enabled !== false;
+          currentConfig = found.config ?? {};
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    return reply.send({ enabled, config: currentConfig, defaults });
+  });
+
+  // -----------------------------------------------------------------------
+  // PATCH /api/channels/:id/config — save channel config to gateway.json
+  // -----------------------------------------------------------------------
+
+  fastify.patch("/api/channels/:id/config", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!channelRegistry.getChannel(id)) {
+      return reply.code(404).send({ error: `Channel "${id}" not found` });
+    }
+    if (!deps.configPath) return reply.code(503).send({ error: "Config file not available" });
+
+    const body = request.body as { enabled?: boolean; config?: Record<string, unknown> } | undefined;
+
+    try {
+      const raw = readFileSync(deps.configPath, "utf-8");
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      type ChanEntry = { id: string; enabled?: boolean; config?: Record<string, unknown> };
+      const channels = ((cfg.channels ?? []) as ChanEntry[]);
+      const idx = channels.findIndex((c) => c.id === id);
+      if (idx === -1) {
+        channels.push({ id, enabled: body?.enabled !== false, config: body?.config ?? {} });
+      } else {
+        const entry = channels[idx]!;
+        if (body?.enabled !== undefined) entry.enabled = body.enabled;
+        if (body?.config !== undefined) entry.config = body.config;
+      }
+      cfg.channels = channels;
+      writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+
+    return reply.send({ ok: true });
+  });
+
+  // -----------------------------------------------------------------------
   // Plans API: /api/plans/* (private network only)
   // -----------------------------------------------------------------------
 
