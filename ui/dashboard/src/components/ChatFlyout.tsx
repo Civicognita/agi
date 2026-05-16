@@ -1686,44 +1686,17 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           />
         )}
 
-        {/* Attachment preview */}
-        {activeSession && attachments.length > 0 && (
-          <div className="px-3 py-1.5 border-t border-border bg-card flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto shrink-0">
-            {attachments.map((att) => (
-              <div
-                key={att.id}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-background border border-border text-[11px] text-foreground max-w-[200px]"
-              >
-                {att.type === "image" ? (
-                  <img
-                    src={att.content}
-                    alt={att.name}
-                    className="w-6 h-6 rounded object-cover"
-                  />
-                ) : (
-                  <span className="text-sm shrink-0">&#128196;</span>
-                )}
-                <span className="overflow-hidden text-ellipsis whitespace-nowrap flex-1">
-                  {att.name}
-                </span>
-                <span className="text-muted-foreground text-[10px] shrink-0">
-                  {formatFileSize(att.size)}
-                </span>
-                <span
-                  onClick={() => removeAttachment(att.id)}
-                  className="cursor-pointer text-red font-bold text-xs shrink-0"
-                >
-                  x
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Input bar */}
+        {/* Input bar — PromptInput owns the shell; file picker + attachment
+            chips live in its aboveInput slot so there is one unified UX.
+            PromptInput v3 has its own drop-to-attach chip bar, but it only
+            stores {id,name,bytes} and discards the File object. We intercept
+            drag/drop in the capture phase (onDropCapture fires parent-first)
+            so PromptInput never sees the event, preventing its cosmetic chip
+            bar from activating while our processFiles pipeline gets the real
+            File objects. aboveInput then shows our processed chips. */}
         {activeSession && (
-          <div className="px-3 py-2.5 border-t border-border bg-card flex gap-1.5 items-end shrink-0">
-            {/* Hidden file input */}
+          <div className="px-3 py-2.5 border-t border-border bg-card shrink-0">
+            {/* Hidden file input — triggered by the paperclip in aboveInput */}
             <input
               ref={fileInputRef}
               type="file"
@@ -1731,21 +1704,8 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
               onChange={handleFileSelect}
               className="hidden"
             />
-            {/* Paperclip button */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              title="Attach files"
-              className="p-2 rounded-[10px] border border-border bg-transparent text-muted-foreground text-base cursor-pointer shrink-0 leading-none"
-            >
-              &#128206;
-            </button>
             {activeSession?.thinking ? (
-              // While Aion is thinking, keep the textarea (with paste / file
-              // attach context the existing handlers expect) plus a prominent
-              // Stop button. PromptInput doesn't have a "thinking" mode; the
-              // legacy composer stays during that window so cancel UX is
-              // unambiguous.
-              <>
+              <div className="flex gap-1.5 items-end">
                 <Textarea
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -1761,21 +1721,62 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                 >
                   Stop
                 </button>
-              </>
+              </div>
             ) : (
-              // Idle: render PromptInput from @particle-academy/react-fancy
-              // for slash-command + @-mention pickers + drop-to-attach +
-              // ⌘/Ctrl+Enter semantics. Attachments from PromptInput's drop
-              // area flow into sendMessage; the paperclip button on the left
-              // remains as an explicit file-picker affordance for users who
-              // prefer it. CHN-B fix v0.4.691 — moves the v0.4.666 swap from
-              // the orphan Chat.tsx into the real surface (ChatFlyout.tsx).
-              <div className="flex-1 min-w-0">
+              <div
+                onDropCapture={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation(); // prevents PromptInput's onDrop from firing
+                  const files = Array.from(e.dataTransfer.files);
+                  if (files.length > 0) processFiles(files);
+                }}
+                onDragOverCapture={(e) => { e.preventDefault(); }}
+                onPasteCapture={(e) => {
+                  const files = Array.from(e.clipboardData.items)
+                    .map((i) => i.getAsFile())
+                    .filter((f): f is File => f !== null);
+                  if (files.length > 0) {
+                    e.preventDefault();
+                    processFiles(files);
+                  }
+                }}
+              >
                 <PromptInput
                   budgetTokens={32_000}
                   placeholder="Message Aionima…"
                   showHint
                   onSubmit={(text) => sendMessage(text)}
+                  aboveInput={
+                    <div className="flex items-center gap-2 px-2 py-1 flex-wrap min-h-[30px]">
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        title="Attach files"
+                        className="shrink-0 text-muted-foreground hover:text-foreground text-base leading-none cursor-pointer"
+                      >
+                        &#128206;
+                      </button>
+                      {attachments.map((att) => (
+                        <div
+                          key={att.id}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-muted border border-border text-[11px] max-w-[180px]"
+                        >
+                          {att.type === "image" ? (
+                            <img src={att.content} alt={att.name} className="w-4 h-4 rounded object-cover shrink-0" />
+                          ) : (
+                            <span className="shrink-0">&#128196;</span>
+                          )}
+                          <span className="font-mono truncate">{att.name}</span>
+                          <span className="text-muted-foreground shrink-0">{formatFileSize(att.size)}</span>
+                          <span
+                            onClick={() => removeAttachment(att.id)}
+                            className="cursor-pointer text-muted-foreground hover:text-foreground font-bold shrink-0 leading-none"
+                          >
+                            ×
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  }
                 />
               </div>
             )}
