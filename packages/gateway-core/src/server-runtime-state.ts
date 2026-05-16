@@ -315,6 +315,8 @@ export interface RuntimeStateDeps {
   federationRouter?: FedRouter;
   /** Callbacks to register additional routes before fastify.listen(). */
   preListenHooks?: ((fastify: import("fastify").FastifyInstance) => void)[];
+  /** Drizzle DB instance — passed to route groups that do direct DB auth (user mgmt, etc.). */
+  db?: import("@agi/db-schema/client").Db;
 }
 
 export interface ReloadResult {
@@ -6339,7 +6341,7 @@ export async function createGatewayRuntimeState(
     configPath: deps.configPath,
   });
 
-  registerMachineAdminRoutes(fastify, { logger: deps.logger, dashboardUserStore, localIdAuthProvider, idBaseUrl: localIdBaseUrl, configPath: deps.configPath });
+  registerMachineAdminRoutes(fastify, { logger: deps.logger, dashboardUserStore, localIdAuthProvider, idBaseUrl: localIdBaseUrl, db: deps.db, configPath: deps.configPath });
 
   // -----------------------------------------------------------------------
   // GET /api/plugins — list installed plugins (private network only)

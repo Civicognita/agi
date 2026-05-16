@@ -3069,6 +3069,7 @@ export async function startGatewayServer(
       nodeId,
       ownerEntityId,
       wsRef,
+      db,
       configPath: opts?.configPath,
       staticDir: opts?.staticDir,
       workspaceProjects: projectPaths,

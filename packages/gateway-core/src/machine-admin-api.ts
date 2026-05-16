@@ -20,6 +20,17 @@ import type { Logger } from "./logger.js";
 import type { DashboardUserStore, DashboardRole } from "./dashboard-user-store.js";
 import { hasRole } from "./dashboard-user-store.js";
 import type { LocalIdAuthProvider } from "./local-id-auth-provider.js";
+import type { Db } from "@agi/db-schema/client";
+import {
+  authenticateDbUser,
+  createDbUser,
+  listDbUsers,
+  getDbUser,
+  updateDbUser,
+  deleteDbUser,
+  changeDbUserPassword,
+  countDbUsers,
+} from "./auth-backends.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -160,12 +171,14 @@ function probeCpuDetail() {
 
 export interface MachineAdminDeps {
   logger?: Logger;
-  /** Dashboard user store — if provided, enables auth + admin user endpoints. */
+  /** Dashboard user store — legacy scrypt-based fallback (deprecated). */
   dashboardUserStore?: DashboardUserStore;
   /** Local-ID auth provider — if provided, enables Login via ID endpoints. */
   localIdAuthProvider?: LocalIdAuthProvider;
-  /** Local-ID base URL — if provided, enables proxying admin CRUD to Local-ID. */
+  /** Local-ID base URL — kept for backward compat; no longer used for user CRUD. */
   idBaseUrl?: string;
+  /** Drizzle DB instance — when provided, user auth + CRUD goes directly to agi_data. */
+  db?: Db;
   /** Path to gateway.json — used to update hosting.lanIp when network changes. */
   configPath?: string;
 }
@@ -978,24 +991,77 @@ export function registerMachineAdminRoutes(
   }
 
   if (userStore) {
-    // POST /api/auth/login
+    // POST /api/auth/login — try DB (argon2) first, fall back to legacy scrypt store
     fastify.post("/api/auth/login", async (request, reply) => {
       const body = request.body as { username?: string; password?: string } | null;
       if (!body?.username || !body?.password) {
         return reply.code(400).send({ error: "Username and password are required" });
       }
 
-      const result = userStore.authenticate(body.username, body.password);
-      if (!result) {
-        return reply.code(401).send({ error: "Invalid credentials" });
+      // Primary: DB-backed argon2 authentication
+      if (deps.db) {
+        const result = await authenticateDbUser(deps.db, body.username, body.password);
+        if (result.ok && result.userId) {
+          const now = Date.now();
+          const session: import("./dashboard-user-store.js").DashboardSession = {
+            userId: result.userId,
+            username: result.username ?? body.username,
+            role: (result.role ?? "viewer") as DashboardRole,
+            issuedAt: now,
+            expiresAt: now + userStore.getSessionTtlMs(),
+          };
+          const token = userStore.createSessionToken(session);
+          return reply.send({ ok: true, token, user: { id: result.userId, username: result.username, displayName: result.displayName, role: result.role } });
+        }
+        // DB auth failed — fall through to legacy scrypt store so pre-migration users still work
       }
 
-      return reply.send({ ok: true, token: result.token, user: result.user });
+      // Fallback: legacy scrypt-based DashboardUserStore
+      const legacyResult = userStore.authenticate(body.username, body.password);
+      if (!legacyResult) {
+        return reply.code(401).send({ error: "Invalid credentials" });
+      }
+      return reply.send({ ok: true, token: legacyResult.token, user: legacyResult.user });
+    });
+
+    // POST /api/auth/register — create a new user account
+    fastify.post("/api/auth/register", async (request, reply) => {
+      const body = request.body as {
+        username?: string;
+        email?: string;
+        displayName?: string;
+        password?: string;
+        role?: string;
+      } | null;
+
+      if ((!body?.username && !body?.email) || !body?.password) {
+        return reply.code(400).send({ error: "Username (or email) and password are required" });
+      }
+      if (body.password.length < 8) {
+        return reply.code(400).send({ error: "Password must be at least 8 characters" });
+      }
+
+      if (!deps.db) {
+        return reply.code(503).send({ error: "Database not available" });
+      }
+
+      try {
+        const user = await createDbUser(deps.db, {
+          username: body.username ?? body.email!,
+          email: body.email,
+          displayName: body.displayName,
+          password: body.password,
+          dashboardRole: body.role ?? "viewer",
+        });
+        return reply.code(201).send({ ok: true, user });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Failed to create user";
+        return reply.code(409).send({ error: msg });
+      }
     });
 
     // GET /api/auth/me
     fastify.get("/api/auth/me", async (request, reply) => {
-      // Try DashboardUserStore first, then LocalIdAuthProvider
       let session = extractSession(request, userStore);
       if (!session && deps.localIdAuthProvider) {
         const authHeader = request.raw.headers["authorization"];
@@ -1006,9 +1072,30 @@ export function registerMachineAdminRoutes(
       if (!session) {
         return reply.code(401).send({ error: "Not authenticated" });
       }
-      // Try getting full user info from store, fall back to session data
-      const user = userStore.getUser(session.userId);
-      const userInfo = user ?? {
+
+      // Try DB user first, fall back to legacy store
+      let userInfo: Record<string, unknown> | null = null;
+      if (deps.db) {
+        const dbUser = await getDbUser(deps.db, session.userId);
+        if (dbUser) {
+          userInfo = {
+            id: dbUser.id,
+            username: dbUser.username,
+            displayName: dbUser.displayName,
+            role: dbUser.dashboardRole,
+            createdAt: dbUser.createdAt,
+            lastLoginAt: null,
+            disabled: false,
+          };
+        }
+      }
+      if (!userInfo) {
+        const legacyUser = userStore.getUser(session.userId);
+        if (legacyUser) {
+          userInfo = { ...legacyUser, role: legacyUser.role };
+        }
+      }
+      const resolved = userInfo ?? {
         id: session.userId,
         username: session.username,
         displayName: session.username,
@@ -1017,7 +1104,7 @@ export function registerMachineAdminRoutes(
         lastLoginAt: null,
         disabled: false,
       };
-      return reply.send({ user: userInfo, session: { role: session.role, expiresAt: session.expiresAt } });
+      return reply.send({ user: resolved, session: { role: session.role, expiresAt: session.expiresAt } });
     });
 
     // GET /api/auth/status — check if dashboard auth is enabled and has users
@@ -1025,11 +1112,13 @@ export function registerMachineAdminRoutes(
       const localIdAvailable = deps.localIdAuthProvider
         ? await deps.localIdAuthProvider.isAvailable()
         : false;
+      const dbCount = deps.db ? await countDbUsers(deps.db) : 0;
+      const totalCount = dbCount + userStore.userCount();
       return reply.send({
         enabled: true,
-        hasUsers: userStore.hasUsers(),
-        userCount: userStore.userCount(),
-        provider: localIdAvailable ? "local-id" : "internal",
+        hasUsers: totalCount > 0,
+        userCount: totalCount,
+        provider: localIdAvailable ? "local-id" : dbCount > 0 ? "db" : "internal",
       });
     });
 
@@ -1083,7 +1172,6 @@ export function registerMachineAdminRoutes(
     });
 
     // GET /api/admin/users — list dashboard users (admin only)
-    // Phase 3: queries Local-ID first, merges with DashboardUserStore fallback
     fastify.get("/api/admin/users", async (request, reply) => {
       const err = guardPrivate(request);
       if (err) return reply.code(403).send({ error: err });
@@ -1093,48 +1181,24 @@ export function registerMachineAdminRoutes(
         return reply.code(403).send({ error: "Admin role required" });
       }
 
-      // Try Local-ID first
-      if (deps.idBaseUrl) {
-        try {
-          const res = await fetch(`${deps.idBaseUrl}/api/users`, {
-            signal: AbortSignal.timeout(5000),
-          });
-          if (res.ok) {
-            const data = (await res.json()) as { users: unknown[] };
-            // Merge: include Local-ID users, plus any DashboardUserStore users not in Local-ID
-            const localIdUsers = data.users as Array<{ id: string; username: string; displayName: string; dashboardRole: string; entity: unknown }>;
-            const localIdUsernames = new Set(localIdUsers.map((u) => u.username));
-            const legacyOnly = userStore.listUsers().filter((u) => !localIdUsernames.has(u.username));
-            const merged = [
-              ...localIdUsers.map((u) => ({
-                id: u.id,
-                username: u.username,
-                displayName: u.displayName,
-                role: u.dashboardRole,
-                source: "local-id" as const,
-                entity: u.entity,
-              })),
-              ...legacyOnly.map((u) => ({
-                id: u.id,
-                username: u.username,
-                displayName: u.displayName,
-                role: u.role,
-                source: "internal" as const,
-                entity: null,
-              })),
-            ];
-            return reply.send({ users: merged });
-          }
-        } catch {
-          // Local-ID unreachable — fall through to DashboardUserStore
-        }
+      // Primary: DB-backed user list
+      if (deps.db) {
+        const dbUsers = await listDbUsers(deps.db);
+        const dbIds = new Set(dbUsers.map((u) => u.id));
+        // Merge legacy users not yet in DB
+        const legacyOnly = userStore.listUsers().filter((u) => !dbIds.has(u.id));
+        const merged = [
+          ...dbUsers.map((u) => ({ ...u, role: u.dashboardRole, source: "db" as const })),
+          ...legacyOnly.map((u) => ({ ...u, source: "internal" as const })),
+        ];
+        return reply.send({ users: merged });
       }
 
+      // Fallback: legacy store only
       return reply.send({ users: userStore.listUsers() });
     });
 
     // POST /api/admin/users — create dashboard user (admin only)
-    // Phase 3: proxies to Local-ID when available
     fastify.post("/api/admin/users", async (request, reply) => {
       const err = guardPrivate(request);
       if (err) return reply.code(403).send({ error: err });
@@ -1155,35 +1219,21 @@ export function registerMachineAdminRoutes(
         return reply.code(400).send({ error: "Username and password are required" });
       }
 
-      // Try Local-ID first
-      if (deps.idBaseUrl) {
+      if (deps.db) {
         try {
-          const res = await fetch(`${deps.idBaseUrl}/api/users/create`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              username: body.username,
-              password: body.password,
-              displayName: body.displayName ?? body.username,
-              dashboardRole: body.role ?? "viewer",
-            }),
-            signal: AbortSignal.timeout(10000),
+          const user = await createDbUser(deps.db, {
+            username: body.username,
+            displayName: body.displayName ?? body.username,
+            password: body.password,
+            dashboardRole: body.role ?? "viewer",
           });
-          if (res.ok) {
-            const data = (await res.json()) as { user: unknown; entity: unknown };
-            return reply.send({ ok: true, user: data.user, entity: data.entity });
-          }
-          const errorBody = await res.json().catch(() => ({})) as { error?: string };
-          if (res.status === 409 || res.status === 400) {
-            return reply.code(res.status).send({ error: errorBody.error ?? "Failed to create user" });
-          }
-          // Other errors — fall through to legacy
-        } catch {
-          // Local-ID unreachable — fall through
+          return reply.send({ ok: true, user });
+        } catch (e) {
+          return reply.code(409).send({ error: e instanceof Error ? e.message : "Failed to create user" });
         }
       }
 
-      // Fallback: DashboardUserStore
+      // Fallback: legacy DashboardUserStore
       try {
         const user = userStore.createUser({
           username: body.username,
@@ -1198,7 +1248,6 @@ export function registerMachineAdminRoutes(
     });
 
     // PUT /api/admin/users/:id — update dashboard user (admin only)
-    // Phase 3: proxies to Local-ID when available
     fastify.put("/api/admin/users/:id", async (request, reply) => {
       const err = guardPrivate(request);
       if (err) return reply.code(403).send({ error: err });
@@ -1215,31 +1264,14 @@ export function registerMachineAdminRoutes(
         disabled?: boolean;
       } | null;
 
-      // Try Local-ID first
-      if (deps.idBaseUrl) {
-        try {
-          const res = await fetch(`${deps.idBaseUrl}/api/users/${encodeURIComponent(id)}`, {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              displayName: body?.displayName,
-              dashboardRole: body?.role,
-            }),
-            signal: AbortSignal.timeout(5000),
-          });
-          if (res.ok) {
-            const data = (await res.json()) as { ok: boolean; user: unknown };
-            return reply.send(data);
-          }
-          if (res.status === 404) {
-            // Not in Local-ID — try DashboardUserStore below
-          } else {
-            const errorBody = await res.json().catch(() => ({})) as { error?: string };
-            return reply.code(res.status).send({ error: errorBody.error ?? "Failed to update user" });
-          }
-        } catch {
-          // Local-ID unreachable — fall through
-        }
+      if (deps.db) {
+        const user = await updateDbUser(deps.db, id, {
+          displayName: body?.displayName,
+          dashboardRole: body?.role,
+          disabled: body?.disabled,
+        });
+        if (user) return reply.send({ ok: true, user });
+        // Not in DB — try legacy store
       }
 
       // Fallback: DashboardUserStore
@@ -1249,7 +1281,6 @@ export function registerMachineAdminRoutes(
     });
 
     // DELETE /api/admin/users/:id — delete dashboard user (admin only)
-    // Phase 3: proxies to Local-ID when available
     fastify.delete("/api/admin/users/:id", async (request, reply) => {
       const err = guardPrivate(request);
       if (err) return reply.code(403).send({ error: err });
@@ -1261,30 +1292,14 @@ export function registerMachineAdminRoutes(
 
       const { id } = request.params as { id: string };
 
-      // Cannot delete yourself
       if (id === session.userId) {
         return reply.code(400).send({ error: "Cannot delete your own account" });
       }
 
-      // Try Local-ID first
-      if (deps.idBaseUrl) {
-        try {
-          const res = await fetch(`${deps.idBaseUrl}/api/users/${encodeURIComponent(id)}`, {
-            method: "DELETE",
-            signal: AbortSignal.timeout(5000),
-          });
-          if (res.ok) {
-            return reply.send({ ok: true });
-          }
-          if (res.status === 404) {
-            // Not in Local-ID — try DashboardUserStore below
-          } else {
-            const errorBody = await res.json().catch(() => ({})) as { error?: string };
-            return reply.code(res.status).send({ error: errorBody.error ?? "Failed to delete user" });
-          }
-        } catch {
-          // Local-ID unreachable — fall through
-        }
+      if (deps.db) {
+        const deleted = await deleteDbUser(deps.db, id);
+        if (deleted) return reply.send({ ok: true });
+        // Not in DB — try legacy store
       }
 
       // Fallback: DashboardUserStore
@@ -1294,7 +1309,6 @@ export function registerMachineAdminRoutes(
     });
 
     // POST /api/admin/users/:id/reset-password — admin password reset
-    // Phase 3: proxies to Local-ID when available
     fastify.post("/api/admin/users/:id/reset-password", async (request, reply) => {
       const err = guardPrivate(request);
       if (err) return reply.code(403).send({ error: err });
@@ -1310,27 +1324,10 @@ export function registerMachineAdminRoutes(
         return reply.code(400).send({ error: "New password is required" });
       }
 
-      // Try Local-ID first
-      if (deps.idBaseUrl) {
-        try {
-          const res = await fetch(`${deps.idBaseUrl}/api/users/${encodeURIComponent(id)}/password`, {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ password: body.password }),
-            signal: AbortSignal.timeout(5000),
-          });
-          if (res.ok) {
-            return reply.send({ ok: true });
-          }
-          if (res.status === 404) {
-            // Not in Local-ID — try DashboardUserStore below
-          } else {
-            const errorBody = await res.json().catch(() => ({})) as { error?: string };
-            return reply.code(res.status).send({ error: errorBody.error ?? "Failed to reset password" });
-          }
-        } catch {
-          // Local-ID unreachable — fall through
-        }
+      if (deps.db) {
+        const ok = await changeDbUserPassword(deps.db, id, body.password);
+        if (ok) return reply.send({ ok: true });
+        // Not in DB — try legacy store
       }
 
       // Fallback: DashboardUserStore

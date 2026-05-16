@@ -252,6 +252,18 @@ export class DashboardUserStore {
     return { token, user: stripHash(user) };
   }
 
+  /** Sign a session payload with this store's secret. Used when an external
+   *  auth backend (e.g. DB argon2) verifies the password but session tokens
+   *  must remain compatible with this store's HMAC scheme. */
+  createSessionToken(session: DashboardSession): string {
+    return signToken(session, this.secret);
+  }
+
+  /** TTL in ms for new sessions. */
+  getSessionTtlMs(): number {
+    return this.sessionTtlMs;
+  }
+
   verifySession(token: string): DashboardSession | null {
     const session = verifyToken<DashboardSession>(token, this.secret);
     if (!session) return null;
