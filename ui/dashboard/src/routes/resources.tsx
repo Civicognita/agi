@@ -133,15 +133,38 @@ function ContainerStatsRow({ c }: { c: HFContainerStats }) {
   );
 }
 
+/** Safely extract a display string from a model value that may be a string,
+ *  an object with model_name, or something else entirely from an older/newer
+ *  Lemonade version. Never returns a raw object — React error #31 if it did. */
+function toModelDisplayName(v: unknown): string | null {
+  if (!v) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "object") {
+    const name = (v as Record<string, unknown>).model_name;
+    if (typeof name === "string") return name;
+    try { return JSON.stringify(v); } catch { return "[model]"; }
+  }
+  return String(v);
+}
+
 function ModelContainerStatsSection() {
   const { data, isLoading, error } = useHFContainerStats();
   const [lemonade, setLemonade] = useState<{ modelLoaded: string | null; allModelsLoaded: string[] } | null>(null);
+  const [lemonadeError, setLemonadeError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/lemonade/status")
-      .then((r) => r.ok ? r.json() as Promise<{ running: boolean; modelLoaded: string | null; allModelsLoaded: string[] }> : null)
-      .then((d) => { if (d?.running) setLemonade({ modelLoaded: d.modelLoaded, allModelsLoaded: d.allModelsLoaded }); })
-      .catch(() => null);
+      .then((r) => r.ok ? r.json() as Promise<{ running: boolean; modelLoaded: unknown; allModelsLoaded: unknown[] }> : null)
+      .then((d) => {
+        if (!d?.running) return;
+        const models = Array.isArray(d.allModelsLoaded)
+          ? d.allModelsLoaded.map(toModelDisplayName).filter((s): s is string => s !== null)
+          : [];
+        setLemonade({ modelLoaded: toModelDisplayName(d.modelLoaded), allModelsLoaded: models });
+      })
+      .catch((e: unknown) => {
+        setLemonadeError(e instanceof Error ? e.message : "Lemonade status unavailable");
+      });
   }, []);
 
   const containers = data?.containers ?? [];
@@ -153,7 +176,8 @@ function ModelContainerStatsSection() {
   }
 
   if (!hasAnything) {
-    if (error) return <p className="text-[11px] text-muted-foreground">Could not load model stats.</p>;
+    if (error) return <p className="text-[11px] text-muted-foreground">Could not load container stats.</p>;
+    if (lemonadeError) return <p className="text-[11px] text-muted-foreground">Lemonade: {lemonadeError}</p>;
     return <p className="text-[11px] text-muted-foreground">No active AI models.</p>;
   }
 

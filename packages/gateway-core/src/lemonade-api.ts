@@ -130,8 +130,14 @@ export function registerLemonadeRoutes(
   fastify.get("/api/lemonade/status", async (_request, reply) => {
     const baseUrl = resolveBaseUrl(getConfig);
     const [health, sysinfo] = await Promise.all([
-      lemonadeFetch<{ status: string; version: string; model_loaded: string | null; all_models_loaded: string[] }>(
-        baseUrl, "/api/v1/health", { timeoutMs: 5_000 }),
+      lemonadeFetch<{
+        status: string;
+        version: string;
+        // Lemonade ≥0.17 returns model objects; earlier versions return strings.
+        // We normalise to string (model_name) in the response below.
+        model_loaded: string | Record<string, unknown> | null;
+        all_models_loaded: Array<string | Record<string, unknown>>;
+      }>(baseUrl, "/api/v1/health", { timeoutMs: 5_000 }),
       lemonadeFetch<{ devices: Record<string, unknown>; recipes: Record<string, unknown> }>(
         baseUrl, "/api/v1/system-info", { timeoutMs: 5_000 }),
     ]);
@@ -143,13 +149,21 @@ export function registerLemonadeRoutes(
         error: health.error,
       });
     }
+    // Normalise model references to plain strings so the dashboard never has
+    // to deal with object vs string variance from different Lemonade versions.
+    const toModelName = (v: string | Record<string, unknown> | null | undefined): string | null => {
+      if (!v) return null;
+      if (typeof v === "string") return v;
+      const name = (v as { model_name?: unknown }).model_name;
+      return typeof name === "string" ? name : JSON.stringify(v);
+    };
     return reply.send({
       installed: true,
       running: true,
       baseUrl,
       version: health.data.version,
-      modelLoaded: health.data.model_loaded,
-      allModelsLoaded: health.data.all_models_loaded,
+      modelLoaded: toModelName(health.data.model_loaded),
+      allModelsLoaded: health.data.all_models_loaded.map(toModelName).filter(Boolean) as string[],
       devices: sysinfo.ok ? sysinfo.data.devices : null,
       recipes: sysinfo.ok ? sysinfo.data.recipes : null,
     });
