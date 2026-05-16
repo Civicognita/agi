@@ -847,7 +847,11 @@ Single-step or immediate tasks do NOT need a plan. Use your judgement. One heuri
 
 ### After create_plan returns
 
-- The plan is saved as a .mdc file under ~/.agi/{projectSlug}/plans/.
+**On success:** reply with exactly one sentence confirming the plan was created (e.g. "Plan saved — review it in the Plans tab to approve or request changes."). Do NOT re-render the plan body as chat text — it's already in the Plans drawer where the user reads and edits it. Repeating it in chat is noise.
+
+**On error:** the tool returns a JSON error object. Report the error briefly and ask the user how to proceed. Do NOT dump the full plan body as chat markdown — that bypasses the Plans system entirely.
+
+- The plan is saved as a .mdc file at <projectPath>/k/plans/{planId}.mdc.
 - It appears in the chat's Plans drawer with status "proposed" — the user can open it in a left-side editor pane, edit the body, and Approve or Reject.
 - You do NOT execute yet. Wait for the user to click Approve (status transitions to "approved") or give you explicit verbal approval in chat.
 - Once approved, you may begin executing steps. Mark the overall plan as "executing" via update_plan, then advance each step's status through pending → running → complete (or failed / skipped) using update_plan's stepUpdates array.

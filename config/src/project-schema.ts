@@ -395,9 +395,12 @@ export const ProjectConfigSchema = z
     /** ISO 8601 creation timestamp. */
     createdAt: z.string().optional(),
     /** Tynn project token (external integration). */
-    tynnToken: z.string().optional(),
+    // .nullish() + transform: legacy files may have `"tynnToken": null`
+    tynnToken: z.string().nullish().transform((v) => v ?? undefined),
     /** Project type ID (mirrors hosting.type when hosting is configured). */
-    type: z.string().optional(),
+    // .nullish() + transform: legacy project.json files written before s150
+    // may have `"type": null`; coerce to undefined so validation passes.
+    type: z.string().nullish().transform((v) => v ?? undefined),
     // s150 (2026-05-07): `category` was removed. `type` is now the single
     // source of truth for project classification. Legacy values tolerated
     // by the root-level .passthrough() and stripped by the s150 migration
