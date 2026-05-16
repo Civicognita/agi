@@ -83,17 +83,7 @@ import {
 } from "./lookup-knowledge.js";
 import type { PrimeLoader } from "../prime-loader.js";
 
-// Plan tools
-import {
-  createCreatePlanHandler,
-  CREATE_PLAN_MANIFEST,
-  CREATE_PLAN_INPUT_SCHEMA,
-} from "./create-plan.js";
-import {
-  createUpdatePlanHandler,
-  UPDATE_PLAN_MANIFEST,
-  UPDATE_PLAN_INPUT_SCHEMA,
-} from "./update-plan.js";
+// Plan tools — handlers/manifests retired (plans now via pm tool Wish #17)
 
 // Project tools
 import {
@@ -340,24 +330,12 @@ export function registerAllTools(
     );
   }
 
-  // Plan tools — unconditionally registered. They take `projectPath` from
-  // the tool INPUT (same pattern as file_read / grep_search taking a path
-  // argument) so they can live in the global tool registry regardless of
-  // which chat session invokes them. The agent reads the path from its
-  // Project Context section of the system prompt and passes it per-call.
-  // The old "conditional on config.projectPath" guard meant the tools
-  // were NEVER registered (registerAllTools is called once at server boot
-  // without a session context) — create_plan never reached Aion's menu.
-  register(
-    CREATE_PLAN_MANIFEST as ToolManifestEntry,
-    createCreatePlanHandler(),
-    CREATE_PLAN_INPUT_SCHEMA,
-  );
-  register(
-    UPDATE_PLAN_MANIFEST as ToolManifestEntry,
-    createUpdatePlanHandler(),
-    UPDATE_PLAN_INPUT_SCHEMA,
-  );
+  // Plan tools — RETIRED. Plans are now part of the `pm` tool (Wish #17,
+  // 2026-05-08): use pm(action: "plan-create") / "plan-update" / "plan-list"
+  // / "plan-get". The standalone create_plan / update_plan tools are no
+  // longer registered; Aion reaches for `pm` because its description marks
+  // it as the single PM entryway. Files (plan-store.ts, create-plan.ts,
+  // update-plan.ts) kept for PlanStore import; manifests unused.
 
   // Project tools (only registered if projectDirs configured)
   if (config.projectDirs !== undefined && config.projectDirs.length > 0) {

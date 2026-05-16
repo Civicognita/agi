@@ -829,46 +829,53 @@ function buildProjectContextSection(
 function buildPlanWorkflowSection(): string {
   return `## Plan Workflow
 
-**When the user asks you to plan anything, use the create_plan tool — do NOT write the plan as markdown in the chat.** Plans written as chat markdown don't surface the Plans tab, the Approval gate, the Plan drawer, or any of the tracking UX the user relies on. They're invisible to the system. Use the tool.
+**When the user asks you to plan anything, use pm(action: "plan-create") — do NOT write the plan as markdown in the chat.** Plans written as chat markdown don't surface the Plans tab, the Approval gate, the Plan drawer, or any of the tracking UX the user relies on. They're invisible to the system. Use the tool.
 
-### When to use create_plan
+Plans are part of the pm tool (Wish #17). The standalone create_plan / update_plan tools no longer exist.
+
+### When to create a plan
 
 - The user says "plan," "propose a plan," "how would you approach," "draft an implementation," "break this down," or any near-synonym.
 - You're about to do multi-step work (three or more distinct steps) and you want the user to approve the approach before you execute.
 - You want to persist your approach across sessions — plans are saved to disk, chat bubbles are not.
 
-Single-step or immediate tasks do NOT need a plan. Use your judgement. One heuristic: if you'd naturally write numbered "I'll do X, then Y, then Z," you're describing a plan — emit it via create_plan instead of as prose.
+Single-step or immediate tasks do NOT need a plan. Use your judgement. One heuristic: if you'd naturally write numbered "I'll do X, then Y, then Z," you're describing a plan — emit it via pm(action: "plan-create") instead of as prose.
 
-### How to use create_plan
+### How to create a plan
 
-- \`title\` — short (under 60 chars), descriptive. "Add auth to the API" not "Plan to add authentication".
-- \`body\` — full markdown. Context, rationale, alternatives you considered, risks, verification. This is what the user reads in the Plan pane. Write it as if you were writing a design doc, because you are.
-- \`steps[]\` — each step has \`title\`, \`type\` (one of: plan, implement, test, review, deploy), and optional \`dependsOn\` (array of earlier step ids like ["step_01"]). Keep step titles action-oriented ("Write the auth middleware," not "Auth middleware").
+Call pm with action: "plan-create", projectPath (from your Project Context), and a plan object:
 
-### After create_plan returns
+- \`plan.title\` — short (under 60 chars), descriptive. "Add auth to the API" not "Plan to add authentication".
+- \`plan.body\` — full markdown. Context, rationale, alternatives considered, risks, verification steps. This is what the user reads in the Plan pane — write it as a design doc.
+- \`plan.steps[]\` — each step has \`title\` and \`type\` (one of: plan, implement, test, review, deploy). Keep step titles action-oriented.
 
-**On success:** reply with exactly one sentence confirming the plan was created (e.g. "Plan saved — review it in the Plans tab to approve or request changes."). Do NOT re-render the plan body as chat text — it's already in the Plans drawer where the user reads and edits it. Repeating it in chat is noise.
+To update a plan's status or steps: pm(action: "plan-update", projectPath, planId, update: {...}).
+To read plans: pm(action: "plan-list", projectPath) or pm(action: "plan-get", projectPath, planId).
 
-**On error:** the tool returns a JSON error object. Report the error briefly and ask the user how to proceed. Do NOT dump the full plan body as chat markdown — that bypasses the Plans system entirely.
+### After plan-create returns
 
-- The plan is saved as a .mdc file at <projectPath>/k/plans/{planId}.mdc.
-- It appears in the chat's Plans drawer with status "proposed" — the user can open it in a left-side editor pane, edit the body, and Approve or Reject.
-- You do NOT execute yet. Wait for the user to click Approve (status transitions to "approved") or give you explicit verbal approval in chat.
-- Once approved, you may begin executing steps. Mark the overall plan as "executing" via update_plan, then advance each step's status through pending → running → complete (or failed / skipped) using update_plan's stepUpdates array.
-- After the final step completes, set the plan's overall status to "complete".
-- Accepted plans are IMMUTABLE — you cannot edit the body, title, or step list once the user approves. Only step-status advances are permitted. If the plan needs a redraft, delete it and create_plan again.
+**On success:** reply with exactly one sentence confirming the plan was created (e.g. "Plan saved — review it in the Plans tab to approve or request changes."). Do NOT re-render the plan body as chat text — it's already in the Plans drawer. Repeating it in chat is noise.
+
+**On error:** the tool returns a JSON error object. Report the error briefly and ask the user how to proceed. Do NOT dump the full plan body as chat markdown.
+
+- Plans are saved at <projectPath>/k/plans/{planId}.mdc.
+- They appear in the chat's Plans drawer with status "proposed" — the user can open, edit, and Approve or Reject.
+- You do NOT execute yet. Wait for the user to click Approve (status → "approved") or give explicit verbal approval in chat.
+- Once approved, mark the plan "executing" via pm(action: "plan-update", update: {status: "executing"}), then advance each step's status through pending → running → complete using stepUpdates.
+- After the final step completes, set the plan status to "complete".
+- Accepted plans are IMMUTABLE — no body/title/step-list edits once approved. Only step-status advances. If a redraft is needed, delete it and plan-create again.
 
 ### State transitions
 
 | From | To | Via |
 |------|-----|-----|
-| draft | reviewing | create_plan presents the plan; the user reviews |
+| draft | reviewing | plan-create presents the plan; user reviews |
 | reviewing | approved | user clicks Approve in the Plan pane |
 | reviewing | (deleted) | user clicks Reject |
-| approved | executing | update_plan status: "executing" — you start work |
-| executing | testing | update_plan status: "testing" — verification phase |
-| testing | complete | update_plan status: "complete" |
-| any | failed | update_plan status: "failed" — something blocked completion |`;
+| approved | executing | plan-update status: "executing" — you start work |
+| executing | testing | plan-update status: "testing" — verification phase |
+| testing | complete | plan-update status: "complete" |
+| any | failed | plan-update status: "failed" — something blocked completion |`;
 }
 
 // ---------------------------------------------------------------------------
