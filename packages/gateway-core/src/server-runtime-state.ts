@@ -52,6 +52,10 @@ import type { ChatPersistence } from "./chat-persistence.js";
 import { registerChatHistoryRoutes } from "./chat-history-api.js";
 import { registerMachineAdminRoutes } from "./machine-admin-api.js";
 import { registerOnboardingRoutes } from "./onboarding-api.js";
+import { registerHandoffRoutes, startHandoffCleanup } from "./handoff-api.js";
+import { registerDeviceFlowRoutes } from "./device-flow-api.js";
+import { registerConnectionsRoutes } from "./connections-api.js";
+import { resolveEncryptionKey } from "./crypto-tokens.js";
 import type { SecretsManager } from "./secrets.js";
 import { DashboardUserStore, hasRole } from "./dashboard-user-store.js";
 import { LocalIdAuthProvider } from "./local-id-auth-provider.js";
@@ -621,6 +625,27 @@ export async function createGatewayRuntimeState(
   // Mark DashboardUserStore as deprecated when Local-ID is available
   if (dashboardUserStore && localIdBaseUrl) {
     dashboardUserStore.localIdAvailable = true;
+  }
+
+  // -----------------------------------------------------------------------
+  // Encryption key for OAuth token storage (handoff / device-flow / connections)
+  // -----------------------------------------------------------------------
+
+  let encryptionKey: Buffer | undefined;
+  if (deps.configPath && deps.db) {
+    encryptionKey = resolveEncryptionKey(deps.configPath);
+  }
+
+  // Derive gateway base URL from hosting config (used in handoff authUrl)
+  let gatewayBaseUrl = "https://ai.on";
+  if (deps.configPath) {
+    try {
+      const cfgRaw = readFileSync(deps.configPath, "utf-8");
+      const cfg = JSON.parse(cfgRaw) as Record<string, unknown>;
+      const hosting = cfg.hosting as Record<string, unknown> | undefined;
+      const baseDomain = (hosting?.baseDomain as string) ?? "ai.on";
+      gatewayBaseUrl = `https://${baseDomain}`;
+    } catch { /* use default */ }
   }
 
   // -----------------------------------------------------------------------
@@ -6339,7 +6364,27 @@ export async function createGatewayRuntimeState(
     secrets: deps.secrets,
     config: deps.config as Record<string, unknown>,
     configPath: deps.configPath,
+    db: deps.db,
+    encKey: encryptionKey,
+    gatewayBaseUrl,
   });
+
+  // Handoff, device-flow, and connections routes (absorbed from agi-local-id Phase 2)
+  if (deps.db && encryptionKey) {
+    registerHandoffRoutes(fastify, {
+      db: deps.db,
+      encKey: encryptionKey,
+      gatewayBaseUrl,
+      logger: deps.logger,
+    });
+    registerDeviceFlowRoutes(fastify, {
+      db: deps.db,
+      encKey: encryptionKey,
+      logger: deps.logger,
+    });
+    registerConnectionsRoutes(fastify, { db: deps.db });
+    startHandoffCleanup(deps.db);
+  }
 
   registerMachineAdminRoutes(fastify, { logger: deps.logger, dashboardUserStore, localIdAuthProvider, idBaseUrl: localIdBaseUrl, db: deps.db, configPath: deps.configPath });
 

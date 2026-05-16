@@ -5,8 +5,9 @@
  * Secrets are stored via SecretsManager (TPM2-sealed) when available,
  * with process.env fallback for dev/migration.
  *
- * OAuth is handled by the Aionima ID Service (id.aionima.ai) — the gateway
- * uses a handoff flow to receive tokens from the central service.
+ * OAuth handoffs are now served internally by the gateway (absorbed from
+ * agi-local-id Phase 2 — 2026-05-16). createHandoff() and pollHandoff()
+ * are called directly instead of HTTP-proxying to id.ai.on.
  */
 
 import type { FastifyInstance } from "fastify";
@@ -19,6 +20,8 @@ import type { OnboardingState } from "./onboarding-state.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 import type { SecretsManager } from "./secrets.js";
+import type { Db } from "@agi/db-schema/client";
+import { createHandoff, pollHandoff } from "./handoff-api.js";
 
 // ---------------------------------------------------------------------------
 // ID Service URL resolution
@@ -94,6 +97,12 @@ export interface OnboardingRouteDeps {
   secrets?: SecretsManager;
   config?: Record<string, unknown>;
   configPath?: string;
+  /** Drizzle DB — enables direct handoff creation/polling without HTTP round-trip. */
+  db?: Db;
+  /** AES-256-GCM encryption key for OAuth token storage. */
+  encKey?: Buffer;
+  /** Gateway's own base URL for building handoff authUrl (e.g. "https://ai.on"). */
+  gatewayBaseUrl?: string;
 }
 
 /**
@@ -571,30 +580,42 @@ export function registerOnboardingRoutes(
   });
 
   // -----------------------------------------------------------------------
-  // POST /api/onboarding/aionima-id/start — create handoff via ID service
+  // POST /api/onboarding/aionima-id/start — create handoff (internal)
   // -----------------------------------------------------------------------
 
   fastify.post("/api/onboarding/aionima-id/start", async (request, reply) => {
     const err = guardPrivate(request);
     if (err) return reply.code(403).send({ error: err });
 
+    if (deps.db && deps.encKey) {
+      // Direct path — handoff created + auto-approved in-process (no HTTP hop)
+      try {
+        const baseUrl = deps.gatewayBaseUrl ?? resolveIdServiceUrl(readConfig());
+        const result = await createHandoff(deps.db, deps.encKey, "onboarding", baseUrl, true);
+        activeHandoff = { handoffId: result.handoffId, createdAt: Date.now() };
+        log.info(`Handoff session created (direct): ${result.handoffId}`);
+        return reply.send({ url: result.authUrl });
+      } catch (e) {
+        log.error(`Handoff create (direct) failed: ${String(e)}`);
+        return reply.code(500).send({ error: "Failed to create handoff session" });
+      }
+    }
+
+    // Legacy HTTP path — fallback when DB not wired (should not happen post Phase 2)
     try {
       const idBaseUrl = resolveIdServiceUrl(readConfig());
       const res = await fetch(`${idBaseUrl}/api/handoff/create`, {
         method: "POST",
         headers: { "content-type": "application/json" },
       });
-
       if (!res.ok) {
         const errText = await res.text();
         log.error(`Handoff create failed: ${res.status} ${errText}`);
         return reply.code(502).send({ error: "Failed to create handoff session" });
       }
-
       const data = (await res.json()) as { handoffId: string; authUrl: string };
       activeHandoff = { handoffId: data.handoffId, createdAt: Date.now() };
-
-      log.info(`Handoff session created: ${data.handoffId}`);
+      log.info(`Handoff session created (http): ${data.handoffId}`);
       return reply.send({ url: data.authUrl });
     } catch (e) {
       log.error(`Handoff create fetch failed: ${String(e)}`);
@@ -610,9 +631,7 @@ export function registerOnboardingRoutes(
     const err = guardPrivate(request);
     if (err) return reply.code(403).send({ error: err });
 
-    if (!activeHandoff) {
-      return reply.send({ status: "no_handoff" });
-    }
+    if (!activeHandoff) return reply.send({ status: "no_handoff" });
 
     // Expire stale handoffs (15 min)
     if (Date.now() - activeHandoff.createdAt > 15 * 60 * 1000) {
@@ -620,72 +639,69 @@ export function registerOnboardingRoutes(
       return reply.send({ status: "expired" });
     }
 
-    try {
-      const idBaseUrl = resolveIdServiceUrl(readConfig());
-      const res = await fetch(`${idBaseUrl}/api/handoff/${activeHandoff.handoffId}/poll`);
+    let pollData: {
+      status: string;
+      services?: Array<{ provider: string; role: string; accountLabel?: string | null; accessToken?: string | null; refreshToken?: string | null }>;
+    };
 
-      if (!res.ok) {
-        if (res.status === 404) {
-          activeHandoff = null;
-          return reply.send({ status: "expired" });
-        }
+    if (deps.db && deps.encKey) {
+      // Direct path — no HTTP hop
+      try {
+        pollData = await pollHandoff(deps.db, deps.encKey, activeHandoff.handoffId);
+      } catch (e) {
+        log.error(`Handoff poll (direct) failed: ${String(e)}`);
         return reply.send({ status: "pending" });
       }
-
-      const data = (await res.json()) as {
-        status: string;
-        services?: Array<{
-          provider: string;
-          role: string;
-          accountLabel?: string;
-          refreshToken?: string;
-          accessToken?: string;
-        }>;
-      };
-
-      if (data.status !== "completed" || !data.services) {
-        return reply.send({ status: data.status });
-      }
-
-      // Store tokens via SecretsManager
-      const connectedServices: Array<{ provider: string; role: string; accountLabel?: string }> = [];
-
-      for (const svc of data.services) {
-        const prefix = svc.role === "owner" ? "OWNER" : "AGENT";
-
-        if (svc.provider === "google") {
-          if (svc.refreshToken) {
-            await saveSecret(secrets, `${prefix}_EMAIL_REFRESH_TOKEN`, svc.refreshToken, log);
-          }
-          if (svc.accessToken) {
-            await saveSecret(secrets, `${prefix}_EMAIL_ACCESS_TOKEN`, svc.accessToken, log);
-          }
-        } else if (svc.provider === "github") {
-          if (svc.accessToken) {
-            await saveSecret(secrets, `${prefix}_GITHUB_TOKEN`, svc.accessToken, log);
-          }
+    } else {
+      // Legacy HTTP path
+      try {
+        const idBaseUrl = resolveIdServiceUrl(readConfig());
+        const res = await fetch(`${idBaseUrl}/api/handoff/${activeHandoff.handoffId}/poll`);
+        if (!res.ok) {
+          if (res.status === 404) { activeHandoff = null; return reply.send({ status: "expired" }); }
+          return reply.send({ status: "pending" });
         }
+        pollData = (await res.json()) as typeof pollData;
+      } catch (e) {
+        log.error(`Handoff poll (http) failed: ${String(e)}`);
+        return reply.send({ status: "pending" });
+      }
+    }
 
-        connectedServices.push({
-          provider: svc.provider,
-          role: svc.role,
-          accountLabel: svc.accountLabel,
-        });
-        log.info(`Handoff: stored ${svc.provider} tokens for ${svc.role}`);
+    if (pollData.status === "not_found" || pollData.status === "expired") {
+      activeHandoff = null;
+      return reply.send({ status: pollData.status });
+    }
+
+    if (pollData.status !== "completed" || !pollData.services) {
+      return reply.send({ status: pollData.status });
+    }
+
+    // Store tokens via SecretsManager
+    const connectedServices: Array<{ provider: string; role: string; accountLabel?: string }> = [];
+
+    for (const svc of pollData.services) {
+      const prefix = svc.role === "owner" ? "OWNER" : "AGENT";
+
+      if (svc.provider === "google") {
+        if (svc.refreshToken) await saveSecret(secrets, `${prefix}_EMAIL_REFRESH_TOKEN`, svc.refreshToken, log);
+        if (svc.accessToken) await saveSecret(secrets, `${prefix}_EMAIL_ACCESS_TOKEN`, svc.accessToken, log);
+      } else if (svc.provider === "github") {
+        if (svc.accessToken) await saveSecret(secrets, `${prefix}_GITHUB_TOKEN`, svc.accessToken, log);
       }
 
-      // Mark step completed
-      const state = readOnboardingState(dataDir);
-      state.steps.aionimaId = "completed";
-      state.aionimaIdServices = connectedServices;
-      writeOnboardingState(state, dataDir);
-
-      activeHandoff = null;
-      return reply.send({ status: "completed", services: connectedServices });
-    } catch (e) {
-      log.error(`Handoff poll failed: ${String(e)}`);
-      return reply.send({ status: "pending" });
+      connectedServices.push({ provider: svc.provider, role: svc.role, accountLabel: svc.accountLabel ?? undefined });
+      log.info(`Handoff: stored ${svc.provider} tokens for ${svc.role}`);
     }
+
+    // Mark step completed
+    const state = readOnboardingState(dataDir);
+    state.steps.aionimaId = "completed";
+    state.aionimaIdServices = connectedServices;
+    writeOnboardingState(state, dataDir);
+
+    activeHandoff = null;
+    return reply.send({ status: "completed", services: connectedServices });
   });
 
   // -----------------------------------------------------------------------
@@ -924,23 +940,32 @@ export function registerOnboardingRoutes(
       return reply.code(400).send({ error: "channelId is required" });
     }
 
-    const idBaseUrl = resolveIdServiceUrl(readConfig());
+    if (deps.db && deps.encKey) {
+      // Direct path — no HTTP hop
+      try {
+        const baseUrl = deps.gatewayBaseUrl ?? resolveIdServiceUrl(readConfig());
+        const result = await createHandoff(deps.db, deps.encKey, `channel:${body.channelId}`, baseUrl, true);
+        activeHandoff = { handoffId: result.handoffId, createdAt: Date.now() };
+        log.info(`Channel OAuth handoff created (direct) for ${body.channelId}`);
+        return reply.send({ url: result.authUrl });
+      } catch (e) {
+        log.error(`Channel OAuth handoff (direct) failed: ${String(e)}`);
+        return reply.code(500).send({ error: "Failed to create channel handoff" });
+      }
+    }
 
+    // Legacy HTTP path
+    const idBaseUrl = resolveIdServiceUrl(readConfig());
     try {
       const res = await fetch(`${idBaseUrl}/api/handoff/create`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ purpose: `channel:${body.channelId}` }),
       });
-
-      if (!res.ok) {
-        return reply.code(502).send({ error: "Failed to create channel handoff" });
-      }
-
+      if (!res.ok) return reply.code(502).send({ error: "Failed to create channel handoff" });
       const data = (await res.json()) as { handoffId: string; authUrl: string };
       activeHandoff = { handoffId: data.handoffId, createdAt: Date.now() };
-
-      log.info(`Channel OAuth handoff created for ${body.channelId}`);
+      log.info(`Channel OAuth handoff created (http) for ${body.channelId}`);
       return reply.send({ url: data.authUrl });
     } catch (e) {
       log.error(`Channel OAuth handoff failed: ${String(e)}`);
