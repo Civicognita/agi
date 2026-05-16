@@ -112,9 +112,6 @@ export class DashboardUserStore {
   private readonly filePath: string;
   private readonly secret: string;
   private readonly sessionTtlMs: number;
-  /** When true, createUser() logs a warning instead of creating. */
-  localIdAvailable = false;
-
   constructor(dataDir: string, secret: string, sessionTtlMs = 86400000) {
     this.filePath = join(dataDir, "dashboard-users.json");
     this.secret = secret;
@@ -169,9 +166,6 @@ export class DashboardUserStore {
     password: string;
     role: DashboardRole;
   }): DashboardUserPublic {
-    if (this.localIdAvailable) {
-      console.warn("[DashboardUserStore] createUser called but Local-ID is available — new users should be created through Local-ID");
-    }
     // Check uniqueness
     if (this.users.some((u) => u.username === params.username)) {
       throw new Error(`Username "${params.username}" already exists`);

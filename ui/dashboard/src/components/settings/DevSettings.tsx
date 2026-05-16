@@ -289,14 +289,6 @@ export function DevSettings(_props: {
                     entries={devStatus.prime.entries}
                     isOwnerFork={isOwnerFork(devStatus.prime.remote)}
                   />
-                  {devStatus.id && (
-                    <RepoCard
-                      name="ID"
-                      remote={devStatus.id.remote}
-                      branch={devStatus.id.branch}
-                      isOwnerFork={isOwnerFork(devStatus.id.remote)}
-                    />
-                  )}
                   {devStatus.marketplace && (
                     <RepoCard
                       name="Marketplace"
@@ -461,13 +453,13 @@ function TestVmPanel() {
       {/* Service health rows */}
       {vmRunning && status && (
         <div className="grid grid-cols-2 gap-x-6 gap-y-1 mb-4 max-w-sm">
-          {(["postgres", "caddy", "agi", "id"] as const).map((svc) => {
+          {(["postgres", "caddy", "agi"] as const).map((svc) => {
             const val = status.services[svc];
             const isUp = val === "active" || val === "running";
             return (
               <div key={svc} className="flex items-center gap-2">
                 <span className={`w-1.5 h-1.5 rounded-full ${isUp ? "bg-green-500" : "bg-red-500"}`} />
-                <span className="text-[12px] text-muted-foreground">{svc === "postgres" ? "PostgreSQL" : svc === "caddy" ? "Caddy" : svc === "agi" ? "AGI" : "ID"}</span>
+                <span className="text-[12px] text-muted-foreground">{svc === "postgres" ? "PostgreSQL" : svc === "caddy" ? "Caddy" : "AGI"}</span>
                 <span className="text-[11px] text-muted-foreground font-mono">{val}</span>
               </div>
             );

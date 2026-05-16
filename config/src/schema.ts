@@ -538,10 +538,6 @@ const DevConfigSchema = z
     marketplaceRepo: z.string().default("git@github.com:wishborn/agi-marketplace.git"),
     /** Dev directory for marketplace fork (optional — resolve-paths.ts resolves to canonical /opt/agi-marketplace). */
     marketplaceDir: z.string().optional(),
-    /** Git remote URL for ID service fork. */
-    idRepo: z.string().default("git@github.com:wishborn/agi-local-id.git"),
-    /** Dev directory for ID service fork (optional — resolve-paths.ts resolves to canonical /opt/agi-local-id). */
-    idDir: z.string().optional(),
     /** Git remote URL for MApp marketplace fork. */
     mappMarketplaceRepo: z.string().default("git@github.com:wishborn/agi-mapp-marketplace.git"),
     /** Dev directory for MApp marketplace fork (optional — resolve-paths.ts resolves to canonical /opt/agi-mapp-marketplace). */
@@ -654,34 +650,6 @@ const OAuthProviderSchema = z
     clientId: z.string(),
     clientSecret: z.string(),
     scopes: z.array(z.string()).optional(),
-  })
-  .strict();
-
-const IdServiceLocalSchema = z
-  .object({
-    /** Enable local ID service (runs alongside AGI on this node). */
-    enabled: z.boolean().default(false),
-    /** Local ID service HTTP port. */
-    port: z.number().int().min(1024).default(3200),
-    /** Subdomain for the local ID service (e.g. "id" → id.ai.on). */
-    subdomain: z.string().default("id"),
-    /** PostgreSQL connection string for the local ID service. */
-    databaseUrl: z.string().optional(),
-    /** Auto-provision a Podman PostgreSQL container for the ID service. */
-    postgresContainer: z.boolean().default(true),
-  })
-  .strict();
-
-const IdServiceConfigSchema = z
-  .object({
-    /** Path to the ID service directory. */
-    dir: z.string().default("/opt/agi-local-id"),
-    /** Git remote URL for the ID service source. */
-    source: z.string().default("git@github.com:Civicognita/agi-local-id.git"),
-    /** Branch to track. */
-    branch: z.string().default("main"),
-    /** Local self-hosting configuration. */
-    local: IdServiceLocalSchema.optional(),
   })
   .strict();
 
@@ -802,7 +770,6 @@ export const AionimaConfigSchema = z
     workers: WorkersConfigSchema.optional(),
     marketplace: MarketplaceConfigSchema.optional(),
     mappMarketplace: MAppMarketplaceConfigSchema.optional(),
-    idService: IdServiceConfigSchema.optional(),
     dev: DevConfigSchema.optional(),
     dashboardAuth: DashboardAuthConfigSchema.optional(),
     federation: FederationConfigSchema.optional(),
@@ -853,8 +820,6 @@ export type DashboardAuthConfig = z.infer<typeof DashboardAuthConfigSchema>;
 export type AgentCredentialsConfig = z.infer<typeof AgentCredentialsConfigSchema>;
 export type FederationConfig = z.infer<typeof FederationConfigSchema>;
 export type IdentityConfig = z.infer<typeof IdentityConfigSchema>;
-export type IdServiceConfig = z.infer<typeof IdServiceConfigSchema>;
-export type IdServiceLocalConfig = z.infer<typeof IdServiceLocalSchema>;
 export type BackupConfig = z.infer<typeof BackupConfigSchema>;
 export type ComplianceConfig = z.infer<typeof ComplianceConfigSchema>;
 export type ChatConfig = z.infer<typeof ChatConfigSchema>;

@@ -122,7 +122,7 @@ import { startGatewaySidecars } from "./server-startup.js";
 import { UserContextStore } from "./user-context-store.js";
 import { HeartbeatScheduler } from "./heartbeat.js";
 import { PrimeLoader } from "./prime-loader.js";
-import { resolvePrimeDir, resolveIdDir } from "./resolve-paths.js";
+import { resolvePrimeDir } from "./resolve-paths.js";
 import { checkProtocolCompatibility } from "./protocol-check.js";
 import { PlanStore, migrateProjectPlans } from "./plan-store.js";
 import { ChatPersistence } from "./chat-persistence.js";
@@ -339,7 +339,7 @@ export async function startGatewayServer(
   try {
     const externalsReport = await ensureExternals(bootLog);
     bootLog.info(
-      `externals: postgres=${externalsReport.postgres.action}(${externalsReport.postgres.state}) idService=${externalsReport.idService.action}(${externalsReport.idService.state}) pgReady=${String(externalsReport.postgresReady)}`,
+      `externals: postgres=${externalsReport.postgres.action}(${externalsReport.postgres.state}) pgReady=${String(externalsReport.postgresReady)}`,
     );
   } catch (err) {
     bootLog.error(
@@ -496,14 +496,13 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const primeDir = resolvePrimeDir(config);
-  const idDir = resolveIdDir(config);
   const primeLoader = new PrimeLoader(primeDir);
   const primeEntryCount = primeLoader.index();
   log.info(`PRIME corpus indexed: ${String(primeEntryCount)} entries from ${primeDir}`);
 
   // Protocol compatibility check — selfRepo is the AGI repo path (used by upgrade system)
   const agiRoot = config.workspace?.selfRepo ?? config.workspace?.root ?? process.cwd();
-  const protocolResult = checkProtocolCompatibility(agiRoot, primeDir, idDir);
+  const protocolResult = checkProtocolCompatibility(agiRoot, primeDir);
   if (!protocolResult.compatible) {
     for (const err of protocolResult.errors) {
       log.warn(`Protocol compatibility: ${err}`);
@@ -1846,14 +1845,6 @@ export async function startGatewayServer(
       statusPollIntervalMs: hostingConfig?.statusPollIntervalMs ?? 10_000,
       tunnelMode: hostingConfig?.tunnelMode ?? "named",
       tunnelDomain: hostingConfig?.tunnelDomain,
-      idService: (() => {
-        const idCfg = (config as Record<string, unknown>).idService as { local?: { enabled?: boolean; subdomain?: string; port?: number } } | undefined;
-        return idCfg?.local?.enabled ? {
-          enabled: true,
-          subdomain: idCfg.local.subdomain ?? "id",
-          port: idCfg.local.port ?? 3200,
-        } : undefined;
-      })(),
     },
     workspaceProjects: projectPaths,
     projectTypeRegistry,

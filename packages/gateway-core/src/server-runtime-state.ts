@@ -31,7 +31,10 @@ import { GatewayWebSocketServer } from "./ws-server.js";
 import { handlePlanRequest } from "./plan-api.js";
 import { readProjectMcpServers, setDotMcpServer, removeDotMcpServer } from "./mcp-config-store.js";
 import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model";
-import { fetchOwnerToken, injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
+import { injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
+import { eq, and } from "drizzle-orm";
+import { connections } from "@agi/db-schema";
+import { decryptToken } from "./crypto-tokens.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 import { probeGpuStats } from "./hardware-probe.js";
@@ -60,7 +63,6 @@ import { registerEntityManagementRoutes } from "./entity-management-api.js";
 import { registerLocalFederationRoutes } from "./local-federation-api.js";
 import type { SecretsManager } from "./secrets.js";
 import { DashboardUserStore, hasRole } from "./dashboard-user-store.js";
-import { LocalIdAuthProvider } from "./local-id-auth-provider.js";
 import type { IdentityProvider } from "./identity-provider.js";
 import type { OAuthHandler } from "./oauth-handler.js";
 import { registerIdentityRoutes } from "./identity-api.js";
@@ -121,7 +123,7 @@ import type { PmProvider } from "@agi/sdk";
 // (b) the Civicognita core 5, (c) the Particle-Academy 4 (5 with fancy-3d).
 const SACRED_PROJECT_NAMES = new Set([
   "_aionima",
-  "agi", "prime", "id", "marketplace", "mapp-marketplace",
+  "agi", "prime", "marketplace", "mapp-marketplace",
   "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d",
 ]);
 
@@ -152,20 +154,6 @@ function resolveWidgetEndpoints(widgets: PanelWidgetAny[], pluginId: string): Pa
 }
 
 
-function resolveIdUrl(configPath?: string): string {
-  if (!configPath) return "https://id.ai.on";
-  try {
-    const cfg = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-    const idSvc = cfg.idService as { local?: { enabled?: boolean; subdomain?: string } } | undefined;
-    const hosting = cfg.hosting as { baseDomain?: string } | undefined;
-    if (idSvc?.local?.enabled) {
-      const sub = idSvc.local.subdomain ?? "id";
-      const domain = hosting?.baseDomain ?? "ai.on";
-      return `https://${sub}.${domain}`;
-    }
-  } catch { /* fallback */ }
-  return "https://id.ai.on";
-}
 
 export interface RuntimeStateDeps {
   auth: GatewayAuth;
@@ -594,42 +582,6 @@ export async function createGatewayRuntimeState(
   }
 
   // -----------------------------------------------------------------------
-  // Local-ID auth provider (if ID service is configured)
-  // -----------------------------------------------------------------------
-
-  let localIdAuthProvider: LocalIdAuthProvider | undefined;
-  let localIdBaseUrl: string | undefined;
-  if (deps.configPath) {
-    try {
-      const cfgRaw = readFileSync(deps.configPath, "utf-8");
-      const cfg = JSON.parse(cfgRaw) as Record<string, unknown>;
-      const idService = cfg.idService as Record<string, unknown> | undefined;
-      const local = idService?.local as Record<string, unknown> | undefined;
-
-      if (local?.enabled) {
-        const hosting = cfg.hosting as Record<string, unknown> | undefined;
-        const baseDomain = (hosting?.baseDomain as string) ?? "ai.on";
-        const subdomain = (local.subdomain as string) ?? "id";
-        localIdBaseUrl = `https://${subdomain}.${baseDomain}`;
-        const secret = (cfg.dashboardAuth as Record<string, unknown> | undefined)?.jwtSecret as string
-          ?? (() => {
-            const generated = randomBytes(32).toString("hex");
-            log.warn("No dashboardAuth.jwtSecret configured — auto-generated ephemeral secret (sessions will not survive restarts)");
-            return generated;
-          })();
-        const ttl = (cfg.dashboardAuth as Record<string, unknown> | undefined)?.sessionTtlMs as number
-          ?? 86400000;
-        localIdAuthProvider = new LocalIdAuthProvider(localIdBaseUrl, secret, ttl, deps.logger);
-      }
-    } catch { /* config unreadable — skip Local-ID auth */ }
-  }
-
-  // Mark DashboardUserStore as deprecated when Local-ID is available
-  if (dashboardUserStore && localIdBaseUrl) {
-    dashboardUserStore.localIdAvailable = true;
-  }
-
-  // -----------------------------------------------------------------------
   // Encryption key for OAuth token storage (handoff / device-flow / connections)
   // -----------------------------------------------------------------------
 
@@ -857,55 +809,7 @@ export async function createGatewayRuntimeState(
       root: deps.workspaceRoot ?? process.cwd(),
     };
 
-    // ID Service — local or central identity service
-    let idService: { status: "connected" | "degraded" | "missing" | "error" | "central"; mode: "local" | "central"; url: string; version?: string };
-    const idCfg = deps.configPath ? (() => {
-      try {
-        const raw = JSON.parse(readFileSync(deps.configPath!, "utf-8")) as Record<string, unknown>;
-        return raw.idService as Record<string, unknown> | undefined;
-      } catch { return undefined; }
-    })() : undefined;
-
-    const idLocal = idCfg?.local as Record<string, unknown> | undefined;
-    if (idLocal?.enabled) {
-      const hostingCfg = deps.configPath ? (() => {
-        try {
-          const raw = JSON.parse(readFileSync(deps.configPath!, "utf-8")) as Record<string, unknown>;
-          return raw.hosting as Record<string, unknown> | undefined;
-        } catch { return undefined; }
-      })() : undefined;
-      const baseDomain = (hostingCfg?.baseDomain as string) ?? "ai.on";
-      const subdomain = (idLocal.subdomain as string) ?? "id";
-      const url = `https://${subdomain}.${baseDomain}`;
-
-      // Story #100 — ID no longer binds a host port; reach it through
-      // Caddy at its public URL instead of `localhost:${port}`. The
-      // gateway already trusts the Caddy root CA (installed by
-      // hosting-setup.sh), so the internal cert validates. This path
-      // works regardless of whether the gateway is on-host or later
-      // moves into a container on aionima.
-      try {
-        const [healthRes, funcRes] = await Promise.all([
-          fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) }).catch(() => null),
-          fetch(`${url}/federation/whoami`, { signal: AbortSignal.timeout(3000) }).catch(() => null),
-        ]);
-
-        if (healthRes?.ok && funcRes?.ok) {
-          const health = (await healthRes.json()) as { status: string; mode?: string };
-          idService = { status: "connected", mode: "local", url, version: health.mode };
-        } else if (healthRes?.ok) {
-          idService = { status: "degraded", mode: "local", url };
-        } else {
-          idService = { status: "error", mode: "local", url };
-        }
-      } catch {
-        idService = { status: "error", mode: "local", url };
-      }
-    } else {
-      idService = { status: "central", mode: "central", url: "https://id.aionima.ai" };
-    }
-
-    return reply.send({ agi, prime, workspace, idService });
+    return reply.send({ agi, prime, workspace });
   });
 
   // -----------------------------------------------------------------------
@@ -3642,7 +3546,6 @@ export async function createGatewayRuntimeState(
   {
     const workspaceRoot = deps.workspaceRoot ?? process.cwd();
     const primeDir = deps.primeDir ?? join(workspaceRoot, ".aionima");
-    const idDir = ((deps.config as Record<string, unknown> | undefined)?.idService as Record<string, string> | undefined)?.dir ?? "/opt/agi-local-id";
     const marketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.marketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-marketplace";
     const mappMarketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.mappMarketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-mapp-marketplace";
 
@@ -3681,33 +3584,26 @@ export async function createGatewayRuntimeState(
 
       const primeEntries = deps.primeLoader !== undefined ? deps.primeLoader.index() : 0;
 
-      // Query Local-ID for the GitHub connection's state so the dashboard
-      // can surface account label + token expiry (tynn #254). Local-ID
-      // lives at id.ai.on and is the canonical identity store; AGI just
-      // reads through it.
+      // Query the connections table directly for the owner's GitHub connection.
       let githubAuthenticated = false;
       let githubAccount: string | null = null;
       let githubTokenExpiresAt: string | null = null;
       let githubTokenScopes: string | null = null;
-      try {
-        const idUrl = resolveIdUrl(deps.configPath);
-        const idRes = await fetch(`${idUrl}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
-        if (idRes.ok) {
-          const conns = (await idRes.json()) as Array<{
-            provider: string;
-            accountLabel?: string | null;
-            tokenExpiresAt?: string | null;
-            scopes?: string | null;
-          }>;
-          const gh = conns.find((c) => c.provider === "github");
+      if (deps.db) {
+        try {
+          const [gh] = await deps.db
+            .select({ accountLabel: connections.accountLabel, tokenExpiresAt: connections.tokenExpiresAt, scopes: connections.scopes })
+            .from(connections)
+            .where(and(eq(connections.provider, "github"), eq(connections.role, "owner")))
+            .limit(1);
           if (gh) {
             githubAuthenticated = true;
             githubAccount = gh.accountLabel ?? null;
-            githubTokenExpiresAt = gh.tokenExpiresAt ?? null;
+            githubTokenExpiresAt = gh.tokenExpiresAt?.toISOString() ?? null;
             githubTokenScopes = gh.scopes ?? null;
           }
-        }
-      } catch { /* ID service unreachable — treat as not authenticated */ }
+        } catch { /* DB unavailable — treat as not authenticated */ }
+      }
 
       // When Dev Mode is ON, the authoritative clones live under the
       // `_aionima/` core collection in the projects workspace — NOT the
@@ -3728,7 +3624,6 @@ export async function createGatewayRuntimeState(
 
       const agiDir = pickDir(workspaceRoot, "agi");
       const effectivePrimeDir = pickDir(primeDir, "prime");
-      const effectiveIdDir = pickDir(idDir, "id");
       const effectiveMarketplaceDir = pickDir(marketplaceDir, "marketplace");
       const effectiveMappMarketplaceDir = pickDir(mappMarketplaceDir, "mapp-marketplace");
 
@@ -3755,13 +3650,12 @@ export async function createGatewayRuntimeState(
         try {
           const cfg = deps.configPath
             ? JSON.parse(readFileSync(deps.configPath, "utf-8")) as {
-                dev?: { agiRepo?: string; primeRepo?: string; idRepo?: string };
+                dev?: { agiRepo?: string; primeRepo?: string };
               }
             : {};
           const probes: Array<[string, string, string | undefined]> = [
             ["agi", "/opt/agi", cfg.dev?.agiRepo],
             ["prime", "/opt/agi-prime", cfg.dev?.primeRepo],
-            ["id", "/opt/agi-local-id", cfg.dev?.idRepo],
           ];
           let aligned = true;
           for (const [name, dir, expected] of probes) {
@@ -3798,7 +3692,6 @@ export async function createGatewayRuntimeState(
         originMisaligned: originMisaligned.length > 0 ? originMisaligned : undefined,
         agi: { remote: getRemote(agiDir), branch: getBranch(agiDir) },
         prime: { remote: getRemote(effectivePrimeDir), branch: getBranch(effectivePrimeDir), entries: primeEntries },
-        id: { remote: getRemote(effectiveIdDir), branch: getBranch(effectiveIdDir) },
         marketplace: { remote: getRemote(effectiveMarketplaceDir), branch: getBranch(effectiveMarketplaceDir) },
         mappMarketplace: { remote: getRemote(effectiveMappMarketplaceDir), branch: getBranch(effectiveMappMarketplaceDir) },
         // PAx (Particle-Academy) ADF UI primitive forks — s136 t512.
@@ -3962,25 +3855,26 @@ export async function createGatewayRuntimeState(
 
       const targetEnabled = body.enabled;
 
-      // Enabling dev mode requires GitHub authentication (checked via Local-ID)
+      // Enabling dev mode requires GitHub authentication (queried from connections table)
       let ownerGithubLogin: string | null = null;
       if (targetEnabled) {
         let hasGithub = false;
-        try {
-          const idUrl = resolveIdUrl(deps.configPath);
-          const idRes = await fetch(`${idUrl}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
-          if (idRes.ok) {
-            const conns = await idRes.json() as Array<{ provider: string; accountLabel?: string | null }>;
-            const gh = conns.find((c) => c.provider === "github");
+        if (deps.db) {
+          try {
+            const [gh] = await deps.db
+              .select({ accountLabel: connections.accountLabel })
+              .from(connections)
+              .where(and(eq(connections.provider, "github"), eq(connections.role, "owner")))
+              .limit(1);
             if (gh) {
               hasGithub = true;
               ownerGithubLogin = gh.accountLabel?.trim() ?? null;
             }
-          }
-        } catch { /* ID service unreachable */ }
+          } catch { /* DB unavailable */ }
+        }
         if (!hasGithub) {
           return reply.code(403).send({
-            error: "GitHub authentication required. Connect your GitHub account via Aionima ID before enabling dev mode.",
+            error: "GitHub authentication required. Connect your GitHub account via Settings → Connections before enabling dev mode.",
             reason: "github_not_authenticated",
           });
         }
@@ -3996,22 +3890,32 @@ export async function createGatewayRuntimeState(
       let devRepoPatch: Record<string, string> = {};
       let forkNotes: Array<{ slug: string; created: boolean; upstream: string }> = [];
       if (targetEnabled) {
-        // Grab the owner's token from Local-ID so we can hit the GitHub API.
-        const tokenInfo = await fetchOwnerToken({ provider: "github", role: "owner" });
-        if (!tokenInfo) {
+        // Fetch the owner's GitHub token directly from the connections table.
+        let ghAccessToken: string | null = null;
+        if (deps.db && encryptionKey) {
+          try {
+            const [row] = await deps.db
+              .select({ accessToken: connections.accessToken })
+              .from(connections)
+              .where(and(eq(connections.provider, "github"), eq(connections.role, "owner")))
+              .limit(1);
+            if (row?.accessToken) ghAccessToken = decryptToken(encryptionKey, row.accessToken);
+          } catch { /* token unavailable */ }
+        }
+        if (!ghAccessToken) {
           return reply.code(502).send({
-            error: "GitHub token unavailable from Local-ID. Reconnect your GitHub account at https://id.ai.on/dashboard.",
+            error: "GitHub token unavailable. Reconnect your GitHub account via Settings → Connections.",
             reason: "token_missing",
           });
         }
         if (!ownerGithubLogin) {
           return reply.code(502).send({
-            error: "Local-ID didn't return a GitHub login. Reconnect your GitHub account.",
+            error: "GitHub login not found. Reconnect your GitHub account via Settings → Connections.",
             reason: "github_login_missing",
           });
         }
         const { resolveOrCreateForks } = await import("./dev-mode-forks.js");
-        const forks = await resolveOrCreateForks(tokenInfo.accessToken, ownerGithubLogin);
+        const forks = await resolveOrCreateForks(ghAccessToken, ownerGithubLogin);
         for (const f of forks) {
           if (f.cloneUrl) {
             // Map slug → dev.*Repo key. Civicognita-owned core five
@@ -4024,7 +3928,7 @@ export async function createGatewayRuntimeState(
             const keyMap: Record<string, string> = {
               "agi": "agiRepo",
               "prime": "primeRepo",
-              "id": "idRepo",
+
               "marketplace": "marketplaceRepo",
               "mapp-marketplace": "mappMarketplaceRepo",
               "react-fancy": "reactFancyRepo",
@@ -4090,11 +3994,20 @@ export async function createGatewayRuntimeState(
               upstreamUrl: upstreamRemoteUrlFn(s),
             }));
 
-            // Fetch the owner's GitHub token once for all clones — Dev Mode
-            // forks live under wishborn/*, which may be private. HTTPS with
-            // x-access-token injects credentials; unauthenticated fallback
-            // works for public forks but fails with 404 on private ones.
-            const ownerToken = await fetchOwnerToken({ provider: "github", role: "owner" });
+            // Fetch the owner's GitHub token from the connections table.
+            // HTTPS x-access-token injection authenticates private fork clones;
+            // falls back to unauthenticated for public forks.
+            let cloneAccessToken: string | null = null;
+            if (deps.db && encryptionKey) {
+              try {
+                const [row] = await deps.db
+                  .select({ accessToken: connections.accessToken })
+                  .from(connections)
+                  .where(and(eq(connections.provider, "github"), eq(connections.role, "owner")))
+                  .limit(1);
+                if (row?.accessToken) cloneAccessToken = decryptToken(encryptionKey, row.accessToken);
+              } catch { /* fall back to unauthenticated clone */ }
+            }
 
             // Core forks live in a special `_aionima/` collection inside
             // the workspace — NOT scattered next to regular projects. The
@@ -4126,8 +4039,8 @@ export async function createGatewayRuntimeState(
               const repoUrl = devCfg[repo.repoKey] as string | undefined;
               if (!repoUrl) continue;
               const targetDir = join(coreCollectionDir, repo.slug);
-              const cloneUrl = ownerToken
-                ? injectTokenIntoCloneUrl(repoUrl, ownerToken.accessToken)
+              const cloneUrl = cloneAccessToken
+                ? injectTokenIntoCloneUrl(repoUrl, cloneAccessToken)
                 : repoUrl;
               try {
                 // Clone if directory doesn't exist. Use execFileSync (no
@@ -4360,12 +4273,7 @@ export async function createGatewayRuntimeState(
 
       // Test-VM services are reported from inside the VM via
       // `test-vm.sh services-status`. We surface only what the host
-      // dashboard actually renders: postgres, caddy, agi. The VM's ID
-      // service is VM-internal — it's not probed from the host, and the
-      // dashboard's red/green ID light tracks the HOST's Local-ID
-      // (reported separately via /api/system/connections). Removing the
-      // `id` field here avoids a cross-namespace "red light" when the
-      // host ID is up but the VM ID isn't (tynn #259).
+      // dashboard actually renders: postgres, caddy, agi.
       let services = { postgres: "unknown", caddy: "unknown", agi: "unknown" };
       if (running) {
         try {
@@ -5068,10 +4976,9 @@ export async function createGatewayRuntimeState(
       });
     }
 
-    // Check service repos (ID, PRIME, marketplace) for pending updates
+    // Check service repos (PRIME, marketplace) for pending updates
     const serviceRepoPaths = [
       deps.primeDir,
-      deps.config ? (deps.config as Record<string, unknown>).idService ? ((deps.config as Record<string, unknown>).idService as Record<string, string>).dir ?? "/opt/agi-local-id" : "/opt/agi-local-id" : undefined,
       deps.config ? (deps.config as Record<string, unknown>).marketplace ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string>).dir ?? "/opt/agi-marketplace" : "/opt/agi-marketplace" : undefined,
     ].filter(Boolean) as string[];
 
@@ -6399,7 +6306,7 @@ export async function createGatewayRuntimeState(
     startHandoffCleanup(deps.db);
   }
 
-  registerMachineAdminRoutes(fastify, { logger: deps.logger, dashboardUserStore, localIdAuthProvider, idBaseUrl: localIdBaseUrl, db: deps.db, configPath: deps.configPath });
+  registerMachineAdminRoutes(fastify, { logger: deps.logger, dashboardUserStore, db: deps.db, configPath: deps.configPath });
 
   // -----------------------------------------------------------------------
   // GET /api/plugins — list installed plugins (private network only)
@@ -7023,7 +6930,6 @@ export async function createGatewayRuntimeState(
       identityProvider: deps.identityProvider,
       visitorAuth: deps.visitorAuth ?? null,
       dashboardUserStore: null,
-      idBaseUrl: localIdBaseUrl,
       logger: deps.logger,
     });
   }

@@ -1001,7 +1001,6 @@ export interface DevStatus {
   githubTokenScopes?: string | null;
   agi: { remote: string };
   prime: { remote: string; branch: string; entries: number };
-  id?: { remote: string; branch: string };
   marketplace?: { remote: string; branch: string };
   mappMarketplace?: { remote: string; branch: string };
   /** PAx (Particle-Academy) ADF UI primitive forks — s136 t512. Always
@@ -1043,12 +1042,6 @@ export interface ConnectionStatus {
     configured: number;
     accessible: number;
     root: string;
-  };
-  idService?: {
-    status: "connected" | "degraded" | "missing" | "error" | "central";
-    mode: "local" | "central";
-    url: string;
-    version?: string;
   };
 }
 
@@ -1701,7 +1694,6 @@ export interface SafemodeExitResult {
   recovery: {
     externals: {
       postgres: { action: "none" | "started" | "failed"; state: string };
-      idService: { action: "none" | "started" | "failed"; state: string };
       postgresReady: boolean;
     };
     projects: { total: number; started: number; failed: number };

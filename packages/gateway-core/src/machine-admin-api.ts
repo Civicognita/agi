@@ -19,7 +19,6 @@ import type { GpuDevice, ThunderboltInfo } from "./hardware-probe.js";
 import type { Logger } from "./logger.js";
 import type { DashboardUserStore, DashboardRole } from "./dashboard-user-store.js";
 import { hasRole } from "./dashboard-user-store.js";
-import type { LocalIdAuthProvider } from "./local-id-auth-provider.js";
 import type { Db } from "@agi/db-schema/client";
 import {
   authenticateDbUser,
@@ -173,10 +172,6 @@ export interface MachineAdminDeps {
   logger?: Logger;
   /** Dashboard user store — legacy scrypt-based fallback (deprecated). */
   dashboardUserStore?: DashboardUserStore;
-  /** Local-ID auth provider — if provided, enables Login via ID endpoints. */
-  localIdAuthProvider?: LocalIdAuthProvider;
-  /** Local-ID base URL — kept for backward compat; no longer used for user CRUD. */
-  idBaseUrl?: string;
   /** Drizzle DB instance — when provided, user auth + CRUD goes directly to agi_data. */
   db?: Db;
   /** Path to gateway.json — used to update hosting.lanIp when network changes. */
@@ -973,19 +968,14 @@ export function registerMachineAdminRoutes(
 
   const userStore = deps.dashboardUserStore;
 
-  /** Extract session from either provider. */
+  /** Extract session from HMAC store. */
   function extractSessionFromAny(request: { raw: IncomingMessage }): import("./dashboard-user-store.js").DashboardSession | null {
     const authHeader = request.raw.headers["authorization"];
     if (typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) return null;
     const token = authHeader.slice(7);
-    // Try internal store first
     if (userStore) {
       const session = userStore.verifySession(token);
       if (session) return session;
-    }
-    // Fall back to Local-ID provider
-    if (deps.localIdAuthProvider) {
-      return deps.localIdAuthProvider.verifySession(token);
     }
     return null;
   }
@@ -1062,13 +1052,7 @@ export function registerMachineAdminRoutes(
 
     // GET /api/auth/me
     fastify.get("/api/auth/me", async (request, reply) => {
-      let session = extractSession(request, userStore);
-      if (!session && deps.localIdAuthProvider) {
-        const authHeader = request.raw.headers["authorization"];
-        if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
-          session = deps.localIdAuthProvider.verifySession(authHeader.slice(7));
-        }
-      }
+      const session = extractSession(request, userStore);
       if (!session) {
         return reply.code(401).send({ error: "Not authenticated" });
       }
@@ -1109,60 +1093,15 @@ export function registerMachineAdminRoutes(
 
     // GET /api/auth/status — check if dashboard auth is enabled and has users
     fastify.get("/api/auth/status", async (_request, reply) => {
-      const localIdAvailable = deps.localIdAuthProvider
-        ? await deps.localIdAuthProvider.isAvailable()
-        : false;
       const dbCount = deps.db ? await countDbUsers(deps.db) : 0;
       const totalCount = dbCount + userStore.userCount();
       return reply.send({
         enabled: true,
         hasUsers: totalCount > 0,
         userCount: totalCount,
-        provider: localIdAvailable ? "local-id" : dbCount > 0 ? "db" : "internal",
+        provider: dbCount > 0 ? "db" : "internal",
       });
     });
-
-    // POST /api/auth/login-via-id — start Local-ID handoff login
-    // On LAN the handoff is auto-approved at creation, so we immediately poll
-    // and return the token — no popup needed. Only falls back to the popup flow
-    // when the handoff is still pending (off-LAN).
-    if (deps.localIdAuthProvider) {
-      const idAuth = deps.localIdAuthProvider;
-
-      fastify.post("/api/auth/login-via-id", async (_request, reply) => {
-        try {
-          const { handoffId, authUrl } = await idAuth.startLogin();
-
-          // Immediate poll — if auto-approved (LAN), return token directly
-          const poll = await idAuth.pollLogin(handoffId);
-          if (poll.status === "completed" && poll.token) {
-            return reply.send({ status: "completed", token: poll.token, user: poll.user });
-          }
-
-          // Not yet approved — caller needs the popup flow
-          return reply.send({ status: "pending", handoffId, authUrl });
-        } catch (e) {
-          log.error(`Login-via-ID start failed: ${e instanceof Error ? e.message : String(e)}`);
-          return reply.code(502).send({ error: "Cannot reach Aionima ID service" });
-        }
-      });
-
-      // GET /api/auth/login-via-id/poll — poll handoff for completion
-      fastify.get("/api/auth/login-via-id/poll", async (request, reply) => {
-        const handoffId = (request.query as { handoffId?: string }).handoffId;
-        if (!handoffId) {
-          return reply.code(400).send({ error: "handoffId query parameter is required" });
-        }
-
-        try {
-          const result = await idAuth.pollLogin(handoffId);
-          return reply.send(result);
-        } catch (e) {
-          log.error(`Login-via-ID poll failed: ${e instanceof Error ? e.message : String(e)}`);
-          return reply.code(502).send({ error: "Cannot reach Aionima ID service" });
-        }
-      });
-    }
 
     // POST /api/auth/logout — end session (client-side token clear)
     fastify.post("/api/auth/logout", async (_request, reply) => {

@@ -7,7 +7,7 @@ export default defineConfig([
     format: "esm",
     dts: true,
     clean: true,
-    external: ["better-sqlite3", "node-pty", "@agi/security", "pg"],
+    external: ["better-sqlite3", "node-pty", "@agi/security", "pg", "@node-rs/argon2"],
   },
   {
     entry: ["cli/src/index.ts"],
@@ -15,7 +15,7 @@ export default defineConfig([
     format: "esm",
     dts: true,
     clean: true,
-    external: ["better-sqlite3", "node-pty"],
+    external: ["better-sqlite3", "node-pty", "@node-rs/argon2"],
   },
   {
     entry: ["packages/model-runtime/src/index.ts"],

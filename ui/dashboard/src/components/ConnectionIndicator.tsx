@@ -64,22 +64,6 @@ function buildNodes(data: ConnectionStatus): StatusNode[] {
     },
   ];
 
-  if (data.idService) {
-    nodes.push({
-      label: "ID",
-      status: data.idService.status === "central" ? "connected"
-        : data.idService.status === "degraded" ? "missing"
-        : data.idService.status,
-      tooltip: data.idService.status === "connected"
-        ? `Local · ${data.idService.url}`
-        : data.idService.status === "central"
-          ? "Central · id.aionima.ai"
-          : data.idService.status === "degraded"
-            ? `Local · degraded (views broken)`
-            : `${data.idService.mode} · unreachable`,
-    });
-  }
-
   return nodes;
 }
 

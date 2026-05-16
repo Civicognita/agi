@@ -21,8 +21,6 @@ export interface SubUserApiDeps {
   identityProvider: IdentityProvider;
   visitorAuth: VisitorAuthManager | null;
   dashboardUserStore: DashboardUserStore | null;
-  /** Local-ID base URL for proxying user creation (Phase 3). */
-  idBaseUrl?: string;
   logger?: Logger;
 }
 
@@ -35,7 +33,7 @@ export function registerSubUserRoutes(
   deps: SubUserApiDeps,
 ): void {
   const log = createComponentLogger(deps.logger, "sub-user-api");
-  const { identityProvider, visitorAuth, dashboardUserStore, idBaseUrl } = deps;
+  const { identityProvider, visitorAuth, dashboardUserStore } = deps;
 
   // -----------------------------------------------------------------------
   // POST /api/sub-users — create a sub-user (tenant)
@@ -59,52 +57,6 @@ export function registerSubUserRoutes(
       return reply.code(400).send({ error: "displayName, username, and password are required" });
     }
 
-    // Try Local-ID first (Phase 3 — single authority)
-    if (idBaseUrl) {
-      try {
-        const res = await fetch(`${idBaseUrl}/api/users/create`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            username: username.trim(),
-            password,
-            displayName: displayName.trim(),
-            dashboardRole: role ?? "viewer",
-          }),
-          signal: AbortSignal.timeout(10000),
-        });
-
-        if (res.ok) {
-          const data = (await res.json()) as {
-            user: { id: string; username: string; displayName: string; dashboardRole: string };
-            entity: { id: string; coaAlias: string; geid: string } | null;
-          };
-          log.info(`Sub-user created via Local-ID: ${data.entity?.coaAlias ?? data.user.id} (${displayName})`);
-          return reply.code(201).send({
-            entityId: data.entity?.id ?? null,
-            geid: data.entity?.geid ?? null,
-            address: data.entity?.coaAlias ?? null,
-            dashboardUser: {
-              id: data.user.id,
-              username: data.user.username,
-              displayName: data.user.displayName,
-              role: data.user.dashboardRole,
-            },
-          });
-        }
-
-        // Non-OK response — fall through to legacy path
-        const errorBody = await res.json().catch(() => ({ error: "Unknown error" })) as { error?: string };
-        if (res.status === 409) {
-          return reply.code(409).send({ error: errorBody.error ?? "Username already taken" });
-        }
-        log.warn(`Local-ID user creation returned ${res.status}, falling back to legacy path`);
-      } catch (e) {
-        log.warn(`Local-ID unavailable for user creation: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-
-    // Fallback: legacy path (IdentityProvider + DashboardUserStore)
     const identity = await identityProvider.createEntityWithIdentity({
       displayName: displayName.trim(),
     });
@@ -137,26 +89,9 @@ export function registerSubUserRoutes(
 
   // -----------------------------------------------------------------------
   // GET /api/sub-users — list sub-users
-  // Phase 3: queries Local-ID first, falls back to DashboardUserStore
   // -----------------------------------------------------------------------
 
   fastify.get("/api/sub-users", async (_request, reply) => {
-    // Try Local-ID first
-    if (idBaseUrl) {
-      try {
-        const res = await fetch(`${idBaseUrl}/api/users`, {
-          signal: AbortSignal.timeout(5000),
-        });
-        if (res.ok) {
-          const data = (await res.json()) as { users: unknown[] };
-          return reply.send({ users: data.users });
-        }
-      } catch {
-        // Local-ID unreachable — fall through
-      }
-    }
-
-    // Fallback: DashboardUserStore
     if (!dashboardUserStore) {
       return reply.send({ users: [] });
     }

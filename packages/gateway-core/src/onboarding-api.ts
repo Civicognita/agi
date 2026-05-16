@@ -28,22 +28,15 @@ import { createHandoff, pollHandoff } from "./handoff-api.js";
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve the ID service URL based on config.
- * If local hosting is enabled, uses the local subdomain; otherwise falls back
- * to the central ID service at id.aionima.ai.
+ * Resolve the gateway's own base URL for internal onboarding HTTP calls.
+ * Identity endpoints are now absorbed into the gateway (no separate local-ID
+ * container); all calls that previously went to id.{domain} now go to the
+ * gateway's root domain.
  */
 function resolveIdServiceUrl(config: Record<string, unknown>): string {
-  const idService = config.idService as Record<string, unknown> | undefined;
-  const local = idService?.local as Record<string, unknown> | undefined;
-
-  if (local?.enabled) {
-    const hosting = config.hosting as Record<string, unknown> | undefined;
-    const baseDomain = (hosting?.baseDomain as string) ?? "ai.on";
-    const subdomain = (local.subdomain as string) ?? "id";
-    return `https://${subdomain}.${baseDomain}`;
-  }
-
-  return "https://id.aionima.ai";
+  const hosting = config.hosting as Record<string, unknown> | undefined;
+  const baseDomain = (hosting?.baseDomain as string) ?? "ai.on";
+  return `https://${baseDomain}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -835,8 +828,6 @@ export function registerOnboardingRoutes(
 
     const body = request.body as {
       baseDomain?: string;
-      idMode?: "central" | "local";
-      localIdPort?: number;
     };
 
     const cfg = readConfig();
@@ -848,83 +839,14 @@ export function registerOnboardingRoutes(
       cfg.hosting = hosting;
     }
 
-    // Save ID service mode
-    if (body.idMode === "local") {
-      const idService = (cfg.idService ?? {}) as Record<string, unknown>;
-      const local = (idService.local ?? {}) as Record<string, unknown>;
-      local.enabled = true;
-      if (body.localIdPort) local.port = body.localIdPort;
-      idService.local = local;
-      cfg.idService = idService;
-    } else if (body.idMode === "central") {
-      const idService = (cfg.idService ?? {}) as Record<string, unknown>;
-      const local = (idService.local ?? {}) as Record<string, unknown>;
-      local.enabled = false;
-      idService.local = local;
-      cfg.idService = idService;
-    }
-
     writeConfig(cfg);
 
-    // Save idMode to onboarding state
     const state = readOnboardingState(dataDir);
     state.steps.hosting = "completed";
-    if (body.idMode) state.idMode = body.idMode;
     writeOnboardingState(state, dataDir);
 
-    log.info(`Hosting config saved (idMode: ${body.idMode ?? "central"})`);
+    log.info("Hosting config saved");
     return reply.send({ ok: true });
-  });
-
-  // -----------------------------------------------------------------------
-  // POST /api/onboarding/hosting/setup-local-id — trigger local ID install
-  // -----------------------------------------------------------------------
-
-  fastify.post("/api/onboarding/hosting/setup-local-id", async (request, reply) => {
-    const err = guardPrivate(request);
-    if (err) return reply.code(403).send({ error: err });
-
-    const cfg = readConfig();
-    const idDir = ((cfg.idService as Record<string, unknown>)?.dir as string) ?? "/opt/agi-local-id";
-
-    // Check if setup script exists
-    const setupScript = join(idDir, "scripts/setup-local.sh");
-    try {
-      const { execSync } = await import("node:child_process");
-      execSync(`bash "${setupScript}" --db-podman`, {
-        cwd: idDir,
-        timeout: 120_000,
-        stdio: "pipe",
-      });
-      log.info("Local ID service setup completed");
-      return reply.send({ ok: true });
-    } catch (e) {
-      log.error(`Local ID setup failed: ${String(e)}`);
-      return reply.code(500).send({ error: "Local ID service setup failed" });
-    }
-  });
-
-  // -----------------------------------------------------------------------
-  // GET /api/onboarding/hosting/local-id-status — poll local ID health
-  // -----------------------------------------------------------------------
-
-  fastify.get("/api/onboarding/hosting/local-id-status", async (request, reply) => {
-    const err = guardPrivate(request);
-    if (err) return reply.code(403).send({ error: err });
-
-    const cfg = readConfig();
-    const idUrl = resolveIdServiceUrl(cfg);
-
-    try {
-      const res = await fetch(`${idUrl}/health`, { signal: AbortSignal.timeout(5000) });
-      if (res.ok) {
-        const data = (await res.json()) as { status: string };
-        return reply.send({ status: "healthy", mode: data.status });
-      }
-      return reply.send({ status: "unhealthy" });
-    } catch {
-      return reply.send({ status: "unreachable" });
-    }
   });
 
   // -----------------------------------------------------------------------
