@@ -3218,6 +3218,50 @@ export async function startGatewayServer(
 
         log.info(`deactivated plugin for update: ${pluginId}`);
       },
+      onActivateChannel: async (_channelId: string, basePath: string) => {
+        try {
+          const discovery = tryLoadManifest(basePath);
+          if ("error" in discovery) {
+            return { ok: false, error: `manifest load failed: ${discovery.error}` };
+          }
+          const pluginId = discovery.manifest.id;
+
+          // The plugin was loaded at boot (activate ran but exited early due to
+          // enabled=false). Deactivate it first so loadPlugins won't skip it on
+          // the "already loaded — skipping" guard at loader.ts:70.
+          if (pluginRegistry.has(pluginId)) {
+            unbridgePluginCapabilities(pluginId, { pluginRegistry, skillRegistry, logger });
+            hookBus.removeForPlugin(pluginId);
+            await pluginRegistry.deactivateSingle(pluginId);
+          }
+
+          // Read fresh config from disk so activate() sees current enabled/config values.
+          const freshCfg = (systemConfigService?.read() ?? config) as Record<string, unknown>;
+          const freshChannelConfigs = (freshCfg.channels ?? []) as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>;
+          const result = await loadPlugins([discovery], {
+            pluginRegistry,
+            hookBus,
+            projectTypeRegistry,
+            config: freshCfg,
+            logger,
+            workspaceRoot: opts?.configPath ? dirname(resolvePath(opts.configPath)) : workspaceRoot,
+            projectDirs: projectPaths,
+            pluginPriorities: Object.fromEntries(
+              Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
+            ),
+            channelRegistry,
+            channelConfigs: freshChannelConfigs,
+            circuitBreaker: circuitBreakerTracker,
+          }, { bustCache: true });
+          if (result.loaded.length > 0) {
+            bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
+            return { ok: true };
+          }
+          return { ok: false, error: result.failed[0]?.error ?? "Channel activate returned no result" };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      },
       secrets,
       config: config as Record<string, unknown>,
       mappRegistry,

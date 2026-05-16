@@ -301,6 +301,14 @@ export interface RuntimeStateDeps {
   onPluginUpdated?: (installPath: string) => Promise<{ loaded: boolean; pluginId?: string; error?: string }>;
   /** Callback to deactivate a plugin before update (unbridge, unregister, deactivate). */
   onPluginDeactivating?: (pluginId: string) => Promise<void>;
+  /**
+   * Activate a discovered-but-unregistered channel plugin with fresh config from disk.
+   * Called by POST /api/channels/:id/start when the channel exists in discoveredPlugins
+   * but never registered in ChannelRegistry (e.g. first Start after enabling a channel
+   * that was inactive at boot). The callback reads gateway.json fresh and re-runs
+   * loadPlugins so the channel's activate() sees enabled=true.
+   */
+  onActivateChannel?: (channelId: string, basePath: string) => Promise<{ ok: boolean; error?: string }>;
   /** Federation — identity provider, OAuth, visitor auth, federation node/router. */
   identityProvider?: IdentityProvider;
   oauthHandler?: OAuthHandler | null;
@@ -984,6 +992,40 @@ export async function createGatewayRuntimeState(
 
   fastify.post("/api/channels/:id/start", async (request, reply) => {
     const { id } = request.params as { id: string };
+
+    // Channel is in discoveredPlugins but not yet registered — its activate()
+    // returned early at boot because enabled=false. Write enabled=true to
+    // gateway.json first (in case the user clicked Start without saving the
+    // enable toggle), then re-run activate with fresh config from disk so the
+    // channel registers before we try to start it.
+    if (!channelRegistry.getChannel(id)) {
+      const discovered = (deps.discoveredPlugins ?? []).find(
+        (p) => p.id === `channel-${id}` || p.id === id,
+      );
+      if (!discovered) {
+        return reply.code(404).send({ error: `Channel "${id}" not found` });
+      }
+      if (deps.configPath) {
+        try {
+          const raw = readFileSync(deps.configPath, "utf-8");
+          const cfg = JSON.parse(raw) as Record<string, unknown>;
+          type ChanEntry = { id: string; enabled?: boolean; config?: Record<string, unknown> };
+          const channels = ((cfg.channels ?? []) as ChanEntry[]);
+          const idx = channels.findIndex((c) => c.id === id);
+          if (idx === -1) channels.push({ id, enabled: true, config: {} });
+          else channels[idx]!.enabled = true;
+          cfg.channels = channels;
+          writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
+        } catch { /* non-fatal — proceed; if config write fails, onActivateChannel reads whatever is on disk */ }
+      }
+      if (deps.onActivateChannel) {
+        const result = await deps.onActivateChannel(id, discovered.basePath);
+        if (!result.ok) {
+          return reply.code(400).send({ error: result.error ?? "Failed to activate channel" });
+        }
+      }
+    }
+
     try {
       await channelRegistry.startChannel(id);
       return reply.send({ ok: true });
