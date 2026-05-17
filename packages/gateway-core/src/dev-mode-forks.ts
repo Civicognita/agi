@@ -37,7 +37,6 @@ export interface CoreRepoSpec {
   slug:
     | "agi"
     | "prime"
-    | "id"
     | "marketplace"
     | "mapp-marketplace"
     | "react-fancy"
@@ -60,7 +59,6 @@ export interface CoreRepoSpec {
   configKey:
     | "agiRepo"
     | "primeRepo"
-    | "idRepo"
     | "marketplaceRepo"
     | "mappMarketplaceRepo"
     | "reactFancyRepo"
@@ -78,7 +76,6 @@ export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
   // so they continue to use CANONICAL_OWNER = "Civicognita").
   { slug: "agi",              upstream: "agi",                  displayName: "AGI",              configKey: "agiRepo" },
   { slug: "prime",            upstream: "aionima",              displayName: "PRIME",            configKey: "primeRepo" },
-  { slug: "id",               upstream: "agi-local-id",         displayName: "ID",               configKey: "idRepo" },
   { slug: "marketplace",      upstream: "agi-marketplace",      displayName: "Marketplace",      configKey: "marketplaceRepo" },
   { slug: "mapp-marketplace", upstream: "agi-mapp-marketplace", displayName: "MApp Marketplace", configKey: "mappMarketplaceRepo" },
 

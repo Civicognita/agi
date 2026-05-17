@@ -7,7 +7,7 @@ export default defineConfig([
     format: "esm",
     dts: true,
     clean: true,
-    external: ["better-sqlite3", "node-pty", "@agi/security", "pg"],
+    external: ["better-sqlite3", "node-pty", "@agi/security", "pg", "@node-rs/argon2"],
   },
   {
     entry: ["cli/src/index.ts"],
@@ -15,7 +15,7 @@ export default defineConfig([
     format: "esm",
     dts: true,
     clean: true,
-    external: ["better-sqlite3", "node-pty"],
+    external: ["better-sqlite3", "node-pty", "@node-rs/argon2"],
   },
   {
     entry: ["packages/model-runtime/src/index.ts"],
@@ -24,5 +24,29 @@ export default defineConfig([
     dts: true,
     clean: true,
     external: ["pg"],
+  },
+  {
+    entry: ["packages/plugins/src/index.ts"],
+    outDir: "packages/plugins/dist",
+    format: "esm",
+    dts: false,
+    clean: true,
+    external: ["@agi/gateway-core", "@agi/security", "better-sqlite3", "node-pty", "pg", "@node-rs/argon2"],
+  },
+  {
+    entry: ["packages/aion-sdk/src/index.ts"],
+    outDir: "packages/aion-sdk/dist",
+    format: "esm",
+    dts: false,
+    clean: true,
+    external: ["@agi/plugins", "@agi/gateway-core", "@agi/security"],
+  },
+  {
+    entry: ["packages/security/src/index.ts"],
+    outDir: "packages/security/dist",
+    format: "esm",
+    dts: false,
+    clean: true,
+    external: ["@agi/db-schema", "drizzle-orm", "minimatch"],
   },
 ]);

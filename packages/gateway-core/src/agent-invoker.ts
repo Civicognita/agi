@@ -61,6 +61,23 @@ const FRIENDLY_TOOL_SUMMARY: Record<string, string> = {
   search_prime: "Knowledge searched",
 };
 
+/**
+ * True when the tool executed successfully. Checks two failure signals:
+ *   1. Runtime errors prefixed "Error executing tool" (from executeToolSafe wrapper)
+ *   2. Structured error returns `{"error":"..."}` from tool handlers themselves —
+ *      these don't start with the prefix so the old `startsWith` check missed them,
+ *      causing the chat UI to show ✓ even when the tool failed (e.g. CREATE_PLAN
+ *      returning an error JSON showed "Plan created ✓" with no file on disk).
+ */
+function toolSucceeded(content: string): boolean {
+  if (content.startsWith("Error executing tool")) return false;
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    if (typeof parsed.error === "string") return false;
+  } catch { /* not JSON — treat as success */ }
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Request type classification — heuristic-based, zero LLM cost
 // ---------------------------------------------------------------------------
@@ -593,6 +610,7 @@ export class AgentInvoker extends EventEmitter {
         projectNotes = ordered.map((n) => ({
           title: n.title,
           body: n.body,
+          kind: n.kind,
           pinned: n.pinned,
           updatedAt: n.updatedAt,
           scope: n.projectPath === null ? "global" as const : "project" as const,
@@ -923,7 +941,7 @@ export class AgentInvoker extends EventEmitter {
             toolName: toolCall.name,
             toolIndex: i,
             loopIteration: loopCount,
-            success: !execResult.content.startsWith("Error executing tool"),
+            success: toolSucceeded(execResult.content),
             summary: FRIENDLY_TOOL_SUMMARY[toolCall.name] ?? (execResult.wasTruncated ? "Done (truncated)" : "Done"),
             resultContent: execResult.content,
             detail,
@@ -1129,7 +1147,7 @@ export class AgentInvoker extends EventEmitter {
               toolName: toolCall.name,
               toolIndex: i,
               loopIteration: loopCount,
-              success: !execResult.content.startsWith("Error executing tool"),
+              success: toolSucceeded(execResult.content),
               summary: FRIENDLY_TOOL_SUMMARY[toolCall.name] ?? (execResult.wasTruncated ? "Done (truncated)" : "Done"),
               resultContent: execResult.content,
               detail: acDetail,

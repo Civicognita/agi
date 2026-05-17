@@ -27,8 +27,18 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, copyFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve as resolvePath } from "node:path";
+import { basename, dirname, join, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { migrateChatSessionsForProject } from "./chat-history-migration.js";
+
+// ESM equivalent of CommonJS __dirname. `import.meta.url` resolves to
+// the module's own file URL at runtime; fileURLToPath + dirname gives
+// us the on-disk directory. Bug 2026-05-09 → 2026-05-13: the previous
+// code used bare `__dirname` which is undefined in ESM, causing the
+// t701 _aionima scaffolder to throw "__dirname is not defined" on every
+// boot (logged at WARN, non-fatal, silently leaving _aionima/project.json
+// missing → cascade of UX bugs the owner reported 2026-05-13).
+const moduleDir = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Sacred project names — Aionima five (Civicognita-owned core) + PAx four
@@ -186,7 +196,7 @@ function findAgiTemplatesSkeleton(): string | null {
     // Walk up from this module location too, in case cwd is somewhere
     // else (test fixtures, ad-hoc tooling). Two levels: src/ → packages/
     // → repo root, then templates/.new.
-    resolvePath(__dirname, "../../../templates/.new"),
+    resolvePath(moduleDir, "../../../templates/.new"),
   ];
   for (const c of candidates) {
     if (existsSync(c) && statSync(c).isDirectory()) return c;

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { OutboundContent } from "@agi/channel-sdk";
+import type { OutboundContent } from "@agi/plugins";
 import type { QueueMessage } from "@agi/entity-model";
 
 import type {

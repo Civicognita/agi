@@ -349,6 +349,42 @@ export const ProjectRepoSchema = z
   );
 
 // ---------------------------------------------------------------------------
+// Channel-room bindings — CHN-D (s165) slice 1, 2026-05-14
+//
+// Owner-bound rooms surface in the project workspace's Channels tab and
+// drive event routing (CHN-C dispatcher finds the bound project via the
+// findProjectByRoom index). Channel-specific encoding lives in
+// `roomId` (free-form string); the plugin parses it on read.
+//
+// Reference: agi/docs/agents/channel-plugin-redesign.md §5.
+// ---------------------------------------------------------------------------
+
+export const ProjectRoomBindingSchema = z
+  .object({
+    /** Channel id ("discord", "telegram", "email", "slack", "whatsapp", "signal"). */
+    channelId: z.string().min(1),
+    /** Channel-scoped room id (e.g. "1234567890:forum:42" for Discord, "C0123" for Slack). */
+    roomId: z.string().min(1),
+    /**
+     * Human-readable label cached at bind time (e.g. "#general", "Bug Reports forum").
+     * Lets the dashboard render the binding without re-fetching from the channel.
+     */
+    label: z.string().optional(),
+    /**
+     * Kind hint cached at bind time. Free-form string because each channel uses
+     * its own room-type vocabulary (Discord: channel/forum/thread/dm; Slack: channel/dm/group-dm/huddle; Telegram: chat/group/channel; Email: thread/label/mailbox).
+     */
+    kind: z.string().optional(),
+    /** Visibility scope cached at bind time. */
+    privacy: z.enum(["public", "private", "secret"]).optional(),
+    /** ISO 8601 timestamp when the binding was created. */
+    boundAt: z.string(),
+    /** Optional free-form binding-time metadata (parent room id, channel-specific extras). */
+    meta: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
 // Root project config — the full <projectPath>/.agi/project.json shape
 // ---------------------------------------------------------------------------
 
@@ -359,9 +395,12 @@ export const ProjectConfigSchema = z
     /** ISO 8601 creation timestamp. */
     createdAt: z.string().optional(),
     /** Tynn project token (external integration). */
-    tynnToken: z.string().optional(),
+    // .nullish() + transform: legacy files may have `"tynnToken": null`
+    tynnToken: z.string().nullish().transform((v) => v ?? undefined),
     /** Project type ID (mirrors hosting.type when hosting is configured). */
-    type: z.string().optional(),
+    // .nullish() + transform: legacy project.json files written before s150
+    // may have `"type": null`; coerce to undefined so validation passes.
+    type: z.string().nullish().transform((v) => v ?? undefined),
     // s150 (2026-05-07): `category` was removed. `type` is now the single
     // source of truth for project classification. Legacy values tolerated
     // by the root-level .passthrough() and stripped by the s150 migration
@@ -400,6 +439,17 @@ export const ProjectConfigSchema = z
      *  project container, reaching siblings via localhost. At most one
      *  repo may set `isDefault: true` (the one served on `/`). */
     repos: z.array(ProjectRepoSchema).optional(),
+    /** Channel rooms bound to this project — CHN-D (s165) slice 1.
+     *  Each entry binds one room from one channel (Discord, Telegram,
+     *  Slack, Email, WhatsApp, Signal) to this project. The CHN-C
+     *  gateway dispatcher uses these bindings to route inbound channel
+     *  events to the right project's cage. When empty/undefined, the
+     *  project has no channel rooms bound and isn't reachable from
+     *  external channels — agent chat still works via the dashboard.
+     *
+     *  At most one binding per (channelId, roomId) pair (refined below).
+     *  Reference: agi/docs/agents/channel-plugin-redesign.md §5. */
+    rooms: z.array(ProjectRoomBindingSchema).optional(),
   })
   .passthrough() // Plugins can store custom keys at the root level
   .refine(
@@ -424,6 +474,15 @@ export const ProjectConfigSchema = z
       return new Set(paths).size === paths.length;
     },
     { message: "two or more repos share the same externalPath" },
+  )
+  .refine(
+    (cfg) => {
+      if (!cfg.rooms) return true;
+      // No two rooms can share the same (channelId, roomId) pair.
+      const keys = cfg.rooms.map((r) => `${r.channelId}::${r.roomId}`);
+      return new Set(keys).size === keys.length;
+    },
+    { message: "two or more rooms share the same (channelId, roomId) binding — bindings must be unique per project" },
   );
 
 // ---------------------------------------------------------------------------
@@ -441,3 +500,4 @@ export type IterativeWorkCadence = z.infer<typeof IterativeWorkCadenceSchema>;
 export type ProjectMcpServer = z.infer<typeof ProjectMcpServerSchema>;
 export type ProjectMcp = z.infer<typeof ProjectMcpSchema>;
 export type ProjectRepo = z.infer<typeof ProjectRepoSchema>;
+export type ProjectRoomBinding = z.infer<typeof ProjectRoomBindingSchema>;

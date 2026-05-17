@@ -1,7 +1,16 @@
 import type { Message } from "discord.js";
-import type { ChannelId, AionimaMessage, MessageContent } from "@agi/channel-sdk";
+import type { ChannelId, AionimaMessage, MessageContent } from "@agi/sdk";
+import type { ChannelMessageAttachment } from "@agi/sdk";
 
 export const DISCORD_CHANNEL_ID = "discord" as ChannelId;
+
+/** Map a MIME type string to a ChannelMessageAttachment kind. */
+export function classifyAttachmentMime(mimeType: string): ChannelMessageAttachment["kind"] {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  return "file";
+}
 
 // ---------------------------------------------------------------------------
 // Normalizer: Discord Message → AionimaMessage
@@ -43,6 +52,12 @@ export function normalizeMessage(msg: Message): AionimaMessage | null {
       username: msg.author.username,
       discriminator: msg.author.discriminator,
       displayName: buildDisplayName(msg),
+      // CHN-B (s163) slice 2 — roomId encoding matches the picker's
+      // `${guildId}:${channelId}` shape (see flattenStateToAvailableRooms
+      // in ./state.ts). Downstream consumers (inboundRouter, future
+      // dispatcher wire-up) call /api/channels/resolve-room with this
+      // value to find the bound project. DMs (no guildId) get undefined.
+      roomId: msg.guildId !== null ? `${msg.guildId}:${msg.channelId}` : undefined,
     },
   };
 }

@@ -43,6 +43,7 @@ export default function SettingsLayout() {
   const allItems: SettingsNavItem[] = useMemo(() => [
     { to: "/settings/gateway", label: "Gateway", isBuiltin: true },
     { to: "/settings/providers", label: "Providers", isBuiltin: true },
+    { to: "/settings/channels", label: "Channels", isBuiltin: true },
     { to: "/settings/vault", label: "Vault", isBuiltin: true },
     { to: "/settings/scheduled-jobs", label: "Scheduled Jobs", isBuiltin: true },
     { to: "/settings/security", label: "Security", isBuiltin: true },

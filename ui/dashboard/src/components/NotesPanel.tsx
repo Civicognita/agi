@@ -122,6 +122,26 @@ export function NotesPanel({ projectPath }: NotesPanelProps): ReactElement {
     }
   }, [selected, dirty, draftTitle, draftBody]);
 
+  // Called by WhiteboardEditor (debounced 500ms) on every board mutation.
+  // Bypasses the dirty guard — the board owns its own state; we just persist it.
+  const handleWhiteboardSave = useCallback(async (json: string) => {
+    if (selected === null) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await updateNote(selected.id, {
+        title: draftTitle.trim() || "Untitled",
+        body: json,
+      });
+      setDraftBody(json);
+      setNotes((prev) => prev.map((n) => (n.id === updated.id ? updated : n)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [selected, draftTitle]);
+
   const handleDelete = useCallback(async (id: string) => {
     setSaving(true);
     setError(null);
@@ -279,16 +299,18 @@ export function NotesPanel({ projectPath }: NotesPanelProps): ReactElement {
               >
                 {selected.pinned ? "Unpin" : "Pin"}
               </Button>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => void handleSave()}
-                disabled={!dirty || saving}
-                data-testid="notes-save-button"
-                className="text-[11px] h-8"
-              >
-                {dirty ? "Save" : "Saved"}
-              </Button>
+              {selected.kind !== "whiteboard" && (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => void handleSave()}
+                  disabled={!dirty || saving}
+                  data-testid="notes-save-button"
+                  className="text-[11px] h-8"
+                >
+                  {dirty ? "Save" : "Saved"}
+                </Button>
+              )}
               <Button
                 type="button"
                 size="sm"
@@ -301,12 +323,9 @@ export function NotesPanel({ projectPath }: NotesPanelProps): ReactElement {
                 Delete
               </Button>
             </div>
-            {/* s157 Phase 2b — whiteboard kind renders the full
-                SharedWhiteboard (fancy-whiteboard primitives + in-page
-                MicroMcpServer + AgentPanel). State is session-ephemeral
-                in this slice; persistence + relay broker land in Phase 2c. */}
+            {/* s157 Phase 2c — controlled Board with auto-persist via onSave. */}
             {selected.kind === "whiteboard" ? (
-              <WhiteboardEditor body={draftBody} />
+              <WhiteboardEditor body={draftBody} onSave={handleWhiteboardSave} />
             ) : (
               <textarea
                 ref={bodyRef}
@@ -319,7 +338,11 @@ export function NotesPanel({ projectPath }: NotesPanelProps): ReactElement {
               />
             )}
             <div className="flex items-center justify-between text-[10px] text-muted-foreground/70">
-              <span>{dirty ? "Unsaved changes — ⌘S to save" : `Saved ${new Date(selected.updatedAt).toLocaleString()}`}</span>
+              <span>
+                {selected.kind === "whiteboard"
+                  ? saving ? "Saving…" : `Auto-saved ${new Date(selected.updatedAt).toLocaleString()}`
+                  : dirty ? "Unsaved changes — ⌘S to save" : `Saved ${new Date(selected.updatedAt).toLocaleString()}`}
+              </span>
               <span className="font-mono">
                 {selected.kind === "whiteboard"
                   ? `whiteboard · ${String(draftBody.length)} JSON chars`

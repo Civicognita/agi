@@ -1,0 +1,21 @@
+{
+  "name": "@agi/channel-slack",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "aionima": {
+    "id": "channel-slack",
+    "name": "Slack Channel",
+    "description": "Slack messaging channel adapter (Socket Mode)",
+    "category": "integration",
+    "entry": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agi/plugins": "workspace:*",
+    "@agi/sdk": "workspace:*",
+    "@slack/bolt": "^4.4.0"
+  }
+}

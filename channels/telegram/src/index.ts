@@ -2,7 +2,7 @@ import { Bot } from "grammy";
 import type {
   AionimaChannelPlugin,
   AionimaMessage,
-} from "@agi/channel-sdk";
+} from "@agi/sdk";
 import type { AionimaPlugin, AionimaPluginAPI } from "@agi/plugins";
 
 import {
@@ -155,9 +155,18 @@ export default {
   async activate(api: AionimaPluginAPI): Promise<void> {
     const channelConfig = api.getChannelConfig("telegram");
     if (!channelConfig?.enabled) return;
-    const plugin = createTelegramPlugin(
-      channelConfig.config as unknown as TelegramConfig,
-    );
+    const config = channelConfig.config as unknown as TelegramConfig;
+    const plugin = createTelegramPlugin(config);
     api.registerChannel(plugin);
+
+    // CHN-I s170 slice 2 (2026-05-15) — register the v2 ChannelDefinition
+    // in PARALLEL to the legacy registerChannel() above. The dispatcher
+    // still consumes the legacy path; the v2 registry holds the shadow
+    // entry for slice 3, when the dispatcher switches over. No behavior
+    // change in this slice — createProtocol() is only called by the
+    // dispatcher (no second Grammy Bot instance, no polling conflict).
+    const { createTelegramChannelDefV2 } = await import("./channel-def.js");
+    const v2Def = createTelegramChannelDefV2(config);
+    api.registerChannelV2(v2Def);
   },
 } satisfies AionimaPlugin;

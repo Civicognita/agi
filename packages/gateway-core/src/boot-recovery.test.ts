@@ -73,7 +73,7 @@ describe("shutdown marker", () => {
   it("buildShutdownMarker populates externals defaults", () => {
     const marker = buildShutdownMarker([], [], "sigterm");
     expect(marker.externals.idPostgresContainer).toBe("agi-postgres-17");
-    expect(marker.externals.idService).toBe("agi-id.service");
+    expect(marker.externals.idService).toBeUndefined();
     expect(marker.pid).toBe(process.pid);
     expect(new Date(marker.shutdownAt).toString()).not.toBe("Invalid Date");
   });

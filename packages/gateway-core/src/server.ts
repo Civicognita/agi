@@ -52,11 +52,12 @@ import { registerSecurityRoutes } from "./security-api.js";
 import { registerProvidersRoutes } from "./providers-api.js";
 import { registerPmRoutes } from "./pm-api.js";
 import { registerNotesRoutes } from "./notes-api.js";
+import { registerWorkflowsRoutes } from "./workflows-api.js";
 import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
 import { COAChainLogger } from "@agi/coa-chain";
 import { PairingStore } from "./pairing-store.js";
-import type { AionimaMessage } from "@agi/channel-sdk";
+import type { AionimaMessage } from "@agi/plugins";
 import { createLogger, createComponentLogger } from "./logger.js";
 import type { Logger, LogEntry } from "./logger.js";
 import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";
@@ -121,7 +122,7 @@ import { startGatewaySidecars } from "./server-startup.js";
 import { UserContextStore } from "./user-context-store.js";
 import { HeartbeatScheduler } from "./heartbeat.js";
 import { PrimeLoader } from "./prime-loader.js";
-import { resolvePrimeDir, resolveIdDir } from "./resolve-paths.js";
+import { resolvePrimeDir } from "./resolve-paths.js";
 import { checkProtocolCompatibility } from "./protocol-check.js";
 import { PlanStore, migrateProjectPlans } from "./plan-store.js";
 import { ChatPersistence } from "./chat-persistence.js";
@@ -135,6 +136,10 @@ import { migrateAionimaSystemForks } from "./aionima-system-migration.js";
 import { migrateAionimaMemoryDir } from "./aionima-memory-migration.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
+import { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
+import { PendingApprovalStore } from "./pending-approval-store.js";
+import { ChannelWorkflowBindingStore } from "./channel-workflow-binding-store.js";
+import { runWorkflow } from "./mapp-executor.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
 import { migrateAllProjectMcpConfigs } from "./mcp-config-migration.js";
 import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
@@ -334,7 +339,7 @@ export async function startGatewayServer(
   try {
     const externalsReport = await ensureExternals(bootLog);
     bootLog.info(
-      `externals: postgres=${externalsReport.postgres.action}(${externalsReport.postgres.state}) idService=${externalsReport.idService.action}(${externalsReport.idService.state}) pgReady=${String(externalsReport.postgresReady)}`,
+      `externals: postgres=${externalsReport.postgres.action}(${externalsReport.postgres.state}) pgReady=${String(externalsReport.postgresReady)}`,
     );
   } catch (err) {
     bootLog.error(
@@ -491,14 +496,13 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const primeDir = resolvePrimeDir(config);
-  const idDir = resolveIdDir(config);
   const primeLoader = new PrimeLoader(primeDir);
   const primeEntryCount = primeLoader.index();
   log.info(`PRIME corpus indexed: ${String(primeEntryCount)} entries from ${primeDir}`);
 
   // Protocol compatibility check — selfRepo is the AGI repo path (used by upgrade system)
   const agiRoot = config.workspace?.selfRepo ?? config.workspace?.root ?? process.cwd();
-  const protocolResult = checkProtocolCompatibility(agiRoot, primeDir, idDir);
+  const protocolResult = checkProtocolCompatibility(agiRoot, primeDir);
   if (!protocolResult.compatible) {
     for (const err of protocolResult.errors) {
       log.warn(`Protocol compatibility: ${err}`);
@@ -639,6 +643,40 @@ export async function startGatewayServer(
     logger,
   });
 
+  // s163 CHN-B slice 4 (2026-05-14) — channel-event dispatcher for the
+  // inbound router. The dispatcher resolves (channelId, roomId) →
+  // bound project so messages from a bound Discord room flow into that
+  // project's cage. Constructed here (before InboundRouter) so it can
+  // be passed as a dep. Uses an early projectConfigManager + workspace
+  // project list; the canonical projectConfigManager declared later
+  // (~line 800) is a separate-but-equivalent instance — both read the
+  // same project.json files. Future consolidation: thread the single
+  // manager all the way through this boot path.
+  const inboundProjectConfigManager = new ProjectConfigManager({ logger });
+  const inboundWorkspaceProjects = config.workspace?.projects ?? [];
+  const inboundChannelEventDispatcher = new ChannelEventDispatcher({
+    projectConfigManager: inboundProjectConfigManager,
+    workspaceProjects: inboundWorkspaceProjects,
+  });
+
+  // s166 CHN-E slice 2 (2026-05-14) — pending-approval store. When an
+  // unknown user posts in a project-bound channel room, the router
+  // captures a pending record so owner can review via /identity/pending.
+  // Slice 7 added persistence to ~/.agi/pending-approvals.json so
+  // records survive gateway restarts (mirrors pairingStore's paired.json).
+  const inboundPendingApprovalStore = new PendingApprovalStore({
+    logger,
+    persistPath: `${homedir()}/.agi/pending-approvals.json`,
+  });
+
+  // s167 CHN-F slice 1 (2026-05-14) — workflow binding store. Owner-declared
+  // channel-role → MApp dispatch table. Persists across restarts alongside
+  // the pending-approval store.
+  const channelWorkflowBindingStore = new ChannelWorkflowBindingStore({
+    logger,
+    persistPath: `${homedir()}/.agi/channel-workflow-bindings.json`,
+  });
+
   // Inbound router — created after outbound so we can wire the sender for pairing.
   const inboundRouter = new InboundRouter({
     entityStore,
@@ -652,6 +690,8 @@ export async function startGatewayServer(
     pairingStore,
     ownerEntityId,
     commsLog,
+    channelEventDispatcher: inboundChannelEventDispatcher,
+    pendingApprovalStore: inboundPendingApprovalStore,
     logger,
     outboundSender: async (channelId, channelUserId, content) => {
       await outboundDispatcher.dispatch({
@@ -1227,7 +1267,7 @@ export async function startGatewayServer(
       outboundDispatcher,
       onInbound: async (message) => {
         queueLog.info(`processing message ${message.id} on channel ${message.channel}`);
-        const payload = message.payload as { entityId?: string; coaFingerprint?: string; message?: unknown };
+        const payload = message.payload as { entityId?: string; coaFingerprint?: string; message?: unknown; projectPath?: string };
         const entityId = payload.entityId;
 
         if (entityId === undefined) {
@@ -1263,6 +1303,7 @@ export async function startGatewayServer(
             queueMessageId: message.id,
             devMode,
             isOwner: ownerEntityId !== undefined && entityId === ownerEntityId,
+            ...(payload.projectPath !== undefined ? { projectContext: payload.projectPath } : {}),
           });
 
           queueLog.info(`agent outcome: ${outcome.type}`);
@@ -1546,9 +1587,26 @@ export async function startGatewayServer(
     }
   }
 
-  // Channel plugins are installed from the marketplace like all other plugins.
-  // The channels/ directory in the repo is the source for marketplace packaging
-  // — it is NOT auto-discovered at boot. Install channels via the dashboard.
+  // Discover built-in channel plugins from the channels/ directory co-deployed
+  // with AGI. These are the canonical channel adapters (Discord, Telegram, Gmail,
+  // Signal, WhatsApp) updated by the upgrade pipeline on every git pull. They
+  // have their own node_modules (pnpm workspace links) and dist/index.js bundles.
+  // Marketplace-installed channel overrides in pluginCacheDir take precedence via
+  // the seenIds dedup above.
+  {
+    const channelsDir = join(installDir, "channels");
+    const channelDiscovery = discoverPlugins([channelsDir]);
+    for (const cp of channelDiscovery.plugins) {
+      if (!seenIds.has(cp.manifest.id)) {
+        discovered.plugins.push(cp);
+        seenIds.add(cp.manifest.id);
+      }
+    }
+    discovered.errors.push(...channelDiscovery.errors);
+    if (channelDiscovery.plugins.length > 0) {
+      log.info(`channels: discovered ${String(channelDiscovery.plugins.length)} built-in channel plugins`);
+    }
+  }
 
   const pluginPrefs = (config as Record<string, unknown>).plugins as Record<string, { enabled?: boolean; priority?: number }> | undefined;
   {
@@ -1787,14 +1845,6 @@ export async function startGatewayServer(
       statusPollIntervalMs: hostingConfig?.statusPollIntervalMs ?? 10_000,
       tunnelMode: hostingConfig?.tunnelMode ?? "named",
       tunnelDomain: hostingConfig?.tunnelDomain,
-      idService: (() => {
-        const idCfg = (config as Record<string, unknown>).idService as { local?: { enabled?: boolean; subdomain?: string; port?: number } } | undefined;
-        return idCfg?.local?.enabled ? {
-          enabled: true,
-          subdomain: idCfg.local.subdomain ?? "id",
-          port: idCfg.local.port ?? 3200,
-        } : undefined;
-      })(),
     },
     workspaceProjects: projectPaths,
     projectTypeRegistry,
@@ -3010,6 +3060,7 @@ export async function startGatewayServer(
       nodeId,
       ownerEntityId,
       wsRef,
+      db,
       configPath: opts?.configPath,
       staticDir: opts?.staticDir,
       workspaceProjects: projectPaths,
@@ -3022,6 +3073,8 @@ export async function startGatewayServer(
       circuitBreaker: circuitBreakerTracker,
       iterativeWorkScheduler,
       projectConfigManager,
+      pendingApprovalStore: inboundPendingApprovalStore,
+      channelWorkflowBindingStore,
       pmProvider,
       mcpClient,
       commsLog,
@@ -3165,6 +3218,55 @@ export async function startGatewayServer(
 
         log.info(`deactivated plugin for update: ${pluginId}`);
       },
+      onActivateChannel: async (_channelId: string, basePath: string) => {
+        try {
+          const discovery = tryLoadManifest(basePath);
+          if ("error" in discovery) {
+            return { ok: false, error: `manifest load failed: ${discovery.error}` };
+          }
+          const pluginId = discovery.manifest.id;
+
+          // The plugin was loaded at boot (activate ran but exited early due to
+          // enabled=false). Deactivate it first so loadPlugins won't skip it on
+          // the "already loaded — skipping" guard at loader.ts:70.
+          if (pluginRegistry.has(pluginId)) {
+            unbridgePluginCapabilities(pluginId, { pluginRegistry, skillRegistry, logger });
+            hookBus.removeForPlugin(pluginId);
+            await pluginRegistry.deactivateSingle(pluginId);
+          }
+
+          // Reset any circuit-breaker failures recorded against this plugin so
+          // prior failed attempts (e.g. from a previous Start click) don't cause
+          // the breaker to skip this load.
+          circuitBreakerTracker?.reset(`plugin:${pluginId}`);
+
+          // Read fresh config from disk so activate() sees current enabled/config values.
+          const freshCfg = (systemConfigService?.read() ?? config) as Record<string, unknown>;
+          const freshChannelConfigs = (freshCfg.channels ?? []) as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>;
+          const result = await loadPlugins([discovery], {
+            pluginRegistry,
+            hookBus,
+            projectTypeRegistry,
+            config: freshCfg,
+            logger,
+            workspaceRoot: opts?.configPath ? dirname(resolvePath(opts.configPath)) : workspaceRoot,
+            projectDirs: projectPaths,
+            pluginPriorities: Object.fromEntries(
+              Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
+            ),
+            channelRegistry,
+            channelConfigs: freshChannelConfigs,
+            circuitBreaker: circuitBreakerTracker,
+          });
+          if (result.loaded.length > 0) {
+            bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
+            return { ok: true };
+          }
+          return { ok: false, error: result.failed[0]?.error ?? "Channel activate returned no result" };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      },
       secrets,
       config: config as Record<string, unknown>,
       mappRegistry,
@@ -3245,6 +3347,7 @@ export async function startGatewayServer(
           notesStore,
           workspaceProjects: projectPaths,
         }),
+        (f) => registerWorkflowsRoutes(f),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
         (f) => registerLemonadeRoutes(f, {
@@ -4940,6 +5043,43 @@ export async function startGatewayServer(
       httpServer,
       entityStore,
       logger,
+      pluginRegistry,
+      channelWorkflowBindingStore,
+      // CHN-F (s167) slice 2 + CHN-H (s169) — dispatch matched channel-workflow bindings to MApp executor.
+      onWorkflowMatch: (bindings, msg, entityId) => {
+        for (const binding of bindings) {
+          const mappDef = mappRegistry.get(binding.mappId);
+          if (mappDef === undefined) {
+            log.warn(`[workflow] MApp "${binding.mappId}" not installed — skipping binding ${binding.id}`);
+            continue;
+          }
+          // CHN-H (s169): prefer trigger="channel-message"; fall back to "manual" for
+          // MApps authored before the channel-message trigger type existed (backwards compat).
+          const workflows = mappDef.workflows ?? [];
+          const selectedWf =
+            workflows.find((w) => w.trigger === "channel-message") ??
+            workflows.find((w) => w.trigger === "manual");
+          if (selectedWf === undefined) {
+            log.info(`[workflow] MApp "${binding.mappId}" has no channel-message or manual workflow — binding ${binding.id} matched, nothing dispatched`);
+            continue;
+          }
+          const roomId = typeof msg.metadata === "object" && msg.metadata !== null
+            ? (msg.metadata as Record<string, unknown>)["roomId"] as string | undefined
+            : undefined;
+          const ctx: Record<string, unknown> = {
+            channelId: msg.channelId as string,
+            roomId,
+            messageText: msg.content.type === "text" ? (msg.content as { type: "text"; text: string }).text : "",
+            entityId,
+            bindingId: binding.id,
+          };
+          runWorkflow(mappDef, selectedWf.id, ctx).then((wfResult) => {
+            log.info(`[workflow] MApp "${binding.mappId}" workflow "${selectedWf.id}" (${selectedWf.trigger}) dispatched: ${wfResult.status}`);
+          }).catch((err: unknown) => {
+            log.error(`[workflow] MApp "${binding.mappId}" workflow error: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        }
+      },
     },
     {
       channels: config.channels.map((ch: { id: string; enabled?: boolean; config?: Record<string, unknown> }) => ({
@@ -5237,11 +5377,16 @@ export async function startGatewayServer(
       log.error(`error stopping queue consumer: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // Step 2: Stop all channels
+    // Step 2: Stop all channels (legacy + v2)
     try {
       await channelRegistry.stopAll();
     } catch (err) {
       log.error(`error stopping channels: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      await sidecarsResult.stopV2Channels();
+    } catch (err) {
+      log.error(`error stopping v2 channels: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // Step 3: Stop AgentSessionManager sweep

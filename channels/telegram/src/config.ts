@@ -1,5 +1,3 @@
-import type { ChannelConfigAdapter } from "@agi/channel-sdk";
-
 // ---------------------------------------------------------------------------
 // Telegram config
 // ---------------------------------------------------------------------------
@@ -53,7 +51,7 @@ export function isTelegramConfig(value: unknown): value is TelegramConfig {
 }
 
 /** ChannelConfigAdapter for the Telegram channel. */
-export function createConfigAdapter(): ChannelConfigAdapter {
+export function createConfigAdapter() {
   return {
     validate: (config: unknown) => isTelegramConfig(config),
     getDefaults: () => ({ pollingTimeout: 30, rateLimitPerMinute: 30 }),

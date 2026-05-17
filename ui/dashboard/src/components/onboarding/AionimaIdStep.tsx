@@ -30,31 +30,26 @@ export function AionimaIdStep({ onNext, onSkip, status }: Props) {
   const checkIdService = useCallback(async () => {
     setIdStatus("checking");
     try {
-      // Get ID service URL from AGI backend
+      // Get ID service URL from AGI backend (now the gateway itself)
       const urlRes = await fetch("/api/onboarding/id-service-url");
       if (urlRes.ok) {
         const { url } = await urlRes.json() as { url: string };
         setIdUrl(url);
       }
-      // Check health via AGI backend (avoids CORS — AGI fetches server-side)
-      const healthRes = await fetch("/api/onboarding/hosting/local-id-status");
+      // The gateway serves identity routes directly; check /health as proxy for readiness
+      const healthRes = await fetch("/health");
       if (healthRes.ok) {
-        const data = await healthRes.json() as { status: string };
-        if (data.status === "healthy") {
-          setIdStatus("healthy");
-          // Fetch connected services via AGI backend proxy
-          try {
-            const statusRes = await fetch("/api/onboarding/aionima-id/status");
-            if (statusRes.ok) {
-              const statusData = await statusRes.json() as { services?: Array<{ provider: string; role: string }> };
-              if (statusData.services) {
-                setConnectedServices(statusData.services.map((s) => ({ ...s, accountLabel: null })));
-              }
+        setIdStatus("healthy");
+        // Fetch connected services via AGI backend proxy
+        try {
+          const statusRes = await fetch("/api/onboarding/aionima-id/status");
+          if (statusRes.ok) {
+            const statusData = await statusRes.json() as { services?: Array<{ provider: string; role: string }> };
+            if (statusData.services) {
+              setConnectedServices(statusData.services.map((s) => ({ ...s, accountLabel: null })));
             }
-          } catch { /* non-fatal */ }
-        } else {
-          setIdStatus("unreachable");
-        }
+          }
+        } catch { /* non-fatal */ }
       } else {
         setIdStatus("unreachable");
       }

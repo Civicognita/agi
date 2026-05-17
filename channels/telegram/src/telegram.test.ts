@@ -10,8 +10,6 @@ import {
 import { splitText } from "./outbound.js";
 import { createSecurityAdapter } from "./security.js";
 import { createTelegramPlugin } from "./index.js";
-import { validateAdapter } from "@agi/channel-sdk";
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -661,10 +659,4 @@ describe("createTelegramPlugin", () => {
     expect(typeof plugin.security!.getAllowlist).toBe("function");
   });
 
-  it("passes validateAdapter from channel-sdk", () => {
-    const plugin = createTelegramPlugin({ botToken: "test:fake-token" });
-    const result = validateAdapter(plugin);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-  });
 });

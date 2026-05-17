@@ -21,7 +21,7 @@ import { InboundRouter } from "./inbound-router.js";
 import { OutboundDispatcher } from "./outbound-dispatcher.js";
 import { GatewayStateMachine } from "./state-machine.js";
 
-import type { AionimaMessage, ChannelId } from "@agi/channel-sdk";
+import type { AionimaMessage, ChannelId } from "@agi/plugins";
 
 // ---------------------------------------------------------------------------
 // Helpers

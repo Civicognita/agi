@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@agi/channel-sdk": "workspace:*",
-    "@agi/entity-model": "workspace:*"
+    "@agi/entity-model": "workspace:*",
+    "@agi/plugins": "workspace:*"
   }
 }

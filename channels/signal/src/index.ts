@@ -1,8 +1,9 @@
 import type {
   AionimaChannelPlugin,
   AionimaMessage,
-} from "@agi/channel-sdk";
+} from "@agi/sdk";
 import type { AionimaPlugin, AionimaPluginAPI } from "@agi/plugins";
+import { createSignalChannelDefV2 } from "./channel-def.js";
 
 import {
   type SignalConfig,
@@ -224,9 +225,14 @@ export default {
   async activate(api: AionimaPluginAPI): Promise<void> {
     const channelConfig = api.getChannelConfig("signal");
     if (!channelConfig?.enabled) return;
-    const plugin = createSignalPlugin(
-      channelConfig.config as unknown as SignalConfig,
-    );
+    const config = channelConfig.config as unknown as SignalConfig;
+
+    // v2 registration (CHN-L s173) — gateway dispatcher uses this path
+    const v2Def = createSignalChannelDefV2(config);
+    api.registerChannelV2?.(v2Def);
+
+    // v0.1 legacy registration — kept until CHN-M (s174) removes @agi/channel-sdk
+    const plugin = createSignalPlugin(config);
     api.registerChannel(plugin);
   },
 } satisfies AionimaPlugin;

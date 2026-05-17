@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { createComponentLogger } from "@agi/gateway-core";
 import { scanPluginSource } from "./scanner.js";
 import type { Logger, ComponentLogger, ProjectTypeRegistry, ProjectTypeDefinition, ProjectTypeTool, CircuitBreakerTracker } from "@agi/gateway-core";
-import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import type { AionimaChannelPlugin } from "./channel-plugin-types.js";
 import type { DiscoveredPlugin } from "./discovery.js";
 import { HookBus } from "./hooks.js";
 import { PluginRegistry } from "./registry.js";
@@ -247,6 +247,14 @@ function createPluginAPI(
     registerChannel(plugin: AionimaChannelPlugin): void {
       deps.channelRegistry?.register(plugin);
       deps.pluginRegistry.addChannel(pluginId, plugin.id as string);
+    },
+
+    registerChannelV2(def: { id: string }): void {
+      // CHN-B s163 slice 2 — register the v2 definition for later
+      // dispatcher consumption (slice 3). Today the runtime channel is
+      // still the legacy registerChannel() path; this is the parallel
+      // shadow registry.
+      deps.pluginRegistry.addChannelV2(pluginId, def.id, def);
     },
 
     registerProvider(def: LLMProviderDefinition): void {

@@ -42,4 +42,11 @@ test.describe("/projects list view (s130 t516 slice 1)", () => {
     await page.getByTestId("projects-view-list").click();
     await expect(page.getByTestId("projects-list")).toBeVisible();
   });
+
+  test("Tynn column header is present in list view (s130 t524)", async ({ page }) => {
+    await page.goto("/projects");
+    await page.getByTestId("projects-list").waitFor({ state: "visible", timeout: 15_000 });
+    // The column header "Tynn" must be rendered regardless of whether projects have tasks data
+    await expect(page.getByRole("columnheader", { name: "Tynn" })).toBeVisible();
+  });
 });

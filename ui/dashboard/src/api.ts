@@ -1632,6 +1632,54 @@ export async function fetchCommsLog(opts?: {
 // Channels API — /api/channels
 // ---------------------------------------------------------------------------
 
+export interface ChannelListEntry {
+  id: string;
+  pluginId: string;
+  name: string;
+  version: string;
+  description: string;
+  status: "registered" | "starting" | "running" | "stopping" | "stopped" | "error";
+  enabled: boolean;
+  registeredAt: string | null;
+}
+
+export interface ChannelConfigResponse {
+  enabled: boolean;
+  config: Record<string, unknown>;
+  defaults: Record<string, unknown>;
+}
+
+export async function fetchChannels(): Promise<ChannelListEntry[]> {
+  const res = await fetch("/api/channels");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ChannelListEntry[]>;
+}
+
+export async function fetchChannelConfig(id: string): Promise<ChannelConfigResponse> {
+  const res = await fetch(`/api/channels/${encodeURIComponent(id)}/config`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<ChannelConfigResponse>;
+}
+
+export async function updateChannelConfig(id: string, payload: { enabled?: boolean; config?: Record<string, unknown> }): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/channels/${encodeURIComponent(id)}/config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<{ ok: boolean }>;
+}
+
 export async function fetchChannelDetail(id: string): Promise<import("./types.js").ChannelDetail> {
   const res = await fetch(`/api/channels/${encodeURIComponent(id)}`);
   if (!res.ok) {
@@ -3685,4 +3733,245 @@ export async function removeProjectRepo(projectPath: string, name: string): Prom
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
+}
+
+// CHN-D (s165) slice 3a — channel-room binding client helpers.
+// Mirrors the ProjectRepo shape above but for project.json `rooms[]`.
+export interface ProjectRoomBinding {
+  channelId: string;
+  roomId: string;
+  label?: string;
+  kind?: string;
+  privacy?: "public" | "private" | "secret";
+  boundAt: string;
+  meta?: Record<string, unknown>;
+}
+
+export async function fetchProjectRooms(projectPath: string): Promise<ProjectRoomBinding[]> {
+  const url = `/api/projects/rooms?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { rooms: ProjectRoomBinding[] };
+  return data.rooms;
+}
+
+export async function addProjectRoom(
+  projectPath: string,
+  binding: Omit<ProjectRoomBinding, "boundAt"> & { boundAt?: string },
+): Promise<void> {
+  const url = `/api/projects/rooms?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(binding),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+export async function removeProjectRoom(
+  projectPath: string,
+  channelId: string,
+  roomId: string,
+): Promise<void> {
+  const url = `/api/projects/rooms/${encodeURIComponent(channelId)}/${encodeURIComponent(roomId)}?path=${encodeURIComponent(projectPath)}`;
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
+// CHN-D slice 3b — available rooms picker. The channels-specific
+// endpoint (e.g. /api/channels/discord/rooms) emits a flat list of
+// bindable rooms; the picker dialog shows them grouped + indicates
+// which are already bound.
+export interface AvailableChannelRoom {
+  channelId: string;
+  roomId: string;
+  label: string;
+  kind?: string;
+  privacy?: "public" | "private" | "secret";
+  /** Grouping label (e.g. guild/server name for Discord, workspace for Slack). */
+  group: string;
+  parent?: string;
+}
+
+export async function fetchAvailableChannelRooms(channelId: string): Promise<AvailableChannelRoom[]> {
+  const url = `/api/channels/${encodeURIComponent(channelId)}/rooms`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { rooms: AvailableChannelRoom[] };
+  return data.rooms;
+}
+
+/**
+ * CHN-C slice 3 — resolve a (channelId, roomId) pair to its bound project.
+ * Returns `null` when no project binds the room. Surfaces what the gateway-
+ * side ChannelEventDispatcher returns; channel-agnostic.
+ */
+export async function resolveChannelRoom(
+  channelId: string,
+  roomId: string,
+): Promise<{ projectPath: string; binding: ProjectRoomBinding } | null> {
+  const url = `/api/channels/resolve-room?channelId=${encodeURIComponent(channelId)}&roomId=${encodeURIComponent(roomId)}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { resolved: { projectPath: string; binding: ProjectRoomBinding } | null };
+  return data.resolved;
+}
+
+// CHN-E (s166) slice 3 — pending-approval queue client.
+export interface PendingApproval {
+  id: string;
+  channelId: string;
+  roomId: string;
+  channelUserId: string;
+  displayName: string;
+  projectPath: string;
+  firstMessagePreview: string;
+  createdAt: string;
+}
+
+export async function fetchPendingApprovals(opts: { project?: string } = {}): Promise<PendingApproval[]> {
+  const url = opts.project !== undefined
+    ? `/api/identity/pending?project=${encodeURIComponent(opts.project)}`
+    : "/api/identity/pending";
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { pending: PendingApproval[]; count: number };
+  return data.pending;
+}
+
+export async function approvePendingApproval(id: string): Promise<PendingApproval> {
+  const url = `/api/identity/pending/${encodeURIComponent(id)}/approve`;
+  const res = await fetch(url, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { ok: true; approval: PendingApproval };
+  return data.approval;
+}
+
+export async function rejectPendingApproval(id: string): Promise<PendingApproval> {
+  const url = `/api/identity/pending/${encodeURIComponent(id)}/reject`;
+  const res = await fetch(url, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { ok: true; approval: PendingApproval };
+  return data.approval;
+}
+
+// CHN-F (s167) slice 1 — channel workflow binding client.
+
+export interface ChannelWorkflowBinding {
+  id: string;
+  channelId: string;
+  roomId?: string;
+  roleId?: string;
+  messagePattern?: string;
+  mappId: string;
+  label?: string;
+  createdAt: string;
+}
+
+export async function listWorkflowBindings(channelId?: string): Promise<ChannelWorkflowBinding[]> {
+  const url = channelId
+    ? `/api/channels/workflow-bindings?channel=${encodeURIComponent(channelId)}`
+    : "/api/channels/workflow-bindings";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json() as { bindings: ChannelWorkflowBinding[] };
+  return data.bindings;
+}
+
+export async function addWorkflowBinding(
+  input: Omit<ChannelWorkflowBinding, "id" | "createdAt">,
+): Promise<ChannelWorkflowBinding> {
+  const res = await fetch("/api/channels/workflow-bindings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { binding: ChannelWorkflowBinding };
+  return data.binding;
+}
+
+export async function deleteWorkflowBinding(id: string): Promise<void> {
+  const res = await fetch(`/api/channels/workflow-bindings/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+// ---------------------------------------------------------------------------
+// Workflow Designer API (s176 — ~/.agi/workflows/)
+// ---------------------------------------------------------------------------
+
+export interface WorkflowSummary {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkflowRecord extends WorkflowSummary {
+  graph: { nodes: unknown[]; edges: unknown[] };
+}
+
+export async function listWorkflows(): Promise<WorkflowSummary[]> {
+  const res = await fetch("/api/workflows");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json() as { workflows: WorkflowSummary[] };
+  return data.workflows;
+}
+
+export async function getWorkflow(id: string): Promise<WorkflowRecord> {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<WorkflowRecord>;
+}
+
+export async function createWorkflow(name: string): Promise<WorkflowRecord> {
+  const res = await fetch("/api/workflows", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<WorkflowRecord>;
+}
+
+export async function updateWorkflow(id: string, patch: { name?: string; graph?: unknown }): Promise<WorkflowRecord> {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json() as Promise<WorkflowRecord>;
+}
+
+export async function deleteWorkflow(id: string): Promise<void> {
+  const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
 }

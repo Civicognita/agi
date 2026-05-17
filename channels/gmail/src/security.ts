@@ -1,4 +1,4 @@
-import type { ChannelSecurityAdapter } from "@agi/channel-sdk";
+import type { ChannelSecurityAdapter } from "@agi/plugins";
 
 // ---------------------------------------------------------------------------
 // Security adapter: email allowlist + rate limiting

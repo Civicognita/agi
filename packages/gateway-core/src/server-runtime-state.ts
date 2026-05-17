@@ -31,7 +31,10 @@ import { GatewayWebSocketServer } from "./ws-server.js";
 import { handlePlanRequest } from "./plan-api.js";
 import { readProjectMcpServers, setDotMcpServer, removeDotMcpServer } from "./mcp-config-store.js";
 import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model";
-import { fetchOwnerToken, injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
+import { injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
+import { eq, and } from "drizzle-orm";
+import { connections } from "@agi/db-schema";
+import { decryptToken } from "./crypto-tokens.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger } from "./logger.js";
 import { probeGpuStats } from "./hardware-probe.js";
@@ -52,9 +55,14 @@ import type { ChatPersistence } from "./chat-persistence.js";
 import { registerChatHistoryRoutes } from "./chat-history-api.js";
 import { registerMachineAdminRoutes } from "./machine-admin-api.js";
 import { registerOnboardingRoutes } from "./onboarding-api.js";
+import { registerHandoffRoutes, startHandoffCleanup } from "./handoff-api.js";
+import { registerDeviceFlowRoutes } from "./device-flow-api.js";
+import { registerConnectionsRoutes } from "./connections-api.js";
+import { resolveEncryptionKey } from "./crypto-tokens.js";
+import { registerEntityManagementRoutes } from "./entity-management-api.js";
+import { registerLocalFederationRoutes } from "./local-federation-api.js";
 import type { SecretsManager } from "./secrets.js";
 import { DashboardUserStore, hasRole } from "./dashboard-user-store.js";
-import { LocalIdAuthProvider } from "./local-id-auth-provider.js";
 import type { IdentityProvider } from "./identity-provider.js";
 import type { OAuthHandler } from "./oauth-handler.js";
 import { registerIdentityRoutes } from "./identity-api.js";
@@ -101,6 +109,8 @@ import {
   type ProjectCategory,
 } from "./project-types.js";
 import type { ProjectConfigManager } from "./project-config-manager.js";
+import type { PendingApprovalStore } from "./pending-approval-store.js";
+import type { ChannelWorkflowBindingStore } from "./channel-workflow-binding-store.js";
 import type { PmProvider } from "@agi/sdk";
 
 // ---------------------------------------------------------------------------
@@ -113,7 +123,7 @@ import type { PmProvider } from "@agi/sdk";
 // (b) the Civicognita core 5, (c) the Particle-Academy 4 (5 with fancy-3d).
 const SACRED_PROJECT_NAMES = new Set([
   "_aionima",
-  "agi", "prime", "id", "marketplace", "mapp-marketplace",
+  "agi", "prime", "marketplace", "mapp-marketplace",
   "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d",
 ]);
 
@@ -144,20 +154,6 @@ function resolveWidgetEndpoints(widgets: PanelWidgetAny[], pluginId: string): Pa
 }
 
 
-function resolveIdUrl(configPath?: string): string {
-  if (!configPath) return "https://id.ai.on";
-  try {
-    const cfg = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-    const idSvc = cfg.idService as { local?: { enabled?: boolean; subdomain?: string } } | undefined;
-    const hosting = cfg.hosting as { baseDomain?: string } | undefined;
-    if (idSvc?.local?.enabled) {
-      const sub = idSvc.local.subdomain ?? "id";
-      const domain = hosting?.baseDomain ?? "ai.on";
-      return `https://${sub}.${domain}`;
-    }
-  } catch { /* fallback */ }
-  return "https://id.ai.on";
-}
 
 export interface RuntimeStateDeps {
   auth: GatewayAuth;
@@ -214,6 +210,13 @@ export interface RuntimeStateDeps {
    *  persist iterativeWork config changes through the same atomic-write path
    *  as other project metadata mutations. */
   projectConfigManager?: ProjectConfigManager;
+  /** PendingApprovalStore — surfaces pending-from-channel approval records
+   *  via GET /api/identity/pending + approve/reject endpoints. CHN-E
+   *  (s166) slice 3 — 2026-05-14. */
+  pendingApprovalStore?: PendingApprovalStore;
+  /** ChannelWorkflowBindingStore — role/channel → MApp dispatch table.
+   *  Surfaced via GET/POST/DELETE /api/channels/workflow-bindings. CHN-F (s167). */
+  channelWorkflowBindingStore?: ChannelWorkflowBindingStore;
   /** PmProvider — used by the iterative-work progress route (t439) to
    *  surface Race-to-DONE counts. Optional: when missing or when the
    *  provider doesn't expose getActiveFocusProgress, the route returns 503. */
@@ -298,6 +301,14 @@ export interface RuntimeStateDeps {
   onPluginUpdated?: (installPath: string) => Promise<{ loaded: boolean; pluginId?: string; error?: string }>;
   /** Callback to deactivate a plugin before update (unbridge, unregister, deactivate). */
   onPluginDeactivating?: (pluginId: string) => Promise<void>;
+  /**
+   * Activate a discovered-but-unregistered channel plugin with fresh config from disk.
+   * Called by POST /api/channels/:id/start when the channel exists in discoveredPlugins
+   * but never registered in ChannelRegistry (e.g. first Start after enabling a channel
+   * that was inactive at boot). The callback reads gateway.json fresh and re-runs
+   * loadPlugins so the channel's activate() sees enabled=true.
+   */
+  onActivateChannel?: (channelId: string, basePath: string) => Promise<{ ok: boolean; error?: string }>;
   /** Federation — identity provider, OAuth, visitor auth, federation node/router. */
   identityProvider?: IdentityProvider;
   oauthHandler?: OAuthHandler | null;
@@ -306,6 +317,8 @@ export interface RuntimeStateDeps {
   federationRouter?: FedRouter;
   /** Callbacks to register additional routes before fastify.listen(). */
   preListenHooks?: ((fastify: import("fastify").FastifyInstance) => void)[];
+  /** Drizzle DB instance — passed to route groups that do direct DB auth (user mgmt, etc.). */
+  db?: import("@agi/db-schema/client").Db;
 }
 
 export interface ReloadResult {
@@ -577,39 +590,24 @@ export async function createGatewayRuntimeState(
   }
 
   // -----------------------------------------------------------------------
-  // Local-ID auth provider (if ID service is configured)
+  // Encryption key for OAuth token storage (handoff / device-flow / connections)
   // -----------------------------------------------------------------------
 
-  let localIdAuthProvider: LocalIdAuthProvider | undefined;
-  let localIdBaseUrl: string | undefined;
+  let encryptionKey: Buffer | undefined;
+  if (deps.configPath && deps.db) {
+    encryptionKey = resolveEncryptionKey(deps.configPath);
+  }
+
+  // Derive gateway base URL from hosting config (used in handoff authUrl)
+  let gatewayBaseUrl = "https://ai.on";
   if (deps.configPath) {
     try {
       const cfgRaw = readFileSync(deps.configPath, "utf-8");
       const cfg = JSON.parse(cfgRaw) as Record<string, unknown>;
-      const idService = cfg.idService as Record<string, unknown> | undefined;
-      const local = idService?.local as Record<string, unknown> | undefined;
-
-      if (local?.enabled) {
-        const hosting = cfg.hosting as Record<string, unknown> | undefined;
-        const baseDomain = (hosting?.baseDomain as string) ?? "ai.on";
-        const subdomain = (local.subdomain as string) ?? "id";
-        localIdBaseUrl = `https://${subdomain}.${baseDomain}`;
-        const secret = (cfg.dashboardAuth as Record<string, unknown> | undefined)?.jwtSecret as string
-          ?? (() => {
-            const generated = randomBytes(32).toString("hex");
-            log.warn("No dashboardAuth.jwtSecret configured — auto-generated ephemeral secret (sessions will not survive restarts)");
-            return generated;
-          })();
-        const ttl = (cfg.dashboardAuth as Record<string, unknown> | undefined)?.sessionTtlMs as number
-          ?? 86400000;
-        localIdAuthProvider = new LocalIdAuthProvider(localIdBaseUrl, secret, ttl, deps.logger);
-      }
-    } catch { /* config unreadable — skip Local-ID auth */ }
-  }
-
-  // Mark DashboardUserStore as deprecated when Local-ID is available
-  if (dashboardUserStore && localIdBaseUrl) {
-    dashboardUserStore.localIdAvailable = true;
+      const hosting = cfg.hosting as Record<string, unknown> | undefined;
+      const baseDomain = (hosting?.baseDomain as string) ?? "ai.on";
+      gatewayBaseUrl = `https://${baseDomain}`;
+    } catch { /* use default */ }
   }
 
   // -----------------------------------------------------------------------
@@ -819,55 +817,7 @@ export async function createGatewayRuntimeState(
       root: deps.workspaceRoot ?? process.cwd(),
     };
 
-    // ID Service — local or central identity service
-    let idService: { status: "connected" | "degraded" | "missing" | "error" | "central"; mode: "local" | "central"; url: string; version?: string };
-    const idCfg = deps.configPath ? (() => {
-      try {
-        const raw = JSON.parse(readFileSync(deps.configPath!, "utf-8")) as Record<string, unknown>;
-        return raw.idService as Record<string, unknown> | undefined;
-      } catch { return undefined; }
-    })() : undefined;
-
-    const idLocal = idCfg?.local as Record<string, unknown> | undefined;
-    if (idLocal?.enabled) {
-      const hostingCfg = deps.configPath ? (() => {
-        try {
-          const raw = JSON.parse(readFileSync(deps.configPath!, "utf-8")) as Record<string, unknown>;
-          return raw.hosting as Record<string, unknown> | undefined;
-        } catch { return undefined; }
-      })() : undefined;
-      const baseDomain = (hostingCfg?.baseDomain as string) ?? "ai.on";
-      const subdomain = (idLocal.subdomain as string) ?? "id";
-      const url = `https://${subdomain}.${baseDomain}`;
-
-      // Story #100 — ID no longer binds a host port; reach it through
-      // Caddy at its public URL instead of `localhost:${port}`. The
-      // gateway already trusts the Caddy root CA (installed by
-      // hosting-setup.sh), so the internal cert validates. This path
-      // works regardless of whether the gateway is on-host or later
-      // moves into a container on aionima.
-      try {
-        const [healthRes, funcRes] = await Promise.all([
-          fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) }).catch(() => null),
-          fetch(`${url}/federation/whoami`, { signal: AbortSignal.timeout(3000) }).catch(() => null),
-        ]);
-
-        if (healthRes?.ok && funcRes?.ok) {
-          const health = (await healthRes.json()) as { status: string; mode?: string };
-          idService = { status: "connected", mode: "local", url, version: health.mode };
-        } else if (healthRes?.ok) {
-          idService = { status: "degraded", mode: "local", url };
-        } else {
-          idService = { status: "error", mode: "local", url };
-        }
-      } catch {
-        idService = { status: "error", mode: "local", url };
-      }
-    } else {
-      idService = { status: "central", mode: "central", url: "https://id.aionima.ai" };
-    }
-
-    return reply.send({ agi, prime, workspace, idService });
+    return reply.send({ agi, prime, workspace });
   });
 
   // -----------------------------------------------------------------------
@@ -939,14 +889,50 @@ export async function createGatewayRuntimeState(
   // -----------------------------------------------------------------------
   // GET /api/channels
   // -----------------------------------------------------------------------
+  // Source of truth = discoveredPlugins filtered to id prefix "channel-".
+  // This is fully plugin-driven: no hardcoded channel list. Runtime status
+  // (registered/running/error/stopped) is overlaid from channelRegistry;
+  // enabled + config are read from gateway.json. Channels that are discovered
+  // but not configured yet show as status "stopped" and enabled=false.
 
   fastify.get("/api/channels", async (_request, reply) => {
-    const channels = channelRegistry.getChannels().map((entry) => ({
-      id: entry.plugin.id,
-      status: entry.status,
-      registeredAt: entry.registeredAt,
-    }));
-    return reply.send(channels);
+    // 1. All installed channel plugins (discovered, prefix "channel-")
+    const discoveredChannels = (deps.discoveredPlugins ?? []).filter((p) =>
+      p.id.startsWith("channel-"),
+    );
+
+    // 2. Config entries from gateway.json (enabled flag + current config)
+    type GwChannelEntry = { id: string; enabled?: boolean; config?: Record<string, unknown> };
+    let configEntries: GwChannelEntry[] = [];
+    if (deps.configPath) {
+      try {
+        const raw = JSON.parse(readFileSync(deps.configPath, "utf-8")) as Record<string, unknown>;
+        configEntries = ((raw.channels ?? []) as GwChannelEntry[]);
+      } catch { /* config unreadable — proceed without */ }
+    }
+
+    // 3. Runtime registry (only channels that successfully registered)
+    // Cast key to string to avoid branded-type friction when looking up by discovered plugin ID
+    const registryMap = new Map(channelRegistry.getChannels().map((e) => [e.plugin.id as string, e]));
+
+    // 4. Strip "channel-" prefix to get the logical channel id
+    const result = discoveredChannels.map((plugin) => {
+      const channelId = plugin.id.replace(/^channel-/, "");
+      const cfgEntry = configEntries.find((c) => c.id === channelId);
+      const regEntry = registryMap.get(plugin.id); // look up by full plugin ID
+      return {
+        id: channelId,
+        pluginId: plugin.id,
+        name: plugin.name,
+        version: plugin.version,
+        description: plugin.description,
+        status: regEntry ? regEntry.status : "stopped",
+        enabled: cfgEntry?.enabled ?? false,
+        registeredAt: regEntry?.registeredAt ?? null,
+      };
+    });
+
+    return reply.send(result);
   });
 
   // -----------------------------------------------------------------------
@@ -956,16 +942,48 @@ export async function createGatewayRuntimeState(
   fastify.get("/api/channels/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const entry = channelRegistry.getChannel(id);
-    if (!entry) {
-      return reply.code(404).send({ error: `Channel "${id}" not found` });
+    if (entry) {
+      return reply.send({
+        id: entry.plugin.id,
+        status: entry.status,
+        registeredAt: entry.registeredAt,
+        error: entry.error ?? null,
+        capabilities: entry.plugin.capabilities ?? null,
+      });
     }
-    return reply.send({
-      id: entry.plugin.id,
-      status: entry.status,
-      registeredAt: entry.registeredAt,
-      error: entry.error ?? null,
-      capabilities: entry.plugin.capabilities ?? null,
-    });
+    // Channel not in registry — check if it's a discovered plugin. If so,
+    // return a synthetic "stopped" entry so the UI can still show it.
+    const discovered = (deps.discoveredPlugins ?? []).find(
+      (p) => p.id === `channel-${id}` || p.id === id,
+    );
+    if (!discovered) return reply.code(404).send({ error: `Channel "${id}" not found` });
+    return reply.send({ id, status: "stopped", registeredAt: null, error: null, capabilities: null });
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/channels/:id/state — live connection snapshot
+  //
+  // Returns a JSON snapshot of the channel's connection state. The
+  // `connected` field derives from the registry status; channel-specific
+  // fields (e.g. Discord guilds / user tag) are populated only when the
+  // channel plugin exposes a `getExtendedState()` method on its plugin
+  // object — otherwise they default to empty/absent so the UI degrades
+  // gracefully without crashing.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/channels/:id/state", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const entry = channelRegistry.getChannel(id);
+    const connected = entry?.status === "running";
+    const base = {
+      connected,
+      snapshotAt: new Date().toISOString(),
+    };
+    // When the plugin exposes a getExtendedState() method, merge its payload.
+    type ExtendedPlugin = { getExtendedState?: () => Record<string, unknown> };
+    const plugin = entry?.plugin as ExtendedPlugin | undefined;
+    const extended = typeof plugin?.getExtendedState === "function" ? plugin.getExtendedState() : {};
+    return reply.send({ ...base, guilds: [], user: undefined, ...extended });
   });
 
   // -----------------------------------------------------------------------
@@ -974,6 +992,40 @@ export async function createGatewayRuntimeState(
 
   fastify.post("/api/channels/:id/start", async (request, reply) => {
     const { id } = request.params as { id: string };
+
+    // Channel is in discoveredPlugins but not yet registered — its activate()
+    // returned early at boot because enabled=false. Write enabled=true to
+    // gateway.json first (in case the user clicked Start without saving the
+    // enable toggle), then re-run activate with fresh config from disk so the
+    // channel registers before we try to start it.
+    if (!channelRegistry.getChannel(id)) {
+      const discovered = (deps.discoveredPlugins ?? []).find(
+        (p) => p.id === `channel-${id}` || p.id === id,
+      );
+      if (!discovered) {
+        return reply.code(404).send({ error: `Channel "${id}" not found` });
+      }
+      if (deps.configPath) {
+        try {
+          const raw = readFileSync(deps.configPath, "utf-8");
+          const cfg = JSON.parse(raw) as Record<string, unknown>;
+          type ChanEntry = { id: string; enabled?: boolean; config?: Record<string, unknown> };
+          const channels = ((cfg.channels ?? []) as ChanEntry[]);
+          const idx = channels.findIndex((c) => c.id === id);
+          if (idx === -1) channels.push({ id, enabled: true, config: {} });
+          else channels[idx]!.enabled = true;
+          cfg.channels = channels;
+          writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
+        } catch { /* non-fatal — proceed; if config write fails, onActivateChannel reads whatever is on disk */ }
+      }
+      if (deps.onActivateChannel) {
+        const result = await deps.onActivateChannel(id, discovered.basePath);
+        if (!result.ok) {
+          return reply.code(400).send({ error: result.error ?? "Failed to activate channel" });
+        }
+      }
+    }
+
     try {
       await channelRegistry.startChannel(id);
       return reply.send({ ok: true });
@@ -1000,6 +1052,82 @@ export async function createGatewayRuntimeState(
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // GET /api/channels/:id/config — current config values + defaults template
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/channels/:id/config", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    // Config is readable regardless of whether the channel is registered.
+    // Defaults come from the registered plugin when available; fall back to {}
+    // for channels that are discovered but not yet activated (no config/disabled).
+    const discovered = (deps.discoveredPlugins ?? []).find(
+      (p) => p.id === `channel-${id}` || p.id === id,
+    );
+    const entry = channelRegistry.getChannel(id);
+    if (!discovered && !entry) return reply.code(404).send({ error: `Channel "${id}" not found` });
+
+    let defaults: Record<string, unknown> = {};
+    try { if (entry) defaults = entry.plugin.config.getDefaults(); } catch { /* plugin may not expose */ }
+
+    let currentConfig: Record<string, unknown> = {};
+    let enabled = true;
+    if (deps.configPath) {
+      try {
+        const raw = readFileSync(deps.configPath, "utf-8");
+        const cfg = JSON.parse(raw) as Record<string, unknown>;
+        type ChanEntry = { id: string; enabled?: boolean; config?: Record<string, unknown> };
+        const channels = ((cfg.channels ?? []) as ChanEntry[]);
+        const found = channels.find((c) => c.id === id);
+        if (found) {
+          enabled = found.enabled !== false;
+          currentConfig = found.config ?? {};
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    return reply.send({ enabled, config: currentConfig, defaults });
+  });
+
+  // -----------------------------------------------------------------------
+  // PATCH /api/channels/:id/config — save channel config to gateway.json
+  // -----------------------------------------------------------------------
+
+  fastify.patch("/api/channels/:id/config", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    // Allow PATCH for any discovered channel, not just registered ones —
+    // so users can configure a channel before it's active.
+    const isKnown = channelRegistry.getChannel(id) !== undefined
+      || (deps.discoveredPlugins ?? []).some((p) => p.id === `channel-${id}` || p.id === id);
+    if (!isKnown) {
+      return reply.code(404).send({ error: `Channel "${id}" not found` });
+    }
+    if (!deps.configPath) return reply.code(503).send({ error: "Config file not available" });
+
+    const body = request.body as { enabled?: boolean; config?: Record<string, unknown> } | undefined;
+
+    try {
+      const raw = readFileSync(deps.configPath, "utf-8");
+      const cfg = JSON.parse(raw) as Record<string, unknown>;
+      type ChanEntry = { id: string; enabled?: boolean; config?: Record<string, unknown> };
+      const channels = ((cfg.channels ?? []) as ChanEntry[]);
+      const idx = channels.findIndex((c) => c.id === id);
+      if (idx === -1) {
+        channels.push({ id, enabled: body?.enabled !== false, config: body?.config ?? {} });
+      } else {
+        const entry = channels[idx]!;
+        if (body?.enabled !== undefined) entry.enabled = body.enabled;
+        if (body?.config !== undefined) entry.config = body.config;
+      }
+      cfg.channels = channels;
+      writeFileSync(deps.configPath, JSON.stringify(cfg, null, 2) + "\n", "utf-8");
+    } catch (err) {
+      return reply.code(500).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+
+    return reply.send({ ok: true });
   });
 
   // -----------------------------------------------------------------------
@@ -1128,7 +1256,14 @@ export async function createGatewayRuntimeState(
         const detectedHosting = deps.hostingManager
           ? deps.hostingManager.detectProjectDefaults(fullPath)
           : undefined;
-        const projectTypeId = metaType ?? detectedHosting?.projectType ?? "static";
+        // Owner directive 2026-05-13: `_aionima/` is the meta-project, always
+        // type "aionima-system" regardless of what (if anything) is on disk.
+        // Covers the case where the t701 boot scaffolder hasn't yet written
+        // project.json — the dashboard's Aionima Sacred card route depends on
+        // this type stamp to render the right (slimmed) project UX.
+        const projectTypeId = entryName === "_aionima"
+          ? "aionima-system"
+          : (metaType ?? detectedHosting?.projectType ?? "static");
         const registry = deps.hostingManager?.getProjectTypeRegistry();
         const typeDef = registry?.get(projectTypeId);
         const projectType = typeDef ? { id: typeDef.id, label: typeDef.label, category: typeDef.category ?? "", hostable: typeDef.hostable, hasCode: typeDef.hasCode, iterativeWorkEligible: typeDef.iterativeWorkEligible ?? false, testingUxEligible: typeDef.testingUxEligible ?? false, tools: typeDef.tools } : undefined;
@@ -1629,6 +1764,254 @@ export async function createGatewayRuntimeState(
       const code = msg.includes("not found") ? 404 : 400;
       return reply.code(code).send({ error: `removeRepo failed: ${msg}` });
     }
+  });
+
+  // -----------------------------------------------------------------------
+  // CHN-D (s165) slice 2 — channel-room binding CRUD per project
+  //
+  // GET    /api/projects/rooms?path=<projectPath>            — list bindings
+  // POST   /api/projects/rooms?path=<projectPath>            — add a binding
+  //                                                            (body = ProjectRoomBinding)
+  // DELETE /api/projects/rooms/:channelId/:roomId?path=<...> — remove a binding
+  //
+  // Mirrors the /api/projects/repos pattern (private-network gate +
+  // workspace-dir validation + 400/403/404 error contract).
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/projects/rooms", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const rooms = deps.projectConfigManager.listRoomBindings(targetPath);
+    return reply.send({ rooms });
+  });
+
+  fastify.post("/api/projects/rooms", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const projectDirs = deps.workspaceProjects ?? [];
+    const pathParam = (request.query as Record<string, string>)["path"];
+    if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+    const targetPath = resolvePath(pathParam);
+    if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+      return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+    }
+    const body = request.body as Record<string, unknown>;
+    if (!body || typeof body !== "object") return reply.code(400).send({ error: "request body must be a binding spec" });
+
+    // Stamp boundAt server-side when the caller omits it (most common pattern).
+    if (typeof body["boundAt"] !== "string") {
+      body["boundAt"] = new Date().toISOString();
+    }
+
+    try {
+      const updated = await deps.projectConfigManager.addRoomBinding(
+        targetPath,
+        body as Parameters<typeof deps.projectConfigManager.addRoomBinding>[1],
+      );
+      return reply.send({ ok: true, config: updated });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("already exists") ? 409 : 400;
+      return reply.code(code).send({ error: `addRoomBinding failed: ${msg}` });
+    }
+  });
+
+  fastify.delete<{ Params: { channelId: string; roomId: string } }>(
+    "/api/projects/rooms/:channelId/:roomId",
+    async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Projects API only allowed from private network" });
+      if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+      const projectDirs = deps.workspaceProjects ?? [];
+      const pathParam = (request.query as Record<string, string>)["path"];
+      if (!pathParam) return reply.code(400).send({ error: "path query parameter is required" });
+      const targetPath = resolvePath(pathParam);
+      if (!projectDirs.some((dir) => targetPath.startsWith(resolvePath(dir)))) {
+        return reply.code(403).send({ error: "Path is not inside a configured workspace.projects directory" });
+      }
+      const { channelId, roomId } = request.params;
+      try {
+        const updated = await deps.projectConfigManager.removeRoomBinding(targetPath, channelId, roomId);
+        return reply.send({ ok: true, config: updated });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const code = msg.includes("not found") ? 404 : 400;
+        return reply.code(code).send({ error: `removeRoomBinding failed: ${msg}` });
+      }
+    },
+  );
+
+  // -----------------------------------------------------------------------
+  // CHN-C (s164) slice 3 — channel-event dispatcher query endpoint
+  //
+  // GET /api/channels/resolve-room?channelId=&roomId=
+  //
+  // Returns { projectPath, binding } when a project binds the (channelId,
+  // roomId) pair; { resolved: null } when no binding exists. Channel-
+  // agnostic — works across Discord/Telegram/Slack/Email once their
+  // adapters emit roomIds matching what owner bound via /api/projects/rooms.
+  //
+  // Consumers:
+  //  - Dashboard: pre-flight check before showing "which project this
+  //    Discord channel routes to"
+  //  - Agents: bridge tools can call this to learn project context
+  //  - CHN-B Discord rewrite: in MessageCreate handler, before dispatch
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/channels/resolve-room", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Channels API only allowed from private network" });
+    if (!deps.projectConfigManager) return reply.code(503).send({ error: "Project config manager not available" });
+    const query = request.query as Record<string, string>;
+    const channelId = query["channelId"];
+    const roomId = query["roomId"];
+    if (!channelId || !roomId) {
+      return reply.code(400).send({ error: "channelId and roomId query parameters are required" });
+    }
+    const { ChannelEventDispatcher } = await import("./channel-event-dispatcher.js");
+    const dispatcher = new ChannelEventDispatcher({
+      projectConfigManager: deps.projectConfigManager,
+      workspaceProjects: deps.workspaceProjects ?? [],
+    });
+    const result = dispatcher.dispatch(channelId, roomId);
+    if (result === null) {
+      return reply.send({ resolved: null });
+    }
+    return reply.send({
+      resolved: {
+        projectPath: result.projectPath,
+        binding: result.binding,
+      },
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // CHN-E (s166) slice 3 — pending-from-channel approval queue API
+  //
+  // GET    /api/identity/pending                 — list all pending approvals
+  // GET    /api/identity/pending?project=<path>  — filtered to one project
+  // POST   /api/identity/pending/:id/approve     — promote (UI slice handles
+  //                                                 entity-tier update separately)
+  // POST   /api/identity/pending/:id/reject      — drop + flag source
+  //
+  // Private-network gated. Returns 503 when pendingApprovalStore isn't
+  // wired (Aion gateway running without inbound channels configured).
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/identity/pending", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+    if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+    const query = request.query as Record<string, string>;
+    const projectFilter = query["project"];
+    const pending = typeof projectFilter === "string" && projectFilter.length > 0
+      ? deps.pendingApprovalStore.listForProject(projectFilter)
+      : deps.pendingApprovalStore.list();
+    return reply.send({ pending, count: pending.length });
+  });
+
+  fastify.post<{ Params: { id: string } }>("/api/identity/pending/:id/approve", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+    if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+    const { id } = request.params;
+    try {
+      const { approval, decision } = deps.pendingApprovalStore.approve(id);
+      // CHN-E slice 5: composite entity-tier promotion. When an entity
+      // already exists for this (channelId, channelUserId), bump its
+      // verificationTier to "verified". Approval = verified is the
+      // contract; doing it here keeps "approve" atomic from the
+      // caller's perspective.
+      let entityPromoted: { id: string; tier: string } | null = null;
+      if (deps.entityStore !== undefined) {
+        const entity = await deps.entityStore.resolveEntityByChannel(approval.channelId, approval.channelUserId);
+        if (entity !== null && entity.verificationTier !== "verified") {
+          await deps.entityStore.updateEntity(entity.id, { verificationTier: "verified" });
+          entityPromoted = { id: entity.id, tier: "verified" };
+        } else if (entity !== null) {
+          entityPromoted = { id: entity.id, tier: entity.verificationTier };
+        }
+      }
+      return reply.send({ ok: true, approval, decision, entityPromoted });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("not found") ? 404 : 400;
+      return reply.code(code).send({ error: `approve failed: ${msg}` });
+    }
+  });
+
+  fastify.post<{ Params: { id: string } }>("/api/identity/pending/:id/reject", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+    if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+    const { id } = request.params;
+    try {
+      const { approval, decision } = deps.pendingApprovalStore.reject(id);
+      return reply.send({ ok: true, approval, decision });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const code = msg.includes("not found") ? 404 : 400;
+      return reply.code(code).send({ error: `reject failed: ${msg}` });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // CHN-F (s167) — channel workflow bindings CRUD (private network only)
+  //
+  // GET    /api/channels/workflow-bindings                — list all
+  // GET    /api/channels/workflow-bindings?channel=<id>  — filtered by channel
+  // POST   /api/channels/workflow-bindings               — add a binding
+  // DELETE /api/channels/workflow-bindings/:id           — remove by id
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/channels/workflow-bindings", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Channels API only allowed from private network" });
+    if (!deps.channelWorkflowBindingStore) return reply.code(503).send({ error: "Workflow-binding store not available" });
+    const q = request.query as Record<string, string>;
+    const bindings = deps.channelWorkflowBindingStore.list(q["channel"]);
+    return reply.send({ bindings });
+  });
+
+  fastify.post("/api/channels/workflow-bindings", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Channels API only allowed from private network" });
+    if (!deps.channelWorkflowBindingStore) return reply.code(503).send({ error: "Workflow-binding store not available" });
+    const body = request.body as Record<string, unknown>;
+    if (!body || typeof body.channelId !== "string" || typeof body.mappId !== "string") {
+      return reply.code(400).send({ error: "channelId (string) and mappId (string) are required" });
+    }
+    try {
+      const binding = deps.channelWorkflowBindingStore.add({
+        channelId: body.channelId,
+        mappId: body.mappId,
+        roomId: typeof body.roomId === "string" ? body.roomId : undefined,
+        roleId: typeof body.roleId === "string" ? body.roleId : undefined,
+        messagePattern: typeof body.messagePattern === "string" ? body.messagePattern : undefined,
+        label: typeof body.label === "string" ? body.label : undefined,
+      });
+      return reply.code(201).send({ binding });
+    } catch (err) {
+      return reply.code(400).send({ error: `addWorkflowBinding failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  });
+
+  fastify.delete<{ Params: { id: string } }>("/api/channels/workflow-bindings/:id", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Channels API only allowed from private network" });
+    if (!deps.channelWorkflowBindingStore) return reply.code(503).send({ error: "Workflow-binding store not available" });
+    const { id } = request.params;
+    const removed = deps.channelWorkflowBindingStore.remove(id);
+    return reply.code(removed ? 200 : 404).send({ ok: removed });
   });
 
   // -----------------------------------------------------------------------
@@ -3205,7 +3588,6 @@ export async function createGatewayRuntimeState(
   {
     const workspaceRoot = deps.workspaceRoot ?? process.cwd();
     const primeDir = deps.primeDir ?? join(workspaceRoot, ".aionima");
-    const idDir = ((deps.config as Record<string, unknown> | undefined)?.idService as Record<string, string> | undefined)?.dir ?? "/opt/agi-local-id";
     const marketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.marketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-marketplace";
     const mappMarketplaceDir = ((deps.config as Record<string, unknown> | undefined)?.mappMarketplace as Record<string, string> | undefined)?.dir ?? "/opt/agi-mapp-marketplace";
 
@@ -3244,33 +3626,26 @@ export async function createGatewayRuntimeState(
 
       const primeEntries = deps.primeLoader !== undefined ? deps.primeLoader.index() : 0;
 
-      // Query Local-ID for the GitHub connection's state so the dashboard
-      // can surface account label + token expiry (tynn #254). Local-ID
-      // lives at id.ai.on and is the canonical identity store; AGI just
-      // reads through it.
+      // Query the connections table directly for the owner's GitHub connection.
       let githubAuthenticated = false;
       let githubAccount: string | null = null;
       let githubTokenExpiresAt: string | null = null;
       let githubTokenScopes: string | null = null;
-      try {
-        const idUrl = resolveIdUrl(deps.configPath);
-        const idRes = await fetch(`${idUrl}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
-        if (idRes.ok) {
-          const conns = (await idRes.json()) as Array<{
-            provider: string;
-            accountLabel?: string | null;
-            tokenExpiresAt?: string | null;
-            scopes?: string | null;
-          }>;
-          const gh = conns.find((c) => c.provider === "github");
+      if (deps.db) {
+        try {
+          const [gh] = await deps.db
+            .select({ accountLabel: connections.accountLabel, tokenExpiresAt: connections.tokenExpiresAt, scopes: connections.scopes })
+            .from(connections)
+            .where(and(eq(connections.provider, "github"), eq(connections.role, "owner")))
+            .limit(1);
           if (gh) {
             githubAuthenticated = true;
             githubAccount = gh.accountLabel ?? null;
-            githubTokenExpiresAt = gh.tokenExpiresAt ?? null;
+            githubTokenExpiresAt = gh.tokenExpiresAt?.toISOString() ?? null;
             githubTokenScopes = gh.scopes ?? null;
           }
-        }
-      } catch { /* ID service unreachable — treat as not authenticated */ }
+        } catch { /* DB unavailable — treat as not authenticated */ }
+      }
 
       // When Dev Mode is ON, the authoritative clones live under the
       // `_aionima/` core collection in the projects workspace — NOT the
@@ -3291,7 +3666,6 @@ export async function createGatewayRuntimeState(
 
       const agiDir = pickDir(workspaceRoot, "agi");
       const effectivePrimeDir = pickDir(primeDir, "prime");
-      const effectiveIdDir = pickDir(idDir, "id");
       const effectiveMarketplaceDir = pickDir(marketplaceDir, "marketplace");
       const effectiveMappMarketplaceDir = pickDir(mappMarketplaceDir, "mapp-marketplace");
 
@@ -3318,13 +3692,12 @@ export async function createGatewayRuntimeState(
         try {
           const cfg = deps.configPath
             ? JSON.parse(readFileSync(deps.configPath, "utf-8")) as {
-                dev?: { agiRepo?: string; primeRepo?: string; idRepo?: string };
+                dev?: { agiRepo?: string; primeRepo?: string };
               }
             : {};
           const probes: Array<[string, string, string | undefined]> = [
             ["agi", "/opt/agi", cfg.dev?.agiRepo],
             ["prime", "/opt/agi-prime", cfg.dev?.primeRepo],
-            ["id", "/opt/agi-local-id", cfg.dev?.idRepo],
           ];
           let aligned = true;
           for (const [name, dir, expected] of probes) {
@@ -3361,7 +3734,6 @@ export async function createGatewayRuntimeState(
         originMisaligned: originMisaligned.length > 0 ? originMisaligned : undefined,
         agi: { remote: getRemote(agiDir), branch: getBranch(agiDir) },
         prime: { remote: getRemote(effectivePrimeDir), branch: getBranch(effectivePrimeDir), entries: primeEntries },
-        id: { remote: getRemote(effectiveIdDir), branch: getBranch(effectiveIdDir) },
         marketplace: { remote: getRemote(effectiveMarketplaceDir), branch: getBranch(effectiveMarketplaceDir) },
         mappMarketplace: { remote: getRemote(effectiveMappMarketplaceDir), branch: getBranch(effectiveMappMarketplaceDir) },
         // PAx (Particle-Academy) ADF UI primitive forks — s136 t512.
@@ -3525,25 +3897,26 @@ export async function createGatewayRuntimeState(
 
       const targetEnabled = body.enabled;
 
-      // Enabling dev mode requires GitHub authentication (checked via Local-ID)
+      // Enabling dev mode requires GitHub authentication (queried from connections table)
       let ownerGithubLogin: string | null = null;
       if (targetEnabled) {
         let hasGithub = false;
-        try {
-          const idUrl = resolveIdUrl(deps.configPath);
-          const idRes = await fetch(`${idUrl}/api/auth/device-flow/status`, { signal: AbortSignal.timeout(3000) });
-          if (idRes.ok) {
-            const conns = await idRes.json() as Array<{ provider: string; accountLabel?: string | null }>;
-            const gh = conns.find((c) => c.provider === "github");
+        if (deps.db) {
+          try {
+            const [gh] = await deps.db
+              .select({ accountLabel: connections.accountLabel })
+              .from(connections)
+              .where(and(eq(connections.provider, "github"), eq(connections.role, "owner")))
+              .limit(1);
             if (gh) {
               hasGithub = true;
               ownerGithubLogin = gh.accountLabel?.trim() ?? null;
             }
-          }
-        } catch { /* ID service unreachable */ }
+          } catch { /* DB unavailable */ }
+        }
         if (!hasGithub) {
           return reply.code(403).send({
-            error: "GitHub authentication required. Connect your GitHub account via Aionima ID before enabling dev mode.",
+            error: "GitHub authentication required. Connect your GitHub account via Settings → Connections before enabling dev mode.",
             reason: "github_not_authenticated",
           });
         }
@@ -3559,22 +3932,32 @@ export async function createGatewayRuntimeState(
       let devRepoPatch: Record<string, string> = {};
       let forkNotes: Array<{ slug: string; created: boolean; upstream: string }> = [];
       if (targetEnabled) {
-        // Grab the owner's token from Local-ID so we can hit the GitHub API.
-        const tokenInfo = await fetchOwnerToken({ provider: "github", role: "owner" });
-        if (!tokenInfo) {
+        // Fetch the owner's GitHub token directly from the connections table.
+        let ghAccessToken: string | null = null;
+        if (deps.db && encryptionKey) {
+          try {
+            const [row] = await deps.db
+              .select({ accessToken: connections.accessToken })
+              .from(connections)
+              .where(and(eq(connections.provider, "github"), eq(connections.role, "owner")))
+              .limit(1);
+            if (row?.accessToken) ghAccessToken = decryptToken(encryptionKey, row.accessToken);
+          } catch { /* token unavailable */ }
+        }
+        if (!ghAccessToken) {
           return reply.code(502).send({
-            error: "GitHub token unavailable from Local-ID. Reconnect your GitHub account at https://id.ai.on/dashboard.",
+            error: "GitHub token unavailable. Reconnect your GitHub account via Settings → Connections.",
             reason: "token_missing",
           });
         }
         if (!ownerGithubLogin) {
           return reply.code(502).send({
-            error: "Local-ID didn't return a GitHub login. Reconnect your GitHub account.",
+            error: "GitHub login not found. Reconnect your GitHub account via Settings → Connections.",
             reason: "github_login_missing",
           });
         }
         const { resolveOrCreateForks } = await import("./dev-mode-forks.js");
-        const forks = await resolveOrCreateForks(tokenInfo.accessToken, ownerGithubLogin);
+        const forks = await resolveOrCreateForks(ghAccessToken, ownerGithubLogin);
         for (const f of forks) {
           if (f.cloneUrl) {
             // Map slug → dev.*Repo key. Civicognita-owned core five
@@ -3587,7 +3970,7 @@ export async function createGatewayRuntimeState(
             const keyMap: Record<string, string> = {
               "agi": "agiRepo",
               "prime": "primeRepo",
-              "id": "idRepo",
+
               "marketplace": "marketplaceRepo",
               "mapp-marketplace": "mappMarketplaceRepo",
               "react-fancy": "reactFancyRepo",
@@ -3653,11 +4036,20 @@ export async function createGatewayRuntimeState(
               upstreamUrl: upstreamRemoteUrlFn(s),
             }));
 
-            // Fetch the owner's GitHub token once for all clones — Dev Mode
-            // forks live under wishborn/*, which may be private. HTTPS with
-            // x-access-token injects credentials; unauthenticated fallback
-            // works for public forks but fails with 404 on private ones.
-            const ownerToken = await fetchOwnerToken({ provider: "github", role: "owner" });
+            // Fetch the owner's GitHub token from the connections table.
+            // HTTPS x-access-token injection authenticates private fork clones;
+            // falls back to unauthenticated for public forks.
+            let cloneAccessToken: string | null = null;
+            if (deps.db && encryptionKey) {
+              try {
+                const [row] = await deps.db
+                  .select({ accessToken: connections.accessToken })
+                  .from(connections)
+                  .where(and(eq(connections.provider, "github"), eq(connections.role, "owner")))
+                  .limit(1);
+                if (row?.accessToken) cloneAccessToken = decryptToken(encryptionKey, row.accessToken);
+              } catch { /* fall back to unauthenticated clone */ }
+            }
 
             // Core forks live in a special `_aionima/` collection inside
             // the workspace — NOT scattered next to regular projects. The
@@ -3689,8 +4081,8 @@ export async function createGatewayRuntimeState(
               const repoUrl = devCfg[repo.repoKey] as string | undefined;
               if (!repoUrl) continue;
               const targetDir = join(coreCollectionDir, repo.slug);
-              const cloneUrl = ownerToken
-                ? injectTokenIntoCloneUrl(repoUrl, ownerToken.accessToken)
+              const cloneUrl = cloneAccessToken
+                ? injectTokenIntoCloneUrl(repoUrl, cloneAccessToken)
                 : repoUrl;
               try {
                 // Clone if directory doesn't exist. Use execFileSync (no
@@ -3923,12 +4315,7 @@ export async function createGatewayRuntimeState(
 
       // Test-VM services are reported from inside the VM via
       // `test-vm.sh services-status`. We surface only what the host
-      // dashboard actually renders: postgres, caddy, agi. The VM's ID
-      // service is VM-internal — it's not probed from the host, and the
-      // dashboard's red/green ID light tracks the HOST's Local-ID
-      // (reported separately via /api/system/connections). Removing the
-      // `id` field here avoids a cross-namespace "red light" when the
-      // host ID is up but the VM ID isn't (tynn #259).
+      // dashboard actually renders: postgres, caddy, agi.
       let services = { postgres: "unknown", caddy: "unknown", agi: "unknown" };
       if (running) {
         try {
@@ -4631,10 +5018,9 @@ export async function createGatewayRuntimeState(
       });
     }
 
-    // Check service repos (ID, PRIME, marketplace) for pending updates
+    // Check service repos (PRIME, marketplace) for pending updates
     const serviceRepoPaths = [
       deps.primeDir,
-      deps.config ? (deps.config as Record<string, unknown>).idService ? ((deps.config as Record<string, unknown>).idService as Record<string, string>).dir ?? "/opt/agi-local-id" : "/opt/agi-local-id" : undefined,
       deps.config ? (deps.config as Record<string, unknown>).marketplace ? ((deps.config as Record<string, unknown>).marketplace as Record<string, string>).dir ?? "/opt/agi-marketplace" : "/opt/agi-marketplace" : undefined,
     ].filter(Boolean) as string[];
 
@@ -5929,9 +6315,40 @@ export async function createGatewayRuntimeState(
     secrets: deps.secrets,
     config: deps.config as Record<string, unknown>,
     configPath: deps.configPath,
+    db: deps.db,
+    encKey: encryptionKey,
+    gatewayBaseUrl,
   });
 
-  registerMachineAdminRoutes(fastify, { logger: deps.logger, dashboardUserStore, localIdAuthProvider, idBaseUrl: localIdBaseUrl, configPath: deps.configPath });
+  // Handoff, device-flow, connections, entity management, and federation routes
+  // (absorbed from agi-local-id Phases 2 and 3)
+  if (deps.db && encryptionKey) {
+    registerHandoffRoutes(fastify, {
+      db: deps.db,
+      encKey: encryptionKey,
+      gatewayBaseUrl,
+      logger: deps.logger,
+    });
+    registerDeviceFlowRoutes(fastify, {
+      db: deps.db,
+      encKey: encryptionKey,
+      logger: deps.logger,
+    });
+    registerConnectionsRoutes(fastify, { db: deps.db });
+    registerEntityManagementRoutes(fastify, {
+      db: deps.db,
+      encKey: encryptionKey,
+      logger: deps.logger,
+    });
+    registerLocalFederationRoutes(fastify, {
+      db: deps.db,
+      gatewayBaseUrl,
+      nodeId: deps.nodeId,
+    });
+    startHandoffCleanup(deps.db);
+  }
+
+  registerMachineAdminRoutes(fastify, { logger: deps.logger, dashboardUserStore, db: deps.db, configPath: deps.configPath });
 
   // -----------------------------------------------------------------------
   // GET /api/plugins — list installed plugins (private network only)
@@ -6479,6 +6896,66 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // TEST-VM ONLY: Taskmaster dispatch-guard e2e helpers (s159 t699)
+  //
+  // POST /api/taskmaster/test/seed-jobs   — write synthetic job files
+  // POST /api/taskmaster/test/dispatch    — invoke worker-dispatch handler
+  //
+  // Both gated on AIONIMA_TEST_VM=1. Production returns 404.
+  // -----------------------------------------------------------------------
+
+  fastify.post("/api/taskmaster/test/seed-jobs", async (request, reply) => {
+    if (process.env["AIONIMA_TEST_VM"] !== "1") {
+      return reply.code(404).send({ error: "Not Found" });
+    }
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Taskmaster test API only allowed from private network" });
+    }
+    interface SeedJob {
+      id: string;
+      description?: string;
+      status: string;
+      planRef?: { planId: string; stepId: string };
+      createdAt?: string;
+      completedAt?: string;
+    }
+    const body = (request.body ?? {}) as { projectPath?: string; jobs?: SeedJob[] };
+    if (typeof body.projectPath !== "string" || body.projectPath.length === 0) {
+      return reply.code(400).send({ error: "projectPath (string) required" });
+    }
+    if (!Array.isArray(body.jobs) || body.jobs.length === 0) {
+      return reply.code(400).send({ error: "jobs (non-empty array) required" });
+    }
+    const jobsDir = dispatchJobsDir(body.projectPath);
+    mkdirSync(jobsDir, { recursive: true });
+    const written: string[] = [];
+    for (const j of body.jobs) {
+      if (typeof j.id !== "string" || j.id.length === 0) continue;
+      const filePath = `${jobsDir}/${j.id}.json`;
+      writeFileSync(filePath, JSON.stringify({ projectPath: body.projectPath, ...j }, null, 2), "utf-8");
+      written.push(j.id);
+    }
+    return reply.send({ ok: true, jobsDir, written });
+  });
+
+  fastify.post("/api/taskmaster/test/dispatch", async (request, reply) => {
+    if (process.env["AIONIMA_TEST_VM"] !== "1") {
+      return reply.code(404).send({ error: "Not Found" });
+    }
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) {
+      return reply.code(403).send({ error: "Taskmaster test API only allowed from private network" });
+    }
+    const { createWorkerDispatchHandler } = await import("./tools/worker-dispatch.js");
+    const handler = createWorkerDispatchHandler({});
+    const input = (request.body ?? {}) as Record<string, unknown>;
+    const result = await handler(input, undefined);
+    // result is a JSON string — parse it so the test can destructure directly
+    return reply.send(JSON.parse(result) as Record<string, unknown>);
+  });
+
+  // -----------------------------------------------------------------------
   // Federation & Identity routes
   // -----------------------------------------------------------------------
 
@@ -6495,7 +6972,6 @@ export async function createGatewayRuntimeState(
       identityProvider: deps.identityProvider,
       visitorAuth: deps.visitorAuth ?? null,
       dashboardUserStore: null,
-      idBaseUrl: localIdBaseUrl,
       logger: deps.logger,
     });
   }

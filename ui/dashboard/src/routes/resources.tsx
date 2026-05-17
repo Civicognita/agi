@@ -11,9 +11,9 @@ import { Card } from "@/components/ui/card.js";
 import { fetchDatabaseStorage } from "@/api.js";
 import { useHFContainerStats, useMachineHardware } from "@/hooks.js";
 import type { HFContainerStats } from "@/api.js";
-// fancy-echarts (npm published as @particle-academy/react-echarts pending
-// rename per CLAUDE.md § 1.5 — package is the canonical PAx EChart wrapper).
-import { EChart } from "@particle-academy/react-echarts";
+// fancy-echarts (rename from @particle-academy/react-echarts finalized
+// 2026-05-14; canonical PAx EChart wrapper).
+import { EChart } from "@particle-academy/fancy-echarts";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -133,38 +133,104 @@ function ContainerStatsRow({ c }: { c: HFContainerStats }) {
   );
 }
 
+/** Safely extract a display string from a model value that may be a string,
+ *  an object with model_name, or something else entirely from an older/newer
+ *  Lemonade version. Never returns a raw object — React error #31 if it did. */
+function toModelDisplayName(v: unknown): string | null {
+  if (!v) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "object") {
+    const name = (v as Record<string, unknown>).model_name;
+    if (typeof name === "string") return name;
+    try { return JSON.stringify(v); } catch { return "[model]"; }
+  }
+  return String(v);
+}
+
 function ModelContainerStatsSection() {
   const { data, isLoading, error } = useHFContainerStats();
+  const [lemonade, setLemonade] = useState<{ modelLoaded: string | null; allModelsLoaded: string[] } | null>(null);
+  const [lemonadeError, setLemonadeError] = useState<string | null>(null);
 
-  if (isLoading) {
-    return <p className="text-[11px] text-muted-foreground">Loading container stats...</p>;
-  }
-
-  if (error) {
-    return <p className="text-[11px] text-muted-foreground">Could not load container stats.</p>;
-  }
+  useEffect(() => {
+    fetch("/api/lemonade/status")
+      .then((r) => r.ok ? r.json() as Promise<{ running: boolean; modelLoaded: unknown; allModelsLoaded: unknown[] }> : null)
+      .then((d) => {
+        if (!d?.running) return;
+        const models = Array.isArray(d.allModelsLoaded)
+          ? d.allModelsLoaded.map(toModelDisplayName).filter((s): s is string => s !== null)
+          : [];
+        setLemonade({ modelLoaded: toModelDisplayName(d.modelLoaded), allModelsLoaded: models });
+      })
+      .catch((e: unknown) => {
+        setLemonadeError(e instanceof Error ? e.message : "Lemonade status unavailable");
+      });
+  }, []);
 
   const containers = data?.containers ?? [];
+  const lemonadeModels = lemonade?.allModelsLoaded ?? [];
+  const hasAnything = containers.length > 0 || lemonadeModels.length > 0;
 
-  if (containers.length === 0) {
-    return <p className="text-[11px] text-muted-foreground">No active model containers.</p>;
+  if (isLoading && lemonade === null) {
+    return <p className="text-[11px] text-muted-foreground">Loading...</p>;
+  }
+
+  if (!hasAnything) {
+    if (error) return <p className="text-[11px] text-muted-foreground">Could not load container stats.</p>;
+    if (lemonadeError) return <p className="text-[11px] text-muted-foreground">Lemonade: {lemonadeError}</p>;
+    return <p className="text-[11px] text-muted-foreground">No active AI models.</p>;
   }
 
   return (
-    <table className="w-full">
-      <thead>
-        <tr className="border-b border-border">
-          <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-4">Container</th>
-          <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-4">CPU</th>
-          <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider">RAM</th>
-        </tr>
-      </thead>
-      <tbody>
-        {containers.map((c) => (
-          <ContainerStatsRow key={c.name} c={c} />
-        ))}
-      </tbody>
-    </table>
+    <div className="space-y-3">
+      {lemonadeModels.length > 0 && (
+        <div>
+          <div className="text-[9px] text-muted-foreground uppercase tracking-wider mb-2">Lemonade (native)</div>
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-4">Model</th>
+                <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-4">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lemonadeModels.map((m) => (
+                <tr key={m} className="border-b border-border last:border-0">
+                  <td className="py-2 pr-4">
+                    <div className="text-[11px] font-mono text-foreground truncate max-w-[240px]" title={m}>{m}</div>
+                  </td>
+                  <td className="py-2 pr-4">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      <span className="text-[11px] text-emerald-500">{lemonade?.modelLoaded === m ? "loaded (active)" : "loaded"}</span>
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {containers.length > 0 && (
+        <div>
+          <div className="text-[9px] text-muted-foreground uppercase tracking-wider mb-2">HuggingFace containers</div>
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-4">Container</th>
+                <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-4">CPU</th>
+                <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider">RAM</th>
+              </tr>
+            </thead>
+            <tbody>
+              {containers.map((c) => (
+                <ContainerStatsRow key={c.name} c={c} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -573,7 +639,7 @@ export default function ResourcesPage() {
       </div>
       <div className="mt-4">
         <Card className="p-4">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Running model containers</h3>
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Running AI models</h3>
           <ModelContainerStatsSection />
         </Card>
       </div>

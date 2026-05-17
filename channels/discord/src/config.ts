@@ -1,4 +1,4 @@
-import type { ChannelConfigAdapter } from "@agi/channel-sdk";
+import type { ChannelConfigAdapter } from "@agi/sdk";
 
 // ---------------------------------------------------------------------------
 // Discord config
@@ -73,6 +73,11 @@ export function isDiscordConfig(value: unknown): value is DiscordConfig {
 export function createConfigAdapter(): ChannelConfigAdapter {
   return {
     validate: (config: unknown) => isDiscordConfig(config),
-    getDefaults: () => ({ rateLimitPerMinute: 20 }),
+    getDefaults: () => ({
+      botToken: "",
+      applicationId: "",
+      mentionOnly: true,
+      rateLimitPerMinute: 20,
+    }),
   };
 }

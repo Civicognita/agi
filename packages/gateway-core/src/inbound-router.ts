@@ -1,9 +1,11 @@
-import type { AionimaMessage, OutboundContent } from "@agi/channel-sdk";
+import type { AionimaMessage, OutboundContent } from "@agi/plugins";
 import type { EntityStore, MessageQueue, CommsLog } from "@agi/entity-model";
 import type { COAChainLogger } from "@agi/coa-chain";
 import type { VoicePipeline, VoiceGatewayState, AudioFormat } from "@agi/voice";
 import type { PairingStore } from "./pairing-store.js";
 import type { OwnerConfig } from "@agi/config";
+import type { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
+import type { PendingApprovalStore } from "./pending-approval-store.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -37,6 +39,24 @@ export interface InboundRouterDeps {
   ownerEntityId?: string;
   /** Optional CommsLog instance for logging inbound messages. */
   commsLog?: CommsLog;
+  /**
+   * Optional channel-event dispatcher. When set + a message arrives
+   * carrying `metadata.roomId`, the router asks the dispatcher whether
+   * a project binds (channelId, roomId). If yes, the bound project's
+   * path is attached to the enqueued payload so downstream agent-
+   * invocation runs inside that project's scope. CHN-B (s163) slice 3
+   * — 2026-05-14.
+   */
+  channelEventDispatcher?: ChannelEventDispatcher;
+  /**
+   * Optional pending-approval store. When set + a message arrives in a
+   * project-bound room (i.e. dispatcher resolved a projectPath), the
+   * router captures a pending-approval record so owner can see + act
+   * on the contact via /identity/pending. CHN-E (s166) slice 2 —
+   * data-collection only: this slice does NOT gate the message; routing
+   * proceeds normally. Slice 3+ wires the gate-and-drop + UI together.
+   */
+  pendingApprovalStore?: PendingApprovalStore;
   /** Optional logger instance. */
   logger?: Logger;
 }
@@ -46,6 +66,13 @@ export interface InboundResult {
   entityId: string;
   coaFingerprint: string;
   queueMessageId: string;
+  /**
+   * Project path resolved via the ChannelEventDispatcher when the
+   * message carries a roomId that binds to a project. Absent when
+   * no dispatcher is configured OR the room isn't bound. CHN-B
+   * (s163) slice 3 — 2026-05-14.
+   */
+  projectPath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +101,8 @@ export class InboundRouter {
   private readonly pairingStore: PairingStore | undefined;
   private readonly outboundSender: OutboundSender | undefined;
   private readonly commsLog: CommsLog | undefined;
+  private readonly channelEventDispatcher: ChannelEventDispatcher | undefined;
+  private readonly pendingApprovalStore: PendingApprovalStore | undefined;
   private readonly log: ComponentLogger;
   constructor(deps: InboundRouterDeps) {
     this.entityStore = deps.entityStore;
@@ -86,6 +115,8 @@ export class InboundRouter {
     this.pairingStore = deps.pairingStore;
     this.outboundSender = deps.outboundSender;
     this.commsLog = deps.commsLog;
+    this.channelEventDispatcher = deps.channelEventDispatcher;
+    this.pendingApprovalStore = deps.pendingApprovalStore;
     this.log = createComponentLogger(deps.logger, "inbound");
   }
 
@@ -400,11 +431,104 @@ export class InboundRouter {
     // its response (the DONE signal in agent-invoker.ts).
     const coaFingerprint = `${this.resourceId}.${entity.coaAlias}.${this.nodeId}.pending`;
 
+    // Step 2b (CHN-B s163 slice 3) — channel-room → project dispatch.
+    // When the message carries metadata.roomId AND a dispatcher is wired,
+    // ask which project binds (channelId, roomId). The bound project's
+    // path flows into the enqueued payload so the agent invocation runs
+    // inside that project's scope.
+    let projectPath: string | undefined;
+    let resolvedRoomId: string | undefined;
+    if (this.channelEventDispatcher !== undefined && typeof routedMessage.metadata === "object" && routedMessage.metadata !== null) {
+      const roomId = (routedMessage.metadata as Record<string, unknown>)["roomId"];
+      if (typeof roomId === "string" && roomId.length > 0) {
+        const dispatch = this.channelEventDispatcher.dispatch(channelId, roomId);
+        if (dispatch !== null) {
+          projectPath = dispatch.projectPath;
+          resolvedRoomId = roomId;
+          this.log.info(`channel-event routed to project: ${channelId}::${roomId} → ${projectPath}`);
+        }
+      }
+    }
+
+    // Step 2c (CHN-E s166 slice 2) — pending-approval capture for
+    // unknown contacts in project-bound rooms. Idempotent: same triple
+    // refreshes display/preview, keeps original createdAt. Owner sees
+    // the captured records via /identity/pending (UI in slice 3+).
+    //
+    // Slice 2 is DATA-COLLECTION ONLY: routing proceeds normally even
+    // when a pending record is captured. Slice 3+ adds the gate-and-
+    // drop behavior + the promote-to-verified-entity flow.
+    if (
+      projectPath !== undefined &&
+      resolvedRoomId !== undefined &&
+      this.pendingApprovalStore !== undefined
+    ) {
+      const captureDisplayName = typeof routedMessage.metadata === "object" && routedMessage.metadata !== null
+        ? (routedMessage.metadata as Record<string, unknown>)["displayName"] as string | undefined
+          ?? (routedMessage.metadata as Record<string, unknown>)["username"] as string | undefined
+          ?? "Unknown"
+        : "Unknown";
+      const preview = routedMessage.content.type === "text"
+        ? (routedMessage.content as { text: string }).text
+        : `[${routedMessage.content.type}]`;
+      this.pendingApprovalStore.capture({
+        channelId,
+        roomId: resolvedRoomId,
+        channelUserId: routedMessage.channelUserId,
+        displayName: captureDisplayName,
+        projectPath,
+        firstMessagePreview: preview,
+      });
+    }
+
+    // Step 2d (CHN-E s166 slice 6) — gate-and-drop unverified senders
+    // in project-bound rooms. Messages from unverified entities are
+    // captured (step 2c above) but DROPPED here so they don't reach
+    // the agent until owner approves via /identity/pending.
+    //
+    // Exemptions:
+    //  - Owner (already routed past Step 0a's owner-command branch with
+    //    fall-through; we don't gate the owner here)
+    //  - Rejected sender — also dropped, but with a "rejected" log line
+    //  - Verified entities — proceed to enqueue normally
+    //  - No projectPath (room isn't bound) — proceed normally (this
+    //    gate only applies to bound rooms)
+    //  - No pendingApprovalStore wired — proceed normally (gate disabled)
+    if (
+      projectPath !== undefined &&
+      resolvedRoomId !== undefined &&
+      this.pendingApprovalStore !== undefined &&
+      !this.isOwner(channelId, routedMessage.channelUserId)
+    ) {
+      const decision = this.pendingApprovalStore.decisionFor(
+        channelId,
+        resolvedRoomId,
+        routedMessage.channelUserId,
+      );
+      if (decision !== null && decision.status === "rejected") {
+        this.log.info(
+          `drop message from REJECTED sender: ${channelId}::${resolvedRoomId}::${routedMessage.channelUserId}`,
+        );
+        return null;
+      }
+      if (entity.verificationTier !== "verified" && entity.verificationTier !== "sealed") {
+        this.log.info(
+          `hold message from UNVERIFIED sender (pending approval): ${channelId}::${resolvedRoomId}::${routedMessage.channelUserId}`,
+        );
+        return null;
+      }
+    }
+
     // Step 3 — enqueue for agent processing
     const queued = await this.messageQueue.enqueue({
       channel: channelId,
       direction: "inbound",
-      payload: { message: routedMessage, entityId: entity.id, coaFingerprint },
+      payload: {
+        message: routedMessage,
+        entityId: entity.id,
+        coaFingerprint,
+        ...(projectPath !== undefined ? { projectPath } : {}),
+      },
     });
 
     // Step 4 — log to comms log (non-blocking, best-effort)
@@ -436,6 +560,7 @@ export class InboundRouter {
       entityId: entity.id,
       coaFingerprint,
       queueMessageId: queued.id,
+      ...(projectPath !== undefined ? { projectPath } : {}),
     };
   }
 }

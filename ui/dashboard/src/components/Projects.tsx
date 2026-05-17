@@ -27,9 +27,13 @@ import { HostingSetupBanner } from "./HostingSetupBanner.js";
 import { SetupTerminal } from "./SetupTerminal.js";
 import type { HostingStatus } from "../api.js";
 
-/** Derive a URL slug from a project path (last segment, lowercased, alphanumeric + dashes). */
+/** Derive a URL slug from a project path. Last segment, lowercased.
+ *  Preserves alphanumerics + dashes + underscores so the meta-project
+ *  `_aionima` (owner-managed local-customizations root) keeps its leading
+ *  underscore in the URL. The Sacred card navigates to `/projects/_aionima`
+ *  and the project-detail route resolves the same slug back. */
 export function projectSlug(path: string): string {
-  return path.split("/").pop()?.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") ?? "";
+  return path.split("/").pop()?.toLowerCase().replace(/[^a-z0-9_]+/g, "-").replace(/^-|-$/g, "") ?? "";
 }
 
 export interface ProjectsProps {
@@ -71,14 +75,30 @@ export function Projects({
   const navigate = useNavigate();
   const isContributing = Boolean(contributingEnabled);
 
-  const sacredEntries = isContributing
-    ? SACRED_PROJECTS.map((sacred) => ({
-        sacred,
-        project: matchSacredProject(projects, sacred.id),
-      }))
-    : [];
+  // Owner directive 2026-05-13: `_aionima` is the Sacred project and must be
+  // present + visible regardless of dev/contributing mode. Dev mode now only
+  // gates fork-population into `_aionima/repos/`, not card visibility.
+  // sacredEntries enumerated unconditionally; counts in the card description
+  // reflect what's actually cloned (0 when contributing-mode off + no forks).
+  const sacredEntries = SACRED_PROJECTS.map((sacred) => ({
+    sacred,
+    project: matchSacredProject(projects, sacred.id),
+  }));
 
-  const isAionimaProject = (p: ProjectInfo) => isSacredProject(p) || p.projectType?.id === "aionima";
+  // Owner directive 2026-05-13: `_aionima/` is the meta-project and must
+  // never appear in the regular projects list — only as the Sacred card.
+  // Backend stamping of projectType.id===\"aionima-system\" is the canonical
+  // signal; the path-basename fallback covers the case where the boot
+  // scaffolder hasn't yet written project.json so the gateway has
+  // auto-detected the directory with a wrong type.
+  const isAionimaProject = (p: ProjectInfo) => {
+    if (isSacredProject(p)) return true;
+    const typeId = p.projectType?.id;
+    if (typeId === "aionima" || typeId === "aionima-system") return true;
+    const basename = p.path.split("/").pop() ?? "";
+    if (basename === "_aionima") return true;
+    return false;
+  };
   // s119 t705 — PAx forks live as repos under `_aionima/repos/` now,
   // not as standalone projects. They never appear as their own tiles;
   // the single Aionima sacred card (above) is the entry point.
@@ -135,6 +155,18 @@ export function Projects({
         <div className="flex items-center gap-2">
           <h2 className="text-xl font-bold text-foreground">Projects</h2>
           <DevNotes title="Projects browser — dev notes">
+            <DevNotes.Item kind="info" heading="Cycle 226 — Sacred Aionima card always visible">
+              v0.4.664 — owner directive: the Sacred Aionima card is now visible
+              regardless of dev/contributing mode. Dev mode only controls whether
+              owner forks get cloned into <code>_aionima/repos/</code>, not whether
+              the card renders. Description text branches on mode — "Wraps N forks"
+              when populated, "Enable contributing mode to clone…" when not.
+              Paired with the underlying ESM <code>__dirname</code> fix in
+              <code>project-config-path.ts</code> that unblocked the boot
+              scaffolder. New regression e2es in <code>aionima-self-managed.spec.ts</code>
+              cover the click→ProjectDetail-render roundtrip and the filter that
+              keeps <code>_aionima</code> out of the regular projects list.
+            </DevNotes.Item>
             <DevNotes.Item kind="info" heading="Cycle 136 — click-to-expand row tray (mockup B)">
               Each row expands to a 4-quadrant grid (Repos / Stacks / Aion context / Knowledge) +
               a 5-button action row (Open workspace / Open chat / Configure repos / Manage stacks /
@@ -144,21 +176,10 @@ export function Projects({
               Hosting health surfaced as a compact icon column. ✓ green = container running &
               reachable. ⚠ amber = degraded. ⚠ red = error. — = not hosted.
             </DevNotes.Item>
-            <DevNotes.Item kind="info" heading="Cycle 133 — Tynn column">
-              `open|doing` two-tone counts per project. **Currently shows `—` for all projects** —
-              backend population deferred to PM-Lite slice (s139 forthcoming). The reframe today
-              shifts this from a remote-tynn fetch to a local PM-Lite store read.
-            </DevNotes.Item>
-            <DevNotes.Item kind="todo" heading="PM-Lite kanban incoming (s139)">
-              The Tynn column in this browser will populate from the local PM-Lite store once
-              s139 ships. The PM-Lite kanban itself surfaces in the Operate tab inside each
-              project's workspace. Codename was tynn-lite; user-facing name is PM-Lite.
-            </DevNotes.Item>
-            <DevNotes.Item kind="warning" heading="Project folder structure migrating (s140)">
-              All non-sacred projects will be restructured to {"{k/, repos/, sandbox/}"} at
-              the project root (chat stays at k/chat/) with a single `project.json` config file at
-              the root holding both project- and per-repo-config. Migration runs as a dry-run
-              report first; no file moves until owner sign-off.
+            <DevNotes.Item kind="info" heading="Cycle 222 — Tynn column live (s130 t524)">
+              `open|doing` counts now populate from each project's `k/pm/tasks.jsonl` (or
+              `.tynn-lite/tasks.jsonl` legacy path). Shows `—` when no PM-Lite store exists
+              for that project. s139 (PM-Lite kanban) and s140 (k/ folder structure) both shipped.
             </DevNotes.Item>
             <DevNotes.Item kind="deferred" heading="COA chain dots in Knowledge column">
               Per cycle-128 audit, the Knowledge column should also show a small COA-chain
@@ -248,16 +269,11 @@ export function Projects({
           Replaces the per-core-repo sacred tiles. Users don't ship updates
           per package; they contribute across channels through the
           consolidated /aionima view (upstream alignment + PR + MINT).
-          Impactium-blockchain COA<>COI ties back to THIS single entry. */}
-      {isContributing && (
-        // Aionima + PAx render in a single Sacred row (owner directive
-        // 2026-04-29 cycle ~121): the two consolidation cards belong on
-        // the same row, not stacked. The auto-fill grid degrades to 1
-        // column at narrow widths and pairs them side-by-side at wider
-        // widths. Each card self-identifies via its name + badge so the
-        // per-section h3 ("Aionima", "PAx · ADF UI primitives") is
-        // dropped in favor of one shared "Sacred" header.
-        <div className="mb-6">
+          Impactium-blockchain COA<>COI ties back to THIS single entry.
+          Visible unconditionally per owner directive 2026-05-13: dev/
+          contributing mode only controls whether owner forks get cloned
+          into `_aionima/repos/`, not whether the Sacred card renders. */}
+      <div className="mb-6">
           <div className="flex items-center gap-2 mb-3">
             <Star className="h-4 w-4 text-yellow" />
             <h3 className="text-[13px] font-semibold text-foreground">Sacred</h3>
@@ -287,14 +303,15 @@ export function Projects({
                   </span>
                 </div>
                 <div className="text-[11px] text-muted-foreground">
-                  Platform contribution portal — upstream alignment, PR submission, MINT impact ($WORK / $K / $RES). Wraps the {sacredEntries.length} core forks + {PAX_SACRED_PROJECTS.length} Particle-Academy ADF UI primitives as a single self-managed project (`_aionima/repos/`).
+                  Platform contribution portal — upstream alignment, PR submission, MINT impact ($WORK / $K / $RES). {isContributing
+                    ? <>Wraps the {sacredEntries.filter((e) => e.project !== null).length} core forks + {PAX_SACRED_PROJECTS.length} Particle-Academy ADF UI primitives as a single self-managed project (`_aionima/repos/`).</>
+                    : <>Enable contributing mode in Settings to clone the {SACRED_PROJECTS.length} core Aionima forks + {PAX_SACRED_PROJECTS.length} Particle-Academy ADF UI primitives into <code>_aionima/repos/</code>.</>}
                 </div>
                 <div className="text-[11px] text-yellow mt-2 font-medium">Open Aionima →</div>
               </div>
             </div>
           </div>
         </div>
-      )}
 
       {/* s130 t516 slice 1 (cycle 102) — list view via react-fancy Table.
           Matches projects-ux-v2/projects-browser-v2.html mockup. Activity

@@ -35,8 +35,8 @@ export interface ShutdownMarker {
   externals: {
     /** Podman container name for the ID service's Postgres instance. */
     idPostgresContainer: string;
-    /** Systemd unit name for the ID service. */
-    idService: string;
+    /** @deprecated Absorbed into gateway — no longer a separate service. */
+    idService?: string;
   };
   projects: RunningProjectSnapshot[];
   models: RunningModelSnapshot[];
@@ -62,17 +62,11 @@ export const DEFAULT_MARKER_PATH = join(homedir(), ".agi", "shutdown-state.json"
 // External-dep defaults
 // ---------------------------------------------------------------------------
 
-// PostgreSQL and Local-ID both run as rootless Podman containers on the
-// shared `aionima` network. We don't rely on a hardcoded service unit any
-// more — we check the published loopback port and, if not responding, try
-// to start the known container by name. Constants are kept as fallback
-// names for shutdown markers written before the containerization.
+// PostgreSQL runs as a rootless Podman container on the shared `aionima`
+// network. We don't rely on a hardcoded container name — we probe the port
+// and, if not responding, discover any stopped postgres container by image.
 export const ID_POSTGRES_CONTAINER = "agi-postgres-17";
-export const ID_SERVICE_CONTAINER = "agi-local-id";
-/** Legacy host-process unit name — retired to `.retired-to-container`. */
-export const ID_SERVICE_UNIT = "agi-id.service";
 export const ID_POSTGRES_PORT = 5432;
-export const ID_SERVICE_PORT = 3200;
 
 // ---------------------------------------------------------------------------
 // Read / write / delete marker
@@ -142,7 +136,6 @@ export function buildShutdownMarker(
     pid: process.pid,
     externals: {
       idPostgresContainer: ID_POSTGRES_CONTAINER,
-      idService: ID_SERVICE_UNIT,
     },
     projects,
     models,
@@ -178,30 +171,6 @@ function podmanStart(name: string, log: Log): boolean {
   }
 }
 
-function systemctlIsActive(unit: string): boolean {
-  try {
-    const out = execFileSync("systemctl", ["is-active", unit], {
-      stdio: "pipe", timeout: 5_000,
-    }).toString().trim();
-    return out === "active";
-  } catch {
-    return false;
-  }
-}
-
-function systemctlStart(unit: string, log: Log): boolean {
-  try {
-    // Gateway runs as wishborn; systemd unit starts require sudo. The system
-    // is configured with passwordless sudo for this user (see CLAUDE.md).
-    execFileSync("sudo", ["-n", "systemctl", "start", unit], {
-      stdio: "pipe", timeout: 15_000,
-    });
-    return true;
-  } catch (err) {
-    log.warn(`[boot-recovery] sudo systemctl start ${unit} failed: ${err instanceof Error ? err.message : String(err)}`);
-    return false;
-  }
-}
 
 async function probeTcp(host: string, port: number, timeoutMs: number): Promise<boolean> {
   return await new Promise<boolean>((resolve) => {
@@ -249,7 +218,6 @@ async function waitForPort(
 export interface ReconcileReport {
   externals: {
     postgres: { action: "none" | "started" | "failed"; state: string };
-    idService: { action: "none" | "started" | "failed"; state: string };
     postgresReady: boolean;
   };
   projects: { total: number; started: number; failed: number; skipped: number };
@@ -265,23 +233,17 @@ export interface ReconcileReport {
 export async function ensureExternals(
   log: Log,
 ): Promise<ReconcileReport["externals"]> {
-  return reconcileExternalsByName(ID_POSTGRES_CONTAINER, ID_SERVICE_UNIT, log);
+  return reconcileExternalsPostgres(log);
 }
 
 export async function reconcileExternals(
-  marker: ShutdownMarker,
+  _marker: ShutdownMarker,
   log: Log,
 ): Promise<ReconcileReport["externals"]> {
-  return reconcileExternalsByName(
-    marker.externals.idPostgresContainer,
-    marker.externals.idService,
-    log,
-  );
+  return reconcileExternalsPostgres(log);
 }
 
-async function reconcileExternalsByName(
-  _pgName: string,
-  serviceName: string,
+async function reconcileExternalsPostgres(
   log: Log,
 ): Promise<ReconcileReport["externals"]> {
 
@@ -325,51 +287,11 @@ async function reconcileExternalsByName(
     }
   }
 
-  // ---- Local-ID container ----
-  // The identity service used to run as a host-level systemd unit
-  // (`agi-id.service`). It's now a rootless Podman container on the
-  // `aionima` network, published loopback-only. Probe the port first —
-  // if it's responding, nothing to do. Otherwise start the known
-  // container by name. The legacy `systemctl` path is a last-resort
-  // fallback for hosts still mid-migration.
-  let idAction: "none" | "started" | "failed" = "none";
-  let idState = "unknown";
-
-  const idPortUp = await probeTcp("127.0.0.1", ID_SERVICE_PORT, 2_000);
-  if (idPortUp) {
-    idAction = "none";
-    idState = "active";
-  } else {
-    const containerState = podmanContainerState(ID_SERVICE_CONTAINER);
-    if (containerState === "running") {
-      idState = "running-but-port-closed";
-      idAction = "failed";
-      log.warn(`[boot-recovery] ${ID_SERVICE_CONTAINER} is running but port ${String(ID_SERVICE_PORT)} isn't responding`);
-    } else if (containerState === "exited" || containerState === "created") {
-      log.info(`[boot-recovery] ${ID_SERVICE_CONTAINER} container ${containerState} — starting`);
-      idAction = podmanStart(ID_SERVICE_CONTAINER, log) ? "started" : "failed";
-      idState = containerState;
-    } else {
-      // No container yet — last-resort fallback to legacy systemd unit
-      // for hosts that haven't gone through the containerization upgrade.
-      const legacyActive = systemctlIsActive(serviceName);
-      if (legacyActive) {
-        idAction = "none";
-        idState = "active-legacy";
-      } else {
-        log.info(`[boot-recovery] no container or active unit for Local-ID — trying legacy unit ${serviceName}`);
-        idAction = systemctlStart(serviceName, log) ? "started" : "failed";
-        idState = "legacy";
-      }
-    }
-  }
-
   // ---- Wait for Postgres to accept connections ----
   const pgReady = pgAlreadyUp || await waitForPort("127.0.0.1", ID_POSTGRES_PORT, 15_000, log);
 
   return {
     postgres: { action: pgAction, state: pgState },
-    idService: { action: idAction, state: idState },
     postgresReady: pgReady,
   };
 }

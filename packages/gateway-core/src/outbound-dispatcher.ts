@@ -1,4 +1,4 @@
-import type { ChannelOutboundAdapter, OutboundContent } from "@agi/channel-sdk";
+import type { ChannelOutboundAdapter, OutboundContent } from "@agi/plugins";
 import type { COAChainLogger } from "@agi/coa-chain";
 import type { VoicePipeline } from "@agi/voice";
 import type { VoiceGatewayState } from "@agi/voice";

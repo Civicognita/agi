@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "build": "tsdown"
+  },
   "exports": {
     ".": "./src/index.ts"
   },
@@ -14,8 +17,11 @@
     "entry": "./src/index.ts"
   },
   "dependencies": {
-    "@agi/channel-sdk": "workspace:*",
     "@agi/plugins": "workspace:*",
+    "@agi/sdk": "workspace:*",
     "discord.js": "^14.18.0"
+  },
+  "devDependencies": {
+    "tsdown": "^0.12.0"
   }
 }

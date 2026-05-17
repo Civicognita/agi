@@ -16,7 +16,7 @@ import type {
 import type {
   AionimaChannelPlugin,
   AionimaMessage,
-} from "@agi/channel-sdk";
+} from "@agi/sdk";
 
 import {
   type DiscordConfig,
@@ -33,6 +33,9 @@ import {
   isGuildAllowed,
   isChannelAllowed,
 } from "./security.js";
+import { buildDiscordBridgeTools } from "./aion-tools.js";
+import { createDiscordChannelDefV2WithTools } from "./channel-def.js";
+import { getDiscordState, getDiscordAvailableRooms } from "./state.js";
 
 // Re-exports for consumer convenience
 export type { DiscordConfig } from "./config.js";
@@ -276,17 +279,27 @@ async function handleGuildJoin(
  */
 export function createDiscordPlugin(
   config: DiscordConfig,
-): AionimaChannelPlugin {
+): AionimaChannelPlugin & { __client: Client; __config: DiscordConfig } {
   if (!isDiscordConfig(config)) {
     throw new Error("Invalid Discord config: botToken is required");
   }
 
+  // Owner directive 2026-05-13: Aion needs richer Discord context —
+  // user profiles, roles, presence, all messages with time-window search.
+  // GuildMembers + GuildPresences are PRIVILEGED intents — must be
+  // enabled in the Discord developer portal for the bot before this
+  // client can connect with them. If the bot login fails with a
+  // privileged-intent error, the operator needs to toggle them on at
+  // https://discord.com/developers/applications/<applicationId>/bot.
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.DirectMessages,
+      GatewayIntentBits.GuildMembers,    // roles + member metadata (privileged)
+      // GuildPresences requires Presence Intent enabled in the developer portal.
+      // Disabled until explicitly needed — enable in portal first, then re-add.
     ],
   });
 
@@ -503,6 +516,12 @@ export function createDiscordPlugin(
     },
 
     security,
+    // Internal escape hatches — used by the activate() function below to
+    // register bridge tools against the live Client. Marked as `__` to
+    // discourage consumer use; not part of the public AionimaChannelPlugin
+    // contract.
+    __client: client,
+    __config: config,
   };
 }
 
@@ -518,5 +537,39 @@ export default {
       channelConfig.config as unknown as DiscordConfig,
     );
     api.registerChannel(plugin);
+
+    // CHN-B s163 slice 2 (2026-05-14) — register the v2 ChannelDefinition
+    // in PARALLEL to the legacy registerChannel() above. The dispatcher
+    // still consumes the legacy path; the v2 registry holds the shadow
+    // entry for slice 3, when the dispatcher switches over. No behavior
+    // change in this slice — just registry presence.
+    const v2Def = createDiscordChannelDefV2WithTools(plugin.__config, plugin.__client);
+    api.registerChannelV2(v2Def);
+
+    // s157-sibling Discord update 2026-05-13 — register bridge tools so
+    // Aion can read message history, profiles, roles, and presence from
+    // Discord. These are READ-side tools; response gating still goes
+    // through the existing `mentionOnly` config (Aion only POSTS when
+    // @-mentioned). See OQ-2 in docs/agents/channel-plugin-redesign.md.
+    const bridgeTools = buildDiscordBridgeTools({ client: plugin.__client, config: plugin.__config });
+    for (const tool of bridgeTools) {
+      api.registerAgentTool(tool);
+    }
+
+    // CHN-B slice 2026-05-14 (s163) — owner-facing introspection endpoint
+    // for the dashboard's Discord status card. Returns the live bot
+    // connection state, guild list, and per-guild channel/forum listing.
+    // Cheap to call; reads from the in-process discord.js Client cache.
+    api.registerHttpRoute("GET", "/api/channels/discord/state", async (_req, reply) => {
+      reply.send(getDiscordState(plugin.__client));
+    });
+
+    // CHN-D slice 3b 2026-05-14 — flat list of bindable rooms for the
+    // dashboard's project-room picker. Filters out voice channels +
+    // categories; emits {channelId, roomId, label, kind, privacy, group}
+    // sorted by (guild, parent, label).
+    api.registerHttpRoute("GET", "/api/channels/discord/rooms", async (_req, reply) => {
+      reply.send({ rooms: getDiscordAvailableRooms(plugin.__client) });
+    });
   },
 } satisfies AionimaPlugin;

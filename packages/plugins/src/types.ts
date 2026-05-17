@@ -6,7 +6,7 @@ import type { ProjectTypeDefinition, ProjectTypeTool } from "@agi/gateway-core";
 export type { LogSourceDefinition } from "@agi/gateway-core";
 import type { ComponentLogger } from "@agi/gateway-core";
 import type { StackDefinition } from "@agi/gateway-core";
-import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import type { AionimaChannelPlugin } from "./channel-plugin-types.js";
 import type { ScanProviderDefinition } from "@agi/security";
 
 // ---------------------------------------------------------------------------
@@ -853,6 +853,15 @@ export interface AionimaPluginAPI {
   registerRuntimeInstaller(installer: RuntimeInstaller): void;
   registerStack(def: StackDefinition): void;
   registerChannel(channelPlugin: AionimaChannelPlugin): void;
+  /**
+   * CHN-B (s163) slice 2 — register a `defineChannelV2` channel definition
+   * (from @agi/sdk). Coexists with legacy `registerChannel()` during the
+   * additive migration. `def` is typed `unknown` here to avoid a circular
+   * workspace dep (@agi/plugins ← @agi/sdk); consumers cast back via
+   * `import type { ChannelDefinition } from "@agi/sdk"`. The runtime
+   * surface requires `def.id` (string) so the registry can dedupe.
+   */
+  registerChannelV2(def: { id: string }): void;
   registerAction(def: ActionDefinition): void;
   /**
    * @deprecated s150 t639 (2026-05-07) — zero production callers; slated for

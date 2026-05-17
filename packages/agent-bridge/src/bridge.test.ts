@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { ChannelId, OutboundContent } from "@agi/channel-sdk";
+import type { ChannelId, OutboundContent } from "@agi/plugins";
 import type { QueueMessage } from "@agi/entity-model";
 import { AgentBridge } from "./bridge.js";
 import type { BridgeDispatcher, BridgeBroadcaster, HeldMessage } from "./types.js";

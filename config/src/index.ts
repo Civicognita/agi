@@ -41,6 +41,7 @@ export {
   ProjectAiDatasetBindingSchema,
   ProjectIterativeWorkSchema,
   ProjectRepoSchema,
+  ProjectRoomBindingSchema,
   ProjectMcpServerSchema,
   ProjectMcpSchema,
   type ProjectConfig,
@@ -51,6 +52,7 @@ export {
   type ProjectAiDatasetBinding,
   type ProjectIterativeWork,
   type ProjectRepo,
+  type ProjectRoomBinding,
   type ProjectMcpServer,
   type ProjectMcp,
 } from "./project-schema.js";

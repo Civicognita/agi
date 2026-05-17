@@ -14,8 +14,6 @@ import {
   isChannelAllowed,
 } from "./security.js";
 import { createDiscordPlugin } from "./index.js";
-import { validateAdapter } from "@agi/channel-sdk";
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -235,6 +233,31 @@ describe("normalizeMessage", () => {
     );
 
     expect(result).toBeNull();
+  });
+
+  // CHN-B (s163) slice 2 — roomId encoding for dispatcher consumption
+  it("attaches metadata.roomId as `guildId:channelId` for guild messages", () => {
+    const result = normalizeMessage(
+      mockMessage({
+        content: "hi",
+        guildId: "1234567890",
+        channelId: "9876543210",
+        channel: { isThread: () => false, id: "9876543210", name: "general" },
+      })
+    );
+    expect((result!.metadata as Record<string, unknown>).roomId).toBe("1234567890:9876543210");
+  });
+
+  it("leaves metadata.roomId undefined for DMs (no guildId)", () => {
+    const result = normalizeMessage(
+      mockMessage({
+        content: "hi from a DM",
+        guildId: null,
+        channelId: "dm-channel-1",
+        channel: { isThread: () => false, id: "dm-channel-1", name: "DM" },
+      })
+    );
+    expect((result!.metadata as Record<string, unknown>).roomId).toBeUndefined();
   });
 
   it("normalizes an image attachment to type:media", () => {
@@ -894,12 +917,6 @@ describe("createDiscordPlugin", () => {
     expect(typeof plugin.outbound.send).toBe("function");
   });
 
-  it("passes validateAdapter from channel-sdk", () => {
-    const plugin = createDiscordPlugin({ botToken: "Bot fake-token" });
-    const result = validateAdapter(plugin);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-  });
 });
 
 // ---------------------------------------------------------------------------

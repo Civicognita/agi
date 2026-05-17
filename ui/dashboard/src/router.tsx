@@ -32,6 +32,7 @@ import MarketplacePage from "./routes/marketplace.js";
 import HFMarketplacePage from "./routes/hf-marketplace.js";
 import SettingsHFPage from "./routes/settings-hf.js";
 import SettingsProvidersPage from "./routes/settings-providers.js";
+import SettingsChannelsPage from "./routes/settings-channels.js";
 import SettingsVaultPage from "./routes/settings-vault.js";
 import ScheduledJobsPage from "./routes/settings-scheduled-jobs.js";
 // /aionima → /projects/_aionima redirect (s119 t705).
@@ -50,6 +51,7 @@ import BackupsPage from "./routes/system-backups.js";
 import SecuritySettingsPage from "./routes/settings-security.js";
 import SystemSecurityPage from "./routes/system-security.js";
 import IdentityServicePage from "./routes/system-identity.js";
+import IdentityPendingPage from "./routes/identity-pending.js";
 import SystemAgentsPage from "./routes/system-agents.js";
 import PromptInspectorPage from "./routes/prompt-inspector.js";
 import MagicAppsPage from "./routes/magic-apps.js";
@@ -111,6 +113,7 @@ export const router = createBrowserRouter([
           { index: true, element: <Navigate to="/settings/gateway" replace /> },
           { path: "gateway", element: <SettingsGatewayPage /> },
           { path: "providers", element: <SettingsProvidersPage /> },
+          { path: "channels", element: <SettingsChannelsPage /> },
           { path: "vault", element: <SettingsVaultPage /> },
           { path: "scheduled-jobs", element: <ScheduledJobsPage /> },
           { path: "security", element: <SecuritySettingsPage /> },
@@ -139,6 +142,8 @@ export const router = createBrowserRouter([
       { path: "system/logs", element: <Navigate to="/gateway/logs" replace /> },
       { path: "system/settings", element: <Navigate to="/settings/gateway" replace /> },
       { path: "system/comms", element: <Navigate to="/comms" replace /> },
+      // CHN-E (s166) slice 4 — pending-from-channel approval queue
+      { path: "identity/pending", element: <IdentityPendingPage /> },
       // Communication
       { path: "comms", element: <CommsPage /> },
       { path: "comms/telegram", element: <CommsTelegramPage /> },

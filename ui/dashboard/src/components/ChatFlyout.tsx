@@ -19,13 +19,14 @@ import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
 import type { ToolCard } from "./ToolCards.js";
 import { PlanViewer } from "./PlanViewer.js";
 import { ChatHistory } from "./ChatHistory.js";
+import { LoopProgressBar } from "./LoopProgressBar.js";
 import { applyInjectionConsumed, shouldShowLivePill, applyStallTimeout, groupByThoughtBoundary } from "./chat-flyout-reducers.js";
 import type { ChatSessionShape, ChatMessageShape } from "./chat-flyout-reducers.js";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useIsMobile, useConfig } from "@/hooks.js";
-import { ContentRenderer, Textarea } from "@particle-academy/react-fancy";
+import { ContentRenderer, Textarea, PromptInput } from "@particle-academy/react-fancy";
 import { Copy as CopyIcon, Check as CheckIcon } from "lucide-react";
 import { PlansDrawer } from "./PlansDrawer.js";
 
@@ -1217,9 +1218,6 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // Derived send-button state
   // -------------------------------------------------------------------------
 
-  const canSend = activeSession != null
-    && (input.trim().length > 0 || attachments.length > 0);
-
   if (!open && !docked) return null;
 
   // Shared header for docked and overlay modes
@@ -1250,6 +1248,14 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // Panel body: everything below the header (shared between docked and overlay modes)
   const panelBody = (
     <div className="relative flex flex-col flex-1 min-h-0">
+        {/* s120 t452 — Loop progress bar mirrors the Claude Code statusline.
+            Restored in v0.4.692 after the orphan-audit cycle 247 fix deleted
+            Chat.tsx (its only prior consumer); LoopProgressBar belongs on
+            the real chat surface, which is THIS file. */}
+        <div className="px-3 pt-2">
+          <LoopProgressBar />
+        </div>
+
         {/* Chat history overlay */}
         <ChatHistory
           open={historyOpen}
@@ -1680,44 +1686,17 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           />
         )}
 
-        {/* Attachment preview */}
-        {activeSession && attachments.length > 0 && (
-          <div className="px-3 py-1.5 border-t border-border bg-card flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto shrink-0">
-            {attachments.map((att) => (
-              <div
-                key={att.id}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-background border border-border text-[11px] text-foreground max-w-[200px]"
-              >
-                {att.type === "image" ? (
-                  <img
-                    src={att.content}
-                    alt={att.name}
-                    className="w-6 h-6 rounded object-cover"
-                  />
-                ) : (
-                  <span className="text-sm shrink-0">&#128196;</span>
-                )}
-                <span className="overflow-hidden text-ellipsis whitespace-nowrap flex-1">
-                  {att.name}
-                </span>
-                <span className="text-muted-foreground text-[10px] shrink-0">
-                  {formatFileSize(att.size)}
-                </span>
-                <span
-                  onClick={() => removeAttachment(att.id)}
-                  className="cursor-pointer text-red font-bold text-xs shrink-0"
-                >
-                  x
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Input bar */}
+        {/* Input bar — PromptInput owns the shell; file picker + attachment
+            chips live in its aboveInput slot so there is one unified UX.
+            PromptInput v3 has its own drop-to-attach chip bar, but it only
+            stores {id,name,bytes} and discards the File object. We intercept
+            drag/drop in the capture phase (onDropCapture fires parent-first)
+            so PromptInput never sees the event, preventing its cosmetic chip
+            bar from activating while our processFiles pipeline gets the real
+            File objects. aboveInput then shows our processed chips. */}
         {activeSession && (
-          <div className="px-3 py-2.5 border-t border-border bg-card flex gap-1.5 items-end shrink-0">
-            {/* Hidden file input */}
+          <div className="px-3 py-2.5 border-t border-border bg-card shrink-0">
+            {/* Hidden file input — triggered by the paperclip in aboveInput */}
             <input
               ref={fileInputRef}
               type="file"
@@ -1725,43 +1704,81 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
               onChange={handleFileSelect}
               className="hidden"
             />
-            {/* Paperclip button */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              title="Attach files"
-              className="p-2 rounded-[10px] border border-border bg-transparent text-muted-foreground text-base cursor-pointer shrink-0 leading-none"
-            >
-              &#128206;
-            </button>
-            <Textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder="Message Aionima..."
-              rows={1}
-              className="flex-1 text-[13px] resize-none min-h-[44px] max-h-[100px]"
-            />
             {activeSession?.thinking ? (
-              <button
-                onClick={cancelInvocation}
-                className="px-3.5 py-2 rounded-[10px] border-none text-[13px] font-semibold bg-red text-white cursor-pointer"
-              >
-                Stop
-              </button>
+              <div className="flex gap-1.5 items-end">
+                <Textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  placeholder="Message Aionima…"
+                  rows={1}
+                  className="flex-1 text-[13px] resize-none min-h-[44px] max-h-[100px]"
+                />
+                <button
+                  onClick={cancelInvocation}
+                  className="px-3.5 py-2 rounded-[10px] border-none text-[13px] font-semibold bg-red text-white cursor-pointer"
+                >
+                  Stop
+                </button>
+              </div>
             ) : (
-              <button
-                onClick={() => sendMessage(input)}
-                disabled={!canSend}
-                className={cn(
-                  "px-3.5 py-2 rounded-[10px] border-none text-[13px] font-semibold",
-                  canSend
-                    ? "bg-primary text-primary-foreground cursor-pointer"
-                    : "bg-secondary text-muted-foreground cursor-default",
-                )}
+              <div
+                onDropCapture={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation(); // prevents PromptInput's onDrop from firing
+                  const files = Array.from(e.dataTransfer.files);
+                  if (files.length > 0) processFiles(files);
+                }}
+                onDragOverCapture={(e) => { e.preventDefault(); }}
+                onPasteCapture={(e) => {
+                  const files = Array.from(e.clipboardData.items)
+                    .map((i) => i.getAsFile())
+                    .filter((f): f is File => f !== null);
+                  if (files.length > 0) {
+                    e.preventDefault();
+                    processFiles(files);
+                  }
+                }}
               >
-                Send
-              </button>
+                <PromptInput
+                  budgetTokens={32_000}
+                  placeholder="Message Aionima…"
+                  showHint
+                  onSubmit={(text) => sendMessage(text)}
+                  aboveInput={
+                    <div className="flex items-center gap-2 px-2 py-1 flex-wrap min-h-[30px]">
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        title="Attach files"
+                        className="shrink-0 text-muted-foreground hover:text-foreground text-base leading-none cursor-pointer"
+                      >
+                        &#128206;
+                      </button>
+                      {attachments.map((att) => (
+                        <div
+                          key={att.id}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-muted border border-border text-[11px] max-w-[180px]"
+                        >
+                          {att.type === "image" ? (
+                            <img src={att.content} alt={att.name} className="w-4 h-4 rounded object-cover shrink-0" />
+                          ) : (
+                            <span className="shrink-0">&#128196;</span>
+                          )}
+                          <span className="font-mono truncate">{att.name}</span>
+                          <span className="text-muted-foreground shrink-0">{formatFileSize(att.size)}</span>
+                          <span
+                            onClick={() => removeAttachment(att.id)}
+                            className="cursor-pointer text-muted-foreground hover:text-foreground font-bold shrink-0 leading-none"
+                          >
+                            ×
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  }
+                />
+              </div>
             )}
           </div>
         )}

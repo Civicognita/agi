@@ -5,8 +5,6 @@
  * Supports both 360dialog aggregator and direct Cloud API access.
  */
 
-import type { ChannelConfigAdapter } from "@agi/channel-sdk";
-
 // ---------------------------------------------------------------------------
 // Config type
 // ---------------------------------------------------------------------------
@@ -87,7 +85,7 @@ export function isWhatsAppConfig(value: unknown): value is WhatsAppConfig {
 // Config adapter
 // ---------------------------------------------------------------------------
 
-export function createConfigAdapter(): ChannelConfigAdapter {
+export function createConfigAdapter() {
   return {
     validate: (config: unknown) => isWhatsAppConfig(config),
     getDefaults: () => ({

@@ -313,17 +313,6 @@ export interface BuildCaddyfileOptions {
   whodbPort?: number;
   whodbContainerName?: string;
   /**
-   * Local-ID runs on the aionima network as `agi-local-id`. `port` is the
-   * container-internal listen port. `containerName` overrides the default
-   * when the unit uses a non-default name.
-   */
-  idService?: {
-    enabled?: boolean;
-    subdomain?: string;
-    port?: number;
-    containerName?: string;
-  };
-  /**
    * Subdomain routes declared by plugins. `target` is a container-internal
    * port when `containerName` is provided (aionima DNS route); falls back
    * to `host.containers.internal:<target>` when only a port is given, or
@@ -485,18 +474,6 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
   blocks.push(`    header Content-Security-Policy "frame-ancestors 'self' ${whodbFrameOrigins}"`);
   blocks.push(`    reverse_proxy ${whodbContainer}:${String(whodbInternalPort)}`);
   blocks.push(`}\n`);
-
-  // Local ID service — when enabled, reverse-proxy id.{baseDomain} to the
-  // ID container on aionima. No host port binding; only AGI binds host ports.
-  if (opts.idService?.enabled) {
-    const idSubdomain = opts.idService.subdomain ?? "id";
-    const idContainer = opts.idService.containerName ?? "agi-local-id";
-    const idInternalPort = opts.idService.port ?? 3200;
-    blocks.push(`${idSubdomain}.${opts.baseDomain} {`);
-    blocks.push(`    ${TLS_INTERNAL}`);
-    blocks.push(`    reverse_proxy ${idContainer}:${String(idInternalPort)}`);
-    blocks.push(`}\n`);
-  }
 
   // Plugin-registered subdomain routes. When the route declares a
   // containerName, Caddy resolves it on aionima; otherwise (legacy route
@@ -753,12 +730,6 @@ export interface HostingConfig {
   tunnelMode?: "quick" | "named";
   /** Cloudflare-managed domain for named tunnels. Named tunnels create DNS as <project>.<tunnelDomain>. */
   tunnelDomain?: string;
-  /** Local ID service config — when enabled, generates a Caddy entry for id.{baseDomain}. */
-  idService?: {
-    enabled: boolean;
-    port: number;
-    subdomain: string;
-  };
   /** WhoDB database explorer port (default: 5050). Always-on infrastructure. */
   whodbPort?: number;
 }
@@ -2980,7 +2951,6 @@ export class HostingManager {
       domainAliases: this.config.domainAliases,
       gatewayPort: this.config.gatewayPort,
       whodbPort: this.config.whodbPort,
-      idService: this.config.idService,
       pluginSubdomainRoutes: this.pluginReg?.getSubdomainRoutes().map(({ route }) => route) ?? [],
       projects: Array.from(this.projects.values())
         .filter((p) => p.meta.enabled)
