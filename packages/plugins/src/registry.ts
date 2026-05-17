@@ -776,6 +776,7 @@ export class PluginRegistry {
     removedCounts.subdomainRoutes = filterInPlace(this.subdomainRoutes, keep);
     removedCounts.stacks = filterInPlace(this.stacks, keep);
     removedCounts.channels = filterInPlace(this.channels, keep);
+    removedCounts.channelsV2 = filterInPlace(this.channelsV2, keep);
     removedCounts.providers = filterInPlace(this.providers, keep);
     removedCounts.scanProviders = filterInPlace(this.scanProviders, keep);
     removedCounts.workers = filterInPlace(this.workers, keep);

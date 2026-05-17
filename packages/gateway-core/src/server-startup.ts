@@ -276,16 +276,22 @@ export async function startGatewaySidecars(
       ),
     );
 
-    // Wire inbound router to all running legacy channels
-    for (const running of channelRegistry.getRunningChannels()) {
-      const id = running.plugin.id as string;
-      running.plugin.messaging.onMessage(async (message: AionimaMessage) => {
+    // Wire legacy channel inbound routing — runs for any channel that starts,
+    // whether at boot or via the manual Start button later. A Set tracks which
+    // channels are already wired so restart events don't double-register.
+    const wiredLegacyChannels = new Set<string>();
+    function wireLegacyChannel(channelId: string) {
+      if (wiredLegacyChannels.has(channelId)) return;
+      const entry = channelRegistry.getChannel(channelId);
+      if (!entry) return;
+      wiredLegacyChannels.add(channelId);
+      entry.plugin.messaging.onMessage(async (message: AionimaMessage) => {
         const preview = message.content.type === "text" ? message.content.text.slice(0, 80) : `[${message.content.type}]`;
-        log.info(`[inbound] ${id}: message from ${message.channelUserId} — "${preview}"`);
+        log.info(`[inbound] ${channelId}: message from ${message.channelUserId} — "${preview}"`);
         try {
           const result = await inboundRouter.route(message);
           if (result === null) {
-            log.info(`[inbound] ${id}: handled inline (owner command or pairing gate)`);
+            log.info(`[inbound] ${channelId}: handled inline (owner command or pairing gate)`);
             return;
           }
           log.info(`[inbound] routed → entity=${result.entityId} queue=${result.queueMessageId}`);
@@ -293,7 +299,27 @@ export async function startGatewaySidecars(
           log.error(`[inbound] routing error: ${err instanceof Error ? err.message : String(err)}`);
         }
       });
+      log.info(`[inbound] wired legacy channel: ${channelId}`);
     }
+
+    // Wire channels that are already running at boot (legacy only — v2 channels
+    // use protocol.onEvent() wired in the v2 block below).
+    for (const running of channelRegistry.getRunningChannels()) {
+      if (!v2ChannelIds.has(running.plugin.id as string)) {
+        wireLegacyChannel(running.plugin.id as string);
+      }
+    }
+
+    // Wire future starts: covers the manual Start button in Settings → Channels
+    // which calls POST /api/channels/:id/start AFTER the gateway is already up.
+    // No v2ChannelIds filter here — that set is a boot-time snapshot; channels
+    // started manually use the legacy registry path regardless of v2 presence.
+    channelRegistry.on("channel_started", (channelId: string) => {
+      // Always re-wire on start: onActivateChannel creates a new plugin instance,
+      // so the old messaging.onMessage registration is stale.
+      wiredLegacyChannels.delete(channelId);
+      wireLegacyChannel(channelId);
+    });
 
     for (const running of channelRegistry.getRunningChannels()) {
       const id = running.plugin.id as string;
