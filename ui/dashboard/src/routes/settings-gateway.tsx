@@ -1,13 +1,5 @@
 /**
- * Settings > Gateway — tabbed settings page (Owner, Identity, Channels,
- * Contributing, Network).
- *
- * Channels tab added 2026-05-14 (s163 CHN-B fix): owner needed a surface
- * to enter Discord/Telegram bot tokens + see connection status. The
- * canonical long-term home is per-channel plugin settings pages, but
- * those don't exist yet. Until the channel plugins migrate to
- * defineChannelV2 + register their own SettingsPage component, this
- * gateway-side fallback provides token entry + status UX.
+ * Settings > Gateway — tabbed settings page (Owner, Identity, Contributing, Network).
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -18,19 +10,14 @@ import { OwnerSettings } from "@/components/settings/OwnerSettings.js";
 import { DevSettings } from "@/components/settings/DevSettings.js";
 import { GatewayNetworkSettings } from "@/components/settings/GatewayNetworkSettings.js";
 import { IdentitySettings } from "@/components/settings/IdentitySettings.js";
-import { ChannelSettings } from "@/components/settings/ChannelSettings.js";
 import { DevNote } from "@/components/ui/dev-notes";
 import type { AionimaConfig } from "../types.js";
 
-// s135 — the deprecated Providers tab has been removed. Canonical
-// Providers UX lives at /settings/providers (Mission Control hero,
-// range dial, escalation triggers, provider catalog shelf).
-type Tab = "general" | "identity" | "channels" | "dev" | "network";
+type Tab = "general" | "identity" | "dev" | "network";
 
 const tabs: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "identity", label: "Identity" },
-  { id: "channels", label: "Channels" },
   { id: "dev", label: "Contributing" },
   { id: "network", label: "Network" },
 ];
@@ -77,6 +64,11 @@ export default function SettingsGatewayPage() {
         Deprecated Providers tab removed from this page. Canonical Providers UX lives at /settings/providers
         (Mission Control hero, range dial, escalation triggers, provider catalog shelf, Models tab).
       </DevNote>
+      <DevNote heading="Cycle 262 — Channels tab removed" kind="info" scope="settings/gateway">
+        Channels tab removed from this page. Channel config, token entry, status, and workflow bindings
+        live at Settings → Channels (plugin-driven, one tab per installed channel). Gateway settings no
+        longer has a hardcoded Telegram/Discord config surface.
+      </DevNote>
       <DevNote heading="Contributing/Dev Mode gates DevNotes visibility" kind="info" scope="settings/gateway">
         Toggle "Contributing" tab → enable Dev Mode. Notes only render when this is on. Production users
         running the gateway never see DevNotes; you (with Contributing on) see them on every page+tab.
@@ -122,10 +114,6 @@ export default function SettingsGatewayPage() {
           <OwnerSettings owner={owner} update={update} />
           <IdentitySettings config={draft} update={update} />
         </>
-      )}
-
-      {activeTab === "channels" && (
-        <ChannelSettings config={draft} update={update} />
       )}
 
       {activeTab === "dev" && (

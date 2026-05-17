@@ -7,6 +7,7 @@
  *   - Config form (fields derived from the plugin's getDefaults() template,
  *     populated with values from gateway.json)
  *   - Enabled toggle
+ *   - Workflow bindings (MApp → channel dispatch rules)
  *
  * Config is persisted via PATCH /api/channels/:id/config → gateway.json.
  * Hot-reload applies without a gateway restart; a channel restart is offered
@@ -16,6 +17,8 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { DevNote } from "@/components/ui/dev-notes";
 import {
   fetchChannels,
@@ -25,8 +28,12 @@ import {
   startChannel,
   stopChannel,
   restartChannel,
+  listWorkflowBindings,
+  addWorkflowBinding,
+  deleteWorkflowBinding,
   type ChannelListEntry,
   type ChannelConfigResponse,
+  type ChannelWorkflowBinding,
 } from "@/api.js";
 import type { ChannelDetail } from "@/types.js";
 
@@ -62,6 +69,141 @@ function isSensitive(key: string): boolean {
 /** Strip trailing " Channel" suffix from plugin display name. */
 function shortName(name: string): string {
   return name.replace(/\s+Channel$/i, "");
+}
+
+// ---------------------------------------------------------------------------
+// WorkflowBindingsBlock — MApp workflow bindings for a channel
+// ---------------------------------------------------------------------------
+
+const EMPTY_FORM = { mappId: "", label: "", roomId: "", roleId: "", messagePattern: "" };
+
+function WorkflowBindingsBlock({ channelId }: { channelId: string }) {
+  const [bindings, setBindings] = useState<ChannelWorkflowBinding[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const bs = await listWorkflowBindings(channelId);
+      setBindings(bs);
+      setError(null);
+    } catch {
+      setError("Failed to load bindings");
+    } finally {
+      setLoading(false);
+    }
+  }, [channelId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.mappId.trim()) { setAddError("MApp ID is required"); return; }
+    setAdding(true);
+    setAddError(null);
+    try {
+      await addWorkflowBinding({
+        channelId,
+        mappId: form.mappId.trim(),
+        label: form.label.trim() || undefined,
+        roomId: form.roomId.trim() || undefined,
+        roleId: form.roleId.trim() || undefined,
+        messagePattern: form.messagePattern.trim() || undefined,
+      });
+      setForm(EMPTY_FORM);
+      setShowAdd(false);
+      await load();
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : "Failed to add binding");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await deleteWorkflowBinding(id);
+      setBindings((prev) => prev.filter((b) => b.id !== id));
+    } catch {
+      setError("Failed to delete binding");
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[13px] font-semibold text-foreground">Workflow Bindings</span>
+        <Button variant="outline" size="xs" onClick={() => { setShowAdd((v) => !v); setAddError(null); }}>
+          {showAdd ? "Cancel" : "Add"}
+        </Button>
+      </div>
+
+      {showAdd && (
+        <form onSubmit={(e) => { void handleAdd(e); }} className="mb-4 p-3 rounded border border-border bg-muted/30 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-[12px] font-medium text-muted-foreground">MApp ID *</label>
+              <Input value={form.mappId} onChange={(e) => setForm((f) => ({ ...f, mappId: e.target.value }))} placeholder="e.g. my-mapp" className="font-mono text-xs" data-testid="binding-mapp-id" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[12px] font-medium text-muted-foreground">Label</label>
+              <Input value={form.label} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} placeholder="Optional display name" className="text-xs" data-testid="binding-label" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[12px] font-medium text-muted-foreground">Room ID</label>
+              <Input value={form.roomId} onChange={(e) => setForm((f) => ({ ...f, roomId: e.target.value }))} placeholder="Channel ID (optional)" className="font-mono text-xs" data-testid="binding-room-id" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[12px] font-medium text-muted-foreground">Role ID</label>
+              <Input value={form.roleId} onChange={(e) => setForm((f) => ({ ...f, roleId: e.target.value }))} placeholder="Role ID (optional)" className="font-mono text-xs" data-testid="binding-role-id" />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-[12px] font-medium text-muted-foreground">Message Pattern (regex)</label>
+            <Input value={form.messagePattern} onChange={(e) => setForm((f) => ({ ...f, messagePattern: e.target.value }))} placeholder="e.g. ^!command or leave empty to match all" className="font-mono text-xs" data-testid="binding-pattern" />
+          </div>
+          {addError !== null && <p className="text-xs text-red">{addError}</p>}
+          <Button type="submit" size="xs" disabled={adding} data-testid="binding-add-submit">
+            {adding ? "Adding…" : "Add Binding"}
+          </Button>
+        </form>
+      )}
+
+      {loading && <p className="text-[13px] text-muted-foreground">Loading…</p>}
+      {error !== null && <p className="text-[13px] text-red">{error}</p>}
+
+      {!loading && bindings.length === 0 && (
+        <p className="text-[13px] text-muted-foreground" data-testid="binding-empty">
+          No bindings. Add one to dispatch incoming messages to a MApp workflow.
+        </p>
+      )}
+
+      {bindings.length > 0 && (
+        <div className="space-y-2" data-testid="binding-list">
+          {bindings.map((b) => (
+            <div key={b.id} className="flex items-start justify-between gap-2 p-2 rounded border border-border text-[12px]" data-testid="binding-row">
+              <div className="flex-1 min-w-0 space-y-0.5">
+                <div className="font-mono font-semibold truncate">{b.label ?? b.mappId}</div>
+                <div className="text-muted-foreground space-x-2">
+                  <span>MApp: <span className="font-mono">{b.mappId}</span></span>
+                  {b.roomId !== undefined && <span>Room: <span className="font-mono">{b.roomId}</span></span>}
+                  {b.roleId !== undefined && <span>Role: <span className="font-mono">{b.roleId}</span></span>}
+                  {b.messagePattern !== undefined && <span>Pattern: <span className="font-mono">{b.messagePattern}</span></span>}
+                </div>
+              </div>
+              <Button variant="ghost" size="xs" className="shrink-0 text-red hover:bg-red/10" onClick={() => { void handleDelete(b.id); }} data-testid="binding-delete">
+                Delete
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +409,8 @@ function ChannelTab({ id, initialEnabled }: ChannelTabProps) {
           )}
         </div>
       </Card>
+
+      <WorkflowBindingsBlock channelId={id} />
     </div>
   );
 }
@@ -301,6 +445,11 @@ export default function SettingsChannelsPage() {
           IDs) — derived from discoveredPlugins. Config persists to gateway.json via PATCH
           /api/channels/:id/config; a running channel is automatically restarted on save
           so new credentials take effect immediately.
+        </DevNote.Item>
+        <DevNote.Item kind="info" heading="Cycle 262 — Workflow bindings moved here">
+          WorkflowBindingsBlock migrated from the old Gateway → Channels tab (removed).
+          Every channel tab now shows its own workflow bindings below the config form.
+          The Gateway settings Channels tab has been removed — this page is the canonical home.
         </DevNote.Item>
       </DevNote>
 

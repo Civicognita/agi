@@ -41,6 +41,9 @@ ALLOWLIST=(
   "components/ActivityIndicator.tsx"
   # Replaced by /gateway/marketplace page.
   "components/PluginManager.tsx"
+  # Cycle 262 — Channels tab removed from Settings > Gateway; token config +
+  # workflow bindings now live in Settings → Channels (settings-channels.tsx).
+  "components/settings/ChannelSettings.tsx"
   # Shadcn-style re-export shims kept for back-compat with any future
   # consumer; today they import direct from react-fancy. Harmless if
   # unused — delete in a dedicated cleanup slice if confirmed dead.
