@@ -3235,6 +3235,11 @@ export async function startGatewayServer(
             await pluginRegistry.deactivateSingle(pluginId);
           }
 
+          // Reset any circuit-breaker failures recorded against this plugin so
+          // prior failed attempts (e.g. from a previous Start click) don't cause
+          // the breaker to skip this load.
+          circuitBreakerTracker?.reset(`plugin:${pluginId}`);
+
           // Read fresh config from disk so activate() sees current enabled/config values.
           const freshCfg = (systemConfigService?.read() ?? config) as Record<string, unknown>;
           const freshChannelConfigs = (freshCfg.channels ?? []) as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>;
@@ -3252,7 +3257,7 @@ export async function startGatewayServer(
             channelRegistry,
             channelConfigs: freshChannelConfigs,
             circuitBreaker: circuitBreakerTracker,
-          }, { bustCache: true });
+          });
           if (result.loaded.length > 0) {
             bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
             return { ok: true };
