@@ -41,4 +41,12 @@ export default defineConfig([
     clean: true,
     external: ["@agi/plugins", "@agi/gateway-core", "@agi/security"],
   },
+  {
+    entry: ["packages/security/src/index.ts"],
+    outDir: "packages/security/dist",
+    format: "esm",
+    dts: false,
+    clean: true,
+    external: ["@agi/db-schema", "drizzle-orm", "minimatch"],
+  },
 ]);
