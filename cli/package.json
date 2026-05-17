@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@agi/config": "workspace:*",
+    "@node-rs/argon2": "^2.0.2",
     "commander": "^13.1.0"
   }
 }
