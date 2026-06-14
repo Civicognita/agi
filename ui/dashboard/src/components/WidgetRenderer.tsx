@@ -16,7 +16,6 @@ import {
   Timeline,
   Kanban,
   Editor,
-  Diagram,
   TreeNav,
   DatePicker,
   ColorPicker,
@@ -28,6 +27,7 @@ import {
   Select,
 } from "@particle-academy/react-fancy";
 import { CodeEditor } from "@particle-academy/fancy-code";
+import { FlowCanvas, type FlowEdge, type FlowNode } from "@particle-academy/fancy-flow";
 import "@particle-academy/fancy-code/styles.css";
 import { executeAction, fetchProjectFileTree } from "../api.js";
 import type { FileNode } from "../api.js";
@@ -556,6 +556,49 @@ function TreeNavWidget({ projectPath }: { widget: Extract<PanelWidget, { type: "
   );
 }
 
+// Legacy DiagramSchema shape — emitted by plugins against the pre-3.x
+// react-fancy `Diagram` component (entities + relations). The component
+// was removed in react-fancy 3.x; fancy-flow's FlowCanvas is the new
+// canonical surface. This adapter transforms the legacy shape so existing
+// plugin endpoints keep working without per-plugin migrations.
+//
+// FOLLOW-UP: filing an upstream issue/PR against fancy-flow to expose
+// `legacySchemaToFlowGraph` (or an `ErdCanvas` preset) so every consumer
+// doesn't reinvent this adapter. Mark with 🎨 UI when filed.
+type LegacyDiagramSchema = {
+  entities?: Array<{
+    id: string;
+    name: string;
+    fields?: Array<{ name: string; type?: string }>;
+    x?: number;
+    y?: number;
+  }>;
+  relations?: Array<{ from: string; to: string; type?: string; label?: string }>;
+};
+
+function legacySchemaToFlowGraph(raw: unknown): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  if (raw === null || typeof raw !== "object") return { nodes: [], edges: [] };
+  const s = raw as LegacyDiagramSchema;
+  const nodes: FlowNode[] = (s.entities ?? []).map((e, i) => ({
+    id: e.id,
+    type: "note",
+    position: { x: e.x ?? i * 240, y: e.y ?? Math.floor(i / 3) * 180 },
+    data: {
+      label: e.name,
+      description: (e.fields ?? [])
+        .map((f) => (f.type !== undefined ? `${f.name}: ${f.type}` : f.name))
+        .join("\n") || undefined,
+    },
+  }));
+  const edges: FlowEdge[] = (s.relations ?? []).map((r, i) => ({
+    id: `e${i}-${r.from}-${r.to}`,
+    source: r.from,
+    target: r.to,
+    label: r.label,
+  }));
+  return { nodes, edges };
+}
+
 function DiagramWidget({ widget }: { widget: Extract<PanelWidget, { type: "diagram" }> }) {
   const [schema, setSchema] = useState<unknown>(null);
   const [error, setError] = useState<string | null>(null);
@@ -570,10 +613,12 @@ function DiagramWidget({ widget }: { widget: Extract<PanelWidget, { type: "diagr
   if (error) return <div className="text-[11px] text-red">{error}</div>;
   if (!schema) return <div className="text-[11px] text-muted-foreground">Loading diagram...</div>;
 
+  const { nodes, edges } = legacySchemaToFlowGraph(schema);
+
   return (
     <div>
       {widget.title && <h4 className="text-[12px] font-semibold text-foreground mb-2">{widget.title}</h4>}
-      <Diagram schema={schema} type={widget.diagramType ?? "flowchart"} />
+      <FlowCanvas nodes={nodes} edges={edges} height={400} showControls showMinimap />
     </div>
   );
 }

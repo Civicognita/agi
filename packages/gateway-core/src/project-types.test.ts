@@ -130,7 +130,8 @@ describe("createProjectTypeRegistry built-ins", () => {
     const reg = createProjectTypeRegistry();
     const eligible = reg.getIterativeWorkEligible();
     const ids = eligible.map((t) => t.id).sort();
-    expect(ids).toEqual(["production"]);
+    // aionima-system was added as eligible in s119 t700 (2026-05-09)
+    expect(ids).toEqual(["aionima-system", "production"]);
   });
 
   it("toJSON includes iterativeWorkEligible flag", () => {

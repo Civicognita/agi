@@ -1,9 +1,9 @@
 /**
- * Plan Store — file-based CRUD for `<projectPath>/k/plans/{planId}.mdc`
+ * Plan Store — file-based CRUD for `<projectPath>/.ai/plans/{planId}.mdc`
  *
  * Each plan is stored as a `.mdc` file (markdown + YAML frontmatter) at
  *
- *     <projectPath>/k/plans/{planId}.mdc        (s130/s140 canonical, Wish #16 2026-05-08)
+ *     <projectPath>/.ai/plans/{planId}.mdc       (canonical; knowledge dir renamed k/ → .ai/ 2026-06-09)
  *     ~/.agi/{projectSlug}/plans/{planId}.mdc   (legacy pre-s130 location)
  *     ~/.agi/{projectSlug}/plans/{planId}.md    (legacy-legacy: JSON-in-YAML)
  *
@@ -12,7 +12,7 @@
  * after the closing fence is the plan's free-form markdown content.
  *
  * **Dual-location semantics (Wish #16):** plans live with their project at
- * `<projectPath>/k/plans/` per the s130 universal-monorepo model. Reads
+ * `<projectPath>/.ai/plans/` per the s130 universal-monorepo model. Reads
  * prefer the per-project location and copy-forward any plan still at the
  * legacy `~/.agi/{slug}/plans/` location on first access. Writes (create /
  * update / delete) go through the per-project location only. The legacy
@@ -30,6 +30,7 @@ import { ulid } from "ulid";
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import type { Plan, PlanStep, CreatePlanInput, UpdatePlanInput, PlanStatus, PlanStepStatus, PlanTynnRefs } from "./plan-types.js";
 import { projectSlug } from "./dispatch-paths.js";
+import { KNOWLEDGE_DIR } from "./project-config-path.js";
 
 // ---------------------------------------------------------------------------
 // Frontmatter helpers
@@ -116,7 +117,7 @@ function metaToPlan(meta: Record<string, unknown>, body: string): Plan {
 export class PlanStore {
   /** Canonical per-project plans dir (Wish #16, 2026-05-08). */
   private plansDir(projectPath: string): string {
-    return join(projectPath, "k", "plans");
+    return join(projectPath, KNOWLEDGE_DIR, "plans");
   }
 
   /**
@@ -157,8 +158,8 @@ export class PlanStore {
 
   /**
    * Read a plan from disk, looking in this order:
-   *   1. `<projectPath>/k/plans/{id}.mdc`               — canonical, YAML
-   *   2. `<projectPath>/k/plans/{id}.md`                — old YAML at new path
+   *   1. `<projectPath>/.ai/plans/{id}.mdc`               — canonical, YAML
+   *   2. `<projectPath>/.ai/plans/{id}.md`                — old YAML at new path
    *   3. `~/.agi/{slug}/plans/{id}.mdc`                 — legacy YAML at old path
    *   4. `~/.agi/{slug}/plans/{id}.md`                  — legacy JSON at old path
    *
@@ -346,7 +347,7 @@ export interface PlanMigrationResult {
 
 /**
  * Idempotently move every plan at `~/.agi/{slug}/plans/` into the canonical
- * `<projectPath>/k/plans/` location. Safe to re-run; plans already present
+ * `<projectPath>/.ai/plans/` location. Safe to re-run; plans already present
  * at the canonical path are skipped, not re-copied. Legacy files are
  * preserved as backup; a future sweep removes them once stable.
  */
@@ -356,7 +357,7 @@ export function migrateProjectPlans(projectPath: string): PlanMigrationResult {
   const legacyDir = join(homedir(), ".agi", projectSlug(projectPath), "plans");
   if (!existsSync(legacyDir)) return result;
 
-  const canonicalDir = join(projectPath, "k", "plans");
+  const canonicalDir = join(projectPath, KNOWLEDGE_DIR, "plans");
 
   let entries: string[];
   try {

@@ -49,11 +49,16 @@ export function DevSettings(_props: {
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // GitHub connection is owned by Local-ID (id.ai.on) — the Contributing
-  // tab never handles the OAuth handshake itself. This tab just opens the
-  // Local-ID connect flow in a popup and polls `/api/dev/status` (which
-  // proxies Local-ID's connections table) until the handle appears.
-  const [connectPopupOpen, setConnectPopupOpen] = useState(false);
+  // GitHub connection is AGI-native: the gateway runs the GitHub device flow
+  // itself (device-flow-api.ts, absorbed from the retired Local-ID service).
+  // This tab starts that flow, shows the user code to enter at github.com, and
+  // polls until the token lands in the connections table — no external ID
+  // service, no popup, no id.ai.on.
+  const [connect, setConnect] = useState<
+    { userCode: string; verificationUri: string; deviceCode: string; interval: number } | null
+  >(null);
+  const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // PRIME switcher state removed — PRIME is part of the Aionima core
@@ -76,54 +81,67 @@ export function DevSettings(_props: {
   }, []);
 
   /**
-   * Open Local-ID's own connect flow in a popup. All identity services
-   * (GitHub device flow, token storage, OAuth brokering) live in Local-ID
-   * — the Contributing tab doesn't re-implement them. After opening the
-   * popup we start polling `/api/dev/status` every 5s; when
-   * `githubAuthenticated` flips true we stop polling, close any lingering
-   * spinner, and the Dev Mode toggle becomes enabled.
+   * Start AGI's own GitHub device flow (POST /api/auth/device-flow/start).
+   * Shows the user code to enter at github.com/login/device, then polls
+   * /api/auth/device-flow/poll until GitHub authorizes — at which point the
+   * token is stored in the connections table and `/api/dev/status` reports
+   * githubAuthenticated. No external service; the gateway owns the handshake.
    */
   const handleGithubConnect = useCallback(() => {
     if (statusPollRef.current) clearInterval(statusPollRef.current);
-
-    // Popup centered on the parent window. 520×720 fits Local-ID's login +
-    // connect screens with room for OAuth redirect screens inside.
-    const w = 520, h = 720;
-    const left = window.screenX + Math.max(0, (window.outerWidth - w) / 2);
-    const top = window.screenY + Math.max(0, (window.outerHeight - h) / 2);
-    const popup = window.open(
-      "https://id.ai.on/dashboard",
-      "agi-id-connect",
-      `width=${w},height=${h},left=${left},top=${top},menubar=no,toolbar=no,location=yes,status=yes,resizable=yes`,
-    );
-    setConnectPopupOpen(true);
-
-    // Poll /api/dev/status every 5s — same cadence Local-ID polls GitHub at,
-    // so we don't hammer Local-ID any faster than it hammers GitHub. Stop
-    // when connected OR the popup closed and we've already confirmed.
-    statusPollRef.current = setInterval(() => {
-      void (async () => {
-        try {
-          const updated = await fetchDevStatus();
-          setDevStatus(updated);
-          if (updated.githubAuthenticated) {
-            if (statusPollRef.current) clearInterval(statusPollRef.current);
-            statusPollRef.current = null;
-            setConnectPopupOpen(false);
-            // Nudge the popup closed if the user hasn't closed it themselves
-            try { popup?.close(); } catch { /* blocked by some browsers */ }
-          } else if (popup && popup.closed) {
-            // User closed the popup without completing — stop polling;
-            // the retry button re-opens.
-            if (statusPollRef.current) clearInterval(statusPollRef.current);
-            statusPollRef.current = null;
-            setConnectPopupOpen(false);
-          }
-        } catch {
-          // Network blip — keep polling
+    setConnecting(true);
+    setConnectError(null);
+    void (async () => {
+      try {
+        const res = await fetch("/api/auth/device-flow/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider: "github", role: "owner" }),
+        });
+        if (!res.ok) {
+          const b = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(b.error ?? `HTTP ${String(res.status)}`);
         }
-      })();
-    }, 5000);
+        const data = (await res.json()) as {
+          deviceCode: string; userCode: string; verificationUri: string; interval: number;
+        };
+        setConnect({
+          userCode: data.userCode,
+          verificationUri: data.verificationUri || "https://github.com/login/device",
+          deviceCode: data.deviceCode,
+          interval: data.interval,
+        });
+
+        // Poll for authorization at GitHub's requested interval.
+        statusPollRef.current = setInterval(() => {
+          void (async () => {
+            try {
+              const pr = await fetch(`/api/auth/device-flow/poll?deviceCode=${encodeURIComponent(data.deviceCode)}`);
+              const pb = (await pr.json()) as { status: string; error?: string };
+              if (pb.status === "completed") {
+                if (statusPollRef.current) clearInterval(statusPollRef.current);
+                statusPollRef.current = null;
+                setConnect(null);
+                setConnecting(false);
+                setDevStatus(await fetchDevStatus());
+              } else if (pb.status === "expired" || pb.status === "error") {
+                if (statusPollRef.current) clearInterval(statusPollRef.current);
+                statusPollRef.current = null;
+                setConnect(null);
+                setConnecting(false);
+                setConnectError(pb.error ?? (pb.status === "expired" ? "Code expired — try again." : "Authorization failed."));
+              }
+              // "pending" → keep polling
+            } catch {
+              // Network blip — keep polling
+            }
+          })();
+        }, Math.max(2, data.interval) * 1000);
+      } catch (err) {
+        setConnecting(false);
+        setConnectError(err instanceof Error ? err.message : "Failed to start GitHub connect");
+      }
+    })();
   }, []);
 
   const handleToggle = useCallback(async () => {
@@ -159,7 +177,7 @@ export function DevSettings(_props: {
           <div>
             <p className="text-sm text-card-foreground">Fork Switching</p>
             <p className="text-[13px] text-muted-foreground">
-              Clone owner forks of core repos (AGI, PRIME, ID, Marketplace) into your workspace
+              Clone your forks of the core repos (AGI, PRIME, the Marketplaces, PAx) into your workspace
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -182,42 +200,53 @@ export function DevSettings(_props: {
             </button>
           </div>
         </div>
-        {/* GitHub auth gate — delegated to Local-ID (id.ai.on).
-            Identity is handled there, NEVER here. This block just opens a
-            popup to Local-ID's connect flow and watches /api/dev/status
-            for the handle to appear. */}
+        {/* GitHub auth gate — AGI-native device flow (device-flow-api.ts).
+            The gateway runs the handshake itself; this block starts it, shows
+            the user code to enter at github.com/login/device, and polls until
+            the token lands in the connections table. No external ID service. */}
         {devStatus !== null && !devStatus.enabled && !devStatus.githubAuthenticated && (
           <Callout color="zinc" className="mt-3">
             <p className="text-sm text-card-foreground">GitHub authentication required</p>
             <p className="text-[13px] text-muted-foreground mt-1">
-              Contributing mode clones owner forks of the AGI, PRIME, ID, and Marketplace repositories.
-              Identity is handled by the Aionima ID service at{" "}
-              <a href="https://id.ai.on/dashboard" target="_blank" rel="noopener noreferrer" className="text-primary underline">id.ai.on</a>
-              {" "}— connect your GitHub account there.
+              Contributing mode clones your forks of the core repos. AGI connects your GitHub
+              account directly — no external service.
             </p>
 
-            <div className="mt-2 flex items-center gap-3">
-              <Button variant="outline" size="sm" onClick={handleGithubConnect}>
-                {connectPopupOpen ? "Reopen ID Connect" : "Open ID Connect"}
-              </Button>
-              {connectPopupOpen && (
+            {!connect ? (
+              <div className="mt-2 flex items-center gap-3">
+                <Button variant="outline" size="sm" disabled={connecting} onClick={handleGithubConnect} data-testid="dev-github-connect">
+                  {connecting ? "Starting…" : "Connect GitHub"}
+                </Button>
+                {connectError !== null && <span className="text-[12px] text-red">{connectError}</span>}
+              </div>
+            ) : (
+              <div className="mt-3 space-y-2" data-testid="dev-github-devicecode">
+                <p className="text-[13px] text-card-foreground">
+                  1. Open{" "}
+                  <a href={connect.verificationUri} target="_blank" rel="noopener noreferrer" className="text-primary underline">
+                    {connect.verificationUri}
+                  </a>
+                </p>
+                <p className="text-[13px] text-card-foreground">2. Enter this code:</p>
+                <code className="block text-lg font-mono tracking-[0.3em] bg-surface0 rounded px-3 py-2 text-center select-all text-card-foreground">
+                  {connect.userCode}
+                </code>
                 <span className="text-[12px] text-muted-foreground flex items-center gap-1">
-                  <span className="animate-pulse">●</span>
-                  Waiting for ID to complete the GitHub handshake...
+                  <span className="animate-pulse">●</span> Waiting for you to authorize on GitHub…
                 </span>
-              )}
-            </div>
+              </div>
+            )}
           </Callout>
         )}
 
-        {/* Connected state — show the account + reassure the flow is done */}
+        {/* Connected state — show the account; identity is owned by AGI now */}
         {devStatus !== null && devStatus.githubAuthenticated && (
           <Callout color="green" className="mt-3 flex items-center gap-3">
             <Badge variant="outline" className="text-green border-green/50">
               ✓ GitHub connected{devStatus.githubAccount ? ` as ${devStatus.githubAccount}` : ""}
             </Badge>
             <span className="text-[12px] text-muted-foreground">
-              Managed in <a href="https://id.ai.on/dashboard" target="_blank" rel="noopener noreferrer" className="text-primary underline">id.ai.on</a>
+              Managed by AGI · <Link to="/settings/identity" className="text-primary underline">Settings → Identity</Link>
             </span>
           </Callout>
         )}
@@ -289,14 +318,6 @@ export function DevSettings(_props: {
                     entries={devStatus.prime.entries}
                     isOwnerFork={isOwnerFork(devStatus.prime.remote)}
                   />
-                  {devStatus.id && (
-                    <RepoCard
-                      name="ID"
-                      remote={devStatus.id.remote}
-                      branch={devStatus.id.branch}
-                      isOwnerFork={isOwnerFork(devStatus.id.remote)}
-                    />
-                  )}
                   {devStatus.marketplace && (
                     <RepoCard
                       name="Marketplace"
@@ -461,13 +482,13 @@ function TestVmPanel() {
       {/* Service health rows */}
       {vmRunning && status && (
         <div className="grid grid-cols-2 gap-x-6 gap-y-1 mb-4 max-w-sm">
-          {(["postgres", "caddy", "agi", "id"] as const).map((svc) => {
+          {(["postgres", "caddy", "agi"] as const).map((svc) => {
             const val = status.services[svc];
             const isUp = val === "active" || val === "running";
             return (
               <div key={svc} className="flex items-center gap-2">
                 <span className={`w-1.5 h-1.5 rounded-full ${isUp ? "bg-green-500" : "bg-red-500"}`} />
-                <span className="text-[12px] text-muted-foreground">{svc === "postgres" ? "PostgreSQL" : svc === "caddy" ? "Caddy" : svc === "agi" ? "AGI" : "ID"}</span>
+                <span className="text-[12px] text-muted-foreground">{svc === "postgres" ? "PostgreSQL" : svc === "caddy" ? "Caddy" : "AGI"}</span>
                 <span className="text-[11px] text-muted-foreground font-mono">{val}</span>
               </div>
             );

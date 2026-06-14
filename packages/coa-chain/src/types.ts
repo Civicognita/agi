@@ -27,7 +27,9 @@ export type COAWorkType =
    *  carries the entry id; `payloadHash` carries SHA-256 of `entryId|
    *  callerProjectPath` so post-hoc audit can correlate without
    *  storing the project path in plaintext. */
-  | "vault_read";
+  | "vault_read"
+  /** s109 prep t366: security scan initiated — `ref` carries the scanId. */
+  | "security_scan";
 
 /** Full COA record for persistence */
 export interface COARecord {

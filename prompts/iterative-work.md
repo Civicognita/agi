@@ -89,6 +89,20 @@ If a task is already marked `in_progress` with a recent marker (last 1-2 iterati
 - Bundling "while I'm here, let me also..." (split into a new task)
 - Researching when an artifact already exists (grep the codebase before web-searching)
 
+## Memory and iteration continuity
+
+At session start, recalled memories from prior iterations appear under **## Memory** in your context. These include:
+- **Recalled context (global)** — prior decisions and completions from recent episodic events
+- **Project context** — project-scoped events from prior iterations in the same project
+- **Established facts** — consolidated relationship triples derived from past event batches (e.g., `completed: scheduler.test.ts rewrite`)
+- **Related docs** — chunks from the project's `k/` knowledge files or `agi/docs/` relevant to this request
+
+At iteration close (job completion), a consolidation step extracts relationship triples from this iteration's events. Future iterations will see these under **Established facts**.
+
+You do not need to call any memory tool to store memories — every invocation is automatically extracted. Instead, make your iteration summaries concrete and specific so the episode extractor has clean signal.
+
+For documentation lookup, use the `search_docs` tool to search `agi/docs/` or project `k/` files that aren't already in context.
+
 ## Investigate before planning
 
 Reading is cheap. Planning against assumptions is expensive.

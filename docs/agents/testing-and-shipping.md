@@ -75,7 +75,21 @@ The lint (`scripts/check-docs-vs-help.sh`) parses `agi help` and `docs/human/cli
 
 Default is **warn-only** so legitimate sibling-doc placements don't block work; use `:strict` in CI gates that should hard-fail on drift. As legitimate omissions get codified into the lint's allow-list (in `check-docs-vs-help.sh`), the strict gate becomes safe to promote to PR-required.
 
-### 4. Curl-test backend API endpoints
+### 4. pnpm orphan-check
+
+```bash
+pnpm orphan-check
+```
+
+Catches UI component files with zero importers — prevents UI swaps from shipping to dead code. A component file that exists but is never imported is silently skipped by the bundler; the build passes, typecheck passes, but the UI change never reaches users.
+
+Run this after every commit that adds, removes, or renames a component file, or swaps one component for another.
+
+The script has an allowlist in `scripts/orphan-check.sh` for intentionally archived components. Add entries with a reason comment when archiving a file deliberately; remove entries when the file is imported again or deleted.
+
+**When it fails:** you either have an orphaned component (delete or import it) or you need to add an allowlist entry with a comment explaining why the file is intentionally unimported.
+
+### 5. Curl-test backend API endpoints
 
 Test every endpoint you added or modified. Examples:
 
@@ -256,7 +270,7 @@ pnpm test:vm:destroy   # Tear down the VM
 pnpm test:vm:ssh       # SSH into the VM
 ```
 
-The VM mounts all workspace repos: AGI → `/mnt/agi`, PRIME → `/mnt/aionima-prime`, ID → `/mnt/agi-local-id`. A test config fixture at `test/fixtures/gateway-test.json` points to these mount paths.
+The VM mounts workspace repos: AGI → `/mnt/agi`, PRIME → `/mnt/aionima-prime`. A test config fixture at `test/fixtures/gateway-test.json` points to these mount paths.
 
 ### Running All VM Tests
 
@@ -548,6 +562,9 @@ Before every commit and push:
 - [ ] `pnpm build` — passes with no errors
 - [ ] `pnpm typecheck` — passes with no type errors
 - [ ] `pnpm lint` — no lint errors
+- [ ] `pnpm orphan-check` — no unimported component files (add allowlist entry if intentionally archived)
+- [ ] `pnpm staged-check:strict` — staged tree typechecks cleanly (catches gitignored files and unstaged edits that fool local tsc)
+- [ ] `pnpm route-check:strict` — no duplicate route registrations
 - [ ] `git status` — review ALL changed files, not just task files
 - [ ] Curl-test every new or modified API endpoint
 - [ ] New unit tests written for new store methods, business logic, or plugin changes

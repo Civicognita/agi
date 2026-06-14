@@ -29,6 +29,9 @@
  * a default for legacy specs that don't set the field.
  */
 
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 /** GitHub org that owns the canonical upstream. */
 export type UpstreamOrg = "Civicognita" | "Particle-Academy";
 
@@ -37,7 +40,7 @@ export interface CoreRepoSpec {
   slug:
     | "agi"
     | "prime"
-    | "id"
+    | "hive-id"
     | "marketplace"
     | "mapp-marketplace"
     | "react-fancy"
@@ -47,7 +50,10 @@ export interface CoreRepoSpec {
     | "fancy-3d"
     | "fancy-screens"
     | "fancy-whiteboard"
-    | "agent-integrations";
+    | "agent-integrations"
+    | "fancy-artboard"
+    | "fancy-slides"
+    | "fancy-flow";
   /** Repo name on GitHub (NOT the slug — sometimes diverges, e.g. prime
    *  → aionima, id → agi-local-id). */
   upstream: string;
@@ -60,7 +66,7 @@ export interface CoreRepoSpec {
   configKey:
     | "agiRepo"
     | "primeRepo"
-    | "idRepo"
+    | "hiveIdRepo"
     | "marketplaceRepo"
     | "mappMarketplaceRepo"
     | "reactFancyRepo"
@@ -70,7 +76,10 @@ export interface CoreRepoSpec {
     | "fancy3dRepo"
     | "fancyScreensRepo"
     | "fancyWhiteboardRepo"
-    | "agentIntegrationsRepo";
+    | "agentIntegrationsRepo"
+    | "fancyArtboardRepo"
+    | "fancySlidesRepo"
+    | "fancyFlowRepo";
 }
 
 export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
@@ -78,7 +87,11 @@ export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
   // so they continue to use CANONICAL_OWNER = "Civicognita").
   { slug: "agi",              upstream: "agi",                  displayName: "AGI",              configKey: "agiRepo" },
   { slug: "prime",            upstream: "aionima",              displayName: "PRIME",            configKey: "primeRepo" },
-  { slug: "id",               upstream: "agi-local-id",         displayName: "ID",               configKey: "idRepo" },
+  // (Local-ID removed — absorbed into AGI gateway-core via s180)
+  // s149 t625 — Hive-ID (cloud federation hub, privately deployed). Added
+  // to CORE_REPOS so Contributing Mode provisions + clones the fork locally.
+  // Distinct from Local-ID (id.ai.on LAN service) — Hive-ID runs on Railway/Azure.
+  { slug: "hive-id",          upstream: "agi-hive-id",          displayName: "Hive-ID",          configKey: "hiveIdRepo" },
   { slug: "marketplace",      upstream: "agi-marketplace",      displayName: "Marketplace",      configKey: "marketplaceRepo" },
   { slug: "mapp-marketplace", upstream: "agi-mapp-marketplace", displayName: "MApp Marketplace", configKey: "mappMarketplaceRepo" },
 
@@ -108,6 +121,10 @@ export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
   // the same channels other collaborators use (panel + on-canvas cursor).
   { slug: "fancy-whiteboard",   upstream: "fancy-whiteboard",   upstreamOrg: "Particle-Academy", displayName: "fancy-whiteboard",   configKey: "fancyWhiteboardRepo" },
   { slug: "agent-integrations", upstream: "agent-integrations", upstreamOrg: "Particle-Academy", displayName: "agent-integrations", configKey: "agentIntegrationsRepo" },
+  // s200 — additional PAx packages registered in the Fancy UI MCP registry.
+  { slug: "fancy-artboard",     upstream: "fancy-artboard",     upstreamOrg: "Particle-Academy", displayName: "fancy-artboard",     configKey: "fancyArtboardRepo" },
+  { slug: "fancy-slides",       upstream: "fancy-slides",       upstreamOrg: "Particle-Academy", displayName: "fancy-slides",       configKey: "fancySlidesRepo" },
+  { slug: "fancy-flow",         upstream: "fancy-flow",         upstreamOrg: "Particle-Academy", displayName: "fancy-flow",         configKey: "fancyFlowRepo" },
 ] as const);
 
 export interface ForkResolveResult {
@@ -139,6 +156,29 @@ export function upstreamRemoteUrl(spec: CoreRepoSpec): string {
 }
 
 /**
+ * Resolve the on-disk directory for a core fork inside its collection dir.
+ *
+ * **Layout history:** the meta-project restructure (CLAUDE.md § 8, 2026-05-13)
+ * moved every fork from a flat `_aionima/<slug>/` into `_aionima/repos/<slug>/`.
+ * Helpers that hardcoded `join(collectionDir, slug)` silently reported every
+ * fork as "not provisioned" after the move (the Aionima project page's Repos +
+ * Contribute panels and the upgrade-wizard fork list all went blank).
+ *
+ * This resolver is the single source of truth: it prefers the new
+ * `repos/<slug>` location and falls back to the legacy flat `<slug>` only if a
+ * `.git` exists there — so a pre-restructure install keeps working and a
+ * post-restructure install resolves correctly. Returns the `repos/<slug>` path
+ * when neither exists yet (the canonical target for new clones).
+ */
+export function coreForkDir(collectionDir: string, slug: string): string {
+  const nested = join(collectionDir, "repos", slug);
+  if (existsSync(join(nested, ".git"))) return nested;
+  const flat = join(collectionDir, slug);
+  if (existsSync(join(flat, ".git"))) return flat;
+  return nested;
+}
+
+/**
  * Resolve (or create) the owner's fork for every core repo.
  */
 export async function resolveOrCreateForks(
@@ -149,7 +189,7 @@ export async function resolveOrCreateForks(
   for (const spec of CORE_REPOS) {
     const upstreamUrl = upstreamRemoteUrl(spec);
     try {
-      const existing = await lookupFork(ownerToken, ownerLogin, spec.upstream);
+      const existing = await lookupFork(ownerToken, ownerLogin, spec.upstream, specUpstreamOrg(spec));
       if (existing) {
         results.push({ slug: spec.slug, cloneUrl: existing, upstreamUrl, created: false });
         continue;
@@ -179,14 +219,18 @@ export async function resolveOrCreateForks(
 }
 
 /**
- * HEAD the owner's fork. Returns its `clone_url` if it exists, null if
- * it 404s. Any other non-2xx response is thrown as an error so the
- * caller can report it.
+ * HEAD the owner's fork. Returns its `clone_url` if it exists AND is a
+ * verified fork of the expected upstream. Returns null if the repo doesn't
+ * exist (caller should then create a proper fork). Throws if the repo
+ * exists but is not a fork of the expected upstream — that is a name
+ * collision that requires manual resolution, not a fork-creation attempt
+ * (which would also fail with a 422 from GitHub).
  */
 async function lookupFork(
   token: string,
   ownerLogin: string,
   upstream: string,
+  expectedUpstreamOrg: string,
 ): Promise<string | null> {
   const url = `https://api.github.com/repos/${ownerLogin}/${upstream}`;
   const res = await fetch(url, {
@@ -197,7 +241,24 @@ async function lookupFork(
   if (!res.ok) {
     throw new Error(`GET ${url} → ${String(res.status)} ${res.statusText}`);
   }
-  const body = (await res.json()) as { clone_url?: string; html_url?: string };
+  const body = (await res.json()) as {
+    clone_url?: string;
+    html_url?: string;
+    fork?: boolean;
+    parent?: { full_name?: string };
+  };
+
+  // Verify this is a genuine fork of the correct upstream — not just any
+  // repo with the same name in the owner's account.
+  const expectedFullName = `${expectedUpstreamOrg}/${upstream}`;
+  if (!body.fork || body.parent?.full_name !== expectedFullName) {
+    throw new Error(
+      `${ownerLogin}/${upstream} exists but is not a fork of ${expectedFullName} ` +
+      `(fork=${String(!!body.fork)}, parent=${body.parent?.full_name ?? "none"}). ` +
+      `Rename or delete the existing repo to let Contributing Mode create a proper fork.`,
+    );
+  }
+
   return body.clone_url ?? (body.html_url ? `${body.html_url}.git` : null);
 }
 
@@ -229,7 +290,7 @@ async function createFork(
   return body.clone_url ?? (body.html_url ? `${body.html_url}.git` : null);
 }
 
-function githubHeaders(token: string): Record<string, string> {
+export function githubHeaders(token: string): Record<string, string> {
   return {
     Authorization: `Bearer ${token}`,
     Accept: "application/vnd.github+json",

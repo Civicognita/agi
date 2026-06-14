@@ -132,7 +132,6 @@ db.ai.on {
   it("emits 7-day TLS lifetime as the long-form tls block on every internal cert (s130 t515 B2 cycle 124, s141 cycle 152 long-form for Caddy lexer + 'lifetime' semantic)", () => {
     const out = buildCaddyfileContent({
       ...baseOpts,
-      idService: { enabled: true },
       pluginSubdomainRoutes: [{ subdomain: "myplugin", target: 5000, containerName: "agi-myplugin" }],
       projects: [{ hostname: "my-app", port: 4001, containerName: "agi-my-app", internalPort: 3000 }],
     });
@@ -153,8 +152,8 @@ db.ai.on {
     //     }
     const lifetimeMatches =
       out.match(/tls \{\n\s+issuer internal \{\n\s+lifetime 168h\n\s+\}\n\s+\}/g) ?? [];
-    // gateway + db + id + plugin + project = 5 sites that emit `tls internal`
-    expect(lifetimeMatches.length).toBe(5);
+    // gateway + db + plugin + project = 4 sites that emit `tls internal`
+    expect(lifetimeMatches.length).toBe(4);
     // Hard regression guards: neither broken shape can silently reappear.
     // (a) one-liner shorthand
     expect(out).not.toMatch(/tls internal \{[^\n]*lifetime/);
@@ -209,21 +208,6 @@ papa.ai.on {
     const out = buildCaddyfileContent({ ...baseOpts, existingCaddyfile: existing });
     expect(out).toContain("papa.ai.on {");
     expect(out).toContain("reverse_proxy localhost:18789");
-  });
-
-  it("writes an ID service block when idService.enabled is true", () => {
-    const out = buildCaddyfileContent({
-      ...baseOpts,
-      idService: { enabled: true, subdomain: "id", port: 3200 },
-    });
-    expect(out).toContain("id.ai.on {");
-    // ID reached by container DNS on aionima; default container is `agi-local-id`.
-    expect(out).toContain("reverse_proxy agi-local-id:3200");
-  });
-
-  it("skips the ID service block when idService.enabled is false or undefined", () => {
-    const out = buildCaddyfileContent(baseOpts);
-    expect(out).not.toContain("id.ai.on {");
   });
 
   it("writes zero plugin subdomain blocks when no routes are provided (no crash)", () => {

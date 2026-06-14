@@ -96,7 +96,7 @@ describe("MApp container kind — skeleton (s145 t584)", () => {
 
   it("skeleton has k/{plans,knowledge,memory}/ subdirs", () => {
     for (const sub of ["plans", "knowledge", "memory"]) {
-      const path = join(skeletonRoot, "k", sub);
+      const path = join(skeletonRoot, ".ai", sub);
       expect(existsSync(path), `${path} should exist`).toBe(true);
     }
   });

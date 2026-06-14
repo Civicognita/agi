@@ -167,7 +167,13 @@ cmd_status() {
   echo ""
   echo -e "${BOLD}Infrastructure${RESET}"
   label "Caddy:"
-  systemctl is-active caddy 2>/dev/null || echo "not installed"
+  if podman ps --filter "name=^agi-caddy$" --format '{{.Status}}' 2>/dev/null | grep -q "^Up"; then
+    echo -e "${GREEN}active${RESET} (containerized)"
+  elif systemctl is-active caddy 2>/dev/null | grep -q "^active"; then
+    echo -e "${YELLOW}active${RESET} (system-scope)"
+  else
+    echo -e "${RED}inactive / not installed${RESET}"
+  fi
   label "Podman:"
   if command -v podman &>/dev/null; then
     echo -e "${GREEN}installed${RESET} ($(podman --version 2>/dev/null | head -1))"
@@ -177,9 +183,9 @@ cmd_status() {
   label "dnsmasq:"
   systemctl is-active dnsmasq 2>/dev/null || echo "not installed"
 
-  # Running containers
+  # Running containers — label is agi.managed=true (not aionima.managed)
   local containers
-  containers="$(podman ps --filter label=aionima.managed=true --format '{{.Names}}' 2>/dev/null | wc -l)"
+  containers="$(podman ps --filter label=agi.managed=true --format '{{.Names}}' 2>/dev/null | wc -l)"
   label "Containers:"
   echo "${containers} running"
 }
@@ -1026,7 +1032,41 @@ cmd_test_vm() {
     err "test-vm.sh not found at $script"
     exit 1
   fi
-  bash "$script" "$subcmd" "$@"
+  # Wish #25 fix (2026-05-14): pass the dev source path through.
+  # Resolution order:
+  #   1. $AGI_DEV_SOURCE env var (caller override)
+  #   2. config.workspace.devSource in gateway.json (explicit owner setting)
+  #   3. config.workspace.selfRepo if it points OUTSIDE /opt (dev install)
+  #   4. Convention: <workspace.projects[0]>/_aionima/repos/agi
+  # Without this, test-vm.sh's REPO_DIR resolves to /opt/agi (the deployed
+  # copy) and mounts the wrong source. test-vm.sh's env-var override
+  # (AGI_DEV_SOURCE) takes precedence over its dirname-based fallback.
+  local dev_source="${AGI_DEV_SOURCE:-}"
+  if [ -z "$dev_source" ] && [ -f "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+    # Try explicit workspace.devSource first.
+    dev_source="$(jq -r '.workspace.devSource // empty' "$CONFIG_FILE" 2>/dev/null || true)"
+    # Fall back to workspace.selfRepo when it's NOT the deployed copy.
+    if [ -z "$dev_source" ]; then
+      local self_repo
+      self_repo="$(jq -r '.workspace.selfRepo // empty' "$CONFIG_FILE" 2>/dev/null || true)"
+      if [ -n "$self_repo" ] && [ "$self_repo" != "/opt/agi" ] && [ -d "$self_repo" ]; then
+        dev_source="$self_repo"
+      fi
+    fi
+    # Convention: <workspace.projects[0]>/_aionima/repos/agi
+    if [ -z "$dev_source" ]; then
+      local first_project
+      first_project="$(jq -r '.workspace.projects[0] // empty' "$CONFIG_FILE" 2>/dev/null || true)"
+      if [ -n "$first_project" ] && [ -d "$first_project/_aionima/repos/agi" ]; then
+        dev_source="$first_project/_aionima/repos/agi"
+      fi
+    fi
+  fi
+  if [ -n "$dev_source" ] && [ -d "$dev_source" ]; then
+    AGI_DEV_SOURCE="$dev_source" bash "$script" "$subcmd" "$@"
+  else
+    bash "$script" "$subcmd" "$@"
+  fi
 }
 
 # Resolve a project slug or name to its container name (agi-<hostname>).
@@ -2156,6 +2196,174 @@ cmd_setup_claude_hooks() {
   info "  ~/.agi/logs/agi-bash-YYYY-MM-DD.jsonl captures each routed exec."
 }
 
+cmd_adapter() {
+  local sub="${1:-help}"
+  shift 2>/dev/null || true
+  local adapters_dir="$HOME/.agi/adapters"
+  local candidates_dir="$adapters_dir/candidates"
+  local active_link="$adapters_dir/active"
+  local train_script="$DEPLOY_DIR/scripts/train-aion-micro.py"
+  local gold_fixture="$DEPLOY_DIR/test/fixtures/prime-gold-evals.jsonl"
+
+  case "$sub" in
+    train)
+      if [ ! -f "$train_script" ]; then
+        err "train script not found: $train_script"
+        exit 1
+      fi
+      info "Starting adapter training…"
+      python3 "$train_script" \
+        --gold-fixture "$gold_fixture" \
+        "$@"
+      ;;
+
+    list)
+      echo "Adapter candidates:"
+      if [ -d "$candidates_dir" ]; then
+        for d in "$candidates_dir"/*/; do
+          [ -d "$d" ] || continue
+          id=$(basename "$d")
+          meta="$d/adapter.json"
+          active_marker=""
+          if [ -L "$active_link" ] && [ "$(readlink "$active_link")" = "${d%/}" ]; then
+            active_marker=" ${GREEN}[active]${RESET}"
+          fi
+          if [ -f "$meta" ]; then
+            status=$(python3 -c "import json,sys; m=json.load(open('$meta')); print(m.get('status','?'))" 2>/dev/null || echo "?")
+            examples=$(python3 -c "import json,sys; m=json.load(open('$meta')); print(m.get('num_examples','?'))" 2>/dev/null || echo "?")
+            echo -e "  ${id}  status=${status}  examples=${examples}${active_marker}"
+          else
+            echo -e "  ${id}  (no metadata)${active_marker}"
+          fi
+        done
+      else
+        echo "  (none — run: agi adapter train)"
+      fi
+      echo ""
+      echo "Active adapter:"
+      if [ -L "$active_link" ]; then
+        echo "  $(readlink "$active_link")"
+      else
+        echo "  (none — base model in use)"
+      fi
+      ;;
+
+    promote)
+      local id="${1:-}"
+      if [ -z "$id" ]; then
+        err "agi adapter promote: missing adapter id"
+        echo "Usage: agi adapter promote <id>" >&2
+        exit 1
+      fi
+      local target="$candidates_dir/$id"
+      if [ ! -d "$target" ]; then
+        err "adapter not found: $target"
+        exit 1
+      fi
+      ln -sfn "$target" "$active_link"
+      ok "Promoted adapter: $id → $active_link"
+      info "Restart the gateway to load the new adapter: agi restart"
+      ;;
+
+    rollback)
+      local id="${1:-}"
+      if [ -L "$active_link" ]; then
+        if [ -n "$id" ]; then
+          local target="$candidates_dir/$id"
+          if [ ! -d "$target" ]; then
+            err "adapter not found: $target"
+            exit 1
+          fi
+          ln -sfn "$target" "$active_link"
+          ok "Rolled back to adapter: $id"
+        else
+          rm -f "$active_link"
+          ok "Removed active adapter — base model will be used on next restart"
+        fi
+        info "Restart to apply: agi restart"
+      else
+        info "No active adapter — base model already in use"
+      fi
+      ;;
+
+    check)
+      local id="${1:-}"
+      local target
+      if [ -n "$id" ]; then
+        target="$candidates_dir/$id"
+      elif [ -L "$active_link" ]; then
+        target=$(readlink "$active_link")
+        id=$(basename "$target")
+      else
+        err "agi adapter check: no active adapter and no id specified"
+        echo "Usage: agi adapter check [<id>]" >&2
+        exit 1
+      fi
+      if [ ! -d "$target" ]; then
+        err "adapter not found: $target"
+        exit 1
+      fi
+      info "Adapter metadata for: $id"
+      python3 - "$target" <<'PYEOF'
+import json, sys
+from pathlib import Path
+adapter_dir = Path(sys.argv[1])
+meta_path = adapter_dir / "adapter.json"
+if not meta_path.exists():
+    print("  (no adapter.json found)")
+    sys.exit(1)
+meta = json.loads(meta_path.read_text())
+print(f"  Adapter id:   {meta.get('id', '?')}")
+print(f"  Base model:   {meta.get('base_model', '?')}")
+print(f"  Examples:     {meta.get('num_examples', '?')}")
+print(f"  Epochs:       {meta.get('epochs', '?')}")
+print(f"  LoRA rank:    {meta.get('lora_rank', '?')}")
+print(f"  Status:       {meta.get('status', '?')}")
+print(f"  Created:      {meta.get('created_at', '?')}")
+adapter_weights = adapter_dir / "adapter"
+if adapter_weights.exists():
+    print(f"  Weights:      present")
+else:
+    print(f"  Weights:      absent (training incomplete or dry-run candidate)")
+PYEOF
+      # Gold-fixture verification requires adapter weights
+      local adapter_weights="$target/adapter"
+      if [ -d "$adapter_weights" ] && [ -f "$train_script" ]; then
+        info "Running gold-fixture verification…"
+        python3 "$train_script" \
+          --gold-fixture "$gold_fixture" \
+          --dataset "$target" \
+          --dry-run 2>&1 | grep -E '^\[adapter' || true
+      else
+        info "Skipping gold-fixture run (adapter weights absent or train script missing)"
+        info "  Run 'agi adapter train' to produce a real adapter first."
+      fi
+      ;;
+
+    help|--help|-h|"")
+      echo "Usage: agi adapter <subcommand> [args]"
+      echo ""
+      echo "Subcommands:"
+      echo "  train [OPTIONS]      Train a new LoRA adapter from candidate episodes"
+      echo "                         --dataset PATH       candidate JSONL (default: latest)"
+      echo "                         --base-model NAME    HF model id (default: Qwen2.5-0.5B)"
+      echo "                         --epochs N           training epochs (default: 3)"
+      echo "                         --lora-rank N        LoRA rank (default: 16)"
+      echo "                         --dry-run            validate dataset only"
+      echo "  list                 List candidate adapters + active marker"
+      echo "  promote <id>         Set adapter as active (takes effect after restart)"
+      echo "  rollback [<id>]      Remove active link (or rollback to a prior id)"
+      echo "  check [<id>]         Run gold-fixture verification against an adapter"
+      ;;
+
+    *)
+      err "agi adapter: unknown subcommand '$sub'"
+      cmd_adapter help
+      exit 1
+      ;;
+  esac
+}
+
 cmd_help() {
   echo -e "${BOLD}agi${RESET} — Aionima Gateway CLI"
   echo ""
@@ -2223,6 +2431,8 @@ cmd_help() {
   echo "  bash CMD...     Run a shell command through Aion's secure entryway"
   echo "                  (logged to ~/.agi/logs/agi-bash-*.jsonl with caller"
   echo "                  attribution; policy gated by ~/.agi/gateway.json bash.policy)"
+  echo "  adapter CMD     Manage Aion-micro LoRA adapters (s112 t386)"
+  echo "                  (train|list|promote <id>|rollback [<id>]|check [<id>])"
   echo "  scan PATH       Run a security scan on PATH (sast|sca|secrets|config),"
   echo "                  poll until done, render findings; CI-friendly exit codes."
   echo "                  Subcmds: list, view <id>, cancel <id>"
@@ -2326,6 +2536,7 @@ case "${1:-help}" in
     fi
     bash "$script" "$@"
     ;;
+  adapter)  shift; cmd_adapter "$@" ;;
   bash)     shift; cmd_bash "$@" ;;
   setup)    node "$DEPLOY_DIR/cli/dist/index.js" setup ;;
   setup-prompts) node "$DEPLOY_DIR/cli/dist/index.js" setup-prompts ;;

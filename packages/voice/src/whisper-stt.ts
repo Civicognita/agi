@@ -39,7 +39,7 @@ export class WhisperSTTProvider implements STTProvider {
   async transcribe(audio: AudioData, options?: STTOptions): Promise<STTResult> {
     // Convert Buffer to a File-like object for the API
     const file = new File(
-      [audio.buffer],
+      [audio.buffer as unknown as ArrayBuffer],
       `audio.${audio.format}`,
       { type: formatToMime(audio.format) },
     );

@@ -34,7 +34,7 @@ export interface CompanionDevice {
   id: string;
   entityId: string;
   deviceName: string;
-  platform: "ios" | "android";
+  platform: "ios" | "android" | "desktop";
   pushToken: string | null;
   lastSeenAt: string;
   pairedAt: string;
@@ -45,7 +45,7 @@ export interface CompanionDevice {
 export interface PairingRequest {
   code: string;
   deviceName: string;
-  platform: "ios" | "android";
+  platform: "ios" | "android" | "desktop";
   pushToken?: string;
 }
 

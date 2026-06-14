@@ -45,6 +45,7 @@ export const RepoPanel = forwardRef<RepoPanelHandle, RepoPanelProps>(function Re
   const [commits, setCommits] = useState<GitCommitEntry[]>([]);
   const [remotes, setRemotes] = useState<GitRemoteEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [notGitRepo, setNotGitRepo] = useState(false);
   const [actionPending, setActionPending] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [diffContent, setDiffContent] = useState<string | null>(null);
@@ -91,6 +92,14 @@ export const RepoPanel = forwardRef<RepoPanelHandle, RepoPanelProps>(function Re
         execGitAction<GitActionResult & { remotes: GitRemoteEntry[] }>(projectPath, "remote_list"),
       ]);
       if (!mountedRef.current) return;
+
+      // A `.agi` envelope (or any folder) with no top-level `.git` returns a
+      // clean { notGitRepo: true } — render the hint, not the git surface.
+      if (results[0]!.status === "fulfilled" && results[0]!.value.notGitRepo) {
+        setNotGitRepo(true);
+        return;
+      }
+      setNotGitRepo(false);
 
       if (results[0]!.status === "fulfilled") setStatus(results[0]!.value);
       if (results[1]!.status === "fulfilled") setBranches(results[1]!.value.branches ?? []);
@@ -206,10 +215,28 @@ export const RepoPanel = forwardRef<RepoPanelHandle, RepoPanelProps>(function Re
   // Loading state
   // -------------------------------------------------------------------------
 
-  if (loading && status === null) {
+  if (loading && status === null && !notGitRepo) {
     return (
       <div className="p-3 text-xs text-muted-foreground">
         Loading repository info...
+      </div>
+    );
+  }
+
+  // Not a git working tree — e.g. a `.agi` envelope, whose git identity is its
+  // config/knowledge state + submodule pins, not a tracked source tree. Point
+  // the owner at the right surface (Coordinate → Project) rather than spamming
+  // git-action errors. (story #207)
+  if (notGitRepo) {
+    return (
+      <div className="rounded-lg bg-mantle border border-border p-4 text-xs text-muted-foreground">
+        <div className="font-semibold text-foreground mb-1">Not a git repository</div>
+        <p className="leading-relaxed">
+          This project folder isn&apos;t a git working tree. If it&apos;s a{" "}
+          <code className="text-blue">.agi</code> envelope, manage its config &amp;
+          knowledge state from <strong>Coordinate → Project</strong>; individual code
+          repos live under <code>repos/</code>.
+        </p>
       </div>
     );
   }

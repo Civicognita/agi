@@ -40,6 +40,7 @@
  */
 
 import { resolve as resolvePath } from "node:path";
+import { KNOWLEDGE_DIR } from "./project-config-path.js";
 
 export interface CageContext {
   /** Absolute path of the project this chat session is bound to.
@@ -75,11 +76,11 @@ export interface Cage {
 /** Subdirectories under the project path that constitute the s130
  *  cage. Mirrors PROJECT_FOLDER_LAYOUT but adds the project root
  *  itself (the source code directly under projectPath/, separate
- *  from the .agi/ + k/ + repos/ + .trash/ children). */
+ *  from the .agi/ + .ai/ + repos/ + .trash/ children). */
 const PROJECT_CAGE_DIRS = [
-  "",          // project root itself
-  ".agi",
-  "k",
+  "",            // project root itself
+  ".agi",        // config envelope
+  KNOWLEDGE_DIR, // knowledge dir (.ai/, renamed from k/ 2026-06-09)
   "repos",
   ".trash",
 ] as const;

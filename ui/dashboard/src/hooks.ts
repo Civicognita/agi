@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { DashboardEvent, LogEntry, AionimaConfig, HFModelSearchResult, CoreForkStatus } from "./types.js";
+import type { DashboardEvent, LogEntry, AionimaConfig, HFModelSearchResult, CoreForkStatus, ContributeStatus, CreatePrResult, AgiRepoStatus, AgiRepoOpResult, CompanionDevice, PairCodeResult, IncomingStatus } from "./types.js";
 import {
   fetchOverview, fetchConfig, saveConfig,
   fetchProjects, createProject, updateProject, deleteProject,
@@ -205,6 +205,137 @@ export function useCoreForkStatus() {
     },
     staleTime: 30_000,
     refetchOnWindowFocus: false,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// useContributeStatus — outbound PR status (fork → upstream/dev), grouped
+// into Learnings (PRIME) + Mechanics (everything else).
+// ---------------------------------------------------------------------------
+
+export function useContributeStatus() {
+  return useQuery({
+    queryKey: ["dev", "contribute", "status"],
+    queryFn: async (): Promise<ContributeStatus> => {
+      const res = await fetch("/api/dev/contribute/status");
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+      return (await res.json()) as ContributeStatus;
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// useIncomingStatus — inbound PR review queue (personal forks → upstream/dev),
+// grouped per core repo. The owner reviews + tests these before merging.
+// ---------------------------------------------------------------------------
+
+export function useIncomingStatus() {
+  return useQuery({
+    queryKey: ["dev", "incoming", "status"],
+    queryFn: async (): Promise<IncomingStatus> => {
+      const res = await fetch("/api/dev/incoming/status");
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+      return (await res.json()) as IncomingStatus;
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useCreateContributePr() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (vars: { slug: string; title?: string; body?: string }): Promise<CreatePrResult> => {
+      const res = await fetch(`/api/dev/contribute/${encodeURIComponent(vars.slug)}/pr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: vars.title, body: vars.body }),
+      });
+      const body = (await res.json().catch(() => ({}))) as CreatePrResult & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${String(res.status)}`);
+      return body;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["dev", "contribute", "status"] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// useAgiRepoStatus — {project}.agi envelope state + submodules (Phase 3).
+// ---------------------------------------------------------------------------
+
+export function useAgiRepoStatus(projectPath: string | undefined) {
+  return useQuery({
+    queryKey: ["projects", "agi-repo", "status", projectPath],
+    enabled: Boolean(projectPath),
+    queryFn: async (): Promise<AgiRepoStatus> => {
+      const res = await fetch(`/api/projects/agi-repo/status?path=${encodeURIComponent(projectPath ?? "")}`);
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+      return (await res.json()) as AgiRepoStatus;
+    },
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useAgiRepoAction(projectPath: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (action: "init" | "import"): Promise<AgiRepoOpResult> => {
+      const res = await fetch(`/api/projects/agi-repo/${action}?path=${encodeURIComponent(projectPath ?? "")}`, {
+        method: "POST",
+      });
+      const body = (await res.json().catch(() => ({}))) as AgiRepoOpResult & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${String(res.status)}`);
+      return body;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["projects", "agi-repo", "status", projectPath] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Companion device pairing (gateway ↔ desktop/mobile, e.g. Genie).
+// ---------------------------------------------------------------------------
+
+export function useCompanionDevices() {
+  return useQuery({
+    queryKey: ["companion", "devices"],
+    queryFn: async (): Promise<CompanionDevice[]> => {
+      const res = await fetch("/api/companion/devices");
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+      return ((await res.json()) as { devices: CompanionDevice[] }).devices;
+    },
+    staleTime: 15_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useGeneratePairCode() {
+  return useMutation({
+    mutationFn: async (): Promise<PairCodeResult> => {
+      const res = await fetch("/api/companion/pair/code", { method: "POST" });
+      const body = (await res.json().catch(() => ({}))) as PairCodeResult & { error?: string };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${String(res.status)}`);
+      return body;
+    },
+  });
+}
+
+export function useRevokeCompanionDevice() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string): Promise<void> => {
+      const res = await fetch(`/api/companion/devices/${encodeURIComponent(id)}/revoke`, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["companion", "devices"] });
+    },
   });
 }
 
@@ -515,7 +646,7 @@ export function useHosting() {
   const statusQuery = useQuery({
     queryKey: ["hosting", "status"],
     queryFn: fetchHostingStatus,
-    refetchInterval: 120_000, // WS events are primary; polling is fallback only
+    refetchInterval: 10_000, // WS events are primary; 10s poll catches missed events
   });
 
   const enableMutation = useMutation({

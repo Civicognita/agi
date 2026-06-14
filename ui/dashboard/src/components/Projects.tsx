@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DevNotes } from "@/components/ui/dev-notes";
-import { SACRED_PROJECTS, PAX_SACRED_PROJECTS, isSacredProject, isPaxProject, matchSacredProject } from "@/lib/sacred-projects.js";
+import { SACRED_PROJECTS, PAX_SACRED_PROJECTS, isSacredProject, isPaxProject } from "@/lib/sacred-projects.js";
 import { Table } from "@particle-academy/react-fancy";
 import { fetchProjectActivitySummary, type ProjectActivitySummary } from "../api.js";
 import {
@@ -27,9 +27,13 @@ import { HostingSetupBanner } from "./HostingSetupBanner.js";
 import { SetupTerminal } from "./SetupTerminal.js";
 import type { HostingStatus } from "../api.js";
 
-/** Derive a URL slug from a project path (last segment, lowercased, alphanumeric + dashes). */
+/** Derive a URL slug from a project path. Last segment, lowercased.
+ *  Preserves alphanumerics + dashes + underscores so the meta-project
+ *  `_aionima` (owner-managed local-customizations root) keeps its leading
+ *  underscore in the URL. The Sacred card navigates to `/projects/_aionima`
+ *  and the project-detail route resolves the same slug back. */
 export function projectSlug(path: string): string {
-  return path.split("/").pop()?.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") ?? "";
+  return path.split("/").pop()?.toLowerCase().replace(/[^a-z0-9_]+/g, "-").replace(/^-|-$/g, "") ?? "";
 }
 
 export interface ProjectsProps {
@@ -55,7 +59,7 @@ export interface ProjectsProps {
 
 export function Projects({
   projects, loading, error, creating, onCreate, onRefresh,
-  projectActivity, hostingStatus, contributingEnabled,
+  projectActivity, hostingStatus, contributingEnabled: _contributingEnabled,
 }: ProjectsProps) {
   const [showModal, setShowModal] = useState(false);
   const [showSetupTerminal, setShowSetupTerminal] = useState(false);
@@ -69,16 +73,21 @@ export function Projects({
   // the table render; a project without a summary just shows a flat line.
   const [activitySummaries, setActivitySummaries] = useState<Record<string, ProjectActivitySummary>>({});
   const navigate = useNavigate();
-  const isContributing = Boolean(contributingEnabled);
 
-  const sacredEntries = isContributing
-    ? SACRED_PROJECTS.map((sacred) => ({
-        sacred,
-        project: matchSacredProject(projects, sacred.id),
-      }))
-    : [];
-
-  const isAionimaProject = (p: ProjectInfo) => isSacredProject(p) || p.projectType?.id === "aionima";
+  // Owner directive 2026-05-13: `_aionima/` is the meta-project and must
+  // never appear in the regular projects list — only as the Sacred card.
+  // Backend stamping of projectType.id===\"aionima-system\" is the canonical
+  // signal; the path-basename fallback covers the case where the boot
+  // scaffolder hasn't yet written project.json so the gateway has
+  // auto-detected the directory with a wrong type.
+  const isAionimaProject = (p: ProjectInfo) => {
+    if (isSacredProject(p)) return true;
+    const typeId = p.projectType?.id;
+    if (typeId === "aionima" || typeId === "aionima-system") return true;
+    const basename = p.path.split("/").pop() ?? "";
+    if (basename === "_aionima") return true;
+    return false;
+  };
   // s119 t705 — PAx forks live as repos under `_aionima/repos/` now,
   // not as standalone projects. They never appear as their own tiles;
   // the single Aionima sacred card (above) is the entry point.
@@ -128,6 +137,24 @@ export function Projects({
       .join("");
   };
 
+  // Derive activity-based project health per the Hearth mockup:
+  // green = Aion active or has recent 30d activity, rose = hosting error, amber = idle
+  const deriveHealth = (p: ProjectInfo): "green" | "amber" | "rose" => {
+    if (p.hosting?.status === "error") return "rose";
+    if (projectActivity?.[p.path]) return "green";
+    const summary = activitySummaries[p.path];
+    if (summary && summary.total > 0) return "green";
+    return "amber";
+  };
+
+  // Sort: green → amber → rose (problems surface naturally)
+  const sortedProjects = [...visibleProjects].sort((a, b) => {
+    const order = { green: 0, amber: 1, rose: 2 } as const;
+    return order[deriveHealth(a)] - order[deriveHealth(b)];
+  });
+
+  const aionActiveCount = visibleProjects.filter((p) => projectActivity?.[p.path]).length;
+
   return (
     <div>
       {/* Header */}
@@ -135,6 +162,24 @@ export function Projects({
         <div className="flex items-center gap-2">
           <h2 className="text-xl font-bold text-foreground">Projects</h2>
           <DevNotes title="Projects browser — dev notes">
+            <DevNotes.Item kind="info" heading="Cycle 228 — Aionima moved into list row (top)">
+              Removed separate Sacred section above the table. Aionima is now the
+              first row in both list view (indigo-tinted Table.Row) and grid view
+              (indigo card as the first grid cell). Same indigo/yellow styling as before;
+              no separate heading or spatial separation from the project list.
+            </DevNotes.Item>
+            <DevNotes.Item kind="info" heading="Cycle 226 — Sacred Aionima card always visible">
+              v0.4.664 — owner directive: the Sacred Aionima card is now visible
+              regardless of dev/contributing mode. Dev mode only controls whether
+              owner forks get cloned into <code>_aionima/repos/</code>, not whether
+              the card renders. Description text branches on mode — "Wraps N forks"
+              when populated, "Enable contributing mode to clone…" when not.
+              Paired with the underlying ESM <code>__dirname</code> fix in
+              <code>project-config-path.ts</code> that unblocked the boot
+              scaffolder. New regression e2es in <code>aionima-self-managed.spec.ts</code>
+              cover the click→ProjectDetail-render roundtrip and the filter that
+              keeps <code>_aionima</code> out of the regular projects list.
+            </DevNotes.Item>
             <DevNotes.Item kind="info" heading="Cycle 136 — click-to-expand row tray (mockup B)">
               Each row expands to a 4-quadrant grid (Repos / Stacks / Aion context / Knowledge) +
               a 5-button action row (Open workspace / Open chat / Configure repos / Manage stacks /
@@ -144,21 +189,10 @@ export function Projects({
               Hosting health surfaced as a compact icon column. ✓ green = container running &
               reachable. ⚠ amber = degraded. ⚠ red = error. — = not hosted.
             </DevNotes.Item>
-            <DevNotes.Item kind="info" heading="Cycle 133 — Tynn column">
-              `open|doing` two-tone counts per project. **Currently shows `—` for all projects** —
-              backend population deferred to PM-Lite slice (s139 forthcoming). The reframe today
-              shifts this from a remote-tynn fetch to a local PM-Lite store read.
-            </DevNotes.Item>
-            <DevNotes.Item kind="todo" heading="PM-Lite kanban incoming (s139)">
-              The Tynn column in this browser will populate from the local PM-Lite store once
-              s139 ships. The PM-Lite kanban itself surfaces in the Operate tab inside each
-              project's workspace. Codename was tynn-lite; user-facing name is PM-Lite.
-            </DevNotes.Item>
-            <DevNotes.Item kind="warning" heading="Project folder structure migrating (s140)">
-              All non-sacred projects will be restructured to {"{k/, repos/, sandbox/}"} at
-              the project root (chat stays at k/chat/) with a single `project.json` config file at
-              the root holding both project- and per-repo-config. Migration runs as a dry-run
-              report first; no file moves until owner sign-off.
+            <DevNotes.Item kind="info" heading="Cycle 222 — Tynn column live (s130 t524)">
+              `open|doing` counts now populate from each project's `k/pm/tasks.jsonl` (or
+              `.tynn-lite/tasks.jsonl` legacy path). Shows `—` when no PM-Lite store exists
+              for that project. s139 (PM-Lite kanban) and s140 (k/ folder structure) both shipped.
             </DevNotes.Item>
             <DevNotes.Item kind="deferred" heading="COA chain dots in Knowledge column">
               Per cycle-128 audit, the Knowledge column should also show a small COA-chain
@@ -244,64 +278,76 @@ export function Projects({
         </div>
       )}
 
-      {/* Aionima — single platform-contribution portal tile (s119 redesign).
-          Replaces the per-core-repo sacred tiles. Users don't ship updates
-          per package; they contribute across channels through the
-          consolidated /aionima view (upstream alignment + PR + MINT).
-          Impactium-blockchain COA<>COI ties back to THIS single entry. */}
-      {isContributing && (
-        // Aionima + PAx render in a single Sacred row (owner directive
-        // 2026-04-29 cycle ~121): the two consolidation cards belong on
-        // the same row, not stacked. The auto-fill grid degrades to 1
-        // column at narrow widths and pairs them side-by-side at wider
-        // widths. Each card self-identifies via its name + badge so the
-        // per-section h3 ("Aionima", "PAx · ADF UI primitives") is
-        // dropped in favor of one shared "Sacred" header.
-        <div className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Star className="h-4 w-4 text-yellow" />
-            <h3 className="text-[13px] font-semibold text-foreground">Sacred</h3>
-          </div>
-          {/* s119 t705 — Aionima is now a self-managed project at
-              `_aionima`. The legacy /aionima consolidated view + the
-              separate /pax tile collapsed into this single card; both
-              routes redirect to `/projects/_aionima`. PAx repos live as
-              repos under `_aionima/repos/<name>` alongside the 5
-              Civicognita cores. */}
-          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-            <div
-              onClick={() => { void navigate("/projects/_aionima"); }}
-              className={cn(
-                "rounded-xl border transition-colors duration-150 cursor-pointer hover:border-yellow",
-                "bg-indigo-50/70 border-indigo-200/80",
-                "dark:bg-indigo-950/40 dark:border-indigo-700/60",
-              )}
-              data-testid="project-card-aionima"
-            >
-              <div className="p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Star className="h-4 w-4 text-yellow" />
-                  <span className="text-[15px] font-semibold text-card-foreground">Aionima</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-semibold">
-                    platform
-                  </span>
-                </div>
-                <div className="text-[11px] text-muted-foreground">
-                  Platform contribution portal — upstream alignment, PR submission, MINT impact ($WORK / $K / $RES). Wraps the {sacredEntries.length} core forks + {PAX_SACRED_PROJECTS.length} Particle-Academy ADF UI primitives as a single self-managed project (`_aionima/repos/`).
-                </div>
-                <div className="text-[11px] text-yellow mt-2 font-medium">Open Aionima →</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* s130 t516 slice 1 (cycle 102) — list view via react-fancy Table.
           Matches projects-ux-v2/projects-browser-v2.html mockup. Activity
           sparkline (fancy-echarts), Knowledge column, and click-to-expand
           inline panel land in subsequent slices. */}
       {viewMode === "list" && (
         <div data-testid="projects-list">
+          {/* Platform hero — Aionima is the gateway itself, always present, always first */}
+          <div
+            className="mb-4 rounded-xl border border-yellow/30 bg-gradient-to-r from-yellow/5 to-transparent p-4 flex items-start gap-4 cursor-pointer hover:border-yellow/50 transition-colors"
+            onClick={() => void navigate("/projects/_aionima")}
+            data-testid="project-card-aionima"
+          >
+            <div className="shrink-0 w-10 h-10 rounded-lg bg-yellow/10 border border-yellow/30 flex items-center justify-center">
+              <Star className="h-5 w-5 text-yellow" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <span className="text-[15px] font-bold text-foreground">Aionima</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-bold uppercase tracking-wide">Platform</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 font-semibold flex items-center gap-1">
+                  ⛨ sacred
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface1 text-muted-foreground font-mono">
+                  ⌗{SACRED_PROJECTS.length + PAX_SACRED_PROJECTS.length} repos
+                </span>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                The gateway itself — Aion's own source, the project suite, channels, and admin.
+                Present in every install · cannot be deleted or archived · Aion edits under guardrails.
+              </p>
+            </div>
+            <div className="shrink-0 flex items-center gap-3 text-[11px] text-muted-foreground">
+              <div className="text-center">
+                <div className="text-[12px] font-semibold text-green flex items-center gap-1">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-green animate-[pulse-green_2s_ease-in-out_infinite]" />
+                  Running
+                </div>
+                <div className="text-[10px]">Aion lives here</div>
+              </div>
+              <div className="text-center">
+                <div className="text-[12px] font-semibold text-foreground">self-edit</div>
+                <div className="text-[10px]">source access</div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); void navigate("/projects/_aionima"); }}
+                className="ml-2 text-[11px] px-3 py-1.5 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 font-medium"
+              >
+                Open platform →
+              </button>
+            </div>
+          </div>
+
+          {/* Filter chips + sort indicator */}
+          <div className="flex items-center gap-2 mb-3 text-[11px]">
+            <span className="px-2.5 py-1 rounded-full bg-secondary text-secondary-foreground font-medium">
+              All {sortedProjects.length}
+            </span>
+            <span className="px-2.5 py-1 rounded-full border border-yellow/40 text-yellow font-medium">
+              Amber {sortedProjects.filter((p) => deriveHealth(p) === "amber").length}
+            </span>
+            {aionActiveCount > 0 && (
+              <span className="px-2.5 py-1 rounded-full border border-green/40 text-green font-medium flex items-center gap-1">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-green animate-[pulse-green_2s_ease-in-out_infinite]" />
+                Aion active {aionActiveCount}
+              </span>
+            )}
+            <span className="ml-auto text-muted-foreground">sorted by health</span>
+          </div>
+
           <Table>
             <Table.Head>
               <Table.Column label="" />
@@ -316,7 +362,8 @@ export function Projects({
               <Table.Column label="Health" />
             </Table.Head>
             <Table.Body>
-              {visibleProjects.map((p) => {
+              {sortedProjects.map((p) => {
+                const health = deriveHealth(p);
                 const slug = projectSlug(p.path);
                 const cat = p.category ?? p.projectType?.category;
                 const isOps = cat === "ops" || cat === "administration";
@@ -454,15 +501,23 @@ export function Projects({
                   <Table.Row
                     key={p.path}
                     onClick={() => void navigate(`/projects/${slug}`)}
-                    className="cursor-pointer hover:bg-secondary/30"
+                    className={cn(
+                      "cursor-pointer hover:bg-secondary/30",
+                      health === "green" && "border-l-[3px] border-green",
+                      health === "amber" && "border-l-[3px] border-yellow",
+                      health === "rose" && "border-l-[3px] border-red",
+                    )}
                     tray={tray}
                     trayTriggerPosition="end"
                   >
                     <Table.Cell>
                       {projectActivity?.[p.path] ? (
-                        <span className="inline-block w-2 h-2 rounded-full bg-green animate-[pulse-green_2s_ease-in-out_infinite]" />
+                        <span className="inline-block w-2 h-2 rounded-full bg-green animate-[pulse-green_2s_ease-in-out_infinite]" title="Aion active" />
                       ) : (
-                        <span className="inline-block w-2 h-2 rounded-full bg-muted-foreground/20" />
+                        <span className={cn(
+                          "inline-block w-2 h-2 rounded-full",
+                          health === "green" ? "bg-green/30" : health === "rose" ? "bg-red/30" : "bg-muted-foreground/20",
+                        )} />
                       )}
                     </Table.Cell>
                     <Table.Cell>
@@ -653,15 +708,39 @@ export function Projects({
       {/* Project grid — original compact card layout, opt-in via viewMode toggle */}
       {viewMode === "grid" && (
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))" }}>
-        {visibleProjects.map((p) => {
+        {/* Aionima platform hero — spans full grid width */}
+        <div
+          onClick={() => { void navigate("/projects/_aionima"); }}
+          className="col-span-full rounded-xl border border-yellow/30 bg-gradient-to-r from-yellow/5 to-transparent p-4 flex items-center gap-4 cursor-pointer hover:border-yellow/50 transition-colors"
+          data-testid="project-card-aionima"
+        >
+          <div className="shrink-0 w-10 h-10 rounded-lg bg-yellow/10 border border-yellow/30 flex items-center justify-center">
+            <Star className="h-5 w-5 text-yellow" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap mb-0.5">
+              <span className="text-[14px] font-bold text-foreground">Aionima</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow/15 text-yellow font-bold uppercase tracking-wide">Platform</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-400 font-semibold">⛨ sacred</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface1 text-muted-foreground font-mono">⌗{SACRED_PROJECTS.length + PAX_SACRED_PROJECTS.length} repos</span>
+              <span className="flex items-center gap-1 text-[10px] text-green"><span className="inline-block w-1.5 h-1.5 rounded-full bg-green animate-[pulse-green_2s_ease-in-out_infinite]" />Aion lives here</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              The gateway itself · cannot be deleted or archived · Aion edits under guardrails
+            </p>
+          </div>
+          <span className="shrink-0 text-[11px] text-yellow font-medium">Open platform →</span>
+        </div>
+        {sortedProjects.map((p) => {
           const slug = projectSlug(p.path);
+          const health = deriveHealth(p);
           return (
             <div
               key={p.path}
               onClick={() => void navigate(`/projects/${slug}`)}
               className={cn(
-                "rounded-xl bg-card border border-border transition-colors duration-150 cursor-pointer",
-                "hover:border-blue",
+                "rounded-xl bg-card border transition-colors duration-150 cursor-pointer hover:border-blue",
+                health === "green" ? "border-l-[3px] border-l-green border-border" : health === "rose" ? "border-l-[3px] border-l-red border-border" : "border-l-[3px] border-l-yellow border-border",
               )}
               data-testid="project-card"
             >
@@ -702,11 +781,12 @@ export function Projects({
                   {p.hosting && (
                     <span className={cn(
                       "text-[10px] px-1.5 py-0.5 rounded font-semibold",
-                      p.hosting.status === "running" ? "bg-green/15 text-green" :
-                      p.hosting.status === "error" ? "bg-red/15 text-red" :
+                      p.hosting.status === "running" && (p.hosting.serving ?? false) ? "bg-green/15 text-green" :
+                      p.hosting.status === "running" ? "bg-yellow/15 text-yellow" :
+                      p.hosting.status === "error" || p.hosting.status === "stopped" ? "bg-red/15 text-red" :
                       "bg-muted-foreground/15 text-muted-foreground",
                     )}>
-                      {p.hosting.status}
+                      {p.hosting.status === "running" && !(p.hosting.serving ?? false) ? "starting" : p.hosting.status}
                     </span>
                   )}
                 </div>

@@ -264,6 +264,27 @@ Path traversal sequences (`..`, absolute paths) are rejected.
 
 ---
 
+### `search_docs`
+
+**Category:** Knowledge
+**Available:** Always (no state or tier gate)
+**Added:** v0.4.0 (s112)
+
+Search AGI platform documentation and project knowledge files indexed by the `DocIndexer`. Covers `agi/docs/`, the global knowledge folder (`~/_aionima/.ai/`), and per-project `.ai/` folders (the knowledge dir, renamed from `k/` 2026-06-09).
+
+**Parameters:**
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `query` | string | yes | — | Search query (semantic when embeddings available, BM25 fallback) |
+| `scope` | string | no | `"all"` | Filter: `"global"` (docs + global k/), `"project"` (current project k/), or `"all"` |
+| `limit` | number | no | `5` | Maximum results (max 50) |
+
+**Returns:** Array of document chunks with `heading`, `content`, `sourcePath`, `scope`.
+
+Use this tool when you need to look up specific platform documentation or project knowledge files that aren't already in your context.
+
+---
+
 ## Project Tools
 
 ### `manage_project`

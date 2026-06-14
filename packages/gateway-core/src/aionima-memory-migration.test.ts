@@ -37,7 +37,7 @@ afterEach(() => {
 
 function workspaceRoot(): string {
   const ws = join(tmp, "workspace");
-  mkdirSync(join(ws, "_aionima", "k"), { recursive: true });
+  mkdirSync(join(ws, "_aionima", ".ai"), { recursive: true });
   return ws;
 }
 
@@ -51,7 +51,7 @@ function seedLegacy(files: Record<string, string>): void {
 
 describe("aionimaMemoryDir / legacyMemoryDir (s119 t704)", () => {
   it("aionimaMemoryDir resolves under workspaceRoot", () => {
-    expect(aionimaMemoryDir("/foo/bar")).toBe("/foo/bar/_aionima/k/memory");
+    expect(aionimaMemoryDir("/foo/bar")).toBe("/foo/bar/_aionima/.ai/memory");
   });
 
   it("legacyMemoryDir resolves under HOME", () => {
@@ -123,7 +123,7 @@ describe("migrateAionimaMemoryDir (s119 t704)", () => {
   });
 
   it("creates target dir on demand if t701 scaffolder hasn't run", () => {
-    // workspaceRoot() pre-creates _aionima/k/ but NOT k/memory.
+    // workspaceRoot() pre-creates _aionima/.ai/ but NOT k/memory.
     const ws = workspaceRoot();
     expect(existsSync(aionimaMemoryDir(ws))).toBe(false);
 

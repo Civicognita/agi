@@ -108,7 +108,7 @@ Plugins can declare dependencies on other plugins using the `depends` field. Whe
 {
   "aionima": {
     "provides": ["project-types"],
-    "depends": ["aionima-node-runtime"]
+    "depends": ["agi-node-runtime"]
   }
 }
 ```
@@ -236,7 +236,17 @@ Required plugins are auto-installed on gateway startup from the marketplace cata
 
 ### Project Type Plugins
 
-Project type plugins register categories like Web App, API Service, Static Site, Literature, etc. These define what appears in the New Project dialog and determine which stacks are available.
+Project type plugins register categories that appear in the New Project dialog and determine which stacks are available for each project.
+
+| Plugin | Project Type |
+|--------|-------------|
+| `project-webapp` | Web App |
+| `project-api` | API Service |
+| `project-staticsite` | Static Site |
+| `project-writing` | Writing / Literature |
+| `project-monorepo` | Monorepo |
+| `project-ops` | Ops / Infrastructure |
+| `project-art` | Art / Creative |
 
 ### Runtime Plugins
 
@@ -244,8 +254,11 @@ Runtime plugins register container images for programming languages. All runtime
 
 | Plugin | Runtimes | Container Image | Pre-installed |
 |--------|----------|----------------|---------------|
-| `aionima-node-runtime` | Node.js 24, 22, 20 LTS | `ghcr.io/civicognita/node:{version}` | python3, make, g++, git, corepack |
-| `aionima-php-runtime` | PHP 8.5, 8.4, 8.3, 8.2 | `ghcr.io/civicognita/php-apache:{version}` | All common extensions (gd, intl, pdo_pgsql, pdo_mysql, redis, imagick, zip, bcmath, opcache, etc.), Composer, mod_rewrite |
+| `agi-node-runtime` | Node.js 24, 22, 20 LTS | `ghcr.io/civicognita/node:{version}` | python3, make, g++, git, corepack |
+| `agi-php-runtime` | PHP 8.5, 8.4, 8.3, 8.2 | `ghcr.io/civicognita/php-apache:{version}` | All common extensions (gd, intl, pdo_pgsql, pdo_mysql, redis, imagick, zip, bcmath, opcache, etc.), Composer, mod_rewrite |
+| `agi-python-runtime` | Python 3.13, 3.12, 3.11 | `ghcr.io/civicognita/python:{version}` | pip, venv, common build tools |
+| `agi-go-runtime` | Go 1.23, 1.22 | `ghcr.io/civicognita/go:{version}` | go toolchain, git |
+| `agi-rust-runtime` | Rust stable, beta | `ghcr.io/civicognita/rust:{version}` | cargo, rustfmt, clippy |
 
 ### Service Plugins
 
@@ -253,9 +266,9 @@ Service plugins register shared database and cache containers. Each service uses
 
 | Plugin | Versions | Container Image | Pre-installed |
 |--------|----------|----------------|---------------|
-| `aionima-postgres` | PostgreSQL 17, 16, 15 | `ghcr.io/civicognita/postgres:{version}` | pgvector, PostGIS, pg_trgm, uuid-ossp, hstore |
-| `aionima-mysql` | MariaDB 11.4, 10.11, 10.6 | `ghcr.io/civicognita/mariadb:{version}` | utf8mb4, dev-friendly defaults |
-| `aionima-redis` | Redis 7.4, 7.2, 6.2 | `ghcr.io/civicognita/redis:{version}` | append-only persistence, LRU eviction |
+| `agi-postgres` | PostgreSQL 17, 16, 15 | `ghcr.io/civicognita/postgres:{version}` | pgvector, PostGIS, pg_trgm, uuid-ossp, hstore |
+| `agi-mysql` | MariaDB 11.4, 10.11, 10.6 | `ghcr.io/civicognita/mariadb:{version}` | utf8mb4, dev-friendly defaults |
+| `agi-redis` | Redis 7.4, 7.2, 6.2 | `ghcr.io/civicognita/redis:{version}` | append-only persistence, LRU eviction |
 
 Each service plugin includes a **Settings page** for installing/uninstalling container images and configuring default credentials.
 
@@ -274,6 +287,12 @@ Stack plugins register framework-specific configurations that projects can add. 
 | `stack-react-vite` | React (Vite) | framework | Node runtime |
 | `stack-static-hosting` | Static Hosting | framework | — |
 | `stack-hono` | Hono API | framework | Node runtime |
+| `stack-tailwind` | Tailwind CSS | utility | — |
+| `stack-django` | Django | framework | Python runtime |
+| `stack-fastapi` | FastAPI | framework | Python runtime |
+| `stack-flask` | Flask | framework | Python runtime |
+| `stack-go-app` | Go App | framework | Go runtime |
+| `stack-rust-app` | Rust App | framework | Rust runtime |
 
 ### plugin-editor
 

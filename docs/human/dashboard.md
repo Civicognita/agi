@@ -43,11 +43,9 @@ The header bar shows a row of colored dots representing the health of each core 
 | **AGI** | Gateway server | Always green (you're looking at it) | -- | -- |
 | **PRIME** | Knowledge corpus | Corpus loaded, entries readable | Directory not found | Error reading corpus |
 | **Workspace** | Project directories | Projects accessible | No projects configured | Dirs inaccessible |
-| **ID** | Identity service | Health + functional endpoint OK | Health OK but app broken (degraded) | Service unreachable |
+| **ID** | Identity service (gateway-internal) | Identity subsystem healthy | -- | Identity subsystem error |
 
-The ID dot only appears when `idService.local.enabled` is `true` in the config. When using the central ID service (`id.aionima.ai`), the dot shows green and is labeled "Central".
-
-**Degraded status (yellow)** means the ID service's liveness probe (`/health`) responds but a functional endpoint (`/federation/whoami`) fails. This typically indicates a build issue (e.g., missing HTML view templates) where the service is running but can't serve pages.
+Identity is always handled in-gateway (absorbed from the retired `aionima-local-id` service in v0.4.747). There is no separate local ID service config toggle — the ID dot reflects the health of the gateway's internal identity subsystem.
 
 ---
 
@@ -119,7 +117,7 @@ Only channels that are configured in `gateway.json` appear in the sidebar.
 
 ### Knowledge
 
-The Knowledge section provides access to the PRIME knowledge corpus (stored in an external repo at the path configured by `prime.dir`, default `/opt/agi-prime`). It allows browsing and reading corpus documents. Writing from the dashboard editor is not supported — the corpus is managed via its own source repository.
+The Knowledge section provides access to the PRIME knowledge corpus (stored at the path configured by `prime.dir`, default `~/.aionima/`). The editor supports full read/write access to files — `.md` files open in a rich text editor (`KnowledgeEditor`), all other file types open in a code editor (`fancy-code CodeEditor`). Changes are written directly to `~/.aionima/` and take effect at next agent invocation. A warning is shown at the top of the page — edit with care, as PRIME corpus changes affect Aion's behaviour immediately.
 
 ### Documentation
 

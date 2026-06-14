@@ -34,7 +34,7 @@ import type {
   ImpactHookAdapter,
   COAEmitterAdapter,
   ChannelId,
-} from "@agi/channel-sdk";
+} from "@agi/plugins";
 
 class ChannelBuilder {
   private def: {

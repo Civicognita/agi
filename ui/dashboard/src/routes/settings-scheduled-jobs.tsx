@@ -1,24 +1,18 @@
 /**
- * Settings → Scheduled Jobs (s118 t443 D2).
+ * Settings → Scheduled Jobs (s118 redesign).
  *
- * System-wide cron manager — lists EVERY scheduled job running in the AGI:
- *   - Per-project iterative-work loops (one per eligible+enabled project)
+ * System-wide view of every scheduled job running in this AGI:
+ *   - Per-project jobs (all types: pm-loop, prompt, command, action)
  *   - Plugin-registered scheduled tasks (e.g. backup runs, log rotations)
  *
- * Cadence is shown as the user-friendly key (when set via the Iterative
- * Work tab) plus the auto-staggered cron expression. Time fields show
- * last fire + next fire when known. Click-through to the project tab for
- * project loops; inline pause/resume for plugin tasks (via existing
- * /api/dashboard/scheduled-tasks/:id/:action endpoint).
- *
- * AGI's own iterative loop (system-wide ops cadence) lands here when
- * implemented — currently empty for this surface.
+ * Click-through to the project's "Scheduled Jobs" tab for editing.
+ * Inline pause/resume for plugin tasks via the existing API.
  */
 
 import type { ReactElement } from "react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
-import type { ProjectInfo } from "../types";
+import type { ProjectInfo, ScheduledJob, ScheduledJobStatus } from "../types";
 import { fetchProjects } from "../api";
 import { Button } from "../components/ui/button";
 
@@ -32,12 +26,18 @@ interface PluginScheduledTask {
   enabled: boolean;
 }
 
-interface ProjectIwInfo {
+interface ProjectJobRow {
   project: ProjectInfo;
-  enabled: boolean;
-  cron: string | null;
-  cadence: string | null;
+  job: ScheduledJob;
+  status?: ScheduledJobStatus;
 }
+
+const JOB_TYPE_LABELS: Record<string, string> = {
+  "pm-loop": "PM Loop",
+  prompt: "Prompt",
+  command: "Command",
+  action: "Action",
+};
 
 async function fetchPluginScheduled(): Promise<PluginScheduledTask[]> {
   const res = await fetch("/api/dashboard/plugin-scheduled-tasks");
@@ -45,22 +45,22 @@ async function fetchPluginScheduled(): Promise<PluginScheduledTask[]> {
   return (await res.json()) as PluginScheduledTask[];
 }
 
-async function fetchProjectIwSummaries(): Promise<ProjectIwInfo[]> {
+async function fetchProjectJobRows(): Promise<ProjectJobRow[]> {
   const projects = await fetchProjects();
   const eligible = projects.filter((p) => p.iterativeWorkEligible ?? p.projectType?.iterativeWorkEligible);
-  const out: ProjectIwInfo[] = [];
+  const out: ProjectJobRow[] = [];
   for (const project of eligible) {
     try {
-      const res = await fetch(`/api/projects/iterative-work/status?path=${encodeURIComponent(project.path)}`);
+      const res = await fetch(`/api/projects/scheduled-jobs?path=${encodeURIComponent(project.path)}`);
       if (!res.ok) continue;
-      const status = (await res.json()) as { enabled: boolean; cron: string | null; cadence?: string | null };
-      // Only show projects with iterative-work enabled — disabled projects
-      // shouldn't clutter the system-wide cron view.
-      if (status.enabled) {
-        out.push({ project, enabled: status.enabled, cron: status.cron, cadence: status.cadence ?? null });
+      const data = (await res.json()) as { jobs: ScheduledJob[]; status: ScheduledJobStatus[] };
+      for (const job of data.jobs ?? []) {
+        if (!job.enabled) continue; // only show active jobs in global view
+        const status = (data.status ?? []).find((s) => s.jobId === job.id);
+        out.push({ project, job, status });
       }
     } catch {
-      /* skip projects whose status endpoint errored */
+      /* skip on error */
     }
   }
   return out;
@@ -73,7 +73,7 @@ async function setPluginEnabled(id: string, enabled: boolean): Promise<void> {
 
 export default function ScheduledJobsPage(): ReactElement {
   const [pluginTasks, setPluginTasks] = useState<PluginScheduledTask[]>([]);
-  const [projectIws, setProjectIws] = useState<ProjectIwInfo[]>([]);
+  const [projectRows, setProjectRows] = useState<ProjectJobRow[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,9 +81,9 @@ export default function ScheduledJobsPage(): ReactElement {
     setLoading(true);
     setError(null);
     try {
-      const [tasks, iws] = await Promise.all([fetchPluginScheduled(), fetchProjectIwSummaries()]);
+      const [tasks, rows] = await Promise.all([fetchPluginScheduled(), fetchProjectJobRows()]);
       setPluginTasks(tasks);
-      setProjectIws(iws);
+      setProjectRows(rows);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -93,7 +93,6 @@ export default function ScheduledJobsPage(): ReactElement {
 
   useEffect(() => {
     void refresh();
-    // Refresh every 30s — cron firings change last-fire/next-fire timestamps.
     const id = window.setInterval(() => { void refresh(); }, 30_000);
     return (): void => { window.clearInterval(id); };
   }, []);
@@ -103,43 +102,56 @@ export default function ScheduledJobsPage(): ReactElement {
       <div>
         <h1 className="text-[16px] font-semibold mb-1">Scheduled Jobs</h1>
         <p className="text-[12px] text-muted-foreground">
-          System-wide view of every cron running in this AGI: per-project iterative-work loops, plugin-registered tasks, and (when active) the system-wide ops loop. Cadence is auto-staggered per project so loops don't collide.
+          System-wide view of every active scheduled job: per-project prompts, commands, actions, and PM loops plus plugin-registered tasks. Manage per-project jobs on each project's <span className="font-mono">Scheduled Jobs</span> tab.
         </p>
       </div>
 
       {error && <div className="text-[12px] text-red">{error}</div>}
-      {loading && projectIws.length === 0 && pluginTasks.length === 0 && (
+      {loading && projectRows.length === 0 && pluginTasks.length === 0 && (
         <div className="text-[12px] text-muted-foreground">Loading…</div>
       )}
 
       <section data-testid="scheduled-jobs-projects">
-        <h2 className="text-[14px] font-semibold mb-2">Project Iterative Work Loops</h2>
-        {projectIws.length === 0 ? (
+        <h2 className="text-[14px] font-semibold mb-2">Project Scheduled Jobs</h2>
+        {projectRows.length === 0 ? (
           <div className="text-[12px] text-muted-foreground">
-            No projects have iterative work enabled. Enable per-project on a project's <span className="font-mono">Iterative Work</span> tab (eligible categories: web, app, ops, administration).
+            No active scheduled jobs. Add one from a project's <span className="font-mono">Scheduled Jobs</span> tab.
           </div>
         ) : (
           <table className="w-full text-[12px]" data-testid="scheduled-jobs-projects-table">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left pb-1">Project</th>
-                <th className="text-left pb-1">Cadence</th>
-                <th className="text-left pb-1">Cron (auto-staggered)</th>
+                <th className="text-left pb-1 pr-3">Project</th>
+                <th className="text-left pb-1 pr-3">Job</th>
+                <th className="text-left pb-1 pr-3">Type</th>
+                <th className="text-left pb-1 pr-3">Cadence</th>
+                <th className="text-left pb-1 pr-3">Next fire</th>
                 <th className="text-left pb-1">Action</th>
               </tr>
             </thead>
             <tbody>
-              {projectIws.map((iw) => (
-                <tr key={iw.project.path} className="border-b border-border/50">
-                  <td className="py-1">
-                    <Link to={`/projects/${iw.project.name}`} className="text-[12px] underline">
-                      {iw.project.name}
+              {projectRows.map(({ project, job, status }) => (
+                <tr key={`${project.path}::${job.id}`} className="border-b border-border/50">
+                  <td className="py-1 pr-3">
+                    <Link to={`/projects/${project.name}`} className="text-[12px] underline">
+                      {project.name}
                     </Link>
                   </td>
-                  <td className="py-1 font-mono">{iw.cadence ?? "—"}</td>
-                  <td className="py-1 font-mono text-muted-foreground">{iw.cron ?? "—"}</td>
+                  <td className="py-1 pr-3">{job.name}</td>
+                  <td className="py-1 pr-3">
+                    <span className="text-[10px] font-mono text-muted-foreground">
+                      {JOB_TYPE_LABELS[job.type] ?? job.type}
+                    </span>
+                  </td>
+                  <td className="py-1 pr-3 font-mono">{job.cadence ?? "—"}</td>
+                  <td className="py-1 pr-3 font-mono text-muted-foreground">
+                    {status?.nextFireAt ? new Date(status.nextFireAt).toLocaleTimeString() : "—"}
+                    {status?.inFlight && <span className="text-yellow ml-1">●</span>}
+                  </td>
                   <td className="py-1">
-                    <Link to={`/projects/${iw.project.name}`} className="text-[11px] underline">Configure →</Link>
+                    <Link to={`/projects/${project.name}`} className="text-[11px] underline">
+                      Configure →
+                    </Link>
                   </td>
                 </tr>
               ))}
@@ -189,10 +201,6 @@ export default function ScheduledJobsPage(): ReactElement {
           </table>
         )}
       </section>
-
-      <div className="text-[11px] text-muted-foreground">
-        AGI's own iterative loop (system-wide ops cadence) lands in this view when implemented. Currently empty.
-      </div>
     </div>
   );
 }

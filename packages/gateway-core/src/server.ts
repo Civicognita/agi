@@ -46,19 +46,23 @@ function resolveAgiVersion(selfRepoPath: string | undefined): string {
 import { EntityStore, MessageQueue, CommsLog, NotificationStore, IncidentStore, VendorStore, SessionStore as ComplianceSessionStore, ConsentStore, UsageStore } from "@agi/entity-model";
 import type { Entity } from "@agi/entity-model";
 import { createDbClient, waitForDb } from "@agi/db-schema/client";
+import { users } from "@agi/db-schema";
+import { eq } from "drizzle-orm";
 import { BackupManager } from "./backup-manager.js";
 import { registerComplianceRoutes } from "./compliance-api.js";
 import { registerSecurityRoutes } from "./security-api.js";
 import { registerProvidersRoutes } from "./providers-api.js";
 import { registerPmRoutes } from "./pm-api.js";
 import { registerNotesRoutes } from "./notes-api.js";
+import { registerScriptRoutes } from "./script-api.js";
+import { registerWorkflowsRoutes } from "./workflows-api.js";
 import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
 import { COAChainLogger } from "@agi/coa-chain";
 import { PairingStore } from "./pairing-store.js";
-import type { AionimaMessage } from "@agi/channel-sdk";
+import type { AionimaMessage } from "@agi/plugins";
 import { createLogger, createComponentLogger } from "./logger.js";
-import type { Logger, LogEntry } from "./logger.js";
+import type { Logger, ComponentLogger, LogEntry } from "./logger.js";
 import { CpuPowerSampler, GpuPowerSampler } from "./system-power.js";
 import { CostLedgerWriter } from "./cost-ledger-writer.js";
 import { CostLedgerReader } from "./cost-ledger-reader.js";
@@ -103,7 +107,12 @@ import { ChatEventBuffer } from "./chat-event-buffer.js";
 import { registerAllTools, registerAgentTools } from "./tools/index.js";
 import { createIssueHandler, ISSUE_TOOL_MANIFEST, ISSUE_TOOL_INPUT_SCHEMA } from "./tools/issue-tools.js";
 import { SkillRegistry } from "@agi/skills";
-import { CompositeMemoryAdapter } from "@agi/memory";
+import {
+  GraphMemoryAdapter,
+  EmbeddingEngine,
+  CandidateDatasetAccumulator,
+} from "@agi/memory";
+import { ConsolidationEngine } from "@agi/memory";
 import {
   VoicePipeline,
   WhisperSTTProvider,
@@ -113,6 +122,7 @@ import {
 } from "@agi/voice";
 import type { CanvasDocument } from "./canvas-types.js";
 import { ChannelRegistry } from "./channel-registry.js";
+import { ChannelAmbientLog } from "./channel-ambient-log.js";
 import { DashboardApi } from "./dashboard-api.js";
 import { DashboardQueries } from "./dashboard-queries.js";
 import { DashboardEventBroadcaster } from "./dashboard-events.js";
@@ -121,7 +131,10 @@ import { startGatewaySidecars } from "./server-startup.js";
 import { UserContextStore } from "./user-context-store.js";
 import { HeartbeatScheduler } from "./heartbeat.js";
 import { PrimeLoader } from "./prime-loader.js";
-import { resolvePrimeDir, resolveIdDir } from "./resolve-paths.js";
+import { AlignmentScorer } from "./prime-alignment-scorer.js";
+import { EpisodeExtractor } from "./episode-extractor.js";
+import { DocIndexer } from "./doc-indexer.js";
+import { resolvePrimeDir } from "./resolve-paths.js";
 import { checkProtocolCompatibility } from "./protocol-check.js";
 import { PlanStore, migrateProjectPlans } from "./plan-store.js";
 import { ChatPersistence } from "./chat-persistence.js";
@@ -133,8 +146,15 @@ import { buildTynnSyncPrompt } from "./plan-tynn-mapper.js";
 import { aionimaSystemProjectPath, ensureAionimaSystemProject, ensureWorkspaceSkeleton, projectConfigPath } from "./project-config-path.js";
 import { migrateAionimaSystemForks } from "./aionima-system-migration.js";
 import { migrateAionimaMemoryDir } from "./aionima-memory-migration.js";
+import { migrateAllKnowledgeDirs } from "./knowledge-dir-migration.js";
 import { HostingManager } from "./hosting-manager.js";
 import { ProjectConfigManager } from "./project-config-manager.js";
+import { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
+import { PendingApprovalStore } from "./pending-approval-store.js";
+import { ModerationFlagStore } from "./moderation-flag-store.js";
+import { RegistrationSessionStore } from "./registration-session-store.js";
+import { ChannelWorkflowBindingStore } from "./channel-workflow-binding-store.js";
+import { runWorkflow } from "./mapp-executor.js";
 import { migrateAllProjectConfigShapes } from "./project-config-shape-migration.js";
 import { migrateAllProjectMcpConfigs } from "./mcp-config-migration.js";
 import { IterativeWorkScheduler } from "./iterative-work/scheduler.js";
@@ -164,6 +184,16 @@ import { registerReportsApi } from "./reports-api.js";
 import { registerWorkerApi } from "./worker-api.js";
 import { registerUsageRoutes } from "./usage-api.js";
 import { appendUpgradeLog } from "./upgrade-log.js";
+import {
+  importPendingSteps,
+  readDeployedVersion,
+  readSeenVersion,
+  writeSeenVersion,
+  readLastMigratedVersion,
+  hasPendingRequiredSteps,
+  listUpgradeNextSteps,
+} from "./upgrade-next-steps.js";
+import { runPendingMigrations } from "./migration-runner.js";
 import { EventEmitter } from "node:events";
 import { HardwareProfiler } from "./machine/hardware-profiler.js";
 import {
@@ -228,6 +258,86 @@ async function generateNextSteps(
 }
 
 // ---------------------------------------------------------------------------
+// Startup helpers
+// ---------------------------------------------------------------------------
+
+async function probeConnectivity(
+  cfg: AionimaConfig,
+  log: ComponentLogger,
+): Promise<{ prime: boolean; hive: boolean }> {
+  const primeDir = cfg.prime?.dir ?? "/opt/agi-prime";
+  const prime = existsSync(join(primeDir, "prime.md"));
+
+  const hiveUrl = cfg.federation?.seedPeers?.[0] ?? "https://id.aionima.ai";
+  let hive = false;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(`${hiveUrl}/health`, { signal: controller.signal });
+    clearTimeout(timer);
+    hive = res.ok;
+  } catch {
+    hive = false;
+  }
+
+  log.info(`connectivity probe: prime=${String(prime)} hive=${String(hive)} → ${prime && hive ? "ONLINE" : prime || hive ? "LIMBO" : "OFFLINE"}`);
+  return { prime, hive };
+}
+
+async function resolveOwnerEntity(
+  ownerConfig: AionimaConfig["owner"],
+  entityStore: EntityStore,
+  log: ComponentLogger,
+): Promise<string | undefined> {
+  if (ownerConfig === undefined) return undefined;
+
+  const ownerChannels = ownerConfig.channels;
+  const hasChannels = Object.values(ownerChannels).some((v) => v !== undefined);
+
+  if (!hasChannels) {
+    log.warn("owner.channels is empty — owner recognition disabled");
+    return undefined;
+  }
+
+  const channelEntries = Object.entries(ownerChannels).filter(
+    (entry): entry is [string, string] => entry[1] !== undefined,
+  );
+
+  let ownerEntity: Entity | undefined;
+
+  for (const [channel, channelUserId] of channelEntries) {
+    const existing = await entityStore.getEntityByChannel(channel, channelUserId);
+    if (existing !== null) {
+      ownerEntity = existing;
+      break;
+    }
+  }
+
+  if (ownerEntity === undefined) {
+    const [firstChannel, firstUserId] = channelEntries[0]!;
+    ownerEntity = await entityStore.resolveOrCreate(firstChannel, firstUserId, ownerConfig.displayName);
+  }
+
+  for (const [channel, channelUserId] of channelEntries) {
+    await entityStore.upsertChannelAccount({
+      entityId: ownerEntity.id,
+      channel,
+      channelUserId,
+    });
+  }
+
+  if (ownerEntity.verificationTier !== "sealed") {
+    await entityStore.updateEntity(ownerEntity.id, { verificationTier: "sealed" });
+  }
+  if (ownerEntity.displayName === "Unknown") {
+    await entityStore.updateEntity(ownerEntity.id, { displayName: ownerConfig.displayName });
+  }
+
+  log.info(`owner entity resolved: ${ownerEntity.coaAlias} (${ownerEntity.displayName}) — sealed`);
+  return ownerEntity.id;
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
@@ -267,7 +377,7 @@ export async function startGatewayServer(
   // Step 1: Config merge — apply CLI overrides
   // -------------------------------------------------------------------------
 
-  const gw = config.gateway ?? { host: "127.0.0.1", port: 3100, state: "OFFLINE" as const };
+  const gw = config.gateway ?? { host: "127.0.0.1", port: 3100, state: "UNKNOWN" as const };
   const host = opts?.host ?? gw.host;
   const port = opts?.port ?? gw.port;
 
@@ -334,7 +444,7 @@ export async function startGatewayServer(
   try {
     const externalsReport = await ensureExternals(bootLog);
     bootLog.info(
-      `externals: postgres=${externalsReport.postgres.action}(${externalsReport.postgres.state}) idService=${externalsReport.idService.action}(${externalsReport.idService.state}) pgReady=${String(externalsReport.postgresReady)}`,
+      `externals: postgres=${externalsReport.postgres.action}(${externalsReport.postgres.state}) pgReady=${String(externalsReport.postgresReady)}`,
     );
   } catch (err) {
     bootLog.error(
@@ -399,6 +509,34 @@ export async function startGatewayServer(
   // wires audit identity context for boot-time resolves.
   const vaultResolver = new VaultResolver(vaultStorage);
 
+  // Resolve vault:// and $VAR references in all channel config leaf values.
+  // Called before every loadPlugins() so channel adapters receive resolved credentials.
+  const resolveChannelConfigs = async (
+    channels: Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>
+  ): Promise<Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>> =>
+    Promise.all(
+      channels.map(async (ch) => {
+        if (!ch.config) return ch;
+        const resolved: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(ch.config)) {
+          if (typeof v === "string" && v.startsWith("vault://")) {
+            try {
+              const r = await vaultResolver.resolve(v);
+              resolved[k] = typeof r === "string" ? r : v;
+            } catch {
+              log.warn(`channel "${ch.id}": vault reference for "${k}" failed to resolve`);
+              resolved[k] = v;
+            }
+          } else if (typeof v === "string" && v.startsWith("$")) {
+            resolved[k] = process.env[v.slice(1)] ?? v;
+          } else {
+            resolved[k] = v;
+          }
+        }
+        return { ...ch, config: resolved };
+      })
+    );
+
   // -------------------------------------------------------------------------
   // Step 2: Auth bootstrap
   // -------------------------------------------------------------------------
@@ -424,11 +562,16 @@ export async function startGatewayServer(
   // Step 3: State machine initialization
   // -------------------------------------------------------------------------
 
-  const stateMachine = new GatewayStateMachine(gw.state);
+  // Always start as UNKNOWN — the probe below is the authoritative source of truth.
+  const stateMachine = new GatewayStateMachine("UNKNOWN");
 
   stateMachine.on("state_change", (transition: StateTransition) => {
     log.info(`state transition: ${transition.from} → ${transition.to} at ${transition.timestamp}`);
   });
+
+  // Run connectivity probe and set initial state authoritatively.
+  const { prime, hive } = await probeConnectivity(config, log);
+  stateMachine.forceState(prime && hive ? "ONLINE" : prime || hive ? "LIMBO" : "OFFLINE");
 
   // -------------------------------------------------------------------------
   // Step 4: Core data layer — open database, create EntityStore + MessageQueue
@@ -491,14 +634,13 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const primeDir = resolvePrimeDir(config);
-  const idDir = resolveIdDir(config);
   const primeLoader = new PrimeLoader(primeDir);
   const primeEntryCount = primeLoader.index();
   log.info(`PRIME corpus indexed: ${String(primeEntryCount)} entries from ${primeDir}`);
 
   // Protocol compatibility check — selfRepo is the AGI repo path (used by upgrade system)
   const agiRoot = config.workspace?.selfRepo ?? config.workspace?.root ?? process.cwd();
-  const protocolResult = checkProtocolCompatibility(agiRoot, primeDir, idDir);
+  const protocolResult = checkProtocolCompatibility(agiRoot, primeDir);
   if (!protocolResult.compatible) {
     for (const err of protocolResult.errors) {
       log.warn(`Protocol compatibility: ${err}`);
@@ -513,60 +655,7 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const ownerConfig = config.owner;
-  let ownerEntityId: string | undefined;
-
-  if (ownerConfig !== undefined) {
-    const ownerChannels = ownerConfig.channels;
-    const hasChannels = Object.values(ownerChannels).some((v) => v !== undefined);
-
-    if (hasChannels) {
-      // First pass: find an existing entity from ANY configured channel.
-      // This prevents creating a duplicate when a new channel ID is added
-      // alongside one that already has an entity (e.g. adding Discord
-      // when Telegram entity #E0 already exists).
-      const channelEntries = Object.entries(ownerChannels).filter(
-        (entry): entry is [string, string] => entry[1] !== undefined,
-      );
-
-      let ownerEntity: Entity | undefined;
-
-      for (const [channel, channelUserId] of channelEntries) {
-        const existing = await entityStore.getEntityByChannel(channel, channelUserId);
-        if (existing !== null) {
-          ownerEntity = existing;
-          break;
-        }
-      }
-
-      // If no existing entity found, create one from the first channel
-      if (ownerEntity === undefined) {
-        const [firstChannel, firstUserId] = channelEntries[0]!;
-        ownerEntity = await entityStore.resolveOrCreate(firstChannel, firstUserId, ownerConfig.displayName);
-      }
-
-      // Link all channels to the resolved entity
-      for (const [channel, channelUserId] of channelEntries) {
-        await entityStore.upsertChannelAccount({
-          entityId: ownerEntity.id,
-          channel,
-          channelUserId,
-        });
-      }
-
-      // Ensure the owner entity is sealed (full access)
-      if (ownerEntity.verificationTier !== "sealed") {
-        await entityStore.updateEntity(ownerEntity.id, { verificationTier: "sealed" });
-      }
-      // Update display name if it was "Unknown"
-      if (ownerEntity.displayName === "Unknown") {
-        await entityStore.updateEntity(ownerEntity.id, { displayName: ownerConfig.displayName });
-      }
-      ownerEntityId = ownerEntity.id;
-      log.info(`owner entity resolved: ${ownerEntity.coaAlias} (${ownerEntity.displayName}) — sealed`);
-    } else {
-      log.warn("owner.channels is empty — owner recognition disabled");
-    }
-  }
+  let ownerEntityId: string | undefined = await resolveOwnerEntity(ownerConfig, entityStore, log);
 
   // Pairing store — manages DM access grants for non-owner users
   const pairingStore = new PairingStore({
@@ -636,7 +725,47 @@ export async function startGatewayServer(
     nodeId,
     voicePipeline,
     getGatewayState: () => stateMachine.getState(),
+    commsLog,
     logger,
+  });
+
+  // s163 CHN-B slice 4 (2026-05-14) — channel-event dispatcher for the
+  // inbound router. The dispatcher resolves (channelId, roomId) →
+  // bound project so messages from a bound Discord room flow into that
+  // project's cage. Constructed here (before InboundRouter) so it can
+  // be passed as a dep. Uses an early projectConfigManager + workspace
+  // project list; the canonical projectConfigManager declared later
+  // (~line 800) is a separate-but-equivalent instance — both read the
+  // same project.json files. Future consolidation: thread the single
+  // manager all the way through this boot path.
+  const inboundProjectConfigManager = new ProjectConfigManager({ logger });
+  const inboundWorkspaceProjects = config.workspace?.projects ?? [];
+  const inboundChannelEventDispatcher = new ChannelEventDispatcher({
+    projectConfigManager: inboundProjectConfigManager,
+    workspaceProjects: inboundWorkspaceProjects,
+  });
+
+  // s166 CHN-E slice 2 (2026-05-14) — pending-approval store. When an
+  // unknown user posts in a project-bound channel room, the router
+  // captures a pending record so owner can review via /identity/pending.
+  // Slice 7 added persistence to ~/.agi/pending-approvals.json so
+  // records survive gateway restarts (mirrors pairingStore's paired.json).
+  const inboundPendingApprovalStore = new PendingApprovalStore({
+    logger,
+    persistPath: `${homedir()}/.agi/pending-approvals.json`,
+  });
+
+  // s194: Registration session store — tracks in-progress Discord DM flows.
+  const registrationSessionStore = new RegistrationSessionStore({
+    persistPath: `${homedir()}/.agi/registration-sessions.json`,
+  });
+
+  // s167 CHN-F slice 1 (2026-05-14) — workflow binding store. Owner-declared
+  // channel-role → MApp dispatch table. Persists across restarts alongside
+  // the pending-approval store.
+  const channelWorkflowBindingStore = new ChannelWorkflowBindingStore({
+    logger,
+    persistPath: `${homedir()}/.agi/channel-workflow-bindings.json`,
   });
 
   // Inbound router — created after outbound so we can wire the sender for pairing.
@@ -652,6 +781,8 @@ export async function startGatewayServer(
     pairingStore,
     ownerEntityId,
     commsLog,
+    channelEventDispatcher: inboundChannelEventDispatcher,
+    pendingApprovalStore: inboundPendingApprovalStore,
     logger,
     outboundSender: async (channelId, channelUserId, content) => {
       await outboundDispatcher.dispatch({
@@ -829,6 +960,17 @@ export async function startGatewayServer(
     logger,
   });
 
+  // s112 Phase 2 — Embedding engine instantiated early so it can be passed to registerAllTools
+  // for search_prime semantic reranking (s197). Actual availability check happens async below.
+  const embeddingEngine = new EmbeddingEngine({
+    model: config.memory?.embeddingModel ?? "nomic-embed-text",
+  });
+
+  // Placeholder — DocIndexer is wired after memoryAdapter+embeddingEngine below.
+  // registerAllTools accepts undefined so the tool is simply not registered
+  // until the indexer is ready. The late-bound ref pattern keeps boot order intact.
+  let docIndexer: DocIndexer | undefined;
+
   const toolCount = registerAllTools(toolRegistry, {
     workspaceRoot,
     resourceEntityId: resourceId,
@@ -838,6 +980,8 @@ export async function startGatewayServer(
     },
     userContextStore,
     primeLoader,
+    embeddingEngine,
+    // docIndexer registered after boot completes (late-bound below)
     projectDirs: projectPaths,
     projectConfigManager,
     imageBlobStore,
@@ -933,13 +1077,90 @@ export async function startGatewayServer(
     skillRegistry.startWatching();
   }
 
-  // Memory adapter — composite (file + optional Cognee)
+  // s112 — Graph memory adapter (CoALA+TiMem, Postgres-backed via agi_data).
   const memoryDir = config.memory?.directory ?? "./data/memory";
-  const memoryAdapter = new CompositeMemoryAdapter({
-    getState: () => stateMachine.getState(),
-    localMemDir: memoryDir,
+  const memoryAdapter = new GraphMemoryAdapter({
+    db,
+    legacyMemDir: memoryDir,
   });
-  log.info(`memory adapter initialized (dir: ${memoryDir})`);
+  log.info("graph memory adapter initialized (agi_data memory_events/relationships/doc_chunks)");
+
+  // s112 Phase 2 — Embedding engine availability check (engine instantiated early above).
+  void embeddingEngine.checkAvailability().then((avail) => {
+    if (avail) {
+      log.info(`embedding engine ready (model: ${embeddingEngine.model})`);
+      // Pre-compute PRIME corpus embeddings for semantic search_prime reranking (s197).
+      void primeLoader.computeEmbeddings(embeddingEngine).catch(() => { /* non-fatal */ });
+    } else {
+      log.info("embedding engine unavailable — using FTS5 BM25 fallback");
+    }
+  });
+
+  // s112 Phase 4 — Consolidation engine (session/job boundary relationship extraction).
+  const consolidationEngine = new ConsolidationEngine({
+    graph: memoryAdapter,
+    invoke: (prompt: string) => getLLMProvider().summarize(prompt, ""),
+    logger: log,
+  });
+
+  // Idle consolidation timer — runs every 30 minutes.
+  setInterval(
+    () => {
+      void consolidationEngine.maybeConsolidate({
+        entityId: resourceId,
+        trigger: "idle",
+      }).catch(() => { /* non-fatal */ });
+    },
+    30 * 60 * 1000,
+  );
+
+  // s112 — Memory & Learning pipeline (EpisodeExtractor + CandidateDatasetAccumulator).
+  // Fire-and-forget: every successful agent invocation extracts an EpisodicRecord,
+  // scores it, anchors it via NoopAnchor, and (if it passes the 4-gate pipeline)
+  // appends it to the monthly candidate dataset for future LoRA training.
+  const _accumulator = new CandidateDatasetAccumulator();
+  const _alignmentScorer = new AlignmentScorer({
+    primeReader: primeLoader.reader,
+    // Lazy: reads the live provider so hot-swapping in Settings takes effect.
+    invoke: (prompt: string) => getLLMProvider().summarize(prompt, ""),
+  });
+  const episodeExtractor = new EpisodeExtractor({
+    // Lazy provider wrapper so provider hot-swap in Settings takes effect.
+    provider: {
+      summarize: (text: string, prompt: string) => getLLMProvider().summarize(text, prompt),
+    } as unknown as import("./llm/index.js").LLMProvider,
+    memoryAdapter,
+    entityId: resourceId,
+    coaAlias: resourceId,
+    alignmentScorer: _alignmentScorer,
+    accumulator: _accumulator,
+    consolidationEngine,
+    logger: log,
+  });
+  log.info("episodic memory pipeline initialized (extractor + accumulator)");
+
+  // s112 Phase 3 — Doc indexer (agi/docs/ + global k/ + per-project k/).
+  // agiRoot comes from config.workspace.selfRepo (the deployed AGI repo path).
+  // globalKDir is optional: set memory.globalKDir in gateway.json to index
+  // a global knowledge directory such as _aionima/k/.
+  docIndexer = new DocIndexer({
+    graph: memoryAdapter,
+    embeddingEngine,
+    agiRoot,
+    globalKDir: config.memory?.globalKDir,
+    projectDirs: projectPaths,
+    cacheDir: join(homedir(), ".agi", "doc-index"),
+    logger: log,
+  });
+  void docIndexer.indexAll().catch(() => { /* non-fatal */ });
+  docIndexer.watchForChanges();
+  // Late-register search_docs + lookup_doc tools (s197 — no state/tier gate).
+  const { createSearchDocsHandler, SEARCH_DOCS_MANIFEST, SEARCH_DOCS_INPUT_SCHEMA } = await import("./tools/search-docs.js");
+  toolRegistry.register(SEARCH_DOCS_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createSearchDocsHandler({ docIndexer }), SEARCH_DOCS_INPUT_SCHEMA);
+  const { createLookupDocHandler, LOOKUP_DOC_MANIFEST, LOOKUP_DOC_INPUT_SCHEMA } = await import("./tools/lookup-doc.js");
+  const docsDir = join(agiRoot, "docs");
+  toolRegistry.register(LOOKUP_DOC_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createLookupDocHandler({ docsDir }), LOOKUP_DOC_INPUT_SCHEMA);
+  log.info("doc indexer initialized + search_docs + lookup_doc tools registered");
 
   // s152 t651 — UserNotes store. Constructed here (before AgentInvoker)
   // so the invoker can read notes per project + global on each turn and
@@ -947,6 +1168,12 @@ export async function startGatewayServer(
   // the user-writes-note → Aion-reads-note loop.
   const { NotesStore } = await import("./notes-store.js");
   const notesStore = new NotesStore(db);
+
+  // s182 Phase E — ScriptRegistry + ScriptRunner for per-MApp Starlark scripting.
+  const { ScriptRegistry } = await import("./script-registry.js");
+  const { ScriptRunner } = await import("./script-runner.js");
+  const scriptRegistry = new ScriptRegistry(db);
+  const scriptRunner = new ScriptRunner();
 
   const agentInvoker = new AgentInvoker({
     stateMachine,
@@ -958,6 +1185,8 @@ export async function startGatewayServer(
     resourceId,
     nodeId,
     memoryAdapter,
+    graphAdapter: memoryAdapter,
+    docIndexer,
     skillRegistry,
     userContextStore,
     primeLoader,
@@ -965,6 +1194,7 @@ export async function startGatewayServer(
     notesStore,
     workspaceRoot,
     projectPaths,
+    episodeExtractor,
     ownerConfig: ownerConfig !== undefined ? {
       displayName: ownerConfig.displayName,
       channels: ownerConfig.channels as Record<string, string | undefined>,
@@ -989,73 +1219,86 @@ export async function startGatewayServer(
   // Step 5a2: Iterative-work fire handler — closes the autonomy loop
   // -------------------------------------------------------------------------
   // When the scheduler decides a project is due, this handler resolves the
-  // $ITERATIVE-WORK system entity, builds a synthetic tick prompt, and routes
-  // it through agentInvoker.process() with projectContext set. The system
-  // prompt assembler (cycle 37 wiring) sees iterativeWork.enabled === true
-  // for this project and injects agi/prompts/iterative-work.md into Aion's
-  // context — Aion then participates in the tynn workflow on the project's
-  // behalf. markComplete is called in finally so a failed invocation still
+  // Scheduled job fire consumer — dispatches by job.type. The pm-loop type
+  // preserves the original iterative-work behavior (synthetic tick prompt via
+  // AgentInvoker). prompt fires a user-authored message. command runs via
+  // `agi bash`. action invokes a plugin-registered handler. markComplete +
+  // recordCompletion are called in finally so a failed invocation still
   // releases the in-flight slot for the next due tick.
-  //
-  // Pattern mirrors heartbeat.ts (channel: "system", synthetic coa, unique
-  // queueMessageId) — same "system-invoked agent call" shape.
   const ITERATIVE_WORK_TICK_PROMPT = "[iterative-work tick] Continue your work on this project per the iterative-work discipline. First action: consume prior markers (don't re-derive). Then pick the highest-priority READY task and ship a slice. End-of-cycle: report Show-Stoppers / Drift / Clarity counts.";
 
   iterativeWorkScheduler.on("fire", (fire) => {
     void (async () => {
+      const { job } = fire;
       const outcome: { status: "done" | "error"; error?: string; artifact?: import("./iterative-work/types.js").IterativeWorkArtifact } = { status: "done" };
       try {
         const slug = projectSlug(fire.projectPath);
-        const systemEntity = await entityStore.resolveOrCreate(
-          "system",
-          "$ITERATIVE-WORK",
-          "Iterative Work System",
-        );
-        const coaFingerprint = `${resourceId}.${systemEntity.coaAlias}.${nodeId}.iterative-work(${slug})`;
-        log.info(`iterative-work fire: ${fire.projectPath} (cron=${fire.cron})`);
-        await agentInvoker.process({
-          entity: systemEntity,
-          channel: "system",
-          content: ITERATIVE_WORK_TICK_PROMPT,
-          coaFingerprint,
-          queueMessageId: `iter-work-${slug}-${String(fire.firedAt.getTime())}`,
-          projectContext: fire.projectPath,
-          isOwner: true,
-        });
+        log.info(`scheduled-job fire: ${fire.projectPath} job=${job.id} type=${job.type} cron=${fire.cron}`);
 
-        // s124 t469 — capture a screenshot of the project's deployed URL
-        // (when hosting is configured). Resolved Q-2 mechanism: full-page
-        // headless Chromium via Playwright (not Puppeteer — Playwright is
-        // already in deps for e2e). Failure-tolerant: a missed thumbnail
-        // just leaves artifact.thumbnailPath undefined; the
-        // IterativeWorkArtifactCard renders gracefully without it.
-        try {
-          const hosting = projectConfigManager.readHosting(fire.projectPath) as { hostname?: string } | null;
-          const hostname = hosting?.hostname;
-          if (typeof hostname === "string" && hostname.length > 0) {
-            const baseDomain = (config as { hosting?: { baseDomain?: string } }).hosting?.baseDomain ?? "ai.on";
-            const url = `https://${hostname}.${baseDomain}`;
-            const { captureProjectScreenshot } = await import("./iterative-work/screenshot.js");
-            const thumbnailPath = await captureProjectScreenshot({
-              hostingUrl: url,
-              log: (msg) => { log.warn(`iter-screenshot: ${msg}`); },
-            });
-            if (thumbnailPath !== null) {
-              outcome.artifact = { ...outcome.artifact, thumbnailPath };
-              log.info(`iterative-work screenshot captured: ${thumbnailPath}`);
+        if (job.type === "pm-loop" || job.type === "prompt") {
+          const content = job.type === "pm-loop" ? ITERATIVE_WORK_TICK_PROMPT : job.prompt;
+          const systemEntity = await entityStore.resolveOrCreate(
+            "system",
+            "$ITERATIVE-WORK",
+            "Iterative Work System",
+          );
+          const coaFingerprint = `${resourceId}.${systemEntity.coaAlias}.${nodeId}.scheduled-job(${slug}.${job.id})`;
+          await agentInvoker.process({
+            entity: systemEntity,
+            channel: "system",
+            content,
+            coaFingerprint,
+            queueMessageId: `sched-job-${slug}-${job.id}-${String(fire.firedAt.getTime())}`,
+            projectContext: fire.projectPath,
+            isOwner: true,
+          });
+
+          // s124 t469 — screenshot capture for pm-loop completions only.
+          if (job.type === "pm-loop") {
+            try {
+              const hosting = projectConfigManager.readHosting(fire.projectPath) as { hostname?: string } | null;
+              const hostname = hosting?.hostname;
+              if (typeof hostname === "string" && hostname.length > 0) {
+                const baseDomain = (config as { hosting?: { baseDomain?: string } }).hosting?.baseDomain ?? "ai.on";
+                const url = `https://${hostname}.${baseDomain}`;
+                const { captureProjectScreenshot } = await import("./iterative-work/screenshot.js");
+                const thumbnailPath = await captureProjectScreenshot({
+                  hostingUrl: url,
+                  log: (msg) => { log.warn(`iter-screenshot: ${msg}`); },
+                });
+                if (thumbnailPath !== null) {
+                  outcome.artifact = { ...outcome.artifact, thumbnailPath };
+                  log.info(`scheduled-job screenshot captured: ${thumbnailPath}`);
+                }
+              }
+            } catch (err) {
+              log.warn(`scheduled-job screenshot block failed for ${fire.projectPath}: ${err instanceof Error ? err.message : String(err)}`);
             }
           }
-        } catch (err) {
-          log.warn(`iterative-work screenshot block failed for ${fire.projectPath}: ${err instanceof Error ? err.message : String(err)}`);
+        } else if (job.type === "command") {
+          // Run via `agi bash` for policy-gating + audit logging.
+          const { execFile } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const execFileAsync = promisify(execFile);
+          const agiBin = process.env.AGI_BIN ?? "agi";
+          const { stdout, stderr } = await execFileAsync(agiBin, ["bash", job.command], { timeout: 300_000 });
+          if (stderr) log.warn(`scheduled-job command stderr: ${stderr.trim()}`);
+          if (stdout) log.info(`scheduled-job command stdout: ${stdout.trim()}`);
+        } else if (job.type === "action") {
+          // Plugin action dispatch — reserved for when the plugin action
+          // registry is wired. Log a warning for now so the job doesn't
+          // silently no-op if someone configures an action job before plugins
+          // register action handlers.
+          log.warn(`scheduled-job action type not yet dispatched (actionId=${job.actionId}); plugin action registry not yet wired`);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        log.error(`iterative-work fire failed for ${fire.projectPath}: ${message}`);
+        log.error(`scheduled-job fire failed for ${fire.projectPath} job=${job.id}: ${message}`);
         outcome.status = "error";
         outcome.error = message;
       } finally {
-        iterativeWorkScheduler.recordCompletion(fire.projectPath, outcome);
-        iterativeWorkScheduler.markComplete(fire.projectPath);
+        iterativeWorkScheduler.recordCompletion(fire.projectPath, job.id, outcome);
+        iterativeWorkScheduler.markComplete(fire.projectPath, job.id);
       }
     })();
   });
@@ -1227,7 +1470,7 @@ export async function startGatewayServer(
       outboundDispatcher,
       onInbound: async (message) => {
         queueLog.info(`processing message ${message.id} on channel ${message.channel}`);
-        const payload = message.payload as { entityId?: string; coaFingerprint?: string; message?: unknown };
+        const payload = message.payload as { entityId?: string; coaFingerprint?: string; message?: unknown; projectPath?: string };
         const entityId = payload.entityId;
 
         if (entityId === undefined) {
@@ -1253,6 +1496,20 @@ export async function startGatewayServer(
               ? (inboundMsg.content as { caption?: string }).caption ?? "[media]"
               : String(payload.message ?? "");
 
+        // Extract channel-specific context from the message metadata so the
+        // agent can call bridge tools (e.g. discord_search_messages) with the
+        // correct IDs without having to parse them out of the message text.
+        const msgMeta = inboundMsg?.metadata as Record<string, unknown> | undefined;
+        const channelContextForInvoker = msgMeta !== undefined ? {
+          channelId: message.channel,
+          guildId: typeof msgMeta.guildId === "string" ? msgMeta.guildId : undefined,
+          guildName: typeof msgMeta.guildName === "string" ? msgMeta.guildName : undefined,
+          roomId: typeof msgMeta.channelId === "string" ? msgMeta.channelId : undefined,
+          roomName: typeof msgMeta.channelName === "string" ? msgMeta.channelName : undefined,
+          senderDisplayName: typeof msgMeta.displayName === "string" ? msgMeta.displayName : undefined,
+          senderUserId: typeof msgMeta.authorId === "string" ? msgMeta.authorId : undefined,
+        } : undefined;
+
         queueLog.info(`invoking agent for entity ${entityId}`);
         try {
           const outcome = await agentInvoker.process({
@@ -1263,6 +1520,8 @@ export async function startGatewayServer(
             queueMessageId: message.id,
             devMode,
             isOwner: ownerEntityId !== undefined && entityId === ownerEntityId,
+            ...(payload.projectPath !== undefined ? { projectContext: payload.projectPath } : {}),
+            ...(channelContextForInvoker !== undefined ? { channelContext: channelContextForInvoker } : {}),
           });
 
           queueLog.info(`agent outcome: ${outcome.type}`);
@@ -1546,11 +1805,71 @@ export async function startGatewayServer(
     }
   }
 
-  // Channel plugins are installed from the marketplace like all other plugins.
-  // The channels/ directory in the repo is the source for marketplace packaging
-  // — it is NOT auto-discovered at boot. Install channels via the dashboard.
+  // Discover built-in channel plugins from the channels/ directory co-deployed
+  // with AGI. These are the canonical channel adapters (Discord, Telegram, Gmail,
+  // Signal, WhatsApp) updated by the upgrade pipeline on every git pull. They
+  // have their own node_modules (pnpm workspace links) and dist/index.js bundles.
+  // Marketplace-installed channel overrides in pluginCacheDir take precedence via
+  // the seenIds dedup above.
+  {
+    const channelsDir = join(installDir, "channels");
+    const channelDiscovery = discoverPlugins([channelsDir]);
+    for (const cp of channelDiscovery.plugins) {
+      if (!seenIds.has(cp.manifest.id)) {
+        discovered.plugins.push(cp);
+        seenIds.add(cp.manifest.id);
+      }
+    }
+    discovered.errors.push(...channelDiscovery.errors);
+    if (channelDiscovery.plugins.length > 0) {
+      log.info(`channels: discovered ${String(channelDiscovery.plugins.length)} built-in channel plugins`);
+    }
+  }
 
   const pluginPrefs = (config as Record<string, unknown>).plugins as Record<string, { enabled?: boolean; priority?: number }> | undefined;
+
+  // Upsert a channel-originated user into the users table. Called by channel
+  // plugins (e.g., Discord) via api.getOrCreateChannelUser(). The principal
+  // is channel:userId (e.g., "discord:123456789") which is unique per channel
+  // platform user. The username is channel_userId to avoid collisions.
+  // Defined at the outer function scope so it is available in all loadPlugins
+  // call sites including the hot-reload callbacks registered later.
+  const createChannelUser = async (
+    channelId: string,
+    userId: string,
+    meta: { displayName?: string; username?: string },
+  ): Promise<{ userId: string; isNew: boolean }> => {
+    const principal = `${channelId}:${userId}`;
+    const username = `${channelId}_${userId}`;
+    const id = ulid();
+    const [inserted] = await db
+      .insert(users)
+      .values({
+        id,
+        authBackend: "virtual",
+        principal,
+        username,
+        displayName: meta.displayName ?? meta.username,
+      })
+      .onConflictDoNothing({ target: [users.authBackend, users.principal] })
+      .returning({ id: users.id });
+    if (inserted) return { userId: inserted.id, isNew: true };
+    const [existing] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.principal, principal))
+      .limit(1);
+    return { userId: existing?.id ?? id, isNew: false };
+  };
+
+  // Ambient log for channel message capture (s189). Shares the same ~/.agi
+  // root as all other runtime data so daily logs land alongside chat history.
+  const channelAmbientLog = new ChannelAmbientLog(join(homedir(), ".agi"));
+
+  // Moderation flag store (s191) — in-memory ring buffer for AI-raised flags.
+  // Ephemeral by design; a Postgres-backed store can replace this when needed.
+  const moderationFlagStore = new ModerationFlagStore();
+
   {
     for (const err of discovered.errors) {
       log.warn(`plugin discovery: ${err.path} — ${err.error}`);
@@ -1592,9 +1911,27 @@ export async function startGatewayServer(
 
     // All discovered plugins are installed plugins (from search paths or
     // the install cache). Only skip if explicitly disabled in config.
-    const enabledPlugins = discovered.plugins.filter(p =>
-      pluginPrefs?.[p.manifest.id]?.enabled !== false,
+    // Exception: built-in channel plugins (id starts with "channel-") are
+    // controlled by channels[].enabled, not plugins[].enabled. If the channel
+    // config says enabled=true, load the plugin even if plugins[id].enabled was
+    // inadvertently set to false (e.g. via a Plugins-settings toggle). This
+    // prevents the two-flag split from silently blocking channels at boot.
+    const channelConfigMap = new Map(
+      (config.channels as Array<{ id: string; enabled?: boolean }> | undefined ?? []).map(c => [c.id, c.enabled]),
     );
+    const enabledPlugins = discovered.plugins.filter(p => {
+      if (pluginPrefs?.[p.manifest.id]?.enabled === false) {
+        // For built-in channel plugins, defer to channels[].enabled when set.
+        const channelId = p.manifest.id.startsWith("channel-")
+          ? p.manifest.id.slice("channel-".length)
+          : null;
+        if (channelId !== null && channelConfigMap.get(channelId) === true) {
+          return true;
+        }
+        return false;
+      }
+      return true;
+    });
 
     // Build priority map from config
     const pluginPriorities: Record<string, number> = {};
@@ -1617,6 +1954,17 @@ export async function startGatewayServer(
         channelRegistry,
         channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
         circuitBreaker: circuitBreakerTracker,
+        createChannelUser,
+        logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+        getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+        isEntityVerified: async (channelId, userId) => {
+          const entity = await entityStore.getEntityByChannel(channelId, userId);
+          return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+        },
+        getRegistrationSession: (id) => registrationSessionStore.get(id),
+        setRegistrationSession: (s) => registrationSessionStore.set(s),
+        deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+        capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
       });
       log.info(`plugins: ${String(result.loaded.length)} loaded, ${String(result.failed.length)} failed`);
       if (discovered.plugins.length > enabledPlugins.length) {
@@ -1674,8 +2022,19 @@ export async function startGatewayServer(
                         Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
                       ),
                       channelRegistry,
-                      channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+                      channelConfigs: await resolveChannelConfigs(config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>),
                       circuitBreaker: circuitBreakerTracker,
+                      createChannelUser,
+                      logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+                      getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+                      isEntityVerified: async (channelId, userId) => {
+                        const entity = await entityStore.getEntityByChannel(channelId, userId);
+                        return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+                      },
+                      getRegistrationSession: (id) => registrationSessionStore.get(id),
+                      setRegistrationSession: (s) => registrationSessionStore.set(s),
+                      deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+                      capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
                     });
                     bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
                     // Retry provider creation now that the plugin is loaded
@@ -1787,14 +2146,6 @@ export async function startGatewayServer(
       statusPollIntervalMs: hostingConfig?.statusPollIntervalMs ?? 10_000,
       tunnelMode: hostingConfig?.tunnelMode ?? "named",
       tunnelDomain: hostingConfig?.tunnelDomain,
-      idService: (() => {
-        const idCfg = (config as Record<string, unknown>).idService as { local?: { enabled?: boolean; subdomain?: string; port?: number } } | undefined;
-        return idCfg?.local?.enabled ? {
-          enabled: true,
-          subdomain: idCfg.local.subdomain ?? "id",
-          port: idCfg.local.port ?? 3200,
-        } : undefined;
-      })(),
     },
     workspaceProjects: projectPaths,
     projectTypeRegistry,
@@ -1812,6 +2163,31 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   hostingManager.regenerateSystemDomains();
+
+  // Owner directive 2026-06-09 — rename each project's knowledge dir k/ → .ai/
+  // (KNOWLEDGE_DIR). MUST run BEFORE every scaffolder + data migration below:
+  // those now target .ai/ via KNOWLEDGE_DIR, so renaming first prevents a fresh
+  // empty .ai/ from being created alongside an un-migrated k/ (which would
+  // strand the real data and trip the never-clobber conflict guard). Walks all
+  // immediate child dirs of each collection — incl `.new` skeleton + `_aionima`
+  // meta-project. Idempotent + non-fatal.
+  try {
+    const r = migrateAllKnowledgeDirs(projectPaths, createComponentLogger(logger, "migrate-knowledge-dir"));
+    if (r.renamed > 0 || r.conflicts > 0 || r.errors.length > 0) {
+      logger.info(
+        "migrate",
+        `boot-time knowledge-dir sweep (k/ → .ai/): scanned=${String(r.scanned)} renamed=${String(r.renamed)} conflicts=${String(r.conflicts)} errors=${String(r.errors.length)}`,
+      );
+      for (const e of r.errors) {
+        logger.warn("migrate", `knowledge-dir migration error [${e.dir}]: ${e.reason}`);
+      }
+    }
+  } catch (err) {
+    logger.warn(
+      "migrate",
+      `boot-time knowledge-dir sweep failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   // s150 t633 — workspace-owned project skeleton. Seeds <workspaceRoot>/.new/
   // from the agi-shipped templates on first boot, then registers each
@@ -2047,7 +2423,7 @@ export async function startGatewayServer(
   // ModelStore + DatasetStore use the shared db connection.
   // Degrade gracefully when Postgres is unreachable — a gateway with HF models
   // unavailable is better than a gateway that refuses to boot. Test VMs
-  // and fresh installs (before `agi-local-id` is up) hit this path.
+  // and fresh installs before Postgres is provisioned hit this path.
   const modelStore = new ModelStore(db);
   try {
     const reconciledModels = await modelStore.reconcileFromDisk(
@@ -2157,7 +2533,7 @@ export async function startGatewayServer(
   // -------------------------------------------------------------------------
 
   const opsConfig = (config as Record<string, unknown>).ops as
-    | { localModel?: { modelId?: string }; aionMicro?: { enabled?: boolean; port?: number; idleTimeoutMs?: number } }
+    | { localModel?: { modelId?: string }; aionMicro?: { enabled?: boolean; port?: number; idleTimeoutMs?: number; localGgufPath?: string } }
     | undefined;
 
   const aionMicroManager = new AionMicroManager(
@@ -2286,16 +2662,28 @@ export async function startGatewayServer(
     const sessionSecret = ulid();
     visitorAuth = new VisitorAuthManager({ sessionSecret });
 
-    const identityConfig = (config as Record<string, unknown>).identity as
-      | { oauth?: { google?: { clientId: string; clientSecret: string }; github?: { clientId: string; clientSecret: string } } }
-      | undefined;
-
-    if (identityConfig?.oauth) {
-      const callbackBaseUrl = fedConfig.publicUrl ?? `http://${host}:${port}`;
-      oauthHandler = new OAuthHandler(identityConfig.oauth, callbackBaseUrl);
-    }
-
     log.info("Federation enabled — identity provider active");
+  }
+
+  // OAuth redirect handler — constructed UNCONDITIONALLY (story #212, Slice 2),
+  // independent of federation. Reads owner OAuth-app creds HOT from
+  // gateway.json `identity.oauth.<provider>` so a freshly-pasted app takes
+  // effect without a restart. Redirect connect (Google/Meta/X/Tynn) must work
+  // even when federation/Civicognita is off — only GitHub uses device flow.
+  {
+    const callbackBaseUrl = fedConfig?.publicUrl ?? `http://${host}:${port}`;
+    const configPath = opts?.configPath;
+    oauthHandler = new OAuthHandler(() => {
+      if (!configPath) return {};
+      try {
+        const raw = JSON.parse(readFileSync(configPath, "utf-8")) as {
+          identity?: { oauth?: import("./oauth-handler.js").OAuthConfig };
+        };
+        return raw.identity?.oauth ?? {};
+      } catch {
+        return {};
+      }
+    }, callbackBaseUrl);
   }
 
   // -------------------------------------------------------------------------
@@ -2325,6 +2713,11 @@ export async function startGatewayServer(
     selfRepoPath: config.workspace?.selfRepo,
     systemConfigService: systemConfigService ?? undefined,
     mappRegistry,
+    scanRunner,
+    scanStore,
+    coaLogger,
+    scriptRegistry,
+    scriptRunner,
   });
   log.info(`registered ${String(agentToolCount)} agent tools`);
 
@@ -2337,7 +2730,13 @@ export async function startGatewayServer(
   // command/env (stdio), url (http/ws), authToken (env-resolvable via
   // $VAR), autoConnect: bool }.
   const mcpClient = new McpClient();
-  const mcpServersConfig = (config as { mcp?: { servers?: Array<Record<string, unknown>> } }).mcp?.servers ?? [];
+  // Merge baked-in default MCP servers (e.g. Fancy UI) with gateway.json's —
+  // always-on for Aion across all projects + chats; an owner can override or
+  // disable a default by re-declaring its id in gateway.json (story #215).
+  const { mergeDefaultMcpServers } = await import("./mcp-config-store.js");
+  const mcpServersConfig = mergeDefaultMcpServers(
+    (config as { mcp?: { servers?: Array<Record<string, unknown>> } }).mcp?.servers ?? [],
+  );
   // s128 cycle 86 — secret-reference resolver for MCP server config. Handles
   // both $VAR (legacy, reads from process.env) AND vault://<id> (Vault).
   // Vault refs are gateway-scoped here (no projectPath context); per-project
@@ -3010,6 +3409,7 @@ export async function startGatewayServer(
       nodeId,
       ownerEntityId,
       wsRef,
+      db,
       configPath: opts?.configPath,
       staticDir: opts?.staticDir,
       workspaceProjects: projectPaths,
@@ -3022,10 +3422,14 @@ export async function startGatewayServer(
       circuitBreaker: circuitBreakerTracker,
       iterativeWorkScheduler,
       projectConfigManager,
+      pendingApprovalStore: inboundPendingApprovalStore,
+      channelWorkflowBindingStore,
       pmProvider,
       mcpClient,
       commsLog,
+      channelAmbientLog,
       notificationStore,
+      moderationFlagStore,
       chatPersistence,
       imageBlobStore,
       pluginRegistry,
@@ -3050,8 +3454,11 @@ export async function startGatewayServer(
       pluginPrefs,
       primeLoader,
       primeDir,
+      llmProvider: getLLMProvider(),
       aionMicro: aionMicroManager,
-        marketplaceManager,
+      marketplaceManager,
+      graphAdapter: memoryAdapter,
+      docIndexer,
       onPluginInstalled: async (installPath: string) => {
         try {
           // installPath is the plugin's own directory (e.g. ~/.agi/plugins/cache/<id>).
@@ -3077,8 +3484,19 @@ export async function startGatewayServer(
               Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
             ),
             channelRegistry,
-            channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+            channelConfigs: await resolveChannelConfigs(config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>),
             circuitBreaker: circuitBreakerTracker,
+            createChannelUser,
+            logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            isEntityVerified: async (channelId, userId) => {
+              const entity = await entityStore.getEntityByChannel(channelId, userId);
+              return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+            },
+            getRegistrationSession: (id) => registrationSessionStore.get(id),
+            setRegistrationSession: (s) => registrationSessionStore.set(s),
+            deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+            capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
           });
           if (result.loaded.length > 0) {
             // Bridge newly registered capabilities and sync stacks to the registry
@@ -3121,8 +3539,19 @@ export async function startGatewayServer(
               Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
             ),
             channelRegistry,
-            channelConfigs: config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>,
+            channelConfigs: await resolveChannelConfigs(config.channels as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>),
             circuitBreaker: circuitBreakerTracker,
+            createChannelUser,
+            logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            isEntityVerified: async (channelId, userId) => {
+              const entity = await entityStore.getEntityByChannel(channelId, userId);
+              return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+            },
+            getRegistrationSession: (id) => registrationSessionStore.get(id),
+            setRegistrationSession: (s) => registrationSessionStore.set(s),
+            deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+            capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
           }, { bustCache: true });
           if (result.loaded.length > 0) {
             bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
@@ -3164,6 +3593,66 @@ export async function startGatewayServer(
         hostingManager.regenerateCaddyfile();
 
         log.info(`deactivated plugin for update: ${pluginId}`);
+      },
+      onActivateChannel: async (_channelId: string, basePath: string) => {
+        try {
+          const discovery = tryLoadManifest(basePath);
+          if ("error" in discovery) {
+            return { ok: false, error: `manifest load failed: ${discovery.error}` };
+          }
+          const pluginId = discovery.manifest.id;
+
+          // The plugin was loaded at boot (activate ran but exited early due to
+          // enabled=false). Deactivate it first so loadPlugins won't skip it on
+          // the "already loaded — skipping" guard at loader.ts:70.
+          if (pluginRegistry.has(pluginId)) {
+            unbridgePluginCapabilities(pluginId, { pluginRegistry, skillRegistry, logger });
+            hookBus.removeForPlugin(pluginId);
+            await pluginRegistry.deactivateSingle(pluginId);
+          }
+
+          // Reset any circuit-breaker failures recorded against this plugin so
+          // prior failed attempts (e.g. from a previous Start click) don't cause
+          // the breaker to skip this load.
+          circuitBreakerTracker?.reset(`plugin:${pluginId}`);
+
+          // Read fresh config from disk so activate() sees current enabled/config values.
+          const freshCfg = (systemConfigService?.read() ?? config) as Record<string, unknown>;
+          const freshChannelConfigs = (freshCfg.channels ?? []) as Array<{ id: string; enabled: boolean; config?: Record<string, unknown> }>;
+          const result = await loadPlugins([discovery], {
+            pluginRegistry,
+            hookBus,
+            projectTypeRegistry,
+            config: freshCfg,
+            logger,
+            workspaceRoot: opts?.configPath ? dirname(resolvePath(opts.configPath)) : workspaceRoot,
+            projectDirs: projectPaths,
+            pluginPriorities: Object.fromEntries(
+              Object.entries(pluginPrefs ?? {}).filter(([, v]) => v.priority !== undefined).map(([k, v]) => [k, v.priority!]),
+            ),
+            channelRegistry,
+            channelConfigs: await resolveChannelConfigs(freshChannelConfigs),
+            circuitBreaker: circuitBreakerTracker,
+            createChannelUser,
+            logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
+            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            isEntityVerified: async (channelId, userId) => {
+              const entity = await entityStore.getEntityByChannel(channelId, userId);
+              return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
+            },
+            getRegistrationSession: (id) => registrationSessionStore.get(id),
+            setRegistrationSession: (s) => registrationSessionStore.set(s),
+            deleteRegistrationSession: (id) => registrationSessionStore.delete(id),
+            capturePendingApproval: (input) => inboundPendingApprovalStore.capture(input),
+          });
+          if (result.loaded.length > 0) {
+            bridgePluginCapabilities({ pluginRegistry, toolRegistry, skillRegistry, logger });
+            return { ok: true };
+          }
+          return { ok: false, error: result.failed[0]?.error ?? "Channel activate returned no result" };
+        } catch (err) {
+          return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
       },
       secrets,
       config: config as Record<string, unknown>,
@@ -3245,6 +3734,10 @@ export async function startGatewayServer(
           notesStore,
           workspaceProjects: projectPaths,
         }),
+        // s182 Phase E — MApp script REST surface. CRUD + enable/disable
+        // for per-MApp Starlark scripts; consumed by MAppEditor Scripts tab.
+        (f) => registerScriptRoutes(f, { scriptRegistry }),
+        (f) => registerWorkflowsRoutes(f),
         (f) => registerAdminRoutes(f, createComponentLogger(logger, "admin-api"), aionMicroManager),
         (f: import("fastify").FastifyInstance) => registerHfRoutes(f, hfApiDeps),
         (f) => registerLemonadeRoutes(f, {
@@ -3289,6 +3782,7 @@ export async function startGatewayServer(
 
   // -------------------------------------------------------------------------
   // Post-upgrade boot detection — if upgrade.sh restarted the service, finalize the upgrade log
+  // and emit a system:upgraded WS event so the dashboard can show the post-upgrade panel.
   // -------------------------------------------------------------------------
   const selfRepoPath = config.workspace?.selfRepo;
   if (selfRepoPath) {
@@ -3301,6 +3795,19 @@ export async function startGatewayServer(
       log.info("upgrade: post-restart cleanup complete");
     }
   }
+
+  // UpgradeNextSteps boot sequence:
+  // 1. Import pending steps written by upgrade.sh (bash→gateway handoff)
+  // 2. Run all TypeScript migrations between last-migrated and current version
+  // The actual system:upgraded broadcast happens in Step 8 once the WS broadcaster is ready.
+  importPendingSteps();
+  const _currentVersion: string = (() => {
+    try { return (require(join(selfRepoPath ?? process.cwd(), "package.json")) as { version: string }).version; } catch { return "0.0.0"; }
+  })();
+  const _lastMigrated = readLastMigratedVersion();
+  void runPendingMigrations(_lastMigrated, _currentVersion).catch((err: unknown) => {
+    log.warn(`migration-runner: boot-time error: ${err instanceof Error ? err.message : String(err)}`);
+  });
 
   // -------------------------------------------------------------------------
   // Step 6b: Log streaming — push log entries to subscribed dashboard clients
@@ -3963,7 +4470,7 @@ export async function startGatewayServer(
             if (outcome.usage && outcome.model) {
               try {
                 chatUsageRec = await usageStore.record({
-                  entityId: ownerEntityId,
+                  entityId: ownerEntityId ?? "system",
                   projectPath: chatProjectPath,
                   provider: outcome.provider ?? "unknown",
                   model: outcome.model,
@@ -4620,6 +5127,27 @@ export async function startGatewayServer(
   // Populate the late-bound ref so the chat:send handler can emit project activity.
   dashboardBroadcasterRef = dashboardBroadcaster;
 
+  // Emit system:upgraded if this boot follows a new version deploy.
+  // importPendingSteps() was called earlier (boot sequence); broadcaster is now ready.
+  try {
+    const deployed = readDeployedVersion();
+    const toVersion = deployed ?? _currentVersion;
+    const seen = readSeenVersion();
+    if (toVersion !== seen) {
+      writeSeenVersion(toVersion);
+      const pending = listUpgradeNextSteps("pending");
+      dashboardBroadcaster?.emitSystemUpgraded({
+        toVersion,
+        fromVersion: seen,
+        pendingSteps: pending.length,
+        hasRequired: hasPendingRequiredSteps(),
+      });
+      log.info(`upgrade: system:upgraded — ${seen ?? "initial"} → ${toVersion}, ${String(pending.length)} pending steps`);
+    }
+  } catch (err) {
+    log.warn(`upgrade: system:upgraded broadcast failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   /**
    * Autonomous Aion turn triggered by a TaskMaster completion/handoff event
    * on an idle session. Drains whatever's queued via injectMessage (the
@@ -4940,6 +5468,43 @@ export async function startGatewayServer(
       httpServer,
       entityStore,
       logger,
+      pluginRegistry,
+      channelWorkflowBindingStore,
+      // CHN-F (s167) slice 2 + CHN-H (s169) — dispatch matched channel-workflow bindings to MApp executor.
+      onWorkflowMatch: (bindings, msg, entityId) => {
+        for (const binding of bindings) {
+          const mappDef = mappRegistry.get(binding.mappId);
+          if (mappDef === undefined) {
+            log.warn(`[workflow] MApp "${binding.mappId}" not installed — skipping binding ${binding.id}`);
+            continue;
+          }
+          // CHN-H (s169): prefer trigger="channel-message"; fall back to "manual" for
+          // MApps authored before the channel-message trigger type existed (backwards compat).
+          const workflows = mappDef.workflows ?? [];
+          const selectedWf =
+            workflows.find((w) => w.trigger === "channel-message") ??
+            workflows.find((w) => w.trigger === "manual");
+          if (selectedWf === undefined) {
+            log.info(`[workflow] MApp "${binding.mappId}" has no channel-message or manual workflow — binding ${binding.id} matched, nothing dispatched`);
+            continue;
+          }
+          const roomId = typeof msg.metadata === "object" && msg.metadata !== null
+            ? (msg.metadata as Record<string, unknown>)["roomId"] as string | undefined
+            : undefined;
+          const ctx: Record<string, unknown> = {
+            channelId: msg.channelId as string,
+            roomId,
+            messageText: msg.content.type === "text" ? (msg.content as { type: "text"; text: string }).text : "",
+            entityId,
+            bindingId: binding.id,
+          };
+          runWorkflow(mappDef, selectedWf.id, ctx).then((wfResult) => {
+            log.info(`[workflow] MApp "${binding.mappId}" workflow "${selectedWf.id}" (${selectedWf.trigger}) dispatched: ${wfResult.status}`);
+          }).catch((err: unknown) => {
+            log.error(`[workflow] MApp "${binding.mappId}" workflow error: ${err instanceof Error ? err.message : String(err)}`);
+          });
+        }
+      },
     },
     {
       channels: config.channels.map((ch: { id: string; enabled?: boolean; config?: Record<string, unknown> }) => ({
@@ -5091,6 +5656,20 @@ export async function startGatewayServer(
       }
       Object.assign(configObj, freshConfig);
 
+      // Hot-resolve owner entity when owner channels change
+      if (event.changedKeys.some((k) => k === "owner")) {
+        resolveOwnerEntity(
+          (freshConfig as AionimaConfig).owner,
+          entityStore,
+          log,
+        ).then((id) => {
+          ownerEntityId = id;
+          log.info("owner entity hot-resolved");
+        }).catch((err: unknown) => {
+          log.error(`failed to hot-resolve owner entity: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+
       // Hot-swap LLM provider when agent config changes
       if (event.changedKeys.some((k) => k === "agent")) {
         try {
@@ -5237,11 +5816,16 @@ export async function startGatewayServer(
       log.error(`error stopping queue consumer: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // Step 2: Stop all channels
+    // Step 2: Stop all channels (legacy + v2)
     try {
       await channelRegistry.stopAll();
     } catch (err) {
       log.error(`error stopping channels: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    try {
+      await sidecarsResult.stopV2Channels();
+    } catch (err) {
+      log.error(`error stopping v2 channels: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // Step 3: Stop AgentSessionManager sweep

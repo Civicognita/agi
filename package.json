@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.659",
+  "version": "0.4.938",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -15,6 +15,7 @@
     "migrate:agi_data:dry": "tsx scripts/migrate-to-agi_data.ts --dry-run",
     "build:dashboard": "pnpm --filter @agi/dashboard build",
     "runtime:build:lamp": "bash scripts/runtime-images/lamp/build.sh",
+    "runtime:build:polyglot": "bash scripts/runtime-images/polyglot/build.sh",
     "start": "tsx cli/src/index.ts run",
     "cli": "tsx cli/src/index.ts",
     "dev": "tsx watch cli/src/index.ts run",
@@ -50,7 +51,8 @@
     "route-check": "bash scripts/check-route-collisions.sh",
     "route-check:strict": "bash scripts/check-route-collisions.sh --strict",
     "staged-check": "bash scripts/check-staged-tree.sh",
-    "staged-check:strict": "bash scripts/check-staged-tree.sh --strict"
+    "staged-check:strict": "bash scripts/check-staged-tree.sh --strict",
+    "orphan-check": "bash scripts/orphan-check.sh"
   },
   "dependencies": {
     "@agi/db-schema": "workspace:*",
@@ -70,7 +72,7 @@
     "tsdown": "^0.12.0",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^4.1.8"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -86,7 +88,10 @@
       "undici": ">=6.24.0",
       "picomatch": ">=4.0.4",
       "serialize-javascript": ">=7.0.5",
-      "brace-expansion": ">=1.1.13",
+      "brace-expansion": ">=5.0.6",
+      "hono": ">=4.12.23",
+      "qs": ">=6.15.2",
+      "ip-address": ">=10.2.0",
       "defu": ">=6.1.5",
       "rollup": ">=4.59.0",
       "uuid": ">=11.0.0",
@@ -98,7 +103,9 @@
     },
     "peerDependencyRules": {
       "allowedVersions": {
-        "@particle-academy/fancy-code>@particle-academy/react-fancy": "2.7.0"
+        "@particle-academy/fancy-code>@particle-academy/react-fancy": "4.4.3",
+        "@particle-academy/agent-integrations>@particle-academy/fancy-sheets": "0.9.0",
+        "@particle-academy/fancy-slides>@particle-academy/fancy-code": "0.5.0"
       }
     }
   }

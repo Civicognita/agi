@@ -1,22 +1,25 @@
 /**
- * EditorFlyout — slide-in panel wrapping FileEditor with file load/save lifecycle.
+ * EditorFlyout — slide-in panel wrapping KnowledgeEditor with file load/save lifecycle.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FlyoutPanel, FlyoutHeader, FlyoutBody, FlyoutFooter } from "@/components/ui/flyout-panel.js";
-import { FileEditor } from "@/components/FileEditor.js";
+import { KnowledgeEditor } from "@/components/KnowledgeEditor.js";
 import { fetchFile, saveFile, fetchProjectFile, saveProjectFile } from "@/api.js";
 import { useIsMobile } from "@/hooks.js";
+import { cn } from "@/lib/utils";
 
 export interface EditorFlyoutProps {
   filePath: string | null; // null = closed
   onClose: () => void;
-  theme: "light" | "dark";
+  theme?: "light" | "dark";
   position?: "left" | "right";
   docked?: boolean;
+  /** Shell panel mode — renders as full-height inline div with no overlay chrome. */
+  panel?: boolean;
 }
 
-export function EditorFlyout({ filePath, onClose, theme, position = "right", docked = false }: EditorFlyoutProps) {
+export function EditorFlyout({ filePath, onClose, position = "right", docked = false, panel = false }: EditorFlyoutProps) {
   const [content, setContent] = useState("");
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
@@ -24,6 +27,8 @@ export function EditorFlyout({ filePath, onClose, theme, position = "right", doc
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const isMobile = useIsMobile();
+  // Keep handleSave stable for the keydown listener
+  const handleSaveRef = useRef<() => Promise<void>>();
 
   const dirty = draft !== content;
 
@@ -75,6 +80,21 @@ export function EditorFlyout({ filePath, onClose, theme, position = "right", doc
       setSaving(false);
     }
   }, [filePath, draft, dirty, isProjectFile]);
+
+  // Keep ref in sync so the keydown handler always calls the latest version
+  handleSaveRef.current = handleSave;
+
+  // Ctrl+S / Cmd+S save
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        void handleSaveRef.current?.();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
 
   const fileName = filePath?.split("/").pop() ?? "";
 
@@ -164,12 +184,10 @@ export function EditorFlyout({ filePath, onClose, theme, position = "right", doc
           </div>
         )}
         {!loading && !error && filePath && (
-          <FileEditor
+          <KnowledgeEditor
             filePath={filePath}
             content={content}
-            theme={theme}
             onChange={setDraft}
-            onSave={handleSave}
           />
         )}
       </FlyoutBody>
@@ -213,6 +231,28 @@ export function EditorFlyout({ filePath, onClose, theme, position = "right", doc
       )}
     </>
   );
+
+  // Panel mode — shell workspace section, fills AccordionPanel.Content
+  if (panel) {
+    return (
+      <div
+        className={cn(
+          "flex flex-col h-full w-full min-h-0 min-w-0 bg-card",
+          !filePath && "items-center justify-center",
+        )}
+        data-testid="editor-panel"
+      >
+        {filePath ? innerContent : (
+          <div className="text-center px-6">
+            <div className="text-5xl mb-3 opacity-20 select-none">✎</div>
+            <p className="text-[13px] text-muted-foreground/70">
+              Open a file from the project to edit it here.
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (docked) {
     return (

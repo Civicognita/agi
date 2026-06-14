@@ -33,7 +33,9 @@ function makeApp(
 }
 
 describe("providers-api — GET /api/providers (s111 t372)", () => {
-  it("returns the canonical 6-Provider catalog with stable tiers", async () => {
+  it("returns the canonical 7-Provider catalog with stable tiers", async () => {
+    // aion-vision (Moondream2 VLM, off-grid vision) was added after initial
+    // 6-provider catalog; catalog is now 7 entries.
     const app = makeApp({});
     const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
     expect(res.statusCode).toBe(200);
@@ -44,6 +46,7 @@ describe("providers-api — GET /api/providers (s111 t372)", () => {
     const ids = body.providers.map((p) => p.id);
     expect(ids).toEqual([
       "aion-micro",
+      "aion-vision",
       "huggingface",
       "ollama",
       "lemonade",
@@ -52,6 +55,7 @@ describe("providers-api — GET /api/providers (s111 t372)", () => {
     ]);
 
     expect(body.providers.find((p) => p.id === "aion-micro")?.tier).toBe("floor");
+    expect(body.providers.find((p) => p.id === "aion-vision")?.tier).toBe("local");
     expect(body.providers.find((p) => p.id === "huggingface")?.tier).toBe("core");
     expect(body.providers.find((p) => p.id === "ollama")?.tier).toBe("local");
     expect(body.providers.find((p) => p.id === "lemonade")?.tier).toBe("local");
@@ -205,7 +209,7 @@ describe("providers-api — GET /api/providers (s111 t372)", () => {
     const res = await app.inject({ method: "GET", url: "/api/providers/catalog" });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { providers: ProviderCatalogEntry[] };
-    expect(body.providers).toHaveLength(6);
+    expect(body.providers).toHaveLength(7);
     await app.close();
   });
 });

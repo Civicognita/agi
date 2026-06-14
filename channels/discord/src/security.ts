@@ -1,4 +1,4 @@
-import type { ChannelSecurityAdapter } from "@agi/channel-sdk";
+import type { ChannelSecurityAdapter } from "@agi/sdk";
 
 // ---------------------------------------------------------------------------
 // Security adapter: guild/channel allowlists + rate limiting
@@ -86,4 +86,19 @@ export function isChannelAllowed(
 ): boolean {
   if (!allowedChannelIds || allowedChannelIds.length === 0) return true;
   return allowedChannelIds.includes(channelId);
+}
+
+/**
+ * Returns `true` if the member holds at least one of the allowed roles
+ * (or no role allowlist is configured).
+ *
+ * @param memberRoleIds - Role IDs the Discord guild member currently holds.
+ * @param allowedRoleIds - Configured role ID allowlist. Empty = open access.
+ */
+export function isRoleAllowed(
+  memberRoleIds: string[],
+  allowedRoleIds: string[],
+): boolean {
+  if (allowedRoleIds.length === 0) return true;
+  return memberRoleIds.some((id) => allowedRoleIds.includes(id));
 }

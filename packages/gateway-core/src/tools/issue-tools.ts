@@ -3,7 +3,7 @@
  *
  * Aion-facing surface for the per-project issue registry. Action
  * dispatcher (read/search/show/log/fix) over the per-project
- * `<projectPath>/k/issues/` Markdown registry from Slice 1; backed by
+ * `<projectPath>/.ai/issues/` Markdown registry from Slice 1; backed by
  * the same store + search logic Slice 2 added.
  *
  * Owner directive 2026-05-09: "Aion needs to log issues when expected
@@ -43,7 +43,7 @@ export interface CreateIssueHandlerConfig {
    * s161 path-A — when Aion fires this tool from a chat without project
    * context (or explicitly wants the system-fallback bucket), the call
    * defaults to `<workspaceRoot>/_aionima` so the issue lands in the
-   * always-present meta-project's k/issues/ registry rather than failing.
+   * always-present meta-project's .ai/issues/ registry rather than failing.
    * Mirrors the canonical s130/s150/s160 architecture: per-project for
    * projects + `_aionima` as the system-fallback project.
    */
@@ -77,7 +77,7 @@ export function createIssueHandler(config: CreateIssueHandlerConfig): ToolHandle
       // s161 path-A — fall back to `<workspaceRoot>/_aionima` when caller
       // omits projectPath. Project-less callers (chat without project
       // context, system-level Aion tool fires) land in the always-present
-      // meta-project's k/issues/ rather than erroring.
+      // meta-project's .ai/issues/ rather than erroring.
       const fallback = config.defaultProjectPath?.() ?? null;
       if (!fallback) return err("projectPath is required");
       projectPath = fallback;
@@ -144,7 +144,7 @@ export function createIssueHandler(config: CreateIssueHandlerConfig): ToolHandle
 export const ISSUE_TOOL_MANIFEST = {
   name: "issue",
   description:
-    "Per-project issue registry — log/search/show/fix recurring failures. Symptom-hash dedup auto-increments occurrences when the same failure recurs (so the same problem doesn't get filed twice). Use 'search' BEFORE filing to check for known issues; use 'log' when an expected action fails and you want it tracked. Actions: 'search' (text + tag:/status: filters), 'show' (full body by id), 'list' (summary index), 'log' (create or append-occurrence), 'fix' (mark fixed + append resolution). Issues live at <projectPath>/k/issues/.",
+    "Per-project issue registry — log/search/show/fix recurring failures. Symptom-hash dedup auto-increments occurrences when the same failure recurs (so the same problem doesn't get filed twice). Use 'search' BEFORE filing to check for known issues; use 'log' when an expected action fails and you want it tracked. Actions: 'search' (text + tag:/status: filters), 'show' (full body by id), 'list' (summary index), 'log' (create or append-occurrence), 'fix' (mark fixed + append resolution). Issues live at <projectPath>/.ai/issues/.",
   requiresState: ["ONLINE" as const, "LIMBO" as const],
   requiresTier: ["verified" as const, "sealed" as const],
 };
@@ -159,7 +159,7 @@ export const ISSUE_TOOL_INPUT_SCHEMA = {
     },
     projectPath: {
       type: "string",
-      description: "Absolute path of the project whose registry to operate on. Must be inside a workspace.projects directory. Optional: when omitted, defaults to <workspaceRoot>/_aionima (the always-present meta-project's k/issues/) so project-less callers don't error.",
+      description: "Absolute path of the project whose registry to operate on. Must be inside a workspace.projects directory. Optional: when omitted, defaults to <workspaceRoot>/_aionima (the always-present meta-project's .ai/issues/) so project-less callers don't error.",
     },
     query: {
       type: "string",

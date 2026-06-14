@@ -95,7 +95,24 @@ export type {
   ProvidesLabel,
 } from "@agi/plugins";
 
-export type { AionimaChannelPlugin } from "@agi/channel-sdk";
+export type {
+  AionimaChannelPlugin,
+  ChannelId,
+  ChannelMeta,
+  ChannelCapabilities,
+  AionimaMessage,
+  MessageContent,
+  ChannelConfigAdapter,
+  ChannelGatewayAdapter,
+  ChannelOutboundAdapter,
+  OutboundContent,
+  ChannelMessagingAdapter,
+  ChannelSecurityAdapter,
+  EntityResolverAdapter,
+  ImpactHookAdapter,
+  ImpactClassification,
+  COAEmitterAdapter,
+} from "@agi/plugins";
 
 export type {
   StackDefinition,

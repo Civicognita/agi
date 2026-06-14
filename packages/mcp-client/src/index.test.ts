@@ -9,8 +9,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  * lift via the agi test VM when t441 is wired into TynnPmProvider in t432).
  */
 
-// Mock the SDK before importing McpClient — vi.mock is hoisted to top of file.
-const mockClientInstance = {
+// vi.hoisted() runs before vi.mock() hoisting so the object is accessible
+// inside the factory. In vitest v4, plain module-level `const` declarations
+// are NOT yet evaluated when the vi.mock factory runs (they're hoisted past
+// them). vi.hoisted() is the v4-idiomatic fix.
+const mockClientInstance = vi.hoisted(() => ({
   connect: vi.fn(),
   close: vi.fn(),
   listTools: vi.fn(),
@@ -18,22 +21,25 @@ const mockClientInstance = {
   listPrompts: vi.fn(),
   callTool: vi.fn(),
   readResource: vi.fn(),
-};
+}));
 
 vi.mock("@modelcontextprotocol/sdk/client/index.js", () => ({
-  Client: vi.fn(() => mockClientInstance),
+  // Must use a regular function (not arrow) — in vitest v4, vi.fn() applied
+  // with `new` tries to construct the implementation; arrow functions are not
+  // constructable and throw "is not a constructor".
+  Client: vi.fn(function MockClient() { return mockClientInstance; }),
 }));
 
 vi.mock("@modelcontextprotocol/sdk/client/stdio.js", () => ({
-  StdioClientTransport: vi.fn((params) => ({ __transport: "stdio", params })),
+  StdioClientTransport: vi.fn(function StdioTransport(params) { return { __transport: "stdio", params }; }),
 }));
 
 vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => ({
-  StreamableHTTPClientTransport: vi.fn((url, opts) => ({ __transport: "http", url: String(url), opts })),
+  StreamableHTTPClientTransport: vi.fn(function StreamableHTTPTransport(url, opts) { return { __transport: "http", url: String(url), opts }; }),
 }));
 
 vi.mock("@modelcontextprotocol/sdk/client/websocket.js", () => ({
-  WebSocketClientTransport: vi.fn((url) => ({ __transport: "websocket", url: String(url) })),
+  WebSocketClientTransport: vi.fn(function WebSocketTransport(url) { return { __transport: "websocket", url: String(url) }; }),
 }));
 
 import { McpClient, type McpServerConfig } from "./index.js";

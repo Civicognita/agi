@@ -1,9 +1,11 @@
-import type { AionimaMessage, OutboundContent } from "@agi/channel-sdk";
+import type { AionimaMessage, OutboundContent } from "@agi/plugins";
 import type { EntityStore, MessageQueue, CommsLog } from "@agi/entity-model";
 import type { COAChainLogger } from "@agi/coa-chain";
 import type { VoicePipeline, VoiceGatewayState, AudioFormat } from "@agi/voice";
 import type { PairingStore } from "./pairing-store.js";
 import type { OwnerConfig } from "@agi/config";
+import type { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
+import type { PendingApprovalStore } from "./pending-approval-store.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -37,6 +39,24 @@ export interface InboundRouterDeps {
   ownerEntityId?: string;
   /** Optional CommsLog instance for logging inbound messages. */
   commsLog?: CommsLog;
+  /**
+   * Optional channel-event dispatcher. When set + a message arrives
+   * carrying `metadata.roomId`, the router asks the dispatcher whether
+   * a project binds (channelId, roomId). If yes, the bound project's
+   * path is attached to the enqueued payload so downstream agent-
+   * invocation runs inside that project's scope. CHN-B (s163) slice 3
+   * — 2026-05-14.
+   */
+  channelEventDispatcher?: ChannelEventDispatcher;
+  /**
+   * Optional pending-approval store. When set + a message arrives in a
+   * project-bound room (i.e. dispatcher resolved a projectPath), the
+   * router captures a pending-approval record so owner can see + act
+   * on the contact via /identity/pending. CHN-E (s166) slice 2 —
+   * data-collection only: this slice does NOT gate the message; routing
+   * proceeds normally. Slice 3+ wires the gate-and-drop + UI together.
+   */
+  pendingApprovalStore?: PendingApprovalStore;
   /** Optional logger instance. */
   logger?: Logger;
 }
@@ -46,6 +66,13 @@ export interface InboundResult {
   entityId: string;
   coaFingerprint: string;
   queueMessageId: string;
+  /**
+   * Project path resolved via the ChannelEventDispatcher when the
+   * message carries a roomId that binds to a project. Absent when
+   * no dispatcher is configured OR the room isn't bound. CHN-B
+   * (s163) slice 3 — 2026-05-14.
+   */
+  projectPath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +101,8 @@ export class InboundRouter {
   private readonly pairingStore: PairingStore | undefined;
   private readonly outboundSender: OutboundSender | undefined;
   private readonly commsLog: CommsLog | undefined;
+  private readonly channelEventDispatcher: ChannelEventDispatcher | undefined;
+  private readonly pendingApprovalStore: PendingApprovalStore | undefined;
   private readonly log: ComponentLogger;
   constructor(deps: InboundRouterDeps) {
     this.entityStore = deps.entityStore;
@@ -86,6 +115,8 @@ export class InboundRouter {
     this.pairingStore = deps.pairingStore;
     this.outboundSender = deps.outboundSender;
     this.commsLog = deps.commsLog;
+    this.channelEventDispatcher = deps.channelEventDispatcher;
+    this.pendingApprovalStore = deps.pendingApprovalStore;
     this.log = createComponentLogger(deps.logger, "inbound");
   }
 
@@ -230,33 +261,9 @@ export class InboundRouter {
   // Owner notification
   // -------------------------------------------------------------------------
 
-  /**
-   * Notify the owner of a new pairing request on their preferred channel.
-   */
-  private notifyOwnerOfPairingRequest(
-    code: string,
-    displayName: string,
-    fromChannel: string,
-    fromUserId: string,
-  ): void {
-    if (this.ownerConfig === undefined || this.outboundSender === undefined) return;
-
-    // Find the owner's preferred channel (first one configured)
-    const channels = this.ownerConfig.channels;
-    for (const [ch, uid] of Object.entries(channels)) {
-      if (uid !== undefined) {
-        this.outboundSender(ch, uid, {
-          type: "text",
-          text: `New pairing request from ${displayName} (${fromChannel}:${fromUserId})\n\nCode: ${code}\n\nReply /approve ${code} or /reject ${code}`,
-        }).catch((err: unknown) => {
-          this.log.warn(
-            `Failed to notify owner on ${ch}: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
-        return; // Only notify on one channel
-      }
-    }
-  }
+  // notifyOwnerOfPairingRequest removed 2026-06-08 — it only served the retired
+  // legacy pairing-code gate (Step 0b). Owner now approves channel contacts via
+  // the /identity/pending dashboard, not via in-channel pairing notifications.
 
   // ---------------------------------------------------------------------------
   // Pipeline
@@ -291,46 +298,24 @@ export class InboundRouter {
       // Fall through — owner's non-command messages go to agent
     }
 
-    // Step 0b — Pairing gate for non-owner users
-    // When dmPolicy is "pairing" and the sender is not the owner and not
-    // paired, generate a pairing code and notify the owner.
-    if (
-      this.ownerConfig !== undefined &&
-      this.pairingStore !== undefined &&
-      this.outboundSender !== undefined &&
-      this.ownerConfig.dmPolicy === "pairing" &&
-      !this.isOwner(channelId, message.channelUserId) &&
-      !this.pairingStore.isApproved(channelId, message.channelUserId)
-    ) {
-      const displayName = typeof message.metadata === "object" && message.metadata !== null
-        ? (message.metadata as Record<string, unknown>)["displayName"] as string | undefined
-          ?? (message.metadata as Record<string, unknown>)["firstName"] as string | undefined
-          ?? (message.metadata as Record<string, unknown>)["username"] as string | undefined
-        : undefined;
-
-      const request = this.pairingStore.createRequest(
-        channelId,
-        message.channelUserId,
-        displayName ?? "Unknown",
-      );
-
-      if (request !== null) {
-        // Send pairing message to the unknown user
-        try {
-          await this.outboundSender(channelId, message.channelUserId, {
-            type: "text",
-            text: `To talk to me, you need my owner's approval.\n\nYour pairing code: **${request.code}**\n\nAsk my owner to approve you, or wait for them to see this request.`,
-          });
-        } catch {
-          // Outbound may fail — ignore
-        }
-
-        // Notify the owner on their preferred channel
-        this.notifyOwnerOfPairingRequest(request.code, displayName ?? "Unknown", channelId, message.channelUserId);
-      }
-
-      return null; // Message NOT routed to agent
-    }
+    // Step 0b — Legacy pairing-code gate RETIRED 2026-06-08 (owner directive).
+    //
+    // This branch used to DM every unknown non-owner a 6-digit pairing code
+    // ("To talk to me, you need my owner's approval. Your pairing code: XXX")
+    // and DROP the message (return null) whenever dmPolicy was "pairing" (the
+    // default). Because it ran BEFORE the modern pending-approval capture
+    // (Step 2c), that flow could never see channel messages — the dashboard
+    // /identity/pending page sat empty while users got cryptic codes with no
+    // dashboard surface to approve them.
+    //
+    // Channel identity is now DASHBOARD-ONLY: unknown users are captured as
+    // pending approvals (Step 2c) and surfaced on /identity/pending for the
+    // owner to approve/reject — no code is ever sent. The s194 path (Step 2d)
+    // lets the agent reply without project scope until the owner approves.
+    //
+    // PairingStore + the owner-commands /approve //reject //list (handled in
+    // handleOwnerCommand) remain wired but are now vestigial — no new pairing
+    // requests are created. Removing them entirely is a follow-up.
 
     // Step 0c — STT transcription (optional, graceful degradation)
     let routedMessage = message;
@@ -400,11 +385,114 @@ export class InboundRouter {
     // its response (the DONE signal in agent-invoker.ts).
     const coaFingerprint = `${this.resourceId}.${entity.coaAlias}.${this.nodeId}.pending`;
 
+    // Step 2b (CHN-B s163 slice 3) — channel-room → project dispatch.
+    // Extract roomId from metadata first (always) so pending-approval capture
+    // (step 2c) works even when the room isn't bound to any project yet.
+    let projectPath: string | undefined;
+    let resolvedRoomId: string | undefined;
+    if (typeof routedMessage.metadata === "object" && routedMessage.metadata !== null) {
+      const roomId = (routedMessage.metadata as Record<string, unknown>)["roomId"];
+      if (typeof roomId === "string" && roomId.length > 0) {
+        resolvedRoomId = roomId;
+        if (this.channelEventDispatcher !== undefined) {
+          const dispatch = this.channelEventDispatcher.dispatch(channelId, roomId);
+          if (dispatch !== null) {
+            projectPath = dispatch.projectPath;
+            this.log.info(`channel-event routed to project: ${channelId}::${roomId} → ${projectPath}`);
+          }
+        }
+      }
+    }
+
+    // Step 2c (CHN-E s166 slice 2) — pending-approval capture for unknown
+    // contacts in any channel room. Idempotent: same triple refreshes
+    // display/preview, keeps original createdAt. Owner sees the captured
+    // records via /identity/pending.
+    //
+    // Capture fires for ALL rooms that carry a roomId (not just project-bound
+    // ones). projectPath is passed when the room is bound; otherwise the
+    // record is grouped under "Unbound" in the UI so the owner can see who's
+    // messaging before any project binding exists. DATA-COLLECTION ONLY here —
+    // step 2d adds the gate-and-drop for project-bound rooms.
+    if (resolvedRoomId !== undefined && this.pendingApprovalStore !== undefined) {
+      const captureDisplayName = typeof routedMessage.metadata === "object" && routedMessage.metadata !== null
+        ? (routedMessage.metadata as Record<string, unknown>)["displayName"] as string | undefined
+          ?? (routedMessage.metadata as Record<string, unknown>)["username"] as string | undefined
+          ?? "Unknown"
+        : "Unknown";
+      const preview = routedMessage.content.type === "text"
+        ? (routedMessage.content as { text: string }).text
+        : `[${routedMessage.content.type}]`;
+      this.pendingApprovalStore.capture({
+        channelId,
+        roomId: resolvedRoomId,
+        channelUserId: routedMessage.channelUserId,
+        displayName: captureDisplayName,
+        projectPath,
+        firstMessagePreview: preview,
+      });
+    }
+
+    // Step 2d (CHN-E s166 slice 6 / s194) — gate-and-drop unverified senders
+    // in project-bound rooms. Messages from unverified entities are
+    // captured (step 2c above) but DROPPED here so they don't reach
+    // the agent until owner approves via /identity/pending.
+    //
+    // Exemptions:
+    //  - Owner (already routed past Step 0a's owner-command branch with
+    //    fall-through; we don't gate the owner here)
+    //  - Rejected sender — also dropped, but with a "rejected" log line
+    //  - Verified entities — proceed to enqueue normally
+    //  - No projectPath (room isn't bound) — proceed normally (this
+    //    gate only applies to bound rooms)
+    //  - No pendingApprovalStore wired — proceed normally (gate disabled)
+    //  - s194: User has a pending approval record (submitted registration) —
+    //    let through but strip project scope so agent can respond without
+    //    reading project data until owner approves
+    if (
+      projectPath !== undefined &&
+      resolvedRoomId !== undefined &&
+      this.pendingApprovalStore !== undefined &&
+      !this.isOwner(channelId, routedMessage.channelUserId)
+    ) {
+      const decision = this.pendingApprovalStore.decisionFor(
+        channelId,
+        resolvedRoomId,
+        routedMessage.channelUserId,
+      );
+      if (decision !== null && decision.status === "rejected") {
+        this.log.info(
+          `drop message from REJECTED sender: ${channelId}::${resolvedRoomId}::${routedMessage.channelUserId}`,
+        );
+        return null;
+      }
+      if (entity.verificationTier !== "verified" && entity.verificationTier !== "sealed") {
+        const hasPendingRecord =
+          this.pendingApprovalStore.getByChannelUser(channelId, routedMessage.channelUserId) !== null;
+        if (!hasPendingRecord) {
+          this.log.info(
+            `drop message from UNREGISTERED sender (no pending record): ${channelId}::${resolvedRoomId}::${routedMessage.channelUserId}`,
+          );
+          return null;
+        }
+        // Has pending approval — allow through without project scope
+        projectPath = undefined;
+        this.log.info(
+          `pending-approval sender allowed without project scope: ${channelId}::${resolvedRoomId}::${routedMessage.channelUserId}`,
+        );
+      }
+    }
+
     // Step 3 — enqueue for agent processing
     const queued = await this.messageQueue.enqueue({
       channel: channelId,
       direction: "inbound",
-      payload: { message: routedMessage, entityId: entity.id, coaFingerprint },
+      payload: {
+        message: routedMessage,
+        entityId: entity.id,
+        coaFingerprint,
+        ...(projectPath !== undefined ? { projectPath } : {}),
+      },
     });
 
     // Step 4 — log to comms log (non-blocking, best-effort)
@@ -436,6 +524,7 @@ export class InboundRouter {
       entityId: entity.id,
       coaFingerprint,
       queueMessageId: queued.id,
+      ...(projectPath !== undefined ? { projectPath } : {}),
     };
   }
 }

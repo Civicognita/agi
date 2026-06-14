@@ -71,7 +71,7 @@ export function gatePath(config: PathGateConfig, absPath: string): string | null
     const cage = config.cageProvider();
     if (cage !== null) {
       if (!isPathInCage(absPath, cage)) {
-        return "Access denied: path is outside the project cage. The chat session is bound to a project; tools can only operate within that project's subtree (.agi/, k/, repos/, .trash/, project root). To request out-of-cage access, ask the owner.";
+        return "Access denied: path is outside the project cage. The chat session is bound to a project; tools can only operate within that project's subtree (.agi/, .ai/, repos/, .trash/, project root). To request out-of-cage access, ask the owner.";
       }
       return null; // cage check passed; cage is stricter, skip workspaceRoot.
     }

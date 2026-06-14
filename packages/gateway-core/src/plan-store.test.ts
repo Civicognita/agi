@@ -1,7 +1,7 @@
 /**
  * PlanStore — .mdc + YAML frontmatter + legacy migration tests.
  *
- * Wish #16 (2026-05-08) — plans now live at `<projectPath>/k/plans/` per
+ * Wish #16 (2026-05-08) — plans now live at `<projectPath>/.ai/plans/` per
  * the s130/s140 universal-monorepo model. The legacy `~/.agi/{slug}/plans/`
  * location is read on miss and copy-forwarded to the canonical location.
  */
@@ -36,14 +36,14 @@ describe("PlanStore — .mdc + YAML", () => {
   });
 
   function canonicalPlansDir(): string {
-    return join(projectPath, "k", "plans");
+    return join(projectPath, ".ai", "plans");
   }
 
   function legacyPlansDir(): string {
     return join(tmpHome, ".agi", projectSlug(projectPath), "plans");
   }
 
-  it("creates plans as .mdc files with readable YAML frontmatter at <projectPath>/k/plans/", () => {
+  it("creates plans as .mdc files with readable YAML frontmatter at <projectPath>/.ai/plans/", () => {
     const store = new PlanStore();
     const plan = store.create({
       title: "Test plan",
@@ -232,8 +232,8 @@ describe("migrateProjectPlans (Wish #16)", () => {
     expect(r.migrated).toBe(2);
     expect(r.skipped).toBe(0);
     expect(new Set(r.migratedIds)).toEqual(new Set(["plan_alpha", "plan_beta"]));
-    expect(existsSync(join(projectPath, "k", "plans", "plan_alpha.mdc"))).toBe(true);
-    expect(existsSync(join(projectPath, "k", "plans", "plan_beta.mdc"))).toBe(true);
+    expect(existsSync(join(projectPath, ".ai", "plans", "plan_alpha.mdc"))).toBe(true);
+    expect(existsSync(join(projectPath, ".ai", "plans", "plan_beta.mdc"))).toBe(true);
     // Legacy preserved as backup.
     expect(existsSync(join(legacyDir(), "plan_alpha.mdc"))).toBe(true);
   });
@@ -243,7 +243,7 @@ describe("migrateProjectPlans (Wish #16)", () => {
     const first = migrateProjectPlans(projectPath);
     expect(first.migrated).toBe(1);
 
-    const canonicalAlpha = join(projectPath, "k", "plans", "plan_alpha.mdc");
+    const canonicalAlpha = join(projectPath, ".ai", "plans", "plan_alpha.mdc");
     writeFileSync(canonicalAlpha, "owner edit", "utf-8");
 
     const second = migrateProjectPlans(projectPath);
@@ -261,8 +261,8 @@ describe("migrateProjectPlans (Wish #16)", () => {
     writeLegacy("plan_legacy_ext", "md", "Legacy");
     const r = migrateProjectPlans(projectPath);
     expect(r.migrated).toBe(1);
-    expect(existsSync(join(projectPath, "k", "plans", "plan_legacy_ext.md"))).toBe(true);
-    expect(existsSync(join(projectPath, "k", "plans", "plan_legacy_ext.mdc"))).toBe(false);
+    expect(existsSync(join(projectPath, ".ai", "plans", "plan_legacy_ext.md"))).toBe(true);
+    expect(existsSync(join(projectPath, ".ai", "plans", "plan_legacy_ext.mdc"))).toBe(false);
   });
 
   it("ignores non-plan files in the legacy dir", () => {

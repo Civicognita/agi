@@ -131,15 +131,20 @@ Subdirectories are supported. The skill's name comes from the frontmatter `name`
 
 The `packages/skills/src/skills/` directory contains example skills shipped with Aionima:
 
-| Skill | Domain | Triggers |
-|-------|--------|---------|
-| `greeting` | utility | hello, hi, hey, greetings, introduce yourself |
+| Skill | Domain | Description |
+|-------|--------|-------------|
+| `greeting` | utility | Handle greetings and introductions |
 | `impact` | impact | impact, score, impactinomics, economy |
 | `dev` | utility | code, build, fix, implement, debug |
 | `status` | utility | status, health, running, uptime |
 | `implement` | utility | implement, add feature, create |
 | `issue` | utility | issue, bug, problem, error |
 | `pr-review` | utility | review, pull request, PR |
+| `ai-apps` | utility | Guide for building AI applications using HuggingFace models and datasets |
+| `features` | utility | Explain Aionima platform features and capabilities |
+| `incident-investigation` | operations | Guidance for Aion when writing post-crash incident reports in safemode |
+| `project-hosting` | utility | How projects are created, hosted, and accessed in Aionima |
+| `scrum-master` | channel | Summarize channel activity, surface stand-up signals, and report on team engagement over a window |
 
 Copy these to your `skills/` directory as a starting point and modify them for your use case.
 

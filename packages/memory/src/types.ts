@@ -1,11 +1,9 @@
 /**
- * Memory system types — Task #141
+ * Memory system types — s112 CoALA+TiMem graph backend.
  *
  * Semantic memory for entities persisting across session boundaries.
- * Cognee (ONLINE) with file fallback (.aionima/.mem/).
+ * Storage: SQLite at ~/.agi/memory/graph.db (no cloud dependency).
  */
-
-import type { GatewayState } from "@agi/gateway-core";
 
 // ---------------------------------------------------------------------------
 // Memory entry
@@ -84,8 +82,8 @@ export interface MemoryProvider {
   /** Count memories for an entity. */
   count(entityId: string): Promise<number>;
 
-  /** Check if the provider is available. */
-  isAvailable(): Promise<boolean>;
+  /** Check if the provider is available. Synchronous — SQLite is always local. */
+  isAvailable(): boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,29 +117,27 @@ export interface PruneParams {
 }
 
 // ---------------------------------------------------------------------------
-// Composite adapter config
+// Memory adapter config
 // ---------------------------------------------------------------------------
 
-/** Configuration for the composite (STATE-gated) memory adapter. */
+/** Configuration for the graph memory adapter (s112 CoALA+TiMem). */
 export interface MemoryConfig {
-  /** Gateway state getter — determines which provider to use. */
-  getState: () => GatewayState;
-  /** Path to local memory files (default: .aionima/.mem/). */
-  localMemDir: string;
-  /** Cognee API key (for ONLINE mode). */
-  cogneeApiKey?: string;
-  /** Cognee API endpoint. */
-  cogneeEndpoint?: string;
+  /** Absolute path to SQLite graph DB. Default: ~/.agi/memory/graph.db */
+  graphDbPath?: string;
+  /** Legacy file-adapter directory for one-shot migration. */
+  legacyMemDir?: string;
   /** Maximum memories to inject per agent call. */
   maxMemoriesPerCall: number;
   /** Maximum token budget for memory injection. */
   memoryTokenBudget: number;
   /** Memory retention days before pruning. */
   retentionDays: number;
+  /** Embedding model name (passed to EmbeddingEngine). Default: nomic-embed-text */
+  embeddingModel?: string;
 }
 
 /** Default memory configuration. */
-export const DEFAULT_MEMORY_CONFIG: Omit<MemoryConfig, "getState" | "localMemDir"> = {
+export const DEFAULT_MEMORY_CONFIG: Omit<MemoryConfig, "graphDbPath" | "legacyMemDir"> = {
   maxMemoriesPerCall: 10,
   memoryTokenBudget: 2000,
   retentionDays: 180,

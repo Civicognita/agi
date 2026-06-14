@@ -2,6 +2,7 @@
  * CompletionStep — Final onboarding screen summarizing completed steps.
  */
 
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import type { OnboardingState, OnboardingStepStatus } from "@/types.js";
@@ -46,6 +47,15 @@ function StatusIcon({ status }: { status: OnboardingStepStatus }) {
 }
 
 export function CompletionStep({ onComplete, state }: Props) {
+  const [twin, setTwin] = useState<{ coaAlias: string; geid: string } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/onboarding/zero-me/twin")
+      .then((r) => r.json() as Promise<{ twin: { coaAlias: string; geid: string } | null }>)
+      .then((d) => { if (d.twin) setTwin(d.twin); })
+      .catch(() => { /* non-fatal */ });
+  }, []);
+
   return (
     <div className="flex flex-col items-center justify-center min-h-[50vh] py-6 sm:py-8">
       {/* Logo */}
@@ -93,7 +103,21 @@ export function CompletionStep({ onComplete, state }: Props) {
         })}
       </div>
 
-      <div className="onboard-animate-in onboard-stagger-3">
+      {twin && (
+        <div className="w-full max-w-sm mb-6 onboard-animate-in onboard-stagger-3 bg-secondary/40 border border-border rounded-lg p-3 space-y-1 text-[13px]">
+          <p className="font-medium text-foreground mb-2">Digital twin active</p>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">COA alias</span>
+            <code className="font-mono text-primary">{twin.coaAlias}</code>
+          </div>
+          <div className="flex items-start gap-2">
+            <span className="text-muted-foreground shrink-0">GEID</span>
+            <code className="font-mono text-xs text-muted-foreground break-all">{twin.geid}</code>
+          </div>
+        </div>
+      )}
+
+      <div className="onboard-animate-in onboard-stagger-4">
         <Button size="lg" onClick={onComplete} className="w-full sm:w-auto min-w-[200px]">
           Enter Aionima
         </Button>

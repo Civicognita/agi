@@ -225,23 +225,15 @@ function repoChecks(config: AionimaConfig): CheckGroup {
       path: mappMarketplaceConfig?.dir ?? "/opt/agi-mapp-marketplace",
       repo: "https://github.com/Civicognita/agi-mapp-marketplace.git",
     },
-    {
-      name: "ID service",
-      path: config.idService?.dir ?? "/opt/agi-local-id",
-      repo: "https://github.com/Civicognita/agi-local-id.git",
-    },
   ];
 
   for (const repo of repos) {
     const exists = dirExists(repo.path);
-    const isIdService = repo.name === "ID service";
     checks.push({
       name: `${repo.name} (${repo.path})`,
       ok: exists,
-      warn: !exists && isIdService,
-      fix: exists ? undefined : isIdService
-        ? `${repo.name} not found — federation features unavailable. Fix: sudo git clone ${repo.repo} ${repo.path} && sudo chown -R $USER:$USER ${repo.path}`
-        : `Fix: sudo git clone ${repo.repo} ${repo.path} && sudo chown -R $USER:$USER ${repo.path}`,
+      warn: false,
+      fix: exists ? undefined : `Fix: sudo git clone ${repo.repo} ${repo.path} && sudo chown -R $USER:$USER ${repo.path}`,
     });
 
     // Protocol compatibility
@@ -365,7 +357,6 @@ function gitStateChecks(config: AionimaConfig): CheckGroup {
     { name: "PRIME corpus", path: config.prime?.dir ?? "/opt/agi-prime" },
     { name: "Plugin Marketplace", path: config.marketplace?.dir ?? "/opt/agi-marketplace" },
     { name: "MApp Marketplace", path: mappMarketplaceConfig?.dir ?? "/opt/agi-mapp-marketplace" },
-    { name: "ID service", path: config.idService?.dir ?? "/opt/agi-local-id" },
   ];
 
   for (const repo of sacred) {
@@ -708,7 +699,8 @@ async function projectShapeChecks(config: AionimaConfig): Promise<CheckGroup | n
 
   const checks: Check[] = [];
   const RETIRED_TYPES: ReadonlySet<string> = new Set(["monorepo"]);
-  const REQUIRED_DIRS = ["repos", "sandbox", ".trash", "k/plans", "k/knowledge", "k/pm", "k/memory", "k/chat"];
+  // Knowledge dir renamed k/ → .ai/ (owner directive 2026-06-09).
+  const REQUIRED_DIRS = ["repos", "sandbox", ".trash", ".ai/plans", ".ai/knowledge", ".ai/pm", ".ai/memory", ".ai/chat"];
   const SACRED_NAMES = new Set([
     "_aionima", "agi", "prime", "id", "marketplace", "mapp-marketplace",
     "react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d", "fancy-screens",
@@ -880,7 +872,6 @@ function devChecks(config: AionimaConfig): CheckGroup | null {
   const originChecks: OriginCheck[] = [
     { name: "AGI origin", dir: "/opt/agi", expectedRepo: config.dev.agiRepo },
     { name: "PRIME origin", dir: "/opt/agi-prime", expectedRepo: config.dev.primeRepo },
-    { name: "ID origin", dir: "/opt/agi-local-id", expectedRepo: config.dev.idRepo },
   ];
 
   for (const { name, dir, expectedRepo } of originChecks) {

@@ -12,6 +12,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
+import { createConnection } from "node:net";
 import { join, resolve as resolvePath, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execSync, execFileSync, spawnSync, spawn, type ChildProcess } from "node:child_process";
@@ -50,6 +51,21 @@ import {
 /** Strip ANSI escape codes from command output for clean dashboard display. */
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?\x07/g;
+
+/**
+ * TCP connect probe — resolves true when something is listening on the port,
+ * false on connection refused or timeout. Does not send any data, so no HTTP
+ * logs appear in the target app. Used by pollContainerHealth() to distinguish
+ * "container running but app not yet serving" from "container running + app ready".
+ */
+function probePort(port: number, timeoutMs = 2_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: "127.0.0.1", port, timeout: timeoutMs });
+    socket.on("connect", () => { socket.destroy(); resolve(true); });
+    socket.on("error", () => resolve(false));
+    socket.on("timeout", () => { socket.destroy(); resolve(false); });
+  });
+}
 
 /** Simple shell argument escaping — wraps in single quotes. Used by
  *  buildMultiRepoContainerArgs to safely pass startCommand strings
@@ -313,17 +329,6 @@ export interface BuildCaddyfileOptions {
   whodbPort?: number;
   whodbContainerName?: string;
   /**
-   * Local-ID runs on the aionima network as `agi-local-id`. `port` is the
-   * container-internal listen port. `containerName` overrides the default
-   * when the unit uses a non-default name.
-   */
-  idService?: {
-    enabled?: boolean;
-    subdomain?: string;
-    port?: number;
-    containerName?: string;
-  };
-  /**
    * Subdomain routes declared by plugins. `target` is a container-internal
    * port when `containerName` is provided (aionima DNS route); falls back
    * to `host.containers.internal:<target>` when only a port is given, or
@@ -358,6 +363,9 @@ export interface BuildCaddyfileOptions {
      *  handle_path block. Only repos with both port + externalPath are
      *  routed; default repo serves on `/` via the catch-all reverse_proxy. */
     repos?: Array<{ name: string; port: number; externalPath: string }>;
+    /** When false, omit the Caddy offline-page `handle_errors` block so raw
+     *  upstream errors pass through. Default true. */
+    friendlyErrors?: boolean;
   }>;
   existingCaddyfile: string;
 }
@@ -485,18 +493,6 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
   blocks.push(`    header Content-Security-Policy "frame-ancestors 'self' ${whodbFrameOrigins}"`);
   blocks.push(`    reverse_proxy ${whodbContainer}:${String(whodbInternalPort)}`);
   blocks.push(`}\n`);
-
-  // Local ID service — when enabled, reverse-proxy id.{baseDomain} to the
-  // ID container on aionima. No host port binding; only AGI binds host ports.
-  if (opts.idService?.enabled) {
-    const idSubdomain = opts.idService.subdomain ?? "id";
-    const idContainer = opts.idService.containerName ?? "agi-local-id";
-    const idInternalPort = opts.idService.port ?? 3200;
-    blocks.push(`${idSubdomain}.${opts.baseDomain} {`);
-    blocks.push(`    ${TLS_INTERNAL}`);
-    blocks.push(`    reverse_proxy ${idContainer}:${String(idInternalPort)}`);
-    blocks.push(`}\n`);
-  }
 
   // Plugin-registered subdomain routes. When the route declares a
   // containerName, Caddy resolves it on aionima; otherwise (legacy route
@@ -627,23 +623,28 @@ export function buildCaddyfileContent(opts: BuildCaddyfileOptions): string {
     }
 
     blocks.push(`    reverse_proxy ${projectUpstream}`);
-    // `handle_errors <status_codes...>` (filter form) needs Caddy 2.8+.
-    // Plenty of deployments are still on 2.6.x which rejects that syntax
-    // with "Wrong argument count or unexpected line ending after '502'"
-    // and fails the whole reload. Use the expression-matcher form that
-    // works on 2.6 through 2.8 uniformly — still limits the offline
-    // page to 5xx responses so legitimate 4xx from the backend (403,
-    // 404, etc.) aren't hidden behind a "container not running" page.
-    blocks.push(`    handle_errors {`);
-    blocks.push(`        @5xx expression \`{http.error.status_code} >= 500\``);
-    blocks.push(`        handle @5xx {`);
-    // `respond` defaults to text/plain, which renders the offline HTML
-    // as raw source in browsers (cycle-122 owner-reported bug). Set
-    // Content-Type explicitly so the styled card renders.
-    blocks.push(`            header Content-Type "text/html; charset=utf-8"`);
-    blocks.push(`            respond \`${offlineHtml}\` 503`);
-    blocks.push(`        }`);
-    blocks.push(`    }`);
+    // Friendly-errors block: intercepts 5xx and serves a styled offline card.
+    // Omitted when project.friendlyErrors === false so raw upstream errors
+    // (crash output, debug pages, real 500 bodies) pass through to the browser.
+    if (project.friendlyErrors !== false) {
+      // `handle_errors <status_codes...>` (filter form) needs Caddy 2.8+.
+      // Plenty of deployments are still on 2.6.x which rejects that syntax
+      // with "Wrong argument count or unexpected line ending after '502'"
+      // and fails the whole reload. Use the expression-matcher form that
+      // works on 2.6 through 2.8 uniformly — still limits the offline
+      // page to 5xx responses so legitimate 4xx from the backend (403,
+      // 404, etc.) aren't hidden behind a "container not running" page.
+      blocks.push(`    handle_errors {`);
+      blocks.push(`        @5xx expression \`{http.error.status_code} >= 500\``);
+      blocks.push(`        handle @5xx {`);
+      // `respond` defaults to text/plain, which renders the offline HTML
+      // as raw source in browsers (cycle-122 owner-reported bug). Set
+      // Content-Type explicitly so the styled card renders.
+      blocks.push(`            header Content-Type "text/html; charset=utf-8"`);
+      blocks.push(`            respond \`${offlineHtml}\` 503`);
+      blocks.push(`        }`);
+      blocks.push(`    }`);
+    }
     blocks.push(`}\n`);
   }
 
@@ -753,12 +754,6 @@ export interface HostingConfig {
   tunnelMode?: "quick" | "named";
   /** Cloudflare-managed domain for named tunnels. Named tunnels create DNS as <project>.<tunnelDomain>. */
   tunnelDomain?: string;
-  /** Local ID service config — when enabled, generates a Caddy entry for id.{baseDomain}. */
-  idService?: {
-    enabled: boolean;
-    port: number;
-    subdomain: string;
-  };
   /** WhoDB database explorer port (default: 5050). Always-on infrastructure. */
   whodbPort?: number;
 }
@@ -790,6 +785,19 @@ export interface ProjectHostingMeta {
   containerKind?: "static" | "code" | "mapp";
   /** s145 t584 — Installed MApp IDs for the Desktop-served container shape. */
   mapps?: string[];
+  /**
+   * When false, the Caddy `handle_errors` offline-page block is omitted so raw
+   * upstream errors pass through to the browser. Default true (friendly page).
+   * Set to false for development projects where you want to see real crash output.
+   */
+  friendlyErrors?: boolean;
+  /**
+   * Custom container image for multi-repo projects. Overrides the default
+   * `agi-runtime:lamp`. Use for mixed-language monorepos (e.g. a Python sim
+   * engine + Node.js frontend) where you need a fat image with multiple runtimes.
+   * Leave empty to use the default lamp image.
+   */
+  baseImage?: string | null;
 }
 
 export interface HostedProject {
@@ -801,6 +809,11 @@ export interface HostedProject {
   error?: string;
   tunnelPid: number | null;
   tunnelUrl: string | null;
+  /** True when the most recent TCP probe to the container's host port succeeded.
+   * Starts false; set to true by pollContainerHealth() once the app is listening.
+   * Reset to false when the container stops. Used to distinguish green (serving)
+   * from yellow (container up but app not yet responding). */
+  serving: boolean;
 }
 
 export interface InfraStatus {
@@ -942,6 +955,7 @@ export class HostingManager {
   private loginProcess: ChildProcess | null = null;
   private onStatusChange: (() => void) | null = null;
   private statusPollTimer: ReturnType<typeof setInterval> | null = null;
+  private healthPollTimer: ReturnType<typeof setInterval> | null = null;
   private eventsProcess: ChildProcess | null = null;
   /** HuggingFace model runtime deps — set via setModelDeps() after Step 5i. */
   private modelDeps: HostingManagerModelDeps | null = null;
@@ -1630,6 +1644,7 @@ export class HostingManager {
       status: "stopped",
       tunnelPid: null,
       tunnelUrl: null,
+      serving: false,
     };
 
     this.projects.set(resolved, hosted);
@@ -1761,6 +1776,8 @@ export class HostingManager {
     // break, but dispatch reads only `type` via isDesktopServed.
     if (updates.containerKind !== undefined) hosted.meta.containerKind = updates.containerKind;
     if (updates.mapps !== undefined) hosted.meta.mapps = updates.mapps;
+    if (updates.friendlyErrors !== undefined) hosted.meta.friendlyErrors = updates.friendlyErrors;
+    if (updates.baseImage !== undefined) hosted.meta.baseImage = updates.baseImage;
 
     // s145 t586 / s150 t634 — when the project is Desktop-served, stamp
     // internalPort=80 here (synchronously, before startContainer fires async)
@@ -2371,6 +2388,7 @@ export class HostingManager {
       aiBindingArgs,
       tunnelOrigin: this.computeTunnelOrigin(hosted),
       networkName: projectNetworkName(hosted.meta.hostname),
+      ...(hosted.meta.baseImage ? { image: hosted.meta.baseImage } : {}),
     });
     if (!result) return null;
     // Set internalPort to the default repo's port so the Caddyfile
@@ -2536,12 +2554,22 @@ export class HostingManager {
       hosted.status = "running";
       hosted.error = undefined;
 
-      this.log.info(`[${hosted.meta.hostname}] container started: ${containerName} (port ${String(hosted.meta.port)}) [${source}]`);
+      this.log.info(`[${hosted.meta.hostname}] container started: ${containerName} (port ${String(hosted.meta.port)}, internalPort ${String(hosted.meta.internalPort)}) [${source}]`);
       // s143 t568 — record container-start success so any prior breaker
       // state for this project gets cleared. The boot-loop's recordSuccess
       // covers enableProject's success path, but startContainer is fire-
       // and-forget from there, so its outcome lives or dies here.
       this.circuitBreaker?.recordSuccess(`hosting:${hosted.path}`);
+
+      // Persist the stack-resolved internalPort back to disk so it survives
+      // gateway restarts and is available to Caddyfile generation on next boot.
+      // Without this write, a stack-resolved port (e.g. Next.js → 3000) is
+      // only in memory for the duration of this session — the on-disk copy
+      // still shows internalPort:null. Also regenerate Caddyfile immediately
+      // so Caddy routes to the correct containerName:internalPort upstream
+      // rather than the fallback host.containers.internal:<allocatedPort>.
+      this.writeHostingMeta(hosted.path, hosted.meta);
+      this.regenerateCaddyfile();
     } catch (err) {
       hosted.status = "error";
       hosted.error = err instanceof Error ? err.message : String(err);
@@ -2803,6 +2831,35 @@ export class HostingManager {
       () => this.pollContainerStatuses(),
       120_000,
     );
+
+    // Kick off an immediate health probe so running containers get their
+    // serving flag on boot rather than waiting 10s for the first interval.
+    void this.pollContainerHealth();
+    this.startHealthProbing();
+  }
+
+  /** Start the 10-second TCP health probe loop. */
+  private startHealthProbing(): void {
+    if (this.healthPollTimer !== null) return;
+    this.healthPollTimer = setInterval(() => void this.pollContainerHealth(), 10_000);
+  }
+
+  /** Probe each running container's host port and update its `serving` flag. */
+  private async pollContainerHealth(): Promise<void> {
+    const probes: Promise<void>[] = [];
+    for (const hosted of this.projects.values()) {
+      if (hosted.status !== "running" || !hosted.meta.port) continue;
+      const port = hosted.meta.port;
+      probes.push(
+        probePort(port).then((alive) => {
+          if (hosted.serving !== alive) {
+            hosted.serving = alive;
+            this.notifyStatusChange();
+          }
+        }).catch(() => { /* probe errors are non-fatal */ }),
+      );
+    }
+    await Promise.allSettled(probes);
   }
 
   /**
@@ -2881,6 +2938,7 @@ export class HostingManager {
 
       if (hosted.status !== newStatus) {
         hosted.status = newStatus;
+        if (newStatus !== "running") hosted.serving = false;
         this.notifyStatusChange();
       }
       return;
@@ -2980,7 +3038,6 @@ export class HostingManager {
       domainAliases: this.config.domainAliases,
       gatewayPort: this.config.gatewayPort,
       whodbPort: this.config.whodbPort,
-      idService: this.config.idService,
       pluginSubdomainRoutes: this.pluginReg?.getSubdomainRoutes().map(({ route }) => route) ?? [],
       projects: Array.from(this.projects.values())
         .filter((p) => p.meta.enabled)
@@ -3004,6 +3061,7 @@ export class HostingManager {
             port: p.meta.port,
             containerName: p.containerName ?? (p.meta.hostname ? `agi-${p.meta.hostname}` : null),
             internalPort: p.meta.internalPort,
+            friendlyErrors: p.meta.friendlyErrors,
             ...(repos ? { repos } : {}),
           };
         }),
@@ -3081,6 +3139,7 @@ export class HostingManager {
       hostname: string;
       type: string;
       status: "running" | "stopped" | "error" | "unconfigured";
+      serving: boolean;
       port: number | null;
       url: string | null;
       mode: "production" | "development";
@@ -3099,6 +3158,7 @@ export class HostingManager {
         hostname: hosted.meta.hostname,
         type: hosted.meta.type,
         status: hosted.status,
+        serving: hosted.serving,
         port: hosted.meta.port,
         mode: hosted.meta.mode,
         internalPort: hosted.meta.internalPort,
@@ -3139,6 +3199,10 @@ export class HostingManager {
     internalPort: number | null;
     runtimeId?: string | null;
     status: "running" | "stopped" | "error" | "unconfigured";
+    /** True when the most recent TCP probe succeeded — i.e. the app is actively
+     * listening on its port. False when container is running but app not yet
+     * ready (starting up, crashed internally). Only meaningful when status === "running". */
+    serving: boolean;
     tunnelUrl?: string | null;
     containerName?: string;
     image?: string;
@@ -3148,6 +3212,10 @@ export class HostingManager {
     /** s145 t585 — surface containerKind + mapps to dashboard. */
     containerKind?: "static" | "code" | "mapp";
     mapps?: string[];
+    /** When false, the Caddy offline-page error block is omitted for this project. */
+    friendlyErrors?: boolean;
+    /** Custom container image override for multi-repo projects. */
+    baseImage?: string | null;
     /** Circuit-breaker state for this project's hosting service id, when not closed.
      * Surfaces "open" / "half-open" so the dashboard can render a distinct chip
      * instead of leaving the project looking simply "stopped" with no context. */
@@ -3194,6 +3262,7 @@ export class HostingManager {
         internalPort: hosted.meta.internalPort,
         runtimeId: hosted.meta.runtimeId ?? null,
         status: hosted.status,
+        serving: hosted.serving,
         ...(hosted.tunnelUrl ? { tunnelUrl: hosted.tunnelUrl } : {}),
         ...(hosted.containerName ? { containerName: hosted.containerName } : {}),
         ...(resolvedImage ? { image: resolvedImage } : {}),
@@ -3203,6 +3272,8 @@ export class HostingManager {
         // dashboards. Removed entirely once t636 lands the HostingPanel UI cleanup.
         containerKind: this.isDesktopServed(hosted.meta) ? "mapp" : "code",
         ...(hosted.meta.mapps !== undefined ? { mapps: hosted.meta.mapps } : {}),
+        ...(hosted.meta.friendlyErrors !== undefined ? { friendlyErrors: hosted.meta.friendlyErrors } : {}),
+        ...(hosted.meta.baseImage ? { baseImage: hosted.meta.baseImage } : {}),
         ...(breaker ? { breaker } : {}),
         url: hosted.status === "running"
           ? `https://${hosted.meta.hostname}.${this.config.baseDomain}`
@@ -3228,6 +3299,7 @@ export class HostingManager {
         containerKind: this.isDesktopServed(meta) ? "mapp" : "code",
         ...(meta.mapps !== undefined ? { mapps: meta.mapps } : {}),
         status: "unconfigured",
+        serving: false,
         url: null,
       };
     }
@@ -3243,6 +3315,7 @@ export class HostingManager {
       mode: "production",
       internalPort: null,
       status: "unconfigured",
+      serving: false,
       url: null,
     };
   }
@@ -3497,6 +3570,10 @@ export class HostingManager {
     if (this.statusPollTimer !== null) {
       clearInterval(this.statusPollTimer);
       this.statusPollTimer = null;
+    }
+    if (this.healthPollTimer !== null) {
+      clearInterval(this.healthPollTimer);
+      this.healthPollTimer = null;
     }
     if (this.eventsProcess !== null) {
       try { this.eventsProcess.kill(); } catch { /* already dead */ }

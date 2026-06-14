@@ -1,7 +1,7 @@
 /**
  * Issue store — Wish #21 Slice 1.
  *
- * File layout under `<projectPath>/k/issues/`:
+ * File layout under `<projectPath>/.ai/issues/`:
  *   - `<id>.md`      — one issue per file (frontmatter + body)
  *   - `index.json`   — flat array of `IssueIndexEntry` for O(1) hash lookup
  *
@@ -34,13 +34,14 @@ import type {
   LogIssueResult,
 } from "./types.js";
 import { hashSymptom } from "./symptom-hash.js";
+import { KNOWLEDGE_DIR } from "../project-config-path.js";
 
 // ---------------------------------------------------------------------------
 // Path helpers
 // ---------------------------------------------------------------------------
 
 export function issuesDir(projectPath: string): string {
-  return join(projectPath, "k", "issues");
+  return join(projectPath, KNOWLEDGE_DIR, "issues");
 }
 
 function indexPath(projectPath: string): string {

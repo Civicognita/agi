@@ -18,6 +18,7 @@ import type { VerificationTier } from "@agi/entity-model";
 
 import type { GatewayState } from "./types.js";
 import type { StateCapabilities } from "./state-machine.js";
+import { KNOWLEDGE_DIR } from "./project-config-path.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -156,7 +157,7 @@ export interface SystemPromptContext {
    * injects them into the project-context section so Aion sees what the
    * user wrote — closes the user-writes-note → Aion-reads-note loop.
    */
-  projectNotes?: Array<{ title: string; body: string; pinned: boolean; updatedAt: string; scope: "project" | "global" }>;
+  projectNotes?: Array<{ title: string; body: string; kind: "markdown" | "whiteboard"; pinned: boolean; updatedAt: string; scope: "project" | "global" }>;
   /**
    * Active project category — sourced from `project.json`'s `category` field
    * (literature/app/web/media/administration/ops/monorepo). When the category
@@ -190,6 +191,42 @@ export interface SystemPromptContext {
    * and entity context are preserved.
    */
   costMode?: string;
+  /**
+   * Channel-specific location context (server, channel, sender info + IDs).
+   * Injected unconditionally when present so the agent knows where it is and
+   * what concrete IDs to pass to bridge tools (e.g. discord_search_messages).
+   * Populated by the inbound router from AionimaMessage.metadata.
+   */
+  channelContext?: ChannelContextData;
+  /**
+   * Compact doc topic index grouped by agi/docs/ subdirectory — injected
+   * alongside the PRIME topic index so Aion knows what platform docs exist
+   * and can look them up via search_docs / lookup_doc (s197).
+   */
+  docTopicIndex?: Record<string, string[]>;
+}
+
+/**
+ * Runtime channel location context extracted from an inbound AionimaMessage.
+ * Gives the agent the concrete IDs it needs to call channel bridge tools
+ * (discord_search_messages, discord_list_members, etc.) without having to
+ * derive them from the message text.
+ */
+export interface ChannelContextData {
+  /** Channel adapter ID (e.g. "discord", "telegram"). */
+  channelId: string;
+  /** Guild/server ID (Discord: guildId). */
+  guildId?: string;
+  /** Guild/server display name. */
+  guildName?: string;
+  /** Room/channel ID within the guild (Discord: channelId). */
+  roomId?: string;
+  /** Room/channel display name (e.g. "general"). */
+  roomName?: string;
+  /** Display name of the person who sent the message. */
+  senderDisplayName?: string;
+  /** Platform user ID of the sender (Discord: user snowflake). */
+  senderUserId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -448,14 +485,75 @@ function buildSkillsSection(skills: SkillPromptEntry[]): string {
   return `## Active Skills\n\nThe following skills are relevant to this interaction:\n\n${entries.join("\n\n---\n\n")}`;
 }
 
+/**
+ * Standing memory behavioral instructions — injected on every non-worker invocation.
+ * Tells Aion how its memory system works regardless of whether any memories are recalled.
+ */
+function buildMemoryInstructionsSection(): string {
+  return `## Memory System
+
+Your memory is persistent across all sessions and automatically recorded — you do not need to call any tool to store it. Every invocation is captured and consolidated into searchable episodic records.
+
+**Reading recalled context (when a ## Memory section appears below):**
+- **Recalled context (global)** — your prior observations and decisions across all work
+- **Project context** — prior work and decisions scoped to the current project
+- **Established facts** — consolidated relationship triples extracted from prior sessions (subject → predicate → object with temporal validity)
+- **Related docs** — relevant chunks from \`agi/docs/\` or project \`k/\` knowledge files
+
+**Active recall tools (use when context is insufficient):**
+- \`search_docs\` — semantic search over \`agi/docs/\`, the global \`k/\` folder, and the current project's \`k/\` folder. Use when you need specific platform documentation or project knowledge that isn't already in context.
+- \`search_prime\` — search the PRIME corpus for Impactivism, COA, entity model, or 0TRUTH knowledge.
+
+**Continuity discipline:** When recalled context is present, treat it as ground truth about prior work. Do not re-derive what is already established. Explicitly reference prior decisions when they are relevant to the current request.`;
+}
+
 function buildMemorySection(memories: MemoryPromptEntry[]): string {
   if (memories.length === 0) return "";
 
-  const entries = memories.map((m) =>
-    `- [${m.category}] ${m.content}`
-  );
+  // s112 Phase 5 — structured sections: global events, project events, facts, docs
+  const global: MemoryPromptEntry[] = [];
+  const project: MemoryPromptEntry[] = [];
+  const facts: MemoryPromptEntry[] = [];
+  const docs: MemoryPromptEntry[] = [];
+  const legacy: MemoryPromptEntry[] = [];
 
-  return `## Entity Memory\n\nRecalled context from previous interactions:\n${entries.join("\n")}`;
+  for (const m of memories) {
+    if (m.category === "memory") global.push(m);
+    else if (m.category === "project-memory") project.push(m);
+    else if (m.category === "fact") facts.push(m);
+    else if (m.category === "docs") docs.push(m);
+    else legacy.push(m);
+  }
+
+  // Legacy flat format (old MemoryEntry shape)
+  if (global.length === 0 && project.length === 0 && facts.length === 0 && docs.length === 0) {
+    const entries = legacy.map((m) => `- [${m.category}] ${m.content}`);
+    return `## Memory\n\n${entries.join("\n")}`;
+  }
+
+  const parts: string[] = ["## Memory"];
+
+  if (global.length > 0) {
+    parts.push("### Recalled context (global)");
+    for (const m of global) parts.push(`- ${m.content}`);
+  }
+
+  if (project.length > 0) {
+    parts.push("### Project context");
+    for (const m of project) parts.push(`- ${m.content}`);
+  }
+
+  if (facts.length > 0) {
+    parts.push("### Established facts");
+    for (const m of facts) parts.push(`- ${m.content}`);
+  }
+
+  if (docs.length > 0) {
+    parts.push("### Related docs");
+    for (const m of docs) parts.push(m.content);
+  }
+
+  return parts.join("\n\n");
 }
 
 function buildDevIdentitySection(): string {
@@ -506,6 +604,36 @@ function buildPrimeDirectiveSection(prime: PrimeContext): string {
   }
 
   return parts.join("\n\n");
+}
+
+/**
+ * Build doc topic index section from agi/docs/ directory listing.
+ * Gives Aion awareness of what platform documentation exists so it can use
+ * search_docs / lookup_doc without guessing paths (s197).
+ */
+function buildDocTopicIndexSection(docTopicIndex: Record<string, string[]>): string {
+  const subdirs = Object.keys(docTopicIndex).filter((k) => k !== "");
+  const rootFiles = docTopicIndex[""] ?? [];
+  if (subdirs.length === 0 && rootFiles.length === 0) return "";
+
+  const lines: string[] = [
+    "## Platform Documentation Index",
+    "",
+    "The following AGI platform docs are available via `search_docs` (keyword/semantic) and `lookup_doc` (full read by path). Cite the source path when referencing content.",
+    "",
+  ];
+
+  for (const subdir of subdirs.sort()) {
+    const files = docTopicIndex[subdir];
+    if (!files || files.length === 0) continue;
+    lines.push(`**${subdir}/:** ${files.join(", ")}`);
+  }
+
+  if (rootFiles.length > 0) {
+    lines.push(`**root:** ${rootFiles.join(", ")}`);
+  }
+
+  return lines.join("\n");
 }
 
 /**
@@ -626,7 +754,7 @@ function buildOpsModeSection(): string {
  * prompt with deep checkouts (each `repos/<repo>` may itself be a huge
  * tree; we only show its top-level children, not its descendants).
  */
-const ARCHITECTURE_EXPAND_DIRS = new Set<string>(["k", "repos", "sandbox", ".agi"]);
+const ARCHITECTURE_EXPAND_DIRS = new Set<string>([KNOWLEDGE_DIR, "repos", "sandbox", ".agi"]);
 
 /** Folders pruned entirely from the architecture tree — noisy/transient. */
 const ARCHITECTURE_PRUNE_DIRS = new Set<string>([
@@ -708,13 +836,47 @@ function buildProjectArchitectureTree(projectPath: string): string[] {
 }
 
 /**
+ * Extract human-readable text from a whiteboard JSON body for agent context.
+ * Returns sticky note text + shape labels; falls back to a placeholder on
+ * parse error or empty board. Exported for testability.
+ */
+export function summarizeWhiteboardBody(json: string): string {
+  try {
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+    const lines: string[] = [];
+    const notes = Array.isArray(parsed["notes"])
+      ? (parsed["notes"] as Array<Record<string, unknown>>)
+      : [];
+    const shapes = Array.isArray(parsed["shapes"])
+      ? (parsed["shapes"] as Array<Record<string, unknown>>)
+      : [];
+    for (const n of notes) {
+      const text =
+        typeof n["text"] === "string"
+          ? n["text"].trim()
+          : typeof n["content"] === "string"
+            ? n["content"].trim()
+            : "";
+      if (text.length > 0) lines.push(text);
+    }
+    for (const s of shapes) {
+      const label = typeof s["label"] === "string" ? s["label"].trim() : "";
+      if (label.length > 0) lines.push(label);
+    }
+    return lines.length > 0 ? lines.join("\n") : "(empty whiteboard)";
+  } catch {
+    return "(whiteboard — unable to parse)";
+  }
+}
+
+/**
  * Build project context section — tells the agent which project it is scoped to.
  * Reads the project's package.json for name/version/description.
  * Injected before plan workflow instructions when projectPath is set.
  */
 function buildProjectContextSection(
   projectPath: string,
-  notes?: Array<{ title: string; body: string; pinned: boolean; updatedAt: string; scope: "project" | "global" }>,
+  notes?: Array<{ title: string; body: string; kind: "markdown" | "whiteboard"; pinned: boolean; updatedAt: string; scope: "project" | "global" }>,
 ): string {
   const lines: string[] = ["## Active Project"];
   lines.push(`Path: ${projectPath}`);
@@ -767,9 +929,13 @@ function buildProjectContextSection(
     for (const note of notes) {
       const scopeTag = note.scope === "global" ? " [global]" : "";
       const pinTag = note.pinned ? " ★" : "";
-      lines.push(`### ${note.title}${pinTag}${scopeTag}`);
+      const kindTag = note.kind === "whiteboard" ? " [whiteboard]" : "";
+      lines.push(`### ${note.title}${pinTag}${scopeTag}${kindTag}`);
       lines.push("");
-      const body = note.body.trim();
+      const body =
+        note.kind === "whiteboard"
+          ? summarizeWhiteboardBody(note.body)
+          : note.body.trim();
       if (body.length > 0) {
         lines.push(body);
       } else {
@@ -791,42 +957,83 @@ function buildProjectContextSection(
 function buildPlanWorkflowSection(): string {
   return `## Plan Workflow
 
-**When the user asks you to plan anything, use the create_plan tool — do NOT write the plan as markdown in the chat.** Plans written as chat markdown don't surface the Plans tab, the Approval gate, the Plan drawer, or any of the tracking UX the user relies on. They're invisible to the system. Use the tool.
+**When the user asks you to plan anything, use pm(action: "plan-create") — do NOT write the plan as markdown in the chat.** Plans written as chat markdown don't surface the Plans tab, the Approval gate, the Plan drawer, or any of the tracking UX the user relies on. They're invisible to the system. Use the tool.
 
-### When to use create_plan
+Plans are part of the pm tool (Wish #17). The standalone create_plan / update_plan tools no longer exist.
+
+### When to create a plan
 
 - The user says "plan," "propose a plan," "how would you approach," "draft an implementation," "break this down," or any near-synonym.
 - You're about to do multi-step work (three or more distinct steps) and you want the user to approve the approach before you execute.
 - You want to persist your approach across sessions — plans are saved to disk, chat bubbles are not.
 
-Single-step or immediate tasks do NOT need a plan. Use your judgement. One heuristic: if you'd naturally write numbered "I'll do X, then Y, then Z," you're describing a plan — emit it via create_plan instead of as prose.
+Single-step or immediate tasks do NOT need a plan. Use your judgement. One heuristic: if you'd naturally write numbered "I'll do X, then Y, then Z," you're describing a plan — emit it via pm(action: "plan-create") instead of as prose.
 
-### How to use create_plan
+### How to create a plan
 
-- \`title\` — short (under 60 chars), descriptive. "Add auth to the API" not "Plan to add authentication".
-- \`body\` — full markdown. Context, rationale, alternatives you considered, risks, verification. This is what the user reads in the Plan pane. Write it as if you were writing a design doc, because you are.
-- \`steps[]\` — each step has \`title\`, \`type\` (one of: plan, implement, test, review, deploy), and optional \`dependsOn\` (array of earlier step ids like ["step_01"]). Keep step titles action-oriented ("Write the auth middleware," not "Auth middleware").
+Call pm with action: "plan-create", projectPath (from your Project Context), and a plan object:
 
-### After create_plan returns
+- \`plan.title\` — short (under 60 chars), descriptive. "Add auth to the API" not "Plan to add authentication".
+- \`plan.body\` — full markdown. Context, rationale, alternatives considered, risks, verification steps. This is what the user reads in the Plan pane — write it as a design doc.
+- \`plan.steps[]\` — each step has \`title\` and \`type\` (one of: plan, implement, test, review, deploy). Keep step titles action-oriented.
 
-- The plan is saved as a .mdc file under ~/.agi/{projectSlug}/plans/.
-- It appears in the chat's Plans drawer with status "proposed" — the user can open it in a left-side editor pane, edit the body, and Approve or Reject.
-- You do NOT execute yet. Wait for the user to click Approve (status transitions to "approved") or give you explicit verbal approval in chat.
-- Once approved, you may begin executing steps. Mark the overall plan as "executing" via update_plan, then advance each step's status through pending → running → complete (or failed / skipped) using update_plan's stepUpdates array.
-- After the final step completes, set the plan's overall status to "complete".
-- Accepted plans are IMMUTABLE — you cannot edit the body, title, or step list once the user approves. Only step-status advances are permitted. If the plan needs a redraft, delete it and create_plan again.
+To update a plan's status or steps: pm(action: "plan-update", projectPath, planId, update: {...}).
+To read plans: pm(action: "plan-list", projectPath) or pm(action: "plan-get", projectPath, planId).
+
+### After plan-create returns
+
+**On success:** reply with exactly one sentence confirming the plan was created (e.g. "Plan saved — review it in the Plans tab to approve or request changes."). Do NOT re-render the plan body as chat text — it's already in the Plans drawer. Repeating it in chat is noise.
+
+**On error:** the tool returns a JSON error object. Report the error briefly and ask the user how to proceed. Do NOT dump the full plan body as chat markdown.
+
+- Plans are saved at <projectPath>/.ai/plans/{planId}.mdc.
+- They appear in the chat's Plans drawer with status "proposed" — the user can open, edit, and Approve or Reject.
+- You do NOT execute yet. Wait for the user to click Approve (status → "approved") or give explicit verbal approval in chat.
+- Once approved, mark the plan "executing" via pm(action: "plan-update", update: {status: "executing"}), then advance each step's status through pending → running → complete using stepUpdates.
+- After the final step completes, set the plan status to "complete".
+- Accepted plans are IMMUTABLE — no body/title/step-list edits once approved. Only step-status advances. If a redraft is needed, delete it and plan-create again.
 
 ### State transitions
 
 | From | To | Via |
 |------|-----|-----|
-| draft | reviewing | create_plan presents the plan; the user reviews |
+| draft | reviewing | plan-create presents the plan; user reviews |
 | reviewing | approved | user clicks Approve in the Plan pane |
 | reviewing | (deleted) | user clicks Reject |
-| approved | executing | update_plan status: "executing" — you start work |
-| executing | testing | update_plan status: "testing" — verification phase |
-| testing | complete | update_plan status: "complete" |
-| any | failed | update_plan status: "failed" — something blocked completion |`;
+| approved | executing | plan-update status: "executing" — you start work |
+| executing | testing | plan-update status: "testing" — verification phase |
+| testing | complete | plan-update status: "complete" |
+| any | failed | plan-update status: "failed" — something blocked completion |`;
+}
+
+// ---------------------------------------------------------------------------
+// Channel context section
+// ---------------------------------------------------------------------------
+
+function buildChannelContextSection(ctx: ChannelContextData): string {
+  const lines: string[] = [];
+
+  const roomPart = ctx.roomName !== undefined ? `**#${ctx.roomName}**` : undefined;
+  const guildPart = ctx.guildName !== undefined ? `server **${ctx.guildName}**` : undefined;
+  const where = [roomPart, guildPart].filter(Boolean).join(" on ");
+  if (where.length > 0) {
+    lines.push(`You are responding in ${where} (${ctx.channelId} channel).`);
+  } else {
+    lines.push(`You are responding via the ${ctx.channelId} channel.`);
+  }
+
+  if (ctx.roomId !== undefined) {
+    lines.push(`Channel ID: \`${ctx.roomId}\` — pass to \`discord_search_messages\` to read recent history.`);
+  }
+  if (ctx.guildId !== undefined) {
+    lines.push(`Guild ID: \`${ctx.guildId}\` — pass to \`discord_list_members\` to see who is in this server.`);
+  }
+  if (ctx.senderDisplayName !== undefined) {
+    const idSuffix = ctx.senderUserId !== undefined ? ` (ID: \`${ctx.senderUserId}\`)` : "";
+    lines.push(`The person you are responding to: **${ctx.senderDisplayName}**${idSuffix}`);
+  }
+
+  return `## Channel Context\n\n${lines.join("\n")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -932,6 +1139,13 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
   // call won't pass `tools:` anyway (chat with no action verbs).
   sections.push(ctx.toolsAvailable === false ? buildToolsHintSection(ctx.tools) : buildToolsSection(ctx.tools));
 
+  // Memory behavioral instructions — always present so Aion knows how to use its
+  // memory system even on cold-start sessions where no memories are recalled yet.
+  // Skipped for worker and local-micro invocations (token budget too tight).
+  if (rt !== "worker" && !isLocal) {
+    sections.push(buildMemoryInstructionsSection());
+  }
+
   // State + owner (compact, one line each)
   sections.push(`Operational state: ${ctx.state}`);
   if (ctx.ownerName !== undefined) {
@@ -975,6 +1189,14 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
         sections.push(indexSection);
       }
     }
+    // Platform doc topic index — alongside PRIME index so Aion knows what
+    // docs exist without guessing. Always injected when available (s197).
+    if (ctx.docTopicIndex !== undefined) {
+      const docIndexSection = buildDocTopicIndexSection(ctx.docTopicIndex);
+      if (docIndexSection.length > 0) {
+        sections.push(docIndexSection);
+      }
+    }
   }
 
   // Project context — for project work. Plan workflow is instruction-heavy
@@ -1013,6 +1235,13 @@ export function assembleSystemPrompt(ctx: SystemPromptContext): string {
   // dispatch effectively, so we never inject this section under local mode.
   if (!isLocal && rt !== "chat" && rt !== "worker") {
     sections.push(buildTaskmasterSection());
+  }
+
+  // Channel context — unconditional when present; gives the agent the concrete
+  // IDs it needs to call bridge tools (discord_search_messages etc.) without
+  // deriving them from the message text.
+  if (ctx.channelContext !== undefined) {
+    sections.push(buildChannelContextSection(ctx.channelContext));
   }
 
   // Skills — always inject if matched (they're request-relevant by definition)
@@ -1104,6 +1333,13 @@ export function assembleSystemPromptWithBreakdown(
   }
 
   identitySections.push(ctx.toolsAvailable === false ? buildToolsHintSection(ctx.tools) : buildToolsSection(ctx.tools));
+
+  // Memory behavioral instructions — same rule as the single-prompt path:
+  // always present except for worker and local-micro invocations.
+  if (rt !== "worker" && !isLocal) {
+    identitySections.push(buildMemoryInstructionsSection());
+  }
+
   identitySections.push(`Operational state: ${ctx.state}`);
 
   if (ctx.ownerName !== undefined) {
@@ -1141,6 +1377,12 @@ export function assembleSystemPromptWithBreakdown(
         contextSections.push(indexSection);
       }
     }
+    if (ctx.docTopicIndex !== undefined) {
+      const docIndexSection = buildDocTopicIndexSection(ctx.docTopicIndex);
+      if (docIndexSection.length > 0) {
+        contextSections.push(docIndexSection);
+      }
+    }
   }
 
   if (rt === "project" && ctx.projectPath !== undefined) {
@@ -1168,6 +1410,10 @@ export function assembleSystemPromptWithBreakdown(
 
   if (!isLocal && rt !== "chat" && rt !== "worker") {
     contextSections.push(buildTaskmasterSection());
+  }
+
+  if (ctx.channelContext !== undefined) {
+    contextSections.push(buildChannelContextSection(ctx.channelContext));
   }
 
   // -------------------------------------------------------------------------

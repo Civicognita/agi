@@ -1,7 +1,8 @@
-import type { ChannelOutboundAdapter, OutboundContent } from "@agi/channel-sdk";
+import type { ChannelOutboundAdapter, OutboundContent } from "@agi/plugins";
 import type { COAChainLogger } from "@agi/coa-chain";
 import type { VoicePipeline } from "@agi/voice";
 import type { VoiceGatewayState } from "@agi/voice";
+import type { CommsLog } from "@agi/entity-model";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -69,6 +70,8 @@ export interface OutboundDispatcherDeps {
   voicePipeline?: VoicePipeline;
   /** Returns the current gateway state for voice provider selection. */
   getGatewayState?: () => VoiceGatewayState;
+  /** Optional: write outbound reply entries to the comms log (best-effort). */
+  commsLog?: CommsLog;
   /** Optional logger instance. */
   logger?: Logger;
 }
@@ -97,6 +100,7 @@ export class OutboundDispatcher {
   private readonly nodeId: string;
   private readonly voicePipeline: VoicePipeline | undefined;
   private readonly getGatewayState: (() => VoiceGatewayState) | undefined;
+  private readonly commsLog: CommsLog | undefined;
   private readonly log: ComponentLogger;
 
   constructor(deps: OutboundDispatcherDeps) {
@@ -106,6 +110,7 @@ export class OutboundDispatcher {
     this.nodeId = deps.nodeId;
     this.voicePipeline = deps.voicePipeline;
     this.getGatewayState = deps.getGatewayState;
+    this.commsLog = deps.commsLog;
     this.log = createComponentLogger(deps.logger, "outbound");
   }
 
@@ -168,11 +173,27 @@ export class OutboundDispatcher {
 
     await adapter.send(route.channelUserId, content);
 
+    const deliveredAt = new Date().toISOString();
+
+    // Best-effort comms log entry for the activity feed + ConversationView.
+    if (this.commsLog !== undefined && content.type === "text") {
+      void this.commsLog.log({
+        channel: route.channelId,
+        direction: "outbound",
+        senderId: route.channelUserId,
+        senderName: "Aion",
+        subject: null,
+        preview: content.text.slice(0, 200),
+        fullPayload: JSON.stringify({ text: content.text, entityId: route.entityId }),
+        entityId: route.entityId,
+      }).catch(() => { /* non-critical */ });
+    }
+
     return {
       channelId: route.channelId,
       channelUserId: route.channelUserId,
       coaFingerprint,
-      deliveredAt: new Date().toISOString(),
+      deliveredAt,
     };
   }
 

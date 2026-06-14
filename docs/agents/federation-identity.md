@@ -1,57 +1,182 @@
 # Federation & Identity System
 
-Technical guide for the federated identity system — GEID keypairs, COA addresses, EntityMap, federation wiring, and the VM dev sandbox.
+Technical guide for federated identity, the third-party API gateway pattern, and the node identity layer.
 
-## Architecture Overview
+---
 
-Every Aionima node can be a sovereign identity provider. The system has five layers:
+## Decision first: how third-party APIs integrate
 
-| Layer | Component | Location |
-|-------|-----------|----------|
-| Identity primitives | GEID keypairs, COA addresses | `packages/entity-model/src/geid.ts` |
-| Portable profile | EntityMap (dual-signed) | `packages/entity-model/src/entity-map.ts` |
-| Schema | 4 new tables + federation columns | `packages/entity-model/src/schema.sql.ts` |
-| Local ID provider | Identity issuance, OAuth, visitor auth | `packages/gateway-core/src/identity-provider.ts` |
-| Federation protocol | Mycelium handshake, ring announce, peer store | `packages/gateway-core/src/federation-*.ts` |
+Before reading further, every new third-party API integration starts with one question:
 
-## Enabling Federation
+> **Does the API require a server-held `client_secret`, or a publicly-resolvable HTTPS callback URL?**
 
-Add to `gateway.json`:
+| Answer | Class | OAuth/flow runs at | Tokens live at | API calls go through |
+|--------|-------|--------------------|----------------|----------------------|
+| **No** (public-client OAuth, e.g. RFC 8628 Device Grant) | Gateway-native class | AGI gateway identity routes | AGI gateway DB (`connections.accessToken`) | agi → API directly (Bearer `access_token`) |
+| **Yes** | Proxied class | Hive-ID (cloud, public HTTPS) | Hive-ID `connections` (never leave) | agi → AGI gateway `/api/proxy/<provider>/<endpoint>` → Hive-ID → API |
 
-```json
-{
-  "federation": {
-    "enabled": true,
-    "publicUrl": "https://your-node.example.com",
-    "seedPeers": [],
-    "autoGeid": true,
-    "allowVisitors": true
-  }
+**Why this split:**
+- The AGI gateway is LAN-only — it physically cannot satisfy public HTTPS callback requirements (OAuth redirect URIs, webhooks). (`feedback_oauth_with_secret_routes_through_hive_id`)
+- agi source is public; never hardcode per-deployment secrets there. (`feedback_localid_private_be_careful_what_ships_in_agi`)
+- GitHub is the only current gateway-native class provider; all others are proxied.
+
+> **s180 note:** "Local-ID" in older docs and comments refers to the previously separate `agi-local-id` service whose functionality was absorbed into the AGI gateway. Any reference to `Local-ID` or `id.ai.on` as a separate process is historical — the gateway now handles identity directly.
+
+---
+
+## Third-party API gateway — proxied class (s149 unified pattern)
+
+### The DToken model
+
+Aionima nodes hold **DTokens** (32-byte random bearers) instead of raw provider access_tokens. Hive-ID stores `sha256(dtoken)` in its `dtokens` table, mapping to a `connections` row. DTokens are:
+- Scoped (per provider + per item/account)
+- Revocable independently of the upstream provider
+- Never re-retrievable from Hive-ID after issuance (returned plaintext once, stored encrypted node-side)
+
+Every proxied API call from agi passes the DToken to the gateway's proxy route, which forwards it to Hive-ID's proxy gateway. Hive-ID resolves the token → connection → upstream credentials, calls the API, and returns the mapped response.
+
+```
+agi (no secrets)
+  └─► AGI gateway /api/proxy/<provider>/<endpoint>  Authorization: Bearer dtok_…
+        └─► Hive-ID /api/proxy/<provider>/<endpoint>  DToken lookup → connection
+              └─► Third-party API  (client_id + client_secret + access_token)
+```
+
+### agi-side caller pattern (applies to ALL proxied providers)
+
+```typescript
+async function callLocalIdProxy<T>(endpoint: string, body: object, opts: { role: string }): Promise<T> {
+  const base = process.env.LOCAL_ID_BASE_URL ?? "https://id.ai.on";
+  const url = `${base}/api/proxy/${PROVIDER}/${endpoint}?role=${encodeURIComponent(opts.role)}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`proxy error ${res.status}: re-link at id.ai.on/dashboard`);
+  return (await res.json()) as T;
 }
 ```
 
-Optional OAuth (for local identity binding):
+agi never holds: `client_secret`, `client_id` (for proxied providers), raw access_tokens, or Hive-ID's URL.
 
-```json
-{
-  "identity": {
-    "oauth": {
-      "github": {
-        "clientId": "...",
-        "clientSecret": "..."
-      },
-      "google": {
-        "clientId": "...",
-        "clientSecret": "..."
-      }
-    }
-  }
-}
+### Role-encoding for multi-account support
+
+The `connections` table uses a `(user_id, provider, role)` unique index. Encode provider-specific account IDs into `role` to support multiple accounts per provider per user:
+
+| Provider | Role encoding | Example |
+|----------|--------------|---------|
+| Plaid | `plaid-item:<itemId>` | `plaid-item:YhXb3k...` |
+| Gmail / Calendar | `google-user:<sub>` | `google-user:11704...` |
+| Discord | `discord-user:<userId>` | `discord-user:147621...` |
+
+**No schema migration needed** — the existing unique index already handles this. Both Local-ID and Hive-ID use the same role convention.
+
+---
+
+## Plaid integration (s147 + s149)
+
+Plaid is system-level for Aion: registered globally on the agent's tool palette so Aion can read bank accounts directly. MApps are secondary consumers via mini-agent auto-discovery.
+
+### Connection flow
+
+```
+Owner browser (id.ai.on/dashboard)
+  │  "Connect Bank Account"
+  │  POST /api/auth/plaid-link/create-link-token → Local-ID → Hive-ID
+  │  → receives link_token
+  │
+  ▼  [Plaid Link widget runs in browser]
+  │
+  │  POST /api/auth/plaid-link/exchange-public-token
+  │       { public_token, metadata }
+  │  → Local-ID → Hive-ID /api/oauth/plaid-link/exchange-public-token
+  │  → Hive-ID: stores access_token, mints DToken, returns plaintext dtok_…
+  │  → Local-ID: encrypts DToken, stores on connections.dtoken
+  └─ Done. Owner's bank is linked.
 ```
 
-Config schemas are in `config/src/schema.ts` (`FederationConfigSchema`, `IdentityConfigSchema`).
+### Local-ID routes (`agi-local-id/src/routes/`)
 
-## GEID (Global Entity ID)
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/auth/plaid-link/create-link-token` | Forward to Hive-ID; returns `link_token` for browser widget |
+| POST | `/api/auth/plaid-link/exchange-public-token` | Forward to Hive-ID; receive + store encrypted DToken |
+| POST | `/api/auth/plaid-link/items/:itemId/remove` | Forward proxy `item-remove` + drop local connection row |
+| GET | `/api/auth/plaid-link/items` | List locally-mirrored connections (no Hive-ID round-trip) |
+| POST | `/api/proxy/<provider>/<endpoint>` | Generic per-provider DToken forwarding to Hive-ID |
+
+### Hive-ID routes (`agi-hive-id/src/routes/oauth/plaid-link.ts`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/oauth/plaid-link/create-link-token` | Issue Plaid `link_token` |
+| POST | `/api/oauth/plaid-link/exchange-public-token` | Exchange `public_token` → access_token + mint DToken |
+| POST | `/api/proxy/plaid/<endpoint>` | Gateway proxy; endpoints: `accounts-get`, `transactions-get`, `balance-get`, `identity-get`, `item-remove` |
+| POST | `/webhook/plaid` | Webhook receiver (JWS signature verification pending) |
+
+Proxy gateway: `agi-hive-id/src/services/proxy-gateway.ts` + `agi-hive-id/src/providers/proxy/plaid.ts`.
+
+### agi plugin (`plugin-plaid-api/src/index.ts`)
+
+Four tools, system-level. No provider credentials in plugin code. Uses `callLocalIdProxy()` pattern above with `role: plaid-item:<itemId>`.
+
+### Plaid-specific behaviors
+
+- **`/item/remove` on disconnect** — Plaid requires server-side notification. Local-ID forwards via proxy + drops local row (best-effort; local row drops even if Hive-ID fails).
+- **Webhooks** — Hive-ID hosts at `/webhook/plaid`. Disable in Plaid dashboard until JWS signature verification ships (`agi-hive-id/src/routes/oauth/plaid-link.ts`).
+- **`ITEM_LOGIN_REQUIRED` reauth** — future scope; dashboard should surface a reauth prompt when Plaid pushes this webhook event.
+
+---
+
+## Google + Discord — proxied class (t625, pending)
+
+Google and Discord use the same proxied-class pattern as Plaid. Hive-ID already handles their OAuth dance via authorization-code flow (`/oauth/google/{start,callback}` + `/oauth/discord/{start,callback}`). The pending work (t625) replaces the `501 not_implemented` stubs in Local-ID's `device-flow.ts:223-227` with the standard proxy-forwarding shape.
+
+Per-provider proxy definitions at `agi-hive-id/src/providers/proxy/{google,discord}.ts` (t625).
+
+**Google endpoints**: `gmail.users.messages.send`, `gmail.users.messages.list`, `calendar.events.list`, `calendar.events.insert`, `drive.files.list`, `drive.files.get`, `oauth2.userinfo.get`
+
+**Discord endpoints**: `users/@me`, `users/@me/guilds`, `channels/<id>/messages`
+
+Both use Bearer `access_token` upstream (unlike Plaid's per-call `client_id+secret+access_token` body). The `ProxyProviderDef` `buildRequest` transformer handles either shape.
+
+---
+
+## Public-client class — GitHub (Local-ID only)
+
+GitHub uses RFC 8628 Device Authorization Grant — no `client_secret` at any step. Flow runs entirely within Local-ID:
+
+1. Owner clicks Connect at `id.ai.on/dashboard`
+2. Local-ID hits GitHub `/login/device/code` with `GITHUB_CLIENT_ID` (public value, baked into source)
+3. Owner completes authorization at github.com using the `user_code`
+4. Local-ID polls `/login/oauth/access_token` until token arrives
+5. `access_token` stored encrypted at `connections.accessToken`
+6. agi broker call: `GET id.ai.on/api/auth/device-flow/token?provider=github&role=owner`
+7. agi attaches Bearer `access_token`, calls `api.github.com` directly
+
+Authoritative list: `LOCAL_PROVIDERS = new Set(["github"])` in `device-flow.ts`.
+
+---
+
+## When to add a new third-party API
+
+1. **Public-client OAuth (no `client_secret`, no public HTTPS redirect)?** → add to `LOCAL_PROVIDERS` in `device-flow.ts`. GitHub is the only current example.
+2. **Otherwise (proxied):**
+   - Add `agi-hive-id/src/providers/proxy/<provider>.ts` (ProxyProviderDef)
+   - Add `agi-hive-id/src/routes/oauth/<provider>.ts` (auth-code flow → use `provider-factory.ts`; widget flow → custom like `plaid-link.ts`)
+   - Add webhook receiver at `agi-hive-id/src/routes/webhooks/<provider>.ts` if applicable
+   - Add Local-ID forwarding route at `agi-local-id/src/routes/proxy-forward.ts`
+   - agi plugin calls Local-ID's `/api/proxy/<provider>/<endpoint>` — no provider credentials
+3. **Always cite memory rules inline in code comments** — future agents need the WHY for the GitHub exception.
+
+---
+
+## Node identity layer — GEID + EntityMap
+
+This section describes how each Aionima node identifies itself within the federation. It is internal infrastructure; most integrations don't need to touch it.
+
+### GEID (Global Entity ID)
 
 Every entity automatically gets an Ed25519 keypair on creation. The GEID is derived from the public key:
 
@@ -69,311 +194,69 @@ geid:<base58-encoded-public-key>
 <entity_alias>[.<agent_alias>]@<node_alias>
 ```
 
-Examples:
-- `#E0@#O0` — Entity 0 at node 0 (owner)
-- `#E0.$A0@#O0` — Entity 0's agent at node 0
-- `#E3@#O7` — Entity 3 visiting from node 7
+Examples: `#E0@#O0` (owner entity at node 0), `#E0.$A0@#O0` (Aion agent), `#E3@#O7` (visitor).
 
 Functions: `formatAddress()`, `parseAddress()` in `geid.ts`.
 
-## Database Schema
+### EntityMap (Portable Profile)
 
-### New tables (in `schema.sql.ts`)
+A dual-signed document that travels with an entity across nodes. Contains GEID, COA address, display name, entity type, impact scores, home node info, and expiry (24h TTL). Dual-signed: entity's Ed25519 signature + home node counter-signature.
+
+Source: `packages/entity-model/src/entity-map.ts` — `generateEntityMap()`, `verifyEntityMap()`, `isEntityMapExpired()`.
+
+### Database schema
+
+New tables (in `packages/entity-model/src/schema.sql.ts`):
 
 | Table | Purpose |
 |-------|---------|
 | `geid_mappings` | GEID keypair storage per entity |
-| `federation_peers` | Persistent peer storage (replaces in-memory Map) |
+| `federation_peers` | Persistent peer storage |
 | `entity_map_cache` | Cached EntityMaps from remote nodes |
 | `access_grants` | Access control for sub-users/visitors |
 
-### Federation columns (via migration)
+Federation columns on `entities`: `geid`, `public_key_pem`, `home_node_id`, `federation_consent`.
 
-Added to `entities`: `geid`, `public_key_pem`, `home_node_id`, `federation_consent`
-Added to `impact_interactions`: `origin_node_id`, `relay_signature`
+### Federation API endpoints
 
-Migration runs in `db.ts` via `FEDERATION_MIGRATIONS` — uses `ALTER TABLE` with try/catch for idempotency. SQL comments are stripped before splitting on `;` to prevent comment lines from swallowing statements.
-
-## EntityMap (Portable Profile)
-
-A dual-signed document that travels with an entity across nodes:
-
-```typescript
-interface EntityMap {
-  geid: GEID;
-  address: string;           // "#E0@#O0"
-  displayName: string;
-  entityType: string;
-  verificationTier: string;
-  impact: { totalImpScore, interactionCount, topWorkTypes };
-  homeNode: { nodeId, endpoint, publicKey };
-  signature: string;          // Entity's Ed25519 signature
-  nodeEndorsement: string;    // Home node's counter-signature
-  expiresAt: string;          // 24h TTL
-}
-```
-
-Functions in `entity-map.ts`: `generateEntityMap()`, `verifyEntityMap()`, `isEntityMapExpired()`.
-
-## API Endpoints
-
-### Identity API (`identity-api.ts`)
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/api/identity/:entityId` | Get entity identity info |
-| GET | `/api/identity/resolve/:geid` | Resolve entity by GEID |
-| GET | `/api/auth/providers` | List available OAuth providers |
-| POST | `/api/auth/start/:provider` | Start OAuth flow |
-| GET | `/api/auth/callback/:provider` | OAuth callback |
-
-### Sub-User API (`sub-user-api.ts`)
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/api/sub-users` | Create sub-user (tenant) |
-| GET | `/api/sub-users` | List sub-users |
-| POST | `/api/visitor/challenge` | Issue GEID challenge |
-| POST | `/api/visitor/verify` | Verify challenge response |
-| GET | `/api/visitor/session` | Verify visitor session |
-
-### Federation endpoints
+Registered when `federation.enabled = true` in `gateway.json`:
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/.well-known/mycelium-node.json` | Node manifest (no auth) |
 | POST | `/mycelium/handshake` | Peer handshake |
-| POST | `/mycelium/ring/announce` | Ring announce (trust >= 1) |
-| GET | `/mycelium/identity/map/:geid` | Fetch EntityMap (trust >= 1) |
+| POST | `/mycelium/ring/announce` | Ring announce (trust ≥ 1) |
+| GET | `/mycelium/identity/map/:geid` | Fetch EntityMap (trust ≥ 1) |
+| GET | `/api/identity/:entityId` | Entity identity info |
+| GET | `/api/identity/resolve/:geid` | Resolve entity by GEID |
+| GET | `/api/auth/providers` | List OAuth providers |
+| POST | `/api/auth/start/:provider` | Start OAuth flow |
+| GET | `/api/auth/callback/:provider` | OAuth callback |
+| POST | `/api/sub-users` | Create sub-user |
+| GET | `/api/sub-users` | List sub-users |
+| POST | `/api/visitor/challenge` | Issue GEID challenge |
+| POST | `/api/visitor/verify` | Verify challenge response |
+| GET | `/api/visitor/session` | Verify visitor session |
 
-## Third-party API gateway (s149 unified pattern)
+### Enabling federation
 
-Aionima distinguishes **two provider classes** for any third-party API
-the system integrates with. The class drives where the OAuth flow runs,
-where credentials live, and where API calls happen.
-
-| Class | Examples | OAuth happens at | Tokens live at | API calls happen at |
-|-------|----------|------------------|----------------|---------------------|
-| Public-client OAuth | GitHub | Local-ID | Local-ID `connections` | Node-side (just Bearer access_token; no `client_secret` needed) |
-| Proxied | Plaid, Google, Discord, Stripe, Twilio, … | Hive-ID | Hive-ID `connections` (never leave) | Hive-ID `/api/proxy/<provider>/<endpoint>` (DToken-bearer auth from nodes) |
-
-Memory rules driving this:
-
-- `feedback_oauth_with_secret_routes_through_hive_id` — third-party APIs
-  requiring a server-held `client_secret` OR a publicly-resolvable HTTPS
-  URL (webhooks, OAuth redirects) route through Hive-ID. Local-ID's
-  `id.ai.on` is LAN-only DNS — fundamentally cannot satisfy public-URL
-  requirements.
-- `feedback_localid_private_be_careful_what_ships_in_agi` — agi source
-  becomes public; never hardcode owner-specific or per-deployment
-  secrets there.
-- `feedback_third_party_oauth_lives_in_localid` — narrowed scope
-  post-cycle 215: applies to **public-client** OAuth (GitHub) only;
-  proxied providers go to Hive-ID.
-
-### Public-client class (GitHub)
-
-GitHub uses RFC 8628 Device Authorization Grant — no `client_secret`
-required at any step. Local-ID's `device-flow.ts:LOCAL_PROVIDERS = new
-Set(["github"])` is the authoritative list. Flow:
-
-1. Owner clicks Connect at Local-ID dashboard
-2. Local-ID hits GitHub's `/login/device/code` with `GITHUB_CLIENT_ID`
-   (a public value, baked into source)
-3. Owner completes authorization on github.com using the user_code
-4. Local-ID polls `/login/oauth/access_token` until it gets the token
-5. access_token stored encrypted in Local-ID `connections.accessToken`
-6. agi gateway broker call: `GET id.ai.on/api/auth/device-flow/token
-   ?provider=github&role=owner` returns the decrypted access_token
-7. agi attaches Bearer access_token + calls api.github.com directly
-
-No Hive-ID involvement. agi holds the access_token only after the LAN
-broker call (private-network gated; not stored agi-side).
-
-### Proxied class — DToken model
-
-Aionima nodes hold **DTokens** (delegation tokens) instead of raw
-provider access_tokens. DTokens are 32-byte random bearers,
-SHA-256-hashed at Hive-ID's `dtokens` table, mapping to a `connections`
-row. They're scoped + revocable + carry an optional expiry. The plaintext
-is returned ONCE at issuance (during OAuth completion) and stored
-encrypted node-side; never retrievable from Hive-ID after.
-
-DToken issuance happens at OAuth-completion paths in Hive-ID
-(plaid-link/exchange-public-token, oauth/{google,discord}/callback). The
-caller (Local-ID typically) receives the plaintext via the response body
-+ stores it encrypted on `connections.dtoken`.
-
-Validation: every `/api/proxy/<provider>/<endpoint>` call accepts the
-DToken via `Authorization: Bearer dtok_…` or `X-DToken` header. Hive-ID
-hashes + looks up the `dtokens` row → `connections` row → resolves the
-`client_id`+`client_secret`+`access_token` → calls upstream → returns
-mapped response.
-
-### Plaid integration (s147 + s149 t624/t626/t627)
-
-Plaid is **system-level for Aion** (registered globally to the agent's
-tool palette so Aion can read bank accounts directly), with MApps as
-secondary consumers via mini-agent auto-discovery. End-to-end:
-
-```
-┌──────────────────────────────────────┐                  ┌──────────────────────┐
-│  Owner browser                        │                  │ Plaid                │
-│  https://id.ai.on/dashboard           │  Plaid Link      │ (api.plaid.com)      │
-│  "Connect Bank Account"               │ ◄──widget──┐     │                      │
-└────────────┬─────────────────────────┘            │     └──────────┬───────────┘
-              │  POST plaid-link/{create-link-token, │                ▲
-              │   exchange-public-token}             │                │
-              ▼                                      │                │
-┌──────────────────────────────────────┐            │                │
-│  Local-ID  (id.ai.on, LAN)            │            │                │
-│  connections row                       │            │                │
-│  role="plaid-item:<itemId>"            │            │                │
-│  dtoken encrypted (AES-256-GCM)        │            │                │
-└────────────┬─────────────────────────┘            │                │
-              │  POST /api/oauth/plaid-link/<…>      │                │
-              ▼                                      │                │ /link/token/create
-┌──────────────────────────────────────┐            │                │ /item/public_token/exchange
-│  Hive-ID  (cloud, public HTTPS)       │ ◄──user OAuth completion────┘ /accounts/get
-│  connections row holds access_token   │ ─────────────────────────────► /transactions/get
-│  providerSettings holds Plaid creds   │                                /accounts/balance/get
-│  dtokens table maps DToken→connection │                                /identity/get
-│  /api/proxy/plaid/<endpoint>          │                                /item/remove
-└────────────▲─────────────────────────┘                                
-              │  POST /api/proxy/plaid/<endpoint>?role=plaid-item:<id>
-              │  Authorization: Bearer dtok_…
-              │
-┌──────────────────────────────────────┐
-│  Local-ID /api/proxy/plaid/<endpoint> │
-│  (private-network gated; forwards    │
-│   DToken from connections.dtoken)    │
-└────────────▲─────────────────────────┘
-              │  POST /api/proxy/plaid/<endpoint>?role=plaid-item:<id>
-              │
-┌──────────────────────────────────────┐
-│  agi gateway                          │
-│  plugin-plaid-api (4 tools, system-   │
-│  level; no creds, no Hive-ID URL,     │
-│  no Plaid-specific config)            │
-└──────────────────────────────────────┘
-```
-
-#### Hive-ID routes (`agi-hive-id/src/routes/oauth/plaid-link.ts`)
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/api/oauth/plaid-link/create-link-token` | Issue Plaid `link_token` for browser widget |
-| POST | `/api/oauth/plaid-link/exchange-public-token` | Exchange `public_token` → encrypted access_token + mint DToken |
-| POST | `/api/proxy/plaid/<endpoint>` | Generic gateway proxy (DToken bearer); endpoints: `accounts-get`, `transactions-get`, `balance-get`, `identity-get`, `item-remove` |
-| POST | `/webhook/plaid` | Webhook receiver (signature verification flagged as future-scope; sandbox+development tiers don't sign) |
-
-`/api/proxy/plaid/*` lives at `agi-hive-id/src/services/proxy-gateway.ts`
-+ `agi-hive-id/src/providers/proxy/plaid.ts` (the ProxyProviderDef).
-
-#### Local-ID routes (`agi-local-id/src/routes/{plaid-link,proxy-forward}.ts`)
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/api/auth/plaid-link/create-link-token` | Forwards to Hive-ID (browser-side widget callback chain) |
-| POST | `/api/auth/plaid-link/exchange-public-token` | Forwards to Hive-ID; receives DToken; stores encrypted on `connections.dtoken` |
-| POST | `/api/auth/plaid-link/items/:itemId/remove` | Forwards proxy `item-remove` + drops local connection row |
-| GET | `/api/auth/plaid-link/items` | Lists locally-mirrored connections (no Hive-ID round-trip) |
-| POST | `/api/proxy/<provider>/<endpoint>` | Generic per-provider forwarding to Hive-ID's gateway with DToken bearer |
-
-#### agi-side caller pattern (`plugin-plaid-api/src/index.ts`)
-
-```ts
-async function callLocalIdProxy<T>(endpoint: string, body: object, opts: {role: string}): Promise<T> {
-  const base = process.env.LOCAL_ID_BASE_URL ?? "https://id.ai.on";
-  const url = `${base}/api/proxy/plaid/${endpoint}?role=${encodeURIComponent(opts.role)}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  // …error handling that points user at id.ai.on/dashboard for re-link
-  return (await res.json()) as T;
+```json
+{
+  "federation": {
+    "enabled": true,
+    "publicUrl": "https://your-node.example.com",
+    "seedPeers": [],
+    "autoGeid": true,
+    "allowVisitors": true
+  }
 }
-
-// Tool handler (e.g., plaid:list-accounts):
-const data = await callLocalIdProxy<{accounts: PlaidAccount[]}>(
-  "accounts-get", {}, { role: `plaid-item:${itemId}` }
-);
 ```
 
-agi never sees: PLAID_CLIENT_ID, PLAID_SECRET, Plaid access_tokens,
-Hive-ID's URL (Local-ID is the only public-internet hop from agi's
-perspective). Per `feedback_localid_private_be_careful_what_ships_in_agi`.
+Config schemas: `FederationConfigSchema`, `IdentityConfigSchema` in `config/src/schema.ts`.
 
-#### Multi-bank support: role-encoding
+### Server wiring
 
-The `connections` table's existing unique index is `(user_id, provider,
-role)`. For Plaid, encode the Plaid `item_id` into the `role` field as
-`plaid-item:<itemId>`. One linked bank per row; unlimited banks per
-user. **No schema migration needed.** The role-encoding is mirrored at
-Hive-ID's `connections` table — both ends use the same convention.
-
-#### Plaid-specific behaviors
-
-- **`/item/remove` cleanup on disconnect** — Plaid requires server-side
-  notification when a bank is unlinked. Local-ID forwards the proxy call
-  via `/api/proxy/plaid/item-remove` + drops the local connection row.
-  Hive-ID's gateway proxies to Plaid `/item/remove`. Cleanup is
-  best-effort; local row drops even if Hive-ID call fails.
-- **Webhooks** — Plaid pushes events (`TRANSACTIONS_UPDATED`,
-  `ITEM_LOGIN_REQUIRED`, etc.) to a configured public HTTPS URL.
-  Hive-ID hosts the receiver at `/webhook/plaid` (scaffold; signature
-  verification flagged for follow-up). Production webhooks should stay
-  disabled at the Plaid app level until JWS signature verification
-  ships.
-- **Reauth flow UI** — when an item gets `ITEM_LOGIN_REQUIRED`, dashboard
-  should surface a reauth prompt. Future scope; mirrors the analogous
-  GitHub flow.
-
-### Generalizing to Google + Discord (s149 t625, pending)
-
-Google and Discord adopt the same proxied-class pattern. Hive-ID already
-handles the OAuth dance for both via authorization-code flow at
-`/oauth/google/{start,callback}` + `/oauth/discord/{start,callback}` —
-the cycle 215 unification flips the **token-transfer** step (which used
-to hand raw access_tokens via the handoff mechanism) to **DToken
-issuance**. Local-ID's existing `device-flow.ts:223-227` stubs (`501
-not_implemented` for Google + Discord) get replaced with the same
-proxy-forwarding shape.
-
-Per-provider proxy definitions live at `agi-hive-id/src/providers/proxy/
-{google,discord}.ts` (pending t625). Endpoints:
-
-- Google: `gmail.users.messages.send`, `gmail.users.messages.list`,
-  `calendar.events.list`, `calendar.events.insert`, `drive.files.list`,
-  `drive.files.get`, `oauth2.userinfo.get`
-- Discord: `users/@me`, `users/@me/guilds`, `channels/<id>/messages`
-
-Both providers use Bearer `access_token` upstream (unlike Plaid's per-call
-`client_id`+`secret`+`access_token` body). The ProxyProviderDef
-abstraction handles either shape via the `buildRequest` transformer per
-`agi-hive-id/src/services/proxy-gateway.ts`.
-
-### When to use which class
-
-If you're integrating a new third-party API:
-
-1. **Does the API support public-client OAuth (no `client_secret`)?** If
-   yes (RFC 8628 Device Authorization Grant or equivalent), it can run
-   in Local-ID. Add to `LOCAL_PROVIDERS` at `device-flow.ts`.
-2. **Otherwise it's proxied.** Add a ProxyProviderDef under
-   `agi-hive-id/src/providers/proxy/<provider>.ts`, an OAuth-bootstrap
-   route under `agi-hive-id/src/routes/oauth/<provider>.ts` (auth-code
-   flow → use the existing `provider-factory.ts`; widget flow → custom
-   like `plaid-link.ts`), a webhook receiver if applicable, and the
-   agi-side plugin calls Local-ID's `/api/proxy/<provider>/<endpoint>`
-   forwarding route.
-3. **Always cite memory rules inline in code comments** — future agents
-   need to know why GitHub is the exception, not the rule.
-
-## Server Wiring
-
-Federation components are initialized in `server.ts` (Step 3f) when `federation.enabled` is true:
+Federation is initialized in `server.ts` when `federation.enabled` is true:
 
 1. `generateNodeKeypair()` — Ed25519 keypair for the node
 2. `FederationPeerStore(db)` — SQLite-backed peer persistence
@@ -381,17 +264,15 @@ Federation components are initialized in `server.ts` (Step 3f) when `federation.
 4. `FederationRouter(node)` — handles `/mycelium/*` routes
 5. `IdentityProvider(entityStore, federationNode)` — local ID management
 6. `VisitorAuthManager({ sessionSecret })` — challenge-response auth
-7. `OAuthHandler(config, baseUrl)` — Google/GitHub OAuth flows
+7. `OAuthHandler(config, baseUrl)` — GitHub/Google OAuth flows
 
-Routes are registered in `server-runtime-state.ts` before the static file handler:
-- `registerIdentityRoutes(fastify, deps)`
-- `registerSubUserRoutes(fastify, deps)`
-- `fastify.get("/.well-known/mycelium-node.json", ...)`
-- `fastify.all("/mycelium/*", ...)` — delegates to `FederationRouter.handleRequest()`
+Routes registered in `server-runtime-state.ts` via `registerIdentityRoutes()`, `registerSubUserRoutes()`, and direct Fastify registrations for `/.well-known` and `/mycelium/*`.
 
-## Files Reference
+---
 
-### Entity Model (`packages/entity-model/src/`)
+## Files reference
+
+### Entity model (`packages/entity-model/src/`)
 
 | File | Purpose |
 |------|---------|
@@ -400,125 +281,53 @@ Routes are registered in `server-runtime-state.ts` before the static file handle
 | `schema.sql.ts` | DDL for new tables + `FEDERATION_MIGRATIONS` |
 | `db.ts` | Migration runner (comment-stripping, idempotent ALTER TABLE) |
 | `store.ts` | `getByGeid()`, `getGeidMapping()`, `updateFederation()`, `getByAddress()` |
-| `impact.ts` | `origin_node_id` / `relay_signature` tracking |
 
-### Gateway Core (`packages/gateway-core/src/`)
+### Gateway core (`packages/gateway-core/src/`)
 
 | File | Purpose |
 |------|---------|
 | `federation-node.ts` | Node identity, manifest, peer management |
-| `federation-router.ts` | Request routing + ring/announce, EntityMap endpoints |
+| `federation-router.ts` | Request routing, ring/announce, EntityMap endpoints |
 | `federation-peer-store.ts` | SQLite-backed persistent peer storage |
 | `federation-types.ts` | Ring protocol types, visitor auth types |
+| `federation-handshake.ts` | Peer handshake protocol |
 | `identity-provider.ts` | Local ID issuance, GEID binding, OAuth binding |
-| `oauth-handler.ts` | Google/GitHub OAuth2 flows |
+| `oauth-handler.ts` | GitHub/Google OAuth2 flows |
 | `identity-api.ts` | Fastify routes for identity operations |
 | `visitor-auth.ts` | GEID challenge-response authentication |
 | `sub-user-api.ts` | Sub-user management routes |
-| `server.ts` | Federation initialization (Step 3f) |
-| `server-runtime-state.ts` | Route registration |
 
 ### Config (`config/src/`)
 
 | File | Purpose |
 |------|---------|
 | `schema.ts` | `FederationConfigSchema`, `OAuthProviderSchema`, `IdentityConfigSchema` |
-| `index.ts` | Re-exports `FederationConfig`, `IdentityConfig` |
 
-## VM Dev Sandbox
+---
 
-Federation development uses the Multipass VM sandbox. This is critical for testing because federation involves database migrations, new API routes, and crypto operations that can break the production instance if shipped untested.
+## Dev + testing
 
-### Setup
-
-```bash
-sudo snap install multipass         # Install Multipass
-./scripts/test-vm.sh create         # Launch VM
-```
-
-### Known VM Issues
-
-**git safe.directory**: The mounted repo at `/mnt/agi` has different ownership than the `aionima` user created by `install.sh`. Before running `install.sh`, set:
+Use `agi test-vm` for all VM operations. See `agi test-vm --help` and `agi/docs/human/testing.md`.
 
 ```bash
-multipass exec aionima-test -- sudo git config --system --add safe.directory /mnt/agi
-multipass exec aionima-test -- sudo git config --system --add safe.directory /mnt/agi/.git
-# Also for the aionima user specifically:
-multipass exec aionima-test -- sudo -u aionima git config --global --add safe.directory /mnt/agi
-multipass exec aionima-test -- sudo -u aionima git config --global --add safe.directory /mnt/agi/.git
+agi test-vm services-status      # Check VM services
+agi test-vm services-start       # Start all services in VM
+agi test --e2e federation        # Run federation e2e suite (if it exists)
 ```
 
-**Native modules**: The clone from `/mnt/agi` copies host-compiled native binaries (`better-sqlite3`, `node-pty`). Rebuild inside the VM:
+For federation endpoint testing from the host after services are up:
 
 ```bash
-multipass exec aionima-test -- sudo -u aionima env HOME=/home/aionima bash << 'SCRIPT'
-cd /home/aionima/_projects/agi
-cd node_modules/.pnpm/better-sqlite3@11.10.0/node_modules/better-sqlite3
-npm run build-release
-cd /home/aionima/_projects/agi/node_modules/.pnpm/node-pty@1.1.0/node_modules/node-pty
-npm run install
-SCRIPT
+# From host — VM at https://test.ai.on
+curl -sk https://test.ai.on/health
+curl -sk https://test.ai.on/.well-known/mycelium-node.json
+curl -sk https://test.ai.on/api/auth/providers
 ```
 
-**upgrade.sh fails**: `install.sh` calls `upgrade.sh` which expects `/opt/agi` to be a git repo. For VM testing, skip deploy and run directly from the cloned repo:
+For deep VM inspection:
 
 ```bash
-multipass exec aionima-test -- sudo -u aionima env HOME=/home/aionima bash << 'SCRIPT'
-cd /home/aionima/_projects/agi
-mkdir -p data
-node cli/dist/index.js run
-SCRIPT
+agi bash 'multipass exec agi-test -- bash -c "cat ~/.agi/gateway.json | head -30"'
 ```
 
-### Testing federation endpoints in the VM
-
-```bash
-# Create config with federation enabled
-multipass exec aionima-test -- sudo -u aionima tee /home/aionima/_projects/agi/gateway.json << 'EOF'
-{
-  "gateway": { "host": "0.0.0.0", "port": 3000 },
-  "owner": { "displayName": "Test Owner" },
-  "federation": {
-    "enabled": true,
-    "publicUrl": "http://localhost:3000",
-    "seedPeers": [],
-    "autoGeid": true,
-    "allowVisitors": true
-  }
-}
-EOF
-
-# Start server and test
-VM_IP=$(./scripts/test-vm.sh ip)
-curl -s http://$VM_IP:3000/health
-curl -s http://$VM_IP:3000/.well-known/mycelium-node.json
-curl -s http://$VM_IP:3000/api/auth/providers
-curl -s -X POST http://$VM_IP:3000/api/sub-users \
-  -H "Content-Type: application/json" \
-  -d '{"displayName":"Alice","username":"alice","password":"test1234"}'
-```
-
-### Syncing uncommitted changes to the VM
-
-The VM clones from the host mount at create time, but subsequent uncommitted changes need to be copied:
-
-```bash
-# Copy a specific changed file from mount
-multipass exec aionima-test -- sudo -u aionima cp \
-  /mnt/agi/packages/entity-model/src/db.ts \
-  /home/aionima/_projects/agi/packages/entity-model/src/db.ts
-
-# Then rebuild
-multipass exec aionima-test -- sudo -u aionima env HOME=/home/aionima bash -c \
-  'cd /home/aionima/_projects/agi && pnpm build'
-```
-
-Or commit + pull:
-
-```bash
-# On host
-git add . && git commit -m "WIP"
-# In VM
-multipass exec aionima-test -- sudo -u aionima env HOME=/home/aionima bash -c \
-  'cd /home/aionima/_projects/agi && git pull /mnt/agi main && pnpm build'
-```
+Do not use `multipass exec` directly — route through `agi bash` so all exec calls are logged. See `CLAUDE.md § 3` for the full blocker protocol.

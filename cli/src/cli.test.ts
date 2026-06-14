@@ -183,14 +183,14 @@ describe("printTable", () => {
 
   it("outputs a line containing each header value", () => {
     printTable(["Channel", "State"], [["telegram", "running"]]);
-    const allOutput = consoleSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    const allOutput = consoleSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? "")).join("\n");
     expect(allOutput).toContain("Channel");
     expect(allOutput).toContain("State");
   });
 
   it("outputs a line containing each row value", () => {
     printTable(["ID", "Status"], [["ch-001", "stopped"], ["ch-002", "running"]]);
-    const allOutput = consoleSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    const allOutput = consoleSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? "")).join("\n");
     expect(allOutput).toContain("ch-001");
     expect(allOutput).toContain("ch-002");
     expect(allOutput).toContain("stopped");
@@ -199,7 +199,7 @@ describe("printTable", () => {
 
   it("renders header in bold", () => {
     printTable(["Header"], [["value"]]);
-    const allOutput = consoleSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    const allOutput = consoleSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? "")).join("\n");
     // bold code appears somewhere in output alongside the header
     expect(allOutput).toContain(BOLD);
     expect(allOutput).toContain("Header");
@@ -207,7 +207,7 @@ describe("printTable", () => {
 
   it("renders border lines with box-drawing characters", () => {
     printTable(["Col"], [["val"]]);
-    const allOutput = consoleSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    const allOutput = consoleSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? "")).join("\n");
     // Top border
     expect(allOutput).toContain("┌");
     expect(allOutput).toContain("┐");
@@ -219,7 +219,7 @@ describe("printTable", () => {
   it("works with ANSI-colored values (correct padding despite escape codes)", () => {
     // green() adds ANSI but the visible text is still just the inner string
     printTable(["State"], [[green("ONLINE")]]);
-    const allOutput = consoleSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    const allOutput = consoleSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? "")).join("\n");
     expect(allOutput).toContain("ONLINE");
   });
 
@@ -227,7 +227,7 @@ describe("printTable", () => {
     printTable(["Col1", "Col2"], []);
     // Should not throw; should still print header + borders
     expect(consoleSpy).toHaveBeenCalled();
-    const allOutput = consoleSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    const allOutput = consoleSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? "")).join("\n");
     expect(allOutput).toContain("Col1");
   });
 });
@@ -269,7 +269,7 @@ describe("printStatus", () => {
       { label: "LongLabel", value: "2" },
     ]);
     // Both lines should have the same leading width after the leading spaces
-    const lines = consoleSpy.mock.calls.map((call) => String(call[0] ?? ""));
+    const lines = consoleSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? ""));
     // Both lines start with two spaces
     for (const line of lines) {
       expect(line.startsWith("  ")).toBe(true);

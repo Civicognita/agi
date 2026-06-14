@@ -5,7 +5,9 @@
  *
  *   /api/projects/<slug>/k/mapps/<mappId>/<filepath>
  *     — persistent project knowledge files. Survives container resets.
- *       Backed by `<projectPath>/k/mapps/<mappId>/`.
+ *       `k` here is the storage-AREA wire enum; on disk it is backed by the
+ *       knowledge dir `<projectPath>/.ai/mapps/<mappId>/` (renamed from k/
+ *       2026-06-09 — the API path segment stays `k` for contract stability).
  *
  *   /api/projects/<slug>/sandbox/mapps/<mappId>/<filepath>
  *     — generated/temporary content. Treated as cache-grade.
@@ -42,6 +44,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve as resolvePath, sep } from "node:path";
+import { KNOWLEDGE_DIR } from "./project-config-path.js";
 
 // Reuse the collection-aware enumeration shape from server-runtime-state's
 // /api/projects route — projects can live one level deep (top-level dir
@@ -95,8 +98,13 @@ function safePathSegments(rawFilepath: string): string[] | null {
   return segments;
 }
 
-// Returns the base dir (k/mapps/<mappId>/ OR sandbox/mapps/<mappId>/)
+// Returns the base dir (.ai/mapps/<mappId>/ OR sandbox/mapps/<mappId>/)
 // after creating it idempotently. Returns null if mappId is unsafe.
+//
+// `area` is the wire/API enum ("k" | "sandbox") — kept stable for the MApp
+// storage contract — but the "k" knowledge area maps to the on-disk
+// KNOWLEDGE_DIR (`.ai/`, renamed from `k/` 2026-06-09). "sandbox" is its own
+// folder name on disk.
 function ensureMappBaseDir(
   projectPath: string,
   area: "k" | "sandbox",
@@ -104,7 +112,8 @@ function ensureMappBaseDir(
 ): string | null {
   const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/;
   if (!SLUG_RE.test(mappId)) return null;
-  const base = join(projectPath, area, "mapps", mappId);
+  const areaDir = area === "k" ? KNOWLEDGE_DIR : area;
+  const base = join(projectPath, areaDir, "mapps", mappId);
   mkdirSync(base, { recursive: true });
   return base;
 }

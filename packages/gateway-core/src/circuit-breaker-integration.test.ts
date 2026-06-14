@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { ChannelRegistry } from "./channel-registry.js";
 import { CircuitBreakerTracker } from "./circuit-breaker.js";
 import { SystemConfigService } from "./system-config-service.js";
-import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import type { AionimaChannelPlugin } from "@agi/plugins";
 
 function makeTmpConfig(): { path: string; cleanup: () => void } {
   const dir = join(tmpdir(), `cb-integration-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`);

@@ -19,7 +19,7 @@ describe("agent-cage (s130 t515 slice 5)", () => {
       expect(cage?.allowedPrefixes).toEqual([
         "/home/user/myproject",
         "/home/user/myproject/.agi",
-        "/home/user/myproject/k",
+        "/home/user/myproject/.ai",
         "/home/user/myproject/repos",
         "/home/user/myproject/.trash",
       ]);
@@ -41,7 +41,7 @@ describe("agent-cage (s130 t515 slice 5)", () => {
       // 5 dirs for ops-project + 5 dirs for each of 2 siblings = 15
       expect(cage?.allowedPrefixes).toHaveLength(15);
       expect(cage?.allowedPrefixes).toContain("/home/user/sibling-a");
-      expect(cage?.allowedPrefixes).toContain("/home/user/sibling-b/k");
+      expect(cage?.allowedPrefixes).toContain("/home/user/sibling-b/.ai");
     });
 
     it("doesn't widen when category is not ops, even with siblings provided", () => {

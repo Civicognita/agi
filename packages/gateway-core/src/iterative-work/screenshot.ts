@@ -36,8 +36,44 @@ export interface CaptureOptions {
   /** Page-load timeout in ms. Default 10s — short enough to not block
    *  the next iteration's fire if the deployed URL is slow. */
   timeoutMs?: number;
+  /**
+   * Max time (ms) to wait for the URL to respond 2xx before launching the
+   * browser. Default 30s. Set to 0 to skip the probe. The iterative-work
+   * cron fires shortly after a project starts, so the dev server may still
+   * be booting — probing avoids capturing "Container not running" frames.
+   */
+  readinessProbeMs?: number;
+  /** Probe poll interval in ms. Default 2s. */
+  probeIntervalMs?: number;
   /** Logger for failure diagnostics. Caller passes the gateway's log.warn. */
   log?: (msg: string) => void;
+}
+
+/**
+ * Poll the URL with a HEAD request until it returns 2xx or the deadline passes.
+ * Returns true if the URL became ready within the allotted time.
+ */
+async function waitForReady(url: string, maxMs: number, intervalMs: number, log: (msg: string) => void): Promise<boolean> {
+  const deadline = Date.now() + maxMs;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    attempt++;
+    try {
+      const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(5_000) });
+      if (res.ok) {
+        if (attempt > 1) log(`readiness probe succeeded after ${attempt} attempts (${Date.now() - (deadline - maxMs)}ms)`);
+        return true;
+      }
+      log(`readiness probe attempt ${attempt}: HTTP ${res.status} — retrying`);
+    } catch {
+      log(`readiness probe attempt ${attempt}: network error — retrying`);
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise<void>((r) => setTimeout(r, Math.min(intervalMs, remaining)));
+  }
+  log(`readiness probe timed out after ${maxMs}ms — proceeding with screenshot anyway`);
+  return false;
 }
 
 /**
@@ -48,6 +84,8 @@ export async function captureProjectScreenshot(opts: CaptureOptions): Promise<st
   const thumbsDir = opts.thumbsDir ?? join(homedir(), ".agi", "thumbs");
   const viewport = opts.viewport ?? { width: 1280, height: 720 };
   const timeoutMs = opts.timeoutMs ?? 10_000;
+  const readinessProbeMs = opts.readinessProbeMs ?? 30_000;
+  const probeIntervalMs = opts.probeIntervalMs ?? 2_000;
   const log = opts.log ?? ((): void => {});
 
   try {
@@ -59,6 +97,12 @@ export async function captureProjectScreenshot(opts: CaptureOptions): Promise<st
 
   const id = ulid();
   const filePath = join(thumbsDir, `iter-${id}.png`);
+
+  // Probe the URL before launching the browser so we don't capture an
+  // error page when the project's dev server is still booting.
+  if (readinessProbeMs > 0) {
+    await waitForReady(opts.hostingUrl, readinessProbeMs, probeIntervalMs, log);
+  }
 
   // Dynamic import keeps Playwright out of the boot path — only loaded
   // when an iteration actually wants to capture. Avoids extending boot

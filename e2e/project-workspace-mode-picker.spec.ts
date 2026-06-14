@@ -230,22 +230,16 @@ test.describe("Project workspace mode picker (s134 t517)", () => {
     await expect(page.getByTestId("project-mode-operate")).toHaveAttribute("aria-pressed", "true");
   });
 
-  test("flyout-shell wraps Canvas + Chat aside (slice 5c phase 2)", async ({ page }) => {
+  test("project detail has no chat aside (chat is in the global shell)", async ({ page }) => {
     const found = await navigateToFullModeProject(page);
     test.skip(!found, "no full-mode project available");
 
     // The flyout-shell wrapper must be present.
     await expect(page.getByTestId("project-flyout-shell")).toBeVisible();
 
-    // The chat aside is rendered (DOM-present); visibility depends on viewport
-    // width because of `hidden lg:flex`. Default Playwright viewport is 1280×720
-    // which is lg+, so the aside should be visible.
-    const aside = page.getByTestId("project-chat-aside");
-    await expect(aside).toBeAttached();
-    // Aside has a "Chat" header (cycle 145) and an Open-chat affordance
-    // (cycle 147 phase-3 starter — kept across copy revisions).
-    await expect(aside).toContainText(/Chat/);
-    await expect(page.getByTestId("project-chat-aside-open")).toBeVisible();
+    // Project chat aside was removed — chat is always in the global 3-panel shell.
+    await expect(page.getByTestId("project-chat-aside")).toHaveCount(0);
+    await expect(page.getByTestId("project-chat-aside-open")).toHaveCount(0);
   });
 
   // -----------------------------------------------------------------------
@@ -281,6 +275,7 @@ test.describe("Project workspace mode picker (s134 t517)", () => {
     await page.getByTestId("project-flyout-shell").waitFor({ state: "visible", timeout: 15_000 });
 
     await expect(page.getByTestId("project-mode-picker")).toHaveCount(0);
+    // project-chat-aside is always absent (removed from ProjectDetail)
     await expect(page.getByTestId("project-chat-aside")).toHaveCount(0);
     // Editor + Repository tabs are the core-fork surface.
     await expect(page.getByRole("tab", { name: "Editor" })).toBeVisible();

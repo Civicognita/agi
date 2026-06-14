@@ -26,7 +26,7 @@ import type {
   LLMProviderDefinition,
 } from "@agi/plugins";
 import type { ProjectTypeDefinition, ProjectTypeTool, StackDefinition } from "@agi/gateway-core";
-import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import type { AionimaChannelPlugin } from "@agi/plugins";
 import type { ScanProviderDefinition } from "@agi/security";
 import type { WorkerDefinition } from "@agi/plugins";
 
@@ -109,6 +109,7 @@ export function createMockAPI(options: MockAPIOptions = {}): { api: AionimaPlugi
     registerStack(def: StackDefinition): void { registrations.stacks.push(def); },
     registerRuntimeInstaller(): void { /* mock */ },
     registerChannel(_plugin: AionimaChannelPlugin): void { registrations.channels.push(_plugin.id as string); },
+    registerChannelV2(_def: { id: string }): void { /* mock; CHN-B s163 slice 2 */ },
     registerProvider(def: LLMProviderDefinition): void { registrations.providers.push(def); },
     registerPmProvider(def: { id: string; name: string }): void { registrations.pmProviders.push({ id: def.id, name: def.name }); },
     registerMcpServerTemplate(def: { id: string; name: string }): void { registrations.mcpServerTemplates.push({ id: def.id, name: def.name }); },

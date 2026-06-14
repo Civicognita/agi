@@ -87,7 +87,7 @@ describe("issue tool — log action (Wish #21 Slice 3)", () => {
     });
     expect((r as { outcome?: string }).outcome).toBe("created");
     expect((r as { id?: string }).id).toBe("i-001");
-    expect(existsSync(join(project, "k", "issues", "i-001.md"))).toBe(true);
+    expect(existsSync(join(project, ".ai", "issues", "i-001.md"))).toBe(true);
   });
 
   it("rejects log without title or symptom", async () => {

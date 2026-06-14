@@ -39,9 +39,8 @@ The VM mounts all workspace repos so tests can access the full system:
 
 | Host Path | VM Mount | Purpose |
 |-----------|----------|---------|
-| AGI repo | `/mnt/agi` | Core monorepo |
+| AGI repo | `/mnt/agi` | Core monorepo (identity is in-gateway; Local-ID was absorbed) |
 | PRIME repo | `/mnt/aionima-prime` | Knowledge corpus |
-| ID repo | `/mnt/agi-local-id` | Identity service |
 
 A test config fixture at `test/fixtures/gateway-test.json` points to these VM mount paths so tests resolve repos correctly.
 

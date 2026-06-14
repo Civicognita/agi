@@ -14,9 +14,8 @@ Aionima uses a **multi-repo architecture** with independent git repositories:
 | **PRIME** | `/opt/agi-prime` | Knowledge corpus (Mycelium Protocol) |
 | **Plugin Marketplace** | `/opt/agi-marketplace` | Code plugins (runtimes, stacks, workers, etc.) |
 | **MApp Marketplace** | `/opt/agi-mapp-marketplace` | Declarative JSON MagicApps |
-| **ID** | `/opt/agi-local-id` | OAuth credential broker and identity service |
 
-Each repo is a standalone git clone on the server. There are no submodules. If a companion repo directory doesn't exist during deployment, upgrade.sh auto-clones it.
+Identity (OAuth, entity registration) is built into the AGI gateway — there is no separate `/opt/agi-local-id` repo. Each repo is a standalone git clone on the server. There are no submodules.
 
 The upgrade flow is:
 
@@ -45,10 +44,9 @@ git clone git@github.com:Civicognita/aionima.git /opt/agi-prime
 
 # MARKETPLACE (plugin marketplace — optional)
 git clone git@github.com:Civicognita/agi-marketplace.git /opt/agi-marketplace
-
-# ID (identity service — optional)
-git clone git@github.com:Civicognita/agi-local-id.git /opt/agi-local-id
 ```
+
+> Note: there is no separate ID repo — identity is built into AGI.
 
 ### Step 2 -- Install Node.js and pnpm
 
@@ -88,19 +86,9 @@ Add repo paths to `~/.agi/gateway.json`:
   },
   "marketplace": {
     "dir": "/opt/agi-marketplace"
-  },
-  "idService": {
-    "local": {
-      "enabled": true,
-      "port": 3200,
-      "subdomain": "id"
-    },
-    "dir": "/opt/agi-local-id"
   }
 }
 ```
-
-When `idService.local.enabled` is `true`, the gateway manages a local ID service at `id.ai.on` instead of using the central `id.aionima.ai` service.
 
 ### Step 6 -- Run the Deployment Script
 
@@ -112,8 +100,8 @@ bash scripts/upgrade.sh
 ### Step 7 -- Start the Service
 
 ```bash
-sudo systemctl start aionima
-sudo systemctl status aionima
+sudo systemctl start agi
+sudo systemctl status agi
 ```
 
 ---
@@ -145,23 +133,6 @@ cd /opt/agi-marketplace && git pull --ff-only
 ```
 
 Non-fatal -- plugins still work from the previous build cache.
-
-### Phase 3c -- Pull ID
-
-```bash
-cd /opt/agi-local-id && git pull --ff-only
-```
-
-Non-fatal -- if ID pull fails, the identity service continues running from its last good state.
-
-### Phase 3d -- Build ID Service
-
-When `idService.local.enabled` is `true` in the config, the ID service is built and restarted:
-
-1. `npm install` — installs all dependencies (including devDependencies like `typescript`)
-2. `npm run build` — compiles TypeScript
-3. `npx drizzle-kit migrate` — runs database migrations (non-fatal if it fails)
-4. `sudo systemctl restart agi-local-id` — restarts the service
 
 ### Phase 4 -- Protocol Compatibility Check
 
@@ -222,21 +193,37 @@ The dashboard reads this to detect available updates.
 
 ## Systemd Service
 
-The service unit is installed at `/etc/systemd/system/agi.service`.
+The service unit is installed at `/etc/systemd/system/agi.service`. The canonical source is `scripts/agi.service` in the AGI repo.
 
 ```ini
 [Unit]
 Description=Aionima Gateway
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=wishborn
+Group=wishborn
 WorkingDirectory=/opt/agi
-ExecStart=node cli/dist/index.js run
-Restart=on-failure
-RestartSec=5s
-EnvironmentFile=/opt/agi/.env
+
+# Trust Caddy's local CA so Node.js accepts self-signed certs for *.ai.on domains.
+Environment=NODE_EXTRA_CA_CERTS=/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
+
+ExecStart=/usr/bin/node /opt/agi/cli/dist/index.js run
+# Restart=always (not on-failure) — the dashboard's Gateway Restart button
+# (POST /api/gateway/restart) and `agi restart` both send SIGTERM to the
+# process, which the gateway handles as a clean shutdown (exit 0). With
+# Restart=on-failure, systemd treats clean exits as success and does NOT
+# bring the service back up. Restart=always brings it back regardless of
+# exit code; `systemctl stop agi` still stops it cleanly.
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agi
 
 [Install]
 WantedBy=multi-user.target
@@ -246,22 +233,22 @@ WantedBy=multi-user.target
 
 ```bash
 # Start the service
-sudo systemctl start aionima
+sudo systemctl start agi
 
 # Stop the service
-sudo systemctl stop aionima
+sudo systemctl stop agi
 
 # Restart the service
-sudo systemctl restart aionima
+sudo systemctl restart agi
 
 # View service status
-sudo systemctl status aionima
+sudo systemctl status agi
 
 # View live logs
-sudo journalctl -u aionima -f
+sudo journalctl -u agi -f
 
 # View recent logs
-sudo journalctl -u aionima -n 100
+sudo journalctl -u agi -n 100
 ```
 
 ---
@@ -292,7 +279,7 @@ At boot, the gateway reads `protocol.json` from all deployed repos and checks se
 There is no automated rollback. If a deployment breaks the service:
 
 1. SSH into the server.
-2. Check the service logs: `sudo journalctl -u aionima -n 50`.
+2. Check the service logs: `sudo journalctl -u agi -n 50`.
 3. If the issue is in the code, revert the commit in the repo and redeploy.
 4. If the config was changed, edit `/opt/agi/gateway.json` and restart.
 
@@ -335,3 +322,75 @@ Both core system domains (dashboard, db portal, ID service) and project virtual 
 ### Log Files
 
 Application logs are written to `/opt/agi/logs/`. Logs rotate at 10 MB with up to 5 rotated files kept.
+
+---
+
+## Off-Grid Install (Air-Gapped / No Internet After Install)
+
+Aionima can run fully offline once the aion-micro GGUF is pre-staged. There are two paths:
+
+### Path A — Internet available at install time (recommended)
+
+The default install automatically downloads the aion-micro GGUF during step 7b:
+
+```bash
+sudo bash install.sh
+```
+
+`install.sh` downloads `wishborn/aion-micro-v1` from HuggingFace Hub to `~/.agi/models/aion-micro/aion-micro-v1.gguf` and writes `ops.aionMicro.localGgufPath` into `gateway.json`. After install, the box can be isolated from the internet and aion-micro will continue working.
+
+If the model is in a private HF repo, pass a token:
+
+```bash
+AIONIMA_HF_TOKEN=hf_xxx sudo bash install.sh
+```
+
+To skip model pre-fetch (e.g., in a CI environment where Lemonade will pull on first use):
+
+```bash
+AIONIMA_PREFETCH_MODELS=0 sudo bash install.sh
+```
+
+### Path B — True air-gap (no internet at any point)
+
+Obtain the GGUF on a networked machine and transfer it to the target box:
+
+```bash
+# On a networked machine:
+curl -L -o aion-micro-v1.gguf \
+  "https://huggingface.co/wishborn/aion-micro-v1/resolve/main/aion-micro-v1.gguf"
+
+# Transfer aion-micro-v1.gguf to the air-gapped box, then:
+AIONIMA_GGUF_PATH=/path/to/aion-micro-v1.gguf sudo bash install.sh
+```
+
+`install.sh` copies the file to `~/.agi/models/aion-micro/aion-micro-v1.gguf` and patches `gateway.json` in one step.
+
+### What `localGgufPath` does
+
+When `ops.aionMicro.localGgufPath` is set in `gateway.json`, `AionMicroManager` sends the absolute file path as the model identifier to Lemonade's `/v1/chat/completions` API. Lemonade (llama.cpp-backed) treats an absolute path as a direct GGUF file load rather than a catalog lookup — no HF Hub call is made.
+
+To verify the setup after install:
+
+```bash
+agi doctor          # should pass with no model-related warnings
+agi status          # gateway should show "online"
+# In the dashboard, send a chat message — aion-micro should respond
+```
+
+### Manual GGUF staging (after initial install)
+
+If the install completed without the GGUF (e.g., model wasn't published yet):
+
+```bash
+# Download (when internet becomes available):
+mkdir -p ~/.agi/models/aion-micro
+curl -L -o ~/.agi/models/aion-micro/aion-micro-v1.gguf \
+  "https://huggingface.co/wishborn/aion-micro-v1/resolve/main/aion-micro-v1.gguf"
+
+# Then add localGgufPath to gateway.json:
+agi config ops.aionMicro.localGgufPath ~/.agi/models/aion-micro/aion-micro-v1.gguf
+agi restart
+```
+
+Or use the Lemonade plugin's pull tool from the dashboard: Settings → Lemonade → pull `wishborn/aion-micro-v1`.

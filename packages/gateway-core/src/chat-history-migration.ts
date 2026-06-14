@@ -1,6 +1,6 @@
 /**
  * chat-history-migration — moves project-scoped chat sessions from the
- * global `~/.agi/chat-history/` to per-project `<projectPath>/k/chat/`.
+ * global `~/.agi/chat-history/` to per-project `<projectPath>/.ai/chat/`.
  *
  * **s130 t518 slice 1 (2026-04-29):** the smallest viable migration
  * primitive. Doesn't refactor ChatPersistence — that's a follow-up
@@ -12,7 +12,7 @@
  *   1. Walks `~/.agi/chat-history/` for `<id>.json` files
  *   2. For each, parses the session and checks `session.context`
  *   3. If `session.context === projectPath`, copies to
- *      `<projectPath>/k/chat/<id>.json` (idempotent — skip if target
+ *      `<projectPath>/.ai/chat/<id>.json` (idempotent — skip if target
  *      exists)
  *   4. Returns count of sessions migrated + per-session details
  *
@@ -26,13 +26,14 @@
  *     `session.context` matching `projectPath` are project-scoped)
  *
  * Per Q-3 (cycle 88 owner answer): per-project chat history lives at
- * `<projectPath>/k/chat/`, alongside k/plans, k/knowledge, k/pm, and
- * k/memory.
+ * `<projectPath>/.ai/chat/`, alongside .ai/plans, .ai/knowledge, .ai/pm, and
+ * .ai/memory.
  */
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { KNOWLEDGE_DIR } from "./project-config-path.js";
 
 interface ChatSessionLike {
   id: string;
@@ -59,13 +60,13 @@ interface MigrateOptions {
    *  `~/.agi/chat-history/`. Mostly for tests. */
   globalChatDir?: string;
   /** Override the per-project chat dir under the project. Defaults to
-   *  `<projectPath>/k/chat/`. */
+   *  `<projectPath>/.ai/chat/`. */
   projectChatDir?: string;
 }
 
 /**
  * Idempotently migrate project-scoped chat sessions from the global
- * `~/.agi/chat-history/` directory into `<projectPath>/k/chat/`.
+ * `~/.agi/chat-history/` directory into `<projectPath>/.ai/chat/`.
  *
  * Safe to call repeatedly — sessions already at the target are skipped,
  * not re-copied. Sessions whose `context` doesn't match `projectPath`
@@ -84,7 +85,7 @@ export function migrateChatSessionsForProject(
   };
 
   const globalDir = options.globalChatDir ?? join(homedir(), ".agi", "chat-history");
-  const projectDir = options.projectChatDir ?? join(projectPath, "k", "chat");
+  const projectDir = options.projectChatDir ?? join(projectPath, KNOWLEDGE_DIR, "chat");
 
   if (!existsSync(globalDir)) {
     // No global chat-history yet — nothing to migrate. (Brand-new

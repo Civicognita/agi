@@ -60,6 +60,28 @@ const QUANT_METHOD_DEPS: Record<string, string[]> = {
   hqq: ["hqq", "accelerate"],
 };
 
+/**
+ * Quantization methods and tags that have no CPU inference path.
+ * A model tagged with any of these is "incompatible" on CPU-only hardware.
+ *
+ * - fp8 / fp8_e4m3 / fp8_e5m2: CUDA Hopper (H100/H200) only
+ * - awq / autoawq: AWQ GEMM kernel is CUDA-only
+ * - gptq: ExLlama / AutoGPTQ kernels are CUDA-only
+ * - bitsandbytes / bnb: bitsandbytes library requires CUDA or ROCm
+ * - eetq: EETQ kernel is CUDA-only
+ * - hqq: HQQ dequantization kernel is GPU-only
+ * - requires-gpu: explicit tag from model card
+ */
+const GPU_ONLY_TAGS = new Set([
+  "fp8", "fp8_e4m3fn", "fp8_e5m2",
+  "awq", "autoawq",
+  "gptq",
+  "bitsandbytes", "bnb",
+  "eetq",
+  "hqq",
+  "requires-gpu",
+]);
+
 /** HuggingFace model ID → Ollama model name mapping. */
 const HF_TO_OLLAMA: Record<string, string> = {
   "Qwen/Qwen2.5-1.5B-Instruct": "qwen2.5:1.5b-instruct",
@@ -385,6 +407,18 @@ export class CapabilityResolver {
     model: HfModelInfo,
     variant?: { sizeBytes: number; quantization?: string },
   ): { compatibility: "compatible" | "limited" | "incompatible"; reason: string } {
+    // GPU-only quantization check — before any size estimation.
+    // These methods have no CPU inference path; running on CPU will always fail.
+    if (!this.capabilities.hasGpu) {
+      const gpuOnlyTag = model.tags.find((t) => GPU_ONLY_TAGS.has(t.toLowerCase()));
+      if (gpuOnlyTag) {
+        return {
+          compatibility: "incompatible",
+          reason: `Requires GPU — ${gpuOnlyTag} quantization has no CPU inference path.`,
+        };
+      }
+    }
+
     const estimate = this.estimateResources(model, variant);
     const runtimeType = this.resolveRuntimeType(model);
 

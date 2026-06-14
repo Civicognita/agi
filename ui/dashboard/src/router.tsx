@@ -12,12 +12,16 @@ import LogsPage from "./routes/logs.js";
 import EntityPage from "./routes/entity.js";
 import ResourcesPage from "./routes/resources.js";
 import WorkflowsPage from "./routes/workflows.js";
+import CommsLayout from "./routes/comms-layout.js";
 import CommsPage from "./routes/comms.js";
+import CommsActivityPage from "./routes/comms-activity.js";
+import CommsModerationPage from "./routes/comms-moderation.js";
 import CommsTelegramPage from "./routes/comms-telegram.js";
 import CommsDiscordPage from "./routes/comms-discord.js";
 import CommsGmailPage from "./routes/comms-gmail.js";
 import CommsSignalPage from "./routes/comms-signal.js";
 import CommsWhatsAppPage from "./routes/comms-whatsapp.js";
+import CommsChannelsPage from "./routes/comms-channels.js";
 import ServicesPage from "./routes/services.js";
 import AdminPage from "./routes/admin.js";
 import AdminDashboardPage from "./routes/admin-dashboard.js";
@@ -32,6 +36,7 @@ import MarketplacePage from "./routes/marketplace.js";
 import HFMarketplacePage from "./routes/hf-marketplace.js";
 import SettingsHFPage from "./routes/settings-hf.js";
 import SettingsProvidersPage from "./routes/settings-providers.js";
+import SettingsChannelsPage from "./routes/settings-channels.js";
 import SettingsVaultPage from "./routes/settings-vault.js";
 import ScheduledJobsPage from "./routes/settings-scheduled-jobs.js";
 // /aionima → /projects/_aionima redirect (s119 t705).
@@ -50,6 +55,8 @@ import BackupsPage from "./routes/system-backups.js";
 import SecuritySettingsPage from "./routes/settings-security.js";
 import SystemSecurityPage from "./routes/system-security.js";
 import IdentityServicePage from "./routes/system-identity.js";
+import SettingsIdentityPage from "./routes/settings-identity.js";
+import IdentityPendingPage from "./routes/identity-pending.js";
 import SystemAgentsPage from "./routes/system-agents.js";
 import PromptInspectorPage from "./routes/prompt-inspector.js";
 import MagicAppsPage from "./routes/magic-apps.js";
@@ -110,7 +117,9 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="/settings/gateway" replace /> },
           { path: "gateway", element: <SettingsGatewayPage /> },
+          { path: "identity", element: <SettingsIdentityPage /> },
           { path: "providers", element: <SettingsProvidersPage /> },
+          { path: "channels", element: <SettingsChannelsPage /> },
           { path: "vault", element: <SettingsVaultPage /> },
           { path: "scheduled-jobs", element: <ScheduledJobsPage /> },
           { path: "security", element: <SecuritySettingsPage /> },
@@ -139,13 +148,24 @@ export const router = createBrowserRouter([
       { path: "system/logs", element: <Navigate to="/gateway/logs" replace /> },
       { path: "system/settings", element: <Navigate to="/settings/gateway" replace /> },
       { path: "system/comms", element: <Navigate to="/comms" replace /> },
-      // Communication
-      { path: "comms", element: <CommsPage /> },
-      { path: "comms/telegram", element: <CommsTelegramPage /> },
-      { path: "comms/discord", element: <CommsDiscordPage /> },
-      { path: "comms/gmail", element: <CommsGmailPage /> },
-      { path: "comms/signal", element: <CommsSignalPage /> },
-      { path: "comms/whatsapp", element: <CommsWhatsAppPage /> },
+      // CHN-E (s166) slice 4 — pending-from-channel approval queue
+      { path: "identity/pending", element: <IdentityPendingPage /> },
+      // Communication — 3-panel workspace shell (s192+)
+      {
+        path: "comms",
+        element: <CommsLayout />,
+        children: [
+          { index: true, element: <CommsPage /> },
+          { path: "activity", element: <CommsActivityPage /> },
+          { path: "discord", element: <CommsDiscordPage /> },
+          { path: "gmail", element: <CommsGmailPage /> },
+          { path: "telegram", element: <CommsTelegramPage /> },
+          { path: "signal", element: <CommsSignalPage /> },
+          { path: "whatsapp", element: <CommsWhatsAppPage /> },
+          { path: "moderation", element: <CommsModerationPage /> },
+          { path: "channels",   element: <CommsChannelsPage /> },
+        ],
+      },
       { path: "*", element: <PluginPageResolver /> },
     ],
   },

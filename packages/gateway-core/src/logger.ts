@@ -158,7 +158,7 @@ export function createLogger(config?: LoggerConfig): Logger {
   const activityStream = new RotatingStream(activityPath, maxFileSize, maxFiles);
   const errorStream = new RotatingStream(errorPath, maxFileSize, maxFiles);
 
-  let entryListener: ((entry: LogEntry) => void) | null = null;
+  const entryListeners: ((entry: LogEntry) => void)[] = [];
 
   function write(level: Level, component: string, message: string): void {
     if (LEVELS[level] < minLevel) return;
@@ -180,8 +180,11 @@ export function createLogger(config?: LoggerConfig): Logger {
       }
     }
 
-    if (entryListener !== null) {
-      entryListener({ timestamp, level, component, message });
+    if (entryListeners.length > 0) {
+      const entry = { timestamp, level, component, message };
+      for (const listener of entryListeners) {
+        listener(entry);
+      }
     }
   }
 
@@ -195,7 +198,7 @@ export function createLogger(config?: LoggerConfig): Logger {
       errorStream.close();
     },
     onEntry(cb) {
-      entryListener = cb;
+      entryListeners.push(cb);
     },
   };
 }

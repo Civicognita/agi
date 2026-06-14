@@ -668,11 +668,12 @@ describe("buildToolsSystemPrompt", () => {
     expect(prompt).toContain("send_message");
   });
 
-  it("includes tool_call format instructions", () => {
+  it("includes tool call format instructions (JSON object with tool + input keys)", () => {
     const prompt = buildToolsSystemPrompt(sampleTools);
-    expect(prompt).toContain("tool_call");
-    expect(prompt).toContain("tool");
-    expect(prompt).toContain("input");
+    // Format uses {"tool": "NAME", "input": {...}} — not the legacy "tool_call" key
+    expect(prompt).toContain('"tool"');
+    expect(prompt).toContain('"input"');
+    expect(prompt).toContain("EXACT_TOOL_NAME");
   });
 });
 
@@ -890,6 +891,44 @@ describe("OllamaProvider — mock fetch", () => {
     await expect(
       provider.invoke({ system: "s", messages: [{ role: "user", content: "hi" }], entityId: "e1" }),
     ).rejects.toThrow(/ollama serve|Cannot connect/i);
+  });
+
+  it("retries maxRetries times before throwing friendly error for ECONNREFUSED", async () => {
+    const MAX_RETRIES = 2;
+    const fetchMock = vi.fn().mockRejectedValue(
+      Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } }),
+    ) as unknown as typeof fetch;
+    (globalThis.fetch as typeof fetch) = fetchMock;
+
+    // retryBaseMs: 1 so the test doesn't actually wait seconds
+    const provider = new OllamaProvider({ defaultModel: "llama3.2", maxTokens: 10, maxRetries: MAX_RETRIES, retryBaseMs: 1 });
+
+    await expect(
+      provider.invoke({ system: "s", messages: [{ role: "user", content: "hi" }], entityId: "e1" }),
+    ).rejects.toThrow(/ollama serve|ollama isn't responding/i);
+
+    // Should have been called maxRetries + 1 times (initial + retries)
+    expect(fetchMock).toHaveBeenCalledTimes(MAX_RETRIES + 1);
+  });
+
+  it("does NOT show friendly error for ECONNREFUSED on intermediate retry failures — only final", async () => {
+    const MAX_RETRIES = 1;
+    let callCount = 0;
+    (globalThis.fetch as typeof fetch) = vi.fn().mockImplementation(async () => {
+      callCount++;
+      if (callCount <= MAX_RETRIES) {
+        throw Object.assign(new Error("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+      }
+      // Last attempt succeeds
+      return { ok: true, json: async () => ({ model: "llama3.2", message: { role: "assistant", content: "hi" } }) };
+    }) as unknown as typeof fetch;
+
+    const provider = new OllamaProvider({ defaultModel: "llama3.2", maxTokens: 10, maxRetries: MAX_RETRIES, retryBaseMs: 1 });
+
+    // Should NOT throw — retried and succeeded on the last attempt
+    const result = await provider.invoke({ system: "s", messages: [{ role: "user", content: "hi" }], entityId: "e1" });
+    expect(result.text).toBeTruthy();
+    expect(callCount).toBe(MAX_RETRIES + 1);
   });
 
   it("throws clear error when model not found", async () => {

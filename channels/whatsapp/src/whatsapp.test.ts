@@ -24,7 +24,6 @@ import {
 } from "./security.js";
 import { handleWebhook } from "./webhook.js";
 import { createWhatsAppPlugin } from "./index.js";
-import { validateAdapter } from "@agi/channel-sdk";
 import type {
   WhatsAppWebhookPayload,
   WhatsAppSendRequest,
@@ -1582,10 +1581,4 @@ describe("createWhatsAppPlugin", () => {
     expect(result).toBe(false);
   });
 
-  it("passes validateAdapter from channel-sdk", () => {
-    const plugin = createWhatsAppPlugin(VALID_CONFIG);
-    const result = validateAdapter(plugin);
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-  });
 });

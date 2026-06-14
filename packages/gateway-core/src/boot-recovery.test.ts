@@ -73,7 +73,7 @@ describe("shutdown marker", () => {
   it("buildShutdownMarker populates externals defaults", () => {
     const marker = buildShutdownMarker([], [], "sigterm");
     expect(marker.externals.idPostgresContainer).toBe("agi-postgres-17");
-    expect(marker.externals.idService).toBe("agi-id.service");
+    expect(marker.externals.idService).toBeUndefined();
     expect(marker.pid).toBe(process.pid);
     expect(new Date(marker.shutdownAt).toString()).not.toBe("Invalid Date");
   });
@@ -84,7 +84,6 @@ describe("classifyIncident — heuristics", () => {
     collectedAt: new Date().toISOString(),
     hadPriorMarker: false,
     gatewayJournal: "",
-    idServiceJournal: "",
     gatewayLog: "",
     podmanPs: "",
     postgresLogs: "",
@@ -116,14 +115,6 @@ describe("classifyIncident — heuristics", () => {
     const c = classifyIncident(e);
     expect(c.classification).toBe("disk_full");
     expect(c.autoRecoverable).toBe(false);
-  });
-
-  it("classifies ID service failure", () => {
-    const e = emptyEvidence();
-    e.idServiceJournal = "agi-id.service: Start-Pre process exited with code 1";
-    const c = classifyIncident(e);
-    expect(c.classification).toBe("id_service_failed");
-    expect(c.autoRecoverable).toBe(true);
   });
 
   it("returns unknown when no pattern matches", () => {

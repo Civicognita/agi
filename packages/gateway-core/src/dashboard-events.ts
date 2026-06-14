@@ -20,6 +20,7 @@ import type {
   ProjectActivityData,
   ProjectConfigChangedData,
   SystemUpgradeData,
+  SystemUpgradedData,
   HostingStatusData,
   UpdateCheckData,
 } from "./dashboard-types.js";
@@ -153,6 +154,14 @@ export class DashboardEventBroadcaster {
   emitSystemUpgrade(data: SystemUpgradeData): void {
     this.broadcastToSubscribers({
       type: "system:upgrade",
+      data,
+    });
+  }
+
+  /** Emit system:upgraded once after a new version is detected on boot. */
+  emitSystemUpgraded(data: SystemUpgradedData): void {
+    this.broadcastToSubscribers({
+      type: "system:upgraded",
       data,
     });
   }
@@ -306,6 +315,7 @@ function extractEntityId(event: DashboardEvent): string | null {
     case "overview:updated":
     case "project:activity":
     case "system:upgrade":
+    case "system:upgraded":
     case "system:update_available":
     case "hosting:status":
     case "project:config_changed":

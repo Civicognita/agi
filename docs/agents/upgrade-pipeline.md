@@ -32,9 +32,8 @@ Five independent git repos are pulled during deployment:
 | PRIME | `/opt/agi-prime` | `prime.dir` | `AIONIMA_PRIME_DIR` |
 | Plugin Marketplace | `/opt/agi-marketplace` | `marketplace.dir` | `AIONIMA_MARKETPLACE_DIR` |
 | MApp Marketplace | `/opt/agi-mapp-marketplace` | `mappMarketplace.dir` | `AIONIMA_MAPP_MARKETPLACE_DIR` |
-| ID | `/opt/agi-local-id` | `idService.dir` | `AIONIMA_ID_DIR` |
 
-If a repo directory doesn't exist, upgrade.sh auto-clones it (via `sudo git clone`). Clone failures are non-fatal — the system continues in degraded mode.
+Identity is built into AGI (s180) — there is no separate ID repo or path. If a companion repo directory doesn't exist, upgrade.sh auto-clones it (via `sudo git clone`). Clone failures are non-fatal — the system continues in degraded mode.
 
 ## The upgrade.sh Script
 
@@ -55,8 +54,6 @@ The script emits structured JSON to stdout for each phase:
 | `pull-prime` / `clone-prime` | Pull or auto-clone PRIME corpus | No (degraded mode) |
 | `pull-marketplace` / `clone-marketplace` | Pull or auto-clone plugin marketplace | No (plugins still cached) |
 | `pull-mapp-marketplace` / `clone-mapp-marketplace` | Pull or auto-clone MApp marketplace | No (MApps still cached) |
-| `pull-id` / `clone-id` | Pull or auto-clone ID service | No (degraded mode) |
-| `build-id` | `npm install && npm run build` in ID dir (if local ID enabled) | No |
 | `protocol-check` | Verify `protocol.json` exists in deployed repos | No (warn) |
 | `install` | `pnpm install --frozen-lockfile` | Yes |
 | `build` | `pnpm build` | Yes |
@@ -65,17 +62,6 @@ The script emits structured JSON to stdout for each phase:
 | `systemd` | Update systemd unit if changed | Yes |
 | `restart` | `sudo systemctl restart aionima` (if backend changed) | Yes |
 | `complete` | Final status | -- |
-
-#### ID Service Build
-
-When `idService.local.enabled` is `true` in `~/.agi/gateway.json`, upgrade.sh builds the ID service:
-
-1. `npm install` — installs **all** dependencies (not `--omit=dev`) because `tsc` is a devDependency
-2. `npm run build` — compiles TypeScript to `dist/`
-3. `npx drizzle-kit migrate` — runs database migrations (non-fatal)
-4. `sudo systemctl restart agi-local-id` — restarts the service if running
-
-**Important:** The ID service's HTML view templates live in `src/views/` and are resolved at runtime from `process.cwd()`, not from `dist/`. This is because `tsc` only compiles `.ts` files — it does not copy `.html` files. The systemd unit sets `WorkingDirectory=/opt/agi-local-id`, so `process.cwd()` always points to the project root.
 
 #### Marketplace Plugin Symlink
 
@@ -137,7 +123,7 @@ Each repo has a `protocol.json`:
 
 At boot, `packages/gateway-core/src/protocol-check.ts` reads all deployed repos and does semver range checking. Incompatible versions result in degraded mode warnings, not hard failures.
 
-**Missing repos are silently skipped.** The protocol checker only reports a missing `protocol.json` as an error when the repo's directory actually exists on disk. If the directory doesn't exist (repo not deployed), it's skipped — this prevents noisy false errors for optional repos like PRIME and ID.
+**Missing repos are silently skipped.** The protocol checker only reports a missing `protocol.json` as an error when the repo's directory actually exists on disk. If the directory doesn't exist (repo not deployed), it's skipped — this prevents noisy false errors for optional repos like PRIME.
 
 ## Dashboard Upgrade Trigger
 
@@ -149,8 +135,6 @@ const phaseToUiPhase: Record<string, string> = {
   "pull-agi": "pulling",
   "pull-prime": "pulling",
   "pull-marketplace": "pulling",
-  "pull-id": "pulling",
-  "build-id": "building",
   "protocol-check": "pulling",
   "install": "building",
   "build": "building",
@@ -158,7 +142,6 @@ const phaseToUiPhase: Record<string, string> = {
   "build-screensaver": "building",
   "systemd": "restarting",
   "restart": "restarting",
-  "restart-id": "restarting",
   "complete": "complete",
 };
 ```

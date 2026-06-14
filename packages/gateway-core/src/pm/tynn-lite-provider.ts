@@ -145,11 +145,11 @@ const EMPTY_STATE: TynnLiteState = {
 export interface TynnLitePmProviderOpts {
   /** Absolute path to the base directory. When `storageDir` is omitted,
    *  the provider lands at `<projectRoot>/.tynn-lite/` (legacy default).
-   *  Pair with `storageDir: "k/pm"` to land at `<projectRoot>/k/pm/` per
+   *  Pair with `storageDir: ".ai/pm"` to land at `<projectRoot>/.ai/pm/` per
    *  the s130 universal-monorepo model (s155 t670, 2026-05-09). */
   projectRoot: string;
   /** Override the default `.tynn-lite` storage directory name. Pass
-   *  `"k/pm"` to align with the per-project k/ knowledge layer; pass
+   *  `".ai/pm"` to align with the per-project k/ knowledge layer; pass
    *  an absolute path to land outside `projectRoot` entirely. */
   storageDir?: string;
   /** Display name for the project (returned by getProject). Defaults to
@@ -169,7 +169,7 @@ export class TynnLitePmProvider implements PmProvider {
 
   constructor(opts: TynnLitePmProviderOpts) {
     // s155 t670 — pluggable storage dir. Absolute paths land as-is so
-    // the caller can target `<projectPath>/k/pm/` (per-project) or any
+    // the caller can target `<projectPath>/.ai/pm/` (per-project) or any
     // other location. Relative paths join with projectRoot like the
     // legacy `.tynn-lite/` default.
     if (opts.storageDir !== undefined) {
@@ -360,7 +360,7 @@ export class TynnLitePmProvider implements PmProvider {
       status,
       startedAt: status === "doing" && current.startedAt === null ? now : current.startedAt,
       finishedAt: (status === "finished" || status === "archived") && current.finishedAt === null ? now : current.finishedAt,
-      updatedAt: { ...(current.updatedAt ?? {}), status: now },
+      updatedAt: { ...current.updatedAt, status: now },
     };
     this.appendRecord(updated);
     const refolded = [...this.foldRecords().values()];
@@ -395,7 +395,7 @@ export class TynnLitePmProvider implements PmProvider {
     const current = folded.get(taskId);
     if (current === undefined) throw new Error(`tynn-lite: unknown task ${taskId}`);
     const now = new Date().toISOString();
-    const newTimestamps: NonNullable<TynnLiteTaskRecord["updatedAt"]> = { ...(current.updatedAt ?? {}) };
+    const newTimestamps: NonNullable<TynnLiteTaskRecord["updatedAt"]> = { ...current.updatedAt };
     if (fields.title !== undefined) newTimestamps.title = now;
     if (fields.description !== undefined) newTimestamps.description = now;
     if (fields.verificationSteps !== undefined) newTimestamps.verificationSteps = now;
@@ -472,7 +472,7 @@ export class TynnLitePmProvider implements PmProvider {
 }
 
 // ---------------------------------------------------------------------------
-// s155 t670 — Migration helper: copy legacy .tynn-lite/ → k/pm/
+// s155 t670 — Migration helper: copy legacy .tynn-lite/ → .ai/pm/
 // ---------------------------------------------------------------------------
 
 export interface TynnLiteMigrationResult {
@@ -488,7 +488,7 @@ export interface TynnLiteMigrationResult {
 
 /**
  * Idempotently move TynnLite storage from a legacy `.tynn-lite/` directory
- * into the canonical s130-aligned location (typically `<projectPath>/k/pm/`).
+ * into the canonical s130-aligned location (typically `<projectPath>/.ai/pm/`).
  *
  * Files copied: `tasks.jsonl`, `comments.jsonl`, `wishes.jsonl`, `state.json`
  * (only those that exist in the legacy dir). Skips when the canonical dir

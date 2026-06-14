@@ -552,7 +552,7 @@ export function GatewayNetworkSettings({ gateway, config, update, section }: Pro
 //   INITIAL / UNKNOWN — boot not yet complete
 //   LIMBO             — running but local COA<>COI not validated with 0PRIME
 //                       Schema; expected steady state until 0PRIME is live
-//   OFFLINE           — local-id or local-prime unavailable
+//   OFFLINE           — no connection to Hive-ID or PRIME (local ops still work)
 //   ONLINE            — future; requires 0PRIME Hive mind
 // ---------------------------------------------------------------------------
 
@@ -571,7 +571,7 @@ function GatewayStatePill({ state }: { state: string }) {
     OFFLINE: {
       label: "Offline",
       classes: "border-red text-red",
-      title: "local-id or local-prime is unavailable",
+      title: "No connection to Hive-ID or PRIME — local operations still work",
     },
     INITIAL: {
       label: "Initial",

@@ -67,10 +67,17 @@ if [ -n "${AGI_TEST_DEV_REPO_DIR:-}" ]; then
 elif [[ "$REPO_DIR" == /opt/agi* ]]; then
   # s148 — auto-prefer the dev tree for spec discovery so brand-new specs
   # are runnable pre-deploy without extra env-var ceremony.
-  CANDIDATE_DEV="${HOME:-/root}/temp_core/agi"
+  # s177 — check t703 layout (_aionima/repos/agi) before legacy flat layout.
+  CANDIDATE_DEV="${HOME:-/root}/temp_core/_aionima/repos/agi"
+  if [ ! -d "$CANDIDATE_DEV" ] || [ ! -f "$CANDIDATE_DEV/package.json" ]; then
+    CANDIDATE_DEV="${HOME:-/root}/_projects/_aionima/repos/agi"
+  fi
+  if [ ! -d "$CANDIDATE_DEV" ] || [ ! -f "$CANDIDATE_DEV/package.json" ]; then
+    CANDIDATE_DEV="${HOME:-/root}/temp_core/agi"  # legacy pre-t703 fallback
+  fi
   if [ -d "$CANDIDATE_DEV" ] && [ -f "$CANDIDATE_DEV/package.json" ]; then
     REPO_DIR="$(cd "$CANDIDATE_DEV" && pwd)"
-    echo "[agi test] auto-preferring dev tree for spec discovery: $REPO_DIR (override with AGI_TEST_DEV_REPO_DIR or run from a tree that doesn't have $CANDIDATE_DEV)" >&2
+    echo "[agi test] auto-preferring dev tree for spec discovery: $REPO_DIR (override with AGI_TEST_DEV_REPO_DIR)" >&2
   fi
 fi
 VM_NAME="agi-test"
@@ -125,7 +132,7 @@ if [ "$LIST_MODE" -eq 1 ]; then
       ;;
     *)
       echo "# unit specs (vitest, matched by filename)"
-      (cd "$REPO_DIR" && find packages cli config -type f -name "*.test.ts" 2>/dev/null | sort)
+      (cd "$REPO_DIR" && find packages cli config channels ui/dashboard/src -type f -name "*.test.ts" 2>/dev/null | sort)
       ;;
   esac
   exit 0
@@ -173,14 +180,15 @@ preflight() {
     newer="$(printf '%s\n%s\n' "$host_version" "$vm_version" | sort -V | tail -1)"
     if [ "$newer" = "$vm_version" ] && [ "$vm_version" != "$host_version" ]; then
       log "VM at v${vm_version} > host at v${host_version} (dev ahead of /opt/agi/) — skipping services-align (auto)"
-      log "set AGI_TEST_DEV_REPO_DIR to resolve specs from your dev tree (e.g. ~/temp_core/agi)"
+      log "set AGI_TEST_DEV_REPO_DIR to resolve specs from your dev tree (e.g. ~/temp_core/_aionima/repos/agi)"
       return 0
     fi
     log "VM at v${vm_version}, host at v${host_version} — running services-align (set AGI_TEST_SKIP_ALIGN=1 to skip)"
     # Keep stderr visible — silent failures hid a 30+ cycle build-skip bug
     # (cycle 119 root cause). pipefail propagates the actual exit status.
+    # s177 — forward AGI_DEV_SOURCE so test-vm.sh uses the dev tree, not /opt/agi.
     set -o pipefail
-    if ! bash "$VM_TEST_SCRIPT" services-align 2>&1 | tail -8; then
+    if ! AGI_DEV_SOURCE="$REPO_DIR" bash "$VM_TEST_SCRIPT" services-align 2>&1 | tail -8; then
       log "services-align failed; running tests against potentially stale VM"
     fi
     set +o pipefail
@@ -201,12 +209,12 @@ resolve_unit_spec() {
   # so a `/` in the pattern always misses. Try -iwholename first when
   # pattern contains a slash; fall back to -iname for plain names.
   if [[ "$pat" == */* ]]; then
-    found="$(cd "$REPO_DIR" && find packages cli config -type f -iwholename "*${pat// /*}*.test.ts" 2>/dev/null | sort | head -1)"
+    found="$(cd "$REPO_DIR" && find packages cli config channels ui/dashboard/src -type f -iwholename "*${pat// /*}*.test.ts" 2>/dev/null | sort | head -1)"
     if [ -n "$found" ]; then echo "$found"; return 0; fi
   fi
-  found="$(cd "$REPO_DIR" && find packages cli config -type f -iname "*${pat// /*}*.test.ts" 2>/dev/null | sort | head -1)"
+  found="$(cd "$REPO_DIR" && find packages cli config channels ui/dashboard/src -type f -iname "*${pat// /*}*.test.ts" 2>/dev/null | sort | head -1)"
   if [ -n "$found" ]; then echo "$found"; return 0; fi
-  found="$(cd "$REPO_DIR" && find packages cli config -type f -name "*.test.ts" -exec grep -l -iE "$pat" {} \; 2>/dev/null | sort | head -1)"
+  found="$(cd "$REPO_DIR" && find packages cli config channels ui/dashboard/src -type f -name "*.test.ts" -exec grep -l -iE "$pat" {} \; 2>/dev/null | sort | head -1)"
   if [ -n "$found" ]; then echo "$found"; return 0; fi
   return 1
 }
@@ -301,7 +309,11 @@ run_unit() {
   # occasionally leaves worker processes pinned (open DB handles, unresolved
   # async handlers). Post-hang residue can be cleared with:
   #   multipass exec agi-test -- pkill -9 -f vitest
-  multipass exec "$VM_NAME" -- bash -lc "cd /mnt/agi && timeout 300 env AIONIMA_TEST_VM=1 pnpm exec vitest run '$spec' --reporter=basic"
+  # `--reporter=default`: the `basic` reporter was removed in Vitest 4
+  # (we run vitest ^4.1.8). Passing `basic` made vitest fail to boot with
+  # "Failed to load url basic" before any test ran, silently breaking ALL
+  # `agi test` unit runs. `default` is the always-available terse reporter.
+  multipass exec "$VM_NAME" -- bash -lc "cd /mnt/agi && timeout 300 env AIONIMA_TEST_VM=1 pnpm exec vitest run '$spec' --reporter=default"
 }
 
 run_e2e() {
@@ -315,14 +327,27 @@ run_e2e() {
   # serves it with internal TLS + reverse_proxy to 127.0.0.1:3100. No
   # host-side proxy hop. The VM IS its own production instance.
   local base_url="https://test.ai.on"
-  # Verify reachability — if test.ai.on DNS isn't set up, fall back to
-  # the VM IP directly (unencrypted, just for the one run).
-  if ! curl -sk --connect-timeout 3 -o /dev/null -w "%{http_code}" "$base_url/api/system/stats" | grep -q "^2"; then
+  # Verify reachability with a bounded retry. The gateway may still be booting
+  # (auto-restart on version drift), so a single probe can spuriously fail.
+  #
+  # NOTE: do NOT fall back to https://<VM_IP>. Caddy serves the VM with
+  # `tls internal`, whose cert covers only `ai.on` / `test.ai.on` — never the
+  # raw IP. An IP base_url therefore guarantees ERR_SSL_PROTOCOL_ERROR on every
+  # navigation, which previously masked itself as a confusing wholesale e2e
+  # failure. If test.ai.on is genuinely unreachable, fail loudly with the fix.
+  local reachable=0 attempt
+  for attempt in 1 2 3 4 5 6; do
+    if curl -sk --connect-timeout 3 -o /dev/null -w "%{http_code}" "$base_url/api/system/stats" | grep -q "^2"; then
+      reachable=1
+      break
+    fi
+    log "test.ai.on not ready (attempt $attempt/6) — gateway may still be booting; retrying…"
+    sleep 5
+  done
+  if [ "$reachable" -ne 1 ]; then
     local vm_ip
-    vm_ip="$(multipass info "$VM_NAME" --format csv | tail -1 | cut -d',' -f3)"
-    log "test.ai.on unreachable — verify host DNS points at $vm_ip; run 'pnpm test:vm:services-setup' to rewire"
-    log "falling back to https://$vm_ip directly for this run"
-    base_url="https://$vm_ip"
+    vm_ip="$(multipass info "$VM_NAME" --format csv 2>/dev/null | tail -1 | cut -d',' -f3)"
+    die "test.ai.on unreachable after 6 attempts. Caddy's tls-internal cert only covers test.ai.on (NOT the raw IP), so there is no working IP fallback. Verify host DNS points test.ai.on → ${vm_ip:-<vm-ip>}, that the VM gateway is up + out of safemode, then re-run. (pnpm test:vm:services-setup rewires DNS.)" 1
   fi
   log "e2e → $spec (against $base_url)"
   (cd "$REPO_DIR" && BASE_URL="$base_url" npx playwright test "$spec" --reporter=list)

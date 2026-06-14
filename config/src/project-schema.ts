@@ -120,23 +120,22 @@ export const ProjectAiDatasetBindingSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// Iterative-work mode — opt-in per-project. When enabled, the prompt assembler
-// injects agi/prompts/iterative-work.md into Aion's system prompt so the agent
-// participates in the tynn workflow (race-to-DONE, look-for-MORE, slice
-// discipline). The cron field is consumed by the scheduler (t436); leaving it
-// undefined while enabled means manual-fire only (e.g. via /next).
+// Scheduled jobs — per-project recurring job scheduler (s118 redesign).
+// Replaces the single-mode `iterativeWork` field with a multi-type job array.
+// Each job has a type-discriminated schema; all types share a common base.
+// Legacy `iterativeWork` configs are migrated at read-time by
+// migrateProjectConfig() in project-config-manager.ts.
 // ---------------------------------------------------------------------------
 
 /**
- * Cadence keys offered by the per-project iterative-work tab dropdown.
- * Mirrors the gateway-core IterativeWorkCadence type (kept in sync; config
- * package can't import gateway-core to avoid a circular dep). The user picks
- * the cadence; the system auto-staggers the actual cron expression at save
- * time via cadenceToStaggeredCron in iterative-work/cron.ts.
+ * Cadence keys available for all scheduled job types. The user picks the
+ * cadence; the system auto-staggers the actual cron expression at save time
+ * via cadenceToStaggeredCron in iterative-work/cron.ts.
  *
- * Available options narrow by project category at the UI layer:
+ * Options available by project category for pm-loop jobs:
  * - dev (web/app): 30m, 1h
  * - ops (ops/administration): 30m, 1h, 5h, 12h, 1d, 5d, 1w
+ * Other job types accept any cadence regardless of category.
  */
 export const IterativeWorkCadenceSchema = z.enum([
   "30m",
@@ -148,17 +147,70 @@ export const IterativeWorkCadenceSchema = z.enum([
   "1w",
 ]);
 
+const ScheduledJobBaseSchema = z.object({
+  /** UUID — stable key for CRUD operations. */
+  id: z.string(),
+  /** Display name shown in the Scheduled Jobs tab and Settings page. */
+  name: z.string(),
+  /** Whether the job fires on its cron schedule. Defaults to true. */
+  enabled: z.boolean().default(true),
+  /** User-picked cadence key. Stored alongside cron for UI display. */
+  cadence: IterativeWorkCadenceSchema.optional(),
+  /**
+   * Cron expression evaluated by the scheduler. When `cadence` is set,
+   * auto-computed from cadenceToStaggeredCron(cadence, projectPath) at save
+   * time. Absent cadence: source of truth directly (legacy passthrough).
+   */
+  cron: z.string().optional(),
+});
+
+/** Fires a user-authored prompt as a project chat turn. */
+const PromptJobSchema = ScheduledJobBaseSchema.extend({
+  type: z.literal("prompt"),
+  /** The prompt text sent as the user message. */
+  prompt: z.string(),
+});
+
+/** Runs a shell command via `agi bash` (logged, policy-gated). */
+const CommandJobSchema = ScheduledJobBaseSchema.extend({
+  type: z.literal("command"),
+  /** The shell command to execute (passed to `agi bash`). */
+  command: z.string(),
+});
+
+/** Invokes a plugin-registered action by its registry ID. */
+const ActionJobSchema = ScheduledJobBaseSchema.extend({
+  type: z.literal("action"),
+  /** ID of the registered plugin action (from the plugin action registry). */
+  actionId: z.string(),
+  /** Optional key-value params forwarded to the action handler. */
+  params: z.record(z.unknown()).optional(),
+});
+
+/** Original PM-loop behavior: fires the iterative-work discipline prompt. */
+const PmLoopJobSchema = ScheduledJobBaseSchema.extend({
+  type: z.literal("pm-loop"),
+});
+
+export const ScheduledJobSchema = z.discriminatedUnion("type", [
+  PromptJobSchema,
+  CommandJobSchema,
+  ActionJobSchema,
+  PmLoopJobSchema,
+]);
+
+export type ScheduledJob = z.infer<typeof ScheduledJobSchema>;
+
+/**
+ * @deprecated s118 redesign — superseded by `scheduledJobs` array. Kept for
+ * the migration guard in project-config-manager.ts: upgrading nodes may still
+ * have `iterativeWork` in their project.json. The guard reads this, translates
+ * it to a pm-loop entry in `scheduledJobs`, and strips the old key on next write.
+ */
 export const ProjectIterativeWorkSchema = z
   .object({
     enabled: z.boolean().optional(),
-    /** User-picked cadence (s118 redesign 2026-04-27). Stored alongside cron. */
     cadence: IterativeWorkCadenceSchema.optional(),
-    /**
-     * Cron expression. When `cadence` is set, this is auto-computed from
-     * cadenceToStaggeredCron(cadence, projectPath) at save time. When only
-     * `cron` is set (legacy), it remains the source of truth — user-edited
-     * pre-redesign configs continue working.
-     */
     cron: z.string().optional(),
   })
   .strict();
@@ -349,6 +401,42 @@ export const ProjectRepoSchema = z
   );
 
 // ---------------------------------------------------------------------------
+// Channel-room bindings — CHN-D (s165) slice 1, 2026-05-14
+//
+// Owner-bound rooms surface in the project workspace's Channels tab and
+// drive event routing (CHN-C dispatcher finds the bound project via the
+// findProjectByRoom index). Channel-specific encoding lives in
+// `roomId` (free-form string); the plugin parses it on read.
+//
+// Reference: agi/docs/agents/channel-plugin-redesign.md §5.
+// ---------------------------------------------------------------------------
+
+export const ProjectRoomBindingSchema = z
+  .object({
+    /** Channel id ("discord", "telegram", "email", "slack", "whatsapp", "signal"). */
+    channelId: z.string().min(1),
+    /** Channel-scoped room id (e.g. "1234567890:forum:42" for Discord, "C0123" for Slack). */
+    roomId: z.string().min(1),
+    /**
+     * Human-readable label cached at bind time (e.g. "#general", "Bug Reports forum").
+     * Lets the dashboard render the binding without re-fetching from the channel.
+     */
+    label: z.string().optional(),
+    /**
+     * Kind hint cached at bind time. Free-form string because each channel uses
+     * its own room-type vocabulary (Discord: channel/forum/thread/dm; Slack: channel/dm/group-dm/huddle; Telegram: chat/group/channel; Email: thread/label/mailbox).
+     */
+    kind: z.string().optional(),
+    /** Visibility scope cached at bind time. */
+    privacy: z.enum(["public", "private", "secret"]).optional(),
+    /** ISO 8601 timestamp when the binding was created. */
+    boundAt: z.string(),
+    /** Optional free-form binding-time metadata (parent room id, channel-specific extras). */
+    meta: z.record(z.string(), z.unknown()).optional(),
+  })
+  .strict();
+
+// ---------------------------------------------------------------------------
 // Root project config — the full <projectPath>/.agi/project.json shape
 // ---------------------------------------------------------------------------
 
@@ -359,9 +447,12 @@ export const ProjectConfigSchema = z
     /** ISO 8601 creation timestamp. */
     createdAt: z.string().optional(),
     /** Tynn project token (external integration). */
-    tynnToken: z.string().optional(),
+    // .nullish() + transform: legacy files may have `"tynnToken": null`
+    tynnToken: z.string().nullish().transform((v) => v ?? undefined),
     /** Project type ID (mirrors hosting.type when hosting is configured). */
-    type: z.string().optional(),
+    // .nullish() + transform: legacy project.json files written before s150
+    // may have `"type": null`; coerce to undefined so validation passes.
+    type: z.string().nullish().transform((v) => v ?? undefined),
     // s150 (2026-05-07): `category` was removed. `type` is now the single
     // source of truth for project classification. Legacy values tolerated
     // by the root-level .passthrough() and stripped by the s150 migration
@@ -377,7 +468,13 @@ export const ProjectConfigSchema = z
     aiModels: z.array(ProjectAiModelBindingSchema).optional(),
     /** AI dataset dependencies. Datasets are mounted as read-only volumes. */
     aiDatasets: z.array(ProjectAiDatasetBindingSchema).optional(),
-    /** Iterative-work mode — toggles tynn-workflow prompt injection + cron-nudged scheduling. */
+    /** Per-project scheduled jobs (recurring prompts, commands, actions, pm-loop). s118 redesign. */
+    scheduledJobs: z.array(ScheduledJobSchema).optional(),
+    /**
+     * @deprecated s118 redesign — superseded by `scheduledJobs`. Still parsed
+     * so legacy project.json files load without error; migrated to a pm-loop
+     * entry in `scheduledJobs` by migrateProjectConfig() in project-config-manager.ts.
+     */
     iterativeWork: ProjectIterativeWorkSchema.optional(),
     /**
      * @deprecated s131 (2026-05-09) — per-project MCP servers moved to a
@@ -400,6 +497,32 @@ export const ProjectConfigSchema = z
      *  project container, reaching siblings via localhost. At most one
      *  repo may set `isDefault: true` (the one served on `/`). */
     repos: z.array(ProjectRepoSchema).optional(),
+    /** Channel rooms bound to this project — CHN-D (s165) slice 1.
+     *  Each entry binds one room from one channel (Discord, Telegram,
+     *  Slack, Email, WhatsApp, Signal) to this project. The CHN-C
+     *  gateway dispatcher uses these bindings to route inbound channel
+     *  events to the right project's cage. When empty/undefined, the
+     *  project has no channel rooms bound and isn't reachable from
+     *  external channels — agent chat still works via the dashboard.
+     *
+     *  At most one binding per (channelId, roomId) pair (refined below).
+     *  Reference: agi/docs/agents/channel-plugin-redesign.md §5. */
+    rooms: z.array(ProjectRoomBindingSchema).optional(),
+    /** `{slug}.agi` monorepo envelope state — Phase 3 first slice.
+     *  When the project folder is itself a git repo under the hard `.agi`
+     *  naming convention (distinguishing the project envelope from the
+     *  actual repos it contains), `agiRepo.initialized` is true. Each
+     *  entry in `repos/` that is a git repo is registered as a git
+     *  submodule of this envelope. `remoteUrl` is the `{slug}.agi` GitHub
+     *  remote when one has been created (optional — the envelope is
+     *  local-first). */
+    agiRepo: z
+      .object({
+        initialized: z.boolean(),
+        remoteUrl: z.string().nullable().optional(),
+      })
+      .passthrough()
+      .optional(),
   })
   .passthrough() // Plugins can store custom keys at the root level
   .refine(
@@ -424,6 +547,15 @@ export const ProjectConfigSchema = z
       return new Set(paths).size === paths.length;
     },
     { message: "two or more repos share the same externalPath" },
+  )
+  .refine(
+    (cfg) => {
+      if (!cfg.rooms) return true;
+      // No two rooms can share the same (channelId, roomId) pair.
+      const keys = cfg.rooms.map((r) => `${r.channelId}::${r.roomId}`);
+      return new Set(keys).size === keys.length;
+    },
+    { message: "two or more rooms share the same (channelId, roomId) binding — bindings must be unique per project" },
   );
 
 // ---------------------------------------------------------------------------
@@ -441,3 +573,4 @@ export type IterativeWorkCadence = z.infer<typeof IterativeWorkCadenceSchema>;
 export type ProjectMcpServer = z.infer<typeof ProjectMcpServerSchema>;
 export type ProjectMcp = z.infer<typeof ProjectMcpSchema>;
 export type ProjectRepo = z.infer<typeof ProjectRepoSchema>;
+export type ProjectRoomBinding = z.infer<typeof ProjectRoomBindingSchema>;

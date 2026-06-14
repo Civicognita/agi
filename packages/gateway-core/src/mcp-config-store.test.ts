@@ -16,6 +16,8 @@ import {
   setDotMcpServer,
   removeDotMcpServer,
   DotMcpJsonSchema,
+  DEFAULT_MCP_SERVERS,
+  mergeDefaultMcpServers,
   type McpServerEntry,
 } from "./mcp-config-store.js";
 import { existsSync as existsSyncFs } from "node:fs";
@@ -281,5 +283,38 @@ describe("readProjectMcpServers (s131 t680)", () => {
   it("returns empty + source 'none' when neither populated", () => {
     expect(readProjectMcpServers(tmp, undefined)).toEqual({ servers: [], source: "none" });
     expect(readProjectMcpServers(tmp, [])).toEqual({ servers: [], source: "none" });
+  });
+});
+
+describe("gateway default MCP servers (s215 t786)", () => {
+  it("ships Fancy UI as a baked-in default (http, autoConnect)", () => {
+    const fancy = DEFAULT_MCP_SERVERS.find((s) => s.id === "fancy-ui");
+    expect(fancy).toBeDefined();
+    expect(fancy!.transport).toBe("http");
+    expect(fancy!.url).toBe("https://ui.particle.academy/mcp");
+    expect(fancy!.autoConnect).toBe(true);
+  });
+
+  it("includes the defaults when gateway.json has no servers", () => {
+    const merged = mergeDefaultMcpServers([]);
+    expect(merged.map((s) => s.id)).toContain("fancy-ui");
+    expect(merged).toHaveLength(DEFAULT_MCP_SERVERS.length);
+  });
+
+  it("keeps the owner's other servers alongside the defaults", () => {
+    const merged = mergeDefaultMcpServers([{ id: "tynn", transport: "http", url: "https://tynn.ai/mcp" }]);
+    const ids = merged.map((s) => s.id);
+    expect(ids).toContain("fancy-ui");
+    expect(ids).toContain("tynn");
+  });
+
+  it("lets a same-id gateway.json entry OVERRIDE the default (owner can disable it)", () => {
+    const merged = mergeDefaultMcpServers([
+      { id: "fancy-ui", transport: "http", url: "https://ui.particle.academy/mcp", autoConnect: false },
+    ]);
+    const fancyEntries = merged.filter((s) => s.id === "fancy-ui");
+    // Exactly one fancy-ui — the owner's, not the default (no duplicate registration).
+    expect(fancyEntries).toHaveLength(1);
+    expect(fancyEntries[0]!.autoConnect).toBe(false);
   });
 });

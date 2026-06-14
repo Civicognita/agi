@@ -213,11 +213,11 @@ agi iw stop --project /home/wishborn/_projects/work/proj-a
 agi iw stop --all
 ```
 
-Both flip `iterativeWork.enabled = false` on the affected project(s)
-in `project.json` AND force-clear any in-flight tracking in the
-scheduler. After the stop, the next `agi doctor logs` sweep should
-show no fresh fire entries for that project. Re-enable via the
-dashboard's Iterative Work tab when the underlying issue is fixed.
+Both disable the project's enabled scheduled jobs in `project.json`
+AND force-clear any in-flight tracking in the scheduler. After the
+stop, the next `agi doctor logs` sweep should show no fresh fire
+entries for that project. Re-enable via the dashboard's Scheduled Jobs
+tab when the underlying issue is fixed.
 
 The `--all` form is the nuclear option: hits every project in the
 configured `workspace.projects` directories. Use when you can't
@@ -229,7 +229,7 @@ identify the looping project from logs alone.
 
 Agent-curated registry for failures Aion (or Claude Code) hits when
 attempting an expected action. Each project has its own
-`<projectPath>/k/issues/` directory: one Markdown file per issue
+`<projectPath>/.ai/issues/` directory: one Markdown file per issue
 (frontmatter + body), plus `index.json` for fast hash lookup.
 
 ```bash
@@ -266,7 +266,7 @@ agi issue from-bash-log --project /home/wishborn/_projects/_aionima --days 30
 agi issue from-bash-log --project /home/wishborn/_projects/_aionima --dry-run    # preview candidates
 
 # Slice 5: raw-tier auto-capture sink. Tools/agents record failures via
-# recordRawCapture() (JSONL append-only at <project>/k/issues/raw.jsonl);
+# recordRawCapture() (JSONL append-only at <project>/.ai/issues/raw.jsonl);
 # operator triages the list + promotes interesting captures to curated.
 agi issue raw list --project /home/wishborn/_projects/_aionima                   # list captures
 agi issue raw promote r-abc123-001 --project /home/wishborn/_projects/_aionima   # promote one
@@ -397,7 +397,7 @@ agi project-migrate s140 --execute    # NOT YET implemented (will run the migrat
 
 **Available migrations.**
 
-- **s140** — Project folder restructure. Each non-sacred project moves to a flat top-level layout: `k/` (with `plans/`, `knowledge/`, `pm/`, `memory/`, `chat/` subfolders) + `repos/` + `sandbox/` (new) + a single `project.json` config at the project root holding both project- and per-repo configuration. Stacks attach to repos rather than to projects. Sacred projects (Aionima five + PAx four) are skipped.
+- **s140** — Project folder restructure. Each non-sacred project moves to a flat top-level layout: `.ai/` (the knowledge dir, renamed from `k/` 2026-06-09, with `plans/`, `knowledge/`, `pm/`, `memory/`, `chat/` subfolders) + `repos/` + `sandbox/` (new) + a single `project.json` config at the project root holding both project- and per-repo configuration. Stacks attach to repos rather than to projects. Sacred projects (Aionima five + PAx four) are skipped.
 
 The dry-run reports per-project: folder-shape diff, per-repo git state (clean/dirty/unpushed), current stack attachments to remap, and the sacred skip list.
 

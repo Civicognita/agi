@@ -26,7 +26,6 @@ Override: `AIONIMA_RUNTIME_MODE` env wins over auto-detection.
 |----------|--------|---------|
 | Mount host's `~/_projects/_aionima/agi` → `/mnt/agi` | `test-vm.sh` `services-setup` | TESTING — live source mount enables iterating without rebuild |
 | Mount host's `_projects/_aionima/prime` → `/mnt/agi-prime` | `test-vm.sh` | TESTING |
-| Mount host's `_projects/_aionima/id` → `/mnt/agi-local-id` | `test-vm.sh` | TESTING |
 
 ### B. Build + run (MIXED)
 
@@ -34,7 +33,6 @@ Override: `AIONIMA_RUNTIME_MODE` env wins over auto-detection.
 |----------|--------|---------|
 | Run `pnpm build` for db-schema + dashboard + tsdown during services-start | `test-vm.sh` services-start | TESTING — VM needs a fresh build matching the mounted source |
 | Run `pnpm install` on first services-setup | `test-vm.sh` | TESTING |
-| Build ID service (`npm run build` in agi-local-id) | `test-vm.sh` | TESTING |
 | HostingManager initialize (load projects + start containers) | gateway boot | **PRODUCTION-LEAKING** — test VM has no real hosted projects to manage. Already gated via `hosting.enabled=false` in test VM gateway.json (v0.4.245 added `regenerateCaddyfile` enabled-guard). |
 | Caddy systemd service running | `test-vm.sh` services-setup | TESTING — needed to serve test.ai.on dashboard |
 

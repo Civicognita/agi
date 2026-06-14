@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { IterativeWorkScheduler } from "./scheduler.js";
 import type { ProjectConfigManager } from "../project-config-manager.js";
-import type { ProjectConfig } from "@agi/config";
+import type { ProjectConfig, ScheduledJob } from "@agi/config";
+
+const JOB_ID = "job-1";
+
+function makeJob(overrides: { enabled?: boolean; cron?: string } = {}): ScheduledJob {
+  const { enabled = true, cron } = overrides;
+  const base = { id: JOB_ID, type: "pm-loop" as const, name: "PM Loop", enabled };
+  return cron !== undefined ? { ...base, cron } : base;
+}
 
 function makeConfigManager(configsByPath: Record<string, Partial<ProjectConfig> | null>): ProjectConfigManager {
   return {
@@ -18,11 +26,11 @@ function captureFires(scheduler: IterativeWorkScheduler): Array<{ projectPath: s
 }
 
 describe("IterativeWorkScheduler.tick", () => {
-  it("fires for projects with iterativeWork.enabled and a parseable cron", () => {
+  it("fires for projects with enabled jobs and a parseable cron", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
-        "/p/b": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
+        "/p/b": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a", "/p/b"],
     });
@@ -36,10 +44,10 @@ describe("IterativeWorkScheduler.tick", () => {
     ]);
   });
 
-  it("skips projects without iterativeWork or with enabled=false", () => {
+  it("skips projects without scheduledJobs or with enabled=false", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/off": { iterativeWork: { enabled: false, cron: "* * * * *" } },
+        "/p/off": { scheduledJobs: [makeJob({ enabled: false, cron: "* * * * *" })] },
         "/p/missing": {},
         "/p/null": null,
       }),
@@ -55,8 +63,8 @@ describe("IterativeWorkScheduler.tick", () => {
   it("skips projects with enabled=true but no cron (manual-fire only)", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/manual": { iterativeWork: { enabled: true } },
-        "/p/empty": { iterativeWork: { enabled: true, cron: "   " } },
+        "/p/manual": { scheduledJobs: [makeJob()] },
+        "/p/empty": { scheduledJobs: [makeJob({ cron: "   " })] },
       }),
       listProjectPaths: () => ["/p/manual", "/p/empty"],
     });
@@ -70,7 +78,7 @@ describe("IterativeWorkScheduler.tick", () => {
   it("skips projects with unparseable cron + logs a warning", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/bad": { iterativeWork: { enabled: true, cron: "0 9-17 * * 1-5" } },
+        "/p/bad": { scheduledJobs: [makeJob({ cron: "0 9-17 * * 1-5" })] },
       }),
       listProjectPaths: () => ["/p/bad"],
     });
@@ -84,7 +92,7 @@ describe("IterativeWorkScheduler.tick", () => {
   it("does not re-fire a project still marked in-flight (idempotency)", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
@@ -95,40 +103,40 @@ describe("IterativeWorkScheduler.tick", () => {
     scheduler.tick(new Date("2026-04-27T05:32:30.000Z"));
 
     expect(fires).toHaveLength(1);
-    expect(scheduler.getInFlight()).toEqual(["/p/a"]);
+    expect(scheduler.getInFlight()).toEqual([`/p/a::${JOB_ID}`]);
   });
 
   it("re-fires after markComplete + the next cron-due tick", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
     const fires = captureFires(scheduler);
 
     scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
-    expect(scheduler.getInFlight()).toEqual(["/p/a"]);
+    expect(scheduler.getInFlight()).toEqual([`/p/a::${JOB_ID}`]);
 
-    scheduler.markComplete("/p/a");
+    scheduler.markComplete("/p/a", JOB_ID);
     expect(scheduler.getInFlight()).toEqual([]);
 
     scheduler.tick(new Date("2026-04-27T05:31:30.000Z"));
     expect(fires).toHaveLength(2);
-    expect(scheduler.getInFlight()).toEqual(["/p/a"]);
+    expect(scheduler.getInFlight()).toEqual([`/p/a::${JOB_ID}`]);
   });
 
   it("does not double-fire within the same minute even after markComplete", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "0 * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "0 * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
     const fires = captureFires(scheduler);
 
     scheduler.tick(new Date("2026-04-27T05:00:30.000Z"));
-    scheduler.markComplete("/p/a");
+    scheduler.markComplete("/p/a", JOB_ID);
     scheduler.tick(new Date("2026-04-27T05:00:45.000Z"));
     scheduler.tick(new Date("2026-04-27T05:30:00.000Z"));
 
@@ -137,7 +145,7 @@ describe("IterativeWorkScheduler.tick", () => {
 
   it("hot-reloads project config — disabling stops fires on next tick", () => {
     const configs: Record<string, Partial<ProjectConfig> | null> = {
-      "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+      "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
     };
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager(configs),
@@ -146,9 +154,9 @@ describe("IterativeWorkScheduler.tick", () => {
     const fires = captureFires(scheduler);
 
     scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
-    scheduler.markComplete("/p/a");
+    scheduler.markComplete("/p/a", JOB_ID);
 
-    configs["/p/a"] = { iterativeWork: { enabled: false } };
+    configs["/p/a"] = { scheduledJobs: [makeJob({ enabled: false })] };
 
     scheduler.tick(new Date("2026-04-27T05:31:30.000Z"));
 
@@ -159,7 +167,7 @@ describe("IterativeWorkScheduler.tick", () => {
     const list = vi.fn(() => ["/p/a"]);
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: list,
     });
@@ -173,7 +181,7 @@ describe("IterativeWorkScheduler.tick", () => {
   it("falls back to empty enumeration when listProjectPaths is omitted", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
     });
     const fires = captureFires(scheduler);
@@ -192,7 +200,7 @@ describe("IterativeWorkScheduler.getStatus", () => {
     expect(scheduler.getStatus("/p/missing")).toBeNull();
   });
 
-  it("returns enabled=false when iterativeWork is absent", () => {
+  it("returns enabled=false when scheduledJobs is absent", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({ "/p/a": {} }),
     });
@@ -209,7 +217,7 @@ describe("IterativeWorkScheduler.getStatus", () => {
   it("returns enabled=true, cron, and computed nextFireAt off `now` when never fired", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "8,38 * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "8,38 * * * *" })] },
       }),
     });
     const status = scheduler.getStatus("/p/a", new Date("2026-04-27T05:10:00.000Z"));
@@ -226,7 +234,7 @@ describe("IterativeWorkScheduler.getStatus", () => {
   it("computes nextFireAt off lastFiredAt when present", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "*/15 * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "*/15 * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
@@ -242,7 +250,7 @@ describe("IterativeWorkScheduler.getStatus", () => {
   it("returns nextFireAt: null when cron is unparseable but enabled is true", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "0 9-17 * * 1-5" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "0 9-17 * * 1-5" })] },
       }),
     });
     const status = scheduler.getStatus("/p/a");
@@ -254,7 +262,7 @@ describe("IterativeWorkScheduler.getStatus", () => {
   it("returns cron: null when cron is empty/whitespace (not just missing)", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "   " } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "   " })] },
       }),
     });
     const status = scheduler.getStatus("/p/a");
@@ -267,13 +275,13 @@ describe("IterativeWorkScheduler iteration log", () => {
   it("pushes a running entry when tick fires", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
     scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
 
-    const log = scheduler.getLog("/p/a");
+    const log = scheduler.getLog("/p/a", JOB_ID);
     expect(log).toHaveLength(1);
     expect(log[0]).toMatchObject({
       firedAt: "2026-04-27T05:30:30.000Z",
@@ -287,14 +295,14 @@ describe("IterativeWorkScheduler iteration log", () => {
   it("recordCompletion mutates the head entry to done with durationMs", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
     scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
-    scheduler.recordCompletion("/p/a", { status: "done", now: new Date("2026-04-27T05:30:35.500Z") });
+    scheduler.recordCompletion("/p/a", JOB_ID, { status: "done", now: new Date("2026-04-27T05:30:35.500Z") });
 
-    const log = scheduler.getLog("/p/a");
+    const log = scheduler.getLog("/p/a", JOB_ID);
     expect(log[0]).toMatchObject({
       status: "done",
       completedAt: "2026-04-27T05:30:35.500Z",
@@ -306,14 +314,14 @@ describe("IterativeWorkScheduler iteration log", () => {
   it("recordCompletion captures error message when status is error", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
     scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
-    scheduler.recordCompletion("/p/a", { status: "error", error: "LLM timeout", now: new Date("2026-04-27T05:31:00.000Z") });
+    scheduler.recordCompletion("/p/a", JOB_ID, { status: "error", error: "LLM timeout", now: new Date("2026-04-27T05:31:00.000Z") });
 
-    const log = scheduler.getLog("/p/a");
+    const log = scheduler.getLog("/p/a", JOB_ID);
     expect(log[0]).toMatchObject({
       status: "error",
       error: "LLM timeout",
@@ -325,21 +333,21 @@ describe("IterativeWorkScheduler iteration log", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({}),
     });
-    scheduler.recordCompletion("/p/a", { status: "done" });
-    expect(scheduler.getLog("/p/a")).toEqual([]);
+    scheduler.recordCompletion("/p/a", JOB_ID, { status: "done" });
+    expect(scheduler.getLog("/p/a", JOB_ID)).toEqual([]);
   });
 
   it("recordCompletion emits a `complete` event carrying the iteration shape (s124 t468)", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
     const completions: Array<unknown> = [];
     scheduler.on("complete", (c) => { completions.push(c); });
     scheduler.tick(new Date("2026-04-28T05:30:00.000Z"));
-    scheduler.recordCompletion("/p/a", {
+    scheduler.recordCompletion("/p/a", JOB_ID, {
       status: "done",
       now: new Date("2026-04-28T05:30:12.000Z"),
       artifact: { summary: "Test ship", commitHash: "abc1234" },
@@ -359,14 +367,14 @@ describe("IterativeWorkScheduler iteration log", () => {
   it("recordCompletion `complete` event includes error field on error status", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
     const completions: Array<{ status: string; error?: string }> = [];
     scheduler.on("complete", (c) => { completions.push(c as { status: string; error?: string }); });
     scheduler.tick(new Date("2026-04-28T05:30:00.000Z"));
-    scheduler.recordCompletion("/p/a", {
+    scheduler.recordCompletion("/p/a", JOB_ID, {
       status: "error",
       error: "test failure",
       now: new Date("2026-04-28T05:30:30.000Z"),
@@ -382,14 +390,14 @@ describe("IterativeWorkScheduler iteration log", () => {
     });
     const completions: Array<unknown> = [];
     scheduler.on("complete", (c) => { completions.push(c); });
-    scheduler.recordCompletion("/p/a", { status: "done" });
+    scheduler.recordCompletion("/p/a", JOB_ID, { status: "done" });
     expect(completions).toHaveLength(0);
   });
 
   it("ring buffer caps at logBufferSize, dropping oldest entries", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
       logBufferSize: 3,
@@ -397,10 +405,10 @@ describe("IterativeWorkScheduler iteration log", () => {
     for (let i = 0; i < 5; i += 1) {
       const stamp = new Date(`2026-04-27T05:${String(30 + i).padStart(2, "0")}:30.000Z`);
       scheduler.tick(stamp);
-      scheduler.markComplete("/p/a");
-      scheduler.recordCompletion("/p/a", { status: "done", now: stamp });
+      scheduler.markComplete("/p/a", JOB_ID);
+      scheduler.recordCompletion("/p/a", JOB_ID, { status: "done", now: stamp });
     }
-    const log = scheduler.getLog("/p/a");
+    const log = scheduler.getLog("/p/a", JOB_ID);
     expect(log).toHaveLength(3);
     expect(log[0]?.firedAt).toBe("2026-04-27T05:34:30.000Z");
     expect(log[2]?.firedAt).toBe("2026-04-27T05:32:30.000Z");
@@ -409,17 +417,17 @@ describe("IterativeWorkScheduler iteration log", () => {
   it("getLog respects the limit parameter and returns most-recent-first", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
     for (let i = 0; i < 4; i += 1) {
       const stamp = new Date(`2026-04-27T05:${String(30 + i).padStart(2, "0")}:30.000Z`);
       scheduler.tick(stamp);
-      scheduler.markComplete("/p/a");
-      scheduler.recordCompletion("/p/a", { status: "done", now: stamp });
+      scheduler.markComplete("/p/a", JOB_ID);
+      scheduler.recordCompletion("/p/a", JOB_ID, { status: "done", now: stamp });
     }
-    const log = scheduler.getLog("/p/a", 2);
+    const log = scheduler.getLog("/p/a", JOB_ID, 2);
     expect(log).toHaveLength(2);
     expect(log[0]?.firedAt).toBe("2026-04-27T05:33:30.000Z");
     expect(log[1]?.firedAt).toBe("2026-04-27T05:32:30.000Z");
@@ -429,7 +437,7 @@ describe("IterativeWorkScheduler iteration log", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({}),
     });
-    expect(scheduler.getLog("/p/never")).toEqual([]);
+    expect(scheduler.getLog("/p/never", JOB_ID)).toEqual([]);
   });
 });
 
@@ -440,7 +448,7 @@ describe("IterativeWorkScheduler.start/stop", () => {
       const list = vi.fn(() => ["/p/a"]);
       const scheduler = new IterativeWorkScheduler({
         projectConfigManager: makeConfigManager({
-          "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+          "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
         }),
         listProjectPaths: list,
         tickIntervalMs: 1000,
@@ -460,13 +468,13 @@ describe("IterativeWorkScheduler.start/stop", () => {
   it("stop clears the in-flight set so a fresh start begins clean", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
 
     scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
-    expect(scheduler.getInFlight()).toEqual(["/p/a"]);
+    expect(scheduler.getInFlight()).toEqual([`/p/a::${JOB_ID}`]);
 
     scheduler.start();
     scheduler.stop();
@@ -478,50 +486,50 @@ describe("IterativeWorkScheduler operator kill switch (s159 t692)", () => {
   it("forceClearProject removes the project from in-flight + lastFired tracking", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/runaway": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/runaway": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/runaway"],
     });
 
     scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
-    expect(scheduler.getInFlight()).toEqual(["/p/runaway"]);
+    expect(scheduler.getInFlight()).toEqual([`/p/runaway::${JOB_ID}`]);
 
     const result = scheduler.forceClearProject("/p/runaway");
-    expect(result).toEqual({ wasInFlight: true, hadLastFired: true });
+    expect(result).toEqual({ wasInFlight: 1, hadLastFired: 1 });
     expect(scheduler.getInFlight()).toEqual([]);
   });
 
-  it("forceClearProject returns wasInFlight=false when project was never in-flight", () => {
+  it("forceClearProject returns zero counts when project was never in-flight", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({}),
       listProjectPaths: () => [],
     });
     const result = scheduler.forceClearProject("/p/never-fired");
-    expect(result).toEqual({ wasInFlight: false, hadLastFired: false });
+    expect(result).toEqual({ wasInFlight: 0, hadLastFired: 0 });
   });
 
   it("forceClearProject leaves OTHER projects' state intact", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
-        "/p/b": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
+        "/p/b": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a", "/p/b"],
     });
 
     scheduler.tick(new Date("2026-04-27T05:30:30.000Z"));
-    expect(scheduler.getInFlight().sort()).toEqual(["/p/a", "/p/b"]);
+    expect(scheduler.getInFlight().sort()).toEqual([`/p/a::${JOB_ID}`, `/p/b::${JOB_ID}`]);
 
     scheduler.forceClearProject("/p/a");
-    expect(scheduler.getInFlight()).toEqual(["/p/b"]);
+    expect(scheduler.getInFlight()).toEqual([`/p/b::${JOB_ID}`]);
   });
 
   it("forceClearAll wipes every project from in-flight + lastFired", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
-        "/p/b": { iterativeWork: { enabled: true, cron: "* * * * *" } },
-        "/p/c": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
+        "/p/b": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
+        "/p/c": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a", "/p/b", "/p/c"],
     });
@@ -546,7 +554,7 @@ describe("IterativeWorkScheduler operator kill switch (s159 t692)", () => {
   it("after forceClearProject, the next tick can re-fire the same project", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
@@ -567,30 +575,30 @@ describe("IterativeWorkScheduler fire-rate observability (s159 t693)", () => {
       projectConfigManager: makeConfigManager({}),
       listProjectPaths: () => [],
     });
-    expect(scheduler.getRecentFireCount("/p/never")).toBe(0);
+    expect(scheduler.getRecentFireCount("/p/never", JOB_ID)).toBe(0);
   });
 
   it("getRecentFireCount returns 1 after a normal fire", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
     scheduler.tick(new Date("2026-04-27T05:30:00.000Z"));
-    expect(scheduler.getRecentFireCount("/p/a", new Date("2026-04-27T05:30:30.000Z"))).toBe(1);
+    expect(scheduler.getRecentFireCount("/p/a", JOB_ID, new Date("2026-04-27T05:30:30.000Z"))).toBe(1);
   });
 
   it("getRecentFireCount drops timestamps older than the 60s window", () => {
     const scheduler = new IterativeWorkScheduler({
       projectConfigManager: makeConfigManager({
-        "/p/a": { iterativeWork: { enabled: true, cron: "* * * * *" } },
+        "/p/a": { scheduledJobs: [makeJob({ cron: "* * * * *" })] },
       }),
       listProjectPaths: () => ["/p/a"],
     });
     scheduler.tick(new Date("2026-04-27T05:00:00.000Z"));
     // 90s later, the recorded fire timestamp is outside the 60s window.
-    expect(scheduler.getRecentFireCount("/p/a", new Date("2026-04-27T05:01:30.000Z"))).toBe(0);
+    expect(scheduler.getRecentFireCount("/p/a", JOB_ID, new Date("2026-04-27T05:01:30.000Z"))).toBe(0);
   });
 
   // NOTE: testing the "5 fires in 60s → WARN" runaway path against

@@ -79,6 +79,10 @@ export interface ScanConfig {
   excludePaths?: string[];
   severityThreshold?: FindingSeverity;
   maxFindings?: number;
+  /** COA entity ID of the caller — stored in config JSONB for audit traceability. */
+  entityId?: string;
+  /** COA entity alias of the caller (e.g. "#E0"). */
+  entityAlias?: string;
 }
 
 // ---------------------------------------------------------------------------

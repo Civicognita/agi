@@ -213,15 +213,8 @@ export class ToolRegistry {
       );
     }
 
-    // Check per-tool state requirements
-    if (
-      registered.manifest.requiresState.length > 0 &&
-      !registered.manifest.requiresState.includes(ctx.state)
-    ) {
-      throw new Error(
-        `Tool "${toolName}" requires state: ${registered.manifest.requiresState.join(", ")}`,
-      );
-    }
+    // requiresState is audit metadata for COA<>COI logging and UI dimming only —
+    // it is NOT an execution gate. State never blocks tool use (see system-prompt.ts).
 
     // Step 3: Execute handler
     let rawResult: string;

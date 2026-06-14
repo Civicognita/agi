@@ -32,6 +32,23 @@ export interface SystemConfigChangeEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Pre-parse migration — strip keys removed in past phases so Zod .strict()
+// doesn't reject configs written by older versions of the gateway.
+// ---------------------------------------------------------------------------
+
+function migrateRaw(raw: Record<string, unknown>): Record<string, unknown> {
+  // Phase 4 (v0.4.747): agi-local-id container retired — idService top-level
+  // and dev.idRepo / dev.idDir are no longer valid schema keys.
+  if ("idService" in raw) delete raw["idService"];
+  if (raw["dev"] != null && typeof raw["dev"] === "object") {
+    const dev = raw["dev"] as Record<string, unknown>;
+    delete dev["idRepo"];
+    delete dev["idDir"];
+  }
+  return raw;
+}
+
+// ---------------------------------------------------------------------------
 // SystemConfigService
 // ---------------------------------------------------------------------------
 
@@ -56,7 +73,7 @@ export class SystemConfigService extends EventEmitter {
     }
 
     try {
-      const raw = JSON.parse(readFileSync(this.configPath, "utf-8"));
+      const raw = migrateRaw(JSON.parse(readFileSync(this.configPath, "utf-8")) as Record<string, unknown>);
       return AionimaConfigSchema.parse(raw);
     } catch (err) {
       this.log.warn(`failed to read config at ${this.configPath}: ${err instanceof Error ? err.message : String(err)}`);
@@ -127,7 +144,8 @@ export class SystemConfigService extends EventEmitter {
   private readRaw(): Record<string, unknown> {
     if (!existsSync(this.configPath)) return {};
     try {
-      return JSON.parse(readFileSync(this.configPath, "utf-8")) as Record<string, unknown>;
+      const raw = JSON.parse(readFileSync(this.configPath, "utf-8")) as Record<string, unknown>;
+      return migrateRaw(raw);
     } catch {
       return {};
     }

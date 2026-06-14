@@ -6,7 +6,6 @@ set -uo pipefail
 
 DEPLOY_DIR="${AIONIMA_DEPLOY_DIR:-/opt/agi}"
 PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/agi-prime}"
-ID_DIR="${AIONIMA_ID_DIR:-/opt/agi-local-id}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
 
 # Dev Mode resolution. When `dev.enabled` is true in ~/.agi/gateway.json,
@@ -22,15 +21,13 @@ _DEV_CFG="$(node -e "
       enabled: dev.enabled === true,
       agi: dev.agiRepo ?? '',
       prime: dev.primeRepo ?? '',
-      id: dev.idRepo ?? '',
     }));
-  } catch { console.log('{\"enabled\":false,\"agi\":\"\",\"prime\":\"\",\"id\":\"\"}'); }
-" 2>/dev/null || echo '{"enabled":false,"agi":"","prime":"","id":""}')"
+  } catch { console.log('{\"enabled\":false,\"agi\":\"\",\"prime\":\"\"}'); }
+" 2>/dev/null || echo '{"enabled":false,"agi":"","prime":""}')"
 
 _dev_enabled="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).enabled))")"
 _dev_agi="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).agi))")"
 _dev_prime="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).prime))")"
-_dev_id="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).id))")"
 
 # AGI self-repo: Dev Mode needs this too. Without it, /opt/agi's origin
 # stays pinned to Civicognita, so owner commits pushed to wishborn/agi
@@ -46,12 +43,6 @@ if [ "$_dev_enabled" = "true" ] && [ -n "$_dev_prime" ]; then
 else
   PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
 fi
-if [ "$_dev_enabled" = "true" ] && [ -n "$_dev_id" ]; then
-  ID_REPO="${AIONIMA_ID_REPO:-$_dev_id}"
-else
-  ID_REPO="${AIONIMA_ID_REPO:-https://github.com/Civicognita/agi-local-id.git}"
-fi
-
 # Marketplace repos are NOT pulled locally by this script — plugins are
 # fetched from GitHub on demand by the gateway's plugin marketplace
 # manager, which has its own Dev Mode fork handling.
@@ -89,7 +80,7 @@ if [ -d "/opt/aionima" ] && [ ! -d "/opt/agi" ]; then
   emit "migrate" "start" "Platform rename: aionima → agi"
 
   # Move production directories
-  for pair in "aionima:agi" "aionima-prime:agi-prime" "aionima-local-id:agi-local-id" "aionima-marketplace:agi-marketplace" "aionima-mapp-marketplace:agi-mapp-marketplace"; do
+  for pair in "aionima:agi" "aionima-prime:agi-prime" "aionima-marketplace:agi-marketplace" "aionima-mapp-marketplace:agi-mapp-marketplace"; do
     old="/opt/${pair%%:*}"
     new="/opt/${pair##*:}"
     if [ -d "$old" ] && [ ! -d "$new" ] && [ ! -L "$old" ]; then
@@ -209,7 +200,6 @@ ensure_https_remote() {
 
 ensure_https_remote "$DEPLOY_DIR"
 ensure_https_remote "$PRIME_DIR"
-ensure_https_remote "$ID_DIR"
 
 # Repoint `origin` to the right upstream when Dev Mode toggles. Idempotent:
 # if the existing origin matches, this is a no-op. If it doesn't (Dev Mode
@@ -249,7 +239,6 @@ ensure_origin_remote() {
 }
 ensure_origin_remote "$DEPLOY_DIR" "$AGI_REPO"   "origin-agi"
 ensure_origin_remote "$PRIME_DIR"  "$PRIME_REPO" "origin-prime"
-ensure_origin_remote "$ID_DIR"     "$ID_REPO"    "origin-id"
 
 # ---------------------------------------------------------------------------
 # Snapshot versions BEFORE pull (must happen before git checkout changes package.json)
@@ -303,108 +292,15 @@ fi
 # Marketplace plugins are managed by the gateway — fetched from GitHub on demand.
 # No local plugin marketplace repo needed.
 
-# ---------------------------------------------------------------------------
-# 3c. Pull ID service repo (auto-clone if missing)
-# ---------------------------------------------------------------------------
-id_version_before="$(cd "$ID_DIR" 2>/dev/null && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
-if [ -d "$ID_DIR/.git" ]; then
-  emit "pull-id" "start"
-  # The build runs scripts/sync-schema.sh as a prebuild hook which copies
-  # @agi/db-schema files into src/db/schema/ — that dirties the working
-  # tree. Subsequent git checkout would fail with "local changes would be
-  # overwritten". Discard the sync-schema modifications first; the prebuild
-  # hook will regenerate them. Mirrors the /opt/agi dirty-tree handler at
-  # the top of this script.
-  if [ -n "$(cd "$ID_DIR" && git diff --name-only 2>/dev/null)" ]; then
-    ID_DIRTY="$(cd "$ID_DIR" && git diff --name-only | tr '\n' ', ')"
-    emit "pull-id" "error" "ID tree dirty (auto-regenerated schema files): ${ID_DIRTY}— stashing"
-    (cd "$ID_DIR" && git stash --quiet) || true
-  fi
-  if (cd "$ID_DIR" && git fetch origin 2>&1 && git checkout -B "$BRANCH" "origin/$BRANCH" 2>&1); then
-    emit "pull-id" "done" "ID service repo updated ($BRANCH)"
-  else
-    emit "pull-id" "error" "ID pull failed"
-    # Non-fatal — continue in degraded mode
-  fi
-else
-  emit "clone-id" "start" "ID service not found at $ID_DIR — cloning"
-  if sudo git clone --branch "$BRANCH" "$ID_REPO" "$ID_DIR" 2>&1 && sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$ID_DIR"; then
-    emit "clone-id" "done" "ID service repo cloned to $ID_DIR ($BRANCH)"
-  else
-    emit "clone-id" "error" "ID clone failed from $ID_REPO"
-    # Non-fatal — continue in degraded mode
-  fi
-fi
-
 # MApps are fetched from GitHub on demand via the dashboard.
-
-# ---------------------------------------------------------------------------
-# 3d. Build local ID service (if enabled in config)
-# ---------------------------------------------------------------------------
-# Check if local ID service is enabled by reading the AGI config.
-# The config lives at ~/.agi/gateway.json and we check idService.local.enabled.
-ID_LOCAL_ENABLED=$(node -e "
-  try {
-    const c = JSON.parse(require('fs').readFileSync(
-      require('path').join(require('os').homedir(), '.agi/gateway.json'), 'utf-8'));
-    console.log(c.idService?.local?.enabled ? '1' : '0');
-  } catch { console.log('0'); }
-" 2>/dev/null || echo "0")
-
-if [ "$ID_LOCAL_ENABLED" = "1" ] && [ -d "$ID_DIR" ]; then
-  emit "build-id" "start"
-
-  # One-time retirement of the legacy host-process systemd unit. Local-ID now
-  # runs as a rootless Podman container on the `aionima` network; the old
-  # agi-id.service is preserved with a `.retired-to-container` suffix as a
-  # rollback breadcrumb but is no longer active.
-  if [ -f /etc/systemd/system/agi-id.service ]; then
-    emit "migrate" "start" "Retiring legacy agi-id.service (now containerized)"
-    sudo systemctl stop agi-id 2>/dev/null || true
-    sudo systemctl disable agi-id 2>/dev/null || true
-    sudo mv /etc/systemd/system/agi-id.service /etc/systemd/system/agi-id.service.retired-to-container
-    sudo systemctl daemon-reload
-    # Also kill any orphan node process still bound to 3200 (e.g. from a
-    # pre-retirement run that was adopted by PID 1).
-    orphan_pid="$(ss -tlnp 2>/dev/null | awk '/:3200/ {print}' | grep -oP 'pid=\K[0-9]+' | head -1)"
-    if [ -n "$orphan_pid" ]; then
-      kill "$orphan_pid" 2>/dev/null || true
-    fi
-  fi
-
-  # Build the Local-ID container image from /opt/agi-local-id. The Dockerfile
-  # there bundles the committed schema copy, runs npm ci, tsc, and drizzle-kit
-  # generate. No host-side install/build pass is needed any more.
-  id_image_tag="localhost/agi-local-id:latest"
-  id_version_after="$(cd "$ID_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
-  if (cd "$ID_DIR" && podman build -t "$id_image_tag" -t "localhost/agi-local-id:$id_version_after" . 2>&1); then
-    emit "build-id" "done" "Local ID image built: $id_image_tag ($id_version_after)"
-
-    # Restart the container only if the version changed.
-    if [ "$id_version_before" != "$id_version_after" ]; then
-      emit "restart-id" "start" "ID version changed: $id_version_before → $id_version_after"
-      # systemd user unit (generated via `podman generate systemd --new`)
-      # manages lifecycle. If present, use it; fall back to direct podman
-      # restart for hosts that haven't run install.sh's systemd-unit step.
-      if systemctl --user list-unit-files agi-local-id.service 2>/dev/null | grep -q agi-local-id; then
-        systemctl --user restart agi-local-id 2>&1 | head -3 || true
-      else
-        podman restart agi-local-id 2>/dev/null || \
-          emit "restart-id" "warn" "agi-local-id container not running yet — run install.sh to wire systemd user unit"
-      fi
-      emit "restart-id" "done" "Local ID container restarted"
-    fi
-  else
-    emit "build-id" "error" "Local ID image build failed"
-  fi
-fi
+# (Local-ID absorbed into AGI core via s180 — no separate ID clone/build step.)
 
 # ---------------------------------------------------------------------------
 # 4. Protocol compatibility check
 # ---------------------------------------------------------------------------
 emit "protocol-check" "start"
 COMPAT_OK=true
-for repo_label_dir in "agi:$DEPLOY_DIR" "prime:$PRIME_DIR" "id:$ID_DIR"; do
+for repo_label_dir in "agi:$DEPLOY_DIR" "prime:$PRIME_DIR"; do
   label="${repo_label_dir%%:*}"
   dir="${repo_label_dir#*:}"
   if [ ! -f "$dir/protocol.json" ]; then
@@ -487,6 +383,38 @@ else
   emit "build" "skip" "Build up to date (source unchanged)"
 fi
 
+# 7b. Rebuild channel plugins whose source changed since last dist build.
+# Each channel package with a "build" script in package.json is rebuilt
+# when its src/ hash has changed. Dist files are gitignored and must be
+# rebuilt after any source-level additions or dynamic→static import changes.
+# ---------------------------------------------------------------------------
+CHANNEL_DIR="$DEPLOY_DIR/channels"
+if [ -d "$CHANNEL_DIR" ]; then
+  for ch_dir in "$CHANNEL_DIR"/*/; do
+    ch_name="$(basename "$ch_dir")"
+    ch_pkg="$ch_dir/package.json"
+    # Only rebuild if package.json has a "build" script
+    if [ -f "$ch_pkg" ] && grep -q '"build"' "$ch_pkg"; then
+      ch_hash_file="$ch_dir/.src-hash"
+      ch_src_hash="$(find "$ch_dir/src" -type f -name '*.ts' ! -name '*.test.ts' \
+        -exec md5sum {} + 2>/dev/null | sort | md5sum | cut -d' ' -f1)"
+      ch_prev_hash=""
+      [ -f "$ch_hash_file" ] && ch_prev_hash="$(cat "$ch_hash_file")"
+      if [ "$ch_src_hash" != "$ch_prev_hash" ] || [ ! -f "$ch_dir/dist/index.js" ]; then
+        emit "build-channel-${ch_name}" "start" "Building channel plugin: $ch_name"
+        if (cd "$ch_dir" && PATH="$DEPLOY_DIR/node_modules/.bin:$PATH" NO_COLOR=1 pnpm build 2>&1 | sed 's/\x1b\[[0-9;]*m//g'); then
+          echo "$ch_src_hash" > "$ch_hash_file"
+          emit "build-channel-${ch_name}" "done" "Channel $ch_name built"
+        else
+          emit "build-channel-${ch_name}" "error" "Channel $ch_name build failed — skipping"
+        fi
+      else
+        emit "build-channel-${ch_name}" "skip" "Channel $ch_name dist up to date"
+      fi
+    fi
+  done
+fi
+
 # Apply DB schema changes via the targeted psql migration script.
 # drizzle-kit push doesn't work (CJS/NodeNext mismatch in schema files);
 # migrate-db.sh runs idempotent ALTER TABLE … IF NOT EXISTS statements
@@ -536,6 +464,67 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 7d. PAx upstream sync — merge upstream changes into owner forks
+#
+# Each Particle-Academy package fork lives at $HOME/_projects/_aionima/repos/<slug>/.
+# This step fetches upstream/main for every cloned PAx repo, attempts a
+# fast-forward merge, and pushes to origin. Conflicts are noted as optional
+# UpgradeNextSteps (never blocks restart). Uncloned repos are silently skipped.
+# ---------------------------------------------------------------------------
+PAX_BASE="$HOME/_projects/_aionima/repos"
+PAX_SLUGS=(
+  react-fancy fancy-code fancy-sheets fancy-echarts fancy-3d fancy-screens
+  fancy-whiteboard agent-integrations fancy-artboard fancy-slides fancy-flow
+)
+PAX_ANY_SYNCED=0
+emit "pax-sync" "start" "Syncing PAx forks from Particle-Academy upstream"
+for pax_slug in "${PAX_SLUGS[@]}"; do
+  pax_path="$PAX_BASE/$pax_slug"
+  if [ ! -d "$pax_path/.git" ]; then
+    emit "pax-sync" "skip" "$pax_slug not cloned — skipping"
+    continue
+  fi
+  (
+    cd "$pax_path" || exit 0
+    # Ensure upstream remote points to Particle-Academy
+    if ! git remote get-url upstream &>/dev/null; then
+      git remote add upstream "https://github.com/Particle-Academy/$pax_slug.git" 2>/dev/null || true
+    fi
+    git fetch upstream main --quiet 2>&1 || { emit "pax-sync" "warn" "$pax_slug: fetch failed"; exit 0; }
+    behind=$(git rev-list HEAD..upstream/main 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$behind" = "0" ]; then
+      emit "pax-sync" "skip" "$pax_slug already up to date"
+      exit 0
+    fi
+    current_branch=$(git branch --show-current 2>/dev/null || echo "dev")
+    merge_output=$(git merge upstream/main --no-edit 2>&1)
+    merge_exit=$?
+    if [ "$merge_exit" -eq 0 ]; then
+      git push origin "$current_branch" --quiet 2>/dev/null || true
+      emit "pax-sync" "done" "$pax_slug: merged $behind commits from upstream, pushed to origin/$current_branch"
+      PAX_ANY_SYNCED=$((PAX_ANY_SYNCED + 1))
+    else
+      git merge --abort 2>/dev/null || true
+      # Stack an optional UpgradeNextStep so the owner knows about the conflict
+      node -e "
+        const { appendPendingStep } = require('$DEPLOY_DIR/packages/gateway-core/src/upgrade-next-steps.js');
+        const version = require('$DEPLOY_DIR/package.json').version;
+        appendPendingStep({
+          id: 'pax-conflict-$pax_slug-' + version,
+          title: 'Merge conflict in $pax_slug',
+          description: 'upstream/main had conflicts with your local changes in $pax_path. Merge manually: cd $pax_path && git merge upstream/main',
+          required: false,
+          fromVersion: version,
+          action: { label: 'Open terminal', kind: 'navigate', target: '/projects/_aionima' }
+        });
+      " 2>/dev/null || true
+      emit "pax-sync" "warn" "$pax_slug: merge conflict — manual merge required (see post-upgrade steps)"
+    fi
+  )
+done
+emit "pax-sync" "done" "PAx sync complete"
+
+# ---------------------------------------------------------------------------
 # 7e. Migrate project configs to current schema
 # ---------------------------------------------------------------------------
 emit "migrate" "start"
@@ -583,7 +572,7 @@ fi
 sudo systemctl enable agi &>/dev/null
 
 # Ensure Caddy CA cert is trusted by Node.js for internal HTTPS calls
-for unit in /etc/systemd/system/agi.service /etc/systemd/system/agi-id.service; do
+for unit in /etc/systemd/system/agi.service; do
   if [ -f "$unit" ] && ! grep -q NODE_EXTRA_CA_CERTS "$unit"; then
     sudo sed -i '/\[Service\]/a Environment=NODE_EXTRA_CA_CERTS=/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt' "$unit"
     emit "systemd" "start" "Added Caddy CA trust to $(basename "$unit")"
@@ -608,6 +597,9 @@ git rev-parse HEAD > "$DEPLOY_DIR/.deployed-commit"
 # 12. Restart if version changed
 # ---------------------------------------------------------------------------
 version_after="$(cd "$DEPLOY_DIR" && node -p "require('./package.json').version" 2>/dev/null || echo "0.0.0")"
+
+# Write deployed version so the gateway can detect a new boot and emit system:upgraded.
+echo "$version_after" > "$HOME/.agi/deployed-version.txt"
 
 if [ "$version_before" != "$version_after" ]; then
   emit "restart" "start" "Version changed: $version_before → $version_after"

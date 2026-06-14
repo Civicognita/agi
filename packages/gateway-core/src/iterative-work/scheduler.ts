@@ -26,7 +26,7 @@ import type { ProjectConfigManager } from "../project-config-manager.js";
 import { createComponentLogger } from "../logger.js";
 import type { Logger, ComponentLogger } from "../logger.js";
 import { nextFireAfter } from "./cron.js";
-import type { IterativeWorkArtifact, IterativeWorkCompletion, IterativeWorkFire, IterativeWorkLogEntry, IterativeWorkProjectStatus, IterativeWorkSchedulerEvents } from "./types.js";
+import type { IterativeWorkArtifact, IterativeWorkCompletion, IterativeWorkLogEntry, IterativeWorkProjectStatus, ScheduledJobFire, ScheduledJobProjectStatus, ScheduledJobStatus, IterativeWorkSchedulerEvents } from "./types.js";
 
 export interface IterativeWorkSchedulerDeps {
   projectConfigManager: ProjectConfigManager;
@@ -108,13 +108,14 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
   }
 
   /**
-   * Mark a project's iteration as complete so the next due tick can fire.
+   * Mark a job's iteration as complete so the next due tick can fire.
    * MUST be called by the fire-event consumer when its handler finishes —
-   * otherwise the project stays in-flight forever.
+   * otherwise the job stays in-flight forever.
    */
-  markComplete(projectPath: string): void {
-    this.inFlight.delete(projectPath);
-    this.inFlightStartedAt.delete(projectPath);
+  markComplete(projectPath: string, jobId: string): void {
+    const key = `${projectPath}::${jobId}`;
+    this.inFlight.delete(key);
+    this.inFlightStartedAt.delete(key);
   }
 
   /**
@@ -136,14 +137,16 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
    */
   recordCompletion(
     projectPath: string,
+    jobId: string,
     outcome: { status: "done" | "error"; error?: string; now?: Date; artifact?: IterativeWorkArtifact },
   ): void {
-    const buffer = this.iterationLog.get(projectPath);
+    const key = `${projectPath}::${jobId}`;
+    const buffer = this.iterationLog.get(key);
     if (buffer === undefined || buffer.length === 0) return;
     const head = buffer[0];
     if (head === undefined || head.status !== "running") return;
     const now = outcome.now ?? new Date();
-    const startedAt = this.inFlightStartedAt.get(projectPath);
+    const startedAt = this.inFlightStartedAt.get(key);
     const completedAt = now.toISOString();
     const durationMs = startedAt !== undefined ? now.getTime() - startedAt.getTime() : null;
     head.completedAt = completedAt;
@@ -169,81 +172,96 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
   }
 
   /**
-   * Read-only snapshot of the per-project iteration log, most-recent-first.
+   * Read-only snapshot of the per-job iteration log, most-recent-first.
    * `limit` defaults to the full buffer; values larger than the buffer are
-   * silently capped. Empty array when the project has never fired.
+   * silently capped. Empty array when the job has never fired.
    */
-  getLog(projectPath: string, limit?: number): IterativeWorkLogEntry[] {
-    const buffer = this.iterationLog.get(projectPath) ?? [];
+  getLog(projectPath: string, jobId: string, limit?: number): IterativeWorkLogEntry[] {
+    const buffer = this.iterationLog.get(`${projectPath}::${jobId}`) ?? [];
     if (limit === undefined) return [...buffer];
     return buffer.slice(0, Math.max(0, limit));
   }
 
   /**
-   * Run one tick synchronously. Public so tests + the future "fire now"
-   * UX surface can advance the scheduler without waiting for the timer.
+   * @deprecated Use getLog(projectPath, jobId, limit). Returns the log for
+   * the first pm-loop job for this project (legacy API shim).
    */
-  tick(now: Date = new Date()): void {
+  getLogLegacy(projectPath: string, limit?: number): IterativeWorkLogEntry[] {
+    const config = this.deps.projectConfigManager.read(projectPath);
+    const pmLoop = config?.scheduledJobs?.find(j => j.type === "pm-loop");
+    if (!pmLoop) return [];
+    return this.getLog(projectPath, pmLoop.id, limit);
+  }
+
+  /**
+   * Run one tick synchronously. Public so tests + the "run now" UX surface
+   * can advance the scheduler without waiting for the timer.
+   * When `onlyJobId` is provided, only that specific job is evaluated (used
+   * by the "run now" endpoint to trigger a single job immediately).
+   */
+  tick(now: Date = new Date(), onlyJobId?: string): void {
     const list = this.deps.listProjectPaths?.() ?? [];
     for (const projectPath of list) {
-      if (this.inFlight.has(projectPath)) continue;
-
       const config = this.deps.projectConfigManager.read(projectPath);
-      const iw = config?.iterativeWork;
-      if (iw?.enabled !== true) continue;
-      if (iw.cron === undefined || iw.cron.trim().length === 0) continue;
+      const jobs = config?.scheduledJobs ?? [];
 
-      const lastFire = this.lastFiredAt.get(projectPath);
-      const since = lastFire ?? new Date(now.getTime() - 60_000);
-      const nextFire = nextFireAfter(iw.cron, since);
-      if (nextFire === null) {
-        this.log.warn(`project "${projectPath}" has unparseable cron "${iw.cron}" — skipping`);
-        continue;
+      for (const job of jobs) {
+        if (onlyJobId !== undefined && job.id !== onlyJobId) continue;
+        if (!job.enabled) continue;
+        if (!job.cron || job.cron.trim().length === 0) continue;
+
+        const key = `${projectPath}::${job.id}`;
+        if (this.inFlight.has(key)) continue;
+
+        const lastFire = this.lastFiredAt.get(key);
+        // When firing immediately (onlyJobId set), bypass the cron check.
+        if (onlyJobId === undefined) {
+          const since = lastFire ?? new Date(now.getTime() - 60_000);
+          const nextFire = nextFireAfter(job.cron, since);
+          if (nextFire === null) {
+            this.log.warn(`job "${job.id}" on project "${projectPath}" has unparseable cron "${job.cron}" — skipping`);
+            continue;
+          }
+          if (nextFire > now) continue;
+        }
+
+        const fire: ScheduledJobFire = {
+          projectPath,
+          job,
+          firedAt: now,
+          cron: job.cron,
+        };
+        this.inFlight.add(key);
+        this.inFlightStartedAt.set(key, now);
+        this.lastFiredAt.set(key, now);
+
+        // s159 t693 — fire-rate tracking per job key.
+        const recent = this.recentFiresByProject.get(key) ?? [];
+        const cutoffMs = now.getTime() - FIRE_RATE_WINDOW_MS;
+        const pruned = recent.filter((t) => t >= cutoffMs);
+        pruned.push(now.getTime());
+        this.recentFiresByProject.set(key, pruned);
+        if (pruned.length >= FIRE_RATE_WARN_THRESHOLD) {
+          this.log.warn(
+            `fire-rate: job "${job.id}" (${job.type}) on "${projectPath}" fired ${String(pruned.length)} times in the last ${String(FIRE_RATE_WINDOW_MS / 1000)}s — possible runaway loop.`,
+          );
+        }
+
+        // Push a "running" entry to the per-job ring buffer.
+        const buffer = this.iterationLog.get(key) ?? [];
+        const entry: IterativeWorkLogEntry = {
+          firedAt: now.toISOString(),
+          completedAt: null,
+          durationMs: null,
+          status: "running",
+          cron: job.cron,
+        };
+        buffer.unshift(entry);
+        while (buffer.length > this.logBufferSize) buffer.pop();
+        this.iterationLog.set(key, buffer);
+        this.log.info(`fire: ${projectPath} job=${job.id} type=${job.type} cron=${job.cron}`);
+        this.emit("fire", fire);
       }
-      if (nextFire > now) continue;
-
-      const fire: IterativeWorkFire = {
-        projectPath,
-        firedAt: now,
-        cron: iw.cron,
-      };
-      this.inFlight.add(projectPath);
-      this.inFlightStartedAt.set(projectPath, now);
-      this.lastFiredAt.set(projectPath, now);
-
-      // s159 t693 — fire-rate tracking. Push the firedAt timestamp into
-      // a 60s sliding window per project; if the window contains
-      // FIRE_RATE_WARN_THRESHOLD or more entries, emit a WARN log so
-      // the next runaway loop is visible BEFORE it becomes a crisis.
-      // Pure observability — does not gate the fire itself (that's the
-      // job of t695 idempotency + t696 cooldown).
-      const recent = this.recentFiresByProject.get(projectPath) ?? [];
-      const cutoffMs = now.getTime() - FIRE_RATE_WINDOW_MS;
-      const pruned = recent.filter((t) => t >= cutoffMs);
-      pruned.push(now.getTime());
-      this.recentFiresByProject.set(projectPath, pruned);
-      if (pruned.length >= FIRE_RATE_WARN_THRESHOLD) {
-        this.log.warn(
-          `fire-rate: ${projectPath} fired ${String(pruned.length)} times in the last ${String(FIRE_RATE_WINDOW_MS / 1000)}s — possible runaway loop. ` +
-          `Use \`agi iw stop --project ${projectPath}\` to break it without restarting the gateway.`,
-        );
-      }
-      // Push a "running" entry to the per-project ring buffer. recordCompletion
-      // mutates this head entry when the consumer reports status; until then
-      // the log surface shows the in-flight iteration as running.
-      const buffer = this.iterationLog.get(projectPath) ?? [];
-      const entry: IterativeWorkLogEntry = {
-        firedAt: now.toISOString(),
-        completedAt: null,
-        durationMs: null,
-        status: "running",
-        cron: iw.cron,
-      };
-      buffer.unshift(entry);
-      while (buffer.length > this.logBufferSize) buffer.pop();
-      this.iterationLog.set(projectPath, buffer);
-      this.log.info(`fire: ${projectPath} (cron=${iw.cron})`);
-      this.emit("fire", fire);
     }
   }
 
@@ -253,51 +271,50 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
   }
 
   /**
-   * Diagnostic: how many times this project has fired in the rolling
-   * 60s window. > FIRE_RATE_WARN_THRESHOLD means the scheduler logged
-   * a WARN on the most recent fire. Caller (e.g. dashboard tile, doctor
-   * check) can surface the same data ahead of crisis. (s159 t693)
+   * Diagnostic: how many times a job has fired in the rolling 60s window.
+   * > FIRE_RATE_WARN_THRESHOLD means the scheduler logged a WARN. (s159 t693)
    */
-  getRecentFireCount(projectPath: string, now: Date = new Date()): number {
-    const recent = this.recentFiresByProject.get(projectPath);
+  getRecentFireCount(projectPath: string, jobId: string, now: Date = new Date()): number {
+    const recent = this.recentFiresByProject.get(`${projectPath}::${jobId}`);
     if (!recent) return 0;
     const cutoffMs = now.getTime() - FIRE_RATE_WINDOW_MS;
     return recent.filter((t) => t >= cutoffMs).length;
   }
 
   /**
-   * Operator kill switch (s159 t692). Force-clears the in-flight + last-fired
-   * tracking for one project so the scheduler treats it as never-fired.
-   * Pair with flipping `iterativeWork.enabled = false` in project.json to
-   * also prevent future fires; this method ONLY clears the runtime tracking.
-   * Returns whether anything was cleared.
-   *
-   * Use case: scheduler thinks a project is in-flight (so it won't re-fire)
-   * but actually the consumer crashed without calling markComplete — OR the
-   * opposite, jobs keep re-firing for the same key without backing off and
-   * the operator wants to break the loop without a gateway restart.
+   * Operator kill switch — force-clears in-flight + last-fired tracking for
+   * one or all jobs on a project. When `jobId` is provided, clears only that
+   * job. When omitted, clears ALL jobs for the project path.
+   * Returns counts of what was cleared.
    */
-  forceClearProject(projectPath: string): { wasInFlight: boolean; hadLastFired: boolean } {
-    const wasInFlight = this.inFlight.has(projectPath);
-    const hadLastFired = this.lastFiredAt.has(projectPath);
-    this.inFlight.delete(projectPath);
-    this.inFlightStartedAt.delete(projectPath);
-    if (wasInFlight || hadLastFired) {
-      this.log.warn(`forceClearProject(${projectPath}) — wasInFlight=${String(wasInFlight)} hadLastFired=${String(hadLastFired)}`);
+  forceClearProject(projectPath: string, jobId?: string): { wasInFlight: number; hadLastFired: number } {
+    let wasInFlight = 0;
+    let hadLastFired = 0;
+    const prefix = `${projectPath}::`;
+    const keysToDelete = jobId
+      ? [`${projectPath}::${jobId}`]
+      : [...this.inFlight, ...this.lastFiredAt.keys()].filter(k => k.startsWith(prefix));
+
+    for (const key of new Set(keysToDelete)) {
+      if (this.inFlight.has(key)) { this.inFlight.delete(key); wasInFlight++; }
+      this.inFlightStartedAt.delete(key);
+      if (this.lastFiredAt.has(key)) { this.lastFiredAt.delete(key); hadLastFired++; }
+    }
+    if (wasInFlight > 0 || hadLastFired > 0) {
+      this.log.warn(`forceClearProject(${projectPath}${jobId ? ` job=${jobId}` : ""}) — cleared ${String(wasInFlight)} in-flight, ${String(hadLastFired)} lastFired`);
     }
     return { wasInFlight, hadLastFired };
   }
 
   /**
-   * Force-clear ALL projects from in-flight + last-fired tracking. Nuclear
-   * option for the runaway scenario when the operator can't identify which
-   * project is looping. Returns counts.
+   * Force-clear ALL jobs from in-flight + last-fired tracking. Nuclear option.
    */
   forceClearAll(): { inFlightCleared: number; lastFiredCleared: number } {
     const inFlightCleared = this.inFlight.size;
     const lastFiredCleared = this.lastFiredAt.size;
     this.inFlight.clear();
     this.inFlightStartedAt.clear();
+    this.lastFiredAt.clear();
     if (inFlightCleared > 0 || lastFiredCleared > 0) {
       this.log.warn(`forceClearAll — cleared ${String(inFlightCleared)} in-flight + ${String(lastFiredCleared)} lastFired entries`);
     }
@@ -305,27 +322,52 @@ export class IterativeWorkScheduler extends EventEmitter<IterativeWorkSchedulerE
   }
 
   /**
-   * Read-only per-project introspection — the data behind the status API +
-   * the eventual Settings UX. Returns null when the project has no config
-   * file at all (callers can distinguish "unknown project" from "configured
-   * but disabled" that way). nextFireAt is computed off lastFiredAt when
-   * present, falling back to `now` so a never-fired project still surfaces a
-   * meaningful next-due timestamp.
+   * Per-project status: list of per-job snapshots. Returns null when project
+   * has no config file. nextFireAt computed off lastFiredAt (or `now` if never fired).
+   */
+  getProjectStatus(projectPath: string, now: Date = new Date()): ScheduledJobProjectStatus | null {
+    const config = this.deps.projectConfigManager.read(projectPath);
+    if (config === null) return null;
+    const jobs: ScheduledJobStatus[] = (config.scheduledJobs ?? []).map((job) => {
+      const key = `${projectPath}::${job.id}`;
+      const cron = job.cron && job.cron.trim().length > 0 ? job.cron : null;
+      const lastFire = this.lastFiredAt.get(key);
+      const nextFire = cron !== null ? nextFireAfter(cron, lastFire ?? now) : null;
+      return {
+        jobId: job.id,
+        type: job.type,
+        name: job.name,
+        enabled: job.enabled,
+        cron,
+        cadence: job.cadence ?? null,
+        inFlight: this.inFlight.has(key),
+        lastFiredAt: lastFire?.toISOString() ?? null,
+        nextFireAt: nextFire?.toISOString() ?? null,
+      };
+    });
+    return { jobs };
+  }
+
+  /**
+   * @deprecated Use getProjectStatus(). Returns a legacy IterativeWorkProjectStatus
+   * by mapping the first pm-loop job to the old shape. Kept for the API shim.
    */
   getStatus(projectPath: string, now: Date = new Date()): IterativeWorkProjectStatus | null {
     const config = this.deps.projectConfigManager.read(projectPath);
     if (config === null) return null;
-    const iw = config.iterativeWork;
-    const enabled = iw?.enabled === true;
-    const cron = iw?.cron !== undefined && iw.cron.trim().length > 0 ? iw.cron : null;
-    const cadence = (iw as { cadence?: string } | undefined)?.cadence ?? null;
-    const lastFire = this.lastFiredAt.get(projectPath);
+    const pmLoop = config.scheduledJobs?.find(j => j.type === "pm-loop");
+    if (!pmLoop) {
+      return { enabled: false, cron: null, cadence: null, inFlight: false, lastFiredAt: null, nextFireAt: null };
+    }
+    const key = `${projectPath}::${pmLoop.id}`;
+    const cron = pmLoop.cron && pmLoop.cron.trim().length > 0 ? pmLoop.cron : null;
+    const lastFire = this.lastFiredAt.get(key);
     const nextFire = cron !== null ? nextFireAfter(cron, lastFire ?? now) : null;
     return {
-      enabled,
+      enabled: pmLoop.enabled,
       cron,
-      cadence,
-      inFlight: this.inFlight.has(projectPath),
+      cadence: pmLoop.cadence ?? null,
+      inFlight: this.inFlight.has(key),
       lastFiredAt: lastFire?.toISOString() ?? null,
       nextFireAt: nextFire?.toISOString() ?? null,
     };

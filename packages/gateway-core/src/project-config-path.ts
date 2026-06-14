@@ -5,7 +5,7 @@
  * from `~/.agi/{projectSlug}/project.json` to
  * `<projectPath>/.agi/project.json`. The `<projectPath>/` location makes
  * the project's authoritative state live with the project, alongside its
- * `k/` knowledge layer, `repos/` multi-repo mounts, and `.trash/`
+ * `.ai/` knowledge layer, `repos/` multi-repo mounts, and `.trash/`
  * soft-delete buffer — the s130 architecture.
  *
  * This refactor uses **transparent auto-migration** inside
@@ -15,9 +15,9 @@
  * have been touched, the side-effect becomes a no-op.
  *
  * **What's NOT yet migrated** (separate slices under t514):
- *   - `~/.agi/{slug}/plans/` → `<projectPath>/k/plans/`
+ *   - `~/.agi/{slug}/plans/` → `<projectPath>/.ai/plans/`
  *   - `~/.agi/{slug}/dispatch/` → likely stays gateway-owned
- *   - `~/.agi/chat-history/` → `<projectPath>/k/chat/`
+ *   - `~/.agi/chat-history/` → `<projectPath>/.ai/chat/`
  *   - `~/.agi/{slug}/tunnel.json` → likely stays gateway-owned
  *
  * The legacy file at `~/.agi/{slug}/project.json` is preserved as
@@ -27,8 +27,18 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, copyFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve as resolvePath } from "node:path";
+import { basename, dirname, join, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
 import { migrateChatSessionsForProject } from "./chat-history-migration.js";
+
+// ESM equivalent of CommonJS __dirname. `import.meta.url` resolves to
+// the module's own file URL at runtime; fileURLToPath + dirname gives
+// us the on-disk directory. Bug 2026-05-09 → 2026-05-13: the previous
+// code used bare `__dirname` which is undefined in ESM, causing the
+// t701 _aionima scaffolder to throw "__dirname is not defined" on every
+// boot (logged at WARN, non-fatal, silently leaving _aionima/project.json
+// missing → cascade of UX bugs the owner reported 2026-05-13).
+const moduleDir = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Sacred project names — Aionima five (Civicognita-owned core) + PAx four
@@ -110,7 +120,7 @@ export function legacyProjectConfigPath(projectPath: string): string {
  *
  *   <projectPath>/
  *   ├── project.json         # ROOT runtime config (project + per-repo combined)
- *   ├── k/                   # knowledge layer
+ *   ├── .ai/                 # knowledge layer (renamed from k/ 2026-06-09)
  *   │   ├── plans/           # per-project plans (replaces _plans/_next/)
  *   │   ├── knowledge/       # markdown notes, design docs, references
  *   │   ├── pm/              # PM-Lite kanban data (s139)
@@ -118,7 +128,7 @@ export function legacyProjectConfigPath(projectPath: string): string {
  *   │   └── chat/            # per-project chat sessions
  *   ├── repos/               # bind-mounted git checkouts (multi-repo)
  *   ├── sandbox/             # agent scratch space — keeps chat-tool cage
- *   │                          primitive from writing into repos/ or k/
+ *   │                          primitive from writing into repos/ or .ai/
  *   └── .trash/              # soft-delete buffer
  *
  * Source of truth: `<gatewayCwd>/templates/.new/`. Adding a new folder is
@@ -126,13 +136,47 @@ export function legacyProjectConfigPath(projectPath: string): string {
  * below is a fallback used when the skeleton can't be located at runtime
  * (e.g. running inside a test fixture without the templates tree).
  */
+/**
+ * Name of the per-project knowledge directory — the structured workspace
+ * for agent/AI artifacts (`plans/ knowledge/ pm/ memory/ chat/ issues/`).
+ *
+ * Renamed from the historical `k/` to `.ai/` (owner directive 2026-06-09) so
+ * the layout matches emerging AI-workflow conventions (`.cursor/`, `.aider/`,
+ * …). The leading dot makes it hidden to `ls`, but it is deliberately surfaced
+ * in the AGI file-browser UI (see buildFileTree's KNOWLEDGE_DIR exception).
+ *
+ * This is the single source of truth — every reader, scaffolder, and
+ * migration imports it rather than hardcoding the folder name. The on-disk
+ * rename of existing `k/` dirs is handled by the boot-time
+ * `migrateAllKnowledgeDirs` sweep (knowledge-dir-migration.ts).
+ *
+ * NOTE: this is the on-disk *folder name*, distinct from the MApp storage
+ * `area: "k" | "sandbox"` wire enum and the worker `domain: "k"` — those are
+ * identifiers, not paths, and are intentionally unchanged.
+ */
+export const KNOWLEDGE_DIR = ".ai";
+
+/**
+ * Whether a directory entry should appear in the AGI file-browser tree.
+ * Always hides `.git` / `node_modules`. When `hideHidden` is on, hides
+ * dotfiles EXCEPT the knowledge dir (`.ai/`): the owner requires it to stay
+ * visible in the UI even though it is dot-hidden to `ls` (directive
+ * 2026-06-09). Pure + side-effect-free so it can be unit-tested directly.
+ */
+export function isVisibleInFileBrowser(name: string, hideHidden: boolean): boolean {
+  if (name === ".git" || name === "node_modules") return false;
+  if (!hideHidden) return true;
+  if (!name.startsWith(".")) return true;
+  return name === KNOWLEDGE_DIR;
+}
+
 const PROJECT_FOLDER_LAYOUT_FALLBACK: readonly string[] = Object.freeze([
-  "k/plans",
-  "k/knowledge",
-  "k/pm",
-  "k/memory",
-  "k/chat",
-  "k/issues",
+  `${KNOWLEDGE_DIR}/plans`,
+  `${KNOWLEDGE_DIR}/knowledge`,
+  `${KNOWLEDGE_DIR}/pm`,
+  `${KNOWLEDGE_DIR}/memory`,
+  `${KNOWLEDGE_DIR}/chat`,
+  `${KNOWLEDGE_DIR}/issues`,
   "repos",
   "sandbox",
   ".trash",
@@ -186,7 +230,7 @@ function findAgiTemplatesSkeleton(): string | null {
     // Walk up from this module location too, in case cwd is somewhere
     // else (test fixtures, ad-hoc tooling). Two levels: src/ → packages/
     // → repo root, then templates/.new.
-    resolvePath(__dirname, "../../../templates/.new"),
+    resolvePath(moduleDir, "../../../templates/.new"),
   ];
   for (const c of candidates) {
     if (existsSync(c) && statSync(c).isDirectory()) return c;
@@ -418,7 +462,7 @@ export function migrateProjectConfig(projectPath: string): {
   error?: string;
   scaffolded?: string[];
   /** Count of chat sessions migrated from `~/.agi/chat-history/` to
-   *  `<projectPath>/k/chat/`. Populated only when project config
+   *  `<projectPath>/.ai/chat/`. Populated only when project config
    *  migration occurred (s130 t518 slice 1). */
   chatSessionsMigrated?: number;
 } {
@@ -456,7 +500,7 @@ export function migrateProjectConfig(projectPath: string): {
     writeFileSync(newPath, readFileSync(sourcePath, "utf-8"), "utf-8");
     // Scaffold the s140 folder layout (k/, repos/, chat/, sandbox/, .trash/).
     const { created } = scaffoldProjectFolders(projectPath);
-    // Migrate project-scoped chat sessions into <projectPath>/k/chat/.
+    // Migrate project-scoped chat sessions into <projectPath>/.ai/chat/.
     // Idempotent — re-runs skip already-copied sessions.
     const chatResult = migrateChatSessionsForProject(projectPath);
     return {

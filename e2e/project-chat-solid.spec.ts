@@ -59,18 +59,7 @@ test.describe("Project chat — solid (cycle 158)", () => {
     await cards.first().click();
     await expect(page).toHaveURL(/\/projects\/[a-z0-9-]+/, { timeout: 10_000 });
 
-    // Open the project chat — clicking the aside CTA opens the chat panel.
-    // The aside button is part of slice 5c phase 3 (cycle 147+); fall back
-    // to the header chat button if the project chat aside isn't rendered
-    // (e.g. core-fork projects, narrow viewports).
-    const projectChatBtn = page.getByRole("button", { name: /^Open chat$/i }).first();
-    if (await projectChatBtn.count() > 0 && await projectChatBtn.isVisible()) {
-      await projectChatBtn.click();
-    } else {
-      const headerChatBtn = page.getByTestId("header-chat-button");
-      await headerChatBtn.click();
-    }
-
+    // Chat is always visible in the shell — no button click needed.
     // Chat panel must surface AND carry the project slug as its active
     // context chip (the chip is the visual ack that project context is
     // being applied — without it, the agent invocation goes through the

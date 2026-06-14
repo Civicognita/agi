@@ -1,7 +1,44 @@
-import type { Message } from "discord.js";
-import type { ChannelId, AionimaMessage, MessageContent } from "@agi/channel-sdk";
+import type { Message, Guild } from "discord.js";
+import type { ChannelId, AionimaMessage, MessageContent } from "@agi/sdk";
+import type { ChannelMessageAttachment } from "@agi/sdk";
 
 export const DISCORD_CHANNEL_ID = "discord" as ChannelId;
+
+/**
+ * Resolve Discord mention tags in message content to human-readable names.
+ * Uses the guild's in-memory caches (populated via GuildMembers + Guilds intents).
+ *
+ *   <@userId> / <@!userId>  →  @DisplayName
+ *   <@&roleId>              →  @RoleName
+ *   <#channelId>            →  #channelName
+ */
+export function resolveDiscordMentions(content: string, guild: Guild | null): string {
+  if (!guild || (!content.includes("<@") && !content.includes("<#"))) return content;
+  let out = content;
+  out = out.replace(/<@!?(\d+)>/g, (_, uid: string) => {
+    const member = guild.members.cache.get(uid);
+    const name = member?.displayName ?? (member?.user as { globalName?: string } | undefined)?.globalName ?? member?.user?.username;
+    return `@${name ?? uid}`;
+  });
+  out = out.replace(/<@&(\d+)>/g, (_, rid: string) => {
+    const role = guild.roles.cache.get(rid);
+    return `@${role?.name ?? rid}`;
+  });
+  out = out.replace(/<#(\d+)>/g, (_, cid: string) => {
+    const ch = guild.channels.cache.get(cid);
+    const name = ch !== undefined && "name" in ch ? (ch as { name: string }).name : null;
+    return `#${name ?? cid}`;
+  });
+  return out;
+}
+
+/** Map a MIME type string to a ChannelMessageAttachment kind. */
+export function classifyAttachmentMime(mimeType: string): ChannelMessageAttachment["kind"] {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.startsWith("video/")) return "video";
+  return "file";
+}
 
 // ---------------------------------------------------------------------------
 // Normalizer: Discord Message → AionimaMessage
@@ -43,6 +80,12 @@ export function normalizeMessage(msg: Message): AionimaMessage | null {
       username: msg.author.username,
       discriminator: msg.author.discriminator,
       displayName: buildDisplayName(msg),
+      // CHN-B (s163) slice 2 — roomId encoding matches the picker's
+      // `${guildId}:${channelId}` shape (see flattenStateToAvailableRooms
+      // in ./state.ts). Downstream consumers (inboundRouter, future
+      // dispatcher wire-up) call /api/channels/resolve-room with this
+      // value to find the bound project. DMs (no guildId) get undefined.
+      roomId: msg.guildId !== null ? `${msg.guildId}:${msg.channelId}` : undefined,
     },
   };
 }

@@ -333,4 +333,80 @@ describe("LayeredPmProvider — Phase 2 layered writes (s155 t672)", () => {
     const queue = readSyncQueue();
     expect(queue[0]?.projectPath).toBe("(unknown)");
   });
+
+  // -------------------------------------------------------------------------
+  // getActiveFocusProgress — the progress bar is OPTIONAL chrome. A provider
+  // gap or throw must degrade to an empty feed (totalTasks: 0, UI hides),
+  // NEVER throw. Regression guard for the recurring /api/loop/progress 502
+  // that spammed the dashboard console every 30s (2026-06-08).
+  // -------------------------------------------------------------------------
+  describe("getActiveFocusProgress graceful degradation", () => {
+    const fullProgress = {
+      totalTasks: 10, doneTasks: 4, qaTasks: 2, doingTasks: 1,
+      backlogTasks: 3, blockedTasks: 0, inProgressTasks: 3, percentComplete: 40,
+    };
+
+    it("returns an empty feed (no throw) when neither provider implements it", async () => {
+      // Mirrors prod: remote tynn primary lacks/fails + tynn-lite fallback has no impl.
+      const primary = makeMockProvider("primary"); // getActiveFocusProgress undefined
+      const fallback = makeMockProvider("fallback"); // undefined too
+      const layered = new LayeredPmProvider({ primary, fallback });
+
+      const progress = await layered.getActiveFocusProgress();
+      expect(progress.totalTasks).toBe(0);
+      expect(progress.doneTasks).toBe(0);
+      expect(progress.qaTasks).toBe(0);
+    });
+
+    it("returns an empty feed when primary throws and fallback can't supply it", async () => {
+      const primary = makeMockProvider("primary", {
+        getActiveFocusProgress: vi.fn(async () => { throw new Error("tynn unreachable"); }),
+      });
+      const fallback = makeMockProvider("fallback"); // undefined
+      const layered = new LayeredPmProvider({ primary, fallback });
+
+      const progress = await layered.getActiveFocusProgress();
+      expect(progress.totalTasks).toBe(0);
+    });
+
+    it("falls through to the fallback's progress when primary throws", async () => {
+      const primary = makeMockProvider("primary", {
+        getActiveFocusProgress: vi.fn(async () => { throw new Error("tynn unreachable"); }),
+      });
+      const fallback = makeMockProvider("fallback", {
+        getActiveFocusProgress: vi.fn(async () => fullProgress),
+      });
+      const layered = new LayeredPmProvider({ primary, fallback });
+
+      const progress = await layered.getActiveFocusProgress();
+      expect(progress.totalTasks).toBe(10);
+      expect(progress.doneTasks).toBe(4);
+    });
+
+    it("returns an empty feed when BOTH providers throw (never propagates)", async () => {
+      const primary = makeMockProvider("primary", {
+        getActiveFocusProgress: vi.fn(async () => { throw new Error("primary down"); }),
+      });
+      const fallback = makeMockProvider("fallback", {
+        getActiveFocusProgress: vi.fn(async () => { throw new Error("fallback down"); }),
+      });
+      const layered = new LayeredPmProvider({ primary, fallback });
+
+      const progress = await layered.getActiveFocusProgress();
+      expect(progress.totalTasks).toBe(0);
+    });
+
+    it("passes primary's progress through unchanged when it succeeds", async () => {
+      const primary = makeMockProvider("primary", {
+        getActiveFocusProgress: vi.fn(async () => fullProgress),
+      });
+      const fallback = makeMockProvider("fallback");
+      const layered = new LayeredPmProvider({ primary, fallback });
+
+      const progress = await layered.getActiveFocusProgress();
+      expect(progress.totalTasks).toBe(10);
+      expect(progress.percentComplete).toBe(40);
+      expect(fallback.getActiveFocusProgress).toBeUndefined();
+    });
+  });
 });

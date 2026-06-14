@@ -20,7 +20,7 @@
 import type {
   AionimaChannelPlugin,
   AionimaMessage,
-} from "@agi/channel-sdk";
+} from "@agi/sdk";
 import type { AionimaPlugin, AionimaPluginAPI } from "@agi/plugins";
 
 import {
@@ -28,6 +28,7 @@ import {
   isWhatsAppConfig,
   createConfigAdapter,
 } from "./config.js";
+import { createWhatsAppChannelDefV2 } from "./channel-def.js";
 import { WHATSAPP_CHANNEL_ID, hashPhoneNumber } from "./normalizer.js";
 import {
   sendOutbound,
@@ -233,9 +234,14 @@ export default {
   async activate(api: AionimaPluginAPI): Promise<void> {
     const channelConfig = api.getChannelConfig("whatsapp");
     if (!channelConfig?.enabled) return;
-    const plugin = createWhatsAppPlugin(
-      channelConfig.config as unknown as WhatsAppConfig,
-    );
+    const config = channelConfig.config as unknown as WhatsAppConfig;
+
+    // v2 registration (CHN-L s173) — gateway dispatcher uses this path
+    const v2Def = createWhatsAppChannelDefV2(config);
+    api.registerChannelV2?.(v2Def);
+
+    // v0.1 legacy registration — kept until CHN-M (s174) removes @agi/channel-sdk
+    const plugin = createWhatsAppPlugin(config);
     api.registerChannel(plugin);
   },
 } satisfies AionimaPlugin;

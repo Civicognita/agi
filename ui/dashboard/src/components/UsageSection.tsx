@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { EChart } from "@particle-academy/react-echarts";
+import { EChart } from "@particle-academy/fancy-echarts";
 import { Card, CardContent } from "@/components/ui/card";
 import { useDashboardWS } from "../hooks.js";
 import {

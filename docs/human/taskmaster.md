@@ -4,6 +4,16 @@ Taskmaster is Aionima's background task engine. When you ask Aionima to handle s
 
 ---
 
+> **Taskmaster vs Scheduled Jobs**
+>
+> Taskmaster handles **one-off multi-step background jobs** triggered programmatically or by a user. A Taskmaster job runs once, produces a result, and stops.
+>
+> **Scheduled Jobs** (Settings → Projects → [project] → Scheduled Jobs tab) handle **recurring automated tasks** — cron-driven, per-project, with a type-aware cadence selector (30 min to 1 week). These are configured in the dashboard and fire on a schedule.
+>
+> This doc covers Taskmaster only. For recurring automation, see the Scheduled Jobs section in the dashboard.
+
+---
+
 ## How Taskmaster Works
 
 When the agent decides a task is better handled asynchronously, it dispatches a background job to Taskmaster. Taskmaster assigns the job to a specialist worker, runs it, and reports back when done.

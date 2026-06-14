@@ -7,10 +7,27 @@
  *
  * Dispatch files land under `~/.agi/{projectSlug}/dispatch/jobs/{jobId}.json`.
  */
-import { writeFileSync, mkdirSync } from "node:fs";
-import type { ToolHandler } from "../tool-registry.js";
-import { dispatchJobsDir } from "../dispatch-paths.js";
+import { writeFileSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ToolHandler } from "../tool-registry.js";
+import { dispatchJobsDir, loadLiveJobOverlay } from "../dispatch-paths.js";
+import { idempotencyKey } from "../taskmaster-queue-diagnostic.js";
+
+// ---------------------------------------------------------------------------
+// Anti-loop guard constants (s159 t695/t696/t697)
+// ---------------------------------------------------------------------------
+
+/** Refuse re-dispatch of the same key within this many ms of last completion. */
+const COOLDOWN_MS = 60_000;
+
+/** Max consecutive failures of the same key within BREAKER_WINDOW_MS before opening the breaker. */
+const BREAKER_THRESHOLD = 3;
+
+/** Rolling window for failure counting (5 min). */
+const BREAKER_WINDOW_MS = 5 * 60_000;
+
+const TERMINAL_STATUSES = new Set(["complete", "failed", "completed", "error", "cancelled"]);
+const ACTIVE_STATUSES = new Set(["pending", "running", "checkpoint"]);
 
 export interface WorkerDispatchConfig {
   /** Test-only override for the dispatch base dir. Production leaves this unset and uses dispatchJobsDir(projectPath). */
@@ -83,6 +100,97 @@ export function createWorkerDispatchHandler(
         error: `Failed to create jobs directory: ${err instanceof Error ? err.message : String(err)}`,
         exitCode: -1,
       });
+    }
+
+    // -------------------------------------------------------------------------
+    // Anti-loop guard: idempotency key + cooldown + circuit breaker (s159)
+    //
+    // Scans the project's jobs directory for existing jobs with the same
+    // idempotency key (hash of planRef or description). Three checks:
+    //
+    //   (1) In-flight: refuse if same key is pending/running/checkpoint
+    //   (2) Cooldown: refuse if same key completed/failed within COOLDOWN_MS
+    //   (3) Circuit breaker: refuse if same key has >= BREAKER_THRESHOLD
+    //       failures within BREAKER_WINDOW_MS
+    //
+    // Non-fatal: if the scan fails (e.g. FS error), the dispatch proceeds.
+    // -------------------------------------------------------------------------
+    try {
+      const candidateKey = idempotencyKey({ id: "", description, planRef });
+      const liveOverlay = loadLiveJobOverlay();
+      let recentFailureCount = 0;
+
+      for (const fname of readdirSync(jobsDir)) {
+        if (!fname.endsWith(".json")) continue;
+        let existing: Record<string, unknown>;
+        try {
+          existing = JSON.parse(readFileSync(join(jobsDir, fname), "utf-8")) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+
+        const existingId = typeof existing.id === "string" ? existing.id : "";
+        if (idempotencyKey({
+          id: existingId,
+          description: typeof existing.description === "string" ? existing.description : undefined,
+          planRef: (existing.planRef as { planId?: string; stepId?: string } | null | undefined) ?? undefined,
+        }) !== candidateKey) {
+          continue;
+        }
+
+        // Merge live overlay status onto dispatch file status
+        const live = liveOverlay.get(existingId);
+        const fileStatus = typeof existing.status === "string" ? existing.status : "pending";
+        const effectiveStatus = live?.status ?? fileStatus;
+
+        // (1) In-flight guard
+        if (ACTIVE_STATUSES.has(effectiveStatus)) {
+          return JSON.stringify({
+            error: `Duplicate dispatch refused: job ${existingId} with the same key is already ${effectiveStatus}. Use taskmaster_status to check its progress.`,
+            exitCode: -1,
+            duplicate: true,
+            existingJobId: existingId,
+          });
+        }
+
+        if (TERMINAL_STATUSES.has(effectiveStatus)) {
+          const refTime = live?.completedAt
+            ?? (typeof existing.completedAt === "string" ? existing.completedAt : undefined)
+            ?? (typeof existing.createdAt === "string" ? existing.createdAt : undefined);
+
+          if (typeof refTime === "string") {
+            const ageMs = Date.now() - new Date(refTime).getTime();
+
+            // (2) Cooldown guard
+            if (ageMs < COOLDOWN_MS) {
+              return JSON.stringify({
+                error: `Cooldown: job ${existingId} with the same key ${effectiveStatus} ${Math.round(ageMs / 1000)}s ago. Wait ${Math.ceil((COOLDOWN_MS - ageMs) / 1000)}s before re-dispatching.`,
+                exitCode: -1,
+                cooldown: true,
+                existingJobId: existingId,
+                cooldownRemainingSeconds: Math.ceil((COOLDOWN_MS - ageMs) / 1000),
+              });
+            }
+
+            // (3) Circuit breaker: count recent failures
+            if ((effectiveStatus === "failed" || effectiveStatus === "error") && ageMs < BREAKER_WINDOW_MS) {
+              recentFailureCount++;
+            }
+          }
+        }
+      }
+
+      // Circuit breaker open check (evaluated after full scan)
+      if (recentFailureCount >= BREAKER_THRESHOLD) {
+        return JSON.stringify({
+          error: `Circuit breaker: ${String(recentFailureCount)} failures of the same job key in the last 5 minutes. Investigate the root cause before re-dispatching — check GET /api/taskmaster/queue and recent logs.`,
+          exitCode: -1,
+          circuitBreaker: true,
+          failureCount: recentFailureCount,
+        });
+      }
+    } catch {
+      // Non-fatal — proceed with dispatch if the guard scan fails
     }
 
     const jobId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

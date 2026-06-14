@@ -1,6 +1,5 @@
 {
   "prime": { "dir": "/mnt/agi-prime" },
-  "idService": { "dir": "/mnt/agi-local-id" },
   "gateway": { "port": 3100 },
   "workspace": {
     "projects": ["/mnt/agi/test/fixtures/projects"]
@@ -9,5 +8,15 @@
     "enabled": true,
     "lanIp": "127.0.0.1",
     "baseDomain": "test.local"
+  },
+  "mcp": {
+    "servers": [
+      {
+        "id": "tynn",
+        "transport": "http",
+        "url": "https://tynn.ai/mcp/tynn",
+        "authToken": "$TYNN_API_KEY"
+      }
+    ]
   }
 }

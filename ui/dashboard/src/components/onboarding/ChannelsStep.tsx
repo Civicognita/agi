@@ -33,6 +33,7 @@ interface ChannelDef {
   fields: Array<{ key: string; label: string; placeholder: string; type?: string; secret?: boolean }>;
   ownerIdLabel: string;
   ownerIdPlaceholder: string;
+  ownerIdHelp?: string;
   installed?: boolean;
 }
 
@@ -62,6 +63,7 @@ const FALLBACK_CHANNELS: ChannelDef[] = [
     ],
     ownerIdLabel: "Your Discord User ID",
     ownerIdPlaceholder: "196170122770120704",
+    ownerIdHelp: "Your personal Discord user ID — right-click your name in Discord → Copy User ID. This lets Aion know it's talking to you.",
   },
   {
     id: "email",
@@ -423,7 +425,7 @@ export function ChannelsStep({ onNext, onSkip, status }: Props) {
                       className="font-mono text-sm"
                     />
                     <p className="text-[11px] text-muted-foreground">
-                      Your identifier on this platform — so the agent knows messages from you are from the owner.
+                      {def.ownerIdHelp ?? "Your identifier on this platform — so the agent knows messages from you are from the owner."}
                     </p>
                   </div>
 

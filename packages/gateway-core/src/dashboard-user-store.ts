@@ -112,9 +112,6 @@ export class DashboardUserStore {
   private readonly filePath: string;
   private readonly secret: string;
   private readonly sessionTtlMs: number;
-  /** When true, createUser() logs a warning instead of creating. */
-  localIdAvailable = false;
-
   constructor(dataDir: string, secret: string, sessionTtlMs = 86400000) {
     this.filePath = join(dataDir, "dashboard-users.json");
     this.secret = secret;
@@ -169,9 +166,6 @@ export class DashboardUserStore {
     password: string;
     role: DashboardRole;
   }): DashboardUserPublic {
-    if (this.localIdAvailable) {
-      console.warn("[DashboardUserStore] createUser called but Local-ID is available — new users should be created through Local-ID");
-    }
     // Check uniqueness
     if (this.users.some((u) => u.username === params.username)) {
       throw new Error(`Username "${params.username}" already exists`);
@@ -250,6 +244,18 @@ export class DashboardUserStore {
 
     const token = signToken(session, this.secret);
     return { token, user: stripHash(user) };
+  }
+
+  /** Sign a session payload with this store's secret. Used when an external
+   *  auth backend (e.g. DB argon2) verifies the password but session tokens
+   *  must remain compatible with this store's HMAC scheme. */
+  createSessionToken(session: DashboardSession): string {
+    return signToken(session, this.secret);
+  }
+
+  /** TTL in ms for new sessions. */
+  getSessionTtlMs(): number {
+    return this.sessionTtlMs;
   }
 
   verifySession(token: string): DashboardSession | null {

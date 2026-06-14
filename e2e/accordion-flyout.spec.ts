@@ -18,8 +18,8 @@ import { test, expect } from "@playwright/test";
 test.describe("AccordionFlyout chrome", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    await page.getByTestId("header-chat-button").click();
-    await expect(page.getByTestId("chat-flyout")).toBeVisible();
+    // Chat is always visible in the shell — no button click needed
+    await expect(page.getByTestId("chat-flyout")).toBeVisible({ timeout: 8_000 });
   });
 
   test("renders both canvas and chat panels by default on desktop", async ({ page }) => {
@@ -73,23 +73,21 @@ test.describe("AccordionFlyout chrome", () => {
     await expect(chatEmptyState).toBeVisible();
   });
 
-  test("header chat button stays clickable above the open flyout", async ({ page }) => {
-    // The flyout sits at z-[200]; the sticky header is at z-[100], BUT the
-    // header-chat-button is positioned to remain interactable because the
-    // flyout has pointer-events-none on its outer container. Verify by
-    // toggling the flyout off and on without dismissing through the panel.
-    const chatButton = page.getByTestId("header-chat-button");
+  test("shell chat panel header collapses and re-expands chat panel", async ({ page }) => {
+    // The shell chat panel header's collapse button handles panel collapse.
+    const toggleBtn = page.getByTestId("shell-panel-toggle-chat");
     const flyout = page.getByTestId("chat-flyout");
 
     await expect(flyout).toBeVisible();
+    await expect(toggleBtn).toBeVisible();
 
-    // Click the header chat button — should toggle flyout closed.
-    await chatButton.click();
-    await expect(flyout).not.toBeVisible();
+    // Collapse via the header collapse button.
+    await toggleBtn.click();
+    await expect(flyout).not.toBeVisible({ timeout: 3_000 });
 
-    // Re-open.
-    await chatButton.click();
-    await expect(flyout).toBeVisible();
+    // Re-expand by clicking the collapsed header strip.
+    await page.getByTestId("shell-panel-header-chat").click();
+    await expect(flyout).toBeVisible({ timeout: 3_000 });
   });
 
   test("aria attributes on rail triggers reflect open/closed state", async ({ page }) => {

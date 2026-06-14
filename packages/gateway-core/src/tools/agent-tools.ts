@@ -23,6 +23,7 @@ import type { PluginRegistry } from "@agi/plugins";
 import type { StackRegistry } from "../stack-registry.js";
 import type { HostingManager, ProjectHostingMeta } from "../hosting-manager.js";
 import type { SystemConfigService } from "../system-config-service.js";
+import type { ScanRunner, ScanStore } from "@agi/security";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -62,6 +63,13 @@ export interface AgentToolsConfig {
   systemConfigService?: SystemConfigService;
   /** MAppRegistry for MApp builder tools. */
   mappRegistry?: import("../mapp-registry.js").MAppRegistry;
+  /** ScanRunner + ScanStore + COALogger for the run_security_scan agent tool. */
+  scanRunner?: ScanRunner;
+  scanStore?: ScanStore;
+  coaLogger?: import("@agi/coa-chain").COAChainLogger;
+  /** ScriptRegistry + ScriptRunner for the run_script agent tool (s182 Phase C). */
+  scriptRegistry?: import("../script-registry.js").ScriptRegistry;
+  scriptRunner?: import("../script-runner.js").ScriptRunner;
 }
 
 // ---------------------------------------------------------------------------

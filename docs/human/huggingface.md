@@ -6,6 +6,21 @@ Aionima can download and run AI models from HuggingFace, the world's largest ope
 
 ---
 
+## CLI reference
+
+| Command | Purpose |
+|---------|---------|
+| `agi models` | List installed and available models |
+| `agi models download <id>` | Download a model from HuggingFace |
+| `agi models remove <id>` | Remove a cached model |
+| `agi providers` | List configured AI providers and their status |
+| `agi ollama <cmd>` | Manage the local Ollama instance (`start`, `stop`, `status`, `pull <model>`) |
+| `agi lemonade <cmd>` | Manage the Lemonade (AMD GPU) runtime (`start`, `stop`, `status`) |
+
+Models are cached in `~/.agi/models/`. Provider configuration lives in `~/.agi/gateway.json` under the `providers` key.
+
+---
+
 ## Enabling HuggingFace Support
 
 1. Open the Admin menu (button at the bottom of the sidebar).

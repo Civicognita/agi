@@ -30,8 +30,8 @@ afterEach(() => {
 });
 
 describe("rawCapturePath (Wish #21 Slice 5)", () => {
-  it("resolves to <project>/k/issues/raw.jsonl", () => {
-    expect(rawCapturePath("/foo/bar")).toBe("/foo/bar/k/issues/raw.jsonl");
+  it("resolves to <project>/.ai/issues/raw.jsonl", () => {
+    expect(rawCapturePath("/foo/bar")).toBe("/foo/bar/.ai/issues/raw.jsonl");
   });
 });
 

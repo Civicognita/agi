@@ -13,10 +13,7 @@ import type { GatewayState } from "./types.js";
 // Types
 // ---------------------------------------------------------------------------
 
-export type InvocationDecision =
-  | { action: "invoke" }
-  | { action: "queue"; reason: string; notifyEntity: boolean; message: string }
-  | { action: "log_only" };
+export type InvocationDecision = { action: "invoke" } | { action: "log_only" };
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -32,22 +29,10 @@ export function gateInvocation(state: GatewayState): InvocationDecision {
       return { action: "invoke" };
 
     case "LIMBO":
-      return {
-        action: "queue",
-        reason: "gateway_limbo",
-        notifyEntity: true,
-        message:
-          "Your request is being processed. There may be a brief delay.",
-      };
+      return { action: "invoke" };
 
     case "OFFLINE":
-      return {
-        action: "queue",
-        reason: "gateway_offline",
-        notifyEntity: true,
-        message:
-          "Aionima is currently offline. Your message has been received and will be processed when connectivity is restored.",
-      };
+      return { action: "invoke" };
 
     case "UNKNOWN":
       return { action: "log_only" };

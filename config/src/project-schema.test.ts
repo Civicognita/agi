@@ -7,7 +7,13 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ProjectConfigSchema, ProjectHostingSchema, ProjectStackInstanceSchema, ProjectRepoSchema } from "./project-schema.js";
+import {
+  ProjectConfigSchema,
+  ProjectHostingSchema,
+  ProjectStackInstanceSchema,
+  ProjectRepoSchema,
+  ProjectRoomBindingSchema,
+} from "./project-schema.js";
 
 const FIXTURES = join(__dirname, "../../test/fixtures/project-configs");
 
@@ -407,6 +413,124 @@ describe("ProjectConfigSchema", () => {
       if (!r.success) {
         expect(r.error.issues.some((i) => i.message.includes("autoRun only applies"))).toBe(true);
       }
+    });
+  });
+
+  // ---- CHN-D (s165) slice 1 — channel-room bindings ---------------------
+  describe("rooms[] channel-room bindings (CHN-D)", () => {
+    it("accepts a project.json with no rooms field (backwards compat)", () => {
+      const r = ProjectConfigSchema.safeParse({ name: "X" });
+      expect(r.success).toBe(true);
+    });
+
+    it("accepts an empty rooms array", () => {
+      const r = ProjectConfigSchema.safeParse({ name: "X", rooms: [] });
+      expect(r.success).toBe(true);
+    });
+
+    it("accepts a minimal binding (channelId + roomId + boundAt only)", () => {
+      const r = ProjectConfigSchema.safeParse({
+        name: "X",
+        rooms: [{ channelId: "discord", roomId: "12345", boundAt: "2026-05-14T11:50:00Z" }],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("accepts a fully populated binding (label + kind + privacy + meta)", () => {
+      const r = ProjectConfigSchema.safeParse({
+        name: "X",
+        rooms: [
+          {
+            channelId: "discord",
+            roomId: "1234567890:forum:42",
+            label: "#bug-reports",
+            kind: "forum",
+            privacy: "public",
+            boundAt: "2026-05-14T11:50:00Z",
+            meta: { parentRoomId: "1234567890", guildId: "9999" },
+          },
+        ],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("rejects a binding with empty channelId", () => {
+      const r = ProjectConfigSchema.safeParse({
+        name: "X",
+        rooms: [{ channelId: "", roomId: "abc", boundAt: "2026-05-14T11:50:00Z" }],
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it("rejects a binding with empty roomId", () => {
+      const r = ProjectConfigSchema.safeParse({
+        name: "X",
+        rooms: [{ channelId: "discord", roomId: "", boundAt: "2026-05-14T11:50:00Z" }],
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it("rejects a binding missing boundAt", () => {
+      const r = ProjectConfigSchema.safeParse({
+        name: "X",
+        rooms: [{ channelId: "discord", roomId: "abc" }],
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it("rejects two bindings with the same (channelId, roomId) pair", () => {
+      const r = ProjectConfigSchema.safeParse({
+        name: "X",
+        rooms: [
+          { channelId: "discord", roomId: "abc", boundAt: "2026-05-14T11:50:00Z" },
+          { channelId: "discord", roomId: "abc", boundAt: "2026-05-14T11:51:00Z" },
+        ],
+      });
+      expect(r.success).toBe(false);
+      if (!r.success) {
+        expect(r.error.issues.some((i) => i.message.includes("same (channelId, roomId)"))).toBe(true);
+      }
+    });
+
+    it("accepts the same roomId under different channels (collision is per channel)", () => {
+      const r = ProjectConfigSchema.safeParse({
+        name: "X",
+        rooms: [
+          { channelId: "discord", roomId: "general", boundAt: "2026-05-14T11:50:00Z" },
+          { channelId: "slack", roomId: "general", boundAt: "2026-05-14T11:50:00Z" },
+        ],
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("accepts an open-ended `kind` string (channel-specific vocab)", () => {
+      const r = ProjectRoomBindingSchema.safeParse({
+        channelId: "slack",
+        roomId: "C9999",
+        kind: "huddle", // Slack-specific
+        boundAt: "2026-05-14T11:50:00Z",
+      });
+      expect(r.success).toBe(true);
+    });
+
+    it("rejects unknown privacy value", () => {
+      const r = ProjectRoomBindingSchema.safeParse({
+        channelId: "discord",
+        roomId: "abc",
+        privacy: "everyone", // not in the enum
+        boundAt: "2026-05-14T11:50:00Z",
+      });
+      expect(r.success).toBe(false);
+    });
+
+    it("rejects extra fields on the binding (strict)", () => {
+      const r = ProjectRoomBindingSchema.safeParse({
+        channelId: "discord",
+        roomId: "abc",
+        boundAt: "2026-05-14T11:50:00Z",
+        rogueField: "nope",
+      });
+      expect(r.success).toBe(false);
     });
   });
 });

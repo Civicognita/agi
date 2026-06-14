@@ -99,7 +99,6 @@ export interface Evidence {
   collectedAt: string;
   hadPriorMarker: boolean;
   gatewayJournal: string;
-  idServiceJournal: string;
   gatewayLog: string;
   podmanPs: string;
   postgresLogs: string;
@@ -144,7 +143,6 @@ export function collectEvidence(log: ComponentLogger): Evidence {
     collectedAt: new Date().toISOString(),
     hadPriorMarker: peekShutdownMarker() !== null,
     gatewayJournal: journalctl("aionima", 500),
-    idServiceJournal: journalctl("agi-id", 200),
     gatewayLog: gatewayLogTail(300),
     podmanPs: podmanPs(),
     postgresLogs: podmanLogs(pgContainerName, 100),
@@ -162,7 +160,6 @@ export type Classification =
   | "postgres_unreachable"
   | "oom_killed"
   | "disk_full"
-  | "id_service_failed"
   | "container_runtime_failure"
   | "unknown";
 
@@ -175,14 +172,14 @@ export interface ClassifiedIncident {
 }
 
 export function classifyIncident(e: Evidence): ClassifiedIncident {
-  const combined = [e.gatewayJournal, e.gatewayLog, e.idServiceJournal].join("\n");
+  const combined = [e.gatewayJournal, e.gatewayLog].join("\n");
 
   // Postgres unreachable — the exact scenario that hit us today
   if (/ECONNREFUSED .*:5432|ECONNREFUSED 127\.0\.0\.1:5432|connect.*:5432.*refused/i.test(combined)) {
     return {
       classification: "postgres_unreachable",
       confidence: "high",
-      summary: "Gateway couldn't reach the ID service's PostgreSQL at 127.0.0.1:5432. Likely cause: the agi-postgres-17 plugin container did not auto-restart after a host reboot.",
+      summary: "Gateway couldn't reach PostgreSQL at 127.0.0.1:5432. Likely cause: the agi-postgres-17 plugin container did not auto-restart after a host reboot.",
       autoRecoverable: true,
       recommendedActions: [
         "Click 'Recover now' — the gateway will start the agi-postgres-17 service container and agi-id.service, then re-run reconciliation.",
@@ -218,20 +215,6 @@ export function classifyIncident(e: Evidence): ClassifiedIncident {
         "Free disk space on / or ~/.agi/ before exiting safemode.",
         "Run `agi doctor` for a detailed storage breakdown.",
         "Consider uninstalling unused HF models (each can be 1-10GB).",
-      ],
-    };
-  }
-
-  // ID service failure
-  if (/agi-id\.service.*(failed|Failed)|Start-Pre.*exited with code/i.test(e.idServiceJournal)) {
-    return {
-      classification: "id_service_failed",
-      confidence: "medium",
-      summary: "The ID service is failing to start — typically a failed drizzle-kit migration or a misconfigured databaseUrl.",
-      autoRecoverable: true,
-      recommendedActions: [
-        "Click 'Recover now' to retry starting the ID service after reconciling externals.",
-        "Check `journalctl -u agi-id -n 50` for migration errors.",
       ],
     };
   }
@@ -298,11 +281,6 @@ function composeHeuristicReport(
   lines.push(truncateForReport(evidence.gatewayJournal, 8_000));
   lines.push("```");
   lines.push("");
-  lines.push("### ID service journal (`journalctl -u agi-id`)");
-  lines.push("```");
-  lines.push(truncateForReport(evidence.idServiceJournal, 4_000));
-  lines.push("```");
-  lines.push("");
   lines.push("### Gateway log (~/.agi/logs/gateway*.log, tail)");
   lines.push("```");
   lines.push(truncateForReport(evidence.gatewayLog, 8_000));
@@ -353,9 +331,6 @@ function buildNarrativePrompt(evidence: Evidence, classified: ClassifiedIncident
     "",
     "--- GATEWAY LOG ---",
     truncateForReport(evidence.gatewayLog, 3_000),
-    "",
-    "--- ID SERVICE JOURNAL ---",
-    truncateForReport(evidence.idServiceJournal, 1_500),
     "",
     "--- DMESG ---",
     truncateForReport(evidence.dmesg, 1_000),

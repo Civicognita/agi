@@ -13,7 +13,7 @@ import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { isDesktopServedType } from "@/lib/project-type-classifier";
 import type { ProjectHostingInfo, ProjectTypeTool, RuntimeInfo, StackInfo, ProjectStackInstance } from "../types.js";
-import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks, fetchEffectiveStartCommand, resetCircuitBreaker } from "../api.js";
+import { fetchProjectDevCommands, fetchRuntimes, fetchProjectStacks, fetchStacks, fetchEffectiveStartCommand, resetCircuitBreaker, fetchContainerLogs } from "../api.js";
 import type { EffectiveStartCommand } from "../api.js";
 import { ProjectToolbar } from "./ProjectToolbar.js";
 import { StackManager } from "./StackManager.js";
@@ -104,6 +104,9 @@ export function HostingPanel({
   const [stickyError, setStickyError] = useState<string | null>(null);
   const [logRefreshKey, setLogRefreshKey] = useState(0);
   const [dbRestartNeeded, setDbRestartNeeded] = useState(false);
+  const [friendlyErrors, setFriendlyErrors] = useState<boolean>(hosting.friendlyErrors ?? true);
+  const [baseImage, setBaseImage] = useState<string>(hosting.baseImage ?? "");
+  const [autoLogs, setAutoLogs] = useState<string | null>(null);
 
   // Sync state when hosting prop changes
   useEffect(() => {
@@ -125,6 +128,32 @@ export function HostingPanel({
       setStickyError(null);
     }
   }, [hosting.error, hosting.status]);
+
+  // Auto-fetch container logs when the container is running but the app isn't
+  // responding (serving=false). Gives the developer immediate startup crash output
+  // without having to navigate to the Logs tab. Clears when serving flips true.
+  useEffect(() => {
+    const isDegraded = hosting.status === "running" && !(hosting.serving ?? true);
+    if (!isDegraded) {
+      setAutoLogs(null);
+      return;
+    }
+    let cancelled = false;
+    const fetch_ = () => {
+      fetchContainerLogs(projectPath, 50)
+        .then(({ logs }) => { if (!cancelled) setAutoLogs(logs || "(no output yet)"); })
+        .catch(() => { if (!cancelled) setAutoLogs("(failed to fetch logs)"); });
+    };
+    fetch_();
+    const interval = setInterval(fetch_, 5_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [projectPath, hosting.status, hosting.serving]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync friendlyErrors/baseImage when hosting prop updates
+  useEffect(() => {
+    setFriendlyErrors(hosting.friendlyErrors ?? true);
+    setBaseImage(hosting.baseImage ?? "");
+  }, [hosting.friendlyErrors, hosting.baseImage]);
 
   // Fetch aggregated dev commands from installed stacks
   useEffect(() => {
@@ -176,11 +205,13 @@ export function HostingPanel({
         mode,
         internalPort: portNum && !isNaN(portNum) ? portNum : undefined,
         mapps: parsedMapps,
+        friendlyErrors,
+        baseImage: baseImage.trim() || null,
       });
     } catch { /* error handled by caller */ } finally {
       setSaving(false);
     }
-  }, [projectPath, type, hostname, docRoot, startCommand, mode, internalPort, desktopServed, mappsInput, onConfigure]);
+  }, [projectPath, type, hostname, docRoot, startCommand, mode, internalPort, desktopServed, mappsInput, friendlyErrors, baseImage, onConfigure]);
 
   // Derive the set of compatible languages from installed stacks.
   // If any installed stack declares compatibleLanguages, restrict the runtime
@@ -205,23 +236,27 @@ export function HostingPanel({
   const needsBuild = hosting.status === "error"
     && (stickyError?.startsWith("Build output missing") ?? false);
 
+  // Green = running + TCP probe succeeded.
+  // Yellow = running but app not yet responding (starting up / degraded).
+  // Red = container stopped or error. Grey = not configured.
+  const isServing = hosting.status === "running" && (hosting.serving ?? false);
+  const isDegraded = hosting.status === "running" && !(hosting.serving ?? true);
+
   const statusColor = needsBuild
     ? "text-yellow"
-    : {
-        running: "text-green",
-        stopped: "text-muted-foreground",
-        error: "text-red",
-        unconfigured: "text-muted-foreground",
-      }[hosting.status];
+    : isServing ? "text-green"
+    : isDegraded ? "text-yellow"
+    : hosting.status === "stopped" ? "text-red"
+    : hosting.status === "error" ? "text-red"
+    : "text-muted-foreground";
 
   const statusDot = needsBuild
     ? "bg-yellow"
-    : {
-        running: "bg-green",
-        stopped: "bg-muted-foreground",
-        error: "bg-red",
-        unconfigured: "bg-muted-foreground",
-      }[hosting.status];
+    : isServing ? "bg-green"
+    : isDegraded ? "bg-yellow"
+    : hosting.status === "stopped" ? "bg-red"
+    : hosting.status === "error" ? "bg-red"
+    : "bg-muted-foreground";
 
   const statusLabel = needsBuild ? "needs build" : hosting.status;
 
@@ -306,6 +341,16 @@ export function HostingPanel({
           <div className="flex gap-3 mt-1.5 text-[11px] text-muted-foreground">
             {hosting.containerName && <span>Container: <code className="text-foreground">{hosting.containerName}</code></span>}
             {hosting.image && <span>Image: <code className="text-foreground">{hosting.image}</code></span>}
+          </div>
+        )}
+        {/* Auto-fetch logs when container is running but app not yet responding */}
+        {autoLogs !== null && (
+          <div className="mt-2 rounded border border-border bg-black/40 overflow-hidden">
+            <div className="flex items-center gap-2 px-2 py-1 border-b border-border bg-black/20">
+              <span className="text-[10px] text-yellow font-semibold">Startup logs</span>
+              <span className="text-[10px] text-muted-foreground">— container running, app not yet responding</span>
+            </div>
+            <pre className="text-[10px] text-muted-foreground font-mono px-2 py-1.5 overflow-x-auto max-h-40 overflow-y-auto whitespace-pre-wrap break-all">{autoLogs}</pre>
           </div>
         )}
       </div>
@@ -485,6 +530,40 @@ export function HostingPanel({
             className="text-[12px] h-8"
           />
         </div>
+      </div>
+
+      {/* Debug / error visibility options */}
+      <div className="mb-3 pt-2 border-t border-border">
+        <div className="text-[10px] font-semibold text-muted-foreground mb-1.5">Error Handling</div>
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={friendlyErrors}
+            onChange={(e) => setFriendlyErrors(e.target.checked)}
+            disabled={busy}
+            className="w-3.5 h-3.5 rounded"
+          />
+          <span className="text-[11px]">Friendly error page</span>
+          <span className="text-[10px] text-muted-foreground">(uncheck to see raw app errors in browser)</span>
+        </label>
+        {!desktopServed && (
+          <div className="mt-2">
+            <label className="block text-[10px] font-semibold text-muted-foreground mb-0.5">
+              Base image override <span className="font-normal">(multi-repo, optional)</span>
+            </label>
+            <Input
+              type="text"
+              value={baseImage}
+              onChange={(e) => setBaseImage(e.target.value)}
+              disabled={busy}
+              placeholder="agi-runtime:lamp (default)"
+              className="text-[11px] h-7 font-mono"
+            />
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Use a custom fat image for mixed-language projects (e.g. Python + Node).
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Database */}

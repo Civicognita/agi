@@ -1,5 +1,7 @@
 # Federation & Identity
 
+> **Note (v0.4.747+):** The `aionima-local-id` service was retired and absorbed into the AGI gateway. Identity brokering, session management, and OAuth flows are now handled directly by the gateway at port 3100. Only the remote `aionima-hive-id` service (port 4100, hosted on Railway/Azure) remains as a separate service.
+
 Aionima supports a federated identity system where every node is a sovereign identity provider. Entities get cryptographic identities, can carry their reputation across nodes, and visitors from other nodes can authenticate without creating local passwords.
 
 ---
@@ -40,6 +42,30 @@ Federation is opt-in. Add this to your `gateway.json`:
 | `seedPeers` | `[]` | URLs of nodes to connect to on startup |
 | `autoGeid` | `true` | Automatically generate identity keys for new entities |
 | `allowVisitors` | `true` | Allow users from other nodes to authenticate |
+
+You can also toggle these from the dashboard at **System ▸ Identity** (see below) instead of hand-editing `gateway.json`.
+
+---
+
+## Identity Management — System ▸ Identity (v0.4.x+)
+
+Identity Management lives in **one place**: the **System ▸ Identity** page. It is the single home for everything identity-related and replaces the previous split across Settings ▸ Identity and Settings ▸ Gateway ▸ Federation (those locations now redirect / have been removed).
+
+The page has three sections:
+
+1. **Your Identity** — your owner GEID and COA alias (and the agent's), copyable.
+2. **Identity Providers** — the canonical provider set Aionima supports:
+
+   | Provider | How it connects | Status today |
+   |----------|-----------------|--------------|
+   | **GitHub** | Hosted device flow (a public client id ships with Aionima — no secret needed) | Connectable now |
+   | **Google** · **Meta** · **X** · **Tynn.ai** | OAuth redirect — you supply your own OAuth app (client id/secret) | Connectable once you add the app |
+   | **Civicognita** | Federated identity (formerly **Hive-ID**) | Available when federation is enabled |
+
+   The provider set is defined by a single registry (`identity-providers.ts`) so it never drifts between the API, the device-flow path, and the UI.
+3. **Civicognita / HIVE Federation** — the federation toggle + public URL + GEID/visitor options (the same `gateway.json` `federation.*` fields above), saved live.
+
+Dashboard **login accounts** (local username/password sign-in) are managed separately in **Machine Admin** — System ▸ Identity links across to it.
 
 ---
 

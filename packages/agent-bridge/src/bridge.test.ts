@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { ChannelId, OutboundContent } from "@agi/channel-sdk";
+import type { ChannelId, OutboundContent } from "@agi/plugins";
 import type { QueueMessage } from "@agi/entity-model";
 import { AgentBridge } from "./bridge.js";
 import type { BridgeDispatcher, BridgeBroadcaster, HeldMessage } from "./types.js";
@@ -55,8 +55,8 @@ beforeEach(() => {
 
   mockBroadcast = vi.fn();
 
-  dispatcher = { dispatch: mockDispatch };
-  broadcaster = { broadcast: mockBroadcast };
+  dispatcher = { dispatch: mockDispatch as unknown as BridgeDispatcher["dispatch"] };
+  broadcaster = { broadcast: mockBroadcast as unknown as BridgeBroadcaster["broadcast"] };
 
   bridge = new AgentBridge({ dispatcher, broadcaster });
 });

@@ -27,6 +27,12 @@
 /** Current MApp schema version (synced with protocol.json mappSchema). */
 export const MAPP_SCHEMA_VERSION = "mapp/1.0" as const;
 
+/** mapp/1.1 — adds `scripts` array for per-MApp Starlark script bundles (s102 Phase C). */
+export const MAPP_SCHEMA_VERSION_V1_1 = "mapp/1.1" as const;
+
+/** Union of all valid schema versions. */
+export type MAppSchemaVersion = typeof MAPP_SCHEMA_VERSION | typeof MAPP_SCHEMA_VERSION_V1_1;
+
 // ---------------------------------------------------------------------------
 // Categories
 // ---------------------------------------------------------------------------
@@ -193,12 +199,19 @@ export interface MAppWorkflowStep {
   dependsOn?: string[];
 }
 
-/** Multi-step automation triggered manually, on file change, or on schedule. */
+/** Multi-step automation triggered manually, on file change, on schedule, or by a channel message. */
 export interface MAppWorkflow {
   id: string;
   name: string;
   description?: string;
-  trigger: "manual" | "on-file-change" | "scheduled";
+  /**
+   * - "manual"          — owner triggers explicitly via UI or API.
+   * - "on-file-change"  — file-watcher fires on project file changes.
+   * - "scheduled"       — cron-based schedule.
+   * - "channel-message" — inbound channel message matching a binding fires this
+   *   workflow. Wired by the gateway's onWorkflowMatch dispatcher (CHN-H s169).
+   */
+  trigger: "manual" | "on-file-change" | "scheduled" | "channel-message";
   steps: MAppWorkflowStep[];
 }
 
@@ -474,10 +487,49 @@ export interface MAppScreen {
 }
 
 // ---------------------------------------------------------------------------
+// Scripts (mapp/1.1 — s102 Phase C)
+// ---------------------------------------------------------------------------
+
+/**
+ * A Starlark script bundled inside a MApp manifest (mapp/1.1).
+ *
+ * Scripts declared here are auto-registered in the ScriptRegistry on MApp
+ * install. They are disabled by default (deny-by-default execution policy).
+ * Compilation to WASM happens via POST /api/scripts/:id/compile (Phase D).
+ */
+export interface MAppScriptDefinition {
+  /** Stable identifier within the MApp. Pattern: `^[a-z0-9][a-z0-9_-]*$`. */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** Purpose description. */
+  description?: string;
+  /** Scripting language. Only "starlark" is supported. */
+  language: "starlark";
+  /** Starlark source code. */
+  source?: string;
+  /**
+   * Whether this script is a 0REALTALK packer/unpacker.
+   * Packers must use deterministic mode and receive special runtime treatment.
+   */
+  isPacker?: boolean;
+  /** Wall-clock timeout in milliseconds (default: 1000). */
+  timeoutMs?: number;
+  /** Max linear memory in 64 KB pages (default: 256 = 16 MB). */
+  maxMemoryPages?: number;
+  /**
+   * Freeze clock and seed PRNG for reproducible execution.
+   * Required for packers; optional for general scripts.
+   * @default false for regular scripts, true for packers
+   */
+  deterministic?: boolean;
+}
+
+// ---------------------------------------------------------------------------
 
 export interface MAppDefinition {
-  /** Schema version. Must be "mapp/1.0". */
-  $schema: typeof MAPP_SCHEMA_VERSION;
+  /** Schema version. "mapp/1.0" (no scripts) or "mapp/1.1" (with scripts). */
+  $schema: MAppSchemaVersion;
 
   // --- Identity ---
   /** Unique slug identifier (e.g. "reader", "wealth-suite"). */
@@ -533,6 +585,12 @@ export interface MAppDefinition {
   constants?: MAppConstant[];
   /** Output configuration (what happens after form submission). */
   output?: MAppOutput;
+  /**
+   * Starlark scripts bundled with this MApp (mapp/1.1).
+   * Auto-registered on install; disabled by default (deny-by-default).
+   * Requires $schema: "mapp/1.1".
+   */
+  scripts?: MAppScriptDefinition[];
 
   // --- Agent ---
   /** Agent prompts injected when this MApp is active on a project. */

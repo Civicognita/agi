@@ -1,6 +1,6 @@
 # Aionima SDK Overview
 
-The Aionima SDK (`@agi/sdk`) is the public API for building marketplace plugins. It provides a `createPlugin()` factory, 14 chainable `define*()` builders, and type-safe access to the full plugin registration surface.
+The Aionima SDK (`@agi/sdk`) is the public API for building marketplace plugins. It provides a `createPlugin()` factory, 16 chainable `define*()` builders, and type-safe access to the full plugin registration surface.
 
 ---
 

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CapabilityResolver } from "./capability-resolver.js";
-import type { HardwareCapabilities, InstalledModel } from "./types.js";
+import type { HardwareCapabilities, HfModelInfo, InstalledModel } from "./types.js";
 
 let tmp: string;
 
@@ -129,6 +129,96 @@ describe("detectExtraDeps", () => {
     const resolver = new CapabilityResolver(HARDWARE);
     const deps = resolver.detectExtraDeps(makeModel());
     expect(deps).toContain("accelerate");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// assessCompatibility — GPU requirement detection
+// ---------------------------------------------------------------------------
+
+function makeHfModel(overrides: Partial<HfModelInfo> = {}): HfModelInfo {
+  return {
+    id: "test/model",
+    modelId: "model",
+    tags: [],
+    downloads: 0,
+    likes: 0,
+    gated: false,
+    private: false,
+    disabled: false,
+    pipeline_tag: "text-generation",
+    library_name: "transformers",
+    ...overrides,
+  };
+}
+
+const CPU_HW: HardwareCapabilities = { ...HARDWARE, hasGpu: false };
+const GPU_HW: HardwareCapabilities = { ...HARDWARE, hasGpu: true, totalVramBytes: 24 * 1024 * 1024 * 1024 };
+
+describe("assessCompatibility — GPU-only quantization", () => {
+  it("fp8 tag → incompatible on CPU-only hardware", () => {
+    const resolver = new CapabilityResolver(CPU_HW);
+    const { compatibility, reason } = resolver.assessCompatibility(makeHfModel({ tags: ["fp8"] }));
+    expect(compatibility).toBe("incompatible");
+    expect(reason).toMatch(/gpu/i);
+    expect(reason).toMatch(/fp8/i);
+  });
+
+  it("awq tag → incompatible on CPU-only hardware", () => {
+    const resolver = new CapabilityResolver(CPU_HW);
+    const { compatibility, reason } = resolver.assessCompatibility(makeHfModel({ tags: ["awq"] }));
+    expect(compatibility).toBe("incompatible");
+    expect(reason).toMatch(/gpu/i);
+    expect(reason).toMatch(/awq/i);
+  });
+
+  it("gptq tag → incompatible on CPU-only hardware", () => {
+    const resolver = new CapabilityResolver(CPU_HW);
+    const { compatibility, reason } = resolver.assessCompatibility(makeHfModel({ tags: ["gptq"] }));
+    expect(compatibility).toBe("incompatible");
+    expect(reason).toMatch(/gpu/i);
+    expect(reason).toMatch(/gptq/i);
+  });
+
+  it("bitsandbytes tag → incompatible on CPU-only hardware", () => {
+    const resolver = new CapabilityResolver(CPU_HW);
+    const { compatibility } = resolver.assessCompatibility(makeHfModel({ tags: ["bitsandbytes"] }));
+    expect(compatibility).toBe("incompatible");
+  });
+
+  it("eetq tag → incompatible on CPU-only hardware", () => {
+    const resolver = new CapabilityResolver(CPU_HW);
+    const { compatibility } = resolver.assessCompatibility(makeHfModel({ tags: ["eetq"] }));
+    expect(compatibility).toBe("incompatible");
+  });
+
+  it("fp8 tag → not blocked on GPU hardware (may still be limited by size)", () => {
+    const resolver = new CapabilityResolver(GPU_HW);
+    // Small model — should NOT be "incompatible" just because of fp8 tag on GPU
+    const { compatibility } = resolver.assessCompatibility(
+      makeHfModel({ tags: ["fp8"] }),
+      { sizeBytes: 1 * 1024 * 1024 * 1024 }, // 1 GB
+    );
+    expect(compatibility).not.toBe("incompatible");
+  });
+
+  it("gguf quantization tags do NOT trigger GPU-only flag (GGUF runs on CPU)", () => {
+    const resolver = new CapabilityResolver(CPU_HW);
+    // Q4_K_M is a GGUF quantization — should be "limited" not "incompatible"
+    const { compatibility } = resolver.assessCompatibility(
+      makeHfModel({ tags: ["gguf", "Q4_K_M"], pipeline_tag: "text-generation" }),
+      { sizeBytes: 2 * 1024 * 1024 * 1024, quantization: "Q4_K_M" },
+    );
+    expect(compatibility).not.toBe("incompatible");
+  });
+
+  it("requires-gpu tag → incompatible on CPU-only hardware", () => {
+    const resolver = new CapabilityResolver(CPU_HW);
+    const { compatibility, reason } = resolver.assessCompatibility(
+      makeHfModel({ tags: ["requires-gpu"] }),
+    );
+    expect(compatibility).toBe("incompatible");
+    expect(reason).toMatch(/gpu/i);
   });
 });
 

@@ -15,7 +15,6 @@ import { join } from "node:path";
 import { PlanStore } from "../plan-store.js";
 import { createUpdatePlanHandler } from "./update-plan.js";
 
-const PROJECT_PATH = "/home/test/myproject";
 
 function parseErr(raw: string): string {
   const result = JSON.parse(raw) as { error: string };
@@ -27,20 +26,18 @@ function parseOk(raw: string): { ok: true; plan: Record<string, unknown> } {
 }
 
 describe("update_plan handler", () => {
-  let tmpHome: string;
-  let originalHome: string | undefined;
+  let tmpProjectDir: string;
   let planId: string;
 
   beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), "update-plan-tool-"));
-    originalHome = process.env.HOME;
-    process.env.HOME = tmpHome;
+    // PlanStore now writes to <projectPath>/.ai/plans/ — project dir must exist.
+    tmpProjectDir = mkdtempSync(join(tmpdir(), "update-plan-proj-"));
 
     // Seed a draft plan to operate on.
     const store = new PlanStore();
     const plan = store.create({
       title: "Seed",
-      projectPath: PROJECT_PATH,
+      projectPath: tmpProjectDir,
       steps: [
         { title: "S1", type: "plan" },
         { title: "S2", type: "implement" },
@@ -51,9 +48,7 @@ describe("update_plan handler", () => {
   });
 
   afterEach(() => {
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-    rmSync(tmpHome, { recursive: true, force: true });
+    rmSync(tmpProjectDir, { recursive: true, force: true });
   });
 
   describe("input validation", () => {
@@ -63,23 +58,23 @@ describe("update_plan handler", () => {
     });
 
     it("rejects when planId is missing", async () => {
-      const res = await createUpdatePlanHandler()({ projectPath: PROJECT_PATH, status: "reviewing" });
+      const res = await createUpdatePlanHandler()({ projectPath: tmpProjectDir, status: "reviewing" });
       expect(parseErr(res)).toMatch(/planId is required/);
     });
 
     it("rejects when neither status nor stepUpdates are provided", async () => {
-      const res = await createUpdatePlanHandler()({ projectPath: PROJECT_PATH, planId });
+      const res = await createUpdatePlanHandler()({ projectPath: tmpProjectDir, planId });
       expect(parseErr(res)).toMatch(/status or stepUpdates/);
     });
 
     it("rejects an invalid plan status", async () => {
-      const res = await createUpdatePlanHandler()({ projectPath: PROJECT_PATH, planId, status: "nonsense" });
+      const res = await createUpdatePlanHandler()({ projectPath: tmpProjectDir, planId, status: "nonsense" });
       expect(parseErr(res)).toMatch(/Invalid status/);
     });
 
     it("rejects an invalid step status", async () => {
       const res = await createUpdatePlanHandler()({
-        projectPath: PROJECT_PATH,
+        projectPath: tmpProjectDir,
         planId,
         stepUpdates: [{ id: "step_01", status: "halfway" }],
       });
@@ -88,7 +83,7 @@ describe("update_plan handler", () => {
 
     it("rejects a step update missing an id", async () => {
       const res = await createUpdatePlanHandler()({
-        projectPath: PROJECT_PATH,
+        projectPath: tmpProjectDir,
         planId,
         stepUpdates: [{ status: "complete" }],
       });
@@ -97,7 +92,7 @@ describe("update_plan handler", () => {
 
     it("rejects when the planId doesn't exist", async () => {
       const res = await createUpdatePlanHandler()({
-        projectPath: PROJECT_PATH,
+        projectPath: tmpProjectDir,
         planId: "plan_DOESNOTEXIST",
         status: "reviewing",
       });
@@ -108,7 +103,7 @@ describe("update_plan handler", () => {
   describe("happy path", () => {
     it("advances plan status and returns the updated plan", async () => {
       const res = await createUpdatePlanHandler()({
-        projectPath: PROJECT_PATH,
+        projectPath: tmpProjectDir,
         planId,
         status: "reviewing",
       });
@@ -118,7 +113,7 @@ describe("update_plan handler", () => {
 
     it("advances a step status without touching the plan status", async () => {
       const res = await createUpdatePlanHandler()({
-        projectPath: PROJECT_PATH,
+        projectPath: tmpProjectDir,
         planId,
         stepUpdates: [{ id: "step_01", status: "running" }],
       });
@@ -132,7 +127,7 @@ describe("update_plan handler", () => {
   describe("accept-lock", () => {
     async function approve(): Promise<void> {
       const res = await createUpdatePlanHandler()({
-        projectPath: PROJECT_PATH,
+        projectPath: tmpProjectDir,
         planId,
         status: "approved",
       });
@@ -142,7 +137,7 @@ describe("update_plan handler", () => {
     it("rejects regression to draft after acceptance", async () => {
       await approve();
       const res = await createUpdatePlanHandler()({
-        projectPath: PROJECT_PATH,
+        projectPath: tmpProjectDir,
         planId,
         status: "draft",
       });
@@ -152,7 +147,7 @@ describe("update_plan handler", () => {
     it("rejects regression to reviewing after acceptance", async () => {
       await approve();
       const res = await createUpdatePlanHandler()({
-        projectPath: PROJECT_PATH,
+        projectPath: tmpProjectDir,
         planId,
         status: "reviewing",
       });
@@ -162,7 +157,7 @@ describe("update_plan handler", () => {
     it("still allows forward transitions after acceptance (approved → executing)", async () => {
       await approve();
       const res = await createUpdatePlanHandler()({
-        projectPath: PROJECT_PATH,
+        projectPath: tmpProjectDir,
         planId,
         status: "executing",
       });
@@ -173,7 +168,7 @@ describe("update_plan handler", () => {
     it("still allows step-status advances after acceptance", async () => {
       await approve();
       const res = await createUpdatePlanHandler()({
-        projectPath: PROJECT_PATH,
+        projectPath: tmpProjectDir,
         planId,
         stepUpdates: [{ id: "step_01", status: "complete" }],
       });

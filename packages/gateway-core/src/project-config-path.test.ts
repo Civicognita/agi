@@ -20,6 +20,8 @@ import {
   ensureWorkspaceSkeleton,
   registerWorkspaceSkeletonRoot,
   _resetPreferredSkeletonRootsForTest,
+  KNOWLEDGE_DIR,
+  isVisibleInFileBrowser,
 } from "./project-config-path.js";
 
 describe("project-config-path", () => {
@@ -170,7 +172,7 @@ describe("project-config-path", () => {
     });
 
     it("layout includes all five k/ subfolders per Q-3 owner answer", () => {
-      const expected = ["k/plans", "k/knowledge", "k/pm", "k/memory", "k/chat"];
+      const expected = [".ai/plans", ".ai/knowledge", ".ai/pm", ".ai/memory", ".ai/chat"];
       for (const rel of expected) {
         expect(PROJECT_FOLDER_LAYOUT).toContain(rel);
       }
@@ -217,7 +219,7 @@ describe("project-config-path", () => {
       // No new project.json at root
       expect(existsSync(join(sacredPath, "project.json"))).toBe(false);
       // No k/ scaffolded
-      expect(existsSync(join(sacredPath, "k"))).toBe(false);
+      expect(existsSync(join(sacredPath, ".ai"))).toBe(false);
     });
 
     it("scaffoldProjectFolders is a no-op for sacred repos", () => {
@@ -225,7 +227,7 @@ describe("project-config-path", () => {
       mkdirSync(sacredPath, { recursive: true });
       const result = scaffoldProjectFolders(sacredPath);
       expect(result.created).toEqual([]);
-      expect(existsSync(join(sacredPath, "k"))).toBe(false);
+      expect(existsSync(join(sacredPath, ".ai"))).toBe(false);
     });
 
     it("projectConfigPath does not auto-write for sacred repos", () => {
@@ -294,13 +296,13 @@ describe("ensureWorkspaceSkeleton", () => {
     workspace = join(tmpRoot, "_projects");
     agiSource = join(tmpRoot, "agi-templates", ".new");
     // Build a fake agi-templates skeleton with the canonical s140 layout.
-    mkdirSync(join(agiSource, "k", "plans"), { recursive: true });
-    mkdirSync(join(agiSource, "k", "knowledge"), { recursive: true });
+    mkdirSync(join(agiSource, ".ai", "plans"), { recursive: true });
+    mkdirSync(join(agiSource, ".ai", "knowledge"), { recursive: true });
     mkdirSync(join(agiSource, "repos"), { recursive: true });
     mkdirSync(join(agiSource, "sandbox"), { recursive: true });
     mkdirSync(join(agiSource, ".trash"), { recursive: true });
     writeFileSync(join(agiSource, "project.json"), `{"name":"new"}\n`, "utf-8");
-    writeFileSync(join(agiSource, "k", "plans", ".gitkeep"), "", "utf-8");
+    writeFileSync(join(agiSource, ".ai", "plans", ".gitkeep"), "", "utf-8");
     _resetPreferredSkeletonRootsForTest();
   });
 
@@ -314,11 +316,11 @@ describe("ensureWorkspaceSkeleton", () => {
     expect(r.seeded).toBe(true);
     expect(r.target).toBe(join(workspace, ".new"));
     expect(existsSync(join(workspace, ".new", "project.json"))).toBe(true);
-    expect(existsSync(join(workspace, ".new", "k", "plans"))).toBe(true);
+    expect(existsSync(join(workspace, ".new", ".ai", "plans"))).toBe(true);
     expect(existsSync(join(workspace, ".new", "repos"))).toBe(true);
     expect(existsSync(join(workspace, ".new", ".trash"))).toBe(true);
     // .gitkeep files are intentionally skipped.
-    expect(existsSync(join(workspace, ".new", "k", "plans", ".gitkeep"))).toBe(false);
+    expect(existsSync(join(workspace, ".new", ".ai", "plans", ".gitkeep"))).toBe(false);
   });
 
   it("is idempotent — second call short-circuits without re-copying", () => {
@@ -363,12 +365,37 @@ describe("ensureWorkspaceSkeleton", () => {
     registerWorkspaceSkeletonRoot(workspace);
     // Pre-creating the skeleton on disk + registering means subsequent
     // scaffolds will use it without ensureWorkspaceSkeleton being called.
-    mkdirSync(join(workspace, ".new", "k"), { recursive: true });
+    mkdirSync(join(workspace, ".new", ".ai"), { recursive: true });
     writeFileSync(join(workspace, ".new", "MARKER.txt"), "registered", "utf-8");
 
     const project = join(workspace, "beta");
     mkdirSync(project, { recursive: true });
     scaffoldProjectFolders(project);
     expect(existsSync(join(project, "MARKER.txt"))).toBe(true);
+  });
+});
+
+describe("isVisibleInFileBrowser (knowledge dir UI visibility — directive 2026-06-09)", () => {
+  it("always hides .git and node_modules", () => {
+    expect(isVisibleInFileBrowser(".git", false)).toBe(false);
+    expect(isVisibleInFileBrowser("node_modules", false)).toBe(false);
+    expect(isVisibleInFileBrowser(".git", true)).toBe(false);
+  });
+
+  it("shows everything (except .git/node_modules) when hideHidden is off", () => {
+    expect(isVisibleInFileBrowser(".hidden", false)).toBe(true);
+    expect(isVisibleInFileBrowser("src", false)).toBe(true);
+    expect(isVisibleInFileBrowser(KNOWLEDGE_DIR, false)).toBe(true);
+  });
+
+  it("hides other dotfiles but KEEPS the knowledge dir (.ai/) visible when hideHidden is on", () => {
+    // The owner's explicit requirement: .ai/ stays visible in the UI.
+    expect(isVisibleInFileBrowser(KNOWLEDGE_DIR, true)).toBe(true);
+    expect(isVisibleInFileBrowser(".ai", true)).toBe(true);
+    // Other dotfiles (incl. the sibling .agi/ config envelope) stay hidden.
+    expect(isVisibleInFileBrowser(".agi", true)).toBe(false);
+    expect(isVisibleInFileBrowser(".env", true)).toBe(false);
+    // Non-dot entries still show.
+    expect(isVisibleInFileBrowser("README.md", true)).toBe(true);
   });
 });

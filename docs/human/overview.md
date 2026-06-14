@@ -2,7 +2,7 @@
 
 Aionima is an autonomous AI gateway. It connects messaging channels (Telegram, Discord, Signal, WhatsApp, Gmail) to a Claude-powered agent pipeline. You send a message on any supported channel; Aionima receives it, consults the agent, and replies — all without manual intervention.
 
-The system is a pnpm monorepo running on Node.js 22 LTS. It uses TypeScript throughout, with a Fastify-backed HTTP server, a WebSocket control plane, SQLite for entity and message storage, and a React dashboard for monitoring and administration.
+The system is a pnpm monorepo running on Node.js 22 LTS. It uses TypeScript throughout, with a Fastify-backed HTTP server, a WebSocket control plane, PostgreSQL for entity and session storage; SQLite for the local memory graph, and a React dashboard for monitoring and administration.
 
 ---
 
@@ -37,7 +37,7 @@ The pipeline is gated by the gateway state (Initial / Limbo / Offline / Online �
 
 Entities represent people, organizations, and other participants who interact with Aionima. Each entity has a verification tier (unverified, verified, sealed) and a Chain of Accountability (COA) alias (e.g. `#E0`, `#O1`). All agent invocations are anchored to a COA fingerprint for audit purposes.
 
-The entity model is stored in a SQLite database at `~/.agi/entities.db`.
+The entity model is stored in PostgreSQL (`agi_data` database). The agent memory graph uses a separate SQLite database at `~/.agi/memory/graph.db`.
 
 ### 4. Dashboard
 
@@ -53,7 +53,7 @@ aionima/
 ├── config/                 Config schema (Zod validation)
 ├── packages/
 │   ├── gateway-core/       HTTP/WS server, agent pipeline, core engine
-│   ├── entity-model/       SQLite entity store, message queue
+│   ├── entity-model/       PostgreSQL entity store, message queue
 │   ├── channel-sdk/        Channel plugin interface and types
 │   ├── coa-chain/          Chain of Accountability audit logger
 │   ├── memory/             Composite memory adapter
@@ -154,7 +154,7 @@ Hot-reload (config.changed hook fires, relevant services update)
 | Package manager | pnpm 10.5 |
 | HTTP server | Fastify 5 |
 | API layer | tRPC 11 |
-| Database | SQLite via better-sqlite3 |
+| Database | PostgreSQL (agi_data) + SQLite memory graph |
 | Frontend | React 19, Vite 6, Tailwind CSS 4, TanStack Query |
 | Bundler | tsdown (esbuild-based) |
 | Testing | Vitest (unit/integration), Playwright (e2e) |
@@ -169,7 +169,7 @@ Hot-reload (config.changed hook fires, relevant services update)
 | Path | Purpose |
 |------|---------|
 | `~/.agi/gateway.json` | Runtime config |
-| `~/.agi/entities.db` | SQLite entity database |
+| `~/.agi/memory/graph.db` | SQLite memory event graph (CoALA+TiMem) |
 | `~/.agi/chat-history/` | Chat session history (JSON files per session) |
 | `~/.agi/secrets/` | TPM2-sealed credentials |
 | `~/.agi/` | Runtime data root |

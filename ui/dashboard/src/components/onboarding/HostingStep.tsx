@@ -1,13 +1,11 @@
 /**
- * HostingStep — Configure domain and identity service hosting during onboarding.
+ * HostingStep — Configure domain hosting during onboarding.
  *
  * 1. "Do you have a custom domain?" → toggle
  * 2. If yes: enter base domain (e.g. "mysetup.com")
- * 3. "Where should your identity service run?"
- *    - Central (recommended): Uses id.aionima.ai — no setup needed
- *    - Local: Deploys ID service at id.{baseDomain}
- * 4. If local: check setup status, offer Podman container setup
- * 5. Saves to config: hosting.baseDomain, idService.local.enabled
+ * 3. Saves to config: hosting.baseDomain
+ *
+ * Identity is now handled directly by the gateway (no separate ID service).
  */
 
 import { useState } from "react";
@@ -26,9 +24,7 @@ interface Props {
 export function HostingStep({ onNext, onSkip, status }: Props) {
   const [hasCustomDomain, setHasCustomDomain] = useState(false);
   const [baseDomain, setBaseDomain] = useState("ai.on");
-  const [idMode, setIdMode] = useState<"central" | "local">("central");
   const [saving, setSaving] = useState(false);
-  const [localSetupStatus, setLocalSetupStatus] = useState<"idle" | "running" | "done" | "error">("idle");
 
   const isCompleted = status === "completed";
 
@@ -40,24 +36,9 @@ export function HostingStep({ onNext, onSkip, status }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           baseDomain: hasCustomDomain ? baseDomain : "ai.on",
-          idMode,
         }),
       });
-      if (res.ok) {
-        // If local mode, trigger setup
-        if (idMode === "local") {
-          setLocalSetupStatus("running");
-          try {
-            const setupRes = await fetch("/api/onboarding/hosting/setup-local-id", {
-              method: "POST",
-            });
-            setLocalSetupStatus(setupRes.ok ? "done" : "error");
-          } catch {
-            setLocalSetupStatus("error");
-          }
-        }
-        onNext();
-      }
+      if (res.ok) onNext();
     } catch {
       // ignore
     } finally {
@@ -132,73 +113,7 @@ export function HostingStep({ onNext, onSkip, status }: Props) {
         )}
       </div>
 
-      {/* Identity service mode */}
-      <div className="flex flex-col gap-3 onboard-animate-in onboard-stagger-2">
-        <p className="text-sm font-medium">Where should your identity service run?</p>
-
-        <div className="flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={() => setIdMode("central")}
-            className={cn(
-              "flex items-start gap-3 p-4 rounded-lg border text-left transition-colors",
-              idMode === "central"
-                ? "border-primary bg-primary/5"
-                : "border-border hover:border-primary/50",
-            )}
-          >
-            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs font-bold shrink-0 mt-0.5">
-              C
-            </div>
-            <div>
-              <p className="text-sm font-medium">
-                Central <span className="text-[10px] text-primary font-normal ml-1">Recommended</span>
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Uses id.aionima.ai — no setup needed. Your OAuth tokens are managed
-                by the Aionima central identity service.
-              </p>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIdMode("local")}
-            className={cn(
-              "flex items-start gap-3 p-4 rounded-lg border text-left transition-colors",
-              idMode === "local"
-                ? "border-primary bg-primary/5"
-                : "border-border hover:border-primary/50",
-            )}
-          >
-            <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-foreground text-xs font-bold shrink-0 mt-0.5">
-              L
-            </div>
-            <div>
-              <p className="text-sm font-medium">Local</p>
-              <p className="text-xs text-muted-foreground">
-                Deploys the ID service at id.{hasCustomDomain ? baseDomain : "ai.on"} on
-                this server. Full control over your OAuth credentials and tokens.
-                Requires PostgreSQL.
-              </p>
-            </div>
-          </button>
-        </div>
-
-        {idMode === "local" && localSetupStatus === "running" && (
-          <div className="p-3 rounded-lg bg-secondary text-sm text-muted-foreground">
-            Setting up local ID service...
-          </div>
-        )}
-        {idMode === "local" && localSetupStatus === "error" && (
-          <Callout color="red" className="text-sm">
-            Local ID setup failed. You can set it up manually later via
-            <code className="mx-1 text-xs">scripts/setup-local.sh</code>
-          </Callout>
-        )}
-      </div>
-
-      <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 onboard-animate-in onboard-stagger-3">
+      <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 onboard-animate-in onboard-stagger-2">
         <Button onClick={handleSave} disabled={saving} className="w-full sm:w-auto">
           {saving ? "Saving..." : "Continue"}
         </Button>

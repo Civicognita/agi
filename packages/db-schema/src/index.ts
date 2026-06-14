@@ -37,5 +37,8 @@ export * from "./hf.js";
 // Security scan runs and findings
 export * from "./security.js";
 
+// Memory graph — episodic events, relationships, doc chunks, consolidation log (s112)
+export * from "./memory.js";
+
 // Shared drizzle + pg client factory (used by services + test fixtures)
 export * from "./client.js";

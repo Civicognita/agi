@@ -250,4 +250,185 @@ describe("ProjectConfigManager", () => {
       expect(result?.errors).toBe(1);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // CHN-D (s165) slice 2 — channel-room binding CRUD helpers
+  // -------------------------------------------------------------------------
+  describe("channel-room bindings (CHN-D)", () => {
+    beforeEach(() => {
+      mgr.create(projectPath, "Channels Test Project");
+    });
+
+    it("listRoomBindings returns empty array when no bindings", () => {
+      expect(mgr.listRoomBindings(projectPath)).toEqual([]);
+    });
+
+    it("addRoomBinding persists a new binding", async () => {
+      const cfg = await mgr.addRoomBinding(projectPath, {
+        channelId: "discord",
+        roomId: "12345",
+        label: "#general",
+        kind: "channel",
+        privacy: "public",
+        boundAt: "2026-05-14T12:00:00Z",
+      });
+      expect(cfg.rooms).toHaveLength(1);
+      expect(cfg.rooms?.[0]?.channelId).toBe("discord");
+      expect(mgr.listRoomBindings(projectPath)).toHaveLength(1);
+    });
+
+    it("addRoomBinding rejects a duplicate (channelId, roomId) pair", async () => {
+      await mgr.addRoomBinding(projectPath, {
+        channelId: "discord",
+        roomId: "12345",
+        boundAt: "2026-05-14T12:00:00Z",
+      });
+      await expect(
+        mgr.addRoomBinding(projectPath, {
+          channelId: "discord",
+          roomId: "12345",
+          boundAt: "2026-05-14T12:01:00Z",
+        }),
+      ).rejects.toThrow(/already exists/);
+    });
+
+    it("addRoomBinding allows same roomId under different channels", async () => {
+      await mgr.addRoomBinding(projectPath, {
+        channelId: "discord",
+        roomId: "general",
+        boundAt: "2026-05-14T12:00:00Z",
+      });
+      const cfg = await mgr.addRoomBinding(projectPath, {
+        channelId: "slack",
+        roomId: "general",
+        boundAt: "2026-05-14T12:00:00Z",
+      });
+      expect(cfg.rooms).toHaveLength(2);
+    });
+
+    it("removeRoomBinding removes the matching entry", async () => {
+      await mgr.addRoomBinding(projectPath, {
+        channelId: "discord",
+        roomId: "a",
+        boundAt: "2026-05-14T12:00:00Z",
+      });
+      await mgr.addRoomBinding(projectPath, {
+        channelId: "discord",
+        roomId: "b",
+        boundAt: "2026-05-14T12:00:00Z",
+      });
+      const cfg = await mgr.removeRoomBinding(projectPath, "discord", "a");
+      expect(cfg.rooms).toHaveLength(1);
+      expect(cfg.rooms?.[0]?.roomId).toBe("b");
+    });
+
+    it("removeRoomBinding throws when the binding doesn't exist", async () => {
+      await expect(
+        mgr.removeRoomBinding(projectPath, "discord", "nonexistent"),
+      ).rejects.toThrow(/not found/);
+    });
+
+    it("addRoomBinding on a nonexistent project throws", async () => {
+      const ghost = join(tmpDir, "no-such-project");
+      mkdirSync(ghost, { recursive: true });
+      await expect(
+        mgr.addRoomBinding(ghost, {
+          channelId: "discord",
+          roomId: "x",
+          boundAt: "2026-05-14T12:00:00Z",
+        }),
+      ).rejects.toThrow(/not found/);
+    });
+
+    it("survives a round-trip read-modify-write (binding persists in JSON)", async () => {
+      await mgr.addRoomBinding(projectPath, {
+        channelId: "telegram",
+        roomId: "@myroom",
+        label: "My Room",
+        boundAt: "2026-05-14T12:00:00Z",
+      });
+      const raw = readFileSync(join(projectPath, "project.json"), "utf-8");
+      expect(raw).toContain("telegram");
+      expect(raw).toContain("@myroom");
+      // Re-read via a fresh manager to confirm persistence is via the file
+      const mgr2 = new ProjectConfigManager();
+      expect(mgr2.listRoomBindings(projectPath)).toHaveLength(1);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // CHN-C (s164) slice 1 — findProjectByRoom dispatcher primitive
+  // -------------------------------------------------------------------------
+  describe("findProjectByRoom (CHN-C)", () => {
+    let projectA: string;
+    let projectB: string;
+
+    beforeEach(async () => {
+      projectA = join(tmpDir, "proj-a");
+      projectB = join(tmpDir, "proj-b");
+      mkdirSync(projectA, { recursive: true });
+      mkdirSync(projectB, { recursive: true });
+      mgr.create(projectA, "Project A");
+      mgr.create(projectB, "Project B");
+      await mgr.addRoomBinding(projectA, {
+        channelId: "discord",
+        roomId: "guild-1:channel-1",
+        label: "#general",
+        boundAt: "2026-05-14T12:00:00Z",
+      });
+      await mgr.addRoomBinding(projectB, {
+        channelId: "telegram",
+        roomId: "@channel-2",
+        boundAt: "2026-05-14T12:00:00Z",
+      });
+    });
+
+    it("returns the project + binding for a matching (channelId, roomId)", () => {
+      const result = mgr.findProjectByRoom("discord", "guild-1:channel-1", [projectA, projectB]);
+      expect(result).not.toBeNull();
+      expect(result?.projectPath).toBe(projectA);
+      expect(result?.binding.label).toBe("#general");
+    });
+
+    it("matches across multiple candidates (returns project B for telegram)", () => {
+      const result = mgr.findProjectByRoom("telegram", "@channel-2", [projectA, projectB]);
+      expect(result?.projectPath).toBe(projectB);
+    });
+
+    it("returns null when no project binds the room", () => {
+      const result = mgr.findProjectByRoom("slack", "C9999", [projectA, projectB]);
+      expect(result).toBeNull();
+    });
+
+    it("returns null when channelId matches but roomId doesn't", () => {
+      const result = mgr.findProjectByRoom("discord", "wrong-id", [projectA, projectB]);
+      expect(result).toBeNull();
+    });
+
+    it("skips candidates whose project.json doesn't exist or is invalid", () => {
+      const ghost = join(tmpDir, "no-such-project");
+      const result = mgr.findProjectByRoom("discord", "guild-1:channel-1", [ghost, projectA]);
+      expect(result?.projectPath).toBe(projectA);
+    });
+
+    it("returns null on empty candidate list", () => {
+      const result = mgr.findProjectByRoom("discord", "anything", []);
+      expect(result).toBeNull();
+    });
+
+    it("first-match-wins when two candidates bind the same room (shouldn't happen but is graceful)", async () => {
+      // Force a duplicate across projects (schema doesn't enforce cross-
+      // project uniqueness, only within-project)
+      await mgr.addRoomBinding(projectB, {
+        channelId: "discord",
+        roomId: "guild-1:channel-1",
+        boundAt: "2026-05-14T12:01:00Z",
+      });
+      const result = mgr.findProjectByRoom("discord", "guild-1:channel-1", [projectA, projectB]);
+      // Candidate order determines winner
+      expect(result?.projectPath).toBe(projectA);
+      const reversed = mgr.findProjectByRoom("discord", "guild-1:channel-1", [projectB, projectA]);
+      expect(reversed?.projectPath).toBe(projectB);
+    });
+  });
 });

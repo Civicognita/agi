@@ -10,7 +10,7 @@
  */
 
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
-import type { ChannelSecurityAdapter } from "@agi/channel-sdk";
+import type { ChannelSecurityAdapter } from "@agi/sdk";
 
 // ---------------------------------------------------------------------------
 // Webhook signature verification

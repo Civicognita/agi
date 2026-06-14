@@ -236,3 +236,52 @@ export function removeDotMcpServer(projectPath: string, id: string): void {
   const filtered = existing.filter((s) => s.id !== id);
   writeDotMcpJson(projectPath, filtered);
 }
+
+// ---------------------------------------------------------------------------
+// Gateway-level default MCP servers (story #215)
+// ---------------------------------------------------------------------------
+
+/** Minimal shape of a gateway-level MCP server entry (gateway.json mcp.servers[]). */
+export interface DefaultMcpServer {
+  id: string;
+  name?: string;
+  transport: "stdio" | "http" | "websocket";
+  command?: string[];
+  url?: string;
+  autoConnect?: boolean;
+}
+
+/**
+ * MCP servers baked into EVERY gateway install, always-on for Aion across all
+ * projects and chats regardless of scope (owner directive 2026-06-13). Shipped
+ * in code rather than gateway.json so no per-install config is required
+ * (feedback_no_config_in_production). An owner can override or disable any
+ * default by re-declaring the same `id` in gateway.json `mcp.servers` (e.g.
+ * `{ "id": "fancy-ui", "autoConnect": false }`) — see mergeDefaultMcpServers.
+ */
+export const DEFAULT_MCP_SERVERS: DefaultMcpServer[] = [
+  {
+    id: "fancy-ui",
+    name: "Fancy UI",
+    transport: "http",
+    // The Fancy UI registry MCP — browse/search/install ADF UI components.
+    url: "https://ui.particle.academy/mcp",
+    autoConnect: true,
+  },
+];
+
+/**
+ * Merge the baked-in defaults with the owner's gateway.json `mcp.servers`. A
+ * configured entry with the same `id` WINS (so owners can customize or disable
+ * a default), and defaults are listed first. Pure — boot calls this to build
+ * the full registration list.
+ */
+export function mergeDefaultMcpServers(
+  configured: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  const configuredIds = new Set(configured.map((s) => s.id));
+  const defaults = DEFAULT_MCP_SERVERS
+    .filter((d) => !configuredIds.has(d.id))
+    .map((d) => ({ ...d }) as Record<string, unknown>);
+  return [...defaults, ...configured];
+}

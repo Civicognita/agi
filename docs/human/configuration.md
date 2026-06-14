@@ -468,37 +468,6 @@ Federation protocol configuration. Enables this node to participate in the Aioni
 | `autoGeid` | boolean | `true` | Auto-generate GEID for new entities |
 | `allowVisitors` | boolean | `true` | Allow visitor authentication from federated nodes |
 
-### idService
-
-ID service configuration. Controls the location and tracking of the local ID service repo, and optionally enables self-hosting the ID service on this node.
-
-```json
-{
-  "idService": {
-    "dir": "/opt/agi-local-id",
-    "source": "git@github.com:Civicognita/agi-local-id.git",
-    "branch": "main",
-    "local": {
-      "enabled": false,
-      "port": 3200,
-      "subdomain": "id",
-      "postgresContainer": true
-    }
-  }
-}
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `dir` | string | `"/opt/agi-local-id"` | Path to the ID service directory |
-| `source` | string | `"git@github.com:Civicognita/agi-local-id.git"` | Git remote URL |
-| `branch` | string | `"main"` | Branch to track |
-| `local.enabled` | boolean | `false` | Enable local ID service |
-| `local.port` | number | `3200` | HTTP port |
-| `local.subdomain` | string | `"id"` | Subdomain (e.g. `"id"` → `id.ai.on`) |
-| `local.databaseUrl` | string | — | PostgreSQL connection string |
-| `local.postgresContainer` | boolean | `true` | Auto-provision a Podman PostgreSQL container |
-
 ### marketplace
 
 Plugin marketplace configuration. Controls where the official marketplace repo is checked out and which branch is tracked.
@@ -552,8 +521,6 @@ Developer mode configuration. When enabled, AGI switches all core repos to owner
     "primeDir": "/opt/agi-prime_dev",
     "marketplaceRepo": "git@github.com:wishborn/agi-marketplace.git",
     "marketplaceDir": "/opt/agi-marketplace_dev",
-    "idRepo": "git@github.com:wishborn/agi-local-id.git",
-    "idDir": "/opt/agi-local-id_dev",
     "mappMarketplaceRepo": "git@github.com:wishborn/agi-mapp-marketplace.git",
     "mappMarketplaceDir": "/opt/agi-mapp-marketplace_dev"
   }
@@ -568,8 +535,6 @@ Developer mode configuration. When enabled, AGI switches all core repos to owner
 | `primeDir` | string | `"/opt/agi-prime_dev"` | Dev directory for PRIME fork |
 | `marketplaceRepo` | string | — | Git remote URL for marketplace fork |
 | `marketplaceDir` | string | `"/opt/agi-marketplace_dev"` | Dev directory for marketplace fork |
-| `idRepo` | string | — | Git remote URL for ID service fork |
-| `idDir` | string | `"/opt/agi-local-id_dev"` | Dev directory for ID service fork |
 | `mappMarketplaceRepo` | string | — | Git remote URL for MApp marketplace fork |
 | `mappMarketplaceDir` | string | `"/opt/agi-mapp-marketplace_dev"` | Dev directory for MApp marketplace fork |
 

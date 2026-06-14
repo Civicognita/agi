@@ -260,13 +260,25 @@ export interface ProjectActivityData {
   summary: string;
 }
 
-/** System upgrade event payload. */
+/** System upgrade event payload (per-step during an active upgrade). */
 export interface SystemUpgradeData {
   phase: string;
   message: string;
   timestamp: string;
   step?: string;
   status?: string;
+}
+
+/** Emitted once on gateway boot when a new version is detected vs seen-version.txt. */
+export interface SystemUpgradedData {
+  /** The version that was just deployed. */
+  toVersion: string;
+  /** The previously seen version (null if first boot with version tracking). */
+  fromVersion: string | null;
+  /** Number of pending UpgradeNextSteps (required + optional). */
+  pendingSteps: number;
+  /** True if any pending step is required (blocks acknowledgement). */
+  hasRequired: boolean;
 }
 
 /** Hosting infrastructure status. */
@@ -436,6 +448,7 @@ export type DashboardEvent =
   | { type: "overview:updated"; data: DashboardOverview }
   | { type: "project:activity"; data: ProjectActivityData & { timestamp: string } }
   | { type: "system:upgrade"; data: SystemUpgradeData }
+  | { type: "system:upgraded"; data: SystemUpgradedData }
   | { type: "system:update_available"; data: UpdateCheckData }
   | { type: "hosting:status"; data: HostingStatusData }
   | { type: "project:config_changed"; data: ProjectConfigChangedData }

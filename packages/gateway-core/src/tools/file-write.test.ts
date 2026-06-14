@@ -21,11 +21,11 @@ beforeEach(() => {
   mkdirSync(workspace, { recursive: true });
   project = join(workspace, "myproj");
   mkdirSync(project, { recursive: true });
-  mkdirSync(join(project, "k"), { recursive: true });
+  mkdirSync(join(project, ".ai"), { recursive: true });
   handler = createFileWriteHandler({
     workspaceRoot: workspace,
     cageProvider: () => ({
-      allowedPrefixes: [project, join(project, ".agi"), join(project, "k"), join(project, "repos"), join(project, ".trash")],
+      allowedPrefixes: [project, join(project, ".agi"), join(project, ".ai"), join(project, "repos"), join(project, ".trash")],
       opsModeWidened: false,
       askUserQuestionEscape: true,
     }),
@@ -59,15 +59,15 @@ describe("file_write root-write protection (s134 cycle 198)", () => {
   });
 
   it("allows files inside k/ subfolder", async () => {
-    const r = await call({ path: "k/note.md", content: "# note" });
+    const r = await call({ path: ".ai/note.md", content: "# note" });
     expect(r.error).toBeUndefined();
-    expect(readFileSync(join(project, "k", "note.md"), "utf-8")).toBe("# note");
+    expect(readFileSync(join(project, ".ai", "note.md"), "utf-8")).toBe("# note");
   });
 
   it("allows files inside nested subfolders with create_dirs", async () => {
-    const r = await call({ path: "k/plans/2026-05-11/index.md", content: "plan", create_dirs: true });
+    const r = await call({ path: ".ai/plans/2026-05-11/index.md", content: "plan", create_dirs: true });
     expect(r.error).toBeUndefined();
-    expect(existsSync(join(project, "k", "plans", "2026-05-11", "index.md"))).toBe(true);
+    expect(existsSync(join(project, ".ai", "plans", "2026-05-11", "index.md"))).toBe(true);
   });
 
   it("still gates paths outside the cage", async () => {

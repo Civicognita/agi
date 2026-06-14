@@ -7,7 +7,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@agi/gateway-core": "workspace:*",
-    "@agi/sdk": "workspace:*"
+    "@agi/db-schema": "workspace:*",
+    "@agi/sdk": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "ulid": "^2.3.0"
   }
 }

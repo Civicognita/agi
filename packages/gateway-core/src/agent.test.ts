@@ -892,45 +892,14 @@ describe("invocation-gate.ts", () => {
       expect(decision.action).toBe("invoke");
     });
 
-    it("LIMBO → action: queue", () => {
+    it("LIMBO → action: invoke (local ops unaffected by federation state)", () => {
       const decision = gateInvocation("LIMBO");
-      expect(decision.action).toBe("queue");
+      expect(decision.action).toBe("invoke");
     });
 
-    it("LIMBO → notifyEntity: true", () => {
-      const decision = gateInvocation("LIMBO");
-      expect(decision.action === "queue" && decision.notifyEntity).toBe(true);
-    });
-
-    it("LIMBO → provides a user-facing message", () => {
-      const decision = gateInvocation("LIMBO");
-      if (decision.action === "queue") {
-        expect(decision.message.length).toBeGreaterThan(0);
-      }
-    });
-
-    it("OFFLINE → action: queue", () => {
+    it("OFFLINE → action: invoke (local ops unaffected by federation state)", () => {
       const decision = gateInvocation("OFFLINE");
-      expect(decision.action).toBe("queue");
-    });
-
-    it("OFFLINE → notifyEntity: true", () => {
-      const decision = gateInvocation("OFFLINE");
-      expect(decision.action === "queue" && decision.notifyEntity).toBe(true);
-    });
-
-    it("OFFLINE → provides a user-facing message", () => {
-      const decision = gateInvocation("OFFLINE");
-      if (decision.action === "queue") {
-        expect(decision.message.length).toBeGreaterThan(0);
-      }
-    });
-
-    it("OFFLINE → reason mentions offline", () => {
-      const decision = gateInvocation("OFFLINE");
-      if (decision.action === "queue") {
-        expect(decision.reason).toContain("offline");
-      }
+      expect(decision.action).toBe("invoke");
     });
 
     it("UNKNOWN → action: log_only", () => {
@@ -1496,15 +1465,17 @@ describe("tool-registry.ts", () => {
       ).rejects.toThrow(/requires tier/);
     });
 
-    it("throws when tool requires a state not matching current state", async () => {
+    it("executes even when requiresState does not match current state (requiresState is audit-only)", async () => {
+      // requiresState was changed from an execution gate to metadata-only for
+      // COA<>COI logging and UI dimming. State never blocks tool use — see
+      // tool-registry.ts line ~216 and the comment there.
       registry.register(
         makeTool("online-tool", { requiresState: ["ONLINE"] }),
         async () => "ok",
         {},
       );
-      await expect(
-        registry.execute("online-tool", {}, makeExecCtx({ state: "LIMBO" })),
-      ).rejects.toThrow(/requires state/);
+      const result = await registry.execute("online-tool", {}, makeExecCtx({ state: "LIMBO" }));
+      expect(result.content).toContain("ok");
     });
 
     it("executes handler and returns content", async () => {

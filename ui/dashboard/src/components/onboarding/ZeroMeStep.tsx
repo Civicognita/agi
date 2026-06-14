@@ -53,12 +53,37 @@ export function ZeroMeStep({ domain, onNext, onSkip }: Props) {
   const [summary, setSummary] = useState("");
   const [saving, setSaving] = useState(false);
   const [chatFailed, setChatFailed] = useState(false);
+  const [existingProfile, setExistingProfile] = useState<string | null>(null);
+  const [checkingStatus, setCheckingStatus] = useState(true);
+  const [twinActivated, setTwinActivated] = useState<{ coaAlias: string; geid: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void sendMessage("");
+    setCheckingStatus(true);
+    setExistingProfile(null);
+    setMessages([]);
+    setCompleted(false);
+    setSummary("");
+    fetch("/api/onboarding/zero-me/status")
+      .then((r) => r.json() as Promise<{ profiles: Record<string, string> }>)
+      .then((data) => {
+        const profile = data.profiles[domain];
+        if (profile) {
+          setExistingProfile(profile);
+        } else {
+          void sendMessage("");
+        }
+      })
+      .catch(() => { void sendMessage(""); })
+      .finally(() => setCheckingStatus(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [domain]);
+
+  const startFresh = () => {
+    setExistingProfile(null);
+    setMessages([]);
+    void sendMessage("");
+  };
 
   useEffect(() => {
     if (scrollRef.current !== null) {
@@ -129,18 +154,85 @@ export function ZeroMeStep({ domain, onNext, onSkip }: Props) {
   const handleSaveAndContinue = async () => {
     setSaving(true);
     try {
-      await fetch("/api/onboarding/zero-me/save", {
+      const res = await fetch("/api/onboarding/zero-me/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ domain, content: summary }),
       });
+      if (res.ok) {
+        const data = (await res.json()) as { ok: boolean; twin?: { coaAlias: string; geid: string } | null };
+        if (data.twin) {
+          setTwinActivated(data.twin);
+          setSaving(false);
+          return; // Show twin confirmation panel before advancing
+        }
+      }
     } catch {
       // Non-fatal
-    } finally {
-      setSaving(false);
-      onNext();
     }
+    setSaving(false);
+    onNext();
   };
+
+  // Twin activation confirmation — shown after all three domains are saved
+  if (twinActivated) {
+    return (
+      <div className="flex flex-col gap-6 h-full onboard-animate-in">
+        <div>
+          <h2 className="text-xl sm:text-2xl font-semibold mb-1">Your digital twin is live</h2>
+          <p className="text-[13px] sm:text-sm text-muted-foreground leading-relaxed">
+            All three dimensions of your identity have been captured. Your twin has been registered on this node.
+          </p>
+        </div>
+        <div className="bg-secondary/40 border border-border rounded-lg p-4 space-y-2 text-[13px]">
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">COA alias</span>
+            <code className="font-mono text-primary">{twinActivated.coaAlias}</code>
+          </div>
+          <div className="flex items-start gap-2">
+            <span className="text-muted-foreground shrink-0">GEID</span>
+            <code className="font-mono text-xs text-muted-foreground break-all">{twinActivated.geid}</code>
+          </div>
+        </div>
+        <Button onClick={onNext} className="w-full sm:w-auto">
+          Continue
+        </Button>
+      </div>
+    );
+  }
+
+  if (checkingStatus) {
+    return (
+      <div className="flex flex-col gap-4 h-full">
+        <div className="onboard-animate-in">
+          <h2 className="text-xl sm:text-2xl font-semibold mb-1">{DOMAIN_COPY[domain].headline}</h2>
+        </div>
+        <p className="text-sm text-muted-foreground animate-pulse">Loading…</p>
+      </div>
+    );
+  }
+
+  // Show existing profile if one was captured previously, with option to redo.
+  if (existingProfile !== null) {
+    return (
+      <div className="flex flex-col gap-4 h-full">
+        <div className="onboard-animate-in">
+          <h2 className="text-xl sm:text-2xl font-semibold mb-1">{DOMAIN_COPY[domain].headline}</h2>
+          <p className="text-[13px] sm:text-sm text-muted-foreground leading-relaxed">
+            You've already captured this. Review it below, then continue — or redo the interview to update it.
+          </p>
+        </div>
+        <div className="flex-1 overflow-y-auto bg-secondary/40 rounded-lg p-4 text-[13px] text-foreground leading-relaxed whitespace-pre-wrap border border-border max-h-[50vh]">
+          {existingProfile}
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+          <Button onClick={onNext} className="w-full sm:w-auto">Continue</Button>
+          <Button variant="outline" onClick={startFresh} className="w-full sm:w-auto">Redo interview</Button>
+          <Button variant="ghost" onClick={onSkip} className="w-full sm:w-auto">Skip</Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4 h-full">

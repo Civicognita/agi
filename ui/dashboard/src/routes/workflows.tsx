@@ -8,6 +8,7 @@ import { Link } from "react-router";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs.js";
 import { PageScroll } from "@/components/PageScroll.js";
 import { WorkflowGraph } from "@/components/WorkflowGraph.js";
+import { WorkflowDesigner } from "@/components/WorkflowDesigner.js";
 import { SystemPromptPipeline, PromptEntryList } from "@/components/PromptCatalog.js";
 import { EditorFlyout } from "@/components/EditorFlyout.js";
 import { Card } from "@/components/ui/card.js";
@@ -56,6 +57,7 @@ export default function WorkflowsPage() {
       <Tabs defaultValue="topology">
         <TabsList>
           <TabsTrigger value="topology">Topology</TabsTrigger>
+          <TabsTrigger value="designer" data-testid="workflow-designer-tab">Designer</TabsTrigger>
           <TabsTrigger value="taskmaster">Taskmaster</TabsTrigger>
           <TabsTrigger value="workers">Workers</TabsTrigger>
           <TabsTrigger value="system-prompt">System Prompt</TabsTrigger>
@@ -84,6 +86,10 @@ export default function WorkflowsPage() {
             onSaveConfig={configHook.save}
             routerStatus={routerData ? { costMode: routerData.costMode, escalation: configHook.data?.agent?.router?.escalation ?? false, providers: routerData.providers } : undefined}
           />
+        </TabsContent>
+
+        <TabsContent value="designer" className="mt-4">
+          <WorkflowDesigner height={620} />
         </TabsContent>
 
         <TabsContent value="taskmaster" className="mt-4">

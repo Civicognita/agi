@@ -32,7 +32,6 @@ export interface CoreForkRepoPanelProps {
 const UPSTREAM_REPO_BY_SLUG: Record<string, string> = {
   "agi": "agi",
   "prime": "aionima",
-  "id": "agi-local-id",
   "marketplace": "agi-marketplace",
   "mapp-marketplace": "agi-mapp-marketplace",
 };

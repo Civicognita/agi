@@ -98,6 +98,72 @@ const DEFAULT_CONFIG: Required<LLMProviderConfig> = {
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503]);
 
 // ---------------------------------------------------------------------------
+// Embedded tool call extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Extracts tool calls that local models embed in the text body when the
+ * OpenAI-compatible server (e.g. Lemonade/llama.cpp) doesn't translate the
+ * model's native output to choices[0].message.tool_calls.
+ *
+ * Format 1 — XML-wrapped (Gemma/llama.cpp with native tools API):
+ *   <tool_call>{"name":"fn","arguments":{...}}</tool_call>
+ *   Also accepts "tool"/"input" as key aliases.
+ *
+ * Format 2 — token-prefixed (raw chat-template token in content):
+ *   <|tool_call|>{"name":"fn","arguments":{...}}
+ *   If non-JSON follows (e.g. hallucinated "call:name arg1"), stripped silently.
+ *
+ * All matched content is removed from cleanText — it never reaches user output.
+ */
+function extractEmbeddedToolCalls(
+  content: string,
+): { toolCalls: LLMToolCall[]; cleanText: string } {
+  const toolCalls: LLMToolCall[] = [];
+  let cleanText = content;
+  let idCounter = 0;
+
+  function parseToolJson(raw: string): LLMToolCall | null {
+    if (!raw.startsWith("{")) return null;
+    try {
+      const obj = JSON.parse(raw) as Record<string, unknown>;
+      const name = (obj["name"] ?? obj["tool"]) as string | undefined;
+      if (typeof name !== "string") return null;
+      const input = (obj["arguments"] ?? obj["input"] ?? {}) as Record<string, unknown>;
+      idCounter++;
+      return { id: `embedded-${String(idCounter)}`, name, input };
+    } catch {
+      return null;
+    }
+  }
+
+  // Pass 1: <tool_call>…</tool_call> XML blocks
+  for (const match of content.matchAll(/<tool_call>([\s\S]*?)<\/tool_call>/g)) {
+    const call = parseToolJson(match[1]?.trim() ?? "");
+    if (call) toolCalls.push(call);
+    cleanText = cleanText.replace(match[0], "");
+  }
+
+  // Pass 2: <|tool_call|> or <|tool_call> token (if no XML blocks found)
+  if (toolCalls.length === 0) {
+    for (const match of cleanText.matchAll(/<\|tool_call\|?>([\s\S]*?)(?=<\||<\/?function_calls>|$)/g)) {
+      const call = parseToolJson(match[1]?.trim() ?? "");
+      if (call) toolCalls.push(call);
+      cleanText = cleanText.replace(match[0], "");
+    }
+  }
+
+  // Strip residual isolated markers
+  cleanText = cleanText
+    .replace(/<\|tool_call\|?>/g, "")
+    .replace(/<\/?function_calls>/g, "")
+    .replace(/\[TOOL_CALLS\]/g, "")
+    .trim();
+
+  return { toolCalls, cleanText };
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -209,6 +275,11 @@ export function toOpenAIToolMessages(results: LLMToolResult[]): OpenAIChatMessag
 
 /**
  * Translate an OpenAI chat completion to provider-agnostic LLMResponse.
+ *
+ * When choices[0].message.tool_calls is empty but the content contains
+ * embedded tool call markup (from Lemonade/llama.cpp not translating the
+ * model's native format), extractEmbeddedToolCalls silently extracts them
+ * and cleans the text so they never appear in user-visible chat output.
  */
 export function fromOpenAICompletion(
   completion: OpenAICompletion,
@@ -254,23 +325,40 @@ export function fromOpenAICompletion(
   if (rawContent.length === 0 && rawReasoning.length > 0) {
     rawContent = rawReasoning;
   }
+
   const rawToolCalls = choice.message.tool_calls ?? [];
 
-  const toolCalls: LLMToolCall[] = rawToolCalls.map((tc) => ({
-    id: tc.id,
-    name: tc.function.name,
-    input: (() => {
-      try {
-        return JSON.parse(tc.function.arguments) as Record<string, unknown>;
-      } catch {
-        return {};
-      }
-    })(),
-  }));
+  let toolCalls: LLMToolCall[];
+  let text: string;
+
+  if (rawToolCalls.length > 0) {
+    // Native tool calls in the response — use them directly. Still run
+    // extractEmbeddedToolCalls to clean any residual markers from text.
+    const { cleanText } = extractEmbeddedToolCalls(rawContent);
+    text = cleanText;
+    toolCalls = rawToolCalls.map((tc) => ({
+      id: tc.id,
+      name: tc.function.name,
+      input: (() => {
+        try {
+          return JSON.parse(tc.function.arguments) as Record<string, unknown>;
+        } catch {
+          return {};
+        }
+      })(),
+    }));
+  } else {
+    // No native tool calls — check whether the model embedded them in content.
+    // Lemonade/llama.cpp doesn't translate Gemma's <tool_call>…</tool_call>
+    // output to tool_calls; extractEmbeddedToolCalls silently handles this.
+    const embedded = extractEmbeddedToolCalls(rawContent);
+    text = embedded.cleanText;
+    toolCalls = embedded.toolCalls;
+  }
 
   const contentBlocks: LLMContentBlock[] = [];
-  if (rawContent) {
-    contentBlocks.push({ type: "text", text: rawContent });
+  if (text) {
+    contentBlocks.push({ type: "text", text });
   }
   for (const tc of toolCalls) {
     contentBlocks.push({
@@ -288,6 +376,11 @@ export function fromOpenAICompletion(
   else if (choice.finish_reason === "length") stopReason = "max_tokens";
   else if (choice.finish_reason !== null) stopReason = choice.finish_reason;
 
+  // When tool calls were extracted from embedded content, the server reports
+  // finish_reason "stop" rather than "tool_calls" — promote so the
+  // agent-invoker enters the tool loop.
+  if (toolCalls.length > 0 && stopReason === "end_turn") stopReason = "tool_use";
+
   // Always preserve the reasoning trace (when present) as a thinking
   // block — orthogonal to the content/empty-fallback above. Lets the
   // dashboard render it as a foldable trace AND keeps the content
@@ -297,7 +390,7 @@ export function fromOpenAICompletion(
     : [];
 
   return {
-    text: rawContent,
+    text,
     toolCalls,
     contentBlocks,
     stopReason,

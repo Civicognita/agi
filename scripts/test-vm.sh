@@ -35,25 +35,43 @@ VM_DISK="${VM_DISK:-20G}"
 # Structured JSON emitter for gateway streaming
 emit_json() { echo "{\"phase\":\"$1\",\"status\":\"$2\",\"details\":\"${3:-}\"}"; }
 
-# Detect paths: AGI repo dir and workspace root (parent of agi/).
+# Detect paths: AGI repo dir and workspace root.
+#
+# Resolution order (Wish #25 fix, 2026-05-14):
+#   1. $AGI_DEV_SOURCE env var (preferred — owner/agi-cli sets this)
+#   2. dirname-based detection, with THREE possible shapes:
+#      a. POST-t703 dev workspace: <ws>/_aionima/repos/<name>/
+#         (script lives at <ws>/_aionima/repos/agi/scripts/test-vm.sh;
+#          siblings are <ws>/_aionima/repos/prime, /id, /marketplace, ...)
+#      b. PRE-t703 dev workspace: <ws>/_aionima/<name>/
+#         (legacy flat layout; siblings are <ws>/_aionima/prime, /id, ...)
+#      c. Ops / vanilla install: /opt/agi + /opt/agi-prime + /opt/agi-local-id
+#         (dashed names under /opt)
+#
 # Use `-P` so symlinks get resolved — if this script is invoked via a
-# symlinked path (e.g. a user-workspace convenience link like
-# ~/temp_core/agi → ~/_projects/_aionima/agi), we still want the VM
-# mounts anchored at the *physical* Dev-Mode workspace, NOT the user's
-# scratchpad. temp_core is the user's workspace, not AGI's.
-REPO_DIR="$(cd -P "$(dirname "$0")/.." && pwd)"
-WORKSPACE_DIR="$(cd -P "$REPO_DIR/.." && pwd)"
+# symlinked path, we want the VM mounts anchored at the *physical*
+# Dev-Mode workspace, NOT the user's scratchpad.
 
-# Sibling layout detection: Dev-Mode provisioned workspace uses slugs
-# (prime, id, marketplace, mapp-marketplace) under `_aionima/`. Ops /
-# vanilla installs use the legacy dashed names (agi-prime, agi-local-id)
-# under /opt. Pick the right set for mount sources.
-if [ "$(basename "$WORKSPACE_DIR")" = "_aionima" ]; then
-  PRIME_PATH="$WORKSPACE_DIR/prime"
-  ID_PATH="$WORKSPACE_DIR/id"
+if [ -n "${AGI_DEV_SOURCE:-}" ] && [ -d "$AGI_DEV_SOURCE" ]; then
+  # Env-var override (highest precedence).
+  REPO_DIR="$(cd -P "$AGI_DEV_SOURCE" && pwd)"
 else
+  REPO_DIR="$(cd -P "$(dirname "$0")/.." && pwd)"
+fi
+WORKSPACE_DIR="$(cd -P "$REPO_DIR/.." && pwd)"
+WORKSPACE_BASENAME="$(basename "$WORKSPACE_DIR")"
+
+if [ "$WORKSPACE_BASENAME" = "repos" ] && [ "$(basename "$(dirname "$WORKSPACE_DIR")")" = "_aionima" ]; then
+  # Shape (a): POST-t703 dev workspace. Siblings live alongside agi/
+  # inside _aionima/repos/.
+  PRIME_PATH="$WORKSPACE_DIR/prime"
+elif [ "$WORKSPACE_BASENAME" = "_aionima" ]; then
+  # Shape (b): PRE-t703 dev workspace (legacy flat layout). Siblings
+  # under _aionima/ directly.
+  PRIME_PATH="$WORKSPACE_DIR/prime"
+else
+  # Shape (c): Ops / vanilla install. Dashed names under the parent.
   PRIME_PATH="$WORKSPACE_DIR/agi-prime"
-  ID_PATH="$WORKSPACE_DIR/agi-local-id"
 fi
 
 # Cloud-init: install Node 22, pnpm, and build deps so the VM is ready faster
@@ -161,7 +179,6 @@ cmd_create() {
   echo "==> Mounting workspace repos..."
   mount_repo "$REPO_DIR"                          "/mnt/agi"                 "AGI"
   mount_repo "$PRIME_PATH"                        "/mnt/agi-prime"           "PRIME"
-  mount_repo "$ID_PATH"                           "/mnt/agi-local-id"        "ID"
 
   echo "==> Waiting for cloud-init to finish..."
   multipass exec "$VM_NAME" -- cloud-init status --wait 2>/dev/null || true
@@ -257,11 +274,9 @@ cmd_remount() {
   # Unmount any stale mounts first (ignore errors if not mounted)
   multipass umount "$VM_NAME":/mnt/agi 2>/dev/null || true
   multipass umount "$VM_NAME":/mnt/agi-prime 2>/dev/null || true
-  multipass umount "$VM_NAME":/mnt/agi-local-id 2>/dev/null || true
 
   mount_repo "$REPO_DIR"                          "/mnt/agi"                 "AGI"
   mount_repo "$PRIME_PATH"                        "/mnt/agi-prime"           "PRIME"
-  mount_repo "$ID_PATH"                           "/mnt/agi-local-id"        "ID"
 
   echo "Done."
 }
@@ -354,18 +369,13 @@ cmd_services_setup() {
 
 ai.on, test.ai.on {
     tls internal
-    reverse_proxy localhost:3100
-}
-
-id.ai.on {
-    tls internal
-    reverse_proxy localhost:4100
+    reverse_proxy 127.0.0.1:3100
 }
 EOF
 systemctl restart caddy'
 
   echo "==> Adding /etc/hosts entries..."
-  multipass exec "$VM_NAME" -- bash -c 'grep -q "ai.on" /etc/hosts || echo "127.0.0.1 ai.on id.ai.on db.ai.on test.ai.on" | sudo tee -a /etc/hosts > /dev/null'
+  multipass exec "$VM_NAME" -- bash -c 'grep -q "ai.on" /etc/hosts || echo "127.0.0.1 ai.on db.ai.on test.ai.on" | sudo tee -a /etc/hosts > /dev/null'
 
   echo "==> Updating host DNS for test.ai.on → VM direct..."
   VM_IP=$(multipass info "$VM_NAME" --format csv | tail -1 | cut -d',' -f3)
@@ -399,29 +409,6 @@ systemctl restart caddy'
     echo "    host Caddy not present — not required now that DNS points direct at VM"
   fi
 
-  echo "==> Building ID service..."
-  multipass exec "$VM_NAME" -- bash -c '
-    cd /mnt/agi-local-id
-    npm install
-    npm run build
-
-    # Generate encryption key
-    ENC_KEY=$(openssl rand -hex 32)
-
-    cat > .env << ENVEOF
-ID_SERVICE_MODE=local
-AIONIMA_ID_BASE_URL=https://id.ai.on
-PORT=4100
-DATABASE_URL=postgres://agi:testpass@localhost/agi
-ENCRYPTION_KEY=$ENC_KEY
-OWNER_NODE_URL=http://localhost:3100
-ENVEOF
-
-    # Run migrations
-    set -a && source .env && set +a
-    npx drizzle-kit migrate
-  '
-
   echo "==> Building AGI..."
   multipass exec "$VM_NAME" -- bash -c '
     cd /mnt/agi
@@ -435,16 +422,6 @@ ENVEOF
   "gateway": { "host": "0.0.0.0", "port": 3100, "state": "ONLINE" },
   "channels": [],
   "entities": { "path": "$HOME/.agi/entities.db" },
-  "idService": {
-    "dir": "/mnt/agi-local-id",
-    "local": {
-      "enabled": true,
-      "port": 4100,
-      "subdomain": "id",
-      "databaseUrl": "postgres://agi:testpass@localhost/agi",
-      "postgresContainer": false
-    }
-  },
   "workers": {}
 }
 CFGEOF
@@ -481,78 +458,60 @@ cmd_services_start() {
   echo "==> Starting Caddy..."
   multipass exec "$VM_NAME" -- sudo systemctl start caddy
 
-  echo "==> Starting ID service..."
-  # Auto-generate .env at ~/.agi/agi-local-id/.env — per CLAUDE.md § 9,
-  # runtime config lives under ~/.agi/, NEVER in the source-mount root
-  # (/mnt/agi-local-id is mapped from the source repo and shouldn't carry
-  # deployment secrets). DATABASE_URL points at the agi-owned agi_data DB
-  # on the VM's local Postgres (per .env.example). ENCRYPTION_KEY is
-  # generated fresh on first run — test VM sessions reset on restart so
-  # rotating per fresh boot is fine.
-  multipass exec "$VM_NAME" -- bash -c '
-    ENV_DIR="$HOME/.agi/agi-local-id"
-    ENV_FILE="$ENV_DIR/.env"
-    mkdir -p "$ENV_DIR"
-    if [ ! -f "$ENV_FILE" ]; then
-      echo "  .env absent at $ENV_FILE — generating test-VM defaults"
-      ENC_KEY=$(node -e "console.log(require(\"crypto\").randomBytes(32).toString(\"hex\"))")
-      cat > "$ENV_FILE" <<EOF
-DATABASE_URL=postgres://agi:aionima@localhost:5432/agi_data
-ENCRYPTION_KEY=${ENC_KEY}
-ID_SERVICE_MODE=local
-EOF
-    fi
-    cd /mnt/agi-local-id
-    set -a && source "$ENV_FILE" && set +a
-    nohup node dist/index.js > /tmp/agi-local-id.log 2>&1 &
-    echo $! > /tmp/agi-local-id.pid
-    sleep 2
-    echo "  ID service PID: $(cat /tmp/agi-local-id.pid)"
-  '
-
   echo "==> Starting AGI gateway..."
   # AIONIMA_TEST_VM=1 marks this gateway process as "running inside the test
   # VM" — gates test-only endpoints (e.g. /api/services/circuit-breakers/
   # force-trip from s143 t573) so production gateways never expose them
   # even on a private network.
   multipass exec "$VM_NAME" -- bash -c '
+    if [ ! -f /mnt/agi/cli/dist/index.js ]; then
+      echo "  ERROR: cli/dist/index.js not found — run services-setup or pnpm build on host first"
+      exit 1
+    fi
     cd /mnt/agi
-    nohup env AIONIMA_TEST_VM=1 node cli/dist/index.js run > /tmp/agi.log 2>&1 &
+    # Source VM secrets file (TYNN_API_KEY etc.) so MCP $VAR tokens resolve at boot.
+    [ -f ~/.agi/secrets.env ] && . ~/.agi/secrets.env 2>/dev/null || true
+    nohup env AIONIMA_TEST_VM=1 TYNN_API_KEY="${TYNN_API_KEY:-}" node cli/dist/index.js run > /tmp/agi.log 2>&1 &
     echo $! > /tmp/agi.pid
     sleep 3
     echo "  AGI PID: $(cat /tmp/agi.pid)"
   '
 
-  # Ensure Ollama + the acceptance-test local model are installed and running.
-  # Phase 10 (#322) of the alpha-stable-1 sweep — Aion must be able to reach
-  # a local model when costMode=local. Idempotent: the install script + the
-  # pull are both skip-if-present. The initial pull is ~1.9 GB for qwen2.5:3b.
-  echo "==> Ensuring Ollama + qwen2.5:3b..."
+  # Ensure Ollama is running. The initial qwen2.5:3b pull (~1.9 GB) is kicked
+  # off in the background so services-start returns quickly — callers that need
+  # the model should poll /api/tags until it appears. Idempotent: the install
+  # and pull are both skip-if-present.
+  echo "==> Ensuring Ollama is running..."
   multipass exec "$VM_NAME" -- bash -lc '
     if ! which ollama >/dev/null 2>&1; then
-      curl -fsSL https://ollama.com/install.sh | sh >/dev/null 2>&1
+      echo "  Ollama not installed — installing (may take a minute)..."
+      timeout 120 bash -c "curl -fsSL https://ollama.com/install.sh | sh" >/dev/null 2>&1 \
+        || { echo "  WARN: Ollama install timed out or failed — skipping"; exit 0; }
     fi
     sudo systemctl enable --now ollama >/dev/null 2>&1 || true
     for i in 1 2 3 4 5; do
-      curl -s -o /dev/null http://127.0.0.1:11434/api/tags && break
+      curl -s --max-time 3 -o /dev/null http://127.0.0.1:11434/api/tags && break
       sleep 2
     done
     if ! ollama list 2>/dev/null | grep -q "qwen2.5:3b"; then
-      ollama pull qwen2.5:3b >/dev/null 2>&1
+      echo "  qwen2.5:3b absent — pulling in background (1.9 GB, see /tmp/ollama-pull.log)"
+      nohup ollama pull qwen2.5:3b >/tmp/ollama-pull.log 2>&1 &
+      echo "  pull PID: $!"
     fi
-    echo "    ollama: $(systemctl is-active ollama) · models: $(ollama list 2>/dev/null | tail -n +2 | awk "{print \$1}" | paste -sd, -)"
+    echo "  ollama: $(systemctl is-active ollama 2>/dev/null || echo unknown) · models: $(ollama list 2>/dev/null | tail -n +2 | awk "{print \$1}" | paste -sd, - || echo none)"
   '
 
   # Seed the owner entity so chat:send doesn't error "Owner not configured".
   # Uses the onboarding-api endpoint which creates ~/.agi/gateway.json's
-  # owner block + registers with ID service (non-fatal if ID is down).
+  # owner block.
   # We also need owner.channels.telegram so server.ts loads ownerEntityId
   # from the entity store (otherwise ownerEntityId is undefined and
   # chat:send short-circuits with "Owner not configured" per server.ts:2486).
   echo "==> Seeding owner entity for chat tests + disabling hosting..."
   multipass exec "$VM_NAME" -- bash -lc '
     GW=http://127.0.0.1:3100
-    curl -s -X POST $GW/api/onboarding/owner-profile \
+    curl -s --connect-timeout 3 --max-time 10 \
+      -X POST $GW/api/onboarding/owner-profile \
       -H "Content-Type: application/json" \
       -d "{\"displayName\":\"Wishborn\",\"dmPolicy\":\"open\"}" >/dev/null 2>&1
     python3 - << "PYEOF"
@@ -595,11 +554,59 @@ PYEOF
     echo "    agent.provider=ollama · agent.model=qwen2.5:3b · router.costMode=local"
   '
 
+  # Wire tynn MCP server so the Race-to-DONE bar and PM tools work in the VM.
+  # Extracts the token from TYNN_API_KEY env var or the workspace .mcp.json,
+  # writes it to ~/.agi/secrets.env on the VM (sourced by services-start), and
+  # injects the mcp.servers block into gateway.json for boot-time registration.
+  # If no token is found, logs a warning and skips (test skips gracefully).
+  TYNN_API_KEY="${TYNN_API_KEY:-}"
+  if [ -z "$TYNN_API_KEY" ]; then
+    for MCP_CANDIDATE in \
+        "$REPO_DIR/../../../.mcp.json" \
+        "$HOME/temp_core/.mcp.json" \
+        "$HOME/.mcp.json"; do
+      if [ -f "$MCP_CANDIDATE" ]; then
+        TYNN_API_KEY=$(python3 -c "
+import json
+try:
+  d = json.load(open('$MCP_CANDIDATE'))
+  tok = d.get('mcpServers',{}).get('tynn',{}).get('headers',{}).get('Authorization','')
+  print(tok.replace('Bearer ','').strip())
+except: pass
+" 2>/dev/null || echo "")
+        [ -n "$TYNN_API_KEY" ] && break
+      fi
+    done
+  fi
+
+  if [ -n "$TYNN_API_KEY" ]; then
+    echo "==> Wiring tynn MCP server into test-VM gateway..."
+    # Write secrets file for services-start to pass to the gateway process env.
+    multipass exec "$VM_NAME" -- bash -c "mkdir -p ~/.agi && printf 'TYNN_API_KEY=%s\n' '$TYNN_API_KEY' > ~/.agi/secrets.env && chmod 600 ~/.agi/secrets.env"
+    # Inject mcp.servers block into gateway.json using $TYNN_API_KEY notation —
+    # resolveSecretRef in server.ts expands $VAR from the gateway process env.
+    multipass exec "$VM_NAME" -- python3 - << 'PYEOF'
+import json, os
+p = os.path.expanduser("~/.agi/gateway.json")
+cfg = json.load(open(p)) if os.path.exists(p) else {}
+cfg.setdefault("mcp", {})["servers"] = [{
+    "id": "tynn",
+    "transport": "http",
+    "url": "https://tynn.ai/mcp/tynn",
+    "authToken": "$TYNN_API_KEY"
+}]
+json.dump(cfg, open(p, "w"), indent=2)
+print("    mcp.servers[tynn] wired → https://tynn.ai/mcp/tynn (token resolved via $TYNN_API_KEY env)")
+PYEOF
+    echo "    tynn wired — restart services for boot-time registration to take effect"
+  else
+    echo "==> WARN: TYNN_API_KEY not found — tynn MCP server not wired (Race-to-DONE bar will skip in e2e)"
+  fi
+
   echo "==> Checking health..."
-  multipass exec "$VM_NAME" -- bash -c '
+  timeout 30 multipass exec "$VM_NAME" -- bash -c '
     sleep 2
-    echo "  AGI:  $(curl -sk https://ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
-    echo "  ID:   $(curl -sk https://id.ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
+    echo "  AGI:  $(curl -sk --connect-timeout 5 --max-time 10 https://ai.on/health 2>/dev/null || echo "NOT RESPONDING")"
   '
 
   # Categorize the sample project fixtures so every official MApp has at
@@ -636,20 +643,21 @@ EOF
   multipass exec "$VM_NAME" -- bash -lc '
     GW=http://127.0.0.1:3100
     for i in 1 2 3 4 5; do
-      curl -s -o /dev/null -w "%{http_code}" $GW/api/system/stats | grep -q "200" && break
+      curl -s --connect-timeout 2 --max-time 5 -o /dev/null -w "%{http_code}" $GW/api/system/stats | grep -q "200" && break
       sleep 2
     done
-    curl -s -X POST $GW/api/mapp-marketplace/pull >/dev/null 2>&1 || true
+    curl -s --connect-timeout 5 --max-time 15 -X POST $GW/api/mapp-marketplace/pull >/dev/null 2>&1 || true
     APPS=(admin-editor code-browser dashboard-viewer dev-workbench gallery media-studio mind-mapper ops-monitor project-analyzer reader runbook-editor)
     OK=0
     for app in "${APPS[@]}"; do
-      if curl -s -X POST -H "Content-Type: application/json" \
+      if curl -s --connect-timeout 5 --max-time 10 \
+          -X POST -H "Content-Type: application/json" \
           -d "{\"appId\":\"$app\",\"sourceId\":1}" \
           $GW/api/mapp-marketplace/install 2>/dev/null | grep -q "\"ok\":true"; then
         OK=$((OK + 1))
       fi
     done
-    INSTALLED=$(curl -s $GW/api/dashboard/magic-apps | grep -o "\"id\":" | wc -l)
+    INSTALLED=$(curl -s --connect-timeout 5 --max-time 10 $GW/api/dashboard/magic-apps | grep -o "\"id\":" | wc -l)
     echo "    installed: $INSTALLED / 11"
   '
 
@@ -661,7 +669,7 @@ EOF
   echo "==> Clearing safemode if active..."
   multipass exec "$VM_NAME" -- bash -c '
     for i in 1 2 3 4 5; do
-      if curl -s -X POST http://127.0.0.1:3100/api/admin/safemode/exit 2>/dev/null | grep -q "\"ok\":true"; then
+      if curl -s --connect-timeout 3 --max-time 5 -X POST http://127.0.0.1:3100/api/admin/safemode/exit 2>/dev/null | grep -q "\"ok\":true"; then
         echo "    safemode cleared"
         exit 0
       fi
@@ -712,33 +720,29 @@ cmd_services_stop() {
       fi
     fi
 
-    if [ -f /tmp/agi-local-id.pid ]; then
-      ID_PID=$(cat /tmp/agi-local-id.pid)
-      if kill -0 $ID_PID 2>/dev/null; then
-        kill $ID_PID 2>/dev/null
-        for i in 1 2 3; do
-          if ! kill -0 $ID_PID 2>/dev/null; then break; fi
-          sleep 1
-        done
-        kill -9 $ID_PID 2>/dev/null || true
-      fi
-      rm -f /tmp/agi-local-id.pid
-      echo "ID stopped"
-    fi
   '
 }
 
 cmd_services_status() {
   ensure_vm_running
-  multipass exec "$VM_NAME" -- bash -c '
+  timeout 30 multipass exec "$VM_NAME" -- bash -c '
     echo "PostgreSQL: $(systemctl is-active postgresql)"
     echo "Caddy:      $(systemctl is-active caddy)"
-    echo "AGI:        $([ -f /tmp/agi.pid ] && kill -0 $(cat /tmp/agi.pid) 2>/dev/null && echo "running (PID $(cat /tmp/agi.pid))" || echo "stopped")"
-    echo "ID:         $([ -f /tmp/agi-local-id.pid ] && kill -0 $(cat /tmp/agi-local-id.pid) 2>/dev/null && echo "running (PID $(cat /tmp/agi-local-id.pid))" || echo "stopped")"
+    # Single curl — capture once, reuse for both status line and health output
+    health=$(curl -sk --connect-timeout 3 --max-time 5 https://ai.on/health 2>/dev/null)
+    if [ -f /tmp/agi.pid ] && kill -0 $(cat /tmp/agi.pid) 2>/dev/null; then
+      pid=$(cat /tmp/agi.pid)
+      if [ -n "$health" ]; then
+        echo "AGI:        running (PID $pid)"
+      else
+        echo "AGI:        starting (PID $pid — plugins/health not yet ready)"
+      fi
+    else
+      echo "AGI:        stopped"
+    fi
     echo ""
     echo "Health checks:"
-    echo "  AGI:  $(curl -sk https://ai.on/health 2>/dev/null || echo "unreachable")"
-    echo "  ID:   $(curl -sk https://id.ai.on/health 2>/dev/null || echo "unreachable")"
+    echo "  AGI:  ${health:-not yet responding}"
   '
 }
 
@@ -772,7 +776,17 @@ cmd_services_align() {
   echo "    Host source version: ${host_version}"
 
   echo "==> Stopping VM services..."
-  cmd_services_stop
+  # A transient multipass SSH glitch after sending SIGKILL to the node process
+  # can make multipass exec exit 255. Treat this as a warning: AGI is
+  # stopped (the kill fired) even if the SSH session dropped mid-script.
+  if ! cmd_services_stop; then
+    echo "    WARN: services-stop returned non-zero (transient SSH drop after kill?)"
+    sleep 2
+    local agi_alive
+    agi_alive=$(multipass exec "$VM_NAME" -- bash -c \
+      '[ -f /tmp/agi.pid ] && kill -0 $(cat /tmp/agi.pid) 2>/dev/null && echo "yes" || echo "no"' 2>/dev/null || echo "unknown")
+    echo "    AGI still alive: ${agi_alive:-unknown} — continuing with build+start"
+  fi
 
   echo "==> Building host (cli/dist + dashboard)..."
   # set -o pipefail propagates pnpm build's exit status through the | tail -3
@@ -789,9 +803,11 @@ cmd_services_align() {
   echo "==> Starting VM services..."
   cmd_services_start
 
-  echo "==> Polling /health until VM reports host version (${host_version})..."
+  # Cold starts install agi-rust-runtime + agi-postgres before /health goes ONLINE —
+  # allow up to 120 s (2 min) for first-run plugin installation to complete.
+  echo "==> Polling /health until VM reports host version (${host_version}, up to 120 s)..."
   local vm_version waited=0
-  while [ $waited -lt 30 ]; do
+  while [ $waited -lt 120 ]; do
     vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk https://test.ai.on/health 2>/dev/null" 2>/dev/null \
       | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
       | tr -d '\r\n ')
@@ -817,7 +833,7 @@ cmd_services_align() {
   # SSL_PROTOCOL_ERROR because Caddy's bound to test.ai.on, not the IP).
   echo "==> Polling test.ai.on reachability from host..."
   local host_check_waited=0
-  while [ $host_check_waited -lt 30 ]; do
+  while [ $host_check_waited -lt 60 ]; do
     if curl -sk -o /dev/null -w "%{http_code}" --connect-timeout 3 "https://test.ai.on/api/system/stats" 2>/dev/null | grep -q "^2"; then
       echo "    aligned: VM reports v${vm_version}, test.ai.on reachable from host"
       return 0
@@ -896,25 +912,13 @@ cmd_test_services() {
     }
 
     echo "Service health:"
-    check "AGI health" "curl -sk https://ai.on/health | grep -q ok"
-    check "ID health" "curl -sk https://id.ai.on/health | grep -q ok"
-
-    echo ""
-    echo "ID service local auth:"
-    check "Dashboard (no login required)" "curl -sk -o /dev/null -w %{http_code} https://id.ai.on/dashboard | grep -q 200"
-    check "Channels page" "curl -sk -o /dev/null -w %{http_code} https://id.ai.on/channels | grep -q 200"
-    check "Connections API" "curl -sk https://id.ai.on/api/connections | grep -qv Unauthorized"
+    check "AGI health" "curl -sk --connect-timeout 5 --max-time 10 https://ai.on/health | grep -q ok"
 
     echo ""
     echo "AGI dashboard:"
-    check "Dashboard loads" "curl -sk -o /dev/null -w %{http_code} https://ai.on/ | grep -q 200"
-    check "Projects API" "curl -sk https://ai.on/api/projects | grep -q projects"
-    check "System connections" "curl -sk https://ai.on/api/system/connections | grep -q idService"
-
-    echo ""
-    echo "Cross-service:"
-    check "AGI sees ID service" "curl -sk https://ai.on/api/system/connections | grep -q connected"
-    check "ID iframe headers" "curl -sk -I https://id.ai.on/ | grep -qi frame-ancestors"
+    check "Dashboard loads" "curl -sk --connect-timeout 5 --max-time 10 -o /dev/null -w %{http_code} https://ai.on/ | grep -q 200"
+    check "Projects API" "curl -sk --connect-timeout 5 --max-time 10 https://ai.on/api/projects | grep -q projects"
+    check "Admin users API" "curl -sk --connect-timeout 5 --max-time 10 https://ai.on/api/admin/users | grep -qv Unauthorized"
 
     echo ""
     echo "Results: $PASS passed, $FAIL failed"
@@ -929,6 +933,85 @@ cmd_provision() {
   cmd_services_setup
   cmd_services_start
   emit_json "provision" "done" "Test VM fully provisioned — test.ai.on is ready"
+}
+
+# ---------------------------------------------------------------------------
+# cmd_pr_test — fetch an incoming PR's head and test it live in the VM.
+#
+#   test-vm.sh pr <slug> <pr-number>
+#
+# Flow (the custodian's "test before merge"):
+#   1. git fetch upstream pull/<n>/head    (the PR head)
+#   2. git worktree add as a SIBLING under _aionima/repos/ (NOT inside the fork,
+#      so the PRIME mount path still resolves when the VM remounts). The owner's
+#      working tree is never touched.
+#   3. pnpm install in the worktree (cheap — pnpm hard-links from the store)
+#   4. AGI_DEV_SOURCE=<worktree> services-align → remounts /mnt/agi to the PR
+#      build, rebuilds the dashboard, restarts services → test.ai.on serves it
+#   5. interactive (TTY): wait for Enter while the owner clicks through;
+#      non-interactive (PR_TEST_NONINTERACTIVE=1, the dashboard job): run the
+#      vitest suite against the PR build, then tear down
+#   6. ALWAYS clean up (trap): restore the owner's dev-tree mount + remove the
+#      worktree — even on failure or Ctrl-C.
+#
+# Scoped to the 'agi' repo: the VM serves agi, so an agi PR is what can be
+# tested live. PRs to other repos are reviewed on GitHub.
+# ---------------------------------------------------------------------------
+cmd_pr_test() {
+  local slug="${1:-}" prnum="${2:-}"
+  if [ -z "$slug" ] || [ -z "$prnum" ]; then
+    echo "Usage: $0 pr <slug> <pr-number>   (slug: agi)" >&2; exit 2
+  fi
+  case "$prnum" in ''|*[!0-9]*) echo "invalid PR number: $prnum" >&2; exit 2 ;; esac
+  if [ "$slug" != "agi" ]; then
+    echo "test-vm pr supports the 'agi' repo only (the VM serves agi)." >&2
+    echo "Review $slug PRs on GitHub; agi-side live testing is the supported path." >&2
+    exit 2
+  fi
+
+  ensure_vm_running
+
+  local FORK_DIR="$REPO_DIR" ORIG_SOURCE="$REPO_DIR"
+  local WT="$WORKSPACE_DIR/agi-pr-$prnum"
+
+  cleanup_pr_test() {
+    echo "==> Restoring your dev-tree mount..."
+    AGI_DEV_SOURCE="$ORIG_SOURCE" bash "$0" remount >/dev/null 2>&1 || true
+    git -C "$FORK_DIR" worktree remove --force "$WT" >/dev/null 2>&1 || true
+    git -C "$FORK_DIR" worktree prune >/dev/null 2>&1 || true
+  }
+  trap cleanup_pr_test EXIT INT TERM
+
+  echo "==> Fetching PR #$prnum head from upstream into a throwaway worktree..."
+  if ! git -C "$FORK_DIR" fetch --no-tags upstream "pull/$prnum/head"; then
+    echo "fetch failed — is the 'upstream' remote set and PR #$prnum open?" >&2; exit 1
+  fi
+  rm -rf "$WT"; git -C "$FORK_DIR" worktree prune >/dev/null 2>&1 || true
+  if ! git -C "$FORK_DIR" worktree add --detach "$WT" FETCH_HEAD; then
+    echo "worktree add failed" >&2; exit 1
+  fi
+
+  echo "==> Installing deps in the PR worktree (pnpm hard-links from the store)..."
+  if ! ( cd "$WT" && pnpm install --frozen-lockfile ); then
+    echo "pnpm install failed in worktree" >&2; exit 1
+  fi
+
+  echo "==> Remounting the VM to the PR worktree + aligning (rebuild + restart)..."
+  if ! AGI_DEV_SOURCE="$WT" bash "$0" services-align; then
+    echo "services-align failed" >&2; exit 1
+  fi
+
+  echo ""
+  echo "==> PR #$prnum is live at https://test.ai.on"
+  if [ -t 0 ] && [ "${PR_TEST_NONINTERACTIVE:-0}" != "1" ]; then
+    echo "    Click through it to review. Press Enter to tear down + restore your dev tree."
+    read -r _ || true
+  else
+    echo "==> Running the vitest suite against the PR build..."
+    AGI_DEV_SOURCE="$WT" AGI_TEST_SKIP_ALIGN=1 bash "$0" test || true
+    echo "==> Test run complete — tearing down."
+  fi
+  # cleanup_pr_test runs via the EXIT trap.
 }
 
 # ---------------------------------------------------------------------------
@@ -954,8 +1037,9 @@ case "${1:-help}" in
   provision)        cmd_provision ;;
   test-services)    cmd_test_services ;;
   test-ui)          cmd_test_ui "${@:2}" ;;
+  pr)               cmd_pr_test "${2:-}" "${3:-}" ;;
   help|--help|-h)
-    echo "Usage: $0 {create|destroy|status|ssh|ip|setup|provision|test|remount|exec|services-setup|services-start|services-stop|services-restart|services-status|services-version|test-services|test-ui}"
+    echo "Usage: $0 {create|destroy|status|ssh|ip|setup|provision|test|pr|remount|exec|services-setup|services-start|services-stop|services-restart|services-status|services-version|test-services|test-ui}"
     echo ""
     echo "Commands:"
     echo "  create           Launch a fresh Ubuntu ${VM_IMAGE} VM with all repo mounts"
@@ -965,13 +1049,15 @@ case "${1:-help}" in
     echo "  ip               Print the VM's IP address"
     echo "  setup            Install Node 22 + pnpm, run pnpm install in VM"
     echo "  test             Run vitest unit tests inside the VM"
+    echo "  pr <slug> <n>    Test an incoming PR live: fetch pull/<n>/head → worktree →"
+    echo "                   remount VM → serve at test.ai.on (agi only; restores on exit)"
     echo "  remount          Re-mount all workspace repos (fixes stale mounts)"
     echo "  exec             Run a command inside the VM"
     echo ""
     echo "Integration test stack:"
-    echo "  services-setup   Install PostgreSQL + Caddy, build and configure ID service + AGI"
-    echo "  services-start   Start all services (PostgreSQL, Caddy, ID service, AGI)"
-    echo "  services-stop    Stop ID service and AGI background processes"
+    echo "  services-setup   Install PostgreSQL + Caddy, build and configure AGI"
+    echo "  services-start   Start all services (PostgreSQL, Caddy, AGI)"
+    echo "  services-stop    Stop AGI background process"
     echo "  services-restart Stop and start all services (fastest way to pick up host source changes)"
     echo "  services-status  Show status and health of all services"
     echo "  services-version Compare VM-running AGI version vs host source package.json (warns when stale)"

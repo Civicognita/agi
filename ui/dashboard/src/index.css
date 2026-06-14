@@ -70,6 +70,20 @@
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
+
+  /* Hearth shell — brand + agent tokens (constant, not theme-switched) */
+  --color-seed-ink: #b8960c;  /* brand gold/bronze from SeedMark gradient midpoint */
+}
+
+/* Agent highlight tokens — derived from primary so they work across all themes. */
+:root {
+  --agent-tint: color-mix(in srgb, var(--color-primary) 9%, transparent);
+  --agent-line: color-mix(in srgb, var(--color-primary) 22%, transparent);
+}
+
+@keyframes orb-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 25%, transparent); }
+  50%       { box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-primary) 10%, transparent); }
 }
 
 /* ---------------------------------------------------------------------------
@@ -257,6 +271,45 @@ select option {
 .onboard-stagger-3 { animation-delay: 0.35s; }
 .onboard-stagger-4 { animation-delay: 0.5s; }
 .onboard-stagger-5 { animation-delay: 0.65s; }
+
+/* ── Aionima design-system utilities ─────────────────────────────────────── */
+/* Confidence bar: sky-400 → violet-400 gradient, used on AI message rows. */
+.aio-conf {
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--color-border);
+  overflow: hidden;
+  position: relative;
+}
+.aio-conf > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #a78bfa);
+  border-radius: 9999px;
+}
+
+/* Status pulse animations for live indicators. */
+@keyframes aio-pulse-emerald {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, #10b981 55%, transparent); }
+  50%       { box-shadow: 0 0 0 4px color-mix(in oklab, #10b981 0%, transparent); }
+}
+@keyframes aio-pulse-amber {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, #f59e0b 55%, transparent); }
+  50%       { box-shadow: 0 0 0 5px color-mix(in oklab, #f59e0b 0%, transparent); }
+}
+@keyframes aio-pulse-rose {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, #f43f5e 60%, transparent); }
+  50%       { box-shadow: 0 0 0 6px color-mix(in oklab, #f43f5e 0%, transparent); }
+}
+@keyframes aio-pulse-violet {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, #a78bfa 50%, transparent); }
+  50%       { box-shadow: 0 0 0 5px color-mix(in oklab, #a78bfa 0%, transparent); }
+}
+
+.aio-live-em { animation: aio-pulse-emerald 2.2s infinite ease-out; }
+.aio-live-am { animation: aio-pulse-amber   2.4s infinite ease-out; }
+.aio-live-ro { animation: aio-pulse-rose    1.8s infinite ease-out; }
+.aio-live-vi { animation: aio-pulse-violet  2.6s infinite ease-out; }
 
 /* Safe-area insets for notched devices (iPhone X+) */
 @supports (padding: env(safe-area-inset-top)) {

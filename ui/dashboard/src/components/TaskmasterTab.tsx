@@ -9,10 +9,11 @@
  * active-only work so it doesn't pile up.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchTaskmasterJobs } from "../api.js";
+import { fetchTaskmasterJobs, approveTaskmasterJob, rejectTaskmasterJob } from "../api.js";
 import type { WorkerJobSummary } from "../types.js";
 import { useDashboardWS } from "../hooks.js";
 import { cn } from "../lib/utils.js";
+import { DevNotes } from "@/components/ui/dev-notes";
 
 type StatusFilter = "active" | "all" | "complete" | "failed";
 
@@ -40,6 +41,7 @@ export function TaskmasterTab({ projectPath }: { projectPath: string }): React.R
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StatusFilter>("active");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [actionPending, setActionPending] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     try {
@@ -50,6 +52,26 @@ export function TaskmasterTab({ projectPath }: { projectPath: string }): React.R
       setError(err instanceof Error ? err.message : "Failed to load jobs");
     }
   }, [projectPath]);
+
+  const handleApprove = useCallback(async (jobId: string) => {
+    setActionPending((p) => ({ ...p, [jobId]: true }));
+    try {
+      await approveTaskmasterJob(jobId);
+      void load();
+    } finally {
+      setActionPending((p) => ({ ...p, [jobId]: false }));
+    }
+  }, [load]);
+
+  const handleReject = useCallback(async (jobId: string) => {
+    setActionPending((p) => ({ ...p, [jobId]: true }));
+    try {
+      await rejectTaskmasterJob(jobId);
+      void load();
+    } finally {
+      setActionPending((p) => ({ ...p, [jobId]: false }));
+    }
+  }, [load]);
 
   useEffect(() => {
     setLoading(true);
@@ -118,6 +140,18 @@ export function TaskmasterTab({ projectPath }: { projectPath: string }): React.R
         </div>
       )}
 
+      {/* Checkpoint banner — shown when any active job is paused for approval */}
+      {filtered.some((j) => j.status === "checkpoint") && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-yellow/40 bg-yellow/5 text-yellow text-[11px]">
+          <span className="font-semibold">⏸</span>
+          <span>
+            {String(filtered.filter((j) => j.status === "checkpoint").length)} job
+            {filtered.filter((j) => j.status === "checkpoint").length !== 1 ? "s" : ""} paused for approval —
+            expand to review
+          </span>
+        </div>
+      )}
+
       {/* Job list */}
       <div className="flex flex-col gap-1.5">
         {filtered.map((job) => {
@@ -147,6 +181,9 @@ export function TaskmasterTab({ projectPath }: { projectPath: string }): React.R
                   <div className="text-[10px] text-muted-foreground mt-0.5">
                     {job.workers.length > 0 && <span>{job.workers.join(", ")} · </span>}
                     <span>{formatTiming(job)}</span>
+                    {job.status === "checkpoint" && (
+                      <span className="ml-1.5 text-yellow font-medium">⏸ awaiting approval</span>
+                    )}
                   </div>
                 </div>
                 <span className="shrink-0 text-[10px] text-muted-foreground">
@@ -156,6 +193,31 @@ export function TaskmasterTab({ projectPath }: { projectPath: string }): React.R
 
               {expanded && (
                 <div className="px-3 py-2 border-t border-border bg-background/50 text-[11px] space-y-2">
+                  {job.status === "checkpoint" && (
+                    <div className="flex items-center gap-2 py-1.5 border-b border-yellow/30">
+                      <span className="text-yellow font-semibold text-[11px]">
+                        ⏸ Paused for review — approve to continue or reject to cancel
+                      </span>
+                      <div className="ml-auto flex gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          disabled={actionPending[job.id] === true}
+                          onClick={(e) => { e.stopPropagation(); void handleApprove(job.id); }}
+                          className="px-2.5 py-1 rounded border border-green/60 text-green text-[10px] font-semibold disabled:opacity-40 cursor-pointer hover:bg-green/10"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          disabled={actionPending[job.id] === true}
+                          onClick={(e) => { e.stopPropagation(); void handleReject(job.id); }}
+                          className="px-2.5 py-1 rounded border border-red/60 text-red text-[10px] font-semibold disabled:opacity-40 cursor-pointer hover:bg-red/10"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {job.error !== undefined && (
                     <div>
                       <div className="text-[10px] uppercase font-semibold text-red mb-0.5">Error</div>
@@ -201,6 +263,14 @@ export function TaskmasterTab({ projectPath }: { projectPath: string }): React.R
           );
         })}
       </div>
+
+      <DevNotes title="Taskmaster tab — dev notes">
+        <DevNotes.Item kind="info" heading="s101 t404 (2026-05-18) — Checkpoint approval UI">
+          Added Approve/Reject buttons to the expanded job detail row when status is &quot;checkpoint&quot;.
+          A banner above the job list counts paused jobs. Collapsed rows show &quot;⏸ awaiting approval&quot;
+          subtitle. Pairs with t406 enforced-chain dispatch (hacker→tester, writer→editor, modeler→linguist).
+        </DevNotes.Item>
+      </DevNotes>
     </div>
   );
 }

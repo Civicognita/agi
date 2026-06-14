@@ -9,7 +9,7 @@
  * @see https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages
  */
 
-import type { OutboundContent } from "@agi/channel-sdk";
+import type { OutboundContent } from "@agi/sdk";
 import type {
   WhatsAppSendRequest,
   WhatsAppSendResponse,

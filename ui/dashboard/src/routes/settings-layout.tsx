@@ -22,6 +22,12 @@ interface SettingsNavItem {
 export interface SettingsContext {
   configHook: ReturnType<typeof useRootContext>["configHook"];
   pluginPages: PluginSettingsPage[];
+  /**
+   * Forwarded from RootContext. Child settings pages can't call useRootContext()
+   * directly — useOutletContext resolves to THIS layout's context, not root's —
+   * so root-level callbacks must be threaded through here.
+   */
+  onOpenUpgradeWizard: () => void;
 }
 
 export function useSettingsContext(): SettingsContext {
@@ -32,7 +38,7 @@ export default function SettingsLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const { configHook } = useRootContext();
+  const { configHook, onOpenUpgradeWizard } = useRootContext();
   const [pluginPages, setPluginPages] = useState<PluginSettingsPage[]>([]);
   const [filter, setFilter] = useState("");
 
@@ -42,7 +48,10 @@ export default function SettingsLayout() {
 
   const allItems: SettingsNavItem[] = useMemo(() => [
     { to: "/settings/gateway", label: "Gateway", isBuiltin: true },
+    // Identity moved to System ▸ Identity (story #212) — the single home for
+    // identity management. /settings/identity still resolves but redirects there.
     { to: "/settings/providers", label: "Providers", isBuiltin: true },
+    { to: "/settings/channels", label: "Channels", isBuiltin: true },
     { to: "/settings/vault", label: "Vault", isBuiltin: true },
     { to: "/settings/scheduled-jobs", label: "Scheduled Jobs", isBuiltin: true },
     { to: "/settings/security", label: "Security", isBuiltin: true },
@@ -114,7 +123,7 @@ export default function SettingsLayout() {
 
       {/* Content area */}
       <div className="flex-1 min-w-0">
-        <Outlet context={{ configHook, pluginPages } satisfies SettingsContext} />
+        <Outlet context={{ configHook, pluginPages, onOpenUpgradeWizard } satisfies SettingsContext} />
       </div>
     </div>
     </PageScroll>

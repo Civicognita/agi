@@ -35,6 +35,16 @@ export interface FineTuneConfig {
   outputName: string;
 }
 
+/** Live progress snapshot from the container's /finetune/status endpoint. */
+export interface FineTuneContainerStatus {
+  status: string;
+  epoch: number;
+  total_epochs: number;
+  loss: number | null;
+  learning_rate: number | null;
+  eta_seconds: number | null;
+}
+
 export interface FineTuneJob {
   id: string;
   config: FineTuneConfig;
@@ -44,6 +54,8 @@ export interface FineTuneJob {
   startedAt: string;
   completedAt?: string;
   error?: string;
+  /** Live training progress — populated by the background status poll. */
+  containerStatus?: FineTuneContainerStatus;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,9 +70,12 @@ const PORT_RANGE_START = 6200;
 // FineTuneManager
 // ---------------------------------------------------------------------------
 
+const STATUS_POLL_INTERVAL_MS = 5_000;
+
 export class FineTuneManager {
   private readonly jobs = new Map<string, FineTuneJob>();
   private readonly allocatedPorts = new Set<number>();
+  private readonly pollTimers = new Map<string, ReturnType<typeof setInterval>>();
 
   constructor(
     private readonly modelStore: ModelStore,
@@ -124,6 +139,8 @@ export class FineTuneManager {
   async stopJob(jobId: string): Promise<void> {
     const job = this.jobs.get(jobId);
     if (!job) throw new Error(`Fine-tune job not found: ${jobId}`);
+
+    this.clearPollTimer(jobId);
 
     if (job.containerId) {
       try {
@@ -207,6 +224,74 @@ export class FineTuneManager {
       containerId,
       containerPort: port,
     });
+
+    // Start polling the container's /finetune/status endpoint so the UI
+    // receives live epoch/loss/ETA data instead of staying stuck at "Training".
+    this.startPollTimer(jobId, port);
+  }
+
+  private startPollTimer(jobId: string, port: number): void {
+    const timer = setInterval(() => {
+      void this.pollContainerStatus(jobId, port);
+    }, STATUS_POLL_INTERVAL_MS);
+    this.pollTimers.set(jobId, timer);
+  }
+
+  private clearPollTimer(jobId: string): void {
+    const timer = this.pollTimers.get(jobId);
+    if (timer !== undefined) {
+      clearInterval(timer);
+      this.pollTimers.delete(jobId);
+    }
+  }
+
+  private async pollContainerStatus(jobId: string, port: number): Promise<void> {
+    const job = this.jobs.get(jobId);
+    if (!job || job.status !== "training") {
+      this.clearPollTimer(jobId);
+      return;
+    }
+
+    let body: FineTuneContainerStatus & { status: string };
+
+    try {
+      const res = await fetch(`http://localhost:${port}/finetune/status`, {
+        signal: AbortSignal.timeout(4_000),
+      });
+      if (!res.ok) return; // Container not ready yet — keep polling
+      body = (await res.json()) as typeof body;
+    } catch {
+      // Network error (container not ready or crashed) — keep polling briefly
+      return;
+    }
+
+    if (body.status === "complete") {
+      this.clearPollTimer(jobId);
+      if (job.containerPort) this.allocatedPorts.delete(job.containerPort);
+      this.jobs.set(jobId, {
+        ...job,
+        status: "complete",
+        containerStatus: body,
+        completedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    if (body.status === "error") {
+      this.clearPollTimer(jobId);
+      if (job.containerPort) this.allocatedPorts.delete(job.containerPort);
+      this.jobs.set(jobId, {
+        ...job,
+        status: "error",
+        containerStatus: body,
+        error: "Training container reported an error",
+        completedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    // Still training — update progress snapshot so list endpoint serves it
+    this.jobs.set(jobId, { ...job, containerStatus: body });
   }
 
   private allocatePort(): number {

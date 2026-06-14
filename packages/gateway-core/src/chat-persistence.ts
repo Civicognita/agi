@@ -8,6 +8,7 @@
 import { readFileSync, writeFileSync, readdirSync, unlinkSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { KNOWLEDGE_DIR } from "./project-config-path.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -102,7 +103,7 @@ function sanitizeId(id: string): string {
 }
 
 /**
- * Resolve the per-project chat dir `<projectPath>/k/chat/` when the
+ * Resolve the per-project chat dir `<projectPath>/.ai/chat/` when the
  * session's context is a valid s130-migrated project (has `.agi/`).
  * Returns null when:
  * - context is empty/falsy (global session)
@@ -117,7 +118,7 @@ function sanitizeId(id: string): string {
 function resolveProjectChatDir(context: string | undefined | null): string | null {
   if (typeof context !== "string" || context.length === 0) return null;
   if (!existsSync(join(context, ".agi"))) return null;
-  return join(context, "k", "chat");
+  return join(context, KNOWLEDGE_DIR, "chat");
 }
 
 function truncatePreview(text: string, maxLen = 100): string {
@@ -143,7 +144,7 @@ export class ChatPersistence {
    *
    * **s130 t518 slice 2 (2026-04-29):** dual-write — always write to
    * the global dir (current readers consume from there), and ALSO
-   * write to `<projectPath>/k/chat/<id>.json` when the session has a
+   * write to `<projectPath>/.ai/chat/<id>.json` when the session has a
    * project context AND that project has been migrated to s130 layout
    * (`<projectPath>/.agi/` exists). Slice 3 will flip readers to the
    * per-project location + drop the global write. Until then,
@@ -180,7 +181,7 @@ export class ChatPersistence {
    *
    * **s130 t521 reader-flip slice (2026-04-29):** accepts optional
    * `projectPath` hint. When set AND the project is s130-migrated
-   * (`<projectPath>/.agi/` exists), checks `<projectPath>/k/chat/<id>.json`
+   * (`<projectPath>/.agi/` exists), checks `<projectPath>/.ai/chat/<id>.json`
    * FIRST and returns it if present. Falls back to the global dir on
    * miss or when no hint is provided. This pairs with slice 2's
    * dual-write: new sessions written for s130 projects land at both
@@ -219,7 +220,7 @@ export class ChatPersistence {
   /** List all saved sessions, sorted by updatedAt descending.
    *
    * **s130 t521 slice (2026-04-29):** accepts optional `additionalDirs`
-   * — per-project chat dirs (e.g. `<projectPath>/k/chat/`) the caller
+   * — per-project chat dirs (e.g. `<projectPath>/.ai/chat/`) the caller
    * wants to combine with the global dir. Sessions found in multiple
    * locations are deduplicated by id, preferring the entry with the
    * most recent `updatedAt`. Until production wiring lands all dirs,

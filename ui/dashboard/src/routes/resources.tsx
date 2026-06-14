@@ -8,12 +8,13 @@ import { useEffect, useMemo, useState } from "react";
 import { ResourceUsage } from "@/components/ResourceUsage.js";
 import { PageScroll } from "@/components/PageScroll.js";
 import { Card } from "@/components/ui/card.js";
+import { DevNotes } from "@/components/ui/dev-notes.js";
 import { fetchDatabaseStorage } from "@/api.js";
 import { useHFContainerStats, useMachineHardware } from "@/hooks.js";
 import type { HFContainerStats } from "@/api.js";
-// fancy-echarts (npm published as @particle-academy/react-echarts pending
-// rename per CLAUDE.md § 1.5 — package is the canonical PAx EChart wrapper).
-import { EChart } from "@particle-academy/react-echarts";
+// fancy-echarts (rename from @particle-academy/react-echarts finalized
+// 2026-05-14; canonical PAx EChart wrapper).
+import { EChart } from "@particle-academy/fancy-echarts";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -133,37 +134,195 @@ function ContainerStatsRow({ c }: { c: HFContainerStats }) {
   );
 }
 
+/** Safely extract a display string from a model value that may be a string,
+ *  an object with model_name, or something else entirely from an older/newer
+ *  Lemonade version. Never returns a raw object — React error #31 if it did. */
+function toModelDisplayName(v: unknown): string | null {
+  if (!v) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "object") {
+    const name = (v as Record<string, unknown>).model_name;
+    if (typeof name === "string") return name;
+    try { return JSON.stringify(v); } catch { return "[model]"; }
+  }
+  return String(v);
+}
+
 function ModelContainerStatsSection() {
   const { data, isLoading, error } = useHFContainerStats();
+  const [lemonade, setLemonade] = useState<{ modelLoaded: string | null; allModelsLoaded: string[] } | null>(null);
+  const [lemonadeError, setLemonadeError] = useState<string | null>(null);
 
-  if (isLoading) {
-    return <p className="text-[11px] text-muted-foreground">Loading container stats...</p>;
-  }
-
-  if (error) {
-    return <p className="text-[11px] text-muted-foreground">Could not load container stats.</p>;
-  }
+  useEffect(() => {
+    fetch("/api/lemonade/status")
+      .then((r) => r.ok ? r.json() as Promise<{ running: boolean; modelLoaded: unknown; allModelsLoaded: unknown[] }> : null)
+      .then((d) => {
+        if (!d?.running) return;
+        const models = Array.isArray(d.allModelsLoaded)
+          ? d.allModelsLoaded.map(toModelDisplayName).filter((s): s is string => s !== null)
+          : [];
+        setLemonade({ modelLoaded: toModelDisplayName(d.modelLoaded), allModelsLoaded: models });
+      })
+      .catch((e: unknown) => {
+        setLemonadeError(e instanceof Error ? e.message : "Lemonade status unavailable");
+      });
+  }, []);
 
   const containers = data?.containers ?? [];
+  const lemonadeModels = lemonade?.allModelsLoaded ?? [];
+  const hasAnything = containers.length > 0 || lemonadeModels.length > 0;
 
-  if (containers.length === 0) {
-    return <p className="text-[11px] text-muted-foreground">No active model containers.</p>;
+  if (isLoading && lemonade === null) {
+    return <p className="text-[11px] text-muted-foreground">Loading...</p>;
   }
+
+  if (!hasAnything) {
+    if (error) return <p className="text-[11px] text-muted-foreground">Could not load container stats.</p>;
+    if (lemonadeError) return <p className="text-[11px] text-muted-foreground">Lemonade: {lemonadeError}</p>;
+    return <p className="text-[11px] text-muted-foreground">No active AI models.</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {lemonadeModels.length > 0 && (
+        <div>
+          <div className="text-[9px] text-muted-foreground uppercase tracking-wider mb-2">Lemonade (native)</div>
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-4">Model</th>
+                <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-4">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lemonadeModels.map((m) => (
+                <tr key={m} className="border-b border-border last:border-0">
+                  <td className="py-2 pr-4">
+                    <div className="text-[11px] font-mono text-foreground truncate max-w-[240px]" title={m}>{m}</div>
+                  </td>
+                  <td className="py-2 pr-4">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                      <span className="text-[11px] text-emerald-500">{lemonade?.modelLoaded === m ? "loaded (active)" : "loaded"}</span>
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {containers.length > 0 && (
+        <div>
+          <div className="text-[9px] text-muted-foreground uppercase tracking-wider mb-2">HuggingFace containers</div>
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-4">Container</th>
+                <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-4">CPU</th>
+                <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider">RAM</th>
+              </tr>
+            </thead>
+            <tbody>
+              {containers.map((c) => (
+                <ContainerStatsRow key={c.name} c={c} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Top processes — sorted by RSS descending, top 10. Polls /api/system/stats
+// every 5s in step with the rest of the Resources page.
+// ---------------------------------------------------------------------------
+
+interface ProcessStat {
+  pid: number;
+  user: string;
+  cpuPct: number;
+  memPct: number;
+  rssKb: number;
+  name: string;
+}
+
+function TopProcessesSection() {
+  const [procs, setProcs] = useState<ProcessStat[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async (): Promise<void> => {
+      try {
+        const r = await fetch("/api/system/stats");
+        if (!r.ok) return;
+        const j = await r.json() as { topProcesses?: ProcessStat[] };
+        if (!cancelled && Array.isArray(j.topProcesses)) setProcs(j.topProcesses);
+      } catch { /* ignore */ }
+    };
+    void refresh();
+    const id = window.setInterval(() => { void refresh(); }, 5_000);
+    return (): void => { cancelled = true; window.clearInterval(id); };
+  }, []);
+
+  if (procs.length === 0) {
+    return <p className="text-[11px] text-muted-foreground">Loading...</p>;
+  }
+
+  const totalRss = procs.reduce((sum, p) => sum + p.rssKb, 0);
 
   return (
     <table className="w-full">
       <thead>
         <tr className="border-b border-border">
-          <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-4">Container</th>
-          <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-4">CPU</th>
-          <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider">RAM</th>
+          <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-3 w-[36px]">#</th>
+          <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-3">Process</th>
+          <th className="pb-1.5 text-left text-[9px] text-muted-foreground uppercase tracking-wider pr-3 hidden sm:table-cell">User</th>
+          <th className="pb-1.5 text-right text-[9px] text-muted-foreground uppercase tracking-wider pr-3">RAM</th>
+          <th className="pb-1.5 text-right text-[9px] text-muted-foreground uppercase tracking-wider">CPU</th>
         </tr>
       </thead>
       <tbody>
-        {containers.map((c) => (
-          <ContainerStatsRow key={c.name} c={c} />
-        ))}
+        {procs.map((p, i) => {
+          const ramPct = p.memPct;
+          const barColour =
+            ramPct >= 15 ? "bg-red-500" : ramPct >= 8 ? "bg-amber-400" : "bg-emerald-500";
+          return (
+            <tr key={p.pid} className="border-b border-border last:border-0">
+              <td className="py-2 pr-3 text-[10px] text-muted-foreground tabular-nums">{i + 1}</td>
+              <td className="py-2 pr-3">
+                <div className="text-[11px] font-mono text-foreground truncate max-w-[160px] sm:max-w-[220px]" title={p.name}>
+                  {p.name}
+                </div>
+                <div className="mt-0.5 w-full h-1 rounded-full bg-surface0 overflow-hidden">
+                  <div className={`h-full rounded-full ${barColour}`} style={{ width: `${String(Math.min(100, ramPct * 4))}%` }} />
+                </div>
+              </td>
+              <td className="py-2 pr-3 hidden sm:table-cell">
+                <span className="text-[10px] text-muted-foreground font-mono">{p.user}</span>
+              </td>
+              <td className="py-2 pr-3 text-right tabular-nums">
+                <span className="text-[11px] text-foreground">{formatBytes(p.rssKb * 1024)}</span>
+                <div className="text-[9px] text-muted-foreground">{p.memPct.toFixed(1)}%</div>
+              </td>
+              <td className="py-2 text-right tabular-nums">
+                <span className={`text-[11px] ${p.cpuPct >= 50 ? "text-amber-400" : "text-foreground"}`}>
+                  {p.cpuPct.toFixed(1)}%
+                </span>
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
+      <tfoot>
+        <tr className="border-t border-border">
+          <td colSpan={3} className="pt-2 text-[9px] text-muted-foreground">Top 10 by RAM · updates every 5s</td>
+          <td className="pt-2 text-right text-[10px] text-muted-foreground tabular-nums">{formatBytes(totalRss * 1024)}</td>
+          <td />
+        </tr>
+      </tfoot>
     </table>
   );
 }
@@ -555,6 +714,12 @@ export default function ResourcesPage() {
       <ResourceUsage />
       <div className="mt-4">
         <Card className="p-4">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Top processes</h3>
+          <TopProcessesSection />
+        </Card>
+      </div>
+      <div className="mt-4">
+        <Card className="p-4">
           <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Power</h3>
           <PowerGaugeSection />
         </Card>
@@ -573,7 +738,7 @@ export default function ResourcesPage() {
       </div>
       <div className="mt-4">
         <Card className="p-4">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Running model containers</h3>
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Running AI models</h3>
           <ModelContainerStatsSection />
         </Card>
       </div>
@@ -583,6 +748,13 @@ export default function ResourcesPage() {
           <DatabaseStorageSection />
         </Card>
       </div>
+      <DevNotes title="Resources page — dev notes">
+        <DevNotes.Item kind="info" heading="v0.4.813 — Top processes panel">
+          Added &quot;Top processes&quot; card immediately after the gauge row. Data comes from
+          ps aux --sort=-%mem via /api/system/stats (topProcesses field, top 10, cached 5s).
+          Bar width is clamped to 4× memPct so the 25%-mem QEMU process fills the bar fully.
+        </DevNotes.Item>
+      </DevNotes>
     </PageScroll>
   );
 }

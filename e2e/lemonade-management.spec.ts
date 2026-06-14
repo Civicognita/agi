@@ -36,7 +36,8 @@ test.describe("Lemonade tab on HF Marketplace", () => {
   });
 
   test("pull form is present when Lemonade is reachable", async ({ page }) => {
-    // Only assert when the status resolved to "running" — skip otherwise
+    // Wait for the status to resolve before snapshot-checking which card rendered
+    await expect(page.getByText(/Lemonade Server|Lemonade not reachable/)).toBeVisible({ timeout: 10_000 });
     const notReachable = page.getByText("Lemonade not reachable");
     const isDown = await notReachable.isVisible().catch(() => false);
     test.skip(isDown, "Lemonade is not reachable in this test environment");
@@ -47,6 +48,7 @@ test.describe("Lemonade tab on HF Marketplace", () => {
   });
 
   test("installed models section header is visible", async ({ page }) => {
+    await expect(page.getByText(/Lemonade Server|Lemonade not reachable/)).toBeVisible({ timeout: 10_000 });
     const notReachable = page.getByText("Lemonade not reachable");
     const isDown = await notReachable.isVisible().catch(() => false);
     test.skip(isDown, "Lemonade is not reachable in this test environment");
@@ -55,6 +57,7 @@ test.describe("Lemonade tab on HF Marketplace", () => {
   });
 
   test("serving backends section header is visible", async ({ page }) => {
+    await expect(page.getByText(/Lemonade Server|Lemonade not reachable/)).toBeVisible({ timeout: 10_000 });
     const notReachable = page.getByText("Lemonade not reachable");
     const isDown = await notReachable.isVisible().catch(() => false);
     test.skip(isDown, "Lemonade is not reachable in this test environment");

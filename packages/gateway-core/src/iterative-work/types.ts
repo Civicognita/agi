@@ -1,40 +1,64 @@
 /**
- * Iterative-work mode public types.
+ * Scheduled-jobs / iterative-work public types (s118 redesign).
  *
- * The scheduler walks all projects with `iterativeWork.enabled: true` on each
- * tick, decides which are due based on their cron expression + last-fired
- * timestamp, and emits a `fire` event with this payload. A separate consumer
- * (wired in a later slice) translates the event into an AgentInvoker call.
+ * The scheduler walks all projects' `scheduledJobs` arrays on each tick,
+ * fires each enabled job that is due based on its cron expression + last-fired
+ * timestamp, and emits a `fire` event. A downstream consumer dispatches by
+ * job.type (pm-loop → agent, prompt → agent, command → agi bash, action → plugin).
  */
 
-export interface IterativeWorkFire {
-  /** Absolute path of the project being fired. */
+import type { ScheduledJob } from "@agi/config";
+
+/** Fire event emitted when a scheduled job is due. */
+export interface ScheduledJobFire {
+  /** Absolute path of the project owning this job. */
   projectPath: string;
-  /** Wall-clock time when the scheduler decided the project was due. */
+  /** The job that fired (type-discriminated for the consumer's switch). */
+  job: ScheduledJob;
+  /** Wall-clock time when the scheduler decided the job was due. */
   firedAt: Date;
   /** Cron expression that produced this fire (for audit). */
   cron: string;
 }
 
+/** @deprecated Use ScheduledJobFire. Kept for backward compat during transition. */
+export type IterativeWorkFire = ScheduledJobFire;
+
 /**
- * Per-project introspection snapshot. Returned by IterativeWorkScheduler.getStatus
- * and surfaced by GET /api/projects/iterative-work/status. ISO-string timestamps
- * (not Date) so the shape JSON-serializes cleanly across the API boundary.
+ * Per-job introspection snapshot. ISO-string timestamps (not Date) so the
+ * shape JSON-serializes cleanly across the API boundary.
+ */
+export interface ScheduledJobStatus {
+  jobId: string;
+  type: string;
+  name: string;
+  enabled: boolean;
+  cron: string | null;
+  cadence: string | null;
+  inFlight: boolean;
+  lastFiredAt: string | null;
+  nextFireAt: string | null;
+}
+
+/**
+ * Per-project introspection snapshot (list of job statuses).
+ * Returned by IterativeWorkScheduler.getProjectStatus.
+ */
+export interface ScheduledJobProjectStatus {
+  jobs: ScheduledJobStatus[];
+}
+
+/**
+ * @deprecated Use ScheduledJobStatus / ScheduledJobProjectStatus.
+ * Kept for the legacy GET /api/projects/iterative-work/status shim which
+ * maps the first pm-loop job to this shape.
  */
 export interface IterativeWorkProjectStatus {
-  /** Whether the project's iterativeWork.enabled is true. */
   enabled: boolean;
-  /** Configured cron expression (null when not set or unset). When `cadence`
-   *  is set, this is the auto-staggered cron computed at save time (D3). */
   cron: string | null;
-  /** User-picked cadence key (s118 t442 D1). Null for legacy `cron`-only
-   *  configs. When set, the `cron` field is auto-derived. */
   cadence: string | null;
-  /** Whether an iteration is currently running for this project. */
   inFlight: boolean;
-  /** ISO timestamp of the most recent fire (null when never fired). */
   lastFiredAt: string | null;
-  /** ISO timestamp of the next computed fire (null when cron unparseable or not set). */
   nextFireAt: string | null;
 }
 
@@ -127,6 +151,6 @@ export interface IterativeWorkCompletion {
  * can `on("fire", ...)` without losing payload typing.
  */
 export interface IterativeWorkSchedulerEvents {
-  fire: [IterativeWorkFire];
+  fire: [ScheduledJobFire];
   complete: [IterativeWorkCompletion];
 }

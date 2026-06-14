@@ -1,11 +1,15 @@
 # UI Components
 
-Three packages provide UI components for MApps, plugins, and the dashboard:
+Eight PAx packages provide UI components for MApps, plugins, and the dashboard:
 
 - **`@particle-academy/react-fancy`** (v1.9.1) — Core component library
 - **`@particle-academy/fancy-code`** (v0.4.2) — Code editor with syntax highlighting
 - **`@particle-academy/fancy-sheets`** (v0.4.5) — Spreadsheet / data grid
-- **`@particle-academy/react-echarts`** (v1.0.0) — Chart components (ECharts wrapper)
+- **`@particle-academy/fancy-echarts`** (v1.0.0) — Chart components (ECharts wrapper)
+- **`@particle-academy/fancy-3d`** — 3D scene components (Three.js-backed, WebGL)
+- **`@particle-academy/fancy-screens`** — Full-screen layout primitives and screen transitions
+- **`@particle-academy/fancy-whiteboard`** — Collaborative whiteboard canvas
+- **`@particle-academy/agent-integrations`** — Agent UI integration primitives
 
 ---
 

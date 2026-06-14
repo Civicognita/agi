@@ -9,6 +9,11 @@ import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import type { OnboardingStepStatus } from "@/types.js";
 
+interface GeidConfirmation {
+  owner: { geid: string; coaAlias: string };
+  agent: { geid: string; coaAlias: string };
+}
+
 interface Props {
   onNext: () => void;
   onSkip: () => void;
@@ -20,6 +25,8 @@ export function OwnerProfileStep({ onNext, onSkip, status }: Props) {
   const [dmPolicy, setDmPolicy] = useState<"pairing" | "open">("pairing");
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [geidConfirmation, setGeidConfirmation] = useState<GeidConfirmation | null>(null);
+  const [copied, setCopied] = useState(false);
   const isCompleted = status === "completed";
   const canContinue = isCompleted || displayName.trim().length > 0;
 
@@ -43,16 +50,94 @@ export function OwnerProfileStep({ onNext, onSkip, status }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ displayName: displayName.trim(), dmPolicy }),
       });
-      if (res.ok) onNext();
+      if (res.ok) {
+        const data = (await res.json()) as {
+          ok: boolean;
+          owner?: { geid: string; coaAlias: string };
+          agent?: { geid: string; coaAlias: string };
+        };
+        if (data.owner?.geid) {
+          setGeidConfirmation({
+            owner: data.owner,
+            agent: data.agent ?? { geid: "", coaAlias: "" },
+          });
+        } else {
+          onNext();
+        }
+      } else {
+        onNext();
+      }
     } catch {
-      // Save failed, proceed anyway
       onNext();
     } finally {
       setSaving(false);
     }
   };
 
+  const handleCopyGeid = (geid: string) => {
+    void navigator.clipboard.writeText(geid).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
   if (!loaded) return null;
+
+  if (geidConfirmation) {
+    const ownerShort = geidConfirmation.owner.geid.length > 16
+      ? `${geidConfirmation.owner.geid.slice(0, 12)}…${geidConfirmation.owner.geid.slice(-6)}`
+      : geidConfirmation.owner.geid;
+    return (
+      <div className="flex flex-col gap-5 sm:gap-6 onboard-animate-fade">
+        <div className="onboard-animate-in">
+          <h2 className="text-xl sm:text-2xl font-semibold mb-1">
+            Identity registered
+          </h2>
+          <p className="text-[13px] sm:text-sm text-muted-foreground leading-relaxed">
+            Your identity has been registered on this node.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-3 onboard-animate-in onboard-stagger-1">
+          <div className="rounded-lg border border-border bg-card p-4 flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Owner</span>
+              <span className="text-sm font-medium">{displayName}</span>
+              <span className="text-xs text-muted-foreground">{geidConfirmation.owner.coaAlias}</span>
+            </div>
+            <div className="flex items-center gap-2 bg-secondary/50 rounded px-3 py-2">
+              <code className="text-xs font-mono text-foreground flex-1 truncate">{ownerShort}</code>
+              <button
+                onClick={() => handleCopyGeid(geidConfirmation.owner.geid)}
+                className="text-[11px] text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                aria-label="Copy GEID"
+              >
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
+          </div>
+
+          {geidConfirmation.agent.geid && (
+            <div className="rounded-lg border border-border bg-card p-4 flex flex-col gap-1">
+              <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Agent</span>
+              <span className="text-xs text-muted-foreground">{geidConfirmation.agent.coaAlias}</span>
+              <code className="text-xs font-mono text-muted-foreground truncate">
+                {geidConfirmation.agent.geid.length > 16
+                  ? `${geidConfirmation.agent.geid.slice(0, 12)}…${geidConfirmation.agent.geid.slice(-6)}`
+                  : geidConfirmation.agent.geid}
+              </code>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 onboard-animate-in onboard-stagger-2">
+          <Button onClick={onNext} className="w-full sm:w-auto">
+            Continue
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-5 sm:gap-6">

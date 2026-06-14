@@ -36,6 +36,7 @@
  * | `defineDashboardDomain` | `api.registerDashboardDomain()` | `DashboardInterfaceDomainDefinition` |
  * | `defineScan`            | `api.registerScanProvider()`    | `ScanProviderDefinition`              |
  * | `defineWorker`          | `api.registerWorker()`          | `WorkerDefinition`                    |
+ * | `defineScript`          | manifest `scripts[]` (mapp/1.1) | `MAppScriptDefinition`                |
  *
  * ### Plugin lifecycle
  *
@@ -94,6 +95,28 @@ export { defineKnowledge } from "./define-knowledge.js";
 export { defineWorkflow } from "./define-workflow.js";
 export { defineSidebar } from "./define-sidebar.js";
 export { defineChannel } from "./define-channel.js";
+// CHN-A (s162) — new ChannelDefinition contract per
+// agi/docs/agents/channel-plugin-redesign.md §3. Coexists with the
+// legacy AionimaChannelPlugin shape; CHN-M (s174) deletes the legacy.
+export { defineChannelV2 } from "./define-channel-v2.js";
+export type {
+  ChannelDefinition,
+  ChannelProtocol,
+  ChannelContext,
+  ChannelCage,
+  ChannelEntityBinding,
+  ChannelRoom,
+  ChannelUser,
+  ChannelMessage,
+  ChannelMessageAttachment,
+  ChannelEvent,
+  ChannelBridgeToolDefinition,
+  ChannelReadPolicy,
+  ChannelSettingsPageProps,
+  ChannelProjectPanelProps,
+  ChannelRoomDiscoveryModel,
+  ChannelRoomDiscovery,
+} from "./channel-v2-types.js";
 export { defineProvider } from "./define-provider.js";
 export { definePmProvider, definePmKanbanConfig, DEFAULT_TYNN_KANBAN_CONFIG } from "./define-pm-provider.js";
 export type { PmProviderDefinition, PmProviderFactory, PmKanbanColumn, PmKanbanConfig } from "./define-pm-provider.js";
@@ -104,6 +127,8 @@ export { defineDashboardDomain } from "./define-dashboard-domain.js";
 export { defineScan } from "./define-scan.js";
 export { defineWorker } from "./define-worker.js";
 export { defineMagicApp } from "./define-magic-app.js";
+export { defineScript } from "./define-script.js";
+export type { ScriptDefinition } from "./define-script.js";
 
 // Layer D blockchain anchor — interface only in v0.4.0 (NoopAnchor lives in
 // packages/memory). Live Ethereum/L2 implementation arrives in v0.6.0 via
@@ -111,7 +136,8 @@ export { defineMagicApp } from "./define-magic-app.js";
 export type { AnchorRecord, AnchorResult, BlockchainAnchor } from "./anchor.js";
 
 // MApp Schema (MPx 1.0)
-export { MAPP_SCHEMA_VERSION, serializeMApp } from "./mapp-schema.js";
+export { MAPP_SCHEMA_VERSION, MAPP_SCHEMA_VERSION_V1_1, serializeMApp } from "./mapp-schema.js";
+export type { MAppSchemaVersion, MAppScriptDefinition } from "./mapp-schema.js";
 export type {
   MAppDefinition, MAppInfo, MAppCategory, MAppPermission,
   MAppContainerConfig, MAppPanel, MAppWidget, MAppTheme,

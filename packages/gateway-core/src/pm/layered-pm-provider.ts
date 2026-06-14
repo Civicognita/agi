@@ -84,6 +84,24 @@ function looksLikeErrorPayload(value: unknown): boolean {
   return false;
 }
 
+/**
+ * Empty active-focus progress. The progress bar is optional chrome — when no
+ * PM provider can supply progress (remote tynn unreachable, no active focus,
+ * the file-fallback doesn't implement it), the correct behavior is to HIDE the
+ * bar (`totalTasks: 0`), not to throw. Throwing surfaced as a recurring
+ * `/api/loop/progress` 502 spamming the dashboard console every 30s.
+ */
+const EMPTY_FOCUS_PROGRESS = Object.freeze({
+  totalTasks: 0,
+  doneTasks: 0,
+  qaTasks: 0,
+  doingTasks: 0,
+  backlogTasks: 0,
+  blockedTasks: 0,
+  inProgressTasks: 0,
+  percentComplete: 0,
+});
+
 export class LayeredPmProvider implements PmProvider {
   readonly providerId: string;
   private readonly primary: PmProvider;
@@ -217,11 +235,19 @@ export class LayeredPmProvider implements PmProvider {
   }
 
   async getActiveFocusProgress(): ReturnType<NonNullable<PmProvider["getActiveFocusProgress"]>> {
+    // The progress feed is OPTIONAL. Any provider gap or throw must degrade to
+    // EMPTY_FOCUS_PROGRESS (UI hides the bar) — never propagate as a 502.
     if (this.primary === this.fallback) {
-      if (this.primary.getActiveFocusProgress === undefined) {
-        throw new Error(`pm provider ${this.primary.providerId} does not expose getActiveFocusProgress`);
+      if (this.primary.getActiveFocusProgress === undefined) return EMPTY_FOCUS_PROGRESS;
+      try {
+        const result = await this.primary.getActiveFocusProgress();
+        if (!looksLikeErrorPayload(result)) return result;
+      } catch (err) {
+        this.logger?.info(
+          `pm-layer: getActiveFocusProgress unavailable (${err instanceof Error ? err.message : String(err)}); returning empty feed`,
+        );
       }
-      return this.primary.getActiveFocusProgress();
+      return EMPTY_FOCUS_PROGRESS;
     }
     if (this.primary.getActiveFocusProgress !== undefined) {
       try {
@@ -233,10 +259,20 @@ export class LayeredPmProvider implements PmProvider {
         );
       }
     }
-    if (this.fallback.getActiveFocusProgress === undefined) {
-      throw new Error(`neither pm provider exposes getActiveFocusProgress`);
+    if (this.fallback.getActiveFocusProgress !== undefined) {
+      try {
+        const result = await this.fallback.getActiveFocusProgress();
+        if (!looksLikeErrorPayload(result)) return result;
+      } catch (err) {
+        this.logger?.info(
+          `pm-layer: fallback getActiveFocusProgress threw (${err instanceof Error ? err.message : String(err)}); returning empty feed`,
+        );
+      }
     }
-    return this.fallback.getActiveFocusProgress();
+    // Neither provider could supply progress — return an empty feed so the
+    // optional dashboard bar hides instead of erroring on every 30s poll.
+    this.logger?.info("pm-layer: no provider supplied active-focus progress; returning empty feed");
+    return EMPTY_FOCUS_PROGRESS;
   }
 
   /** Direct accessor for the underlying providers — exposed for the

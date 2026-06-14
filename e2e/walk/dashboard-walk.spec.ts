@@ -33,7 +33,7 @@ interface RouteCase {
 }
 
 const ROUTES: RouteCase[] = [
-  { path: "/", label: "overview", expect: { testId: "app-sidebar" } },
+  { path: "/", label: "overview", expect: { testId: "hearth-top" } },
   { path: "/coa", label: "coa" },
   { path: "/reports", label: "reports" },
   { path: "/projects", label: "projects", expect: { testId: "marketplace-section" } },

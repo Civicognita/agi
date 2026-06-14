@@ -413,7 +413,13 @@ export class AgentRouter implements LLMProvider {
       complex: complexThresholdTokens,
     });
 
-    const route = this.resolveRoute(config, costMode, classification.complexity);
+    // Detect image content blocks so resolveRoute can prefer aion-vision in
+    // off-grid mode rather than routing to lemonade's general-purpose model.
+    const hasImages = params.messages.some(
+      (m) => Array.isArray(m.content) && m.content.some((b) => b.type === "image"),
+    );
+
+    const route = this.resolveRoute(config, costMode, classification.complexity, hasImages);
     const provider = this.getOrCreateProvider(route.provider, route.model, config);
 
     const overriddenParams: LLMInvokeParams = { ...params, model: route.model };
@@ -689,18 +695,25 @@ export class AgentRouter implements LLMProvider {
     config: AgentRouterConfig,
     costMode: CostMode,
     complexity: RequestComplexity,
+    hasImages = false,
   ): RouteTarget {
     // s111 t415 — off-grid gate. Fires BEFORE the localFirst gate so cloud
     // Providers are filtered entirely. Off-grid is the alpha-stable-1 floor
     // contract: when the owner has toggled off-grid mode in Settings, the
     // router MUST NOT attempt cloud Providers, even when costMode="max"
     // (which normally forces cloud escalation). The preference chain is
-    // lemonade → ollama → hf-local → aion-micro. aion-micro is the
-    // last-resort floor: a small fine-tuned model that ships baked into
-    // the install (s111 t380), guaranteed available even on a fresh box
-    // with nothing else local installed. Bigger local Providers win when
-    // present because aion-micro is intentionally compact.
+    // aion-vision (when image content) → lemonade → ollama → hf-local →
+    // aion-micro. aion-micro is the last-resort floor: a small fine-tuned
+    // model that ships baked into the install (s111 t380), guaranteed
+    // available even on a fresh box with nothing else local installed.
+    // Bigger local Providers win when present because aion-micro is compact.
     if (config.router.offGrid === true) {
+      // s111 t412 — vision routing: when the turn contains image content and
+      // Lemonade is available (aion-vision runs on the same backplane), prefer
+      // aion-vision so Moondream2 handles the image instead of Gemma-4.
+      if (hasImages && config.providers["lemonade"]) {
+        return { provider: "aion-vision", model: "moondream2" };
+      }
       if (config.providers["lemonade"]) {
         return { provider: "lemonade", model: "default" };
       }

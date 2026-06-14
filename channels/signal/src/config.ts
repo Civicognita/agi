@@ -1,5 +1,3 @@
-import type { ChannelConfigAdapter } from "@agi/channel-sdk";
-
 // ---------------------------------------------------------------------------
 // Signal config
 // ---------------------------------------------------------------------------
@@ -68,7 +66,7 @@ export function isSignalConfig(value: unknown): value is SignalConfig {
 }
 
 /** ChannelConfigAdapter for the Signal channel. */
-export function createConfigAdapter(): ChannelConfigAdapter {
+export function createConfigAdapter() {
   return {
     validate: (config: unknown) => isSignalConfig(config),
     getDefaults: () => ({ pollingIntervalMs: 2000, rateLimitPerMinute: 15 }),

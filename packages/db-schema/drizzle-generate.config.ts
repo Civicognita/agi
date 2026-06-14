@@ -36,6 +36,7 @@ export default defineConfig({
     "./dist/hf.js",
     "./dist/security.js",
     "./dist/cost-ledger.js",
+    "./dist/memory.js",
   ],
   out: "./drizzle",
   dialect: "postgresql",

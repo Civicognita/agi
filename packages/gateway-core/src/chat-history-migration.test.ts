@@ -1,7 +1,7 @@
 /**
  * chat-history-migration tests — verifies project-scoped session
  * migration from global ~/.agi/chat-history/ to per-project
- * <projectPath>/k/chat/.
+ * <projectPath>/.ai/chat/.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -20,7 +20,7 @@ describe("migrateChatSessionsForProject", () => {
     tmpRoot = join(tmpdir(), `chat-mig-${String(Date.now())}-${String(Math.random()).slice(2)}`);
     projectPath = join(tmpRoot, "myproject");
     globalChatDir = join(tmpRoot, "agi-home", ".agi", "chat-history");
-    projectChatDir = join(projectPath, "k", "chat");
+    projectChatDir = join(projectPath, ".ai", "chat");
     mkdirSync(projectPath, { recursive: true });
     mkdirSync(globalChatDir, { recursive: true });
   });

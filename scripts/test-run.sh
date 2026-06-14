@@ -98,7 +98,7 @@ preflight() {
   local host_version vm_version
   host_version=$(grep -m1 '"version"' "$REPO_DIR/package.json" 2>/dev/null \
     | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
-  vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk https://ai.on/health 2>/dev/null" 2>/dev/null \
+  vm_version=$(multipass exec "$VM_NAME" -- bash -c "curl -sk --connect-timeout 5 --max-time 10 https://ai.on/health 2>/dev/null" 2>/dev/null \
     | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
     | tr -d '\r\n ')
 
@@ -108,7 +108,7 @@ preflight() {
     # Wait up to 30s for /health to come back ONLINE so tests don't race the boot
     local waited=0
     while [ $waited -lt 30 ]; do
-      if multipass exec "$VM_NAME" -- bash -c "curl -sk https://ai.on/health 2>/dev/null | grep -q '\"state\":\"ONLINE\"'" 2>/dev/null; then
+      if multipass exec "$VM_NAME" -- bash -c "curl -sk --connect-timeout 5 --max-time 10 https://ai.on/health 2>/dev/null | grep -q '\"state\":\"ONLINE\"'" 2>/dev/null; then
         echo "VM services back online (took ${waited}s)." >&2
         break
       fi

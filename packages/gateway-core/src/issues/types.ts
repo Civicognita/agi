@@ -1,7 +1,7 @@
 /**
  * Issue registry types — Wish #21 Slice 1.
  *
- * Per-project Markdown registry at `<projectPath>/k/issues/`. Each issue
+ * Per-project Markdown registry at `<projectPath>/.ai/issues/`. Each issue
  * is one `.md` file with frontmatter (the structured fields below) plus
  * Markdown body (Symptom / Context / Repro / Investigation / Resolution).
  * `index.json` at the same path is a flat array of summary records for

@@ -1,5 +1,5 @@
 /**
- * Protocol compatibility checker — validates that AGI, PRIME, and ID repos
+ * Protocol compatibility checker — validates that AGI and PRIME repos
  * are running compatible protocol versions at boot time.
  */
 
@@ -19,7 +19,6 @@ export interface ProtocolCheckResult {
   manifests: {
     agi: ProtocolManifest | null;
     prime: ProtocolManifest | null;
-    id: ProtocolManifest | null;
   };
 }
 
@@ -70,18 +69,15 @@ function satisfiesRange(version: string, range: string): boolean {
  *
  * @param agiDir - Path to AGI repo root
  * @param primeDir - Path to PRIME corpus directory
- * @param idDir - Path to ID service directory
  */
 export function checkProtocolCompatibility(
   agiDir: string,
   primeDir: string,
-  idDir: string,
 ): ProtocolCheckResult {
   const errors: string[] = [];
 
   const agi = readManifest(agiDir);
   const prime = readManifest(primeDir);
-  const id = readManifest(idDir);
 
   if (!agi) {
     errors.push(`AGI protocol.json not found at ${agiDir}`);
@@ -89,15 +85,11 @@ export function checkProtocolCompatibility(
   if (!prime && existsSync(primeDir)) {
     errors.push(`PRIME protocol.json not found at ${primeDir}`);
   }
-  if (!id && existsSync(idDir)) {
-    errors.push(`ID protocol.json not found at ${idDir}`);
-  }
 
   // Check AGI's requirements against all core repos
   if (agi?.requires) {
     const nameToManifest: Record<string, ProtocolManifest | null> = {
       "agi-prime": prime,
-      "agi-local-id": id,
     };
 
     for (const [depName, requiredRange] of Object.entries(agi.requires)) {
@@ -114,6 +106,6 @@ export function checkProtocolCompatibility(
   return {
     compatible: errors.length === 0,
     errors,
-    manifests: { agi, prime, id },
+    manifests: { agi, prime },
   };
 }

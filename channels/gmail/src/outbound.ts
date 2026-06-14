@@ -1,4 +1,4 @@
-import type { OutboundContent } from "@agi/channel-sdk";
+import type { OutboundContent } from "@agi/plugins";
 import type { GmailClient } from "./gmail-client.js";
 import type { ThreadContext } from "./normalizer.js";
 

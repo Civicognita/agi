@@ -162,6 +162,7 @@ export interface ProvidersApiDeps {
  *  unknown providers from being persisted. */
 const KNOWN_PROVIDER_IDS = new Set([
   "aion-micro",
+  "aion-vision",
   "huggingface",
   "ollama",
   "lemonade",
@@ -203,6 +204,21 @@ function buildBaseCatalog(config: AionimaConfig): ProviderCatalogEntry[] {
       // Phase K.4 moved aion-micro serving to the Lemonade backplane — the
       // model can't answer chat completions if Lemonade isn't healthy. The
       // catalog UI uses this to show "Requires: Lemonade" on the card.
+      dependsOn: ["lemonade"],
+    },
+    {
+      id: "aion-vision",
+      name: "aion-vision",
+      tier: "local",
+      offGridCapable: true,
+      health: "healthy",
+      // Moondream2 — compact CPU-capable VLM (image Q&A, OCR, captioning).
+      // Served via the Lemonade backplane at the same port as aion-micro.
+      // SmolVLM-500M-Instruct-GGUF is the fallback when Moondream2 isn't
+      // pulled (see getModelsForBuiltin for the full model list).
+      defaultModel: "moondream2",
+      // aion-vision can't serve requests if Lemonade isn't healthy — same
+      // dependency pattern as aion-micro.
       dependsOn: ["lemonade"],
     },
     {
@@ -291,6 +307,24 @@ export async function getModelsForBuiltin(
         label: "aion-micro v1",
         capabilities: { tools: false, vision: false, reasoning: false },
       }];
+
+    case "aion-vision":
+      // Off-grid VLM Provider. Moondream2 is the primary model (compact CPU
+      // VLM, ~1.86GB, optimised for image Q&A and captioning). SmolVLM-500M
+      // is the sub-1GB fallback when Moondream2 isn't pulled or the box is
+      // memory-constrained. Both are served via Lemonade (port 13305).
+      return [
+        {
+          id: "moondream2",
+          label: "Moondream2",
+          capabilities: { tools: false, vision: true, reasoning: false },
+        },
+        {
+          id: "SmolVLM-500M-Instruct-GGUF",
+          label: "SmolVLM-500M",
+          capabilities: { tools: false, vision: true, reasoning: false },
+        },
+      ];
 
     case "ollama": {
       const ollamaCfg = (providers["ollama"] as { baseUrl?: string } | undefined) ?? {};

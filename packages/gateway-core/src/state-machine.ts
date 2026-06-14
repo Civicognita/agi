@@ -40,10 +40,12 @@ export interface StateTransition {
 // State capabilities table
 // ---------------------------------------------------------------------------
 
+// State gates ONLY COA<>COI MINT signatures — local agentic operations are
+// permitted in all states. UNKNOWN is the only state that suppresses invocation.
 const CAPABILITIES: Record<GatewayState, StateCapabilities> = {
   ONLINE: { remoteOps: true, tynn: true, memory: true, deletions: true },
   LIMBO: { remoteOps: false, tynn: true, memory: true, deletions: false },
-  OFFLINE: { remoteOps: false, tynn: false, memory: true, deletions: false },
+  OFFLINE: { remoteOps: false, tynn: true, memory: true, deletions: false },
   UNKNOWN: { remoteOps: false, tynn: false, memory: false, deletions: false },
 };
 
@@ -144,6 +146,30 @@ export class GatewayStateMachine extends EventEmitter {
    */
   isAllowed(op: keyof StateCapabilities): boolean {
     return CAPABILITIES[this.current][op];
+  }
+
+  /**
+   * Force the state machine into `to` without validating the transition graph.
+   *
+   * Only for use by the startup connectivity probe, which is the authoritative
+   * source of truth for initial state. Runtime events must go through
+   * `transition()` so the graph constraints remain enforced.
+   */
+  forceState(to: GatewayState): void {
+    const entry: StateTransition = {
+      from: this.current,
+      to,
+      timestamp: new Date().toISOString(),
+    };
+
+    this.current = to;
+
+    if (this.history.length >= HISTORY_MAX) {
+      this.history.shift();
+    }
+    this.history.push(entry);
+
+    this.emit("state_change", entry);
   }
 
   // ---------------------------------------------------------------------------

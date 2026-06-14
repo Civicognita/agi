@@ -3,7 +3,7 @@
  *
  * One-shot, idempotent migration that moves Aion's memory files from
  * the legacy global location (`~/.agi/memory/`) into the per-project
- * canonical location (`<workspaceRoot>/_aionima/k/memory/`) so memory
+ * canonical location (`<workspaceRoot>/_aionima/.ai/memory/`) so memory
  * lives with the project that owns it (per s160 + owner directive
  * 2026-05-09: "the _aionima folder is where memory and user-generated
  * system knowledge lives").
@@ -33,7 +33,7 @@ import { existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:f
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { aionimaSystemProjectPath } from "./project-config-path.js";
+import { aionimaSystemProjectPath, KNOWLEDGE_DIR } from "./project-config-path.js";
 import type { ComponentLogger } from "./logger.js";
 
 /**
@@ -45,11 +45,11 @@ export function legacyMemoryDir(): string {
 }
 
 /**
- * Canonical memory location — one of the `_aionima/k/<area>` knowledge
+ * Canonical memory location — one of the `_aionima/.ai/<area>` knowledge
  * subdirs created by the t701 scaffolder.
  */
 export function aionimaMemoryDir(workspaceRoot: string): string {
-  return join(aionimaSystemProjectPath(workspaceRoot), "k", "memory");
+  return join(aionimaSystemProjectPath(workspaceRoot), KNOWLEDGE_DIR, "memory");
 }
 
 export interface AionimaMemoryMigrationResult {

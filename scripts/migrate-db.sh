@@ -70,6 +70,16 @@ CREATE TABLE IF NOT EXISTS cost_records (
 CREATE INDEX IF NOT EXISTS cost_records_ts_idx ON cost_records (ts);
 CREATE INDEX IF NOT EXISTS cost_records_provider_idx ON cost_records (provider);
 CREATE INDEX IF NOT EXISTS cost_records_entity_ts_idx ON cost_records (entity_id, ts);
+
+-- v0.4.938 — connections.dtoken (device-flow token column;
+-- packages/db-schema/src/auth.ts). Added to the Drizzle schema + the unused
+-- 0004_special_bishop.sql migration in 5701568 but NEVER to THIS script — the
+-- only path that touches the live DB (drizzle-kit push is disabled here). So the
+-- GitHub device-flow connection INSERT failed in production with:
+--   column "dtoken" of relation "connections" does not exist
+-- Guarded going forward by migrate-db-parity.test.ts (s219 follow-up).
+ALTER TABLE IF EXISTS connections
+  ADD COLUMN IF NOT EXISTS dtoken text;
 SQL
 
 echo "[migrate-db] applying $(echo "$MIGRATIONS_SQL" | grep -cE '^[A-Z]') statement(s) idempotently"

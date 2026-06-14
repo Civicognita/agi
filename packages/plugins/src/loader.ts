@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { createComponentLogger } from "@agi/gateway-core";
 import { scanPluginSource } from "./scanner.js";
 import type { Logger, ComponentLogger, ProjectTypeRegistry, ProjectTypeDefinition, ProjectTypeTool, CircuitBreakerTracker } from "@agi/gateway-core";
-import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import type { AionimaChannelPlugin } from "./channel-plugin-types.js";
 import type { DiscoveredPlugin } from "./discovery.js";
 import { HookBus } from "./hooks.js";
 import { PluginRegistry } from "./registry.js";
@@ -48,6 +48,31 @@ export interface PluginLoaderDeps {
    * this, plugin loads fall back to the bare try/catch behavior unchanged.
    */
   circuitBreaker?: CircuitBreakerTracker;
+  /**
+   * Create or look up a user account seeded from a channel plugin (e.g.,
+   * Discord). Exposed to plugins via `AionimaPluginAPI.getOrCreateChannelUser`.
+   * Implemented by gateway-core/server.ts with a Drizzle upsert so plugins
+   * never need direct DB access.
+   */
+  createChannelUser?: (
+    channelId: string,
+    userId: string,
+    meta: { displayName?: string; username?: string },
+  ) => Promise<{ userId: string; isNew: boolean }>;
+  /** Log a raw channel message to the ambient daily session file (s189). */
+  logAmbientMessage?: (channelId: string, entry: import("./types.js").AmbientEntry) => void;
+  /** Return recent messages from today's ambient log (s189). */
+  getAmbientContext?: (channelId: string, limit: number) => import("./types.js").AmbientEntry[];
+  /** s194: Check whether a channel user is verified in the entity store. */
+  isEntityVerified?: (channelId: string, userId: string) => Promise<boolean>;
+  /** s194: Retrieve an in-progress DM registration session. */
+  getRegistrationSession?: (sessionId: string) => import("./types.js").RegistrationSession | null;
+  /** s194: Persist or update a registration session. */
+  setRegistrationSession?: (session: import("./types.js").RegistrationSession) => void;
+  /** s194: Remove a registration session. */
+  deleteRegistrationSession?: (sessionId: string) => void;
+  /** s194: Capture a pending approval from the registration flow. */
+  capturePendingApproval?: (input: import("./types.js").PendingApprovalCaptureInput) => void;
 }
 
 export interface LoadResult {
@@ -249,6 +274,14 @@ function createPluginAPI(
       deps.pluginRegistry.addChannel(pluginId, plugin.id as string);
     },
 
+    registerChannelV2(def: { id: string }): void {
+      // CHN-B s163 slice 2 — register the v2 definition for later
+      // dispatcher consumption (slice 3). Today the runtime channel is
+      // still the legacy registerChannel() path; this is the parallel
+      // shadow registry.
+      deps.pluginRegistry.addChannelV2(pluginId, def.id, def);
+    },
+
     registerProvider(def: LLMProviderDefinition): void {
       deps.pluginRegistry.addProvider(pluginId, def);
     },
@@ -358,5 +391,14 @@ function createPluginAPI(
     getProjectStacks(projectPath: string): Array<{ stackId: string; addedAt: string }> {
       return deps.projectStacksReader?.(projectPath) ?? [];
     },
+
+    getOrCreateChannelUser: deps.createChannelUser,
+    logAmbientMessage: deps.logAmbientMessage,
+    getAmbientContext: deps.getAmbientContext,
+    isEntityVerified: deps.isEntityVerified,
+    getRegistrationSession: deps.getRegistrationSession,
+    setRegistrationSession: deps.setRegistrationSession,
+    deleteRegistrationSession: deps.deleteRegistrationSession,
+    capturePendingApproval: deps.capturePendingApproval,
   };
 }

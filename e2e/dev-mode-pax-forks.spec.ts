@@ -47,7 +47,7 @@ test.describe("Dev-Mode PAx forks (s136 t512)", () => {
 
   test("Contributing tab renders the Particle-Academy section heading when dev-mode is on", async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("[data-testid='app-sidebar']", { timeout: 10_000 });
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
 
     // Skip when contributing mode isn't on — the section is only
     // rendered post-toggle.

@@ -156,9 +156,49 @@ CREATE TABLE impact_interactions (
 );
 CREATE INDEX impact_interactions_entity_idx ON impact_interactions (entity_id);
 CREATE INDEX impact_interactions_coa_idx ON impact_interactions (coa_fingerprint);
+
+-- user_notes (mirrors packages/db-schema/src/platform.ts — s152/s157)
+CREATE TABLE user_notes (
+  id TEXT PRIMARY KEY,
+  user_entity_id TEXT NOT NULL,
+  project_path TEXT,
+  title TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'markdown',
+  body TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  pinned BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX user_notes_user_idx ON user_notes (user_entity_id);
+CREATE INDEX user_notes_project_idx ON user_notes (project_path);
+CREATE INDEX user_notes_pinned_idx ON user_notes (pinned);
+CREATE INDEX user_notes_kind_idx ON user_notes (kind);
+
+-- mapp_scripts (mirrors packages/db-schema/src/platform.ts — s182 Phase B)
+CREATE TABLE mapp_scripts (
+  id TEXT PRIMARY KEY,
+  mapp_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  language TEXT NOT NULL DEFAULT 'starlark',
+  source TEXT,
+  source_hash TEXT,
+  wasm_b64 TEXT,
+  wasm_hash TEXT,
+  is_packer BOOLEAN NOT NULL DEFAULT false,
+  enabled BOOLEAN NOT NULL DEFAULT false,
+  timeout_ms INTEGER NOT NULL DEFAULT 1000,
+  max_memory_pages INTEGER NOT NULL DEFAULT 256,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX mapp_scripts_mapp_idx ON mapp_scripts (mapp_id);
+CREATE UNIQUE INDEX mapp_scripts_name_uniq ON mapp_scripts (mapp_id, name);
+CREATE INDEX mapp_scripts_packer_idx ON mapp_scripts (mapp_id, is_packer, enabled);
 `;
 
-const FIXTURE_TABLES = ["impact_interactions", "coa_chains", "geid_local", "entities"] as const;
+const FIXTURE_TABLES = ["impact_interactions", "coa_chains", "geid_local", "entities", "user_notes", "mapp_scripts"] as const;
 
 function resolveBaseUrl(): string {
   return process.env.AGI_TEST_DATABASE_URL

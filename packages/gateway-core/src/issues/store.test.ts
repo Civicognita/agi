@@ -27,8 +27,8 @@ afterEach(() => {
 });
 
 describe("issuesDir (Wish #21)", () => {
-  it("returns <project>/k/issues", () => {
-    expect(issuesDir("/foo/bar")).toBe("/foo/bar/k/issues");
+  it("returns <project>/.ai/issues", () => {
+    expect(issuesDir("/foo/bar")).toBe("/foo/bar/.ai/issues");
   });
 });
 

@@ -20,7 +20,7 @@ beforeEach(() => {
   handler = createDirCreateHandler({
     workspaceRoot: workspace,
     cageProvider: () => ({
-      allowedPrefixes: [project, join(project, ".agi"), join(project, "k"), join(project, "repos"), join(project, ".trash")],
+      allowedPrefixes: [project, join(project, ".agi"), join(project, ".ai"), join(project, "repos"), join(project, ".trash")],
       opsModeWidened: false,
       askUserQuestionEscape: true,
     }),
@@ -37,16 +37,16 @@ async function call(input: Record<string, unknown>): Promise<{ path?: string; er
 
 describe("dir_create (s134 cycle 198)", () => {
   it("creates a new directory at a relative path in k/", async () => {
-    const r = await call({ path: "k/plans" });
+    const r = await call({ path: ".ai/plans" });
     expect(r.error).toBeUndefined();
-    expect(existsSync(join(project, "k", "plans"))).toBe(true);
-    expect(statSync(join(project, "k", "plans")).isDirectory()).toBe(true);
+    expect(existsSync(join(project, ".ai", "plans"))).toBe(true);
+    expect(statSync(join(project, ".ai", "plans")).isDirectory()).toBe(true);
   });
 
   it("creates nested directories with recursive=true (default)", async () => {
-    const r = await call({ path: "k/plans/2026-05-11" });
+    const r = await call({ path: ".ai/plans/2026-05-11" });
     expect(r.error).toBeUndefined();
-    expect(existsSync(join(project, "k", "plans", "2026-05-11"))).toBe(true);
+    expect(existsSync(join(project, ".ai", "plans", "2026-05-11"))).toBe(true);
   });
 
   it("succeeds at the project root (mkdir of new top-level folder)", async () => {
@@ -67,9 +67,9 @@ describe("dir_create (s134 cycle 198)", () => {
   });
 
   it("is idempotent on existing directory", async () => {
-    await call({ path: "k/plans" });
-    const r = await call({ path: "k/plans" });
+    await call({ path: ".ai/plans" });
+    const r = await call({ path: ".ai/plans" });
     expect(r.error).toBeUndefined();
-    expect(r.path).toBe(join(project, "k", "plans"));
+    expect(r.path).toBe(join(project, ".ai", "plans"));
   });
 });

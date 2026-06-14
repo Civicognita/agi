@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 // Chat content now renders via react-fancy's ContentRenderer (see imports
 // below). The legacy ReactMarkdown + markdownComponents path was retired
 // in favor of ContentRenderer + registered extensions (thinking, question,
@@ -19,15 +20,23 @@ import { ToolCards, LiveToolCards, SingleToolCard } from "./ToolCards.js";
 import type { ToolCard } from "./ToolCards.js";
 import { PlanViewer } from "./PlanViewer.js";
 import { ChatHistory } from "./ChatHistory.js";
+import { LoopProgressBar } from "./LoopProgressBar.js";
 import { applyInjectionConsumed, shouldShowLivePill, applyStallTimeout, groupByThoughtBoundary } from "./chat-flyout-reducers.js";
 import type { ChatSessionShape, ChatMessageShape } from "./chat-flyout-reducers.js";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useIsMobile, useConfig } from "@/hooks.js";
-import { ContentRenderer, Textarea } from "@particle-academy/react-fancy";
+import { ContentRenderer, Textarea, PromptInput } from "@particle-academy/react-fancy";
 import { Copy as CopyIcon, Check as CheckIcon } from "lucide-react";
 import { PlansDrawer } from "./PlansDrawer.js";
+
+// ---------------------------------------------------------------------------
+// Session persistence — localStorage keys for browser-refresh restore
+// ---------------------------------------------------------------------------
+
+const LS_SESSIONS_KEY = "agi_open_sessions_v1";
+const LS_ACTIVE_KEY = "agi_active_session_v1";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -191,6 +200,13 @@ export interface ChatFlyoutProps {
   openRequestId?: string | null;
   /** When true, renders as an inline flex child instead of a fixed overlay. */
   docked?: boolean;
+  /** When true (implies docked=true), renders without the outer width div so
+   *  the AccordionPanel shell section owns the container sizing. */
+  inShell?: boolean;
+  /** When provided (inShell=true), the AgentCanvas (canvasSlot) is portalled
+   *  into this element so it renders inside the shell's Canvas section while
+   *  remaining in ChatFlyout's React tree (state + WS events stay local). */
+  canvasPortalTarget?: Element | null;
   /** s124 cycle 86 rework — global notification list. ChatFlyout filters
    *  to iterative-work entries matching the active session's project path
    *  and renders the latest as an inline IterativeWorkArtifactCard at the
@@ -285,7 +301,7 @@ function TokenBreakdownModal({
 // Component
 // ---------------------------------------------------------------------------
 
-export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithContext, openWithMessage, openRequestId, docked = false, notifications: notificationsProp }: ChatFlyoutProps) {
+export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithContext, openWithMessage, openRequestId, docked = false, inShell = false, canvasPortalTarget, notifications: notificationsProp }: ChatFlyoutProps) {
   // State
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const sessionsRef = useRef(sessions);
@@ -319,6 +335,9 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingContextRef = useRef<string | null>(null);
   const pendingMessageRef = useRef<string | null>(null);
+  // Tracks sessions still awaiting chat:opened during a localStorage restore.
+  // Non-zero value suppresses auto-create-session and defers setActiveSessionId.
+  const pendingRestoreCountRef = useRef(0);
 
   // Scroll refs
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -554,6 +573,19 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         deferredCreateRef.current = false;
         ws.send(JSON.stringify({ type: "chat:open", payload: { context: "general" } }));
       }
+      // Restore sessions from pre-refresh localStorage snapshot.
+      // Only fires if no sessions are already open (i.e. fresh page load, not reconnect).
+      if (sessionsRef.current.length === 0) {
+        try {
+          const saved = JSON.parse(localStorage.getItem(LS_SESSIONS_KEY) ?? "[]") as Array<{ id: string; context: string }>;
+          if (saved.length > 0) {
+            pendingRestoreCountRef.current = saved.length;
+            for (const s of saved) {
+              ws.send(JSON.stringify({ type: "chat:open", payload: { sessionId: s.id, context: s.context } }));
+            }
+          }
+        } catch { /* noop */ }
+      }
       // Start heartbeat. Every tick we ping; if we haven't seen a pong within
       // HEARTBEAT_TIMEOUT_MS we declare the WS dead and force-close it so the
       // reconnect path runs (ws.onclose -> 3s reconnect timer -> new WS).
@@ -642,7 +674,18 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                 queuedMessages: [],
               }];
             });
-            setActiveSessionId(p.sessionId);
+            // During a localStorage restore, hold off on activating each session
+            // individually — wait until the last one arrives, then activate the
+            // previously-active session. For non-restore opens, activate immediately.
+            if (pendingRestoreCountRef.current > 0) {
+              pendingRestoreCountRef.current -= 1;
+              if (pendingRestoreCountRef.current === 0) {
+                const savedActive = localStorage.getItem(LS_ACTIVE_KEY);
+                setActiveSessionId(savedActive ?? p.sessionId);
+              }
+            } else {
+              setActiveSessionId(p.sessionId);
+            }
 
             // Auto-send pending message from "Fix this" (or similar pre-loaded context)
             const pendingMsg = pendingMessageRef.current;
@@ -1024,7 +1067,9 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
         },
       }));
     } else {
-      // Normal send path
+      // Normal send path — set thinking=true optimistically so the live-pill
+      // renders immediately (especially noticeable with large image/doc payloads
+      // where the server chat:thinking event arrives after a WS roundtrip delay).
       setSessions((prev) => prev.map((s) =>
         s.id === activeSession.id
           ? {
@@ -1036,6 +1081,7 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                 images: imageFiles.map((img) => img.content),
               }],
               suggestions: [],
+              thinking: true,
             }
           : s
       ));
@@ -1145,12 +1191,21 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     }
   }, [activeSession?.messages, activeSession?.thinking, autoScroll]);
 
-  // Create first session on open if none exist (skip when openWithContext will handle it)
+  // Create first session on open if none exist (skip when openWithContext or localStorage restore will handle it)
   useEffect(() => {
-    if (open && sessions.length === 0 && !openWithContext && !pendingContextRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
+    if (open && sessions.length === 0 && !openWithContext && !pendingContextRef.current && pendingRestoreCountRef.current === 0 && wsRef.current?.readyState === WebSocket.OPEN) {
       createSession();
     }
   }, [open, sessions.length, openWithContext, createSession]);
+
+  // Persist open sessions to localStorage so browser refresh can restore them.
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(sessions.map((s) => ({ id: s.id, context: s.context }))));
+      if (activeSessionId) localStorage.setItem(LS_ACTIVE_KEY, activeSessionId);
+      else localStorage.removeItem(LS_ACTIVE_KEY);
+    } catch { /* storage quota — non-fatal */ }
+  }, [sessions, activeSessionId]);
 
   // Open with context — create a session scoped to a specific project
   const prevContextRef = useRef<string | null>(null);
@@ -1217,17 +1272,15 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // Derived send-button state
   // -------------------------------------------------------------------------
 
-  const canSend = activeSession != null
-    && (input.trim().length > 0 || attachments.length > 0);
-
   if (!open && !docked) return null;
 
-  // Shared header for docked and overlay modes
+  // Shared header — overlay mode shows Expand + X; docked/shell mode shows neither
+  // (the AccordionPanel rail trigger handles panel collapse instead of an X button).
   const panelHeader = (
     <div className="flex items-center justify-between px-4 py-[10px] bg-card border-b border-border shrink-0">
       <span className="font-bold text-sm text-foreground">Chat</span>
-      <div className="flex gap-1.5">
-        {!docked && (
+      {!docked && (
+        <div className="flex gap-1.5">
           <Button
             variant="outline"
             size="xs"
@@ -1235,21 +1288,29 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           >
             {isFullscreen ? "Restore" : "Expand"}
           </Button>
-        )}
-        <Button
-          variant="outline"
-          size="xs"
-          onClick={onClose}
-        >
-          X
-        </Button>
-      </div>
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={onClose}
+          >
+            X
+          </Button>
+        </div>
+      )}
     </div>
   );
 
   // Panel body: everything below the header (shared between docked and overlay modes)
   const panelBody = (
     <div className="relative flex flex-col flex-1 min-h-0">
+        {/* s120 t452 — Loop progress bar mirrors the Claude Code statusline.
+            Restored in v0.4.692 after the orphan-audit cycle 247 fix deleted
+            Chat.tsx (its only prior consumer); LoopProgressBar belongs on
+            the real chat surface, which is THIS file. */}
+        <div className="px-3 pt-2">
+          <LoopProgressBar />
+        </div>
+
         {/* Chat history overlay */}
         <ChatHistory
           open={historyOpen}
@@ -1472,8 +1533,20 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
                                 </span>
                               )}
                               {msg.routingMeta.complexity && (
-                                <span className="text-[9px] font-mono text-muted-foreground px-1 rounded bg-muted/30">
+                                <span
+                                  className="text-[9px] font-mono text-muted-foreground px-1 rounded bg-muted/30"
+                                  title={msg.routingMeta.requestType ? `requestType: ${msg.routingMeta.requestType}${msg.routingMeta.classifierUsed ? ` (${msg.routingMeta.classifierUsed})` : ""}` : undefined}
+                                >
                                   {msg.routingMeta.complexity}
+                                </span>
+                              )}
+                              {msg.routingMeta.requestType && (
+                                <span
+                                  data-testid="request-type-badge"
+                                  className="text-[9px] font-mono text-muted-foreground/70 px-1 rounded bg-muted/20 cursor-default"
+                                  title={msg.routingMeta.classifierUsed ? `classifier: ${msg.routingMeta.classifierUsed}` : "request type"}
+                                >
+                                  {msg.routingMeta.requestType}
                                 </span>
                               )}
                               {msg.routingMeta.escalated && (
@@ -1560,12 +1633,14 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           )}
 
           {activeSession && activeSession.suggestions.length > 0 && !activeSession.thinking && (
-            <div className="flex gap-1.5 flex-wrap py-1">
+            <div data-testid="suggestion-chips" className="flex gap-1.5 flex-wrap py-1">
               {activeSession.suggestions.map((s, i) => (
                 <button
                   key={`suggestion-${String(i)}`}
+                  data-testid="suggestion-chip"
                   onClick={() => sendMessage(s)}
-                  className="px-3 py-1 rounded-full border border-blue text-blue bg-transparent text-[11px] cursor-pointer"
+                  title={s}
+                  className="px-3 py-1 rounded-full border border-blue/60 text-blue bg-transparent text-[11px] cursor-pointer hover:bg-blue/10 hover:border-blue transition-colors"
                 >
                   {s}
                 </button>
@@ -1680,44 +1755,17 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
           />
         )}
 
-        {/* Attachment preview */}
-        {activeSession && attachments.length > 0 && (
-          <div className="px-3 py-1.5 border-t border-border bg-card flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto shrink-0">
-            {attachments.map((att) => (
-              <div
-                key={att.id}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-background border border-border text-[11px] text-foreground max-w-[200px]"
-              >
-                {att.type === "image" ? (
-                  <img
-                    src={att.content}
-                    alt={att.name}
-                    className="w-6 h-6 rounded object-cover"
-                  />
-                ) : (
-                  <span className="text-sm shrink-0">&#128196;</span>
-                )}
-                <span className="overflow-hidden text-ellipsis whitespace-nowrap flex-1">
-                  {att.name}
-                </span>
-                <span className="text-muted-foreground text-[10px] shrink-0">
-                  {formatFileSize(att.size)}
-                </span>
-                <span
-                  onClick={() => removeAttachment(att.id)}
-                  className="cursor-pointer text-red font-bold text-xs shrink-0"
-                >
-                  x
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Input bar */}
+        {/* Input bar — PromptInput owns the shell; file picker + attachment
+            chips live in its aboveInput slot so there is one unified UX.
+            PromptInput v3 has its own drop-to-attach chip bar, but it only
+            stores {id,name,bytes} and discards the File object. We intercept
+            drag/drop in the capture phase (onDropCapture fires parent-first)
+            so PromptInput never sees the event, preventing its cosmetic chip
+            bar from activating while our processFiles pipeline gets the real
+            File objects. aboveInput then shows our processed chips. */}
         {activeSession && (
-          <div className="px-3 py-2.5 border-t border-border bg-card flex gap-1.5 items-end shrink-0">
-            {/* Hidden file input */}
+          <div className="px-3 py-2.5 border-t border-border bg-card shrink-0">
+            {/* Hidden file input — triggered by the paperclip in aboveInput */}
             <input
               ref={fileInputRef}
               type="file"
@@ -1725,43 +1773,81 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
               onChange={handleFileSelect}
               className="hidden"
             />
-            {/* Paperclip button */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              title="Attach files"
-              className="p-2 rounded-[10px] border border-border bg-transparent text-muted-foreground text-base cursor-pointer shrink-0 leading-none"
-            >
-              &#128206;
-            </button>
-            <Textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder="Message Aionima..."
-              rows={1}
-              className="flex-1 text-[13px] resize-none min-h-[44px] max-h-[100px]"
-            />
             {activeSession?.thinking ? (
-              <button
-                onClick={cancelInvocation}
-                className="px-3.5 py-2 rounded-[10px] border-none text-[13px] font-semibold bg-red text-white cursor-pointer"
-              >
-                Stop
-              </button>
+              <div className="flex gap-1.5 items-end">
+                <Textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
+                  placeholder="Message Aionima…"
+                  rows={1}
+                  className="flex-1 text-[13px] resize-none min-h-[44px] max-h-[100px]"
+                />
+                <button
+                  onClick={cancelInvocation}
+                  className="px-3.5 py-2 rounded-[10px] border-none text-[13px] font-semibold bg-red text-white cursor-pointer"
+                >
+                  Stop
+                </button>
+              </div>
             ) : (
-              <button
-                onClick={() => sendMessage(input)}
-                disabled={!canSend}
-                className={cn(
-                  "px-3.5 py-2 rounded-[10px] border-none text-[13px] font-semibold",
-                  canSend
-                    ? "bg-primary text-primary-foreground cursor-pointer"
-                    : "bg-secondary text-muted-foreground cursor-default",
-                )}
+              <div
+                onDropCapture={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation(); // prevents PromptInput's onDrop from firing
+                  const files = Array.from(e.dataTransfer.files);
+                  if (files.length > 0) processFiles(files);
+                }}
+                onDragOverCapture={(e) => { e.preventDefault(); }}
+                onPasteCapture={(e) => {
+                  const files = Array.from(e.clipboardData.items)
+                    .map((i) => i.getAsFile())
+                    .filter((f): f is File => f !== null);
+                  if (files.length > 0) {
+                    e.preventDefault();
+                    processFiles(files);
+                  }
+                }}
               >
-                Send
-              </button>
+                <PromptInput
+                  budgetTokens={32_000}
+                  placeholder="Message Aionima…"
+                  showHint
+                  onSubmit={(text) => sendMessage(text)}
+                  aboveInput={
+                    <div className="flex items-center gap-2 px-2 py-1 flex-wrap min-h-[30px]">
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        title="Attach files"
+                        className="shrink-0 text-muted-foreground hover:text-foreground text-base leading-none cursor-pointer"
+                      >
+                        &#128206;
+                      </button>
+                      {attachments.map((att) => (
+                        <div
+                          key={att.id}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-muted border border-border text-[11px] max-w-[180px]"
+                        >
+                          {att.type === "image" ? (
+                            <img src={att.content} alt={att.name} className="w-4 h-4 rounded object-cover shrink-0" />
+                          ) : (
+                            <span className="shrink-0">&#128196;</span>
+                          )}
+                          <span className="font-mono truncate">{att.name}</span>
+                          <span className="text-muted-foreground shrink-0">{formatFileSize(att.size)}</span>
+                          <span
+                            onClick={() => removeAttachment(att.id)}
+                            className="cursor-pointer text-muted-foreground hover:text-foreground font-bold shrink-0 leading-none"
+                          >
+                            ×
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  }
+                />
+              </div>
             )}
           </div>
         )}
@@ -1794,7 +1880,8 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
   // section.
   const chatSlot = (
     <div className="flex flex-col h-full min-w-0 w-full">
-      {panelHeader}
+      {/* Shell mode: the ShellPanelHeader already labels the panel — skip internal header */}
+      {!inShell && panelHeader}
       {panelBody}
     </div>
   );
@@ -1816,23 +1903,33 @@ export function ChatFlyout({ open, onClose, theme = "dark", projects, openWithCo
     />
   );
 
-  // Docked mode: inline flex child (no overlay, no backdrop). The
-  // AccordionFlyout owns the chat-vs-canvas split internally — this branch
-  // just sizes the outer container.
+  // Docked / shell mode: inline flex child (no overlay, no backdrop).
   if (docked) {
+    // In shell mode, render chat directly (no nested AccordionFlyout — that
+    // would add 2 extra rail triggers inside the outer shell's 3 sections).
+    // The AgentCanvas is portalled into the shell's dedicated Canvas section
+    // via canvasPortalTarget so it stays in this React tree (state/WS events)
+    // but appears visually in the correct panel.
+    const inner = inShell
+      ? (
+        <>
+          {chatSlot}
+          {canvasPortalTarget && createPortal(canvasSlot, canvasPortalTarget)}
+        </>
+      )
+      : <AccordionFlyout chat={chatSlot} canvas={canvasSlot} isMobile={isMobile} />;
     return (
       <>
         <div
           data-testid="chat-flyout"
           data-chat-context={openWithContext ?? undefined}
-          className="flex h-full border-l border-border bg-background"
-          style={{ width: "50%" }}
+          className={inShell
+            ? "flex h-full bg-background w-full"
+            : "flex h-full border-l border-border bg-background"
+          }
+          style={inShell ? undefined : { width: "50%" }}
         >
-          <AccordionFlyout
-            chat={chatSlot}
-            canvas={canvasSlot}
-            isMobile={isMobile}
-          />
+          {inner}
         </div>
         <TokenBreakdownModal
           open={tokenBreakdownMsg !== null}

@@ -11,17 +11,19 @@
  * - Cell refs only as small muted badges for formula reference
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { Select } from "@/components/ui/select.js";
 import { Card } from "@/components/ui/card.js";
 import { DevNote } from "@/components/ui/dev-notes.js";
+import type { MAppScript, ChannelWorkflowBinding } from "@/api.js";
+import { fetchScripts, createScript, updateScript, enableScript, disableScript, deleteScript, listWorkflowBindings, addWorkflowBinding, deleteWorkflowBinding } from "@/api.js";
 import { EmojiSelect, Textarea, Callout } from "@particle-academy/react-fancy";
 import { MAppFormRenderer } from "./MAppFormRenderer.js";
 import { cn } from "@/lib/utils";
 
-const STEPS = ["Basics", "Constants", "Pages", "Screens", "Output", "Simulator"] as const;
+const STEPS = ["Basics", "Constants", "Pages", "Screens", "Output", "Scripts", "Workflows", "Simulator"] as const;
 const DRAFT_KEY = "mapp-editor-draft";
 
 /**
@@ -127,6 +129,16 @@ interface EditorScreen {
   miniAgent: EditorScreenMiniAgent | null;
 }
 
+interface EditorWorkflow {
+  id: string;
+  name: string;
+  description?: string;
+  trigger: "manual" | "on-file-change" | "scheduled" | "channel-message";
+  channelId?: string;
+  roomId?: string;
+  messagePattern?: string;
+}
+
 interface EditorState {
   id: string; name: string; author: string; version: string;
   description: string; category: string; icon: string;
@@ -139,6 +151,8 @@ interface EditorState {
   screens: EditorScreen[];
   processingPrompt: string;
   panelWidgets: Array<Record<string, unknown>>;
+  /** s169 CHN-H — channel-message and other MApp workflow triggers. */
+  workflows: EditorWorkflow[];
 }
 
 function emptyState(): EditorState {
@@ -151,6 +165,7 @@ function emptyState(): EditorState {
     screens: [],
     processingPrompt: "",
     panelWidgets: [],
+    workflows: [],
   };
 }
 
@@ -236,7 +251,9 @@ export function MAppEditor({ initialDefinition, onSave, onClose }: MAppEditorPro
           {step === 2 && <PagesStep state={state} update={update} />}
           {step === 3 && <ScreensStep state={state} update={update} />}
           {step === 4 && <OutputStep state={state} update={update} />}
-          {step === 5 && <SimulatorStep state={state} />}
+          {step === 5 && <ScriptsStep mappId={state.id} />}
+          {step === 6 && <WorkflowsStep state={state} update={update} />}
+          {step === 7 && <SimulatorStep state={state} />}
         </div>
 
         {/* Footer */}
@@ -252,7 +269,7 @@ export function MAppEditor({ initialDefinition, onSave, onClose }: MAppEditorPro
                 {validationErrors.length} error{validationErrors.length === 1 ? "" : "s"}
               </span>
             )}
-            {step < 5 && <Button size="sm" variant="outline" onClick={() => setStep((s) => s + 1)}>Next</Button>}
+            {step < 7 && <Button size="sm" variant="outline" onClick={() => setStep((s) => s + 1)}>Next</Button>}
             <Button
               size="sm"
               onClick={handleSave}
@@ -1116,7 +1133,459 @@ function OutputStep({ state, update }: { state: EditorState; update: <K extends 
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Simulator
+// Step 6: Scripts — per-MApp Starlark scripting (s182 Phase E)
+// ---------------------------------------------------------------------------
+
+interface ScriptFormState {
+  name: string;
+  description: string;
+  source: string;
+  isPacker: boolean;
+}
+
+function emptyScriptForm(): ScriptFormState {
+  return { name: "", description: "", source: "", isPacker: false };
+}
+
+function ScriptsStep({ mappId }: { mappId: string }) {
+  const [scripts, setScripts] = useState<MAppScript[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newForm, setNewForm] = useState<ScriptFormState>(emptyScriptForm);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editSource, setEditSource] = useState("");
+  const [saving, setSaving] = useState(false);
+  // Use a ref to track whether we've already loaded for this mappId to avoid
+  // hammering the API on re-renders. Reloads whenever mappId changes.
+  const loadedRef = useRef<string | null>(null);
+
+  const reload = useCallback(async (id: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const list = await fetchScripts(id);
+      setScripts(list);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!mappId) return;
+    if (loadedRef.current === mappId) return;
+    loadedRef.current = mappId;
+    void reload(mappId);
+  }, [mappId, reload]);
+
+  const handleCreate = useCallback(async () => {
+    if (!mappId || !newForm.name.trim()) return;
+    setSaving(true);
+    try {
+      const created = await createScript({
+        mappId,
+        name: newForm.name.trim(),
+        description: newForm.description.trim() || null,
+        source: newForm.source.trim() || null,
+        isPacker: newForm.isPacker,
+      });
+      setScripts((prev) => [...prev, created]);
+      setNewForm(emptyScriptForm);
+      setCreating(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [mappId, newForm]);
+
+  const handleSaveSource = useCallback(async (id: string) => {
+    setSaving(true);
+    try {
+      const updated = await updateScript(id, { source: editSource });
+      setScripts((prev) => prev.map((s) => s.id === id ? updated : s));
+      setEditingId(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [editSource]);
+
+  const handleToggleEnabled = useCallback(async (script: MAppScript) => {
+    try {
+      if (script.enabled) {
+        await disableScript(script.id);
+      } else {
+        await enableScript(script.id);
+      }
+      setScripts((prev) => prev.map((s) => s.id === script.id ? { ...s, enabled: !s.enabled } : s));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  const handleDelete = useCallback(async (id: string) => {
+    try {
+      await deleteScript(id);
+      setScripts((prev) => prev.filter((s) => s.id !== id));
+      if (editingId === id) setEditingId(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [editingId]);
+
+  if (!mappId) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <p className="text-[13px] text-muted-foreground">Save the MApp first (set a name in the Basics step) to add scripts.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-[14px] font-semibold text-foreground">Scripts</h3>
+          <p className="text-[11px] text-muted-foreground">
+            Per-MApp Starlark scripts executed by the <code className="text-[10px] bg-surface0 px-1 rounded">run_script</code> agent tool.
+            Deny-by-default: scripts must be explicitly enabled. Compiler (Phase D) coming soon.
+          </p>
+        </div>
+        {!creating && (
+          <Button size="sm" variant="outline" onClick={() => setCreating(true)}>+ Add Script</Button>
+        )}
+      </div>
+
+      <DevNote
+        kind="deferred"
+        scope="mapp-editor:scripts"
+        heading="Phase D — Starlark→WASM compiler not yet shipped"
+      >
+        Scripts can be authored (source stored) and toggled enabled/disabled, but the{" "}
+        <code>run_script</code> tool will refuse to run any script whose{" "}
+        <code>wasmB64</code> is null. Phase D will add a compile button that invokes
+        the Starlark→WASM toolchain and populates <code>wasmB64</code>. Packer scripts
+        (isPacker=true) are injected by the agent pipeline before MApp execution.
+      </DevNote>
+
+      {error !== null && (
+        <div className="text-[11px] text-red bg-red/10 border border-red/20 rounded px-3 py-2">{error}</div>
+      )}
+
+      {creating && (
+        <div className="rounded-lg border border-border bg-mantle p-4 space-y-3">
+          <h4 className="text-[12px] font-semibold text-foreground">New Script</h4>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] text-muted-foreground">Name *</label>
+              <Input value={newForm.name} onChange={(e) => setNewForm((f) => ({ ...f, name: e.target.value }))} placeholder="validate-input" className="h-8 text-[12px] font-mono" />
+            </div>
+            <div>
+              <label className="text-[10px] text-muted-foreground">Description</label>
+              <Input value={newForm.description} onChange={(e) => setNewForm((f) => ({ ...f, description: e.target.value }))} placeholder="What does this script do?" className="h-8 text-[12px]" />
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] text-muted-foreground">Source (Starlark)</label>
+            <textarea
+              value={newForm.source}
+              onChange={(e) => setNewForm((f) => ({ ...f, source: e.target.value }))}
+              rows={6}
+              placeholder={'# Starlark script\ndef main(input):\n  return {"result": input}'}
+              className="w-full bg-crust border border-border rounded text-[12px] font-mono px-3 py-2 resize-y text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="new-ispacker" checked={newForm.isPacker} onChange={(e) => setNewForm((f) => ({ ...f, isPacker: e.target.checked }))} />
+            <label htmlFor="new-ispacker" className="text-[11px] text-muted-foreground">Packer script (injected before MApp execution)</label>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button size="sm" variant="secondary" onClick={() => { setCreating(false); setNewForm(emptyScriptForm); }}>Cancel</Button>
+            <Button size="sm" onClick={handleCreate} disabled={saving || !newForm.name.trim()}>
+              {saving ? "Saving…" : "Create"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {loading && <p className="text-[11px] text-muted-foreground">Loading scripts…</p>}
+
+      {!loading && scripts.length === 0 && !creating && (
+        <div className="text-center py-8 text-muted-foreground text-[12px] border border-dashed border-border rounded-lg">
+          No scripts yet. Scripts let the agent run Starlark logic scoped to this MApp.
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {scripts.map((script) => (
+          <div key={script.id} className="rounded-lg border border-border bg-mantle">
+            <div className="flex items-center justify-between px-4 py-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-[12px] font-mono font-semibold text-foreground truncate">{script.name}</span>
+                {script.isPacker && <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-semibold">PACKER</span>}
+                <span className={cn(
+                  "text-[9px] px-1.5 py-0.5 rounded font-semibold",
+                  script.enabled ? "bg-green/10 text-green" : "bg-surface0 text-muted-foreground",
+                )}>
+                  {script.enabled ? "ENABLED" : "DISABLED"}
+                </span>
+                {script.wasmB64 === null && (
+                  <span className="text-[9px] bg-yellow/10 text-yellow px-1.5 py-0.5 rounded font-semibold">UNCOMPILED</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  onClick={() => void handleToggleEnabled(script)}
+                  className="text-[10px] px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground"
+                >
+                  {script.enabled ? "Disable" : "Enable"}
+                </button>
+                <button
+                  onClick={() => {
+                    if (editingId === script.id) { setEditingId(null); }
+                    else { setEditingId(script.id); setEditSource(script.source ?? ""); }
+                  }}
+                  className="text-[10px] px-2 py-1 rounded border border-border text-muted-foreground hover:text-foreground"
+                >
+                  {editingId === script.id ? "Close" : "Edit"}
+                </button>
+                <button
+                  onClick={() => void handleDelete(script.id)}
+                  className="text-[10px] px-2 py-1 rounded border border-border text-muted-foreground hover:text-red"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+            {script.description !== null && (
+              <p className="px-4 pb-2 text-[11px] text-muted-foreground">{script.description}</p>
+            )}
+            {editingId === script.id && (
+              <div className="px-4 pb-4 space-y-2 border-t border-border pt-3">
+                <label className="text-[10px] text-muted-foreground">Source (Starlark)</label>
+                <textarea
+                  value={editSource}
+                  onChange={(e) => setEditSource(e.target.value)}
+                  rows={10}
+                  className="w-full bg-crust border border-border rounded text-[12px] font-mono px-3 py-2 resize-y text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <div className="flex gap-2 justify-end">
+                  <Button size="sm" variant="secondary" onClick={() => setEditingId(null)}>Cancel</Button>
+                  <Button size="sm" onClick={() => void handleSaveSource(script.id)} disabled={saving}>
+                    {saving ? "Saving…" : "Save Source"}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 7: Workflows (channel-message trigger bindings — s169 CHN-H)
+// ---------------------------------------------------------------------------
+
+function WorkflowsStep({ state }: { state: EditorState; update: <K extends keyof EditorState>(k: K, v: EditorState[K]) => void }) {
+  const mappId = state.id;
+  const [bindings, setBindings] = useState<ChannelWorkflowBinding[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newForm, setNewForm] = useState({ channelId: "", roomId: "", messagePattern: "", label: "" });
+  const [saving, setSaving] = useState(false);
+  const loadedRef = useRef<string | null>(null);
+
+  const reload = useCallback(async (id: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const all = await listWorkflowBindings();
+      setBindings(all.filter((b) => b.mappId === id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!mappId) return;
+    if (loadedRef.current === mappId) return;
+    loadedRef.current = mappId;
+    void reload(mappId);
+  }, [mappId, reload]);
+
+  const handleAdd = useCallback(async () => {
+    if (!mappId || !newForm.channelId.trim()) return;
+    setSaving(true);
+    try {
+      const created = await addWorkflowBinding({
+        channelId: newForm.channelId.trim(),
+        mappId,
+        ...(newForm.roomId.trim() && { roomId: newForm.roomId.trim() }),
+        ...(newForm.messagePattern.trim() && { messagePattern: newForm.messagePattern.trim() }),
+        ...(newForm.label.trim() && { label: newForm.label.trim() }),
+      });
+      setBindings((prev) => [...prev, created]);
+      setNewForm({ channelId: "", roomId: "", messagePattern: "", label: "" });
+      setCreating(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [mappId, newForm]);
+
+  const handleDelete = useCallback(async (id: string) => {
+    try {
+      await deleteWorkflowBinding(id);
+      setBindings((prev) => prev.filter((b) => b.id !== id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  if (!mappId) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <p className="text-[13px] text-muted-foreground">Save the MApp first (set a name in Basics) to add channel triggers.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-[14px] font-semibold text-foreground">Channel Triggers</h3>
+          <p className="text-[11px] text-muted-foreground">
+            Configure which channel messages automatically invoke this MApp. The gateway evaluates bindings on every incoming message.
+          </p>
+        </div>
+        {!creating && (
+          <Button size="sm" variant="outline" onClick={() => setCreating(true)}>+ Add Trigger</Button>
+        )}
+      </div>
+
+      <DevNote
+        kind="info"
+        scope="mapp-editor:workflows"
+        heading="Cycle 216 — Channel-message trigger authoring (s169 CHN-H)"
+      >
+        Bindings live in <code>~/.agi/channel-workflow-bindings.json</code> and are evaluated
+        by the gateway independently of the MApp definition. Each binding fires this MApp when
+        the channel, room, and message-pattern conditions all match. Future cycles: step-based
+        workflow authoring (manual / scheduled / on-file-change triggers stored in{" "}
+        <code>def.workflows[]</code>).
+      </DevNote>
+
+      {error !== null && (
+        <div className="text-[11px] text-red bg-red/10 border border-red/20 rounded px-3 py-2">{error}</div>
+      )}
+
+      {creating && (
+        <div className="rounded-lg border border-border bg-mantle p-4 space-y-3">
+          <h4 className="text-[12px] font-semibold text-foreground">New Channel Trigger</h4>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] text-muted-foreground">Channel ID *</label>
+              <Input
+                value={newForm.channelId}
+                onChange={(e) => setNewForm((f) => ({ ...f, channelId: e.target.value }))}
+                placeholder="discord"
+                className="h-8 text-[12px] font-mono"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-muted-foreground">Room ID (optional)</label>
+              <Input
+                value={newForm.roomId}
+                onChange={(e) => setNewForm((f) => ({ ...f, roomId: e.target.value }))}
+                placeholder="#general or snowflake-id"
+                className="h-8 text-[12px] font-mono"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] text-muted-foreground">Message Pattern (ECMAScript regex, optional)</label>
+              <Input
+                value={newForm.messagePattern}
+                onChange={(e) => setNewForm((f) => ({ ...f, messagePattern: e.target.value }))}
+                placeholder="^!deploy"
+                className="h-8 text-[12px] font-mono"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-muted-foreground">Label (optional)</label>
+              <Input
+                value={newForm.label}
+                onChange={(e) => setNewForm((f) => ({ ...f, label: e.target.value }))}
+                placeholder="contributors → deploy"
+                className="h-8 text-[12px]"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => { setCreating(false); setNewForm({ channelId: "", roomId: "", messagePattern: "", label: "" }); }}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" onClick={() => void handleAdd()} disabled={saving || !newForm.channelId.trim()}>
+              {saving ? "Saving…" : "Add Trigger"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {loading && <p className="text-[11px] text-muted-foreground">Loading triggers…</p>}
+
+      {!loading && bindings.length === 0 && !creating && (
+        <div className="text-center py-8 text-muted-foreground text-[12px] border border-dashed border-border rounded-lg">
+          No channel triggers yet. Add a trigger to have this MApp fire automatically on matching channel messages.
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {bindings.map((b) => (
+          <div key={b.id} className="rounded-lg border border-border bg-mantle px-4 py-3 flex items-center justify-between gap-4">
+            <div className="min-w-0 flex flex-col gap-0.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[12px] font-mono font-semibold text-foreground">{b.channelId}</span>
+                {b.roomId && <span className="text-[11px] font-mono text-muted-foreground">/ {b.roomId}</span>}
+                {b.label && <span className="text-[11px] text-muted-foreground italic">{b.label}</span>}
+              </div>
+              {b.messagePattern && (
+                <span className="text-[10px] font-mono text-blue bg-blue/10 px-1.5 py-0.5 rounded w-fit">
+                  pattern: {b.messagePattern}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => void handleDelete(b.id)}
+              className="text-[10px] px-2 py-1 rounded border border-border text-muted-foreground hover:text-red shrink-0"
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Step 8: Simulator
 // ---------------------------------------------------------------------------
 
 function SimulatorStep({ state }: { state: EditorState }) {
@@ -1259,5 +1728,6 @@ function definitionToState(def: Record<string, unknown>): EditorState {
     screens,
     processingPrompt: ((def.output as Record<string, unknown>)?.processingPrompt as string) ?? "",
     panelWidgets: ((def.panel as Record<string, unknown>)?.widgets as Array<Record<string, unknown>>) ?? [],
+    workflows: [],
   };
 }

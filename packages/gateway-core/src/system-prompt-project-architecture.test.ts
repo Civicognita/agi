@@ -21,8 +21,8 @@ beforeEach(() => {
   mkdirSync(project, { recursive: true });
   // Owner-blessed shape: project root has only folders + project.json.
   writeFileSync(join(project, "project.json"), JSON.stringify({ name: "test-proj" }));
-  mkdirSync(join(project, "k", "plans"), { recursive: true });
-  mkdirSync(join(project, "k", "notes"), { recursive: true });
+  mkdirSync(join(project, ".ai", "plans"), { recursive: true });
+  mkdirSync(join(project, ".ai", "notes"), { recursive: true });
   mkdirSync(join(project, "repos", "agi"), { recursive: true });
   mkdirSync(join(project, "sandbox"), { recursive: true });
   mkdirSync(join(project, "node_modules"), { recursive: true }); // should be pruned
@@ -59,7 +59,7 @@ describe("assembleSystemPrompt — project architecture (s134 cycle 198)", () =>
   it("renders project.json + folders at top-level", () => {
     const prompt = assembleSystemPrompt(ctx());
     expect(prompt).toContain("project.json");
-    expect(prompt).toContain("k/");
+    expect(prompt).toContain(".ai/");
     expect(prompt).toContain("repos/");
     expect(prompt).toContain("sandbox/");
   });

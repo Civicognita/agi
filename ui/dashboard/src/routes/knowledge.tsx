@@ -1,14 +1,13 @@
 /**
  * Knowledge page — browse and edit .aionima/ PRIME knowledge files.
- * Two-column layout with file tree sidebar and CodeMirror editor.
+ * Two-column layout with file tree sidebar and smart KnowledgeEditor.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { TreeNav } from "@particle-academy/react-fancy";
-import { FileEditor } from "@/components/FileEditor.js";
+import { KnowledgeEditor } from "@/components/KnowledgeEditor.js";
 import { fetchFile, fetchFileTree, saveFile } from "@/api.js";
 import type { FileNode } from "@/api.js";
-import { useRootContext } from "./root.js";
 import { useIsMobile } from "@/hooks.js";
 import { DevNote } from "@/components/ui/dev-notes";
 
@@ -18,7 +17,6 @@ function mapNode(n: FileNode): TreeNodeData {
 }
 
 export default function KnowledgePage() {
-  const { theme } = useRootContext();
   const isMobile = useIsMobile();
 
   const [treeNodes, setTreeNodes] = useState<FileNode[]>([]);
@@ -131,7 +129,7 @@ export default function KnowledgePage() {
             <div style={{ flex: 1, overflow: "hidden" }}>
               {loading && <div style={{ padding: 16, color: "var(--color-muted-foreground)", fontSize: 13 }}>Loading...</div>}
               {error && <div style={{ padding: 16, color: "var(--color-red)", fontSize: 13 }}>{error}</div>}
-              {!loading && !error && <FileEditor filePath={selectedPath} content={content} theme={theme} onChange={setDraft} onSave={handleSave} />}
+              {!loading && !error && <KnowledgeEditor filePath={selectedPath ?? undefined} content={content} onChange={setDraft} />}
             </div>
           </div>
         )}
@@ -317,12 +315,10 @@ export default function KnowledgePage() {
             </div>
           )}
           {selectedPath && !loading && !error && (
-            <FileEditor
+            <KnowledgeEditor
               filePath={selectedPath}
               content={content}
-              theme={theme}
               onChange={setDraft}
-              onSave={handleSave}
             />
           )}
         </div>

@@ -1,4 +1,4 @@
-import type { OutboundContent } from "@agi/channel-sdk";
+import type { OutboundContent } from "@agi/plugins";
 
 // ---------------------------------------------------------------------------
 // Bridge → WebChat UI (server-to-client)

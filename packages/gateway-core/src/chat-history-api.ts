@@ -47,7 +47,7 @@ export interface ChatHistoryRouteDeps {
   imageBlobStore?: import("./image-blob-store.js").ImageBlobStore;
   /**
    * Per-project chat dir resolver — s130 t521 endpoint-wiring slice
-   * (2026-04-29). Returns the list of `<projectPath>/k/chat/` paths
+   * (2026-04-29). Returns the list of `<projectPath>/.ai/chat/` paths
    * that exist for s130-migrated projects in the workspace. The list
    * endpoint passes this as `additionalDirs` to `chatPersistence.list()`
    * so per-project chat history is visible alongside the global dir.

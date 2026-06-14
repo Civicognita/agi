@@ -2,7 +2,7 @@
  * CommsLog — communication transcript store (drizzle/Postgres).
  */
 
-import { and, eq, lt, sql } from "drizzle-orm";
+import { and, eq, gte, lt, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 import type { Db } from "@agi/db-schema/client";
 import { commsLog } from "@agi/db-schema";
@@ -88,6 +88,8 @@ export class CommsLog {
   async query(opts?: {
     channel?: string;
     direction?: string;
+    /** YYYY-MM-DD — when set, filters to entries created on that calendar day. */
+    date?: string;
     limit?: number;
     offset?: number;
   }): Promise<CommsLogEntry[]> {
@@ -97,6 +99,12 @@ export class CommsLog {
     const conditions = [];
     if (opts?.channel !== undefined) conditions.push(eq(commsLog.channel, opts.channel));
     if (opts?.direction !== undefined) conditions.push(eq(commsLog.direction, opts.direction as typeof commsLog.$inferInsert["direction"]));
+    if (opts?.date !== undefined) {
+      conditions.push(gte(commsLog.createdAt, new Date(`${opts.date}T00:00:00.000Z`)));
+      const nextDay = new Date(`${opts.date}T00:00:00.000Z`);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      conditions.push(lt(commsLog.createdAt, nextDay));
+    }
 
     const rows = await this.db
       .select()
@@ -109,10 +117,16 @@ export class CommsLog {
     return rows.map(rowToEntry);
   }
 
-  async count(opts?: { channel?: string; direction?: string }): Promise<number> {
+  async count(opts?: { channel?: string; direction?: string; date?: string }): Promise<number> {
     const conditions = [];
     if (opts?.channel !== undefined) conditions.push(eq(commsLog.channel, opts.channel));
     if (opts?.direction !== undefined) conditions.push(eq(commsLog.direction, opts.direction as typeof commsLog.$inferInsert["direction"]));
+    if (opts?.date !== undefined) {
+      conditions.push(gte(commsLog.createdAt, new Date(`${opts.date}T00:00:00.000Z`)));
+      const nextDay = new Date(`${opts.date}T00:00:00.000Z`);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      conditions.push(lt(commsLog.createdAt, nextDay));
+    }
 
     const [row] = await this.db
       .select({ cnt: sql<number>`COUNT(*)` })

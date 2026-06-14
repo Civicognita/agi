@@ -34,9 +34,19 @@ export interface AionMicroConfig {
   fallbackModel?: string;
   /** Lemonade base URL — defaults to localhost:13305 (matches plugin install). */
   lemonadeBaseUrl?: string;
+  /**
+   * Absolute path to a pre-staged GGUF on this machine (e.g.
+   * `/home/aionima/.agi/models/aion-micro/aion-micro-v1.gguf`).
+   * When set, Lemonade receives this path as the model identifier so it
+   * loads from disk rather than pulling from HF Hub — enabling fully
+   * offline operation after a one-time internet pass at install time.
+   * Set automatically by install.sh under `ops.aionMicro.localGgufPath`
+   * in gateway.json when the GGUF was staged during installation.
+   */
+  localGgufPath?: string;
 }
 
-const DEFAULT_CONFIG: Required<AionMicroConfig> = {
+const DEFAULT_CONFIG: Required<Omit<AionMicroConfig, "localGgufPath">> = {
   enabled: true,
   model: DEFAULT_MODEL,
   fallbackModel: DEFAULT_FALLBACK_MODEL,
@@ -49,7 +59,7 @@ interface ChatMessage {
 }
 
 export class AionMicroManager {
-  private readonly config: Required<AionMicroConfig>;
+  private readonly config: Required<Omit<AionMicroConfig, "localGgufPath">> & { localGgufPath?: string };
   private readonly log: ComponentLogger;
 
   constructor(config: Partial<AionMicroConfig> | undefined, log: ComponentLogger) {
@@ -64,6 +74,8 @@ export class AionMicroManager {
   /** Resolved model name + Lemonade base URL — used by status endpoints. */
   getModel(): string { return this.config.model; }
   getLemonadeBaseUrl(): string { return this.config.lemonadeBaseUrl; }
+  /** Absolute path to a pre-staged local GGUF, if configured. */
+  getLocalGgufPath(): string | undefined { return this.config.localGgufPath; }
 
   /**
    * Public chat-completion entry point for callers that want to use the
@@ -107,12 +119,17 @@ export class AionMicroManager {
   }
 
   /**
-   * Pick the model to use: prefer the fine-tuned one; fall back to the
-   * upstream SmolLM2 if the fine-tuned model isn't pulled yet. Lemonade
-   * returns 404 on /chat/completions for unknown model names — the caller
-   * (chat()) catches that and retries with the fallback.
+   * Pick the model identifier to send to Lemonade:
+   *   1. localGgufPath — absolute filesystem path to a pre-staged GGUF.
+   *      Lemonade (llama.cpp-backed) treats an absolute path as a direct
+   *      file load, bypassing HF Hub entirely — offline-safe.
+   *   2. model — HF catalog name (pulled by Lemonade at first use).
+   *   3. fallbackModel — upstream SmolLM2 if fine-tuned model isn't pulled.
    */
   private getPrimaryModel(): string {
+    if (this.config.localGgufPath !== undefined && this.config.localGgufPath.length > 0) {
+      return this.config.localGgufPath;
+    }
     return this.config.model || this.config.fallbackModel;
   }
 

@@ -1,13 +1,17 @@
 /**
- * search_prime tool — keyword search over the PRIME knowledge corpus (.aionima/).
+ * search_prime tool — keyword + optional semantic search over the PRIME corpus.
  *
  * Returns matching entries with title, category, path, and a content excerpt.
+ * When EmbeddingEngine is available and entries have pre-computed embeddings,
+ * results are re-ranked by cosine similarity (s197 semantic upgrade).
  */
 import type { ToolHandler } from "../tool-registry.js";
 import type { PrimeLoader } from "../prime-loader.js";
+import type { EmbeddingEngine } from "@agi/memory";
 
 export interface SearchPrimeConfig {
   primeLoader: PrimeLoader;
+  embeddingEngine?: EmbeddingEngine;
 }
 
 export function createSearchPrimeHandler(config: SearchPrimeConfig): ToolHandler {
@@ -20,7 +24,10 @@ export function createSearchPrimeHandler(config: SearchPrimeConfig): ToolHandler
     const limit = Math.min(Math.max(Number(input.limit ?? 10), 1), 50);
 
     try {
-      const results = config.primeLoader.search(query, limit);
+      const queryEmbedding = config.embeddingEngine?.isAvailable()
+        ? (await config.embeddingEngine.embed(query).catch(() => null)) ?? undefined
+        : undefined;
+      const results = config.primeLoader.search(query, limit, queryEmbedding);
 
       if (results.length === 0) {
         return JSON.stringify({ results: [], count: 0, query });
@@ -42,7 +49,7 @@ export function createSearchPrimeHandler(config: SearchPrimeConfig): ToolHandler
 
 export const SEARCH_PRIME_MANIFEST = {
   name: "search_prime",
-  description: "Search the PRIME knowledge corpus (.aionima/) by keyword query. Returns matching entries with title, category, and content excerpt.",
+  description: "Search the PRIME knowledge corpus (.aionima/) by keyword or semantic query. Returns matching entries with title, category, and content excerpt. Uses embedding-based reranking when available.",
   requiresState: ["ONLINE" as const, "LIMBO" as const],
   requiresTier: ["verified" as const, "sealed" as const],
 };

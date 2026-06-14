@@ -63,7 +63,7 @@ describe("ChatPersistence — s130 t518 slice 2 dual-write/delete", () => {
       store.save(session);
 
       expect(existsSync(join(globalDir, "s2.json"))).toBe(true);
-      expect(existsSync(join(unmigratedProjectPath, "k", "chat", "s2.json"))).toBe(false);
+      expect(existsSync(join(unmigratedProjectPath, ".ai", "chat", "s2.json"))).toBe(false);
     });
 
     it("writes to BOTH global and per-project when project IS s130-migrated", () => {
@@ -71,15 +71,15 @@ describe("ChatPersistence — s130 t518 slice 2 dual-write/delete", () => {
       store.save(session);
 
       expect(existsSync(join(globalDir, "s3.json"))).toBe(true);
-      expect(existsSync(join(migratedProjectPath, "k", "chat", "s3.json"))).toBe(true);
+      expect(existsSync(join(migratedProjectPath, ".ai", "chat", "s3.json"))).toBe(true);
       // Both copies should be identical.
       const g = readFileSync(join(globalDir, "s3.json"), "utf-8");
-      const p = readFileSync(join(migratedProjectPath, "k", "chat", "s3.json"), "utf-8");
+      const p = readFileSync(join(migratedProjectPath, ".ai", "chat", "s3.json"), "utf-8");
       expect(g).toBe(p);
     });
 
     it("creates the per-project chat dir if missing", () => {
-      const projectChatDir = join(migratedProjectPath, "k", "chat");
+      const projectChatDir = join(migratedProjectPath, ".ai", "chat");
       expect(existsSync(projectChatDir)).toBe(false);
 
       store.save(makeSession("s4", migratedProjectPath));
@@ -94,7 +94,7 @@ describe("ChatPersistence — s130 t518 slice 2 dual-write/delete", () => {
       // would fail). Simplest: make k/ a regular file.
       const breakProject = join(tmpRoot, "broken-project");
       mkdirSync(join(breakProject, ".agi"), { recursive: true });
-      writeFileSync(join(breakProject, "k"), "not-a-dir", "utf-8");
+      writeFileSync(join(breakProject, ".ai"), "not-a-dir", "utf-8");
 
       // This should not throw.
       expect(() => {
@@ -118,12 +118,12 @@ describe("ChatPersistence — s130 t518 slice 2 dual-write/delete", () => {
     it("deletes from BOTH locations when session has s130-migrated context", () => {
       store.save(makeSession("d2", migratedProjectPath));
       expect(existsSync(join(globalDir, "d2.json"))).toBe(true);
-      expect(existsSync(join(migratedProjectPath, "k", "chat", "d2.json"))).toBe(true);
+      expect(existsSync(join(migratedProjectPath, ".ai", "chat", "d2.json"))).toBe(true);
 
       const result = store.delete("d2");
       expect(result).toBe(true);
       expect(existsSync(join(globalDir, "d2.json"))).toBe(false);
-      expect(existsSync(join(migratedProjectPath, "k", "chat", "d2.json"))).toBe(false);
+      expect(existsSync(join(migratedProjectPath, ".ai", "chat", "d2.json"))).toBe(false);
     });
 
     it("returns true when at least one location was deleted", () => {
@@ -166,7 +166,7 @@ describe("ChatPersistence — s130 t518 slice 2 dual-write/delete", () => {
       // Global session
       store.save(makeSession("global-1", ""));
       // Per-project session — write directly into the migrated project's k/chat/
-      const projChat = join(migratedProjectPath, "k", "chat");
+      const projChat = join(migratedProjectPath, ".ai", "chat");
       mkdirSync(projChat, { recursive: true });
       writeFileSync(
         join(projChat, "p1.json"),
@@ -185,7 +185,7 @@ describe("ChatPersistence — s130 t518 slice 2 dual-write/delete", () => {
       writeFileSync(join(globalDir, "d1.json"), JSON.stringify(oldSession), "utf-8");
 
       // Newer version in per-project
-      const projChat = join(migratedProjectPath, "k", "chat");
+      const projChat = join(migratedProjectPath, ".ai", "chat");
       mkdirSync(projChat, { recursive: true });
       const newSession = { ...oldSession, updatedAt: "2026-04-29T02:00:00Z", lastPreview: "newer" };
       writeFileSync(join(projChat, "d1.json"), JSON.stringify(newSession), "utf-8");
@@ -230,7 +230,7 @@ describe("ChatPersistence — s130 t518 slice 2 dual-write/delete", () => {
       store.save(makeSession("d1", migratedProjectPath));
 
       // Mutate the per-project copy so we can tell which one was loaded.
-      const projChat = join(migratedProjectPath, "k", "chat", "d1.json");
+      const projChat = join(migratedProjectPath, ".ai", "chat", "d1.json");
       const proj = JSON.parse(readFileSync(projChat, "utf-8")) as { lastPreview: string };
       proj.lastPreview = "from-per-project";
       writeFileSync(projChat, JSON.stringify(proj), "utf-8");
@@ -264,7 +264,7 @@ describe("ChatPersistence — s130 t518 slice 2 dual-write/delete", () => {
 
     it("falls through to global when per-project copy is corrupt", () => {
       // Create both: corrupt per-project + valid global.
-      const projChat = join(migratedProjectPath, "k", "chat");
+      const projChat = join(migratedProjectPath, ".ai", "chat");
       mkdirSync(projChat, { recursive: true });
       writeFileSync(join(projChat, "c1.json"), "{not valid json", "utf-8");
       writeFileSync(

@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ComponentLogger } from "./logger.js";
-import { CORE_REPOS, upstreamRemoteUrl, type CoreRepoSpec } from "./dev-mode-forks.js";
+import { CORE_REPOS, coreForkDir, upstreamRemoteUrl, type CoreRepoSpec } from "./dev-mode-forks.js";
 import type { AionMicroManager } from "./aion-micro-manager.js";
 
 const FETCH_TIMEOUT_MS = 20_000;
@@ -147,7 +147,7 @@ export async function getAllCoreForkStatuses(
 ): Promise<CoreForkStatus[]> {
   const out: CoreForkStatus[] = [];
   for (const spec of CORE_REPOS) {
-    const targetDir = join(coreCollectionDir, spec.slug);
+    const targetDir = coreForkDir(coreCollectionDir, spec.slug);
     if (!existsSync(targetDir)) {
       out.push({
         slug: spec.slug,

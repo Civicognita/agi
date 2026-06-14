@@ -40,11 +40,13 @@ import {
   fetchProvidersCatalog,
   fetchActiveProvider,
   fetchRecentDecisions,
+  fetchRecentCostRecords,
   updateActiveProvider,
   updateRouterConfig,
   type ProviderCatalogEntry,
   type ActiveProviderState,
   type RoutingDecisionRecord,
+  type CostLedgerEntryRecord,
 } from "@/api.js";
 
 // ---------------------------------------------------------------------------
@@ -133,6 +135,7 @@ function formatTimeAgo(ts: string): string {
 function synthesizeNarrative(
   decision: RoutingDecisionRecord,
   catalog: ProviderCatalogEntry[],
+  costRecord: CostLedgerEntryRecord | null,
 ): string {
   const provider = catalog.find((p) => p.id === decision.provider);
   const tier = provider?.tier ?? "unknown";
@@ -145,19 +148,31 @@ function synthesizeNarrative(
           ? "a local Provider"
           : "the configured Provider";
   const escalationClause = decision.escalated ? " (escalated mid-turn for higher quality)" : "";
+  let costClause = "";
+  if (costRecord !== null) {
+    const secs = (costRecord.turnDurationMs / 1000).toFixed(1);
+    const totalWatts = (costRecord.cpuWattsObserved ?? 0) + (costRecord.gpuWattsObserved ?? 0);
+    const wattClause = totalWatts > 0 ? ` · ${totalWatts.toFixed(1)} W` : "";
+    const dollarClause = costRecord.dollarCost !== null && costRecord.dollarCost > 0
+      ? ` ($${costRecord.dollarCost.toFixed(4)})`
+      : "";
+    costClause = ` Consumed ${secs}s${wattClause}${dollarClause}.`;
+  }
   return (
     `Picked ${decision.model} via ${decision.provider} (${tierClause}) ` +
     `for a ${decision.complexity} request in ${decision.costMode} cost mode${escalationClause}. ` +
-    `Reason: ${decision.reason}.`
+    `Reason: ${decision.reason}.${costClause}`
   );
 }
 
 function MissionControlHero({
   decision,
   catalog,
+  costRecord,
 }: {
   decision: RoutingDecisionRecord;
   catalog: ProviderCatalogEntry[];
+  costRecord: CostLedgerEntryRecord | null;
 }) {
   const provider = catalog.find((p) => p.id === decision.provider);
   const runtimeLabel =
@@ -165,7 +180,7 @@ function MissionControlHero({
       ? provider.dependsOn.join(", ")
       : provider?.baseUrl ?? "Cloud API";
   const runtimeSub = provider?.baseUrl ?? (provider?.tier === "cloud" ? "remote" : "—");
-  const narrative = synthesizeNarrative(decision, catalog);
+  const narrative = synthesizeNarrative(decision, catalog, costRecord);
   const tag = decision.ts !== undefined ? `Right now · ${formatTimeAgo(decision.ts)}` : "Right now";
   return (
     <Card
@@ -786,20 +801,22 @@ export default function SettingsProvidersPage() {
   const [activatingId, setActivatingId] = useState<string | null>(null);
   const [costModePending, setCostModePending] = useState(false);
   const [recentDecisions, setRecentDecisions] = useState<RoutingDecisionRecord[]>([]);
+  const [recentCostRecords, setRecentCostRecords] = useState<CostLedgerEntryRecord[]>([]);
 
   const reload = useCallback(async () => {
     try {
-      // Recent-decisions fetched in parallel with catalog + active state.
-      // It's never a blocker for the page (empty array is a valid state —
-      // hero hides) so the result is consumed even if its fetch fails.
-      const [catalogRes, activeRes, decisionsRes] = await Promise.all([
+      // Recent-decisions and cost records fetched in parallel with catalog + active.
+      // Neither is a blocker (empty array = valid state — hero hides / no cost enrichment).
+      const [catalogRes, activeRes, decisionsRes, costRes] = await Promise.all([
         fetchProvidersCatalog(),
         fetchActiveProvider(),
         fetchRecentDecisions(20).catch(() => []),
+        fetchRecentCostRecords(5).catch(() => []),
       ]);
       setCatalog(catalogRes.providers);
       setActive(activeRes);
       setRecentDecisions(decisionsRes);
+      setRecentCostRecords(costRes);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -976,14 +993,28 @@ export default function SettingsProvidersPage() {
 
         <TabsContent value="providers" className="mt-4 space-y-6">
 
-      {/* Mission Control hero — most recent routing decision (s111 t419).
-          Hides when no decisions exist yet (fresh boot, no turns). */}
-      {recentDecisions.length > 0 && (
-        <MissionControlHero
-          decision={recentDecisions[recentDecisions.length - 1]!}
-          catalog={catalog}
-        />
-      )}
+      {/* Mission Control hero — most recent routing decision (s111 t419 + t426).
+          Hides when no decisions exist yet (fresh boot, no turns). Cost record
+          is matched by provider + model + costMode + complexity against the
+          most recent cost ledger entries; falls back to most-recent when no
+          exact match (pre-cost-ledger decisions). */}
+      {recentDecisions.length > 0 && (() => {
+        const lastDecision = recentDecisions[recentDecisions.length - 1]!;
+        const matchedCost = recentCostRecords.findLast(
+          (r) =>
+            r.provider === lastDecision.provider &&
+            r.model === lastDecision.model &&
+            r.costMode === lastDecision.costMode &&
+            r.complexity === lastDecision.complexity,
+        ) ?? recentCostRecords[recentCostRecords.length - 1] ?? null;
+        return (
+          <MissionControlHero
+            decision={lastDecision}
+            catalog={catalog}
+            costRecord={matchedCost}
+          />
+        );
+      })()}
 
       {/* Cost-mode range dial + escalation triggers + placeholder ticker
           (s111 t420 + s129 t510). Floor/ceiling come from server-projected

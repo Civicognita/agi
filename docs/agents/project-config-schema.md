@@ -207,3 +207,34 @@ After s150 t636/t637/t638 the project detail page is type-driven, not category-d
 - **MagicApps tab** was retired; the picker now renders inline below the Hosting card when type is Desktop-served.
 - **Purpose** is a free-form textarea bound to `description` (was a `category` Select).
 - **Tab clutter trim:** primary tabs are Details / Editor / Hosting / Activity; secondary tabs (Repository / Environment / TaskMaster / Iterative Work / MCP / plugin-* / Security) collapse into a "More…" overflow Select.
+
+## `agiRepo` (Phase 3 — `{project}.agi` envelope)
+
+Optional, `.passthrough()`. Present once the project folder has been turned into a git
+repository under the hard `{slug}.agi` naming convention (the `.agi` suffix distinguishes the
+project *envelope* from the actual repos it contains). Each `repos/<name>` that is a git repo
+is registered as a git **submodule** of the envelope.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `initialized` | `boolean` | True when the project folder is itself a git repo (the envelope). |
+| `remoteUrl` | `string \| null` | The `{slug}.agi` GitHub remote, when one has been created. Optional — the envelope is local-first. |
+
+Managed by `packages/gateway-core/src/agi-repo-manager.ts` and the endpoints
+`GET/POST /api/projects/agi-repo/{status,init,import}?path=`. The `_aionima` meta-project is
+**excluded** (it keeps its `collection.json` convention).
+
+**Config/knowledge-state sync (story #207, v0.4.921).** An envelope's git identity is its
+config + knowledge state + submodule pins, *not* a working tree of source — so it is managed as
+a **config/knowledge-state surface** (Coordinate → Project), not via the Repos-tab git-action
+model. Additional endpoints (all `?path=`):
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET …/agi-repo/state` | Classified diff vs upstream: `{ initialized, hasRemote, remoteUrl, ahead, behind, incoming[], localChanges[], submoduleDrift[] }`. Each change is `{ path, kind: config\|knowledge\|submodule, change }`. **Chats (`.ai/chat/`), memory (`.ai/memory/`), `sandbox/`, `.trash/` are excluded** (local runtime state — memory-exclude pending Genie confirmation on #178). |
+| `POST …/agi-repo/remote` | Body `{ mode: "auto"\|"url", url? }`. `auto` creates `{slug}.agi` via the owner's connected GitHub token + wires `origin`; `url` wires an existing remote. Records `agiRepo.remoteUrl`. |
+| `POST …/agi-repo/pull` | Fast-forward config/knowledge + `git submodule update --init --recursive`. |
+| `POST …/agi-repo/push` | Commit + push config/knowledge (chats/sandbox/.trash are gitignored, never pushed). |
+
+`initAgiRepo`'s `.gitignore` excludes `sandbox/`, `.trash/`, **`.ai/chat/`** and **`.ai/memory/`**.
+Read-only git actions on a non-`.agi` (gitless) folder return `200 { notGitRepo: true }`, not 400.

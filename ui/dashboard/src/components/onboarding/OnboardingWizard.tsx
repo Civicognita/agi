@@ -30,9 +30,9 @@ import type { OnboardingState, OnboardingStepStatus } from "@/types.js";
 const ALL_STEPS = [
   { id: "welcome", label: "Welcome", firstbootOnly: true, stateKey: null },
   { id: "hosting", label: "Hosting", firstbootOnly: true, stateKey: "hosting" as const },
-  { id: "aionimaId", label: "Identity", firstbootOnly: false, stateKey: "aionimaId" as const },
   { id: "aiKeys", label: "AI Providers", firstbootOnly: false, stateKey: "aiKeys" as const },
   { id: "ownerProfile", label: "Owner Profile", firstbootOnly: false, stateKey: "ownerProfile" as const },
+  { id: "aionimaId", label: "Identity", firstbootOnly: false, stateKey: "aionimaId" as const },
   { id: "channels", label: "Channels", firstbootOnly: false, stateKey: "channels" as const },
   { id: "federation", label: "Network", firstbootOnly: true, stateKey: "federation" as const },
   { id: "zeroMeMind", label: "0ME: Mind", firstbootOnly: false, stateKey: "zeroMeMind" as const },
@@ -227,15 +227,6 @@ export function OnboardingWizard({ isFirstboot, onComplete }: Props) {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
-
-  useEffect(() => {
-    if (loading || isFirstboot) return;
-    const idx = visibleSteps.findIndex((step) => {
-      if (step.stateKey === null) return false;
-      return state.steps[step.stateKey] !== "completed";
-    });
-    if (idx >= 0) setCurrentStepIndex(idx);
-  }, [loading, isFirstboot, state, visibleSteps]);
 
   const markStep = async (stateKey: OnboardingStateKey | null, status: OnboardingStepStatus) => {
     if (stateKey === null) return;

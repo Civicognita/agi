@@ -15,6 +15,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const magicAppModeEnum = pgEnum("magic_app_mode", [
@@ -135,5 +136,58 @@ export const userNotes = pgTable(
     projectIdx: index("user_notes_project_idx").on(t.projectPath),
     pinnedIdx: index("user_notes_pinned_idx").on(t.pinned),
     kindIdx: index("user_notes_kind_idx").on(t.kind),
+  }),
+);
+
+/**
+ * MApp script definitions — per-MApp Starlark source + compilation state.
+ *
+ * s182 Phase B: stores Starlark scripts per-MApp with deny-by-default
+ * execution (enabled = false). The WASM compilation pipeline (Phase D) will
+ * populate wasm_b64 + wasm_hash from the source field.
+ *
+ * Key invariants:
+ * - (mapp_id, name) is unique — scripts are addressed by name within an MApp.
+ * - enabled defaults false — explicit opt-in required per owner decision.
+ * - is_packer = true → script runs as a CONTENT PACKER in the agent pipeline.
+ * - wasm_b64 / wasm_hash are null until Phase D compiles the source.
+ */
+export const mappScripts = pgTable(
+  "mapp_scripts",
+  {
+    id: text("id").primaryKey(),
+    /** MApp bundle identifier (e.g., "com.example.my-mapp"). */
+    mappId: text("mapp_id").notNull(),
+    /** Human-readable script name, unique within a MApp. */
+    name: text("name").notNull(),
+    description: text("description"),
+    /** Source language. Only "starlark" in Phase A–C; "wasm-raw" added in Phase D. */
+    language: text("language").notNull().default("starlark"),
+    /** Starlark source code. Persisted for re-compilation and diff tracking. */
+    source: text("source"),
+    /** sha256:<hex> of source at last compile. Stale when source changes. */
+    sourceHash: text("source_hash"),
+    /**
+     * Compiled WASM binary encoded as base64.
+     * Null until Phase D compilation pipeline runs on this script.
+     */
+    wasmB64: text("wasm_b64"),
+    /** sha256:<hex> of the decoded wasm_b64. Matches ScriptResult.outputHash pattern. */
+    wasmHash: text("wasm_hash"),
+    /** True = this script acts as a CONTENT PACKER in the agent pipeline. */
+    isPacker: boolean("is_packer").notNull().default(false),
+    /** False = deny-by-default. Must be explicitly set to run. */
+    enabled: boolean("enabled").notNull().default(false),
+    /** Wall-clock timeout budget for WASM execution. */
+    timeoutMs: integer("timeout_ms").notNull().default(1000),
+    /** Max linear memory pages (64 KB each). */
+    maxMemoryPages: integer("max_memory_pages").notNull().default(256),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    mappIdx: index("mapp_scripts_mapp_idx").on(t.mappId),
+    nameUniq: uniqueIndex("mapp_scripts_name_uniq").on(t.mappId, t.name),
+    packerIdx: index("mapp_scripts_packer_idx").on(t.mappId, t.isPacker, t.enabled),
   }),
 );

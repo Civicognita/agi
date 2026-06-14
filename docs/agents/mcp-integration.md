@@ -49,6 +49,30 @@ Per-project `gateway.json` extension:
 
 Hot-reloadable per `feedback_hot_config` — adding/removing a server doesn't require gateway restart.
 
+### Baked-in default servers (story #215)
+
+Some MCP servers are **always-on for Aion in every install, across all projects
+and chats**, without any `gateway.json` config. These are defined in code in
+`mcp-config-store.ts` as `DEFAULT_MCP_SERVERS` and merged at boot with the
+owner's `gateway.json mcp.servers` via `mergeDefaultMcpServers()`.
+
+Current defaults:
+
+| id | transport | url | purpose |
+|----|-----------|-----|---------|
+| `fancy-ui` | http | `https://ui.particle.academy/mcp` | Browse / search / install ADF (Fancy UI) components |
+
+A `gateway.json` entry with the **same `id` overrides the default** — so an
+owner can customise or disable a baked-in server by re-declaring it, e.g. to
+turn Fancy UI off:
+
+```json
+{ "mcp": { "servers": [ { "id": "fancy-ui", "autoConnect": false } ] } }
+```
+
+Registration is wrapped in try/catch, so an unreachable default (e.g. a cloud
+MCP while off-grid) logs a warning and the gateway boots normally.
+
 ## Aion-side surface (cycle 31+)
 
 The `mcp` agent tool will dispatch:

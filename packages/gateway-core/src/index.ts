@@ -424,6 +424,13 @@ export type { StackApiDeps } from "./stack-api.js";
 // Project Config Manager
 export { ProjectConfigManager } from "./project-config-manager.js";
 export type { ProjectConfigManagerDeps, ProjectConfigChangeEvent, ProjectConfigCreateOpts } from "./project-config-manager.js";
+// CHN-C (s164) slice 2 — dispatcher primitive that resolves a (channelId,
+// roomId) event to its bound project by walking workspace.projects[].
+export { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
+export type { ChannelEventDispatcherDeps, DispatchResult } from "./channel-event-dispatcher.js";
+// CHN-E (s166) slice 1 — pending-from-channel approval queue.
+export { PendingApprovalStore, pendingApprovalId } from "./pending-approval-store.js";
+export type { PendingApproval, PendingApprovalDecision, PendingApprovalStoreConfig } from "./pending-approval-store.js";
 
 // System Config Service
 export { SystemConfigService } from "./system-config-service.js";
@@ -439,6 +446,8 @@ export { serializeMagicApp } from "./magic-app-types.js";
 export type {
   MagicAppContainerContext,
   MagicAppDefinition as LegacyMagicAppDefinition,
+  MagicAppWorkflow,
+  MagicAppChannelTrigger,
 } from "./magic-app-types.js";
 
 // MApp State Store
@@ -503,9 +512,25 @@ export type { IdentityProviderConfig, IssuedIdentity, IdentityBindingResult } fr
 export { OAuthHandler } from "./oauth-handler.js";
 export type { OAuthProviderConfig, OAuthConfig, OAuthUserInfo } from "./oauth-handler.js";
 
+// Identity Providers — canonical registry (SSOT, story #212)
+export {
+  IDENTITY_PROVIDERS,
+  IDENTITY_PROVIDER_ORDER,
+  listIdentityProviders,
+  getIdentityProvider,
+  isKnownIdentityProvider,
+} from "./identity-providers.js";
+export type {
+  IdentityProviderId,
+  IdentityAuthMode,
+  IdentityGate,
+  IdentityProviderSpec,
+  IdentityProviderEndpoints,
+} from "./identity-providers.js";
+
 // Phase 5 — Identity API
-export { registerIdentityRoutes } from "./identity-api.js";
-export type { IdentityApiDeps } from "./identity-api.js";
+export { registerIdentityRoutes, registerIdentityProvidersRoute } from "./identity-api.js";
+export type { IdentityApiDeps, IdentityProvidersRouteDeps } from "./identity-api.js";
 
 // Phase 5 — Visitor Authentication
 export { VisitorAuthManager } from "./visitor-auth.js";

@@ -169,7 +169,7 @@ export function buildCandidatePayload(c: PromotionCandidate): CandidatePayload {
     "## Repro",
     "",
     `Triggered ${String(c.count)} times in the bash audit log between ${c.first_ts} and ${c.last_ts}.`,
-    "Raw command not captured by the audit log (only \`cmd_hash\` is stored). To reproduce, search ~/.agi/logs/agi-bash-*.jsonl for the cmd_hash above and check the chat session that originated the call.",
+    "Raw command not captured by the audit log (only `cmd_hash` is stored). To reproduce, search ~/.agi/logs/agi-bash-*.jsonl for the cmd_hash above and check the chat session that originated the call.",
     "",
     "## Investigation log",
     "",

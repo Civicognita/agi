@@ -1,7 +1,7 @@
 # Crash Recovery & Safemode
 
-The gateway owns the full dependency chain — PostgreSQL (ID service), the
-`agi-id.service` systemd unit, project containers, and HF model
+The gateway owns the full dependency chain — PostgreSQL (`agi-postgres`
+container, `agi_data` database), project containers, and HF model
 containers. When any of those drift or the machine itself crashes, the
 gateway detects it and recovers on its own. **You should never have to run
 `podman start`, `systemctl start`, or similar by hand.**
@@ -10,8 +10,8 @@ gateway detects it and recovers on its own. **You should never have to run
 
 1. **Reads a shutdown marker** at `~/.agi/shutdown-state.json` that the
    previous run wrote when it exited gracefully.
-2. **Starts PostgreSQL and the ID service** regardless of how it exited.
-   AGI's own databases live in that Postgres instance, so it must be up.
+2. **Starts the `agi-postgres` container** regardless of how it exited.
+   AGI's own databases live in that Postgres instance (`agi_data`), so it must be up.
 3. **If the marker exists** (clean boot): restarts project + model
    containers listed in the marker, then deletes the marker and continues.
 4. **If the marker is missing** (crash): enters **safemode**.
@@ -36,9 +36,9 @@ don't know what yet."
 As soon as safemode is entered, the **SafemodeInvestigator** runs as a
 background task:
 
-1. Collects evidence: `journalctl -u aionima`, `journalctl -u aionima-id`,
-   `podman ps -a`, postgres container logs, tail of the gateway log,
-   `dmesg`, and disk-free output.
+1. Collects evidence: `journalctl -u aionima`, `podman ps -a`,
+   `agi-postgres` container logs, tail of the gateway log, `dmesg`, and
+   disk-free output.
 2. Classifies the incident heuristically (postgres unreachable, OOM, disk
    full, ID service failed, container runtime failure, or unknown).
 3. If a small local model (default `HuggingFaceTB/SmolLM2-360M-Instruct`)
@@ -53,7 +53,7 @@ installed yet — the heuristic template is self-sufficient.
 
 Click **Recover now** (or run `agi safemode exit`). This will:
 
-1. Ensure `agi-id-postgres` and `agi-id.service` are up.
+1. Ensure the `agi-postgres` container is up and the `agi_data` database is reachable.
 2. Start any managed containers (`label=aionima.managed=true`) still in
    `Created` / `Exited` state.
 3. Restart HF model containers tracked in `~/.agi/model-containers.json`.

@@ -14,9 +14,11 @@ import { Select } from "@/components/ui/select";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, fetchIterativeWorkStatus, fetchIterativeWorkProgress, fetchNotes, updateProjectRepo } from "../api.js";
-import type { FileNode, IterativeWorkProjectStatus, IterativeWorkProgress } from "../api.js";
+import { execGitAction, fetchProjectFileTree, fetchProjectFile, saveProjectFile, createProjectFile, deleteProjectFile, renameProjectFile, fetchPluginPanels, fetchPluginActions, fetchProjectTypes, updateProjectRepo } from "../api.js";
+import type { FileNode } from "../api.js";
 import { DevNotes } from "@/components/ui/dev-notes";
+import { ProjHeader } from "@/components/ProjHeader.js";
+import { StackStrip } from "@/components/StackStrip.js";
 import type { PluginAction, PluginPanel, ProjectActivity, ProjectInfo } from "../types.js";
 import { RepoPanel } from "./RepoPanel.js";
 import { RepoManager } from "./RepoManager.js";
@@ -27,7 +29,9 @@ import { TaskmasterTab } from "./TaskmasterTab.js";
 import { PmLitePanel } from "./PmLitePanel.js";
 import { PmKanbanPanel } from "./PmKanbanPanel.js";
 import { NotesPanel } from "./NotesPanel.js";
-import { IterativeWorkTab } from "./IterativeWorkTab.js";
+import { ChannelsPanel } from "./ChannelsPanel.js";
+import { AgiProjectStatePanel } from "./AgiProjectStatePanel.js";
+import { ScheduledJobsTab } from "./ScheduledJobsTab.js";
 import { MCPTab } from "./MCPTab.js";
 import { ProjectActivityTab } from "./ProjectActivityTab.js";
 import { ProjectManagement } from "./ProjectManagement.js";
@@ -41,6 +45,10 @@ import { isSacredProject } from "@/lib/sacred-projects.js";
 import { SecurityTab } from "./SecurityTab.js";
 import { MagicAppPicker } from "./MagicAppPicker.js";
 import { isDesktopServedType } from "@/lib/project-type-classifier";
+import { AionimaSystemReposPanel } from "./AionimaSystemReposPanel.js";
+import { AionimaContributePanel } from "./AionimaContributePanel.js";
+import { AionimaIncomingPrsPanel } from "./AionimaIncomingPrsPanel.js";
+import { AgiRepoCard } from "./AgiRepoCard.js";
 
 export interface ProjectDetailProps {
   projects: ProjectInfo[];
@@ -82,7 +90,7 @@ const CANVAS_LABELS: Record<string, string> = {
   repository: "Repository",
   environment: "Environment",
   hosting: "Hosting",
-  "iterative-work": "Iterative Work",
+  "iterative-work": "Scheduled Jobs",
   mcp: "MCP",
   // s150 t637 — "magic-apps" tab dropped; MApps config now lives inside the
   // Hosting tab when type is Desktop-served. Label removed from this map.
@@ -108,6 +116,7 @@ function tabIdToCanvasLabel(tabId: string, panels: PluginPanel[]): string {
 
 export function ProjectDetail({
   projects, onUpdate, updating, onDelete, deleting, onRefresh, onOpenChat, theme,
+  projectActivity,
   hostingStatus, onHostingConfigure, onHostingRestart,
   onTunnelEnable, onTunnelDisable, hostingBusy,
   onOpenEditor, onToolExecute, onOpenTerminal, contributingEnabled, onFixFinding,
@@ -115,13 +124,26 @@ export function ProjectDetail({
 }: ProjectDetailProps) {
   const { slug } = useParams<{ slug: string }>();
   const project = projects.find((p) => projectSlug(p.path) === slug);
-  const isSacred = project ? (isSacredProject(project) || project.projectType?.id === "aionima") : false;
-  const canViewSacred = Boolean(contributingEnabled);
-  // Core fork = provisioned by Dev Mode into the `_aionima/` collection.
-  // These get a drastically reduced UX — only Editor + Repository tabs.
-  // No hosting, no environment, no taskmaster, no plugins — they are
-  // source trees the owner submits PRs from, not deployables.
-  const isCoreFork = project?.coreCollection === "aionima" || project?.projectType?.id === "aionima";
+  // s175 (2026-05-15): include "aionima-system" in the sacred check.
+  // _aionima meta-project has type "aionima-system", not "aionima".
+  const isSacred = project ? (
+    isSacredProject(project) ||
+    project.projectType?.id === "aionima" ||
+    project.projectType?.id === "aionima-system"
+  ) : false;
+  // Owner directive 2026-05-13: _aionima (type "aionima-system") is always
+  // viewable regardless of contributing mode. Contributing mode gates only
+  // fork-population into _aionima/repos/, not card/detail visibility.
+  const canViewSacred = project?.projectType?.id === "aionima-system" || Boolean(contributingEnabled);
+  // Core fork = a fork provisioned by Dev Mode into _aionima/repos/. These
+  // get reduced UX (Editor + Repository only — no hosting, env, plugins).
+  // s175 fix: do NOT catch the _aionima container itself (coreCollection is
+  // "aionima" on the container too, but only actual forks have
+  // projectType "aionima"). Using only the type check avoids the false match.
+  const isCoreFork = project?.projectType?.id === "aionima";
+  // s179: the _aionima meta-project itself (type "aionima-system") gets a
+  // dedicated Repos/Details/Editor tab set — no stack strip, no mode picker.
+  const isAionimaContainer = project?.projectType?.id === "aionima-system";
 
   const [editName, setEditName] = useState<string | null>(null);
   // s140 cycle-169 t591 — Tynn token state removed; token now lives in
@@ -212,12 +234,17 @@ export function ProjectDetail({
     "taskmaster": "coordinate",
     // Wish #17 / s155 t671 — Plans tab in coordinate mode (PM workflow).
     "plans": "coordinate",
+    // story #207 — Project tab: the .agi envelope config/knowledge-state surface.
+    "project": "coordinate",
     // s152 — Notes tab in coordinate mode (knowledge capture for the project).
     "notes": "coordinate",
     // s139 t538 — PM kanban tab in coordinate mode. Reuses PmKanbanPanel
     // (the system-aggregate /pm/kanban view) — per-project filtering is a
     // future phase; today the tab shows the same all-tasks view.
     "pm": "coordinate",
+    // s165 CHN-D slice 3a — Channels tab in coordinate mode (project↔room
+    // bindings list; picker dialog lands in slice 3b).
+    "channels": "coordinate",
     "security": "insight",
     "activity": "insight",
   };
@@ -229,12 +256,18 @@ export function ProjectDetail({
     }
     return TAB_MODES[tabId] === currentMode;
   };
+  // s179: default to "repos" tab for the _aionima container project.
+  useEffect(() => {
+    if (isAionimaContainer && activeTab === "details") setActiveTab("repos");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAionimaContainer]);
+
   // Auto-switch activeTab when mode changes if the current tab is no
   // longer in the active mode.
   useEffect(() => {
     if (!tabBelongsToMode(activeTab)) {
       // Find first tab in current mode (prefer the canonical first one)
-      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "taskmaster", "plans", "notes", "security", "activity"];
+      const candidates = ["details", "files", "repository", "environment", "hosting", "iterative-work", "mcp", "taskmaster", "plans", "notes", "channels", "security", "activity"];
       const firstInMode = candidates.find((id) => TAB_MODES[id] === currentMode);
       if (firstInMode) setActiveTab(firstInMode);
     }
@@ -386,18 +419,10 @@ export function ProjectDetail({
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden p-3 md:p-6">
       {/* Header row */}
-      <div className="flex items-center justify-between mb-6 shrink-0">
+      <div className="flex items-center mb-6 shrink-0">
         <Link to="/projects" className="no-underline">
           <Button variant="outline" size="sm">Back to Projects</Button>
         </Link>
-        <div className="flex gap-2">
-          {/* The project-level (container) terminal lives in the Development tab > Terminal
-              subtab. The host-level system terminal is now a global button in the dashboard
-              header — see root.tsx. No Terminal button on the project page. */}
-          <Button size="sm" data-testid="project-chat-button" onClick={() => onOpenChat(project.path)}>
-            open chat
-          </Button>
-        </div>
       </div>
 
       {/* Project heading — extended per projects-ux-v2 mockup B (cycle 134):
@@ -409,7 +434,13 @@ export function ProjectDetail({
           const s = project.hosting?.status;
           const enabled = project.hosting?.enabled;
           if (!enabled) return null;
-          const cls = s === "running" ? "bg-green" : s === "error" ? "bg-red" : "bg-yellow";
+          const serving = project.hosting?.serving ?? false;
+          const cls =
+            s === "running" && serving ? "bg-green"
+            : s === "running" ? "bg-yellow"
+            : s === "error" ? "bg-red"
+            : s === "stopped" ? "bg-red"
+            : "bg-muted-foreground";
           // s140 cycle-172 t594 — aria-label not title. title doesn't show
           // on touch devices and is inconsistently announced by screen
           // readers. aria-label is the durable a11y primitive for an
@@ -425,36 +456,83 @@ export function ProjectDetail({
         })()}
         <h2 className="text-xl font-bold text-foreground">{project.name}</h2>
         <DevNotes title="Project workspace — dev notes">
-          <DevNotes.Item kind="info" heading="Cycles 144-148 — Canvas + Chat split (slice 5c phases 1-3)">
-            Mockup B's flyout-shell shape is in: Canvas section header reads `Canvas · {"{tab}"}`,
-            tabs sit on the left (flex-1), chat aside sits on the right (280px, lg+ only). The
-            aside shows iterative-work status (when eligible) + an Open chat CTA.
+          <DevNotes.Item kind="info" heading="2026-06-10 — Coordinate → Project: .agi config/knowledge-state surface">
+            New <strong>Project</strong> tab in Coordinate mode manages a <code>.agi</code> envelope as a
+            config/knowledge-STATE surface — NOT a repo manager. An upgrade Wizard (git init +{" "}
+            <code>{"{slug}.agi"}</code> remote, with <em>AGI auto-creates</em> OR <em>paste URL</em>)
+            turns a project into an envelope; once wired, the panel shows ahead/behind + a reviewable
+            diff of config/knowledge/submodule changes with <strong>Pull &amp; apply</strong> (runs{" "}
+            <code>git submodule update --init --recursive</code>) and <strong>Push state</strong>. Chats
+            (<code>.ai/chat/</code>), <code>sandbox/</code>, <code>.trash/</code> are excluded from sync.
+            Backend: <code>agi-repo/{"{state,remote,pull,push}"}</code> (v0.4.921–922, story #207).
           </DevNotes.Item>
-          <DevNotes.Item kind="todo" heading="Slice 5c phase 4 — chat content not yet in aside">
-            The actual chat thread + composer is still rendered inside the cycle-87 floating
-            ChatFlyout, NOT inside the workspace aside. Phase 4 moves that content into the
-            right panel and adds collapsible AccordionFlyout chrome.
+          <DevNotes.Item kind="info" heading="2026-06-09 — Knowledge dir renamed k/ → .ai/">
+            Every project's knowledge layer (<code>plans/ knowledge/ pm/ memory/ chat/ issues/</code>)
+            moved from <code>k/</code> to <code>.ai/</code> to match common AI-workflow conventions
+            (<code>.cursor/</code>, <code>.aider/</code>). Existing projects auto-migrate on gateway
+            boot (rename is atomic + never clobbers). <code>.ai/</code> is dot-hidden to <code>ls</code>
+            but stays <strong>visible in the file browser</strong> here — the sibling <code>.agi/</code>
+            config envelope is unchanged. New projects scaffold <code>.ai/</code> directly (v0.4.919).
           </DevNotes.Item>
-          <DevNotes.Item kind="warning" heading="Chat panel close button desync (cycle 149 owner-flagged)">
-            Clicking X in the chat panel header collapses both AccordionFlyout sections to rail-only
-            but leaves the header chat-button highlighted as active. The two close triggers need
-            two-way binding via `onOpenChange`. Filed as comment on s134 t517.
+          <DevNotes.Item kind="info" heading="2026-06-08 — Incoming PRs tab (review contributors' forks)">
+            New <strong>Incoming</strong> tab on the _aionima container (Repos | Contribute |
+            Incoming | Editor). Lists open PRs that contributors' personal forks — including
+            forks-of-forks — have opened into upstream <code>dev</code>, grouped per core repo,
+            with author, head fork (cross-fork flagged), and draft state. Merge happens on
+            GitHub via <em>View on GitHub →</em> (an irreversible write we never automate). The
+            <em>Test in VM</em> button hands you <code>agi test-vm pr agi &lt;n&gt;</code>, which
+            fetches the PR head into a throwaway worktree, remounts the VM to it, and serves it at
+            <code>test.ai.on</code> for live click-through — restoring your dev tree on exit
+            (agi repo only; v0.4.915).
           </DevNotes.Item>
-          <DevNotes.Item kind="info" heading="Cycle 137 — sub-surface pill restyle (slice 5b)">
-            Mode picker pill row uses tailwind arbitrary-attribute variant
-            `[&[aria-selected=true]]` to override react-fancy underline-variant defaults via
-            tailwind-merge. Yellow active fill, muted hover inactive.
+          <DevNotes.Item kind="info" heading="2026-06-08 — Upstream vs Personal forks + version-aware upgrades">
+            Terminology + correctness. (1) The Repos panel header is now <strong>Personal forks</strong>
+            ("tracked against Upstream (Civicognita)") instead of "Core Forks"; fork labels come from the
+            API's <code>displayName</code> (single source of truth) rather than a stale hardcoded map that
+            still listed the deprecated Local-ID and omitted the PAx repos. (2) The Upgrade Wizard now gates
+            the <strong>Review →</strong> action on a version-aware <code>isUpgrade</code> flag, not raw commit
+            topology. <code>upstream/main</code> trails your fork by merge bubbles, so it showed a phantom
+            "4 commits available" despite being an older version (v0.4.906 vs v0.4.911) — it now renders as an
+            <em>info row</em> ("older than your vX — nothing to pull"). Incoming-PR review/test tab is next.
           </DevNotes.Item>
-          <DevNotes.Item kind="todo" heading="Cage indicator (t517 item 6)">
-            Depends on s130 t515 phase B (chat-tool cage primitive — backlog). When chat is
-            project-bound, a small "Tools caged to this project" pill appears in the chat header.
+          <DevNotes.Item kind="info" heading="2026-06-08 — Aionima page repaired: forks resolve + Details tab removed">
+            Two fixes. (1) The Repos + Contribute panels were blank ("No forks provisioned" / "No repos in
+            this group") because the backend looked for forks at <code>_aionima/&lt;slug&gt;</code> while the
+            2026-05-13 restructure moved them to <code>_aionima/repos/&lt;slug&gt;</code>. A shared
+            <code>coreForkDir()</code> resolver now prefers the nested layout (legacy flat still supported).
+            (2) The meta-project tab set is now <strong>Repos | Contribute | Editor</strong> — the read-only
+            Details tab was dropped (it duplicated what other tabs show). Regular projects keep their Details
+            tab.
           </DevNotes.Item>
-          <DevNotes.Item kind="warning" heading="Project folder restructure incoming (s140)">
-            Each project will move to {"{k/, repos/, sandbox/}"} (with chat at k/chat/) at the project root with a
-            single root `project.json` config (project- + repo-config combined). Stacks attach to
-            individual repos, not to the project. Multi-repo single-container hosting UI extends
-            with per-repo {"{config, start, dev, stack-actions}"} surfaces. Migration runs as a
-            dry-run report first; no file moves until owner sign-off.
+          <DevNotes.Item kind="info" heading="2026-06-07 — .agi monorepo envelope control (Details tab)">
+            Regular projects' Details tab now carries an AgiRepoCard: initialize the project folder as a
+            {" "}<code>{"{slug}.agi"}</code> git envelope, or import existing <code>repos/</code> as git
+            submodules. First slice — explicit action only (no auto-init on create yet); Tynn handshake +
+            remote auto-creation deferred. Excluded for the _aionima collection.
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="2026-06-07 — Contribute tab (outbound PRs) on _aionima">
+            The aionima-system project gains a Contribute tab (Repos | Contribute | Details | Editor).
+            It groups core forks into Learnings (→ PRIME) and Mechanics (→ agi, marketplaces, PAx) and
+            opens cross-repo PRs to upstream/dev with an AI-drafted body. Mirror of the inbound merge
+            path; PRs always target dev (never main). See CONTRIBUTING.md.
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="Cycle 2026-05-31 — 3-state status dot + TCP health probe">
+            Status dot is now 3-state: green = container running AND TCP probe reached the port (app serving),
+            yellow = container running but port not yet responding (starting up / internal crash),
+            red = container stopped or error. Backend runs a 10-second TCP probe loop; frontend polls
+            every 10s (was 120s). StackStrip fallback text simplified to "No active tasks".
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="s199 (2026-05-28) — ProjHeader + StackStrip + mode picker restyle">
+            ProjHeader compact bar (name, category badge, primary repo URL, hosted URL, Chat button) added
+            above mode picker. StackStrip shows Aion's live iterative-work task summary (from projectActivity)
+            between ProjHeader and mode picker — pulses when work is in flight. Mode picker restyled from
+            underline tabs to pill/segment (bg-secondary fill, rounded-md, no border-b-2).
+          </DevNotes.Item>
+          <DevNotes.Item kind="info" heading="s179 (2026-05-15) — Aionima-system container UX">
+            aionima-system project type now gets a dedicated 3-tab view (Repos | Details | Editor)
+            instead of the full mode-picker + all tabs. Stack strip and mode picker hidden.
+            AionimaSystemReposPanel shows all five core forks with ahead/behind badges,
+            a file browser toggle, and a Talk-to-project button.
           </DevNotes.Item>
         </DevNotes>
         {project.category && (
@@ -538,7 +616,7 @@ export function ProjectDetail({
           postgres + redis, so a cache-invalidation step is feasible").
           Skipped for core forks (aionima collection) since they're
           source trees, not deployable services. */}
-      {!isCoreFork && project.projectType?.hasCode && (
+      {!isCoreFork && !isAionimaContainer && project.projectType?.hasCode && (
         <div
           className="flex items-center gap-2 px-3 py-2 mb-3 rounded-md bg-indigo-500/5 border border-indigo-500/20"
           data-testid="project-stack-strip"
@@ -580,6 +658,22 @@ export function ProjectDetail({
         </div>
       )}
 
+      {/* s199 — ProjHeader: compact identity bar (name, category badge,
+          repo URL, hosted URL, Chat action) above the mode picker.
+          Skipped for core forks and aionima containers which have their
+          own restricted view without the mode picker. */}
+      {!isCoreFork && !isAionimaContainer && (
+        <ProjHeader project={project} onOpenChat={onOpenChat} />
+      )}
+
+      {/* s199 — StackStrip: Aion's active iterative-work context bar.
+          Distinct from the docker "project-stack-strip" above which shows
+          attached postgres/redis stacks. This strip shows the live task
+          summary from projectActivity and pulses when work is in flight. */}
+      {!isCoreFork && !isAionimaContainer && project.projectType?.hasCode && (
+        <StackStrip projectPath={project.path} projectActivity={projectActivity} />
+      )}
+
       {/* s134 t517 slice 2 (cycle 112) — 4-mode picker per the
           projects-ux-v2/project-workspace-v2.html mockup. Replaces
           the visual organization of the existing 11 tabs by grouping
@@ -592,22 +686,25 @@ export function ProjectDetail({
           - literature/media (content projects): hide Develop + Operate
             (no code → no editor/hosting tabs)
           - administration: hide Develop (no code)
-          - Otherwise (web/app/monorepo/ops): all 4 modes visible */}
-      {!isCoreFork && (() => {
+          - Otherwise (web/app/monorepo/ops): all 4 modes visible
+
+          s199 — mode picker restyled from underline tabs to pill/segment
+          control (bg-secondary fill on active, rounded-md, no border-b). */}
+      {!isCoreFork && !isAionimaContainer && (() => {
         const cat = project.category ?? project.projectType?.category;
         const visibleModes = computeVisibleModes(cat);
         return (
-          <div className="flex items-center gap-1 mb-3 border-b border-border" data-testid="project-mode-picker">
+          <div className="flex items-center gap-1 mb-3 mt-2" data-testid="project-mode-picker">
             {visibleModes.map((mode) => (
               <button
                 key={mode}
                 type="button"
                 onClick={() => setCurrentMode(mode)}
                 className={cn(
-                  "px-4 py-2 text-[13px] font-medium uppercase tracking-wider transition-colors cursor-pointer border-b-2",
+                  "px-3 py-1.5 rounded-md text-[12px] font-medium uppercase tracking-wider transition-colors cursor-pointer",
                   currentMode === mode
-                    ? "text-foreground border-yellow"
-                    : "text-muted-foreground border-transparent hover:text-foreground",
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
                 )}
                 aria-pressed={currentMode === mode}
                 data-testid={`project-mode-${mode}`}
@@ -644,6 +741,19 @@ export function ProjectDetail({
             <TabsTrigger value="files">Editor</TabsTrigger>
             <TabsTrigger value="repository">Repository</TabsTrigger>
           </TabsList>
+        ) : isAionimaContainer ? (
+          // s179: _aionima meta-project — Repos | Contribute | Editor.
+          // Details tab dropped 2026-06-08 (owner directive): for the meta-project
+          // it was read-only metadata that duplicated what Repos/Editor already
+          // show — no user-visible value. The details TabsContent below is kept
+          // for regular projects; the redirect at ~L257 bounces any stray
+          // activeTab="details" back to "repos" for this container.
+          <TabsList>
+            <TabsTrigger value="repos" data-testid="project-tab-repos">Repos</TabsTrigger>
+            <TabsTrigger value="contribute" data-testid="project-tab-contribute">Contribute</TabsTrigger>
+            <TabsTrigger value="incoming" data-testid="project-tab-incoming">Incoming</TabsTrigger>
+            <TabsTrigger value="files">Editor</TabsTrigger>
+          </TabsList>
         ) : (
           <div className="flex items-center gap-2 mb-3 pb-2 border-b border-border flex-wrap" data-testid="project-sub-surface">
             <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold whitespace-nowrap pr-1" data-testid="project-sub-surface-label">{currentMode} ›</span>
@@ -666,7 +776,10 @@ export function ProjectDetail({
               )}
               {tabBelongsToMode("iterative-work")
                 && (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
-                <TabsTrigger value="iterative-work" className={SUB_PILL_CLASS} data-testid="project-tab-iterative-work">Iterative Work</TabsTrigger>
+                <TabsTrigger value="iterative-work" className={SUB_PILL_CLASS} data-testid="project-tab-iterative-work">Scheduled Jobs</TabsTrigger>
+              )}
+              {tabBelongsToMode("project") && !isAionimaContainer && (
+                <TabsTrigger value="project" className={SUB_PILL_CLASS} data-testid="project-tab-project">Project</TabsTrigger>
               )}
               {tabBelongsToMode("plans") && (
                 <TabsTrigger value="plans" className={SUB_PILL_CLASS} data-testid="project-tab-plans">Plans</TabsTrigger>
@@ -676,6 +789,9 @@ export function ProjectDetail({
               )}
               {tabBelongsToMode("notes") && (
                 <TabsTrigger value="notes" className={SUB_PILL_CLASS} data-testid="project-tab-notes">Notes</TabsTrigger>
+              )}
+              {tabBelongsToMode("channels") && (
+                <TabsTrigger value="channels" className={SUB_PILL_CLASS} data-testid="project-tab-channels">Channels</TabsTrigger>
               )}
               {tabBelongsToMode("taskmaster") && (
                 <TabsTrigger value="taskmaster" className={SUB_PILL_CLASS} data-testid="project-tab-taskmaster">TaskMaster</TabsTrigger>
@@ -720,6 +836,13 @@ export function ProjectDetail({
         )}
 
         <TabsContent value="details" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          {/* {project}.agi monorepo envelope control (Phase 3). Excluded for the
+              _aionima collection, which keeps its own collection.json convention. */}
+          {!isAionimaContainer && (
+            <div className="mb-4">
+              <AgiRepoCard projectPath={project.path} />
+            </div>
+          )}
           {/*
             s140 t592 cycle-176 — Tabbed sub-pages: Identity /
             Configuration / Lifecycle. Owner-chosen shape (Q-14).
@@ -1240,6 +1363,28 @@ export function ProjectDetail({
           </Card>
         </TabsContent>
 
+        {/* s179: _aionima container — repos overview panel */}
+        <TabsContent value="repos" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <Card className="p-4">
+            <AionimaSystemReposPanel
+              projectPath={project.path}
+              onOpenChat={() => onOpenChat(project.path)}
+            />
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="contribute" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <Card className="p-4">
+            <AionimaContributePanel />
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="incoming" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <Card className="p-4">
+            <AionimaIncomingPrsPanel />
+          </Card>
+        </TabsContent>
+
         <TabsContent value="repository" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <Card className="p-4">
             {isCoreFork && project?.coreForkSlug ? (
@@ -1393,6 +1538,11 @@ export function ProjectDetail({
         {/* Wish #17 / s155 t671 — Plans tab (PM-Lite). Always available;
             DONE/CURRENT/NEXT views over the layered PM provider, plus a
             file-based plan list straight from <projectPath>/k/plans/. */}
+        {/* story #207 — .agi envelope config/knowledge-state surface. */}
+        <TabsContent value="project" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <AgiProjectStatePanel projectPath={project.path} projectName={project.name} />
+        </TabsContent>
+
         <TabsContent value="plans" className="mt-4 flex-1 min-h-0 overflow-y-auto">
           <PmLitePanel projectPath={project.path} />
         </TabsContent>
@@ -1410,9 +1560,16 @@ export function ProjectDetail({
           <NotesPanel projectPath={project.path} />
         </TabsContent>
 
+        {/* s165 CHN-D slice 3a — Channels tab. Read-only listing of
+            channel-room bindings for this project. Picker dialog lands
+            in slice 3b. */}
+        <TabsContent value="channels" className="mt-4 flex-1 min-h-0 overflow-y-auto">
+          <ChannelsPanel projectPath={project.path} />
+        </TabsContent>
+
         {(project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) && (
           <TabsContent value="iterative-work" className="mt-4 flex-1 min-h-0 overflow-y-auto">
-            <IterativeWorkTab project={project} />
+            <ScheduledJobsTab project={project} />
           </TabsContent>
         )}
 
@@ -1449,164 +1606,8 @@ export function ProjectDetail({
           </TabsContent>
         )}
       </Tabs>
-      {!isCoreFork && (
-        <aside
-          className="w-[280px] hidden lg:flex flex-col border-l border-border pl-3"
-          data-testid="project-chat-aside"
-          aria-label="Project chat panel"
-        >
-          <ProjectChatAside
-            project={project}
-            onOpenChat={() => onOpenChat(project.path)}
-            onOpenNotes={() => setActiveTab("notes")}
-          />
-        </aside>
-      )}
       </div>
     </div>
   );
 }
 
-/**
- * Project chat aside (slice 5c phase 3 starter — cycle 147).
- *
- * Replaces the cycle-145 placeholder with useful project-scoped content
- * pending the heavier ChatFlyout-into-aside integration. Shows:
- *  - Iterative-work status (enabled / cron / next fire) when eligible
- *  - Progress bar (done/total tasks) sourced from the PM provider
- *  - "Open chat" CTA that mirrors the header button (talk about this project)
- *
- * Iterative-work data is fetched in parallel with progress; failures collapse
- * to a "no status available" hint without breaking the aside chrome.
- */
-function ProjectChatAside({
-  project,
-  onOpenChat,
-  onOpenNotes,
-}: {
-  project: ProjectInfo;
-  onOpenChat: () => void;
-  /** s152 t653 — clicking the notes breadcrumb routes here. */
-  onOpenNotes?: () => void;
-}) {
-  const eligible = (project.iterativeWorkEligible ?? project.projectType?.iterativeWorkEligible) === true;
-  const [status, setStatus] = useState<IterativeWorkProjectStatus | null>(null);
-  const [progress, setProgress] = useState<IterativeWorkProgress | null>(null);
-  // s152 t653 — passive note-availability breadcrumb. When notes exist
-  // for this project (or globally), surface a count so the user knows
-  // Aion is seeing them as project context. Click navigates to the
-  // Notes tab. Best-effort fetch; failures are silent.
-  const [noteCount, setNoteCount] = useState<{ project: number; global: number } | null>(null);
-
-  useEffect(() => {
-    // Cycle 148 — reset state on project change so we don't briefly show
-    // the previous project's status/progress while the new fetch lands.
-    setStatus(null);
-    setProgress(null);
-    setNoteCount(null);
-    if (!eligible) return;
-    let cancelled = false;
-    void Promise.all([
-      fetchIterativeWorkStatus(project.path).catch(() => null),
-      fetchIterativeWorkProgress(project.path).catch(() => null),
-    ]).then(([s, p]) => {
-      if (cancelled) return;
-      setStatus(s);
-      setProgress(p);
-    });
-    return () => { cancelled = true; };
-  }, [eligible, project.path]);
-
-  // s152 t653 — note count fetch lives in its own effect so it runs for
-  // every project (not just iterative-work-eligible ones).
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.all([
-      fetchNotes(project.path).catch(() => []),
-      fetchNotes(null).catch(() => []),
-    ]).then(([proj, global]) => {
-      if (cancelled) return;
-      setNoteCount({ project: proj.length, global: global.length });
-    });
-    return () => { cancelled = true; };
-  }, [project.path]);
-
-  return (
-    <>
-      <h2 className="text-[12px] uppercase tracking-wider text-muted-foreground/80 font-semibold mt-3 mb-2">
-        Chat
-      </h2>
-
-      {/* s152 t653 — passive notes breadcrumb. Visible when at least one
-          per-project or global note exists. Clicking it switches to the
-          Notes tab so the user can see what Aion is seeing. */}
-      {noteCount !== null && (noteCount.project > 0 || noteCount.global > 0) && (
-        <button
-          type="button"
-          className="text-left mb-2 px-3 py-2 rounded bg-secondary/10 hover:bg-secondary/20 transition-colors w-full"
-          onClick={() => { onOpenNotes?.(); }}
-          data-testid="project-chat-aside-notes-breadcrumb"
-          title="Aion sees these notes as project context"
-        >
-          <span className="text-[11px] text-muted-foreground">
-            <span aria-hidden="true">📝</span>{" "}
-            {noteCount.project > 0 && (
-              <>
-                <strong className="text-foreground">{String(noteCount.project)}</strong>{" "}
-                project note{noteCount.project === 1 ? "" : "s"}
-              </>
-            )}
-            {noteCount.project > 0 && noteCount.global > 0 && " · "}
-            {noteCount.global > 0 && (
-              <>
-                <strong className="text-foreground">{String(noteCount.global)}</strong>{" "}
-                global
-              </>
-            )}
-          </span>
-        </button>
-      )}
-
-      {eligible && (
-        <Card className="p-3 mb-2 bg-secondary/10" data-testid="project-chat-aside-iterative">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold mb-1">Iterative work</div>
-          <div className="text-[12px] text-foreground">
-            {status === null ? "Loading…" : status.enabled ? "Enabled" : "Disabled"}
-            {status?.inFlight && <span className="ml-1 text-yellow text-[10px]">· running</span>}
-          </div>
-          {status?.cron && (
-            <div className="text-[11px] text-muted-foreground font-mono mt-0.5">{status.cron}</div>
-          )}
-          {progress !== null && progress.totalTasks > 0 && (
-            <div className="mt-2">
-              <div className="text-[11px] text-muted-foreground mb-1">
-                {progress.doneTasks}/{progress.totalTasks} done · {progress.percentComplete}%
-              </div>
-              <div className="h-1.5 bg-secondary rounded overflow-hidden">
-                <div
-                  className="h-full bg-yellow transition-[width]"
-                  style={{ width: `${String(progress.percentComplete)}%` }}
-                />
-              </div>
-            </div>
-          )}
-        </Card>
-      )}
-
-      <Card className="p-3 flex-1 min-h-0 overflow-y-auto bg-secondary/10 border-dashed border-border/60">
-        <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
-          Project-scoped chat panel — the heavy integration ships in slice 5c phase 4. Use Open chat to talk
-          about this project today.
-        </p>
-        <Button
-          size="sm"
-          className="mt-3 w-full"
-          onClick={onOpenChat}
-          data-testid="project-chat-aside-open"
-        >
-          Open chat
-        </Button>
-      </Card>
-    </>
-  );
-}

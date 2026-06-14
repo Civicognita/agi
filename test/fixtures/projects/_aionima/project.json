@@ -1,0 +1,20 @@
+{
+  "name": "",
+  "createdAt": "",
+  "type": null,
+  "category": null,
+  "description": "",
+  "hosting": {
+    "enabled": false,
+    "type": "static",
+    "hostname": "",
+    "docRoot": null,
+    "startCommand": null,
+    "port": null,
+    "mode": "development",
+    "internalPort": null,
+    "stacks": []
+  },
+  "repos": [],
+  "tynnToken": null
+}

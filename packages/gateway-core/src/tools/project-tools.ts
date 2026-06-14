@@ -5,7 +5,7 @@
  * Reuses logic from the REST API endpoints in server-runtime-state.ts.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { execSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
 import type { ToolHandler } from "../tool-registry.js";
 import { projectConfigPath } from "../project-config-path.js";
@@ -147,18 +147,16 @@ function handleCreate(config: ProjectToolConfig, input: Record<string, unknown>)
   let cloned = false;
   const repoRemote = input.repoRemote ? String(input.repoRemote).trim() : "";
   if (repoRemote.length > 0) {
-    try {
-      execSync(`git clone ${JSON.stringify(repoRemote)} .`, {
-        cwd: targetDir,
-        stdio: "pipe",
-        timeout: 60000,
-      });
-      cloned = true;
-    } catch (err) {
-      return JSON.stringify({
-        error: `Folder created but git clone failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
+    const cloneResult = spawnSync("git", ["clone", repoRemote, "."], {
+      cwd: targetDir,
+      stdio: "pipe",
+      timeout: 60000,
+    });
+    if (cloneResult.error || cloneResult.status !== 0) {
+      const msg = cloneResult.error?.message ?? cloneResult.stderr?.toString().trim() ?? "git clone failed";
+      return JSON.stringify({ error: `Folder created but git clone failed: ${msg}` });
     }
+    cloned = true;
   }
 
   // Write metadata via ProjectConfigManager or legacy fallback
@@ -286,21 +284,25 @@ function handleInfo(config: ProjectToolConfig, input: Record<string, unknown>): 
   const commits: { hash: string; message: string }[] = [];
 
   if (hasGit) {
-    try { branch = execSync(`git -C ${JSON.stringify(targetPath)} rev-parse --abbrev-ref HEAD`, { timeout: 5000, stdio: "pipe" }).toString().trim(); } catch { /* */ }
-    try { remote = execSync(`git -C ${JSON.stringify(targetPath)} remote get-url origin`, { timeout: 5000, stdio: "pipe" }).toString().trim(); } catch { /* */ }
-    try {
-      const porcelain = execSync(`git -C ${JSON.stringify(targetPath)} status --porcelain`, { timeout: 5000, stdio: "pipe" }).toString().trim();
-      gitStatus = porcelain.length === 0 ? "clean" : "dirty";
-    } catch { /* */ }
-    try {
-      const logOutput = execSync(`git -C ${JSON.stringify(targetPath)} log --oneline -5`, { timeout: 5000, stdio: "pipe" }).toString().trim();
+    const r1 = spawnSync("git", ["-C", targetPath, "rev-parse", "--abbrev-ref", "HEAD"], { timeout: 5000, stdio: "pipe" });
+    if (!r1.error && r1.status === 0) branch = r1.stdout.toString().trim();
+
+    const r2 = spawnSync("git", ["-C", targetPath, "remote", "get-url", "origin"], { timeout: 5000, stdio: "pipe" });
+    if (!r2.error && r2.status === 0) remote = r2.stdout.toString().trim();
+
+    const r3 = spawnSync("git", ["-C", targetPath, "status", "--porcelain"], { timeout: 5000, stdio: "pipe" });
+    if (!r3.error && r3.status === 0) gitStatus = r3.stdout.toString().trim().length === 0 ? "clean" : "dirty";
+
+    const r4 = spawnSync("git", ["-C", targetPath, "log", "--oneline", "-5"], { timeout: 5000, stdio: "pipe" });
+    if (!r4.error && r4.status === 0) {
+      const logOutput = r4.stdout.toString().trim();
       if (logOutput.length > 0) {
         for (const line of logOutput.split("\n")) {
           const spaceIdx = line.indexOf(" ");
           if (spaceIdx > 0) commits.push({ hash: line.slice(0, spaceIdx), message: line.slice(spaceIdx + 1) });
         }
       }
-    } catch { /* */ }
+    }
   }
 
   // Project config (name, category, description, type)

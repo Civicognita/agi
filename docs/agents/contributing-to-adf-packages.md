@@ -1,6 +1,6 @@
 # Contributing to ADF Packages (PAx)
 
-**Audience:** Aion + human contributors maintaining the four
+**Audience:** Aion + human contributors maintaining the eight
 Particle-Academy packages that form the ADF UI primitive layer.
 
 This document describes the **maintenance loop**: when AGI (or another
@@ -10,7 +10,7 @@ without leaving local fallbacks scattered across the consumer.
 
 ---
 
-## 1. The four PAx packages
+## 1. The eight PAx packages
 
 | Package | npm | What it provides |
 |---|---|---|
@@ -18,15 +18,23 @@ without leaving local fallbacks scattered across the consumer.
 | `fancy-code` | `@particle-academy/fancy-code` | Code editor / syntax highlighting (CodeMirror-backed). Powers the Editor sub-surface, file previews, terminal/log viewers. |
 | `fancy-sheets` | `@particle-academy/fancy-sheets` | Data grid primitive — sortable columns, virtualization, click-to-expand rows, multi-select. Powers the Projects browser list view, dependency tables, tynn task lists. |
 | `fancy-echarts` | `@particle-academy/fancy-echarts` | Charts on Apache ECharts — sparklines, Sankey, timeline, donut. Renamed from `react-echarts` upstream; npm rename pending (first work item). |
+| `fancy-3d` | `@particle-academy/fancy-3d` | 3D scene and WebGL components (Three.js-backed). |
+| `fancy-screens` | `@particle-academy/fancy-screens` | Full-screen layout primitives and screen transitions. |
+| `fancy-whiteboard` | `@particle-academy/fancy-whiteboard` | Collaborative whiteboard canvas. |
+| `agent-integrations` | `@particle-academy/agent-integrations` | Agent UI integration primitives. |
 
-All four live in this workspace as siblings to `agi/`:
+All eight live in this workspace as siblings to `agi/`:
 
 | Symlink | Repo | Push origin | Upstream |
 |---|---|---|---|
-| `~/temp_core/react-fancy` | `/home/wishborn/_projects/_aionima/react-fancy` | `wishborn/react-fancy` | `Particle-Academy/react-fancy` |
-| `~/temp_core/fancy-code` | `/home/wishborn/_projects/_aionima/fancy-code` | `wishborn/fancy-code` | `Particle-Academy/fancy-code` |
-| `~/temp_core/fancy-sheets` | `/home/wishborn/_projects/_aionima/fancy-sheets` | `wishborn/fancy-sheets` | `Particle-Academy/fancy-sheets` |
-| `~/temp_core/fancy-echarts` | `/home/wishborn/_projects/_aionima/fancy-echarts` | `wishborn/fancy-echarts` | `Particle-Academy/fancy-echarts` |
+| `~/temp_core/_aionima/repos/react-fancy` | `/home/wishborn/_projects/_aionima/repos/react-fancy` | `wishborn/react-fancy` | `Particle-Academy/react-fancy` |
+| `~/temp_core/_aionima/repos/fancy-code` | `/home/wishborn/_projects/_aionima/repos/fancy-code` | `wishborn/fancy-code` | `Particle-Academy/fancy-code` |
+| `~/temp_core/_aionima/repos/fancy-sheets` | `/home/wishborn/_projects/_aionima/repos/fancy-sheets` | `wishborn/fancy-sheets` | `Particle-Academy/fancy-sheets` |
+| `~/temp_core/_aionima/repos/fancy-echarts` | `/home/wishborn/_projects/_aionima/repos/fancy-echarts` | `wishborn/fancy-echarts` | `Particle-Academy/fancy-echarts` |
+| `~/temp_core/_aionima/repos/fancy-3d` | `/home/wishborn/_projects/_aionima/repos/fancy-3d` | `wishborn/fancy-3d` | `Particle-Academy/fancy-3d` |
+| `~/temp_core/_aionima/repos/fancy-screens` | `/home/wishborn/_projects/_aionima/repos/fancy-screens` | `wishborn/fancy-screens` | `Particle-Academy/fancy-screens` |
+| `~/temp_core/_aionima/repos/fancy-whiteboard` | `/home/wishborn/_projects/_aionima/repos/fancy-whiteboard` | `wishborn/fancy-whiteboard` | `Particle-Academy/fancy-whiteboard` |
+| `~/temp_core/_aionima/repos/agent-integrations` | `/home/wishborn/_projects/_aionima/repos/agent-integrations` | `wishborn/agent-integrations` | `Particle-Academy/agent-integrations` |
 
 Provisioned via the **Contributing Mode** toggle in
 `Settings → Gateway → Contributing` (single source of truth:
@@ -45,6 +53,10 @@ The **PAx domain** (slug: `pax`) holds maintenance work, with one
 - `fancy-code`
 - `fancy-sheets`
 - `fancy-echarts`
+- `fancy-3d`
+- `fancy-screens`
+- `fancy-whiteboard`
+- `agent-integrations`
 
 When AGI needs a primitive that doesn't exist (or a bug fix to one that
 does), file a **tynn story** under the relevant feature. The umbrella

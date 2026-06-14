@@ -9,6 +9,6 @@
   "devDependencies": {
     "@agi/gateway-core": "workspace:*",
     "@types/ws": "^8.5.14",
-    "ws": "^8.18.1"
+    "ws": "^8.21.0"
   }
 }

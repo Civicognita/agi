@@ -119,6 +119,24 @@ export interface RegisteredChannel {
   channelId: string;
 }
 
+/**
+ * CHN-B (s163) slice 2 — parallel registry for v2 channel definitions
+ * (`defineChannelV2` shape from @agi/sdk). Kept structurally separate
+ * from legacy `RegisteredChannel` so both can coexist during the
+ * additive migration (CHN-A → CHN-M).
+ *
+ * `definition` is typed `unknown` here to avoid a circular workspace
+ * dep (`@agi/sdk` → `@agi/plugins` already; reverse would cycle). The
+ * gateway-side dispatcher consumes this registry and does the type
+ * assertion against `import type { ChannelDefinition } from "@agi/sdk"`
+ * at the boundary.
+ */
+export interface RegisteredChannelV2 {
+  pluginId: string;
+  channelId: string;
+  definition: unknown;
+}
+
 export interface RegisteredProvider {
   pluginId: string;
   provider: LLMProviderDefinition;
@@ -197,6 +215,7 @@ export class PluginRegistry {
   private readonly subdomainRoutes: RegisteredSubdomainRoute[] = [];
   private readonly stacks: RegisteredStack[] = [];
   private readonly channels: RegisteredChannel[] = [];
+  private readonly channelsV2: RegisteredChannelV2[] = [];
   private readonly providers: RegisteredProvider[] = [];
   private readonly pmProviders: RegisteredPmProvider[] = [];
   private readonly mcpServerTemplates: RegisteredMcpServerTemplate[] = [];
@@ -552,6 +571,26 @@ export class PluginRegistry {
     return [...this.channels];
   }
 
+  /**
+   * CHN-B (s163) slice 2 — register a `defineChannelV2` definition.
+   * The definition is stored opaquely (`unknown`); consumers cast back
+   * via `import type { ChannelDefinition } from "@agi/sdk"`. Dedupes
+   * by channelId — first-registered wins, matching the legacy
+   * channel-registration behavior.
+   */
+  addChannelV2(pluginId: string, channelId: string, definition: unknown): void {
+    if (this.channelsV2.some((c) => c.channelId === channelId)) return;
+    this.channelsV2.push({ pluginId, channelId, definition });
+  }
+
+  getChannelsV2(): RegisteredChannelV2[] {
+    return [...this.channelsV2];
+  }
+
+  getChannelV2(channelId: string): RegisteredChannelV2 | undefined {
+    return this.channelsV2.find((c) => c.channelId === channelId);
+  }
+
   // -------------------------------------------------------------------------
   // LLM Providers
   // -------------------------------------------------------------------------
@@ -737,6 +776,7 @@ export class PluginRegistry {
     removedCounts.subdomainRoutes = filterInPlace(this.subdomainRoutes, keep);
     removedCounts.stacks = filterInPlace(this.stacks, keep);
     removedCounts.channels = filterInPlace(this.channels, keep);
+    removedCounts.channelsV2 = filterInPlace(this.channelsV2, keep);
     removedCounts.providers = filterInPlace(this.providers, keep);
     removedCounts.scanProviders = filterInPlace(this.scanProviders, keep);
     removedCounts.workers = filterInPlace(this.workers, keep);

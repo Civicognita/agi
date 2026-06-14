@@ -51,6 +51,7 @@ const TYPE_TIER: Record<string, ProviderCatalogEntry["tier"]> = {
   openai: "cloud",
   ollama: "local",
   lemonade: "local",
+  "aion-vision": "local",
   "hf-local": "core",
   "aion-micro": "floor",
 };
@@ -160,6 +161,21 @@ export function createSingleProvider(
         maxTokens: config.maxTokens ?? 1024,
         maxRetries: config.maxRetries ?? 2,
         // baseUrl MUST include `/v1` — see lemonade case above for why.
+        baseUrl: config.baseUrl ?? "http://127.0.0.1:13305/v1",
+        timeoutMs,
+      });
+
+    case "aion-vision":
+      // Off-grid VLM Provider — routes image Q&A requests to Moondream2 (or
+      // a configured model override) via the Lemonade backplane. Same port and
+      // auth pattern as aion-micro; only the defaultModel differs. Timeout uses
+      // the "local" tier multiplier (6×) because VLM inference on CPU can be
+      // slower than text generation.
+      return new OpenAIProvider({
+        apiKey: "not-needed",
+        defaultModel: config.defaultModel ?? "moondream2",
+        maxTokens: config.maxTokens ?? 1024,
+        maxRetries: config.maxRetries ?? 2,
         baseUrl: config.baseUrl ?? "http://127.0.0.1:13305/v1",
         timeoutMs,
       });

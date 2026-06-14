@@ -10,6 +10,15 @@ import { test, expect } from "@playwright/test";
 test.describe("HF Model lifecycle", () => {
   test.setTimeout(120_000);
 
+  // Skip all tests when no HF models are installed in the test VM.
+  // The test VM services-start does NOT pre-install models, so these tests
+  // only run when the owner has manually installed at least one model.
+  test.beforeEach(async ({ request }) => {
+    const res = await request.get("/api/hf/models").catch(() => null);
+    const models = res?.ok() ? await res.json().catch(() => []) : [];
+    test.skip(!Array.isArray(models) || (models as unknown[]).length === 0, "no HF models installed in this VM");
+  });
+
   test("Installed tab shows tiny-gpt2", async ({ page }) => {
     await page.goto("/hf-marketplace");
     await page.getByRole("button", { name: "Installed" }).click();

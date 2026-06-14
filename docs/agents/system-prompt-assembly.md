@@ -193,24 +193,32 @@ function buildSkillsContext(skills: Skill[]): string {
 }
 ```
 
-### Pattern: Memory context injection
+### Pattern: Memory context injection (s112 CoALA+TiMem)
 
-`packages/memory/` provides a composite memory adapter. It aggregates multiple memory backends (local file, Cognee, etc.):
+`packages/memory/` provides `GraphMemoryAdapter` — a single SQLite-backed adapter at `~/.agi/memory/graph.db`. `AgentInvoker` builds a structured memory section with four sub-sections:
 
-```ts
-import type { MemoryAdapter } from "@agi/memory";
-
-async function buildMemoryContext(memory: MemoryAdapter, entityId: string, query: string): Promise<string> {
-  const memories = await memory.recall({ entityId, query, limit: 10 });
-  if (memories.length === 0) return "";
-
-  const items = memories
-    .map((m) => `- ${sanitizeForPromptLiteral(m.content)}`)
-    .join("\n");
-
-  return ["## Relevant Memory", "", items].join("\n");
-}
 ```
+## Memory
+
+### Recalled context (global)
+- {summary}   ← up to 4 global episodic events (project_path IS NULL)
+
+### Project context
+- {summary}   ← up to 4 project-scoped events (project_path = request.projectContext)
+
+### Established facts
+- {predicate}: {objectLiteral} (since {date})  ← up to 3 active relationships
+
+### Related docs
+**{heading}** ({sourcePath})
+{content snippet}  ← up to 2 chunks from DocIndexer
+```
+
+**Token budget:** ~400 (global) + ~400 (project) + ~120 (facts) + ~400 (docs) = ~1320 of the 2000-token cap.
+
+**Off-grid:** when Ollama is unavailable, events and doc chunks are retrieved via FTS5 BM25 only (no crash).
+
+See `docs/agents/memory-and-learning.md` for the full architecture.
 
 ## Developer Mode Context
 

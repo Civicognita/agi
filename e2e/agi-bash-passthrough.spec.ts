@@ -77,8 +77,8 @@ test.describe("agi bash passthrough — caller migration enforcement", () => {
       const sentinel = `echo agi-bash-passthrough-sentinel-${Date.now()}`;
 
       await page.goto("/");
-      await page.getByTestId("header-chat-button").click();
-      await expect(page.getByTestId("chat-flyout")).toBeVisible();
+      // Chat is always visible in the shell
+      await expect(page.getByTestId("chat-flyout")).toBeVisible({ timeout: 8_000 });
 
       const input = page.getByTestId("chat-input");
       await input.fill(`Run \`${sentinel}\` via the shell_exec tool and report the output.`);

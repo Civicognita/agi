@@ -43,6 +43,7 @@ import type { LLMProvider, LLMToolCall, LLMToolResult, LLMMessage, LLMContentBlo
 import type { UserContextStore } from "./user-context-store.js";
 import type { PrimeLoader } from "./prime-loader.js";
 import type { ProjectConfigManager } from "./project-config-manager.js";
+import type { EpisodeExtractor } from "./episode-extractor.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 
@@ -60,6 +61,23 @@ const FRIENDLY_TOOL_SUMMARY: Record<string, string> = {
   taskmaster_dispatch: "Work dispatched",
   search_prime: "Knowledge searched",
 };
+
+/**
+ * True when the tool executed successfully. Checks two failure signals:
+ *   1. Runtime errors prefixed "Error executing tool" (from executeToolSafe wrapper)
+ *   2. Structured error returns `{"error":"..."}` from tool handlers themselves —
+ *      these don't start with the prefix so the old `startsWith` check missed them,
+ *      causing the chat UI to show ✓ even when the tool failed (e.g. CREATE_PLAN
+ *      returning an error JSON showed "Plan created ✓" with no file on disk).
+ */
+function toolSucceeded(content: string): boolean {
+  if (content.startsWith("Error executing tool")) return false;
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    if (typeof parsed.error === "string") return false;
+  } catch { /* not JSON — treat as success */ }
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // Request type classification — heuristic-based, zero LLM cost
@@ -224,6 +242,13 @@ export interface AgentInvokerDeps {
    *  When the result is `"local"`, the system prompt assembler trims sections
    *  small models can't usefully consume (Taskmaster, plan workflow, etc.). */
   getCostMode?: () => string;
+  /** s112 t384 — episode extraction pipeline. When wired, every successful chat
+   *  turn triggers a fire-and-forget episode extraction + scoring + storage cycle. */
+  episodeExtractor?: EpisodeExtractor;
+  /** s112 Phase 3/5 — graph memory adapter for project-scoped queries + relationship traversal. */
+  graphAdapter?: import("@agi/memory").GraphMemoryAdapter;
+  /** s112 Phase 3 — doc indexer for doc chunk injection into context. */
+  docIndexer?: import("./doc-indexer.js").DocIndexer;
 }
 
 export interface InvocationRequest {
@@ -260,6 +285,8 @@ export interface InvocationRequest {
   chatSessionId?: string;
   /** Abort signal — when triggered, the invocation stops at the next checkpoint. */
   abortSignal?: AbortSignal;
+  /** Channel-specific context (guild/channel IDs, sender info) for bridge tool awareness. */
+  channelContext?: import("./system-prompt.js").ChannelContextData;
 }
 
 export type InvocationOutcome =
@@ -376,14 +403,6 @@ export class AgentInvoker extends EventEmitter {
       return { type: "log_only" };
     }
 
-    if (decision.action === "queue") {
-      return {
-        type: "queued",
-        reason: decision.reason,
-        entityNotification: decision.message,
-      };
-    }
-
     // -----------------------------------------------------------------------
     // Step 3: Rate limit check
     // -----------------------------------------------------------------------
@@ -467,16 +486,75 @@ export class AgentInvoker extends EventEmitter {
       channel,
     };
 
-    // Inject recalled memories (if memory adapter is wired)
+    // Inject recalled memories — s112 Phase 5: project-scoped + relationships + doc chunks
     let memories: Array<{ content: string; category: string }> | undefined;
-    if (this.deps.memoryAdapter !== undefined) {
+    const projectPath = request.projectContext ?? null;
+    const queryText = typeof content === "string" ? content.slice(0, 300) : "";
+
+    if (this.deps.graphAdapter !== undefined) {
+      try {
+        const graph = this.deps.graphAdapter;
+
+        // Global episodic events (entity-wide)
+        const globalEvents = await graph.queryGraphEvents({
+          entityId: entity.id,
+          projectPath: null,
+          semantic: queryText,
+          limit: 4,
+        });
+
+        // Project-scoped episodic events
+        const projectEvents = projectPath
+          ? await graph.queryGraphEvents({ entityId: entity.id, projectPath, semantic: queryText, limit: 4 })
+          : [];
+
+        // Established relationship facts
+        const relationships = await graph.queryRelationships({
+          subjectEntityId: entity.id,
+          projectPath,
+          validAt: new Date(),
+          limit: 3,
+        });
+
+        // Doc chunks from k/ and agi/docs/
+        const docChunks = this.deps.docIndexer
+          ? await this.deps.docIndexer.query({
+              query: queryText || "memory context",
+              scope: projectPath ? `project:${projectPath}` : "global",
+              limit: 2,
+            }).catch(() => [])
+          : [];
+
+        const parts: Array<{ content: string; category: string }> = [];
+
+        for (const e of globalEvents) {
+          parts.push({ category: "memory", content: e.summary });
+        }
+        for (const e of projectEvents) {
+          parts.push({ category: "project-memory", content: e.summary });
+        }
+        for (const r of relationships) {
+          const since = new Date(r.validFrom).toISOString().slice(0, 10);
+          parts.push({ category: "fact", content: `${r.predicate}: ${r.objectLiteral} (since ${since})` });
+        }
+        for (const c of docChunks) {
+          const label = c.heading ? `**${c.heading}** (${c.sourcePath})` : c.sourcePath;
+          parts.push({ category: "docs", content: `${label}\n${c.content.slice(0, 200)}` });
+        }
+
+        if (parts.length > 0) memories = parts;
+      } catch {
+        // Memory recall failure is non-fatal
+      }
+    } else if (this.deps.memoryAdapter !== undefined) {
+      // Legacy fallback for non-graph adapters
       try {
         memories = await this.deps.memoryAdapter.query({
           entityId: entity.id,
           limit: 10,
         });
       } catch {
-        // Memory recall failure is non-fatal
+        // non-fatal
       }
     }
 
@@ -489,10 +567,7 @@ export class AgentInvoker extends EventEmitter {
 
       for (const registered of validSkills) {
         const def = registered.definition;
-        // Filter by gateway state
-        if (def.requiresState !== undefined && def.requiresState.length > 0) {
-          if (!def.requiresState.includes(state)) continue;
-        }
+        // requiresState is audit metadata only — not a skill visibility gate.
         // Check trigger patterns against user message
         for (const regex of def.compiledTriggers) {
           if (regex.test(inputText)) {
@@ -546,16 +621,15 @@ export class AgentInvoker extends EventEmitter {
     // tools it cannot actually call.
     const willOfferTools = shouldOfferTools(sanitizedText, requestType) && availableTools.length > 0;
 
-    // Iterative-work mode — when the project opts in via
-    // `iterativeWork.enabled: true`, hot-load agi/prompts/iterative-work.md so
-    // Aion participates in the tynn workflow on this turn. Read at use time
-    // (per `feedback_hot_config`); errors are swallowed so a missing prompt
-    // file never breaks invocation.
+    // Iterative-work mode — when the project has an enabled pm-loop job,
+    // hot-load agi/prompts/iterative-work.md so Aion participates in the tynn
+    // workflow on this turn. Read at use time (per `feedback_hot_config`);
+    // errors are swallowed so a missing prompt file never breaks invocation.
+    const hasPmLoop = projectConfigForTurn?.scheduledJobs?.some(
+      (j) => j.type === "pm-loop" && j.enabled,
+    ) ?? false;
     let iterativeWorkPrompt: string | undefined;
-    if (
-      requestType === "project" &&
-      projectConfigForTurn?.iterativeWork?.enabled === true
-    ) {
+    if (requestType === "project" && hasPmLoop) {
       try {
         const { readFileSync } = await import("node:fs");
         const { resolve: resolvePath } = await import("node:path");
@@ -593,6 +667,7 @@ export class AgentInvoker extends EventEmitter {
         projectNotes = ordered.map((n) => ({
           title: n.title,
           body: n.body,
+          kind: n.kind,
           pinned: n.pinned,
           updatedAt: n.updatedAt,
           scope: n.projectPath === null ? "global" as const : "project" as const,
@@ -603,6 +678,9 @@ export class AgentInvoker extends EventEmitter {
         this.log.warn(`notes injection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+
+    // s197 — doc topic index so Aion knows what platform docs exist.
+    const docTopicIndex = this.deps.docIndexer?.getDocTopicIndex();
 
     const promptCtx: SystemPromptContext = {
       entity: entityCtx,
@@ -626,6 +704,8 @@ export class AgentInvoker extends EventEmitter {
       toolsAvailable: willOfferTools,
       iterativeWorkPrompt,
       ...(projectNotes !== undefined ? { projectNotes } : {}),
+      ...(request.channelContext !== undefined ? { channelContext: request.channelContext } : {}),
+      ...(docTopicIndex !== undefined && Object.keys(docTopicIndex).length > 0 ? { docTopicIndex } : {}),
     };
 
     const { prompt: baseSystemPrompt, breakdown: promptBreakdown } = assembleSystemPromptWithBreakdown(promptCtx);
@@ -923,7 +1003,7 @@ export class AgentInvoker extends EventEmitter {
             toolName: toolCall.name,
             toolIndex: i,
             loopIteration: loopCount,
-            success: !execResult.content.startsWith("Error executing tool"),
+            success: toolSucceeded(execResult.content),
             summary: FRIENDLY_TOOL_SUMMARY[toolCall.name] ?? (execResult.wasTruncated ? "Done (truncated)" : "Done"),
             resultContent: execResult.content,
             detail,
@@ -1129,7 +1209,7 @@ export class AgentInvoker extends EventEmitter {
               toolName: toolCall.name,
               toolIndex: i,
               loopIteration: loopCount,
-              success: !execResult.content.startsWith("Error executing tool"),
+              success: toolSucceeded(execResult.content),
               summary: FRIENDLY_TOOL_SUMMARY[toolCall.name] ?? (execResult.wasTruncated ? "Done (truncated)" : "Done"),
               resultContent: execResult.content,
               detail: acDetail,
@@ -1234,6 +1314,20 @@ export class AgentInvoker extends EventEmitter {
         loopCount,
         coaFingerprint: outboundFingerprint,
       });
+
+      // Fire-and-forget episode extraction (s112 t384). Must not block the
+      // response return. void is intentional — errors are logged inside extractor.
+      if (this.deps.episodeExtractor !== undefined) {
+        void this.deps.episodeExtractor.extractAndStore({
+          userMessage: sanitizedText,
+          assistantResponse: cleanedText,
+          toolsUsed,
+          model: result.model,
+          coaFingerprint: outboundFingerprint,
+          sessionKey: sKey,
+          projectPath: request.projectContext ?? null,
+        });
+      }
 
       const historyTokens = history.tokenEstimate;
       const enrichedRoutingMeta = result.routingMeta

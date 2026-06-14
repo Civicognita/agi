@@ -34,7 +34,7 @@ test.describe("Chat workflow", () => {
 
   test("chat flyout opens via project 'Talk about this project' button", async ({ page }) => {
     await page.goto("/projects");
-    await page.waitForTimeout(1000);
+    await page.waitForLoadState("networkidle");
     const cards = page.getByTestId("project-card");
     const cardCount = await cards.count();
     test.skip(cardCount === 0, "no projects available in this environment");
@@ -50,7 +50,7 @@ test.describe("Chat workflow", () => {
 
   test("project chat re-opens after close (Phase 4b: prevContextRef reset)", async ({ page }) => {
     await page.goto("/projects");
-    await page.waitForTimeout(1000);
+    await page.waitForLoadState("networkidle");
     const cards = page.getByTestId("project-card");
     const cardCount = await cards.count();
     test.skip(cardCount === 0, "no projects available in this environment");
@@ -111,5 +111,14 @@ test.describe("Chat workflow", () => {
     await expect(flyout).toBeVisible();
     // No active run → pill is not rendered.
     await expect(flyout.getByTestId("chat-live-pill")).toHaveCount(0);
+  });
+
+  test("suggestion-chips testid is wired (absent in empty session)", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("header-chat-button").click();
+    const flyout = page.getByTestId("chat-flyout");
+    await expect(flyout).toBeVisible();
+    // No prior session → no suggestions rendered yet.
+    await expect(flyout.getByTestId("suggestion-chips")).toHaveCount(0);
   });
 });

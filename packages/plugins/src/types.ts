@@ -6,7 +6,7 @@ import type { ProjectTypeDefinition, ProjectTypeTool } from "@agi/gateway-core";
 export type { LogSourceDefinition } from "@agi/gateway-core";
 import type { ComponentLogger } from "@agi/gateway-core";
 import type { StackDefinition } from "@agi/gateway-core";
-import type { AionimaChannelPlugin } from "@agi/channel-sdk";
+import type { AionimaChannelPlugin } from "./channel-plugin-types.js";
 import type { ScanProviderDefinition } from "@agi/security";
 
 // ---------------------------------------------------------------------------
@@ -837,6 +837,49 @@ export interface WorkerDefinition {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Ambient log — shared data shape for channel message logging (s189)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single raw message captured by the channel ambient log. Defined here
+ * (not in gateway-core) so channel plugins can reference the type without
+ * creating a circular dependency on gateway-core.
+ */
+export interface AmbientEntry {
+  ts: string;
+  authorId: string;
+  displayName: string;
+  text: string;
+  roomId: string;
+}
+
+/** s194: Registration step in the Discord DM onboarding flow. */
+export type RegistrationStep = "name" | "email" | "birthdate" | "pronouns" | "confirm" | "submitted" | "cancelled";
+
+/** s194: In-progress Discord DM registration session. Key: "discord::{userId}". */
+export interface RegistrationSession {
+  sessionId: string;
+  channelUserId: string;
+  discordHandle: string;
+  guildId?: string;
+  step: RegistrationStep;
+  data: { name?: string; email?: string; birthdate?: string; pronouns?: string };
+  startedAt: string;
+  updatedAt: string;
+}
+
+/** s194: Input shape for capturing a pending approval from the registration flow. */
+export interface PendingApprovalCaptureInput {
+  channelId: string;
+  roomId: string;
+  channelUserId: string;
+  displayName: string;
+  projectPath?: string;
+  firstMessagePreview: string;
+  registrationData?: { name?: string; email?: string; birthdate?: string; pronouns?: string; discordHandle?: string };
+}
+
 // Plugin API — what plugins receive on activation
 // ---------------------------------------------------------------------------
 
@@ -853,6 +896,15 @@ export interface AionimaPluginAPI {
   registerRuntimeInstaller(installer: RuntimeInstaller): void;
   registerStack(def: StackDefinition): void;
   registerChannel(channelPlugin: AionimaChannelPlugin): void;
+  /**
+   * CHN-B (s163) slice 2 — register a `defineChannelV2` channel definition
+   * (from @agi/sdk). Coexists with legacy `registerChannel()` during the
+   * additive migration. `def` is typed `unknown` here to avoid a circular
+   * workspace dep (@agi/plugins ← @agi/sdk); consumers cast back via
+   * `import type { ChannelDefinition } from "@agi/sdk"`. The runtime
+   * surface requires `def.id` (string) so the registry can dedupe.
+   */
+  registerChannelV2(def: { id: string }): void;
   registerAction(def: ActionDefinition): void;
   /**
    * @deprecated s150 t639 (2026-05-07) — zero production callers; slated for
@@ -882,6 +934,20 @@ export interface AionimaPluginAPI {
   registerMcpServerTemplate(def: McpServerTemplate): void;
   registerScanProvider(def: ScanProviderDefinition): void;
   registerWorker(def: WorkerDefinition): void;
+  /**
+   * Create or look up a channel-originated user account. Called by channel
+   * plugins (e.g., Discord) to register members as pending AGI users without
+   * requiring direct DB access from the plugin. `channelId` is the plugin's
+   * channel identifier (e.g., "discord"). `userId` is the platform-native ID.
+   * Returns the internal AGI user ID and whether the row was newly created.
+   * Optional — only wired when the gateway supplies a `createChannelUser`
+   * callback in `PluginLoaderDeps`.
+   */
+  getOrCreateChannelUser?: (
+    channelId: string,
+    userId: string,
+    meta: { displayName?: string; username?: string },
+  ) => Promise<{ userId: string; isNew: boolean }>;
   getChannelConfig(channelId: string): { enabled: boolean; config: Record<string, unknown> } | undefined;
   getConfig(): Record<string, unknown>;
   getLogger(): ComponentLogger;
@@ -891,6 +957,29 @@ export interface AionimaPluginAPI {
   getProjectConfig(projectPath: string): Record<string, unknown> | null;
   /** Get installed stacks for a project. */
   getProjectStacks(projectPath: string): Array<{ stackId: string; addedAt: string }>;
+  /**
+   * Log a raw channel message to today's ambient session file for the given
+   * channel. Used by channel plugins (e.g., Discord) to record ALL messages,
+   * not just those routed to Aion. Optional — only wired when the gateway
+   * supplies a ChannelAmbientLog in PluginLoaderDeps (s189).
+   */
+  logAmbientMessage?: (channelId: string, entry: AmbientEntry) => void;
+  /**
+   * Return recent messages from today's ambient log for the given channel.
+   * Used by channel plugins to inject wake-up context when Aion is mentioned.
+   * Optional — only wired alongside logAmbientMessage (s189).
+   */
+  getAmbientContext?: (channelId: string, limit: number) => AmbientEntry[];
+  /** s194: Check whether a channel user is verified in the entity store. */
+  isEntityVerified?: (channelId: string, userId: string) => Promise<boolean>;
+  /** s194: Retrieve an active registration session by sessionId. */
+  getRegistrationSession?: (sessionId: string) => RegistrationSession | null;
+  /** s194: Persist or update a registration session. */
+  setRegistrationSession?: (session: RegistrationSession) => void;
+  /** s194: Remove a registration session (cancelled or completed). */
+  deleteRegistrationSession?: (sessionId: string) => void;
+  /** s194: Capture a pending approval record (e.g., from a completed registration flow). */
+  capturePendingApproval?: (input: PendingApprovalCaptureInput) => void;
 }
 
 // ---------------------------------------------------------------------------

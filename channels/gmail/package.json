@@ -12,7 +12,6 @@
     "entry": "./src/index.ts"
   },
   "dependencies": {
-    "@agi/channel-sdk": "workspace:*",
     "@agi/plugins": "workspace:*",
     "googleapis": "^146.0.0"
   }

@@ -73,11 +73,46 @@ export interface MagicAppWorkflowStep {
   dependsOn?: string[];
 }
 
+/**
+ * Channel-message trigger config — scopes this workflow to specific
+ * channel/room/pattern combinations. All fields optional; absent means
+ * "match any". Used when trigger === "channel-message".
+ *
+ * CHN-H (s169): wired by the gateway's onWorkflowMatch dispatcher when
+ * a ChannelWorkflowBinding fires for this MApp.
+ */
+export interface MagicAppChannelTrigger {
+  /** Restrict to a specific channel id ("discord", "slack", "telegram", …). */
+  channelId?: string;
+  /** Restrict to a specific room. Undefined = any room on the channel. */
+  roomId?: string;
+  /**
+   * ECMAScript regex tested against message text (case-insensitive).
+   * Undefined / empty = match all messages passing the other filters.
+   */
+  messagePattern?: string;
+}
+
 export interface MagicAppWorkflow {
   id: string;
   name: string;
   description?: string;
-  trigger: "manual" | "on-file-change" | "scheduled";
+  /**
+   * What event fires this workflow.
+   * - "manual"          — owner triggers explicitly via UI or API.
+   * - "on-file-change"  — file-watcher fires on project file changes.
+   * - "scheduled"       — cron-based schedule.
+   * - "channel-message" — inbound channel message matching a
+   *   ChannelWorkflowBinding fires this workflow. CHN-H (s169).
+   */
+  trigger: "manual" | "on-file-change" | "scheduled" | "channel-message";
+  /**
+   * Channel-trigger scope declaration. Only meaningful when
+   * trigger === "channel-message". The gateway dispatcher uses the
+   * ChannelWorkflowBinding match result; this field is informational
+   * (documents which channels the MApp author intended to receive).
+   */
+  channelTrigger?: MagicAppChannelTrigger;
   steps: MagicAppWorkflowStep[];
 }
 

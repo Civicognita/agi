@@ -13,8 +13,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createCreatePlanHandler } from "./create-plan.js";
 
-const PROJECT_PATH = "/home/test/myproject";
-
 function parseOk(raw: string): { ok: true; plan: Record<string, unknown> } {
   const result = JSON.parse(raw) as { ok: true; plan: Record<string, unknown> };
   return result;
@@ -26,19 +24,16 @@ function parseErr(raw: string): string {
 }
 
 describe("create_plan handler — input validation", () => {
-  let tmpHome: string;
-  let originalHome: string | undefined;
+  let tmpProjectDir: string;
 
   beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), "create-plan-tool-"));
-    originalHome = process.env.HOME;
-    process.env.HOME = tmpHome;
+    // PlanStore now writes to <projectPath>/.ai/plans/ (canonical per-project
+    // location). The project directory must exist for mkdirSync to succeed.
+    tmpProjectDir = mkdtempSync(join(tmpdir(), "create-plan-proj-"));
   });
 
   afterEach(() => {
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
-    rmSync(tmpHome, { recursive: true, force: true });
+    rmSync(tmpProjectDir, { recursive: true, force: true });
   });
 
   it("rejects when projectPath is missing", async () => {
@@ -65,7 +60,7 @@ describe("create_plan handler — input validation", () => {
   it("rejects when title is missing", async () => {
     const handler = createCreatePlanHandler();
     const res = await handler({
-      projectPath: PROJECT_PATH,
+      projectPath: tmpProjectDir,
       body: "B",
       steps: [{ title: "s", type: "plan" }],
     });
@@ -75,7 +70,7 @@ describe("create_plan handler — input validation", () => {
   it("rejects when body is missing", async () => {
     const handler = createCreatePlanHandler();
     const res = await handler({
-      projectPath: PROJECT_PATH,
+      projectPath: tmpProjectDir,
       title: "T",
       steps: [{ title: "s", type: "plan" }],
     });
@@ -85,7 +80,7 @@ describe("create_plan handler — input validation", () => {
   it("rejects when steps array is empty", async () => {
     const handler = createCreatePlanHandler();
     const res = await handler({
-      projectPath: PROJECT_PATH,
+      projectPath: tmpProjectDir,
       title: "T",
       body: "B",
       steps: [],
@@ -96,7 +91,7 @@ describe("create_plan handler — input validation", () => {
   it("rejects a step with an invalid type", async () => {
     const handler = createCreatePlanHandler();
     const res = await handler({
-      projectPath: PROJECT_PATH,
+      projectPath: tmpProjectDir,
       title: "T",
       body: "B",
       steps: [{ title: "s", type: "not-a-real-type" }],
@@ -107,7 +102,7 @@ describe("create_plan handler — input validation", () => {
   it("rejects a step missing a title", async () => {
     const handler = createCreatePlanHandler();
     const res = await handler({
-      projectPath: PROJECT_PATH,
+      projectPath: tmpProjectDir,
       title: "T",
       body: "B",
       steps: [{ type: "plan" }],
@@ -115,10 +110,12 @@ describe("create_plan handler — input validation", () => {
     expect(parseErr(res)).toMatch(/missing a title/);
   });
 
-  it("writes a plan to ~/.agi/{slug}/plans when valid", async () => {
+  it("writes a plan to <projectPath>/.ai/plans/ when valid", async () => {
+    // Canonical location is now per-project (not ~/.agi/{slug}) — see
+    // PlanStore.plansDir() which returns join(projectPath, ".ai", "plans").
     const handler = createCreatePlanHandler();
     const res = await handler({
-      projectPath: PROJECT_PATH,
+      projectPath: tmpProjectDir,
       title: "Integration",
       body: "# Body\n\nsome markdown",
       steps: [
@@ -136,10 +133,10 @@ describe("create_plan handler — input validation", () => {
     expect(steps[0]!.id).toBe("step_01");
     expect(steps[1]!.id).toBe("step_02");
 
-    // File landed in the expected slug directory.
-    const slugDir = join(tmpHome, ".agi", "home-test-myproject", "plans");
-    expect(existsSync(slugDir)).toBe(true);
-    const files = readdirSync(slugDir);
+    // File landed in the canonical per-project location.
+    const plansDir = join(tmpProjectDir, ".ai", "plans");
+    expect(existsSync(plansDir)).toBe(true);
+    const files = readdirSync(plansDir);
     expect(files).toHaveLength(1);
     expect(files[0]!.endsWith(".mdc")).toBe(true);
   });
@@ -147,7 +144,7 @@ describe("create_plan handler — input validation", () => {
   it("preserves dependsOn arrays through to the stored plan", async () => {
     const handler = createCreatePlanHandler();
     const res = await handler({
-      projectPath: PROJECT_PATH,
+      projectPath: tmpProjectDir,
       title: "Deps",
       body: "b",
       steps: [
