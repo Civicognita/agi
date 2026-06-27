@@ -119,4 +119,59 @@ test.describe("Aionima Contribute — UI", () => {
       await expect(disabledCreate.first()).toBeDisabled();
     }
   });
+
+  // Regression (s222): after creating a PR and then merging it upstream, the
+  // server reports no open PR (existingPrUrl=null) — but the panel kept the
+  // optimistic local URL and the row still showed "View open PR". Refresh must
+  // clear the optimistic state so the server truth wins.
+  test("Refresh clears a stale optimistic PR link once the PR is merged", async ({ page }) => {
+    const statusBody = {
+      ownerLogin: "wishborn",
+      learnings: [],
+      mechanics: [
+        {
+          slug: "agi",
+          displayName: "agi",
+          upstreamOrg: "Civicognita",
+          upstream: "agi",
+          branch: "dev",
+          commitsAhead: 1,
+          existingPrUrl: null,
+          existingPrNumber: null,
+        },
+      ],
+    };
+    await page.route("**/api/dev/contribute/status", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(statusBody) }),
+    );
+    await page.route("**/api/dev/contribute/agi/pr", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ prUrl: "https://github.com/Civicognita/agi/pull/1", alreadyOpen: false }),
+      }),
+    );
+
+    await page.goto("/projects/_aionima");
+    await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
+    const tab = page.getByTestId("project-tab-contribute");
+    if ((await tab.count()) === 0) {
+      test.skip();
+      return;
+    }
+    await tab.click();
+    await expect(page.getByTestId("contribute-group-mechanics")).toBeVisible({ timeout: 8_000 });
+
+    const row = page.getByTestId("contribute-row-agi");
+    // Create the PR — the panel now holds the optimistic URL locally.
+    await row.getByTestId("contribute-create-pr").click();
+    await expect(page.getByTestId("contribute-pr-link-agi")).toBeVisible();
+
+    // The PR has since been merged upstream; the status endpoint still reports
+    // existingPrUrl=null (no OPEN PR). Refresh must drop the stale link and
+    // restore the Create PR affordance — not keep showing "View open PR".
+    await page.getByRole("button", { name: "Refresh" }).click();
+    await expect(page.getByTestId("contribute-pr-link-agi")).toHaveCount(0);
+    await expect(row.getByTestId("contribute-create-pr")).toBeVisible();
+  });
 });

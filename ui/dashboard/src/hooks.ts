@@ -32,6 +32,7 @@ import {
   fetchHFInstalledDatasets,
   listFineTuneJobs,
   getFineTuneStatus,
+  fetchContributeMetrics,
 } from "./api.js";
 
 // ---------------------------------------------------------------------------
@@ -240,6 +241,15 @@ export function useIncomingStatus() {
       return (await res.json()) as IncomingStatus;
     },
     staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useContributeMetrics() {
+  return useQuery({
+    queryKey: ["dev", "contribute", "metrics"],
+    queryFn: fetchContributeMetrics,
+    staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
 }

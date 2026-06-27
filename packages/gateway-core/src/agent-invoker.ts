@@ -28,6 +28,7 @@ import type { GatewayStateMachine } from "./state-machine.js";
 import type { AgentSessionManager } from "./agent-session.js";
 import type { ToolRegistry, ToolExecutionResult } from "./tool-registry.js";
 import type { RateLimiter } from "./rate-limiter.js";
+import { splitThinking } from "./thinking-text.js";
 
 import {
   assembleSystemPromptWithBreakdown,
@@ -290,7 +291,7 @@ export interface InvocationRequest {
 }
 
 export type InvocationOutcome =
-  | { type: "response"; text: string; toolsUsed: string[]; coaFingerprint: string; taskmasterEmissions: string[]; model: string; provider: string; usage: { inputTokens: number; outputTokens: number }; toolCount: number; loopCount: number; routingMeta?: { costMode: string; complexity: string; selectedModel: string; selectedProvider: string; escalated: boolean; reason: string; requestType?: string; classifierUsed?: "heuristic" | "aion-micro"; contextLayers?: string[]; tokenBreakdown?: SystemPromptTokenBreakdown } }
+  | { type: "response"; text: string; thinking?: string; toolsUsed: string[]; coaFingerprint: string; taskmasterEmissions: string[]; model: string; provider: string; usage: { inputTokens: number; outputTokens: number }; toolCount: number; loopCount: number; routingMeta?: { costMode: string; complexity: string; selectedModel: string; selectedProvider: string; escalated: boolean; reason: string; requestType?: string; classifierUsed?: "heuristic" | "aion-micro"; contextLayers?: string[]; tokenBreakdown?: SystemPromptTokenBreakdown } }
   | { type: "queued"; reason: string; entityNotification: string }
   | { type: "human_routed"; content: string }
   | { type: "log_only" }
@@ -1282,11 +1283,19 @@ export class AgentInvoker extends EventEmitter {
 
       const emissions =
         this.deps.toolRegistry.extractTaskmasterEmissions(finalText);
-      const { text: cleanedText, strippedCount } =
+      const { text: taskmasterCleaned, strippedCount } =
         this.deps.toolRegistry.stripTaskmasterEmissions(
           finalText,
           entity.verificationTier,
         );
+
+      // Separate any inline <thinking>/<think> reasoning the model emitted in
+      // its text (distinct from provider reasoning_content, already mapped to
+      // thinkingBlocks). Without this the raw reasoning block leaks into channel
+      // replies (the Discord bug). visibleText is what users see; the reasoning
+      // rides along on the outcome so channels can surface it separately.
+      const { visibleText: cleanedText, thinking: inlineThinking } =
+        splitThinking(taskmasterCleaned);
 
       if (strippedCount > 0) {
         this.emit("taskmaster_emissions", {
@@ -1347,6 +1356,7 @@ export class AgentInvoker extends EventEmitter {
       return {
         type: "response",
         text: cleanedText,
+        ...(inlineThinking.length > 0 ? { thinking: inlineThinking } : {}),
         toolsUsed,
         coaFingerprint: outboundFingerprint,
         taskmasterEmissions: emissions.map((e) => e.description),

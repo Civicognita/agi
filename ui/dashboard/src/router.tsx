@@ -30,12 +30,15 @@ import DocsPage from "./routes/docs.js";
 import NotesPage from "./routes/notes.js";
 import SettingsLayout from "./routes/settings-layout.js";
 import SettingsGatewayPage from "./routes/settings-gateway.js";
+import ContributePage from "./routes/contribute.js";
+import MemoryPage from "./routes/memory.js";
 import SettingsDynamicPage from "./routes/settings-dynamic.js";
 import { PluginPageResolver } from "./components/PluginPageResolver.js";
 import MarketplacePage from "./routes/marketplace.js";
 import HFMarketplacePage from "./routes/hf-marketplace.js";
 import SettingsHFPage from "./routes/settings-hf.js";
 import SettingsProvidersPage from "./routes/settings-providers.js";
+import SettingsAppearancePage from "./routes/settings-appearance.js";
 import SettingsChannelsPage from "./routes/settings-channels.js";
 import SettingsVaultPage from "./routes/settings-vault.js";
 import ScheduledJobsPage from "./routes/settings-scheduled-jobs.js";
@@ -84,6 +87,8 @@ export const router = createBrowserRouter([
       { path: "reports/:coaReqId", element: <ReportDetailPage /> },
       { path: "entity/:id", element: <EntityPage /> },
       { path: "projects", element: <ProjectsPage /> },
+      { path: "contribute", element: <ContributePage /> },
+      { path: "memory", element: <MemoryPage /> },
 { path: "projects/:slug", element: <ProjectDetailPage /> },
       // MagicApps
       { path: "magic-apps", element: <MagicAppsPage /> },
@@ -119,6 +124,7 @@ export const router = createBrowserRouter([
           { path: "gateway", element: <SettingsGatewayPage /> },
           { path: "identity", element: <SettingsIdentityPage /> },
           { path: "providers", element: <SettingsProvidersPage /> },
+          { path: "appearance", element: <SettingsAppearancePage /> },
           { path: "channels", element: <SettingsChannelsPage /> },
           { path: "vault", element: <SettingsVaultPage /> },
           { path: "scheduled-jobs", element: <ScheduledJobsPage /> },

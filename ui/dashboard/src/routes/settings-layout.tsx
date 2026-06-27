@@ -51,6 +51,7 @@ export default function SettingsLayout() {
     // Identity moved to System ▸ Identity (story #212) — the single home for
     // identity management. /settings/identity still resolves but redirects there.
     { to: "/settings/providers", label: "Providers", isBuiltin: true },
+    { to: "/settings/appearance", label: "Appearance", isBuiltin: true },
     { to: "/settings/channels", label: "Channels", isBuiltin: true },
     { to: "/settings/vault", label: "Vault", isBuiltin: true },
     { to: "/settings/scheduled-jobs", label: "Scheduled Jobs", isBuiltin: true },

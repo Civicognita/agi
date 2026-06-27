@@ -3,12 +3,12 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router";
 import { cn } from "@/lib/utils";
 import { useSettingsContext } from "./settings-layout.js";
 import { SettingsSaveBar } from "@/components/settings/SettingsSaveBar.js";
 import { CompanionDevicesCard } from "@/components/CompanionDevicesCard.js";
 import { OwnerSettings } from "@/components/settings/OwnerSettings.js";
-import { DevSettings } from "@/components/settings/DevSettings.js";
 import { GatewayNetworkSettings } from "@/components/settings/GatewayNetworkSettings.js";
 import { DevNote } from "@/components/ui/dev-notes";
 import { Button } from "@/components/ui/button";
@@ -77,8 +77,13 @@ export default function SettingsGatewayPage() {
         the connections table directly; only this UI was stuck on the dead popup.
       </DevNote>
       <DevNote heading="Contributing/Dev Mode gates DevNotes visibility" kind="info" scope="settings/gateway">
-        Toggle "Contributing" tab → enable Dev Mode. Notes only render when this is on. Production users
-        running the gateway never see DevNotes; you (with Contributing on) see them on every page+tab.
+        Dev Mode gates DevNotes visibility — notes only render when it's on. The toggle moved to the
+        dedicated Contributing page (/contribute, Repos &amp; Mode tab). Production users never see DevNotes.
+      </DevNote>
+      <DevNote heading="2026-06-18 — Contributing moved to /contribute (Wave 2)" kind="info" scope="settings/gateway">
+        The Contributing tab here is now just a pointer. Contributing mode, GitHub connect, fork/repo
+        status, incoming + outbound PRs, and the test VM live on the dedicated /contribute page (Outbound /
+        Incoming / Repos &amp; Mode tabs) — less scroll, plus contribution metrics + PR comments.
       </DevNote>
       <DevNote heading="Project folder restructure incoming (s140)" kind="warning" scope="settings/gateway">
         After running `agi project-migrate s140 --execute`, this page's project list reflects the new
@@ -156,7 +161,16 @@ export default function SettingsGatewayPage() {
       )}
 
       {activeTab === "dev" && (
-        <DevSettings config={draft} update={update} />
+        <div className="rounded-lg border border-border bg-card p-4" data-testid="contribute-moved-pointer">
+          <div className="text-[13px] font-semibold text-foreground">Contributing has its own page now</div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Contributing mode, GitHub connect, fork/repo status, incoming &amp; outbound PRs, and the test VM
+            moved to a dedicated page (Wave 2 — less scroll, contribution metrics, PR comments).
+          </p>
+          <Link to="/contribute" className="inline-block mt-2 text-[12px] text-primary hover:underline" data-testid="contribute-page-link">
+            Open Contributing →
+          </Link>
+        </div>
       )}
 
       {activeTab === "network" && (

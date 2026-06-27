@@ -9,12 +9,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Switch, Progress, Slider, Textarea, Badge,
-  Avatar,
+  Avatar, useToast,
 } from "@particle-academy/react-fancy";
 import { Card, CardHeader, CardContent } from "@/components/ui/card.js";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { Select } from "@/components/ui/select.js";
+import { InfoPopover } from "@/components/ui/info-popover.js";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs.js";
 import { cn } from "@/lib/utils";
 import { PageScroll } from "@/components/PageScroll.js";
 import {
@@ -483,7 +485,16 @@ function PromptCard({ system, tone, refuse, temp, maxTurn, onChange }: {
 
 const ROLE_ALLOW_OPTIONS = ["all", "respond", "respond + memory", "monitor", "none"].map((v) => ({ value: v, label: v }));
 
-function RoleOverridesCard({ roles, onChange }: { roles: RoleOverride[]; onChange: (v: RoleOverride[]) => void }) {
+function RoleOverridesCard({ roles, onChange, availableRoles }: {
+  roles: RoleOverride[];
+  onChange: (v: RoleOverride[]) => void;
+  /** Live channel roles to pick from (e.g. Discord guild roles). When present,
+   *  the role field is a dropdown instead of free text (Wave 3b — "don't make
+   *  me type"). */
+  availableRoles?: Array<{ value: string; label: string }>;
+}) {
+  const hasRoleList = availableRoles !== undefined && availableRoles.length > 0;
+  const roleOptions = hasRoleList ? [{ value: "", label: "Select a role…" }, ...availableRoles] : [];
   return (
     <div className="space-y-2">
       {roles.length === 0 && (
@@ -491,13 +502,29 @@ function RoleOverridesCard({ roles, onChange }: { roles: RoleOverride[]; onChang
       )}
       {roles.map((r, i) => (
         <div key={i} className="flex items-center gap-2">
-          <Input
-            size="sm"
-            placeholder="Role name or ID"
-            value={r.role}
-            onChange={(e) => onChange(roles.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
-            className="flex-1"
-          />
+          {hasRoleList ? (
+            <div className="flex-1">
+              <Select
+                list={
+                  r.role !== "" && !roleOptions.some((o) => o.value === r.role)
+                    ? [...roleOptions, { value: r.role, label: `${r.role} (not in server)` }]
+                    : roleOptions
+                }
+                value={r.role}
+                onValueChange={(v) => onChange(roles.map((x, j) => j === i ? { ...x, role: v } : x))}
+                size="sm"
+                data-testid="role-override-select"
+              />
+            </div>
+          ) : (
+            <Input
+              size="sm"
+              placeholder="Role name or ID"
+              value={r.role}
+              onChange={(e) => onChange(roles.map((x, j) => j === i ? { ...x, role: e.target.value } : x))}
+              className="flex-1"
+            />
+          )}
           <Select
             list={ROLE_ALLOW_OPTIONS}
             value={r.allow}
@@ -673,6 +700,7 @@ export default function CommsChannelsPage() {
   const [saving, setSaving]        = useState(false);
   const [dirty, setDirty]          = useState(false);
   const [error, setError]          = useState<string | null>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
     fetchChannels().then((list) => { setChannels(list); if (list.length > 0) setSelectedId((p) => p ?? list[0].id); }).catch(() => {});
@@ -698,12 +726,42 @@ export default function CommsChannelsPage() {
     try {
       await updateChannelConfig(selectedId, { config: serializeBehavior(behavior) });
       setDirty(false);
+      toast({ title: "Channel settings saved", description: "Your changes are live.", variant: "success" });
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast({ title: "Save failed", description: msg, variant: "error" });
     } finally {
       setSaving(false);
     }
-  }, [selectedId, behavior]);
+  }, [selectedId, behavior, toast]);
+
+  // Live role list for the selected channel (Discord) → the Role-overrides
+  // picker. Backend /api/channels/discord/state returns guild roles even though
+  // the shared DiscordChannelState type doesn't list them, so read defensively.
+  const [availableRoles, setAvailableRoles] = useState<Array<{ value: string; label: string }>>([]);
+  useEffect(() => {
+    if (selectedId !== "discord") { setAvailableRoles([]); return; }
+    let cancelled = false;
+    void fetch("/api/channels/discord/state")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s: unknown) => {
+        if (cancelled || s === null) return;
+        const guilds = (s as { guilds?: Array<{ roles?: Array<{ id: string; name: string; managed?: boolean }> }> }).guilds ?? [];
+        const seen = new Set<string>();
+        const opts: Array<{ value: string; label: string }> = [];
+        for (const g of guilds) {
+          for (const role of g.roles ?? []) {
+            if (role.managed === true || role.name === "@everyone" || seen.has(role.name)) continue;
+            seen.add(role.name);
+            opts.push({ value: role.name, label: role.name });
+          }
+        }
+        setAvailableRoles(opts);
+      })
+      .catch(() => { /* roles unavailable — picker falls back to text input */ });
+    return () => { cancelled = true; };
+  }, [selectedId]);
 
   const selected = channels.find((c) => c.id === selectedId);
   const channelOptions = channels.map((c) => ({ value: c.id, label: c.name }));
@@ -745,14 +803,30 @@ export default function CommsChannelsPage() {
           {/* Mode picker */}
           <div className="px-4 py-3 border-b border-border">
             <div className="mb-2">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Mode</div>
+              <div className="flex items-center gap-1.5">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Mode</div>
+                <InfoPopover title="Channel mode">
+                  Off = Aion ignores this channel entirely. Monitor = reads &amp; remembers but never speaks.
+                  Respond = participates (subject to the @mention + role rules below). This is the master
+                  switch for how visible Aion is here.
+                </InfoPopover>
+              </div>
               <div className="text-[12px] text-muted-foreground mt-0.5">How Aion participates in this channel.</div>
             </div>
             <ModePicker current={behavior.mode} onChange={(m) => patch("mode", m)} disabled={!selectedId} />
           </div>
 
-          {/* 2-col config cards */}
-          <div className="p-4 grid gap-3" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          {/* Per-channel config grouped into tabs (Wave 3d — owner: "too many
+              panels, no tabs, content too moshed up"). Mode stays above as the
+              master switch; the rest splits into Behavior / Access & limits. */}
+          <div className="px-4 pb-4">
+            <Tabs defaultValue="behavior">
+              <TabsList>
+                <TabsTrigger value="behavior" data-testid="channel-tab-behavior">Behavior</TabsTrigger>
+                <TabsTrigger value="access" data-testid="channel-tab-access">Access &amp; limits</TabsTrigger>
+              </TabsList>
+              <TabsContent value="behavior">
+                <div className="grid gap-4 pt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
             <ConfigCard
               title="Agent assignment"
               right={<Badge color="zinc" variant="soft" size="sm">{behavior.agentIds.length} assigned</Badge>}
@@ -760,15 +834,44 @@ export default function CommsChannelsPage() {
               <AgentAssignment agents={agents} assignedIds={behavior.agentIds} onChange={(ids) => patch("agentIds", ids)} />
             </ConfigCard>
 
-            <ConfigCard title="Memory scope">
+            <ConfigCard
+              title="Memory scope"
+              right={
+                <InfoPopover title="Memory scope">
+                  Which slices of Aion's memory it draws on in this channel. channel = this channel's history;
+                  server = the whole server; user = the speaker's history across channels; thread = the current
+                  thread only. Aion has one shared memory ("one mind") — these toggles only scope what it recalls
+                  here, they don't create separate memories.
+                </InfoPopover>
+              }
+            >
               <MemoryScopeCard value={behavior.memory} onChange={(v) => patch("memory", v)} />
             </ConfigCard>
 
-            <ConfigCard title="Tool access">
+            <ConfigCard
+              title="Tool access"
+              right={
+                <InfoPopover title="Tool access">
+                  Which tools Aion may call when acting in this channel (memory recall/write, web search,
+                  reactions…). Unchecking one disables it here even if it's enabled elsewhere — a per-channel
+                  safety boundary.
+                </InfoPopover>
+              }
+            >
               <ToolAccessCard tools={behavior.tools} onChange={(v) => patch("tools", v)} />
             </ConfigCard>
 
-            <ConfigCard title="Auto-moderation" accent="bg-amber-500">
+            <ConfigCard
+              title="Auto-moderation"
+              accent="bg-amber-500"
+              right={
+                <InfoPopover title="Auto-moderation">
+                  Lets Aion watch this channel and act on policy issues (flag, warn, remove) without being
+                  addressed. Higher sensitivity catches more but risks false positives; off means Aion only
+                  moderates when explicitly asked.
+                </InfoPopover>
+              }
+            >
               <AutoModCard value={behavior.autoMod} onChange={(v) => patch("autoMod", v)} />
             </ConfigCard>
 
@@ -794,14 +897,35 @@ export default function CommsChannelsPage() {
                 onChange={(p) => { setBehavior((prev) => ({ ...prev, ...p })); setDirty(true); }}
               />
             </ConfigCard>
-          </div>
-
-          {/* 3-col bottom strip */}
-          <div className="px-4 pb-4 grid gap-3" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
-            <ConfigCard title="Role overrides">
-              <RoleOverridesCard roles={behavior.roleOverrides} onChange={(v) => patch("roleOverrides", v)} />
+                </div>
+              </TabsContent>
+              <TabsContent value="access">
+                <div className="grid gap-4 pt-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
+            <ConfigCard
+              title="Role overrides"
+              right={
+                <InfoPopover title="Role overrides">
+                  Grant or restrict what Aion does for members with a given role. Each row maps a role to an
+                  access level (respond, monitor, none…). Rows are matched top-down; members with no matching
+                  role get the channel default. On Discord, pick from your server's live roles.
+                </InfoPopover>
+              }
+            >
+              <RoleOverridesCard
+                roles={behavior.roleOverrides}
+                onChange={(v) => patch("roleOverrides", v)}
+                availableRoles={availableRoles}
+              />
             </ConfigCard>
-            <ConfigCard title="Rate limits">
+            <ConfigCard
+              title="Rate limits"
+              right={
+                <InfoPopover title="Rate limits">
+                  Caps how often Aion replies in this channel (per-minute / per-hour) so it can't flood or run
+                  up cost during a busy thread. Hitting the cap makes Aion go quiet until the window resets.
+                </InfoPopover>
+              }
+            >
               <RateLimitsCard value={behavior.rateLimits} onChange={(v) => patch("rateLimits", v)} />
             </ConfigCard>
             <ConfigCard
@@ -812,6 +936,9 @@ export default function CommsChannelsPage() {
                 Automatic thread tagging routes messages to relevant agents. Topic model training requires channel history.
               </p>
             </ConfigCard>
+                </div>
+              </TabsContent>
+            </Tabs>
           </div>
         </div>
 

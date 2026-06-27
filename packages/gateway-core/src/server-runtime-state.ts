@@ -2356,6 +2356,148 @@ export async function createGatewayRuntimeState(
   });
 
   // -----------------------------------------------------------------------
+  // Identity people management (Wave 1 s228) — approved/rejected history.
+  //
+  // GET    /api/identity/people?status=approved|rejected           — list decided people
+  // PATCH  /api/identity/people/:channelId/:channelUserId/projects — edit granted projects
+  // POST   /api/identity/people/:channelId/:channelUserId/revoke   — revoke approval
+  // POST   /api/identity/people/:channelId/:channelUserId/re-review — un-reject (re-review)
+  //
+  // Same private-network + 503-if-no-store guard as /api/identity/pending.
+  // -----------------------------------------------------------------------
+
+  fastify.get("/api/identity/people", async (request, reply) => {
+    const clientIp = getClientIp(request.raw);
+    if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+    if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+    const status = (request.query as Record<string, string>)["status"];
+    const filter = status === "approved" || status === "rejected" ? status : undefined;
+
+    // APPROVED people are sourced from the ENTITY STORE (the durable local
+    // identity system) — a verified/sealed tier == approved. This is the fix
+    // for "doesn't remember users / not tied to the identity system": the old
+    // implementation read the ephemeral pending-approval decision log, which
+    // held only pre-Wave-1 snapshot-less rows and showed nothing. The decision
+    // log is now consulted ONLY to enrich each person with assigned projects.
+    const decisionList = deps.pendingApprovalStore.listDecisions();
+    const projectsByPerson = new Map<string, string[]>();
+    for (const d of decisionList) {
+      if (d.channelId !== undefined && d.channelUserId !== undefined && d.assignedProjectPaths !== undefined) {
+        projectsByPerson.set(`${d.channelId}::${d.channelUserId}`, d.assignedProjectPaths);
+      }
+    }
+
+    type DecidedPerson = {
+      status: "approved" | "rejected";
+      channelId: string;
+      channelUserId: string;
+      displayName: string;
+      decidedAt: string;
+      entityId?: string;
+      verificationTier?: string;
+      assignedProjectPaths?: string[];
+    };
+    const people: DecidedPerson[] = [];
+
+    if (deps.entityStore !== undefined && filter !== "rejected") {
+      const channelPeople = await deps.entityStore.listChannelPeople();
+      for (const p of channelPeople) {
+        if (p.verificationTier !== "verified" && p.verificationTier !== "sealed") continue;
+        // The owner (#E0) isn't an "approved person" — they do the approving.
+        if (deps.ownerEntityId !== undefined && p.entityId === deps.ownerEntityId) continue;
+        const projects = projectsByPerson.get(`${p.channel}::${p.channelUserId}`);
+        people.push({
+          status: "approved",
+          channelId: p.channel,
+          channelUserId: p.channelUserId,
+          displayName: p.displayName,
+          decidedAt: p.updatedAt,
+          entityId: p.entityId,
+          verificationTier: p.verificationTier,
+          ...(projects !== undefined ? { assignedProjectPaths: projects } : {}),
+        });
+      }
+    }
+
+    // REJECTED people come from the decision log (a rejection is a drop, not a
+    // durable entity tier). Snapshot-bearing rejected decisions only.
+    if (filter !== "approved") {
+      for (const d of deps.pendingApprovalStore.listDecisions("rejected")) {
+        if (d.channelId === undefined || d.channelUserId === undefined) continue;
+        people.push({
+          status: "rejected",
+          channelId: d.channelId,
+          channelUserId: d.channelUserId,
+          displayName: d.displayName ?? d.channelUserId,
+          decidedAt: d.decidedAt,
+          ...(d.assignedProjectPaths !== undefined ? { assignedProjectPaths: d.assignedProjectPaths } : {}),
+        });
+      }
+    }
+
+    return reply.send({ people, count: people.length });
+  });
+
+  fastify.patch<{ Params: { channelId: string; channelUserId: string }; Body: { projectPaths?: string[] } }>(
+    "/api/identity/people/:channelId/:channelUserId/projects",
+    async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+      if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+      const { channelId, channelUserId } = request.params;
+      const projectPaths = (request.body as { projectPaths?: string[] } | undefined)?.projectPaths ?? [];
+      // Upsert: entity-sourced approved people may have no decision-log entry,
+      // so resolve their display name from the entity store and create one.
+      let displayName = channelUserId;
+      if (deps.entityStore !== undefined) {
+        const entity = await deps.entityStore.resolveEntityByChannel(channelId, channelUserId);
+        if (entity !== null) displayName = entity.displayName;
+      }
+      deps.pendingApprovalStore.upsertAssignedProjects(channelId, channelUserId, displayName, projectPaths);
+      return reply.send({ ok: true, channelId, channelUserId, projectPaths });
+    },
+  );
+
+  fastify.post<{ Params: { channelId: string; channelUserId: string } }>(
+    "/api/identity/people/:channelId/:channelUserId/revoke",
+    async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+      if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+      const { channelId, channelUserId } = request.params;
+      // Real revoke: drop the entity back to "unverified" (the inbound gate
+      // checks entity.verificationTier, so clearing only the JSON decision would
+      // leave the person fully approved). Then clear any decision-log record.
+      let entityRevoked = false;
+      if (deps.entityStore !== undefined) {
+        const entity = await deps.entityStore.resolveEntityByChannel(channelId, channelUserId);
+        if (entity !== null && (entity.verificationTier === "verified" || entity.verificationTier === "sealed")) {
+          await deps.entityStore.updateEntity(entity.id, { verificationTier: "unverified" });
+          entityRevoked = true;
+        }
+      }
+      const clearedDecision = deps.pendingApprovalStore.clearDecision(channelId, channelUserId);
+      if (!entityRevoked && !clearedDecision) {
+        return reply.code(404).send({ error: "No approved entity or decision found for that channel + user" });
+      }
+      return reply.send({ ok: true, action: "revoked", channelId, channelUserId, entityRevoked });
+    },
+  );
+
+  fastify.post<{ Params: { channelId: string; channelUserId: string } }>(
+    "/api/identity/people/:channelId/:channelUserId/re-review",
+    async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Identity API only allowed from private network" });
+      if (!deps.pendingApprovalStore) return reply.code(503).send({ error: "Pending-approval store not available" });
+      const { channelId, channelUserId } = request.params;
+      const changed = deps.pendingApprovalStore.clearDecision(channelId, channelUserId);
+      if (!changed) return reply.code(404).send({ error: "No decision found for that channel + user" });
+      return reply.send({ ok: true, action: "re-review", channelId, channelUserId });
+    },
+  );
+
+  // -----------------------------------------------------------------------
   // CHN-F (s167) — channel workflow bindings CRUD (private network only)
   //
   // GET    /api/channels/workflow-bindings                — list all
@@ -4493,6 +4635,28 @@ export async function createGatewayRuntimeState(
     });
 
     // -----------------------------------------------------------------------
+    // GET /api/dev/contribute/metrics — contribution metrics (Wave 2b)
+    //   Per core repo: merged PRs (accepted contributions), open PRs, total
+    //   authored, plus rolled-up totals. Informational; zeros without a token.
+    // -----------------------------------------------------------------------
+    fastify.get("/api/dev/contribute/metrics", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) {
+        return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      }
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) {
+          return reply.code(403).send({ error: "Admin role required" });
+        }
+      }
+      const { login, token } = await readOwnerGithub(deps, encryptionKey);
+      const { computeContributeMetrics } = await import("./dev-mode-contribute.js");
+      const metrics = await computeContributeMetrics(login, token);
+      return reply.send(metrics);
+    });
+
+    // -----------------------------------------------------------------------
     // GET /api/dev/incoming/status — INBOUND PR review queue
     // -----------------------------------------------------------------------
     //
@@ -4588,6 +4752,60 @@ export async function createGatewayRuntimeState(
           "click through. Press Enter when done — your dev tree is restored automatically " +
           "(even on Ctrl-C). Your working tree is never touched.",
       });
+    });
+
+    // -----------------------------------------------------------------------
+    // PR comments (Wave 2c) — read + post an incoming PR's conversation.
+    //   GET  /api/dev/incoming/:slug/pr/:number/comments
+    //   POST /api/dev/incoming/:slug/pr/:number/comments  { body }
+    // -----------------------------------------------------------------------
+    fastify.get("/api/dev/incoming/:slug/pr/:number/comments", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) return reply.code(403).send({ error: "Admin role required" });
+      }
+      const { slug, number } = request.params as { slug: string; number: string };
+      const prNumber = Number.parseInt(number, 10);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) return reply.code(400).send({ error: `invalid PR number: ${number}` });
+      const { CORE_REPOS } = await import("./dev-mode-forks.js");
+      const spec = CORE_REPOS.find((s) => s.slug === slug);
+      if (!spec) return reply.code(404).send({ error: `unknown core repo: ${slug}` });
+      const { token } = await readOwnerGithub(deps, encryptionKey);
+      const { listPrComments } = await import("./dev-mode-incoming.js");
+      try {
+        const comments = await listPrComments(spec, prNumber, token ?? "");
+        return reply.send({ comments, count: comments.length });
+      } catch (err) {
+        return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+
+    fastify.post("/api/dev/incoming/:slug/pr/:number/comments", async (request, reply) => {
+      const clientIp = getClientIp(request.raw);
+      if (!isPrivateNetwork(clientIp)) return reply.code(403).send({ error: "Dev API only allowed from private network" });
+      if (dashboardUserStore) {
+        const session = extractDashboardSession(request.raw, dashboardUserStore);
+        if (!session || !hasRole(session.role, "admin")) return reply.code(403).send({ error: "Admin role required" });
+      }
+      const { slug, number } = request.params as { slug: string; number: string };
+      const prNumber = Number.parseInt(number, 10);
+      if (!Number.isInteger(prNumber) || prNumber <= 0) return reply.code(400).send({ error: `invalid PR number: ${number}` });
+      const commentBody = (request.body as { body?: string } | undefined)?.body;
+      if (commentBody === undefined || commentBody.trim() === "") return reply.code(400).send({ error: "comment body is required" });
+      const { CORE_REPOS } = await import("./dev-mode-forks.js");
+      const spec = CORE_REPOS.find((s) => s.slug === slug);
+      if (!spec) return reply.code(404).send({ error: `unknown core repo: ${slug}` });
+      const { token } = await readOwnerGithub(deps, encryptionKey);
+      if (token === null) return reply.code(400).send({ error: "GitHub not connected — connect on the Contributing page" });
+      const { postPrComment } = await import("./dev-mode-incoming.js");
+      try {
+        const comment = await postPrComment(spec, prNumber, token, commentBody.trim());
+        return reply.send({ ok: true, comment });
+      } catch (err) {
+        return reply.code(502).send({ error: err instanceof Error ? err.message : String(err) });
+      }
     });
 
     // -----------------------------------------------------------------------
@@ -5472,9 +5690,12 @@ export async function createGatewayRuntimeState(
     const now = Date.now();
     if (now - topProcessesCache.ts < 5000) return topProcessesCache.data;
     try {
+      // `ps aux` (BSD personality) combined with `-o` errors with "conflicting
+      // format options" and breaks the top-processes widget. Use `-eo` (select
+      // all + user-defined format) — one format source, no conflict.
       const out = execFileSync(
         "ps",
-        ["aux", "--sort=-%mem", "--no-headers", "-ww", "-o", "pid,user,%cpu,%mem,rss,comm"],
+        ["-eo", "pid,user,%cpu,%mem,rss,comm", "--sort=-%mem", "--no-headers", "-ww"],
         { timeout: 5000 },
       ).toString();
       const data = out

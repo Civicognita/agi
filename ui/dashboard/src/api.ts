@@ -4374,3 +4374,85 @@ export async function deleteWorkflow(id: string): Promise<void> {
   const res = await fetch(`/api/workflows/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
 }
+
+// --- Identity people management (Wave 1 s228) ---------------------------------
+
+/** A channel person the owner has already approved or rejected. */
+export interface DecidedPerson {
+  status: "approved" | "rejected";
+  decidedAt: string;
+  channelId?: string;
+  channelUserId?: string;
+  displayName?: string;
+  projectPath?: string;
+  assignedProjectPaths?: string[];
+  registrationData?: { name?: string; email?: string; birthdate?: string; pronouns?: string; discordHandle?: string };
+}
+
+export async function fetchIdentityPeople(status?: "approved" | "rejected"): Promise<DecidedPerson[]> {
+  const res = await fetch(status ? `/api/identity/people?status=${status}` : "/api/identity/people");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return ((await res.json()) as { people: DecidedPerson[] }).people;
+}
+
+export async function patchPersonProjects(channelId: string, channelUserId: string, projectPaths: string[]): Promise<void> {
+  const res = await fetch(
+    `/api/identity/people/${encodeURIComponent(channelId)}/${encodeURIComponent(channelUserId)}/projects`,
+    { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectPaths }) },
+  );
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function revokePerson(channelId: string, channelUserId: string): Promise<void> {
+  const res = await fetch(`/api/identity/people/${encodeURIComponent(channelId)}/${encodeURIComponent(channelUserId)}/revoke`, { method: "POST" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+export async function reReviewPerson(channelId: string, channelUserId: string): Promise<void> {
+  const res = await fetch(`/api/identity/people/${encodeURIComponent(channelId)}/${encodeURIComponent(channelUserId)}/re-review`, { method: "POST" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+// --- Contribution metrics (Wave 2b) ------------------------------------------
+
+export interface ContributeMetrics {
+  ownerLogin: string | null;
+  repos: Array<{ slug: string; displayName: string; merged: number; open: number; total: number }>;
+  totals: { merged: number; open: number; total: number };
+}
+
+export async function fetchContributeMetrics(): Promise<ContributeMetrics> {
+  const res = await fetch("/api/dev/contribute/metrics");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as ContributeMetrics;
+}
+
+// --- Incoming PR comments (Wave 2c) ------------------------------------------
+
+export interface PrComment {
+  id: number;
+  authorLogin: string;
+  authorAvatar: string | null;
+  body: string;
+  createdAt: string;
+  htmlUrl: string;
+}
+
+export async function fetchPrComments(slug: string, prNumber: number): Promise<PrComment[]> {
+  const res = await fetch(`/api/dev/incoming/${encodeURIComponent(slug)}/pr/${String(prNumber)}/comments`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return ((await res.json()) as { comments: PrComment[] }).comments;
+}
+
+export async function postPrComment(slug: string, prNumber: number, body: string): Promise<PrComment> {
+  const res = await fetch(`/api/dev/incoming/${encodeURIComponent(slug)}/pr/${String(prNumber)}/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) {
+    const e = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(e.error ?? `HTTP ${res.status}`);
+  }
+  return ((await res.json()) as { comment: PrComment }).comment;
+}

@@ -83,4 +83,25 @@ describe("migrate-db.sh ↔ Drizzle schema parity for connections (s219)", () =>
   it("specifically covers connections.dtoken (the device-flow regression)", () => {
     expect(migrateDbConnectionsAdditions()).toContain("dtoken");
   });
+
+  // s221: 0004 added several tables (memory graph + mapp_scripts) that were
+  // never ported to migrate-db.sh either — port-parity guard for tables.
+  it("every CREATE TABLE in 0004_special_bishop.sql is covered by migrate-db.sh", () => {
+    const sql0004 = readFileSync(
+      here("../../db-schema/drizzle/0004_special_bishop.sql"),
+      "utf-8",
+    );
+    const sh = readFileSync(MIGRATE_DB, "utf-8");
+    // All 0004 tables use `CREATE TABLE IF NOT EXISTS "name"`. No /i flag — keep
+    // the keyword uppercase so the lowercase [a-z_] capture can't grab "IF".
+    const tablesIn0004 = [...sql0004.matchAll(/CREATE TABLE IF NOT EXISTS\s+"?([a-z_]+)"?/g)].map(
+      (m) => m[1]!,
+    );
+    expect(tablesIn0004.length).toBeGreaterThan(0);
+    const migrateTables = new Set(
+      [...sh.matchAll(/CREATE TABLE IF NOT EXISTS\s+"?([a-z_]+)"?/g)].map((m) => m[1]!),
+    );
+    const missing = tablesIn0004.filter((t) => !migrateTables.has(t));
+    expect(missing, `0004 tables missing from migrate-db.sh: ${missing.join(", ")}`).toEqual([]);
+  });
 });

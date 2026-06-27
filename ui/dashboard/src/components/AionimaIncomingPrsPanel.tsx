@@ -12,11 +12,89 @@
  * read-only review queue.
  */
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { Textarea } from "@particle-academy/react-fancy";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useIncomingStatus } from "../hooks.js";
+import { fetchPrComments, postPrComment, type PrComment } from "../api.js";
 import type { IncomingPrInfo, IncomingRepoStatus } from "../types.js";
+
+/** Expandable PR comment thread + composer (Wave 2c). */
+function PrCommentThread({ slug, prNumber }: { slug: string; prNumber: number }) {
+  const [comments, setComments] = useState<PrComment[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [body, setBody] = useState("");
+  const [posting, setPosting] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setComments(await fetchPrComments(slug, prNumber));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed to load comments");
+    } finally {
+      setLoading(false);
+    }
+  }, [slug, prNumber]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const post = async () => {
+    if (body.trim() === "") return;
+    setPosting(true);
+    setError(null);
+    try {
+      const c = await postPrComment(slug, prNumber, body.trim());
+      setComments((prev) => [...(prev ?? []), c]);
+      setBody("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed to post comment");
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 border-t border-border/40 pt-2 space-y-2" data-testid={`pr-comments-${slug}-${String(prNumber)}`}>
+      {loading && comments === null && <p className="text-[11px] text-muted-foreground">Loading comments…</p>}
+      {comments !== null && comments.length === 0 && (
+        <p className="text-[11px] text-muted-foreground italic">No comments yet.</p>
+      )}
+      {comments?.map((c) => (
+        <div key={c.id} className="text-[11px]" data-testid="pr-comment">
+          <span className="font-mono font-semibold text-foreground">{c.authorLogin}</span>
+          <span className="text-muted-foreground/60"> · {new Date(c.createdAt).toLocaleString()}</span>
+          <p className="text-muted-foreground whitespace-pre-wrap mt-0.5">{c.body}</p>
+        </div>
+      ))}
+      <div className="flex flex-col gap-1.5">
+        <Textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          placeholder="Comment on this PR…"
+          rows={2}
+          className="text-[12px]"
+          data-testid={`pr-comment-input-${slug}-${String(prNumber)}`}
+        />
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            className="text-[11px] h-7"
+            disabled={posting || body.trim() === ""}
+            onClick={() => void post()}
+            data-testid={`pr-comment-post-${slug}-${String(prNumber)}`}
+          >
+            {posting ? "Posting…" : "Comment"}
+          </Button>
+          {error !== null && <span className="text-[11px] text-red">{error}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface PrTestPrep {
   supported: boolean;
@@ -99,6 +177,7 @@ function IncomingRepoGroup({ repo }: { repo: IncomingRepoStatus }) {
 function IncomingPrRow({ pr }: { pr: IncomingPrInfo }) {
   const [prep, setPrep] = useState<PrTestPrep | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showComments, setShowComments] = useState(false);
 
   async function handleTest() {
     setBusy(true);
@@ -150,6 +229,15 @@ function IncomingPrRow({ pr }: { pr: IncomingPrInfo }) {
           >
             {busy ? "Preparing…" : "Test in VM"}
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-[11px] h-7"
+            onClick={() => setShowComments((s) => !s)}
+            data-testid={`aionima-incoming-comments-toggle-${pr.slug}-${pr.number}`}
+          >
+            {showComments ? "Hide comments" : "Comments"}
+          </Button>
           <a
             href={pr.htmlUrl}
             target="_blank"
@@ -178,6 +266,8 @@ function IncomingPrRow({ pr }: { pr: IncomingPrInfo }) {
           )}
         </div>
       )}
+
+      {showComments && <PrCommentThread slug={pr.slug} prNumber={pr.number} />}
     </Card>
   );
 }

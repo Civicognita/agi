@@ -55,7 +55,11 @@ export interface ChannelOutboundAdapter {
 }
 
 export type OutboundContent =
-  | { type: "text"; text: string }
+  // `thinking` is the model's reasoning, already separated from `text` by the
+  // framework (splitThinking). Channels MAY render it separately (e.g. Discord
+  // shows it as a de-emphasized embed); channels that ignore it simply send the
+  // clean `text`. It is never concatenated into `text`.
+  | { type: "text"; text: string; thinking?: string }
   | { type: "media"; url: string; mimeType: string; caption?: string }
   | { type: "voice"; audioBuffer: Buffer; format: string };
 

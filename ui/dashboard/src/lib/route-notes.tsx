@@ -40,7 +40,7 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
   "/": {
     heading: "Dashboard root — overview surface",
     kind: "info",
-    body: "Default landing page. Surfaces system pulse + key metrics. Stable surface; no recent agent-side changes this session.",
+    body: "Default landing page. Surfaces system pulse + key metrics. Shell fix (v0.4.943): collapsed Workspace/Chat/Canvas rails now fill full shell height instead of shrinking to label height — AccordionPanel.Trigger now uses display:contents so the rail's h-full resolves against the full-height section.",
   },
 
   // ----- Projects (already has inline DevNotes from cycle 150 wave) -----
@@ -50,9 +50,26 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
     body: "Click the notebook icon in the header to see the cycle 134-149 work surfaced as inline notes (tray restructure, Health column, Tynn column, PM-Lite reframe).",
   },
 
+  "/memory": {
+    heading: "Aion's Memory — one shared mind (Wave 4)",
+    kind: "info",
+    body: "Browse Aion's global memory: episodic events (semantic search + project filter) and a Knowledge-docs search over the PRIME corpus + agi docs + per-project knowledge. Memory is app-wide, NOT per-channel — over GET /api/memory/events + /api/memory/search-docs.",
+  },
+  "/contribute": {
+    heading: "Contributing — its own page (Wave 2, was Settings → Gateway tab)",
+    kind: "info",
+    body: "Outbound (open PRs from your fork), Incoming (PRs to review), and Repos & Mode (contributing-mode toggle + GitHub connect + repo status + test VM) tabs. v0.4.x adds contribution metrics + PR comments. Moved here from the buried Settings → Gateway → Contributing tab.",
+  },
+
   // ----- Aionima collection / PAx (already have inline) -----
   "/aionima": null,
   "/pax": null,
+
+  "/settings/appearance": {
+    heading: "Appearance — UI customization (Wave 5)",
+    kind: "info",
+    body: "Theme, corner radius (Subtle/Sharp/Near-square → --radius-scale), motion speed + reduce-motion, and spacing density. AppearanceProvider applies CSS vars on documentElement live and persists ui.appearance to gateway.json. The radius scale multiplies every --radius-* (built in Wave 0c).",
+  },
 
   // ----- Settings family -----
   "/settings": {
@@ -168,6 +185,11 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
     kind: "info",
     body: "Telegram, Discord, Signal, Gmail, WhatsApp. Each channel is a plugin-contributed adapter; settings live in their own routes.",
   },
+  "/comms/channels": {
+    heading: "Channel behavior config (Wave 3 redesign in progress)",
+    kind: "info",
+    body: "Per-channel behavior: mode, agent assignment, role overrides, rate limits, memory scope. Wave 3 — role overrides now pick from your live Discord roles (no more typing role names), and adjustable controls carry (i) info popovers explaining what they do.",
+  },
   "/comms/discord": {
     heading: "Discord channel adapter",
     kind: "info",
@@ -218,7 +240,7 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
   "/system/identity": {
     heading: "Identity — in-gateway (absorbed from the retired Local-ID service)",
     kind: "info",
-    body: "AGI owns identity, OAuth, and session brokering directly (device-flow-api.ts). Hive-ID remains the remote federation hub for cross-node trust. There is no separate Local-ID service anymore.",
+    body: "AGI owns identity, OAuth, and session brokering directly (device-flow-api.ts). Hive-ID remains the remote federation hub for cross-node trust. v0.4.952 (Wave 1): added an Approved & rejected people panel — channel approvals now retain who the person was, so you can edit a person's project access, revoke an approval, or re-review a rejection (previously decisions discarded the person).",
   },
   "/system/incidents": {
     heading: "Security incidents",

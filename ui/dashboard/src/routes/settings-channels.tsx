@@ -16,6 +16,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { DiscordOwnerCard } from "@/components/DiscordOwnerCard.js";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -787,6 +788,9 @@ function DiscordServerPanel({ channelId, cfgResponse, enabled, channelStatus, on
         </div>
         <Button variant="outline" size="xs" onClick={() => void loadState()}>Refresh</Button>
       </div>
+
+      {/* Owner designation — which Discord user is #E0 (Wave 1d). */}
+      <DiscordOwnerCard />
 
       {selectedGuild && (
         <div className="grid grid-cols-[1fr_260px] gap-4">

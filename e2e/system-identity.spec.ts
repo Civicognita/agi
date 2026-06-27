@@ -113,4 +113,41 @@ test.describe("System ▸ Identity (consolidated)", () => {
     await expect(page.getByTestId("identity-provider-github")).toBeVisible();
     await expect(page.getByTestId("identity-provider-civicognita")).toBeVisible();
   });
+
+  // -------------------------------------------------------------------------
+  // Approved / rejected people management (Wave 1 s228). The panel renders null
+  // until at least one decision exists, so we seed it via route-mocking.
+  // -------------------------------------------------------------------------
+
+  test("renders approved + rejected people with manage actions", async ({ page }) => {
+    await page.route("**/api/identity/people**", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          people: [
+            { status: "approved", decidedAt: "2026-06-15T12:00:00.000Z", channelId: "discord", channelUserId: "alice", displayName: "Alice", assignedProjectPaths: ["/home/p"] },
+            { status: "rejected", decidedAt: "2026-06-15T13:00:00.000Z", channelId: "discord", channelUserId: "bob", displayName: "Bob" },
+          ],
+          count: 2,
+        }),
+      }),
+    );
+    await page.goto("/system/identity");
+    await expect(page.getByTestId("identity-people-panel")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("decided-person-row")).toHaveCount(2);
+    // Approved person → edit-projects + revoke; rejected person → re-review.
+    await expect(page.getByTestId("person-edit-projects")).toBeVisible();
+    await expect(page.getByTestId("person-revoke")).toBeVisible();
+    await expect(page.getByTestId("person-re-review")).toBeVisible();
+  });
+
+  test("people panel is absent when no one has been decided", async ({ page }) => {
+    await page.route("**/api/identity/people**", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ people: [], count: 0 }) }),
+    );
+    await page.goto("/system/identity");
+    await expect(page.getByTestId("system-identity-page")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("identity-people-panel")).toHaveCount(0);
+  });
 });

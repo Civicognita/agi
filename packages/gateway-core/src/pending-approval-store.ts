@@ -61,11 +61,34 @@ export interface PendingApproval {
   assignedProjectPaths?: string[];
 }
 
-/** Decision recorded when owner acts on the pending approval. */
+/** Decision recorded when owner acts on the pending approval.
+ *
+ * Wave 1 (s228): the decision now retains a snapshot of WHO the person was,
+ * so approved/rejected people stay listable + manageable after the pending
+ * record is removed. (Previously only status + decidedAt were kept, so the
+ * dashboard had "no way of seeing who has been approved.") The person fields
+ * are optional for backward-compat with pre-Wave-1 persisted decisions. */
 export interface PendingApprovalDecision {
   status: "approved" | "rejected";
   /** ISO 8601 timestamp of the decision. */
   decidedAt: string;
+  /** Channel the person belongs to (e.g. "discord"). */
+  channelId?: string;
+  /** Channel-scoped user id. Together with channelId this is the person key. */
+  channelUserId?: string;
+  /** Display name captured at decision time. */
+  displayName?: string;
+  /** The room/project context the decision was made in. */
+  projectPath?: string;
+  /** Projects the owner granted at/after approval (editable via manage UI). */
+  assignedProjectPaths?: string[];
+  /** Registration data the person supplied, if any. */
+  registrationData?: PendingApproval["registrationData"];
+}
+
+/** Stable per-person key (a person spans multiple rooms). */
+export function personKey(channelId: string, channelUserId: string): string {
+  return `${channelId}::${channelUserId}`;
 }
 
 export interface PendingApprovalStoreConfig {
@@ -275,7 +298,16 @@ export class PendingApprovalStore {
         ? { assignedProjectPaths: opts.projectPaths }
         : {}),
     };
-    const decision: PendingApprovalDecision = { status: "approved", decidedAt: new Date().toISOString() };
+    const decision: PendingApprovalDecision = {
+      status: "approved",
+      decidedAt: new Date().toISOString(),
+      channelId: approval.channelId,
+      channelUserId: approval.channelUserId,
+      displayName: approval.displayName,
+      projectPath: approval.projectPath,
+      ...(finalApproval.assignedProjectPaths !== undefined ? { assignedProjectPaths: finalApproval.assignedProjectPaths } : {}),
+      ...(approval.registrationData !== undefined ? { registrationData: approval.registrationData } : {}),
+    };
     const siblingIds = this.siblingIdsForPerson(approval.channelId, approval.channelUserId);
     for (const sibId of siblingIds) {
       this.approvals.delete(sibId);
@@ -298,7 +330,15 @@ export class PendingApprovalStore {
     if (approval === undefined) {
       throw new Error(`Pending approval not found: ${id}`);
     }
-    const decision: PendingApprovalDecision = { status: "rejected", decidedAt: new Date().toISOString() };
+    const decision: PendingApprovalDecision = {
+      status: "rejected",
+      decidedAt: new Date().toISOString(),
+      channelId: approval.channelId,
+      channelUserId: approval.channelUserId,
+      displayName: approval.displayName,
+      projectPath: approval.projectPath,
+      ...(approval.registrationData !== undefined ? { registrationData: approval.registrationData } : {}),
+    };
     const siblingIds = this.siblingIdsForPerson(approval.channelId, approval.channelUserId);
     for (const sibId of siblingIds) {
       this.approvals.delete(sibId);
@@ -319,6 +359,88 @@ export class PendingApprovalStore {
   decisionFor(channelId: string, roomId: string, channelUserId: string): PendingApprovalDecision | null {
     const id = pendingApprovalId(channelId, roomId, channelUserId);
     return this.decisions.get(id) ?? null;
+  }
+
+  /**
+   * List decided people (approved and/or rejected), one entry per PERSON
+   * (deduped across rooms, latest decision wins), newest-first. Powers the
+   * identity-management view. Decisions missing the person snapshot (pre-Wave-1
+   * persisted entries) are skipped — they predate the manage feature.
+   */
+  listDecisions(status?: "approved" | "rejected"): PendingApprovalDecision[] {
+    const byPerson = new Map<string, PendingApprovalDecision>();
+    for (const d of this.decisions.values()) {
+      if (d.channelId === undefined || d.channelUserId === undefined) continue;
+      const key = personKey(d.channelId, d.channelUserId);
+      const existing = byPerson.get(key);
+      if (existing === undefined || d.decidedAt > existing.decidedAt) byPerson.set(key, d);
+    }
+    const all = [...byPerson.values()].sort((a, b) => b.decidedAt.localeCompare(a.decidedAt));
+    return status !== undefined ? all.filter((d) => d.status === status) : all;
+  }
+
+  /**
+   * Update the projects granted to an approved person (manage access). Applies
+   * to every per-room decision for that person. Returns true if anything changed.
+   */
+  updateAssignedProjects(channelId: string, channelUserId: string, projectPaths: string[]): boolean {
+    let changed = false;
+    for (const [id, d] of this.decisions) {
+      if (d.channelId === channelId && d.channelUserId === channelUserId) {
+        this.decisions.set(id, { ...d, assignedProjectPaths: projectPaths });
+        changed = true;
+      }
+    }
+    if (changed) this.save();
+    return changed;
+  }
+
+  /**
+   * Set a person's assigned projects, creating a synthetic "approved" decision
+   * when none exists. Approved people are now sourced from the entity store, so
+   * many won't have a decision-log entry — this lets the owner assign projects
+   * to them anyway (the decision log is the project-assignment side-store).
+   * Always returns true (the upsert always succeeds).
+   */
+  upsertAssignedProjects(
+    channelId: string,
+    channelUserId: string,
+    displayName: string,
+    projectPaths: string[],
+  ): boolean {
+    if (this.updateAssignedProjects(channelId, channelUserId, projectPaths)) return true;
+    // No existing decision — synthesize one keyed person-level (no room).
+    const synthId = `${channelId}::*::${channelUserId}`;
+    this.decisions.set(synthId, {
+      status: "approved",
+      decidedAt: new Date().toISOString(),
+      channelId,
+      channelUserId,
+      displayName,
+      projectPath: "",
+      assignedProjectPaths: projectPaths,
+    });
+    this.save();
+    return true;
+  }
+
+  /**
+   * Remove ALL decisions for a person. Use to revoke an approval (the person
+   * returns to unknown — a future message re-captures a pending record) or to
+   * re-review a rejection (un-block so they can post again). Returns true if any
+   * decision was removed.
+   */
+  clearDecision(channelId: string, channelUserId: string): boolean {
+    let changed = false;
+    // Deleting the current entry while iterating a Map is spec-safe.
+    for (const [id, d] of this.decisions) {
+      if (d.channelId === channelId && d.channelUserId === channelUserId) {
+        this.decisions.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) this.save();
+    return changed;
   }
 
   /** Test-only: clear all state (in-memory + persisted, if configured). */

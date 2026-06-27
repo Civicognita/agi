@@ -335,19 +335,22 @@ run_e2e() {
   # raw IP. An IP base_url therefore guarantees ERR_SSL_PROTOCOL_ERROR on every
   # navigation, which previously masked itself as a confusing wholesale e2e
   # failure. If test.ai.on is genuinely unreachable, fail loudly with the fix.
-  local reachable=0 attempt
-  for attempt in 1 2 3 4 5 6; do
+  # Cold-boot of the VM gateway (plugin + model loading) routinely takes ~70-90s,
+  # so the readiness budget must exceed that — a short window gives up mid-boot and
+  # reports a spurious "unreachable" failure. 18 attempts × ~5s ≈ 90-140s.
+  local reachable=0 attempt max_attempts=18
+  for attempt in $(seq 1 "$max_attempts"); do
     if curl -sk --connect-timeout 3 -o /dev/null -w "%{http_code}" "$base_url/api/system/stats" | grep -q "^2"; then
       reachable=1
       break
     fi
-    log "test.ai.on not ready (attempt $attempt/6) — gateway may still be booting; retrying…"
+    log "test.ai.on not ready (attempt $attempt/$max_attempts) — gateway may still be booting (cold boot can take ~90s); retrying…"
     sleep 5
   done
   if [ "$reachable" -ne 1 ]; then
     local vm_ip
     vm_ip="$(multipass info "$VM_NAME" --format csv 2>/dev/null | tail -1 | cut -d',' -f3)"
-    die "test.ai.on unreachable after 6 attempts. Caddy's tls-internal cert only covers test.ai.on (NOT the raw IP), so there is no working IP fallback. Verify host DNS points test.ai.on → ${vm_ip:-<vm-ip>}, that the VM gateway is up + out of safemode, then re-run. (pnpm test:vm:services-setup rewires DNS.)" 1
+    die "test.ai.on unreachable after $max_attempts attempts (~$((max_attempts * 5))s). Caddy's tls-internal cert only covers test.ai.on (NOT the raw IP), so there is no working IP fallback. Verify host DNS points test.ai.on → ${vm_ip:-<vm-ip>}, that the VM gateway is up + out of safemode (agi test-vm services-status), then re-run. (pnpm test:vm:services-setup rewires DNS.)" 1
   fi
   log "e2e → $spec (against $base_url)"
   (cd "$REPO_DIR" && BASE_URL="$base_url" npx playwright test "$spec" --reporter=list)

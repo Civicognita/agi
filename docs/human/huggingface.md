@@ -59,6 +59,25 @@ Models are cached in `~/.agi/models/`. Provider configuration lives in `~/.agi/g
 3. Click "Start".
 4. The model loads into a container and becomes available for use.
 
+### Context window (Lemonade models)
+
+When a model is loaded via the Lemonade backplane, AGI sets the served context
+window (`ctx_size`) automatically — it reads the model's trained
+`max_context_window` and clamps it to a default cap of **32768** tokens. This
+replaces Lemonade's own 4096-token default, which is too small for Aion's full
+system prompt + conversation history (it produced `HTTP 400
+context_length_exceeded`).
+
+To raise or lower the cap, set it in `gateway.json` (hot-reloaded — no restart):
+
+```json
+{ "providers": { "lemonade": { "ctxSize": 65536 } } }
+```
+
+The effective context is `min(model.max_context_window, ctxSize)`. Larger values
+grow the llama.cpp KV cache, so keep it within available RAM/VRAM. `save_options`
+is sent on load so the window persists across reloads.
+
 ---
 
 ## Using Models in Apps

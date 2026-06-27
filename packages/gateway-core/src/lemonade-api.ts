@@ -62,6 +62,42 @@ function resolveBaseUrl(getConfig: () => AionimaConfig): string {
   return providers["lemonade"]?.baseUrl ?? DEFAULT_LEMONADE_URL;
 }
 
+/** Default served context window for Lemonade models. Lemonade itself
+ *  defaults to 4096, which overflows on Aion's system-prompt + history
+ *  (~14.6k tokens) → HTTP 400 context_length_exceeded. 32768 comfortably
+ *  fits a long Aion turn while keeping the llama.cpp KV-cache bounded on
+ *  CPU/iGPU boxes. Overridable per-deploy via gateway.json
+ *  `providers.lemonade.ctxSize` (hot-reloaded — read at load time). */
+const DEFAULT_CTX_CAP = 32768;
+
+function resolveCtxCap(getConfig: () => AionimaConfig): number {
+  const config = getConfig();
+  const providers = (config.providers as Record<string, { ctxSize?: number }> | undefined) ?? {};
+  const cap = providers["lemonade"]?.ctxSize;
+  return typeof cap === "number" && cap > 0 ? cap : DEFAULT_CTX_CAP;
+}
+
+/** Pick a context size for a model load: the model's own trained context
+ *  window (Lemonade reports `max_context_window`) clamped to `cap`. Falls
+ *  back to `cap` when the model isn't in Lemonade's list or reports no max —
+ *  still far larger than Lemonade's 4096 default, which is the bug. */
+async function deriveCtxSize(
+  baseUrl: string,
+  modelName: string,
+  cap: number,
+): Promise<number> {
+  const res = await lemonadeFetch<{
+    data?: Array<{ id?: string; checkpoint?: string; max_context_window?: number }>;
+  }>(baseUrl, "/api/v1/models", { timeoutMs: 8_000 });
+  if (res.ok) {
+    const models = res.data?.data ?? [];
+    const match = models.find((m) => m.id === modelName || m.checkpoint === modelName);
+    const maxCtx = match?.max_context_window ?? 0;
+    if (maxCtx > 0) return Math.min(maxCtx, cap);
+  }
+  return cap;
+}
+
 interface LemonadeFetchResult<T> {
   ok: true;
   data: T;
@@ -206,15 +242,28 @@ export function registerLemonadeRoutes(
   // expect {model_name}. The proxy hides this — callers always send
   // `model` and we translate at the boundary.
   fastify.post("/api/lemonade/models/load", async (request, reply) => {
-    const body = request.body as { model?: string } | undefined;
+    const body = request.body as { model?: string; ctx_size?: number } | undefined;
     if (!body?.model) return reply.code(400).send({ error: "model is required" });
     const baseUrl = resolveBaseUrl(getConfig);
+
+    // Always set a context window large enough for Aion's prompt — caller
+    // override wins, else derive from the model's max_context_window capped to
+    // the hot-config default. save_options persists it so a re-load (or a
+    // Lemonade restart) keeps the larger window instead of reverting to 4096.
+    const ctxSize = body.ctx_size ?? (await deriveCtxSize(baseUrl, body.model, resolveCtxCap(getConfig)));
+    logger?.info(`lemonade load: ${body.model} (ctx_size=${ctxSize})`);
+
     const result = await lemonadeFetch<unknown>(
       baseUrl, "/api/v1/load",
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model_name: body.model }), timeoutMs: 60_000 },
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model_name: body.model, ctx_size: ctxSize, save_options: true }),
+        timeoutMs: 60_000,
+      },
     );
     if (!result.ok) return reply.code(result.status).send({ error: result.error });
-    return reply.send({ ok: true, model: body.model });
+    return reply.send({ ok: true, model: body.model, ctxSize });
   });
 
   // -------------------------------------------------------------------------

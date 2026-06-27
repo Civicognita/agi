@@ -1,6 +1,6 @@
 {
   "name": "agi",
-  "version": "0.4.938",
+  "version": "0.4.969",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.5.2",
@@ -103,7 +103,7 @@
     },
     "peerDependencyRules": {
       "allowedVersions": {
-        "@particle-academy/fancy-code>@particle-academy/react-fancy": "4.4.3",
+        "@particle-academy/fancy-code>@particle-academy/react-fancy": "4.7.1",
         "@particle-academy/agent-integrations>@particle-academy/fancy-sheets": "0.9.0",
         "@particle-academy/fancy-slides>@particle-academy/fancy-code": "0.5.0"
       }

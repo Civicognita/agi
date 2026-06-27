@@ -1550,7 +1550,13 @@ export async function startGatewayServer(
                 channelId,
                 channelUserId,
                 entityId,
-                content: { type: "text", text: outcome.text },
+                content: {
+                  type: "text",
+                  text: outcome.text,
+                  // Reasoning rides along separated from the reply; channels that
+                  // support it (Discord) render it as a de-emphasized embed.
+                  ...(outcome.thinking !== undefined ? { thinking: outcome.thinking } : {}),
+                },
               });
               queueLog.info("response sent");
             } else {

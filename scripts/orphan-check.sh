@@ -30,33 +30,19 @@ fi
 # Intentionally-archived orphans. Add a comment when extending; remove
 # when the file is consumed again (or deleted).
 ALLOWLIST=(
-  # s124 cycle 86 deprecation — iterative-work toasts now render inside
-  # ChatFlyout per project, not global bottom-right stack.
-  "components/IterativeWorkToastStack.tsx"
-  # s135 deprecation — canonical Providers UX moved to /settings/providers.
-  "components/settings/AgentSettings.tsx"
-  "components/settings/AiProviderSettings.tsx"
-  "components/settings/PrimeSettings.tsx"
-  # Replaced by ToolCards / LiveToolCards in ChatFlyout.
-  "components/ActivityIndicator.tsx"
-  # Replaced by /gateway/marketplace page.
-  "components/PluginManager.tsx"
-  # Cycle 262 — Channels tab removed from Settings > Gateway; token config +
-  # workflow bindings now live in Settings → Channels (settings-channels.tsx).
-  "components/settings/ChannelSettings.tsx"
-  # Shadcn-style re-export shims kept for back-compat with any future
-  # consumer; today they import direct from react-fancy. Harmless if
-  # unused — delete in a dedicated cleanup slice if confirmed dead.
+  # 2026-06-15 cleanup (owner directive): 11 genuinely-dead archived components
+  # were DELETED, not allowlisted — IterativeWorkToastStack + IterativeWorkToast,
+  # settings/{AgentSettings,AiProviderSettings,PrimeSettings,ChannelSettings},
+  # ActivityIndicator, PluginManager, ui/{dropdown-menu,panel-trigger},
+  # HearthChatPane.
+  #
+  # FALSE POSITIVE — ui/table.tsx is LIVE (COAExplorer.tsx renders <Table>,
+  # <TableHeader>, etc.), but orphan-check's heuristic doesn't detect that
+  # named-export usage, so it must stay allowlisted or the check fails.
   "components/ui/table.tsx"
-  "components/ui/dropdown-menu.tsx"
-  "components/ui/panel-trigger.tsx"
-  # (Orb.tsx removed from allowlist — now consumed by StackStrip.tsx s199)
-  # s198 focused-canvas stub replaced by docked ChatFlyout (2026-05-31).
-  # File kept in case the per-context pane design revives it; delete
-  # once the focused-canvas layout is confirmed final.
-  "components/HearthChatPane.tsx"
-  # s197 Hearth Home — old overview tab components temporarily displaced.
-  # Re-wire when /usage and /impactinomics dedicated routes ship (v0.4.0).
+  #
+  # s197 Hearth Home — overview components parked for the planned /usage and
+  # /impactinomics routes (v0.4.0). Re-wire (or delete) when those routes ship.
   "components/ActivityFeed.tsx"
   "components/TimelineChart.tsx"
   "components/OverviewCards.tsx"

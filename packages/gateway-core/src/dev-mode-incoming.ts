@@ -155,3 +155,61 @@ export async function computeIncomingStatus(
   );
   return { ownerLogin, repos };
 }
+
+// ---------------------------------------------------------------------------
+// PR comments (Wave 2c) — read + post the PR conversation from the dashboard.
+// A PR's conversation thread is the underlying issue's comments, so we use the
+// GitHub issues/comments API (covers the general discussion, not line reviews).
+// ---------------------------------------------------------------------------
+
+export interface PrComment {
+  id: number;
+  authorLogin: string;
+  authorAvatar: string | null;
+  body: string;
+  createdAt: string;
+  htmlUrl: string;
+}
+
+interface GhIssueComment {
+  id: number;
+  user?: { login?: string; avatar_url?: string };
+  body?: string;
+  created_at?: string;
+  html_url?: string;
+}
+
+export function mapIssueComment(c: GhIssueComment): PrComment {
+  return {
+    id: c.id,
+    authorLogin: c.user?.login ?? "unknown",
+    authorAvatar: c.user?.avatar_url ?? null,
+    body: c.body ?? "",
+    createdAt: c.created_at ?? "",
+    htmlUrl: c.html_url ?? "",
+  };
+}
+
+/** List a PR's conversation comments (newest GitHub order — oldest first). */
+export async function listPrComments(spec: CoreRepoSpec, prNumber: number, token: string): Promise<PrComment[]> {
+  const org = specUpstreamOrg(spec);
+  const url = `https://api.github.com/repos/${org}/${spec.upstream}/issues/${String(prNumber)}/comments?per_page=100`;
+  const res = await fetch(url, { headers: githubHeaders(token), signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  if (!res.ok) throw new Error(`GitHub ${String(res.status)}`);
+  const body = (await res.json()) as GhIssueComment[];
+  return body.map(mapIssueComment);
+}
+
+/** Post a comment to a PR's conversation. Returns the created comment. */
+export async function postPrComment(spec: CoreRepoSpec, prNumber: number, token: string, commentBody: string): Promise<PrComment> {
+  const org = specUpstreamOrg(spec);
+  const url = `https://api.github.com/repos/${org}/${spec.upstream}/issues/${String(prNumber)}/comments`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...githubHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ body: commentBody }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`GitHub ${String(res.status)}`);
+  return mapIssueComment((await res.json()) as GhIssueComment);
+}

@@ -179,6 +179,11 @@ export function create<Name>Plugin(config: <Name>Config): AionimaChannelPlugin {
         await sendOutbound(channelUserId, content);
       },
     },
+    // OutboundContent text variant carries an optional `content.thinking` — the
+    // model's reasoning, already separated from `content.text` by the framework
+    // (splitThinking in gateway-core). Render it separately if your channel can
+    // (Discord shows it as a de-emphasized embed); otherwise just send
+    // `content.text` and ignore `thinking`. Never concatenate it into the reply.
 
     messaging: {
       onMessage: (handler) => {

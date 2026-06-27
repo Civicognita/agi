@@ -80,14 +80,139 @@ CREATE INDEX IF NOT EXISTS cost_records_entity_ts_idx ON cost_records (entity_id
 -- Guarded going forward by migrate-db-parity.test.ts (s219 follow-up).
 ALTER TABLE IF EXISTS connections
   ADD COLUMN IF NOT EXISTS dtoken text;
+
+-- v0.4.939 — 0004_special_bishop.sql objects that need NO special privileges:
+-- s182 mapp_scripts + the non-vector s112 memory tables. Added to the Drizzle
+-- schema + 0004 migration but never ported HERE (the only prod path), so they
+-- were absent in production. Same drift class as dtoken/cost_records.
+-- (The vector-backed memory tables are applied separately below — they need the
+-- pgvector extension, whose CREATE EXTENSION requires superuser.)
+CREATE TABLE IF NOT EXISTS mapp_scripts (
+  id text PRIMARY KEY NOT NULL,
+  mapp_id text NOT NULL,
+  name text NOT NULL,
+  description text,
+  language text DEFAULT 'starlark' NOT NULL,
+  source text,
+  source_hash text,
+  wasm_b64 text,
+  wasm_hash text,
+  is_packer boolean DEFAULT false NOT NULL,
+  enabled boolean DEFAULT false NOT NULL,
+  timeout_ms integer DEFAULT 1000 NOT NULL,
+  max_memory_pages integer DEFAULT 256 NOT NULL,
+  created_at timestamp with time zone DEFAULT now() NOT NULL,
+  updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_consolidation_log (
+  id text PRIMARY KEY NOT NULL,
+  trigger text NOT NULL,
+  entity_id text,
+  project_path text,
+  events_processed bigint,
+  relationships_added bigint,
+  started_at bigint NOT NULL,
+  completed_at bigint
+);
+
+CREATE TABLE IF NOT EXISTS memory_relationships (
+  id text PRIMARY KEY NOT NULL,
+  subject_entity_id text NOT NULL,
+  predicate text NOT NULL,
+  object_entity_id text,
+  object_literal text,
+  project_path text,
+  valid_from bigint NOT NULL,
+  valid_until bigint,
+  confidence real DEFAULT 1 NOT NULL,
+  source_event_ids text DEFAULT '[]' NOT NULL,
+  created_at bigint NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS mapp_scripts_mapp_idx ON mapp_scripts USING btree (mapp_id);
+CREATE UNIQUE INDEX IF NOT EXISTS mapp_scripts_name_uniq ON mapp_scripts USING btree (mapp_id, name);
+CREATE INDEX IF NOT EXISTS mapp_scripts_packer_idx ON mapp_scripts USING btree (mapp_id, is_packer, enabled);
+CREATE INDEX IF NOT EXISTS idx_memory_rel_subject ON memory_relationships USING btree (subject_entity_id, valid_until);
+CREATE INDEX IF NOT EXISTS idx_memory_rel_project ON memory_relationships USING btree (subject_entity_id, project_path, valid_until);
 SQL
 
-echo "[migrate-db] applying $(echo "$MIGRATIONS_SQL" | grep -cE '^[A-Z]') statement(s) idempotently"
+# Vector-backed s112 memory tables — embedding columns are vector(768), so they
+# require the pgvector extension. CREATE EXTENSION needs SUPERUSER (the `agi` role
+# is not one), so these are applied separately and only once pgvector is present.
+read -r -d '' MIGRATIONS_SQL_VECTOR <<'SQL' || true
+CREATE TABLE IF NOT EXISTS memory_doc_chunks (
+  id text PRIMARY KEY NOT NULL,
+  source_path text NOT NULL,
+  scope text NOT NULL,
+  heading text,
+  content text NOT NULL,
+  chunk_index bigint NOT NULL,
+  content_hash text NOT NULL,
+  indexed_at bigint NOT NULL,
+  embedding vector(768)
+);
 
-if echo "$MIGRATIONS_SQL" | $PSQL_RUNNER -v ON_ERROR_STOP=1 -q; then
-  echo "[migrate-db] schema in sync"
-  exit 0
-else
-  echo "[migrate-db] some statements failed — see above" >&2
+CREATE TABLE IF NOT EXISTS memory_events (
+  id text PRIMARY KEY NOT NULL,
+  entity_id text NOT NULL,
+  project_path text,
+  session_id text,
+  summary text NOT NULL,
+  tags text DEFAULT '[]' NOT NULL,
+  confidence real DEFAULT 0.5 NOT NULL,
+  prime_alignment real,
+  source_links text DEFAULT '[]' NOT NULL,
+  hash text NOT NULL,
+  coa_fingerprint text DEFAULT 'legacy' NOT NULL,
+  model_version text,
+  created_at bigint NOT NULL,
+  consolidated_at bigint,
+  embedding vector(768),
+  CONSTRAINT memory_events_hash_unique UNIQUE(hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_doc_scope ON memory_doc_chunks USING btree (scope);
+CREATE INDEX IF NOT EXISTS idx_memory_doc_path ON memory_doc_chunks USING btree (source_path);
+CREATE INDEX IF NOT EXISTS idx_memory_events_entity ON memory_events USING btree (entity_id);
+CREATE INDEX IF NOT EXISTS idx_memory_events_project ON memory_events USING btree (entity_id, project_path);
+CREATE INDEX IF NOT EXISTS idx_memory_events_created ON memory_events USING btree (created_at);
+CREATE INDEX IF NOT EXISTS idx_memory_events_unconsolidated ON memory_events USING btree (entity_id, consolidated_at);
+SQL
+
+# --- Apply core (additive, no special privileges) ---------------------------
+echo "[migrate-db] applying $(echo "$MIGRATIONS_SQL" | grep -cE '^[A-Z]') core statement(s) idempotently"
+if ! echo "$MIGRATIONS_SQL" | $PSQL_RUNNER -v ON_ERROR_STOP=1 -q; then
+  echo "[migrate-db] core statements failed — see above" >&2
   exit 1
 fi
+
+# --- pgvector (superuser) + vector-backed tables ----------------------------
+# CREATE EXTENSION requires superuser; agi is not one. Install via the container's
+# postgres superuser when reachable. If pgvector can't be made available, SKIP the
+# vector tables with a warning rather than failing the whole migration (the core
+# additive changes above must still land).
+vector_ready() {
+  echo "SELECT 1 FROM pg_extension WHERE extname='vector';" \
+    | $PSQL_RUNNER -tA 2>/dev/null | grep -q 1
+}
+if ! vector_ready; then
+  if podman ps --format '{{.Names}}' 2>/dev/null | grep -qx "$PG_CONTAINER" \
+     && podman exec -i "$PG_CONTAINER" psql -U postgres -d "$DB_NAME" -v ON_ERROR_STOP=1 -qc \
+          "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null 2>&1; then
+    echo "[migrate-db] pgvector installed (postgres superuser)"
+  else
+    echo "[migrate-db] WARN: pgvector unavailable (CREATE EXTENSION needs superuser) — skipping vector-backed memory tables" >&2
+  fi
+fi
+
+if vector_ready; then
+  echo "[migrate-db] applying $(echo "$MIGRATIONS_SQL_VECTOR" | grep -cE '^[A-Z]') vector-backed statement(s)"
+  if ! echo "$MIGRATIONS_SQL_VECTOR" | $PSQL_RUNNER -v ON_ERROR_STOP=1 -q; then
+    echo "[migrate-db] vector-backed statements failed — see above" >&2
+    exit 1
+  fi
+fi
+
+echo "[migrate-db] schema in sync"
+exit 0

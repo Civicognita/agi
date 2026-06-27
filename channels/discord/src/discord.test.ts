@@ -139,8 +139,12 @@ describe("isDiscordConfig", () => {
     expect(isDiscordConfig({ botToken: "tok", applicationId: "12345" })).toBe(true);
   });
 
-  it("rejects non-numeric rateLimitPerMinute", () => {
-    expect(isDiscordConfig({ botToken: "tok", rateLimitPerMinute: "30" })).toBe(false);
+  it("accepts a numeric-STRING rateLimitPerMinute (dashboard form stores strings; coerce converts later)", () => {
+    expect(isDiscordConfig({ botToken: "tok", rateLimitPerMinute: "30" })).toBe(true);
+  });
+
+  it("rejects a genuinely non-numeric rateLimitPerMinute string", () => {
+    expect(isDiscordConfig({ botToken: "tok", rateLimitPerMinute: "abc" })).toBe(false);
   });
 
   it("rejects zero rateLimitPerMinute", () => {

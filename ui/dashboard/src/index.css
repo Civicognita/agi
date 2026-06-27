@@ -1,7 +1,21 @@
 @import "tailwindcss";
 
-/* Scan react-fancy's compiled output so Tailwind generates its dark: variants */
+/*
+ * Drive `dark:` variants off the app's `.dark` class (toggled by ThemeProvider:
+ * `classList.toggle("dark", theme.dark)`) instead of Tailwind v4's default
+ * OS `prefers-color-scheme`. Without this, `dark:` utilities tracked the OS, not
+ * the in-app theme — so themed components (notably fancy-diff: light line
+ * backgrounds + grey text) failed to render dark when the app was dark but the OS
+ * wasn't. This completes the Tailwind v3→v4 class-dark-mode migration. (s223)
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Scan compiled Fancy packages so Tailwind generates their dark: variants.
+ * fancy-diff ships hardcoded `dark:` Tailwind classes but only an accent var in
+ * its styles.css — its dark utilities must be generated here or the diff renders
+ * its light classes (light lines + grey text) in dark mode. */
 @source "../node_modules/@particle-academy/react-fancy/dist/**/*.js";
+@source "../node_modules/@particle-academy/fancy-diff/dist/**/*.js";
 
 /*
  * Aionima theme system — semantic CSS custom properties.
@@ -65,14 +79,59 @@
   --color-subtext0: var(--color-muted-foreground);
   --color-text: var(--color-foreground);
 
-  /* Structural tokens (constant across themes) */
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
+  /* Structural tokens. Radius reduced to "Subtle" (s227 Wave 0c) — cards ~8px,
+   * panels/modals ~10px, inputs/buttons ~6px; badges/avatars keep rounded-full.
+   * All values scale by --radius-scale (default 1, defined in :root below) so the
+   * Appearance settings page (Wave 5) can offer Sharp/Subtle/Near-square presets
+   * at runtime. react-fancy components inherit this — our Tailwind build emits
+   * `.rounded-*{border-radius:var(--radius-*)}` for every scanned classname. */
+  --radius-sm: calc(0.375rem * var(--radius-scale));   /* ~6px */
+  --radius-md: calc(0.5rem * var(--radius-scale));     /* ~8px */
+  --radius-lg: calc(0.5rem * var(--radius-scale));     /* was 0.75rem — cards */
+  --radius-xl: calc(0.625rem * var(--radius-scale));   /* was 1rem — panels/modals */
+  --radius-2xl: calc(0.875rem * var(--radius-scale));  /* was TW default 1rem */
+
+  /* Spacing density (Wave 5): Tailwind v4 resolves spacing utilities as
+   * calc(var(--spacing) times n), so scaling this base unit scales ALL spacing
+   * by --space-scale (Compact 0.85, Comfortable 1, Spacious 1.15). Default
+   * scale 1 keeps 0.25rem, byte-identical until the Appearance density control
+   * changes it. Must live in @theme (not :root) for Tailwind to keep it. */
+  --spacing: calc(0.25rem * var(--space-scale));
 
   /* Hearth shell — brand + agent tokens (constant, not theme-switched) */
   --color-seed-ink: #b8960c;  /* brand gold/bronze from SeedMark gradient midpoint */
+}
+
+/* Runtime UI-customization vars (Wave 5 — set on documentElement by
+ * AppearanceProvider; defaults here so the app renders correctly pre-hydration).
+ * --radius-scale multiplies every --radius-* via calc (Subtle 1 / Sharp 0.6 /
+ * Near-square 0.15). --duration-* drive transition speed; --space-scale is a
+ * density multiplier. Defined outside @theme so --radius-scale/--space-scale
+ * don't generate stray utilities. */
+:root {
+  --radius-scale: 1;
+  --space-scale: 1;
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+}
+
+/* Accessibility / Appearance: when reduce-motion is on (toggle or the user's OS
+ * preference), collapse transitions + animations to near-instant. */
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Agent highlight tokens — derived from primary so they work across all themes. */

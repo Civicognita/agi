@@ -15,6 +15,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { DevNote } from "@/components/ui/dev-notes.js";
 import { cn } from "@/lib/utils";
 import { useContributeStatus, useCreateContributePr } from "../hooks.js";
 import type { RepoContributeInfo } from "../types.js";
@@ -39,6 +40,13 @@ export function AionimaContributePanel() {
 
   return (
     <div className="space-y-5">
+      <DevNote heading="Cycle — Refresh now reflects merged PRs (s222)" kind="info">
+        Refresh clears the optimistic per-create PR links and refetches, so once a PR is merged
+        upstream (server reports no open PR) the row drops "View open PR" and restores "Create PR".
+        Previously the locally-cached created-PR URL was preferred over server truth and Refresh
+        appeared to do nothing.
+      </DevNote>
+
       {/* Toolbar */}
       <div className="flex items-center justify-between">
         <div>
@@ -48,7 +56,20 @@ export function AionimaContributePanel() {
             {data?.ownerLogin && <> from <span className="font-mono">{data.ownerLogin}</span></>}.
           </p>
         </div>
-        <Button size="sm" variant="outline" className="text-[11px] h-7" onClick={() => void refetch()}>
+        <Button
+          size="sm"
+          variant="outline"
+          className="text-[11px] h-7"
+          data-testid="contribute-refresh"
+          onClick={() => {
+            // Clear optimistic per-create results (the just-created PR URLs) so
+            // the refetched server state is authoritative. Without this, a merged
+            // PR's link would persist forever because `result?.url` is preferred
+            // over the server's `existingPrUrl` (s222).
+            setResults({});
+            void refetch();
+          }}
+        >
           Refresh
         </Button>
       </div>

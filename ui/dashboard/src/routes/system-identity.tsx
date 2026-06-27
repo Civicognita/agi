@@ -22,6 +22,7 @@ import { DevNote } from "@/components/ui/dev-notes.js";
 import { cn } from "@/lib/utils";
 import { fetchIdentityProviders, configureProviderApp, clearProviderApp } from "@/api.js";
 import { DEFAULT_IDENTITY_PROVIDERS, resolveIdentityProviders } from "@/lib/identity-providers.js";
+import { IdentityPeoplePanel } from "@/components/IdentityPeoplePanel.js";
 import { useConfig } from "@/hooks.js";
 import type { AionimaConfig, IdentityProviderView, IdentityProviderStatus } from "@/types.js";
 
@@ -618,6 +619,9 @@ export default function IdentityServicePage() {
                 ))}
               </div>
             </div>
+
+            {/* Approved / rejected people management (Wave 1 s228) */}
+            <IdentityPeoplePanel />
 
             {/* Federation / Civicognita */}
             <FederationCard />

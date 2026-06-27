@@ -13,6 +13,9 @@ import { fetchDevStatus, switchDevMode, fetchTestVmStatus, runTestVmCommand, fet
 import type { TestVmStatus, TestResults } from "../../api.js";
 import type { DevStatus, AionimaConfig } from "../../types.js";
 
+// Compact one-line repo row (Wave 2d — owner: "repo status doesn't need to be so
+// bulky"). Dot = your-fork vs upstream; remote right-aligned + truncated; branch /
+// entries inline. Replaces the previous tall per-repo card.
 function RepoCard({ name, remote, branch, entries, isOwnerFork }: {
   name: string;
   remote: string;
@@ -21,18 +24,19 @@ function RepoCard({ name, remote, branch, entries, isOwnerFork }: {
   isOwnerFork: boolean;
 }) {
   return (
-    <div className="flex items-start gap-3 p-3 rounded-md bg-surface0">
-      <span className={`mt-1 h-2.5 w-2.5 rounded-full shrink-0 ${isOwnerFork ? "bg-green" : "bg-overlay1"}`} />
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-card-foreground">{name}</div>
-        <div className="text-[12px] text-muted-foreground font-mono truncate" title={remote}>{remote}</div>
-        {branch !== undefined && (
-          <div className="text-[12px] text-muted-foreground mt-0.5">Branch: <span className="text-card-foreground">{branch}</span></div>
-        )}
-        {entries !== undefined && (
-          <div className="text-[12px] text-muted-foreground mt-0.5">Entries: <span className="text-card-foreground">{entries}</span></div>
-        )}
-      </div>
+    <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-md hover:bg-surface0/50 text-[12px]" data-testid={`repo-row-${name.toLowerCase().replace(/\s+/g, "-")}`}>
+      <span
+        className={`h-2 w-2 rounded-full shrink-0 ${isOwnerFork ? "bg-green" : "bg-overlay1"}`}
+        title={isOwnerFork ? "your fork" : "upstream"}
+      />
+      <span className="font-medium text-card-foreground shrink-0">{name}</span>
+      {branch !== undefined && branch !== "" && (
+        <span className="text-muted-foreground shrink-0 font-mono">{branch}</span>
+      )}
+      {entries !== undefined && (
+        <span className="text-muted-foreground shrink-0">{entries} entries</span>
+      )}
+      <span className="font-mono text-muted-foreground/70 truncate flex-1 text-right" title={remote}>{remote}</span>
     </div>
   );
 }
@@ -300,12 +304,12 @@ export function DevSettings(_props: {
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading repo status...</p>
           ) : devStatus !== null ? (
-            <div className="space-y-5">
+            <div className="space-y-3">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
                   Civicognita · core platform
                 </div>
-                <div className="grid gap-3">
+                <div className="grid gap-0.5">
                   <RepoCard
                     name="AGI"
                     remote={devStatus.agi.remote}
@@ -341,7 +345,7 @@ export function DevSettings(_props: {
                 <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
                   Particle-Academy · ADF UI primitives (PAx)
                 </div>
-                <div className="grid gap-3">
+                <div className="grid gap-0.5">
                   {devStatus.reactFancy && (
                     <RepoCard
                       name="react-fancy"

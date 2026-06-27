@@ -208,6 +208,47 @@ export class EntityStore {
     return entity;
   }
 
+  /**
+   * List every person (entity with ≥1 channel account), one row per channel
+   * account, with the entity's verification tier. This is the durable identity
+   * record — a "verified"/"sealed" tier means the owner approved them. The
+   * identity-management view sources from HERE (the entity store), not the
+   * ephemeral pending-approval log, so approved people persist + display
+   * correctly across restarts.
+   */
+  async listChannelPeople(): Promise<Array<{
+    entityId: string;
+    displayName: string;
+    verificationTier: VerificationTier;
+    coaAlias: string;
+    channel: string;
+    channelUserId: string;
+    updatedAt: string;
+  }>> {
+    const rows = await this.db
+      .select({
+        entityId: entities.id,
+        displayName: entities.displayName,
+        verificationTier: entities.verificationTier,
+        coaAlias: entities.coaAlias,
+        updatedAt: entities.updatedAt,
+        channel: channelAccounts.channel,
+        channelUserId: channelAccounts.channelUserId,
+      })
+      .from(channelAccounts)
+      .innerJoin(entities, eq(entities.id, channelAccounts.entityId))
+      .orderBy(sql`${entities.updatedAt} DESC`);
+    return rows.map((r) => ({
+      entityId: r.entityId,
+      displayName: r.displayName,
+      verificationTier: r.verificationTier as VerificationTier,
+      coaAlias: r.coaAlias,
+      channel: r.channel,
+      channelUserId: r.channelUserId,
+      updatedAt: r.updatedAt instanceof Date ? r.updatedAt.toISOString() : String(r.updatedAt),
+    }));
+  }
+
   /** Upsert channel account — safe to call on every inbound message. */
   async upsertChannelAccount(params: {
     entityId: string;

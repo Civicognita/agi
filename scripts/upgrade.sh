@@ -601,17 +601,42 @@ version_after="$(cd "$DEPLOY_DIR" && node -p "require('./package.json').version"
 # Write deployed version so the gateway can detect a new boot and emit system:upgraded.
 echo "$version_after" > "$HOME/.agi/deployed-version.txt"
 
-if [ "$version_before" != "$version_after" ]; then
-  emit "restart" "start" "Version changed: $version_before → $version_after"
+# Restart decision compares the RUNNING PROCESS version (from /health) against the
+# freshly-deployed source version — NOT source-before vs source-after. The old
+# source-vs-source check missed the failure mode where a PRIOR pull already
+# advanced the on-disk source but the process never actually bounced: every
+# subsequent upgrade then saw "no version change" and skipped the restart, so a
+# stale process served old code indefinitely (observed in the wild: a 0.4.937
+# process ran for 9.5 days while the source + dist were 0.4.968). Comparing
+# against the live process is self-correcting — if they ever drift, we bounce.
+version_running="$(curl -s --max-time 3 http://localhost:3100/health 2>/dev/null | grep -oE '"version":"[^"]*"' | head -1 | sed 's/.*:"//;s/"$//')"
+
+if [ "$version_running" != "$version_after" ]; then
+  emit "restart" "start" "Running v${version_running:-unknown/down} != deployed v$version_after — restarting"
   # Sentinel file tells the new server it booted after an upgrade.
   # The new server removes it on startup and appends "restart complete" to the upgrade log.
   touch "$DEPLOY_DIR/.upgrade-pending"
-  sudo systemctl restart agi
-  # upgrade.sh typically dies here (SIGPIPE when parent Node process exits).
-  # If it survives (e.g. stdout redirected), clean up:
-  rm -f "$DEPLOY_DIR/.upgrade-pending"
-  emit "restart" "done"
-  emit "complete" "done" "Deploy complete — service restarted (v$version_after)"
+
+  # Emit completion BEFORE dispatching the restart: the restart kills the gateway
+  # that relays this stream, so anything emitted after won't reach the dashboard.
+  emit "restart" "done" "Restart dispatched"
+  emit "complete" "done" "Deploy complete — restarting to v$version_after"
+
+  # CRITICAL (s221): when the dashboard triggers an upgrade, the gateway spawns
+  # this script as a child — so it runs INSIDE the agi.service cgroup. A direct
+  # `systemctl restart agi` makes systemd stop the service and kill the whole
+  # cgroup, including THIS script and the `systemctl` client, mid-restart — so the
+  # process never actually bounces (the stale-process bug: a 3-day-old process
+  # kept serving pre-route code across upgrades). Dispatch the restart as a
+  # DETACHED transient unit (systemd-run), which runs outside the agi cgroup and
+  # survives the service stop. Fall back to a direct restart only where systemd-run
+  # is unavailable (non-systemd hosts / test VM nohup gateway).
+  if command -v systemd-run >/dev/null 2>&1; then
+    sudo systemd-run --no-block --collect --unit="agi-restart-$$" systemctl restart agi
+  else
+    sudo systemctl restart agi
+  fi
+  # Do NOT remove .upgrade-pending here — the newly-booted server consumes it.
 else
-  emit "complete" "done" "Deploy complete — no version change (v$version_after)"
+  emit "complete" "done" "Deploy complete — running process already on v$version_after"
 fi

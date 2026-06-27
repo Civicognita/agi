@@ -128,6 +128,69 @@ export async function computeContributeStatus(
   return { ownerLogin, learnings, mechanics };
 }
 
+// ---------------------------------------------------------------------------
+// Contribution metrics (Wave 2b) — how much the owner has contributed upstream.
+// ---------------------------------------------------------------------------
+
+export interface RepoContributeMetrics {
+  slug: string;
+  displayName: string;
+  /** PRs from the owner's fork that were MERGED upstream (accepted contributions). */
+  merged: number;
+  /** Currently open PRs from the owner's fork → upstream. */
+  open: number;
+  /** All PRs the owner authored on this upstream repo (merged + open + closed-unmerged). */
+  total: number;
+}
+
+export interface ContributeMetrics {
+  ownerLogin: string | null;
+  repos: RepoContributeMetrics[];
+  totals: { merged: number; open: number; total: number };
+}
+
+/**
+ * Count the owner's upstream contributions per core repo: merged PRs (accepted),
+ * open PRs, and total authored. One GitHub call per repo (latest 100 PRs,
+ * filtered to the owner as author). Degrades to zeros without a token/login or
+ * on any API failure — metrics are informational, never blocking.
+ */
+export async function computeContributeMetrics(
+  ownerLogin: string | null,
+  token: string | null,
+): Promise<ContributeMetrics> {
+  const repos: RepoContributeMetrics[] = [];
+  for (const spec of CORE_REPOS) {
+    const org = specUpstreamOrg(spec);
+    let merged = 0;
+    let open = 0;
+    let total = 0;
+    if (ownerLogin !== null && ownerLogin !== "") {
+      const url = `https://api.github.com/repos/${org}/${spec.upstream}/pulls?state=all&per_page=100&sort=updated&direction=desc`;
+      try {
+        const res = await fetch(url, { headers: githubHeaders(token ?? ""), signal: AbortSignal.timeout(8_000) });
+        if (res.ok) {
+          const pulls = (await res.json()) as Array<{ user?: { login?: string }; state?: string; merged_at?: string | null }>;
+          for (const p of pulls) {
+            if (p.user?.login !== ownerLogin) continue;
+            total++;
+            if (p.merged_at !== null && p.merged_at !== undefined) merged++;
+            else if (p.state === "open") open++;
+          }
+        }
+      } catch {
+        // network/timeout — leave this repo's counts at zero
+      }
+    }
+    repos.push({ slug: spec.slug, displayName: spec.displayName, merged, open, total });
+  }
+  const totals = repos.reduce(
+    (acc, r) => ({ merged: acc.merged + r.merged, open: acc.open + r.open, total: acc.total + r.total }),
+    { merged: 0, open: 0, total: 0 },
+  );
+  return { ownerLogin, repos, totals };
+}
+
 async function computeRepoContribute(
   coreCollectionDir: string,
   spec: CoreRepoSpec,

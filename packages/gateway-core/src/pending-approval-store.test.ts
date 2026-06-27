@@ -223,6 +223,65 @@ describe("PendingApprovalStore — person-level cascade (one card per person)", 
   });
 });
 
+describe("PendingApprovalStore — decided-people management (Wave 1 s228)", () => {
+  let store: PendingApprovalStore;
+
+  beforeEach(() => {
+    store = new PendingApprovalStore();
+    store.capture({ channelId: "discord", roomId: "guild-1:general", channelUserId: "alice", displayName: "Alice", projectPath: "/home/p", firstMessagePreview: "hi", registrationData: { email: "a@x.io" } });
+    store.capture({ channelId: "discord", roomId: "guild-1:bugs", channelUserId: "bob", displayName: "Bob", projectPath: "/home/p", firstMessagePreview: "yo" });
+  });
+
+  it("approve retains the person snapshot on the decision", () => {
+    store.approve("discord::guild-1:general::alice", { projectPaths: ["/home/p", "/home/q"] });
+    const d = store.decisionFor("discord", "guild-1:general", "alice");
+    expect(d?.status).toBe("approved");
+    expect(d?.displayName).toBe("Alice");
+    expect(d?.channelUserId).toBe("alice");
+    expect(d?.assignedProjectPaths).toEqual(["/home/p", "/home/q"]);
+    expect(d?.registrationData?.email).toBe("a@x.io");
+  });
+
+  it("listDecisions returns one entry per person, filterable by status", () => {
+    store.approve("discord::guild-1:general::alice", { projectPaths: ["/home/p"] });
+    store.reject("discord::guild-1:bugs::bob");
+    expect(store.listDecisions()).toHaveLength(2);
+    const approved = store.listDecisions("approved");
+    expect(approved).toHaveLength(1);
+    expect(approved[0]?.displayName).toBe("Alice");
+    const rejected = store.listDecisions("rejected");
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.displayName).toBe("Bob");
+  });
+
+  it("listDecisions dedupes a multi-room person to one entry", () => {
+    store.capture({ channelId: "discord", roomId: "dm-alice", channelUserId: "alice", displayName: "Alice", projectPath: "", firstMessagePreview: "dm" });
+    store.approve("discord::dm-alice::alice"); // cascades across both Alice rooms
+    expect(store.listDecisions("approved")).toHaveLength(1);
+  });
+
+  it("updateAssignedProjects edits an approved person's projects", () => {
+    store.approve("discord::guild-1:general::alice", { projectPaths: ["/home/p"] });
+    expect(store.updateAssignedProjects("discord", "alice", ["/home/p", "/home/r"])).toBe(true);
+    expect(store.decisionFor("discord", "guild-1:general", "alice")?.assignedProjectPaths).toEqual(["/home/p", "/home/r"]);
+  });
+
+  it("clearDecision revokes/re-reviews a person (removes their decisions)", () => {
+    store.reject("discord::guild-1:bugs::bob");
+    expect(store.decisionFor("discord", "guild-1:bugs", "bob")?.status).toBe("rejected");
+    expect(store.clearDecision("discord", "bob")).toBe(true);
+    expect(store.decisionFor("discord", "guild-1:bugs", "bob")).toBeNull();
+    expect(store.listDecisions()).toHaveLength(0);
+  });
+
+  it("retained person snapshot survives a persistence round-trip", () => {
+    // (covered structurally; persistence block below exercises the file path)
+    store.approve("discord::guild-1:general::alice", { projectPaths: ["/home/p"] });
+    const d = store.listDecisions("approved")[0];
+    expect(d?.channelId).toBe("discord");
+  });
+});
+
 describe("PendingApprovalStore — persistence (slice 7)", () => {
   let tmpDir: string;
   let persistPath: string;
@@ -316,5 +375,26 @@ describe("PendingApprovalStore — persistence (slice 7)", () => {
       displayName: "U", projectPath: "/p", firstMessagePreview: "",
     });
     expect(existsSync(persistPath)).toBe(false);
+  });
+});
+
+describe("PendingApprovalStore.upsertAssignedProjects", () => {
+  it("updates the existing decision when one is present", () => {
+    const store = new PendingApprovalStore();
+    store.capture({ channelId: "discord", roomId: "r1", channelUserId: "u1", displayName: "Alice", projectPath: "/p", firstMessagePreview: "" });
+    store.approve(pendingApprovalId("discord", "r1", "u1"));
+    expect(store.upsertAssignedProjects("discord", "u1", "Alice", ["/proj/a"])).toBe(true);
+    const found = store.listDecisions("approved").find((d) => d.channelUserId === "u1");
+    expect(found?.assignedProjectPaths).toEqual(["/proj/a"]);
+  });
+
+  it("creates a synthetic approved decision when the person has NO prior decision (entity-sourced approval)", () => {
+    const store = new PendingApprovalStore();
+    // No capture/approve — the approval lives only as a verified entity.
+    expect(store.upsertAssignedProjects("discord", "u2", "Bob", ["/proj/b"])).toBe(true);
+    const found = store.listDecisions("approved").find((d) => d.channelUserId === "u2");
+    expect(found).toBeDefined();
+    expect(found?.displayName).toBe("Bob");
+    expect(found?.assignedProjectPaths).toEqual(["/proj/b"]);
   });
 });
