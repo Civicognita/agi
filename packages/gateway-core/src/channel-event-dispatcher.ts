@@ -24,6 +24,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { resolve as resolvePath } from "node:path";
 import type { ProjectConfigManager } from "./project-config-manager.js";
+import { isSacredProjectPath } from "./project-config-path.js";
 import type { ProjectRoomBinding } from "@agi/config";
 
 export interface ChannelEventDispatcherDeps {
@@ -63,7 +64,11 @@ export class ChannelEventDispatcher {
    */
   dispatch(channelId: string, roomId: string): DispatchResult | null {
     const candidates = this.enumerateProjectCandidates();
-    return this.mgr.findProjectByRoom(channelId, roomId, candidates);
+    const result = this.mgr.findProjectByRoom(channelId, roomId, candidates);
+    // s234 — defense in depth: even if a stale binding points at a Sacred project,
+    // a Channel can never dispatch into it. Binding is already refused upstream.
+    if (result !== null && isSacredProjectPath(result.projectPath)) return null;
+    return result;
   }
 
   /**

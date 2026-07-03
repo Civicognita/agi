@@ -23,7 +23,7 @@ import {
   type ProjectRepo,
   type ProjectRoomBinding,
 } from "@agi/config";
-import { projectConfigPath } from "./project-config-path.js";
+import { projectConfigPath, isSacredProjectPath } from "./project-config-path.js";
 import { createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger } from "./logger.js";
 import {
@@ -364,6 +364,11 @@ export class ProjectConfigManager extends EventEmitter {
     binding: ProjectRoomBinding,
   ): Promise<ProjectConfig> {
     const resolved = resolvePath(projectPath);
+    // s234 — Sacred projects (agi/prime/id/marketplaces + PAx) can never be
+    // driven from a Channel. Refuse the binding at the single chokepoint.
+    if (isSacredProjectPath(resolved)) {
+      throw new Error("Sacred projects cannot be bound to a channel");
+    }
     const existing = this.read(resolved);
     if (existing === null) throw new Error(`Project config not found at ${resolved}`);
 

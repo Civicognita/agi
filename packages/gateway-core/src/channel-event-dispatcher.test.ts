@@ -117,4 +117,34 @@ describe("ChannelEventDispatcher", () => {
     const result = dispatcher.dispatch("Discord", "guild-1:channel-x"); // wrong case
     expect(result).toBeNull();
   });
+
+  // s234 — Sacred projects can never be driven from a Channel.
+  it("refuses binding a room to a Sacred project", async () => {
+    const sacred = join(workspaceRoot, "agi"); // basename 'agi' is sacred
+    mkdirSync(sacred, { recursive: true });
+    mgr.create(sacred, "AGI core");
+    await expect(
+      mgr.addRoomBinding(sacred, {
+        channelId: "discord",
+        roomId: "guild-9:ops",
+        boundAt: "2026-06-29T00:00:00Z",
+      }),
+    ).rejects.toThrow(/[Ss]acred/);
+  });
+
+  it("never dispatches into a Sacred project even with a stale on-disk binding", () => {
+    // Write a binding directly to disk (bypassing the guarded addRoomBinding)
+    // to simulate a pre-existing/stale sacred binding. Dispatch must still refuse.
+    const sacred = join(workspaceRoot, "prime"); // basename 'prime' is sacred
+    mkdirSync(sacred, { recursive: true });
+    writeFileSync(
+      join(sacred, "project.json"),
+      JSON.stringify({
+        name: "PRIME",
+        rooms: [{ channelId: "discord", roomId: "sacred-room", boundAt: "2026-06-29T00:00:00Z" }],
+      }),
+      "utf-8",
+    );
+    expect(dispatcher.dispatch("discord", "sacred-room")).toBeNull();
+  });
 });

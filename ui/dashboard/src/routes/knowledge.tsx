@@ -31,9 +31,13 @@ export default function KnowledgePage() {
 
   const dirty = draft !== content;
 
-  // Load file tree on mount
+  // Load the PRIME corpus tree on mount. "knowledge" root = the full Aionima
+  // knowledge graph (domains, inputs, COA doctrine) served read-only by the
+  // gateway. Previously this called fetchFileTree() with no root, which the
+  // built-in endpoint 403s (it only serves docs/ or knowledge/), so the catch
+  // swallowed it to [] and the page rendered "No files found".
   useEffect(() => {
-    fetchFileTree()
+    fetchFileTree("knowledge")
       .then(setTreeNodes)
       .catch(() => setTreeNodes([]))
       .finally(() => setTreeLoading(false));
@@ -129,7 +133,7 @@ export default function KnowledgePage() {
             <div style={{ flex: 1, overflow: "hidden" }}>
               {loading && <div style={{ padding: 16, color: "var(--color-muted-foreground)", fontSize: 13 }}>Loading...</div>}
               {error && <div style={{ padding: 16, color: "var(--color-red)", fontSize: 13 }}>{error}</div>}
-              {!loading && !error && <KnowledgeEditor filePath={selectedPath ?? undefined} content={content} onChange={setDraft} />}
+              {!loading && !error && <KnowledgeEditor filePath={selectedPath ?? undefined} content={content} onChange={setDraft} readOnly />}
             </div>
           </div>
         )}
@@ -147,14 +151,17 @@ export default function KnowledgePage() {
         overflow: "hidden",
       }}
     >
-      <DevNote heading="PRIME knowledge editor — careful with edits" kind="warning" scope="knowledge">
-        This page edits files in `~/.aionima/` directly. Save writes synchronously; no undo beyond
-        Discard while the buffer is dirty. PRIME corpus changes feed Aion's system prompt at next
-        invocation — verify edits against the prime.md doctrine before saving.
+      <DevNote heading="Read-only PRIME corpus browser (was 403-broken)" kind="info" scope="knowledge">
+        Browses the full Aionima knowledge graph — the PRIME corpus (domains, inputs, COA doctrine)
+        served read-only from the gateway&apos;s `knowledge` file root. Until this fix the page called
+        `fetchFileTree()` with no root, which the built-in endpoint 403s (it only serves `docs/` or
+        `knowledge/`); the error was swallowed and the page showed &quot;No files found&quot;. View-only by
+        design: PRIME is read-only at runtime, so the editor renders with `readOnly` and there is no
+        Save. Editing the corpus stays out-of-band (the editor plugin / git).
       </DevNote>
       <DevNote heading="Per-project chat history is separate (s130)" kind="info" scope="knowledge">
         Project-bound chat sessions live at `&lt;projectPath&gt;/k/chat/` (cycle 143 boot-time mass
-        migration). chat/ stays under k/ in the s140 layout. This Knowledge page only edits the
+        migration). chat/ stays under k/ in the s140 layout. This Knowledge page only surfaces the
         global PRIME corpus, not per-project files.
       </DevNote>
       {/* Sidebar — file tree */}
@@ -319,6 +326,7 @@ export default function KnowledgePage() {
               filePath={selectedPath}
               content={content}
               onChange={setDraft}
+              readOnly
             />
           )}
         </div>

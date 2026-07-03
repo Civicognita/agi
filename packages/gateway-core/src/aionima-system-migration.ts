@@ -36,22 +36,25 @@ import type { ComponentLogger } from "./logger.js";
  * basename matches this list, leaving any non-fork directories at the
  * `_aionima/` root alone (they get hand-investigated, never auto-moved).
  *
- * Order:
- *   - 5 Civicognita-owned cores
- *   - 6 Particle-Academy ADF UI primitives (PAx)
+ * Order (matches CORE_REPOS in dev-mode-forks.ts):
+ *   - 5 Aionima-specific cores: agi, prime, hive-id, marketplace, mapp-marketplace
+ *
+ * The Particle-Academy (PAx) ADF UI primitives were REMOVED from this list
+ * (owner directive 2026-06-29) — they are no longer monorepo-resident and must
+ * not be moved into `_aionima/repos/`. Fancy UI lives in the separate Fancy
+ * project (Fancy agent) and is consumed here only as published packages.
+ *
+ * Local-ID (`id`, upstream agi-local-id) was REMOVED too — its functionality was
+ * absorbed directly into AGI gateway-core (s180), so it is no longer an Aionima
+ * system fork. Hive-ID (`hive-id`, upstream agi-hive-id — the cloud federation
+ * hub) takes its slot in the envelope's submodule set.
  */
 export const AIONIMA_SYSTEM_FORK_NAMES: readonly string[] = Object.freeze([
   "agi",
   "prime",
-  "id",
+  "hive-id",
   "marketplace",
   "mapp-marketplace",
-  "react-fancy",
-  "fancy-code",
-  "fancy-sheets",
-  "fancy-echarts",
-  "fancy-3d",
-  "fancy-screens",
 ]);
 
 // ---------------------------------------------------------------------------

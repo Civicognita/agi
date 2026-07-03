@@ -51,9 +51,9 @@ const ROUTE_NOTES: Record<string, RouteNote | null> = {
   },
 
   "/memory": {
-    heading: "Aion's Memory — one shared mind (Wave 4)",
+    heading: "Aion's Memory — one mind, layered by locality (Wave 4 + s234)",
     kind: "info",
-    body: "Browse Aion's global memory: episodic events (semantic search + project filter) and a Knowledge-docs search over the PRIME corpus + agi docs + per-project knowledge. Memory is app-wide, NOT per-channel — over GET /api/memory/events + /api/memory/search-docs.",
+    body: "Browse Aion's memory: episodic events (semantic search + project/scope filter) and a Knowledge-docs search over the PRIME corpus + agi docs + per-project knowledge. Every event carries a locality scope — PRIME (ingrained, read-only) · machine-wide (gestalt) · project · channel-provider · room/thread — shown as a badge per row. Narrow scopes stay confined; broader scopes cascade down (owner-tunable via gateway.json → memory.cascade). Over GET /api/memory/events + /api/memory/search-docs.",
   },
   "/contribute": {
     heading: "Contributing — its own page (Wave 2, was Settings → Gateway tab)",

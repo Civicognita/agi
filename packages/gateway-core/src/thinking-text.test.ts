@@ -5,7 +5,7 @@
  * above the actual reply (debug screenshot 2026-06-21).
  */
 import { describe, it, expect } from "vitest";
-import { splitThinking } from "./thinking-text.js";
+import { splitThinking, ensureVisibleReply, EMPTY_VISIBLE_REPLY_FALLBACK } from "./thinking-text.js";
 
 describe("splitThinking", () => {
   it("returns text unchanged when there is no thinking block", () => {
@@ -55,5 +55,48 @@ describe("splitThinking", () => {
     const input = "<thinking>plan</thinking>\n**Bold** and *italic* and `code` and > quote";
     const r = splitThinking(input);
     expect(r.visibleText).toBe("**Bold** and *italic* and `code` and > quote");
+  });
+});
+
+/**
+ * ensureVisibleReply — guards the "Aion went quiet" bug: an all-reasoning turn
+ * produced empty visibleText, the outbound gate only dispatched truthy text, so
+ * the reply was silently dropped. This must collapse to a safe fallback (never
+ * silence, never a chain-of-thought leak).
+ */
+describe("ensureVisibleReply", () => {
+  it("passes normal visible text straight through (no fallback)", () => {
+    const r = ensureVisibleReply("Here is the answer.");
+    expect(r.text).toBe("Here is the answer.");
+    expect(r.usedFallback).toBe(false);
+  });
+
+  it("substitutes the fallback for empty text (the regression) — never silent", () => {
+    const r = ensureVisibleReply("");
+    expect(r.text).toBe(EMPTY_VISIBLE_REPLY_FALLBACK);
+    expect(r.usedFallback).toBe(true);
+    expect(r.text.length).toBeGreaterThan(0); // outbound gate will now dispatch it
+  });
+
+  it("substitutes the fallback for whitespace-only text", () => {
+    const r = ensureVisibleReply("   \n\n  ");
+    expect(r.usedFallback).toBe(true);
+    expect(r.text).toBe(EMPTY_VISIBLE_REPLY_FALLBACK);
+  });
+
+  it("the fallback does NOT leak reasoning — it's a fixed neutral message", () => {
+    const r = ensureVisibleReply("");
+    expect(r.text.toLowerCase()).not.toContain("thinking");
+    expect(r.text.toLowerCase()).not.toContain("<think");
+  });
+
+  it("end-to-end: an all-reasoning model output never yields a silent (empty) reply", () => {
+    // The exact incident shape: model emitted only an unclosed <thinking> body.
+    const raw = "<thinking>I was pressured to answer and I'm deliberating about what to say";
+    const { visibleText } = splitThinking(raw);
+    expect(visibleText).toBe(""); // splitThinking correctly withholds the CoT
+    const { text, usedFallback } = ensureVisibleReply(visibleText);
+    expect(usedFallback).toBe(true);
+    expect(text).toBe(EMPTY_VISIBLE_REPLY_FALLBACK); // ...but a reply is still sent
   });
 });

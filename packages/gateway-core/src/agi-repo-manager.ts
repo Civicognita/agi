@@ -1,19 +1,18 @@
 /**
- * agi-repo-manager — {project}.agi monorepo envelope (Phase 3, first slice).
+ * agi-repo-manager — {slug}.agi monorepo envelope.
  *
- * Formalizes a project folder as a git repository under the hard `{slug}.agi`
- * naming convention. The `.agi` suffix distinguishes the project *envelope*
- * from the actual repos it contains. Each entry under `repos/` that is itself
- * a git repo is registered as a git **submodule** of the envelope; the
- * envelope tracks `project.json`, `k/`, and `.gitmodules` directly while
- * ignoring scratch (`sandbox/`, `.trash/`).
+ * An **AGI Envelope** is the general agentic-workspace primitive: a whole
+ * agentic workspace expressed as a monorepo. The `.agi` suffix distinguishes
+ * the project *envelope* from the actual repos it contains. Each entry under
+ * `repos/` that is itself a git repo is registered as a git **submodule** of
+ * the envelope; the envelope tracks `project.json`, `.ai/`, and `.gitmodules`
+ * directly while ignoring scratch + local-only state (`sandbox/`, `.trash/`,
+ * `.ai/chat/`, `.ai/memory/`).
  *
- * Owner-confirmed mechanics only. Deferred (NOT here): the Tynn-desktop
- * discovery handshake + shared schema convergence, `{slug}.agi` GitHub remote
- * auto-creation, and automatic submodule-pin advancement on upgrade.
- *
- * The `_aionima` meta-project is EXCLUDED — it keeps its `collection.json`
- * convention and is not a `{slug}.agi` project.
+ * General by design — ANY project folder can become an envelope (owner directive
+ * 2026-06-29). `_aionima` itself was converted to the `aionima.agi` envelope; it
+ * is no longer a special-cased exclusion. `.agi` envelope repos are almost always
+ * PRIVATE and are CREATED (not forked) for the user.
  *
  * All git invocations go through spawnSync with array args (no shell), so a
  * malicious path or URL cannot inject a command.
@@ -67,11 +66,6 @@ function git(args: string[], cwd: string): { ok: boolean; stdout: string; stderr
 
 function isGitRepo(dir: string): boolean {
   return existsSync(join(dir, ".git"));
-}
-
-/** A project is the `_aionima` meta-project — excluded from the .agi model. */
-function isExcludedEnvelope(projectPath: string): boolean {
-  return basename(projectPath) === "_aionima";
 }
 
 // ---------------------------------------------------------------------------
@@ -141,9 +135,6 @@ export function getAgiRepoStatus(projectPath: string): AgiRepoStatus {
  * Idempotent: a no-op when the envelope is already a git repo.
  */
 export function initAgiRepo(projectPath: string): AgiRepoOpResult {
-  if (isExcludedEnvelope(projectPath)) {
-    return { ok: false, error: "_aionima is a collection, not a {slug}.agi project" };
-  }
   if (!existsSync(projectPath)) {
     return { ok: false, error: `project path does not exist: ${projectPath}` };
   }
@@ -158,11 +149,24 @@ export function initAgiRepo(projectPath: string): AgiRepoOpResult {
   // are local runtime state too — `.ai/chat/` + `.ai/memory/` are excluded so
   // they never travel through the envelope's config/knowledge sync (story #207,
   // owner directive; memory-exclude pending Genie confirmation on #178).
+  // MCP config (`.mcp.json`, `.cursor/mcp.json`) is dev-environment-specific —
+  // it carries a per-dev Tynn bearer token + per-session Genie URL. AGI
+  // envelopes are shareable among teams, but this file is unique to each dev's
+  // machine, so it must NEVER be committed (owner directive 2026-06-29).
   const gitignore = join(projectPath, ".gitignore");
   if (!existsSync(gitignore)) {
     writeFileSync(
       gitignore,
-      ["sandbox/", ".trash/", `${KNOWLEDGE_DIR}/chat/`, `${KNOWLEDGE_DIR}/memory/`, "node_modules/", ""].join("\n"),
+      [
+        "sandbox/",
+        ".trash/",
+        `${KNOWLEDGE_DIR}/chat/`,
+        `${KNOWLEDGE_DIR}/memory/`,
+        "node_modules/",
+        ".mcp.json",
+        ".cursor/mcp.json",
+        "",
+      ].join("\n"),
       "utf-8",
     );
   }
@@ -224,10 +228,6 @@ export function addRepoSubmodule(
  * list of newly-registered submodule paths.
  */
 export function importAgiRepo(projectPath: string): AgiRepoOpResult {
-  if (isExcludedEnvelope(projectPath)) {
-    return { ok: false, error: "_aionima is a collection, not a {slug}.agi project" };
-  }
-
   if (!isGitRepo(projectPath)) {
     const init = initAgiRepo(projectPath);
     if (!init.ok) return init;
@@ -265,7 +265,11 @@ export function importAgiRepo(projectPath: string): AgiRepoOpResult {
 
 /** The canonical `{slug}.agi` remote repo name for an envelope folder. */
 export function agiRemoteName(projectPath: string): string {
-  const base = basename(projectPath);
+  // Strip LEADING underscores: collection/workspace dirs are underscore-prefixed
+  // to hide them from hosting discovery (e.g. `_aionima`), but the envelope slug
+  // and its `{slug}.agi` remote drop the prefix (`aionima.agi`). Internal
+  // underscores are part of the name and preserved.
+  const base = basename(projectPath).replace(/^_+/, "");
   return base.endsWith(".agi") ? base : `${base}.agi`;
 }
 
@@ -410,6 +414,55 @@ export function setAgiRemote(projectPath: string, url: string): AgiSyncResult {
     : git(["remote", "add", "origin", trimmed], projectPath);
   if (!res.ok) return { ok: false, error: `git remote failed: ${res.stderr}` };
   return { ok: true, summary: `origin → ${trimmed}` };
+}
+
+/**
+ * Create the envelope's `{slug}.agi` GitHub repo as a PRIVATE repo (created, NOT
+ * forked — `.agi` envelopes are almost always private) and wire it as `origin`.
+ * Idempotent: an existing repo (HTTP 422) is reused. Used by both the
+ * agi-repo/remote endpoint and the Contributing-Mode provisioning flow so the
+ * "create the {slug}.agi monorepo for the user" behavior lives in one place.
+ */
+export async function createPrivateAgiRemote(
+  projectPath: string,
+  token: string,
+): Promise<{ ok: boolean; remoteUrl?: string; error?: string }> {
+  const repoName = agiRemoteName(projectPath);
+  let remoteUrl: string | null = null;
+  try {
+    const gh = await fetch("https://api.github.com/user/repos", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "aionima-gateway",
+      },
+      body: JSON.stringify({ name: repoName, private: true, description: "Aionima .agi project envelope (config + knowledge state)" }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (gh.status === 422) {
+      // Already exists — reuse it rather than failing.
+      const me = await fetch("https://api.github.com/user", {
+        headers: { Authorization: `Bearer ${token}`, "User-Agent": "aionima-gateway" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      const login = ((await me.json().catch(() => ({}))) as { login?: string }).login;
+      remoteUrl = login ? `https://github.com/${login}/${repoName}.git` : null;
+    } else if (!gh.ok) {
+      const errBody = (await gh.json().catch(() => ({}))) as { message?: string };
+      return { ok: false, error: `GitHub repo create failed (${String(gh.status)}): ${errBody.message ?? "unknown"}` };
+    } else {
+      const created = (await gh.json()) as { clone_url?: string };
+      remoteUrl = created.clone_url ?? null;
+    }
+  } catch (err) {
+    return { ok: false, error: `GitHub API error: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  if (!remoteUrl) return { ok: false, error: "could not resolve the created repo URL" };
+  const res = setAgiRemote(projectPath, remoteUrl);
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, remoteUrl };
 }
 
 /**

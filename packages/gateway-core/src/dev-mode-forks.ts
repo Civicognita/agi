@@ -95,36 +95,15 @@ export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
   { slug: "marketplace",      upstream: "agi-marketplace",      displayName: "Marketplace",      configKey: "marketplaceRepo" },
   { slug: "mapp-marketplace", upstream: "agi-mapp-marketplace", displayName: "MApp Marketplace", configKey: "mappMarketplaceRepo" },
 
-  // Particle-Academy (PAx) ADF UI primitives — workspace-resident per
-  // CLAUDE.md § 1.5. Same provisioning flow as the core five; different
-  // upstream org. Forks live at wishborn/<slug>; lookupFork is
-  // idempotent so existing forks (created manually in cycle 88) are
-  // reused without re-creating.
-  { slug: "react-fancy",   upstream: "react-fancy",   upstreamOrg: "Particle-Academy", displayName: "react-fancy",   configKey: "reactFancyRepo" },
-  { slug: "fancy-code",    upstream: "fancy-code",    upstreamOrg: "Particle-Academy", displayName: "fancy-code",    configKey: "fancyCodeRepo" },
-  { slug: "fancy-sheets",  upstream: "fancy-sheets",  upstreamOrg: "Particle-Academy", displayName: "fancy-sheets",  configKey: "fancySheetsRepo" },
-  { slug: "fancy-echarts", upstream: "fancy-echarts", upstreamOrg: "Particle-Academy", displayName: "fancy-echarts", configKey: "fancyEchartsRepo" },
-  { slug: "fancy-3d",      upstream: "fancy-3d",      upstreamOrg: "Particle-Academy", displayName: "fancy-3d",      configKey: "fancy3dRepo" },
-  // s146 t604 cycle 199 — fancy-screens added to PAx (6th package).
-  // Owner-confirmed 2026-05-03: @particle-academy/fancy-screens@0.2.0
-  // is the Screen primitive MApps compose against. Containerized
-  // application surface with scoped state, typed ports, hibernation,
-  // schema-driven rendering, agent-introspectable registry.
-  { slug: "fancy-screens", upstream: "fancy-screens", upstreamOrg: "Particle-Academy", displayName: "fancy-screens", configKey: "fancyScreensRepo" },
-
-  // s157 cycle 197 — fancy-whiteboard + agent-integrations added to PAx
-  // (8 packages total). Owner-confirmed 2026-05-11: s157 Phase 2 (whiteboard
-  // mode for UserNotes) builds on @particle-academy/fancy-whiteboard's
-  // canvas primitives + sticky-notes + diagramming + freeform drawing +
-  // presence cursors. agent-integrations provides per-session micro-MCP
-  // bridges so Aion can participate in shared whiteboard sessions through
-  // the same channels other collaborators use (panel + on-canvas cursor).
-  { slug: "fancy-whiteboard",   upstream: "fancy-whiteboard",   upstreamOrg: "Particle-Academy", displayName: "fancy-whiteboard",   configKey: "fancyWhiteboardRepo" },
-  { slug: "agent-integrations", upstream: "agent-integrations", upstreamOrg: "Particle-Academy", displayName: "agent-integrations", configKey: "agentIntegrationsRepo" },
-  // s200 — additional PAx packages registered in the Fancy UI MCP registry.
-  { slug: "fancy-artboard",     upstream: "fancy-artboard",     upstreamOrg: "Particle-Academy", displayName: "fancy-artboard",     configKey: "fancyArtboardRepo" },
-  { slug: "fancy-slides",       upstream: "fancy-slides",       upstreamOrg: "Particle-Academy", displayName: "fancy-slides",       configKey: "fancySlidesRepo" },
-  { slug: "fancy-flow",         upstream: "fancy-flow",         upstreamOrg: "Particle-Academy", displayName: "fancy-flow",         configKey: "fancyFlowRepo" },
+  // NOTE: the Particle-Academy (PAx) ADF UI primitives (react-fancy, fancy-code,
+  // fancy-sheets, fancy-echarts, fancy-3d, fancy-screens, fancy-whiteboard,
+  // agent-integrations, fancy-artboard, fancy-slides, fancy-flow) were REMOVED
+  // from CORE_REPOS (owner directive 2026-06-29). They are no longer monorepo-
+  // resident workspace forks — Contributing Mode must NOT provision or clone them.
+  // Fancy UI is developed in the separate Fancy project (managed by the Fancy
+  // agent) and consumed here ONLY as published `@particle-academy/*` npm packages.
+  // The upstreamOrg/Particle-Academy machinery below is retained for any future
+  // non-core PAx use, but no PAx repo is a core workspace fork.
 ] as const);
 
 export interface ForkResolveResult {

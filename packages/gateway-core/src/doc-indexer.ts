@@ -156,12 +156,12 @@ export class DocIndexer {
     // agi/docs/ — global platform documentation
     const docsDir = join(this.agiRoot, "docs");
     if (existsSync(docsDir)) {
-      sources.push({ dir: docsDir, scope: "global" });
+      sources.push({ dir: docsDir, scope: "gestalt" });
     }
 
     // Global k/ directory
     if (this.globalKDir && existsSync(this.globalKDir)) {
-      sources.push({ dir: this.globalKDir, scope: "global" });
+      sources.push({ dir: this.globalKDir, scope: "gestalt" });
     }
 
     // Per-project knowledge (.ai/) directories
@@ -216,6 +216,8 @@ export class DocIndexer {
   async query(opts: {
     query: string;
     scope?: string;
+    /** s234 locality scope-stack — filters doc chunks to these scopes (precedence over `scope`). */
+    scopes?: string[];
     limit?: number;
   }): Promise<Array<{ heading: string | null; content: string; sourcePath: string; scope: string }>> {
     const limit = opts.limit ?? 5;
@@ -225,6 +227,7 @@ export class DocIndexer {
 
     const chunks = await this.graph.queryDocChunks({
       scope: opts.scope,
+      scopes: opts.scopes,
       semantic: opts.query,
       limit,
       queryEmbedding,

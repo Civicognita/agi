@@ -1136,6 +1136,11 @@ export async function startGatewayServer(
     accumulator: _accumulator,
     consolidationEngine,
     logger: log,
+    // s234 — owner cascade-up policy, read live from gateway.json (hot-swappable).
+    getCascadePolicy: () =>
+      (systemConfigService?.read() ?? config).memory?.cascade as
+        | import("./memory-scope.js").CascadePolicy
+        | undefined,
   });
   log.info("episodic memory pipeline initialized (extractor + accumulator)");
 
@@ -1160,7 +1165,13 @@ export async function startGatewayServer(
   const { createLookupDocHandler, LOOKUP_DOC_MANIFEST, LOOKUP_DOC_INPUT_SCHEMA } = await import("./tools/lookup-doc.js");
   const docsDir = join(agiRoot, "docs");
   toolRegistry.register(LOOKUP_DOC_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createLookupDocHandler({ docsDir }), LOOKUP_DOC_INPUT_SCHEMA);
-  log.info("doc indexer initialized + search_docs + lookup_doc tools registered");
+  // search_memory — active recall over episodic memory (memory_events). Closes
+  // the "Aion has memories but no way to search them" gap: previously memories
+  // were only injected passively at prompt-assembly. Same store as the dashboard
+  // memory browser (graphAdapter), so agent + UI read one shared memory.
+  const { createSearchMemoryHandler, SEARCH_MEMORY_MANIFEST, SEARCH_MEMORY_INPUT_SCHEMA } = await import("./tools/search-memory.js");
+  toolRegistry.register(SEARCH_MEMORY_MANIFEST as import("./system-prompt.js").ToolManifestEntry, createSearchMemoryHandler({ graphAdapter: memoryAdapter }), SEARCH_MEMORY_INPUT_SCHEMA);
+  log.info("doc indexer initialized + search_docs + lookup_doc + search_memory tools registered");
 
   // s152 t651 — UserNotes store. Constructed here (before AgentInvoker)
   // so the invoker can read notes per project + global on each turn and
@@ -1562,6 +1573,15 @@ export async function startGatewayServer(
             } else {
               queueLog.warn("no channelUserId — cannot send response");
             }
+          } else if (outcome.type === "response" && !outcome.text) {
+            // Defensive: a "response" with empty text must never fall through
+            // silently (the Discord "Aion went quiet" bug — replies vanished with
+            // zero trace). agent-invoker now guarantees non-empty text, so this is
+            // a backstop that stays LOUD for out-of-app visibility.
+            queueLog.error(
+              `empty-text response for entity ${entityId} (coa ${outcome.coaFingerprint ?? "?"}) — ` +
+                `dropped instead of sent; investigate (this should not happen post-fix)`,
+            );
           } else if (outcome.type === "rate_limited") {
             queueLog.info(`rate limited: ${outcome.entityNotification}`);
           } else if (outcome.type === "error") {

@@ -59,3 +59,31 @@ export function splitThinking(text: string): SplitThinking {
 
   return { visibleText, thinking: thoughts.join("\n\n") };
 }
+
+/**
+ * Default user-visible reply when a model turn produced NO visible text — i.e.
+ * it emitted only reasoning, or an unclosed `<thinking>` swallowed the whole
+ * body. Honest and channel-safe: it does NOT leak the reasoning (that would
+ * defeat the whole point of splitThinking) and does not fabricate an answer.
+ */
+export const EMPTY_VISIBLE_REPLY_FALLBACK =
+  "I worked through that but didn't produce a reply to send. Could you rephrase or ask again?";
+
+/**
+ * Guarantee a non-empty, user-visible reply.
+ *
+ * A model turn whose visible text is empty (all reasoning / unclosed thinking)
+ * MUST NOT become a silent no-send — that was the Discord "Aion went quiet" bug:
+ * the outbound gate only dispatched on truthy text, so empty replies vanished
+ * with zero trace. This collapses that case to a safe fallback and reports
+ * whether the fallback was used so the caller can log it (out-of-app visibility).
+ */
+export function ensureVisibleReply(
+  visibleText: string,
+  fallback: string = EMPTY_VISIBLE_REPLY_FALLBACK,
+): { text: string; usedFallback: boolean } {
+  const trimmed = visibleText.trim();
+  return trimmed.length > 0
+    ? { text: trimmed, usedFallback: false }
+    : { text: fallback, usedFallback: true };
+}

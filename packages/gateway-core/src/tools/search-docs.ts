@@ -23,13 +23,16 @@ export function createSearchDocsHandler(config: SearchDocsConfig): ToolHandler {
     const limit = Math.min(Math.max(Number(input.limit ?? 5), 1), 20);
 
     // Scope: 'global' | 'project' (uses current project path) | 'all' (no filter)
+    // s234: the 'global' option maps to the 'gestalt' doc-chunk scope (machine-wide layer).
     const scope = scopeInput === "all" ? undefined : scopeInput;
     const projectPath = typeof input.projectPath === "string" ? input.projectPath : undefined;
     const resolvedScope = scope === "project" && projectPath
       ? `project:${projectPath}`
       : scope === "project"
         ? undefined // can't filter without project path
-        : scope;
+        : scope === "global"
+          ? "gestalt"
+          : scope;
 
     try {
       const results = await config.docIndexer.query({

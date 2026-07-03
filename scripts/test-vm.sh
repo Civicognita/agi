@@ -309,8 +309,11 @@ cmd_services_setup() {
   multipass exec "$VM_NAME" -- sudo ln -sf /mnt/agi/scripts/agi-cli.sh /usr/local/bin/agi
   multipass exec "$VM_NAME" -- sudo chmod +x /mnt/agi/scripts/agi-cli.sh /mnt/agi/scripts/agi-test.sh
 
-  echo "==> Installing PostgreSQL..."
-  multipass exec "$VM_NAME" -- sudo apt-get install -y postgresql postgresql-client
+  echo "==> Installing PostgreSQL (+ pgvector for the s112 memory tables)..."
+  # pgvector is REQUIRED — memory_events/memory_doc_chunks have vector(768) columns.
+  # Without it the drizzle push silently drops those tables and the whole memory
+  # subsystem is dead in the VM (no episodic capture, /api/memory/events 500s).
+  multipass exec "$VM_NAME" -- sudo apt-get install -y postgresql postgresql-client postgresql-16-pgvector
 
   echo "==> Configuring PostgreSQL for password auth..."
   multipass exec "$VM_NAME" -- bash -c 'sudo bash -c '"'"'
@@ -331,6 +334,10 @@ cmd_services_setup() {
   multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE USER agi WITH PASSWORD 'aionima';\"" 2>/dev/null || \
     multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"ALTER USER agi WITH PASSWORD 'aionima';\""
   multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -c \"CREATE DATABASE agi_data OWNER agi;\"" 2>/dev/null || true
+
+  echo "==> Enabling pgvector extension (superuser; required before schema push)..."
+  multipass exec "$VM_NAME" -- bash -c "sudo -u postgres psql -d agi_data -c \"CREATE EXTENSION IF NOT EXISTS vector;\"" 2>&1 || \
+    echo "WARN: pgvector CREATE EXTENSION failed — memory tables will not be created"
 
   echo "==> Pushing drizzle schema to agi_data..."
   # drizzle-kit push from ./drizzle-push.config.ts which points at the built
@@ -799,6 +806,13 @@ cmd_services_align() {
   else
     echo "    WARN: build failed; VM will run whatever's in cli/dist now"
   fi
+
+  # Keep the schema current. services-align previously only rebuilt + restarted,
+  # so additive column changes (e.g. s234 memory `scope`) never landed and the
+  # gateway 500'd on the new SELECTs. migrate-db.sh is idempotent + guarded.
+  echo "==> Applying additive DB migrations (migrate-db.sh)..."
+  multipass exec "$VM_NAME" -- bash -lc 'cd /mnt/agi && bash scripts/migrate-db.sh 2>&1 | tail -6' || \
+    echo "    WARN: migrate-db.sh returned non-zero — schema may be stale"
 
   echo "==> Starting VM services..."
   cmd_services_start

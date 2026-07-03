@@ -1651,6 +1651,8 @@ export interface MemoryEvent {
   confidence: number;
   createdAt: string;
   projectPath: string | null;
+  /** s234 locality scope — prime|gestalt|project:<path>|provider:<id>|room:<channelId>:<roomId>. */
+  scope: string | null;
   coaFingerprint: string;
 }
 
@@ -1665,12 +1667,14 @@ export async function fetchMemoryEvents(params?: {
   q?: string;
   projectPath?: string | null;
   entityId?: string;
+  scope?: string;
   limit?: number;
 }): Promise<MemoryEvent[]> {
   const url = new URL("/api/memory/events", window.location.origin);
   if (params?.q) url.searchParams.set("q", params.q);
   if (params?.projectPath !== undefined) url.searchParams.set("projectPath", params.projectPath ?? "null");
   if (params?.entityId) url.searchParams.set("entityId", params.entityId);
+  if (params?.scope) url.searchParams.set("scope", params.scope);
   if (params?.limit) url.searchParams.set("limit", String(params.limit));
   const res = await fetch(url.toString(), { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error(`Memory events fetch failed: ${res.status}`);

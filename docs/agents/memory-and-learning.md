@@ -1,6 +1,8 @@
 # Memory and Learning Framework
 
-> Canonical reference for s112 (v0.4.0). Storage: SQLite `~/.agi/memory/graph.db`. Embedding: Ollama `nomic-embed-text` (FTS5 BM25 fallback). Consolidation: session/job boundaries.
+> Canonical reference for s112 + s234 (v0.4.0). Storage: **PostgreSQL** (`agi_data`) with **pgvector** `vector(768)` embeddings and a GIN `tsvector` full-text index. Embedding: Ollama `nomic-embed-text` (FTS BM25 fallback). Consolidation: session/job boundaries.
+>
+> **Two axes.** Memory is organised on two orthogonal axes: the **CoALA cognitive** axis (working → episodic → semantic → procedural, below) and the **s234 locality** axis (prime → gestalt → project → provider → room — see *Locality scopes*). A memory has both a cognitive layer and a `scope`.
 
 ---
 
@@ -18,6 +20,46 @@ Aion's memory system is a **CoALA + TiMem hybrid** — the cognitive taxonomy of
 | C | PRIME (procedural) | Hardened knowledge files — persona, purpose, directives | File system (`aionima-prime/`) |
 
 Layer D (blockchain anchor) is stubbed as `NoopAnchor` in v0.4.0; a live Ethereum/L2 implementation is planned for v0.6.0.
+
+---
+
+## Locality scopes (s234)
+
+Every memory (`memory_events` + `memory_relationships`) carries a **`scope`** — *where* it was formed — on a unified scope-path. This is the locality axis, orthogonal to the cognitive layers above. Helpers live in `gateway-core/src/memory-scope.ts`.
+
+| Layer | Scope string | Meaning | Writable? |
+|-------|--------------|---------|-----------|
+| InGrained | `prime` | PRIME doctrine from `aionima-prime` (doc-chunks). Universal. | **Read-only** (never written by the pipeline) |
+| Gestalt | `gestalt` | Machine-wide shared substrate (Owner-governed). Was the pre-s234 `global`/`null` tier. | yes |
+| Project | `project:<projectPath>` | Per-project (`.ai/memory` + project events). | yes |
+| Channel Provider | `provider:<channelId>` | Per integration (discord, gmail, …). | yes |
+| Room/Thread | `room:<channelId>:<roomId>` | A Discord channel/DM, Gmail contact-thread, etc. `roomId` is free-form. | yes |
+
+**Recall = scope-stack cascade.** A request resolves an ordered scope-stack from its `channelContext` + `projectContext` (`resolveScopeStack`):
+
+| Request origin | Stack (most-specific → broadest) |
+|----------------|----------------------------------|
+| Discord room in a bound project | `[room:P:R, provider:P, project:J, gestalt, prime]` |
+| Project chat (no channel) | `[project:J, gestalt, prime]` |
+| Bare chat | `[gestalt, prime]` |
+
+A memory is recallable **iff its `scope` is in the request's stack**. That single rule gives both behaviours: broader layers cascade **down** (gestalt/prime are in every stack); narrower layers stay **confined** (`room:P:R` is in no other stack — a DM secret never leaks into another channel). `graph-adapter` queries take a `scopes[]` filter; `agent-invoker` Phase 5 builds the stack and labels each memory by locality.
+
+**Write (`resolveWriteScope`).** A channel turn confines to `room:<channelId>:<roomId>`; otherwise `project:<path>`; otherwise `gestalt`. Never `prime`. The `episode-extractor` stamps this on every captured record; consolidation inherits it so facts stay confined.
+
+**Owner cascade-up policy** (`gateway.json → memory.cascade`, hot-reloaded). Default = confined. Per-layer `reachUpTo` promotes new memories of that layer to a broader scope at write time (recall stays the pure stack rule):
+
+```jsonc
+"memory": { "cascade": {
+  "room":     { "reachUpTo": "provider" },
+  "provider": { "reachUpTo": "gestalt"  },
+  "project":  { "reachUpTo": "gestalt"  }
+} }
+```
+
+**Guards.** PRIME is read-only — `insertEvent`/`storeRelationship` coerce any `prime` write down to `gestalt`. **Sacred projects** (agi/prime/id/marketplaces + PAx) can never be driven from a Channel: `addRoomBinding` refuses the binding and `ChannelEventDispatcher.dispatch` refuses a sacred project even with a stale binding.
+
+The dashboard **Aion's Mind** page (`/memory`) shows each memory's locality badge.
 
 ---
 
@@ -74,10 +116,10 @@ Trigger sites:
 
 **Query path:**
 1. Embed the query text via `EmbeddingEngine.embed()`
-2. Pre-filter: FTS5 `events_fts MATCH ?` → top 25 candidates
-3. Cosine-rerank in TypeScript → return top `limit` (default 10)
+2. Pre-filter: Postgres `plainto_tsquery` over the generated `tsvector` (GIN index) → top candidates
+3. Cosine-rerank in TypeScript over the pgvector embeddings → return top `limit` (default 10)
 
-**Off-grid fallback:** when Ollama is unavailable, `isAvailable() = false` → pure FTS5 BM25 ordering. No crash, no silent failure.
+**Off-grid fallback:** when Ollama is unavailable, `isAvailable() = false` → pure `ts_rank` ordering. No crash, no silent failure.
 
 ---
 
@@ -97,6 +139,21 @@ Trigger sites:
 
 **`search_docs` tool:** always available (no state/tier gate); semantic query over doc chunks.
 
+**`search_memory` tool:** always available (no state/tier gate); active recall over the
+episodic store (`memory_events`) — the same `GraphMemoryAdapter` the dashboard "Aion's Mind"
+browser reads. Before this tool, episodic memory was only injected *passively* at
+prompt-assembly (see Phase 5 below), so the agent could not query its own memories on demand;
+`search_memory` closes that gap. Takes `query` (optional — empty returns most-recent), `limit`,
+`projectPath`, `tags`, `minConfidence`.
+
+> **Capture prerequisite — the prompts must load.** `EpisodeExtractor` loads
+> `prompts/episode-extract.md` + `episode-score.md` at module init; if they fail to resolve,
+> `EXTRACT_PROMPT` is empty and **every** extraction returns null → `memory_events` stays empty
+> forever. The prompts-dir is resolved by walking up from `import.meta.url` (the relative depth
+> differs between the `gateway-core/dist` and `cli/dist` bundles — the gateway runs the cli
+> bundle). On failure the gateway logs `episodic memory DEGRADED` at boot, and the extractor
+> keeps a stored/skipped tally so a silently-empty capture layer is visible in logs.
+
 ---
 
 ## Memory injection into context (Phase 5)
@@ -106,11 +163,17 @@ Trigger sites:
 ```
 ## Memory
 
-### Recalled context (global)
-- {summary}   ← up to 4 global episodic events
+### This room/thread          ← memories confined to the current room/DM/thread
+- {summary}
 
-### Project context            ← only for project-scoped requests
-- {summary}   ← up to 4 project-scoped events
+### This channel              ← memories shared across the current channel provider
+- {summary}
+
+### Project context           ← memories scoped to the current project
+- {summary}
+
+### Recalled context (machine-wide)   ← the gestalt layer
+- {summary}
 
 ### Established facts
 - {predicate}: {objectLiteral} (since {date})  ← up to 3 active relationships
@@ -120,7 +183,7 @@ Trigger sites:
 {content snippet, max 200 chars}
 ```
 
-Token budget: ~400 (global) + ~400 (project) + ~120 (facts) + ~400 (docs) = ~1320 tokens within the 2000-token budget.
+Episodic events are queried across the request's full scope-stack (up to ~8) and rendered most-specific-first; only the tiers present in the stack appear. Token budget stays within ~2000.
 
 ---
 
@@ -139,12 +202,11 @@ Admitted entries accumulate in a monthly dataset file. Future iteration: LoRA fi
 
 ---
 
-## SQLite schema reference
+## PostgreSQL schema reference
 
-Full schema in `docs/agents/memory-graph.md`. Key tables:
+Schema in `packages/db-schema/src/memory.ts`; additive migrations apply via `scripts/migrate-db.sh` (NOT drizzle-kit). Key tables (all on `agi_data`, pgvector + GIN tsvector):
 
-- `events` — episodic records with FTS5 index (`events_fts`)
-- `relationships` — consolidated semantic graph with temporal validity
-- `doc_chunks` — indexed documentation + .ai/ files with FTS5 index (`doc_chunks_fts`)
-- `consolidation_log` — audit trail for consolidation runs
-- `_meta` — migration markers (e.g., `migrated_from_file_adapter`)
+- `memory_events` — episodic records; `embedding vector(768)`; **`scope`** locality column (s234)
+- `memory_relationships` — consolidated semantic graph with temporal validity (`valid_from`/`valid_until`); **`scope`** column
+- `memory_doc_chunks` — indexed `agi/docs/` + `k/`/`.ai/` files; `scope` ∈ `gestalt | project:<path> | prime`
+- `memory_consolidation_log` — audit trail for consolidation runs

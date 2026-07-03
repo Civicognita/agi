@@ -36,19 +36,21 @@ function makeFakeFork(forkName: string): string {
 }
 
 describe("AIONIMA_SYSTEM_FORK_NAMES (s119 t703)", () => {
-  it("contains the 5 Civicognita cores + 6 PAx packages", () => {
+  it("contains the 5 Aionima cores only — PAx removed + Local-ID absorbed (owner directive 2026-06-29)", () => {
     expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("agi");
     expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("prime");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("id");
+    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("hive-id");
     expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("marketplace");
     expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("mapp-marketplace");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("react-fancy");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("fancy-code");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("fancy-sheets");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("fancy-echarts");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("fancy-3d");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toContain("fancy-screens");
-    expect(AIONIMA_SYSTEM_FORK_NAMES).toHaveLength(11);
+    expect(AIONIMA_SYSTEM_FORK_NAMES).toHaveLength(5);
+    // PAx repos are no longer monorepo-resident — migration must not move them.
+    for (const pax of ["react-fancy", "fancy-code", "fancy-sheets", "fancy-echarts", "fancy-3d", "fancy-screens"]) {
+      expect(AIONIMA_SYSTEM_FORK_NAMES).not.toContain(pax);
+    }
+    // Local-ID was absorbed into AGI gateway-core (s180) — its fork is no longer
+    // a system repo and must NOT be migrated into _aionima/repos/. The Aionima
+    // envelope replaced it with hive-id (the cloud federation hub).
+    expect(AIONIMA_SYSTEM_FORK_NAMES).not.toContain("id");
   });
 });
 
@@ -70,13 +72,13 @@ describe("migrateAionimaSystemForks (s119 t703)", () => {
   });
 
   it("moves all 5 Civicognita cores in one pass", () => {
-    for (const name of ["agi", "prime", "id", "marketplace", "mapp-marketplace"]) {
+    for (const name of ["agi", "prime", "hive-id", "marketplace", "mapp-marketplace"]) {
       makeFakeFork(name);
     }
     const r = migrateAionimaSystemForks(tmp);
     expect(r.moved).toBe(5);
     expect(r.errors).toEqual([]);
-    for (const name of ["agi", "prime", "id", "marketplace", "mapp-marketplace"]) {
+    for (const name of ["agi", "prime", "hive-id", "marketplace", "mapp-marketplace"]) {
       expect(existsSync(join(tmp, "_aionima", "repos", name))).toBe(true);
       expect(existsSync(join(tmp, "_aionima", name))).toBe(false);
     }

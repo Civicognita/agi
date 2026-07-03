@@ -19,7 +19,7 @@
  * always cheap and local."
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ulid } from "ulid";
@@ -30,6 +30,7 @@ import { canonicalEpisodicHash, NoopAnchor, episodicToAnchor } from "@agi/memory
 import type { CandidateDatasetAccumulator } from "@agi/memory";
 import type { AlignmentScorer } from "./prime-alignment-scorer.js";
 import type { ComponentLogger } from "./logger.js";
+import { resolveWriteScopeWithPolicy, type CascadePolicy } from "./memory-scope.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -49,10 +50,12 @@ export interface EpisodeExtractorOptions {
   /** Optional dataset accumulator. Runs 4-gate pipeline on each stored record. */
   accumulator?: CandidateDatasetAccumulator;
   /** Optional consolidation engine — triggered at session boundaries. */
-  consolidationEngine?: { maybeConsolidate(opts: { entityId: string; projectPath?: string | null; trigger: "session_close" | "job_complete" | "idle" }): Promise<unknown> };
+  consolidationEngine?: { maybeConsolidate(opts: { entityId: string; projectPath?: string | null; scope?: string | null; trigger: "session_close" | "job_complete" | "idle" }): Promise<unknown> };
   logger?: ComponentLogger;
   /** Timeout for the full extract+score+store cycle, ms. Default 45_000. */
   timeoutMs?: number;
+  /** s234 — live reader for the owner cascade-up policy (gateway.json memory.cascade). Hot. */
+  getCascadePolicy?: () => CascadePolicy | undefined;
 }
 
 export interface ExtractionInput {
@@ -64,13 +67,40 @@ export interface ExtractionInput {
   sessionKey: string;
   /** Project path for project-scoped memory tagging (optional). */
   projectPath?: string | null;
+  /** s234 — channel adapter id (e.g. "discord") when the turn came from a channel. */
+  channelId?: string | null;
+  /** s234 — room/thread id within the channel. With channelId, scopes the memory to that room. */
+  roomId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
 // Prompt loading
 // ---------------------------------------------------------------------------
 
-const _promptsDir = join(dirname(fileURLToPath(import.meta.url)), "../../../prompts");
+/**
+ * Resolve the prompts/ dir robustly. The relative depth from import.meta.url is
+ * NOT constant: this module is bundled into BOTH packages/gateway-core/dist/
+ * index.js (repo-root + 3) AND cli/dist/index.js (repo-root + 2) — and the
+ * gateway actually runs the cli bundle. A fixed "../../../prompts" overshoots for
+ * the cli bundle (lands on /mnt/prompts), the readFileSync throws, _loadPrompt
+ * swallows it to "", and episodic memory records 0 rows forever. Walk up from the
+ * module location until prompts/episode-extract.md is found instead.
+ */
+function _resolvePromptsDir(): string {
+  const start = dirname(fileURLToPath(import.meta.url));
+  let dir = start;
+  for (let i = 0; i < 8; i++) {
+    const candidate = join(dir, "prompts");
+    if (existsSync(join(candidate, "episode-extract.md"))) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) break; // reached filesystem root
+    dir = parent;
+  }
+  // Legacy fallback (gateway-core/dist depth) if the walk somehow fails.
+  return join(start, "../../../prompts");
+}
+
+const _promptsDir = _resolvePromptsDir();
 
 function _loadPrompt(name: string): string {
   try {
@@ -82,6 +112,16 @@ function _loadPrompt(name: string): string {
 
 const EXTRACT_PROMPT = _loadPrompt("episode-extract.md");
 const SCORE_PROMPT = _loadPrompt("episode-score.md");
+
+/**
+ * Test/diagnostic hook: true when both episodic prompts resolved + loaded. Guards
+ * against the prompt files going missing or the prompts-dir resolver breaking
+ * (the bug that left episodic memory empty). The boot-time DEGRADED warning is
+ * the runtime catch for the bundled-artifact case.
+ */
+export function episodicPromptsLoaded(): boolean {
+  return EXTRACT_PROMPT.length > 0 && SCORE_PROMPT.length > 0;
+}
 
 // ---------------------------------------------------------------------------
 // Extractor
@@ -97,7 +137,14 @@ export class EpisodeExtractor {
   private readonly consolidationEngine?: EpisodeExtractorOptions["consolidationEngine"];
   private readonly logger?: ComponentLogger;
   private readonly timeoutMs: number;
+  private readonly getCascadePolicy?: () => CascadePolicy | undefined;
   private readonly anchor = new NoopAnchor();
+  // Running tallies so a 100%-failing capture layer is visible in logs instead
+  // of silently writing 0 rows forever. The whole pipeline is fire-and-forget,
+  // so without this a swallowed summarize() error rots undetected (the bug that
+  // left memory_events empty: "Aion says it has memories but can't search them").
+  private storedCount = 0;
+  private skippedCount = 0;
 
   constructor(opts: EpisodeExtractorOptions) {
     this.provider = opts.provider;
@@ -109,6 +156,14 @@ export class EpisodeExtractor {
     this.consolidationEngine = opts.consolidationEngine;
     this.logger = opts.logger;
     this.timeoutMs = opts.timeoutMs ?? 45_000;
+    this.getCascadePolicy = opts.getCascadePolicy;
+    // Boot-time loud failure: if the prompts didn't load, episodic memory can
+    // NEVER record (every _extract returns null). Surface it once, loudly.
+    if (!EXTRACT_PROMPT || !SCORE_PROMPT) {
+      this.logger?.warn(
+        `episodic memory DEGRADED: ${!EXTRACT_PROMPT ? "episode-extract.md" : "episode-score.md"} prompt not loaded — no episodes will be recorded`,
+      );
+    }
   }
 
   /**
@@ -124,12 +179,26 @@ export class EpisodeExtractor {
     try {
       // Step 1: Extract episode content
       const extracted = await this._extract(input, deadline);
-      if (!extracted || !extracted.summary) return null; // not noteworthy
+      if (!extracted || !extracted.summary) {
+        // _extract logged the SPECIFIC reason (prompt missing / summarize threw /
+        // unparseable / not noteworthy). Keep a running tally so a persistently
+        // empty memory_events table is diagnosable from logs alone.
+        this.skippedCount++;
+        this.logger?.debug(`episode not stored (stored=${this.storedCount} skipped=${this.skippedCount})`);
+        return null;
+      }
 
       // Step 2: Score quality
       const scored = await this._score(extracted, input.toolsUsed, deadline);
 
       const timestamp = new Date().toISOString();
+      // s234 — locality scope from the turn's channel/project context. Channel
+      // turns confine to room:<channelId>:<roomId>; otherwise project, else gestalt.
+      // The owner cascade-up policy (read live, hot) may promote it to a broader scope.
+      const scope = resolveWriteScopeWithPolicy(
+        { channelId: input.channelId, roomId: input.roomId, projectPath: input.projectPath },
+        this.getCascadePolicy?.(),
+      );
       const recordBase = {
         id: ulid(),
         timestamp,
@@ -142,6 +211,7 @@ export class EpisodeExtractor {
         modelVersion: input.model,
         // projectPath is carried through for graph-adapter project-scoped storage
         projectPath: input.projectPath ?? null,
+        scope,
       };
 
       // Step 3: Compute canonical hash (includes all stable fields)
@@ -179,8 +249,11 @@ export class EpisodeExtractor {
         }
       }
 
-      this.logger?.debug(
-        `episode extracted: ${record.id} conf=${record.confidence.toFixed(2)} tags=[${record.tags.join(",")}]`,
+      // First successful store is logged at INFO so "episodic memory is alive"
+      // is visible without debug logging; subsequent stores stay at debug.
+      this.storedCount++;
+      this.logger?.[this.storedCount === 1 ? "info" : "debug"](
+        `episode stored: ${record.id} conf=${record.confidence.toFixed(2)} tags=[${record.tags.join(",")}] (stored=${this.storedCount})`,
       );
 
       // Step 8: Trigger consolidation at session boundary (non-blocking)
@@ -189,6 +262,7 @@ export class EpisodeExtractor {
           .maybeConsolidate({
             entityId: this.entityId,
             projectPath: input.projectPath ?? null,
+            scope,
             trigger: "session_close",
           })
           .catch(() => { /* consolidation failure is non-fatal */ });
@@ -211,7 +285,12 @@ export class EpisodeExtractor {
     input: ExtractionInput,
     deadline: number,
   ): Promise<ExtractResult | null> {
-    if (!EXTRACT_PROMPT || Date.now() >= deadline) return null;
+    // EXTRACT_PROMPT absence is already warned once at construction; don't spam.
+    if (!EXTRACT_PROMPT) return null;
+    if (Date.now() >= deadline) {
+      this.logger?.warn("episode extract: deadline exceeded before the summarize() call");
+      return null;
+    }
 
     const exchangeText = [
       `User: ${input.userMessage.slice(0, 1200)}`,
@@ -228,11 +307,26 @@ export class EpisodeExtractor {
           setTimeout(() => r(new Error("extract timeout")), Math.min(remaining, 20_000)),
         ),
       ]);
-    } catch {
+    } catch (err) {
+      // The single most common silent-failure cause: the economy summarize()
+      // model is unavailable/erroring. Surface it instead of swallowing.
+      this.logger?.warn(
+        `episode extract: summarize() failed — ${err instanceof Error ? err.message : String(err)}`,
+      );
       return null;
     }
 
-    return _parseExtractResult(raw);
+    const parsed = _parseExtractResult(raw);
+    if (parsed === null) {
+      // Debug, not warn: an empty {summary} legitimately means "not noteworthy"
+      // (the extract prompt returns no summary for trivial exchanges), so this is
+      // not necessarily a failure. summarize()-throw and prompt-missing above ARE
+      // failures and stay at warn.
+      this.logger?.debug(
+        `episode extract: no summary returned (${raw.length} chars) — not noteworthy or unparseable`,
+      );
+    }
+    return parsed;
   }
 
   private async _score(

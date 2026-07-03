@@ -62,6 +62,7 @@ function makeGraphEvent(entityId: string, overrides: Partial<GraphEventRecord> =
     id,
     entityId,
     projectPath: overrides.projectPath ?? null,
+    scope: overrides.scope,
     summary: overrides.summary ?? `graph event ${String(episodeCounter)}`,
     tags: overrides.tags ?? ["test"],
     confidence: overrides.confidence ?? 0.8,
@@ -361,5 +362,33 @@ describe("GraphMemoryAdapter — doc chunks", () => {
 
     const projResults = await adapter.queryDocChunks({ scope: pScope, limit: 10 });
     expect(projResults.every((c) => c.scope === pScope)).toBe(true);
+  });
+});
+
+describe("s234 — locality scope filter (scopes[])", () => {
+  it("confines queryGraphEvents to the requested scope-stack on BOTH query paths", async () => {
+    const entityId = `scope-test-${uid()}`;
+    await adapter.storeEpisodicEvent(makeGraphEvent(entityId, { summary: "gestalt xylophone note", scope: "gestalt" }));
+    await adapter.storeEpisodicEvent(makeGraphEvent(entityId, { summary: "project xylophone note", scope: "project:/p/j", projectPath: "/p/j" }));
+    await adapter.storeEpisodicEvent(makeGraphEvent(entityId, { summary: "room xylophone secret", scope: "room:discord:guild-1:bugs" }));
+
+    // Recency path (no `semantic`) — the dashboard/endpoint default, and the
+    // branch that regressed: must restrict to the requested scope.
+    const roomOnly = await adapter.queryGraphEvents({ entityId, scopes: ["room:discord:guild-1:bugs"], limit: 20 });
+    expect(roomOnly.map((e) => e.scope)).toEqual(["room:discord:guild-1:bugs"]);
+
+    // A two-scope stack cascades both and still excludes the project scope.
+    const stack = await adapter.queryGraphEvents({ entityId, scopes: ["room:discord:guild-1:bugs", "gestalt"], limit: 20 });
+    expect(stack.map((e) => e.scope).sort()).toEqual(["gestalt", "room:discord:guild-1:bugs"]);
+
+    // No scopes filter → all three visible.
+    expect((await adapter.queryGraphEvents({ entityId, limit: 20 })).length).toBe(3);
+
+    // Semantic path — same confinement.
+    const roomSemantic = await adapter.queryGraphEvents({ entityId, scopes: ["room:discord:guild-1:bugs"], semantic: "xylophone", limit: 20 });
+    expect(roomSemantic.every((e) => e.scope === "room:discord:guild-1:bugs")).toBe(true);
+    expect(roomSemantic.length).toBe(1);
+
+    await adapter.deleteAllForEntity(entityId);
   });
 });

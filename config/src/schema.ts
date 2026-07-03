@@ -292,6 +292,9 @@ const SkillsConfigSchema = z
   })
   .strict();
 
+/** s234 — how far up a memory may be promoted from its write scope. Never 'prime' (read-only). */
+const CascadeReachSchema = z.enum(["gestalt", "project", "provider"]);
+
 const MemoryConfigSchema = z
   .object({
     /** Legacy directory scanned once for file-adapter migration. */
@@ -300,6 +303,19 @@ const MemoryConfigSchema = z
     embeddingModel: z.string().default("nomic-embed-text"),
     /** Absolute path to global k/ knowledge directory (e.g. _aionima/k/). Optional. */
     globalKDir: z.string().optional(),
+    /**
+     * s234 — owner-configurable upward promotion. By default every memory is
+     * confined to its write scope; set a per-layer `reachUpTo` to let new
+     * memories of that layer surface at a broader scope (e.g. room → provider).
+     */
+    cascade: z
+      .object({
+        room: z.object({ reachUpTo: CascadeReachSchema }).strict().optional(),
+        provider: z.object({ reachUpTo: CascadeReachSchema }).strict().optional(),
+        project: z.object({ reachUpTo: CascadeReachSchema }).strict().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

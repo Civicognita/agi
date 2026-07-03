@@ -91,6 +91,11 @@ export interface EpisodicRecord {
   /** Pointers to the source material — chat session ids, doc paths, tool
    *  call ids, etc. — that this episode summarizes. */
   sourceLinks: string[];
+  /** Project path for project-scoped storage (null = not project-scoped). */
+  projectPath?: string | null;
+  /** s234 locality scope — prime|gestalt|project:<path>|provider:<id>|room:<channelId>:<roomId>.
+   *  Computed at capture from the turn's channel/project context. */
+  scope?: string;
   /** Canonical content hash for dedup + anchor reference. Produced by
    *  `canonicalEpisodicHash(record)` (sha256 of canonical JSON). */
   hash: string;

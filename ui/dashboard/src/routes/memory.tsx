@@ -11,7 +11,27 @@ import { Badge } from "@/components/ui/badge.js";
 import { Input } from "@/components/ui/input.js";
 import { Button } from "@/components/ui/button.js";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs.js";
+import { DevNote } from "@/components/ui/dev-notes.js";
 import { fetchMemoryEvents, searchMemoryDocs, type MemoryEvent, type MemoryDocChunk } from "@/api.js";
+
+/** Render a createdAt value safely — an unparseable/empty value shows "—", never "Invalid Date". */
+function formatCreatedAt(createdAt: string): string {
+  const d = new Date(createdAt);
+  return isNaN(d.getTime()) ? "—" : d.toLocaleString();
+}
+
+/** s234 — turn a locality scope string into a readable, colour-coded badge label. */
+function localityBadge(scope: string | null): { label: string; cls: string } {
+  if (scope === null || scope === "gestalt") return { label: "machine-wide", cls: "bg-zinc-500/15 text-zinc-300" };
+  if (scope === "prime") return { label: "PRIME", cls: "bg-amber-500/15 text-amber-400" };
+  if (scope.startsWith("project:")) return { label: "project", cls: "bg-emerald-500/15 text-emerald-400" };
+  if (scope.startsWith("provider:")) return { label: `channel · ${scope.slice("provider:".length)}`, cls: "bg-violet-500/15 text-violet-400" };
+  if (scope.startsWith("room:")) {
+    const ch = scope.slice("room:".length).split(":")[0];
+    return { label: `room · ${ch}`, cls: "bg-sky-500/15 text-sky-400" };
+  }
+  return { label: scope, cls: "bg-zinc-500/15 text-zinc-300" };
+}
 
 function EventsTab() {
   const [q, setQ] = useState("");
@@ -65,6 +85,10 @@ function EventsTab() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm text-foreground">{ev.summary}</p>
                   <div className="flex items-center gap-2 flex-wrap mt-1">
+                    {(() => {
+                      const b = localityBadge(ev.scope);
+                      return <Badge className={b.cls} data-testid="memory-event-scope">{b.label}</Badge>;
+                    })()}
                     {ev.tags.map((t) => (
                       <Badge key={t} className="bg-blue-500/15 text-blue-400">{t}</Badge>
                     ))}
@@ -74,7 +98,7 @@ function EventsTab() {
                   </div>
                 </div>
                 <div className="shrink-0 text-right">
-                  <div className="text-[10px] text-muted-foreground">{new Date(ev.createdAt).toLocaleString()}</div>
+                  <div className="text-[10px] text-muted-foreground" data-testid="memory-event-date">{formatCreatedAt(ev.createdAt)}</div>
                   <div className="text-[10px] text-muted-foreground/60">conf {Math.round(ev.confidence * 100)}%</div>
                 </div>
               </div>
@@ -147,10 +171,17 @@ export default function MemoryPage() {
         <div>
           <h1 className="text-xl font-semibold text-foreground">Aion's Mind</h1>
           <p className="text-[13px] text-muted-foreground mt-0.5">
-            One shared memory across the whole app — not per-channel. Everything Aion learns in chats, channels,
-            and projects lands here.
+            One mind, layered by locality. Each memory carries a scope — machine-wide, a project, a channel, or a
+            single room/thread — shown on every row. Narrower scopes stay confined (a room memory never leaks to
+            another room); broader scopes cascade down into every conversation.
           </p>
         </div>
+        <DevNote heading="Cascade-up policy editor — deferred" kind="deferred" scope="memory/cascade">
+          The owner cascade-up policy (which memories may promote upward, and how far) is functional and
+          hot-reloaded from <code>gateway.json → memory.cascade</code> (per-layer <code>reachUpTo</code>:
+          room→provider, provider→gestalt, project→gestalt). A visual per-layer editor is deferred (s234 P4
+          follow-up); edit <code>gateway.json</code> directly for now — changes take effect without a restart.
+        </DevNote>
         <Tabs defaultValue="events">
           <TabsList>
             <TabsTrigger value="events" data-testid="memory-tab-events">Memories</TabsTrigger>

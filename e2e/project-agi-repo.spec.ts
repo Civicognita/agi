@@ -34,8 +34,8 @@ test.describe("Project .agi envelope — API layer", () => {
       if (!res.ok) return null;
       return res.json();
     });
-    const first = Array.isArray(projects?.projects)
-      ? projects.projects.find((p: { path?: string; name?: string }) => p.path && p.name !== "_aionima")
+    const first = Array.isArray(projects)
+      ? projects.find((p: { path?: string; name?: string }) => p.path && p.name !== "_aionima")
       : null;
     if (!first?.path) {
       test.skip();
@@ -77,8 +77,8 @@ test.describe("Project .agi envelope — API layer", () => {
       if (!res.ok) return null;
       return res.json();
     });
-    const first = Array.isArray(projects?.projects)
-      ? projects.projects.find((p: { path?: string; name?: string }) => p.path && p.name !== "_aionima")
+    const first = Array.isArray(projects)
+      ? projects.find((p: { path?: string; name?: string }) => p.path && p.name !== "_aionima")
       : null;
     if (!first?.path) { test.skip(); return; }
 
@@ -101,7 +101,7 @@ test.describe("Project .agi envelope — API layer", () => {
     const target = await page.evaluate(async () => {
       const res = await fetch("/api/projects");
       if (!res.ok) return null;
-      const { projects } = await res.json();
+      const projects = await res.json();
       if (!Array.isArray(projects)) return null;
       for (const p of projects) {
         if (!p.path || p.name === "_aionima") continue;
@@ -145,8 +145,8 @@ test.describe("Project .agi envelope — API layer", () => {
       const res = await fetch("/api/projects");
       return res.ok ? res.json() : null;
     });
-    const first = Array.isArray(projects?.projects)
-      ? projects.projects.find((p: { path?: string; name?: string }) => p.path && p.name !== "_aionima")
+    const first = Array.isArray(projects)
+      ? projects.find((p: { path?: string; name?: string }) => p.path && p.name !== "_aionima")
       : null;
     if (!first?.path) { test.skip(); return; }
 
@@ -173,8 +173,8 @@ test.describe("Project .agi envelope — UI", () => {
       if (!res.ok) return null;
       return res.json();
     });
-    const first = Array.isArray(projects?.projects)
-      ? projects.projects.find((p: { name?: string }) => p.name && p.name !== "_aionima")
+    const first = Array.isArray(projects)
+      ? projects.find((p: { name?: string }) => p.name && p.name !== "_aionima")
       : null;
     if (!first?.name) {
       test.skip();
@@ -201,14 +201,22 @@ test.describe("Project .agi envelope — UI", () => {
       const res = await fetch("/api/projects");
       return res.ok ? res.json() : null;
     });
-    const first = Array.isArray(projects?.projects)
-      ? projects.projects.find((p: { name?: string }) => p.name && p.name !== "_aionima")
+    const first = Array.isArray(projects)
+      ? projects.find((p: { name?: string }) => p.name && p.name !== "_aionima")
       : null;
     if (!first?.name) { test.skip(); return; }
 
     await page.goto(`/projects/${encodeURIComponent(first.name)}`);
     await page.waitForSelector("[data-testid='hearth-top']", { timeout: 10_000 });
 
+    // NOTE: the "project" sub-tab belongs to COORDINATE mode (TAB_MODES["project"]
+    // in ProjectDetail.tsx), which only renders for categorized full-mode projects
+    // (web/app/monorepo/ops). In the test VM, project-type classification is
+    // currently absent (the project-* hosting plugins fail to load — `@agi/sdk`
+    // unresolvable — so every fixture reports category:null), and this test does
+    // not switch to coordinate mode. Until both are addressed it skips at
+    // tab.count()===0. The config/knowledge-state surface is covered at the API
+    // layer by "agi-repo/state returns the config-state shape" above.
     const tab = page.getByTestId("project-tab-project");
     if ((await tab.count()) === 0) { test.skip(); return; }
     await tab.first().click();

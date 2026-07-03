@@ -48,6 +48,7 @@ interface PwBrowser { newPage(): Promise<PwPage>; close(): Promise<void>; isConn
 interface PwPage {
   setViewportSize(s: { width: number; height: number }): Promise<void>;
   goto(url: string, opts?: { timeout?: number; waitUntil?: string }): Promise<void>;
+  waitForLoadState(state?: string, opts?: { timeout?: number }): Promise<void>;
   click(selector: string, opts?: { timeout?: number }): Promise<void>;
   type(selector: string, text: string, opts?: { delay?: number }): Promise<void>;
   fill(selector: string, value: string): Promise<void>;
@@ -100,6 +101,24 @@ function getSessionKey(ctx?: ToolExecutionContext): string {
 
 const NAV_TIMEOUT = 30_000;
 const ACTION_TIMEOUT = 10_000;
+/** Best-effort settle after DOMContentLoaded — capped so it can never hang. */
+const LOAD_SETTLE_MS = 5_000;
+
+/**
+ * Navigate and settle WITHOUT `waitUntil: "networkidle"`.
+ *
+ * `networkidle` resolves only after 500 ms of zero network activity, which never
+ * happens for client-rendered / realtime apps (open sockets, telemetry, prefetch,
+ * streaming). It made `goto` hang the full NAV_TIMEOUT and throw on healthy pages
+ * (issues i-001 / i-002 — WhisperChat). Instead: block only until the DOM is
+ * parsed, then a bounded, non-throwing wait for the `load` event so dynamic
+ * content still populates. The `load` wait can time out silently — that's fine;
+ * the page is already usable and further actions will `waitForSelector` anyway.
+ */
+export async function navigateWithSettle(page: PwPage, url: string): Promise<void> {
+  await page.goto(url, { timeout: NAV_TIMEOUT, waitUntil: "domcontentloaded" });
+  await page.waitForLoadState("load", { timeout: LOAD_SETTLE_MS }).catch(() => {});
+}
 
 export function createBrowserSessionHandler(config: BrowserSessionConfig): ToolHandler {
   return async (input: Record<string, unknown>, ctx?: ToolExecutionContext): Promise<string> => {
@@ -146,7 +165,7 @@ export function createBrowserSessionHandler(config: BrowserSessionConfig): ToolH
         const vw = (input.viewport as { width?: number } | undefined)?.width ?? 1280;
         const vh = (input.viewport as { height?: number } | undefined)?.height ?? 720;
         await page.setViewportSize({ width: vw, height: vh });
-        await page.goto(url, { timeout: NAV_TIMEOUT, waitUntil: "networkidle" });
+        await navigateWithSettle(page, url);
 
         const sid = ulid();
         sessions.set(sessionKey, { browser, page, lastActivity: Date.now(), sessionId: sid });
@@ -182,7 +201,7 @@ export function createBrowserSessionHandler(config: BrowserSessionConfig): ToolH
         case "navigate": {
           if (!url) return JSON.stringify({ error: "url is required for navigate" });
           if (!/^https?:\/\//i.test(url)) return JSON.stringify({ error: "URL must start with http:// or https://" });
-          await page.goto(url, { timeout: NAV_TIMEOUT, waitUntil: "networkidle" });
+          await navigateWithSettle(page, url);
           const title = await page.title();
           const result: Record<string, unknown> = { ok: true, action: "navigate", url: page.url(), title };
           if (includeScreenshot) Object.assign(result, await captureScreenshot(page, config, fullPage));

@@ -494,13 +494,16 @@ function buildMemoryInstructionsSection(): string {
 
 Your memory is persistent across all sessions and automatically recorded — you do not need to call any tool to store it. Every invocation is captured and consolidated into searchable episodic records.
 
-**Reading recalled context (when a ## Memory section appears below):**
-- **Recalled context (global)** — your prior observations and decisions across all work
+**Reading recalled context (when a ## Memory section appears below):** memories are scoped by locality and surface most-specific-first — narrower scopes are confined (a room memory never leaks to another room), broader scopes cascade down into every conversation.
+- **This room/thread** — memories confined to the current channel room, DM, or thread
+- **This channel** — memories shared across the current channel provider (e.g. Discord)
 - **Project context** — prior work and decisions scoped to the current project
+- **Recalled context (machine-wide)** — your prior observations and decisions across all work on this machine (the gestalt layer)
 - **Established facts** — consolidated relationship triples extracted from prior sessions (subject → predicate → object with temporal validity)
 - **Related docs** — relevant chunks from \`agi/docs/\` or project \`k/\` knowledge files
 
 **Active recall tools (use when context is insufficient):**
+- \`search_memory\` — search your own episodic memory: prior observations, decisions, and facts recorded across all chats, channels, and projects. Use when the recalled context above isn't enough and you need to look further back. This is how you actively query the memories that are otherwise only surfaced passively.
 - \`search_docs\` — semantic search over \`agi/docs/\`, the global \`k/\` folder, and the current project's \`k/\` folder. Use when you need specific platform documentation or project knowledge that isn't already in context.
 - \`search_prime\` — search the PRIME corpus for Impactivism, COA, entity model, or 0TRUTH knowledge.
 
@@ -510,7 +513,9 @@ Your memory is persistent across all sessions and automatically recorded — you
 function buildMemorySection(memories: MemoryPromptEntry[]): string {
   if (memories.length === 0) return "";
 
-  // s112 Phase 5 — structured sections: global events, project events, facts, docs
+  // s234 — locality-scoped sections, most-specific → broadest, then facts + docs.
+  const room: MemoryPromptEntry[] = [];
+  const channel: MemoryPromptEntry[] = [];
   const global: MemoryPromptEntry[] = [];
   const project: MemoryPromptEntry[] = [];
   const facts: MemoryPromptEntry[] = [];
@@ -518,7 +523,9 @@ function buildMemorySection(memories: MemoryPromptEntry[]): string {
   const legacy: MemoryPromptEntry[] = [];
 
   for (const m of memories) {
-    if (m.category === "memory") global.push(m);
+    if (m.category === "room-memory") room.push(m);
+    else if (m.category === "channel-memory") channel.push(m);
+    else if (m.category === "memory") global.push(m);
     else if (m.category === "project-memory") project.push(m);
     else if (m.category === "fact") facts.push(m);
     else if (m.category === "docs") docs.push(m);
@@ -526,21 +533,34 @@ function buildMemorySection(memories: MemoryPromptEntry[]): string {
   }
 
   // Legacy flat format (old MemoryEntry shape)
-  if (global.length === 0 && project.length === 0 && facts.length === 0 && docs.length === 0) {
+  if (
+    room.length === 0 && channel.length === 0 && global.length === 0 &&
+    project.length === 0 && facts.length === 0 && docs.length === 0
+  ) {
     const entries = legacy.map((m) => `- [${m.category}] ${m.content}`);
     return `## Memory\n\n${entries.join("\n")}`;
   }
 
   const parts: string[] = ["## Memory"];
 
-  if (global.length > 0) {
-    parts.push("### Recalled context (global)");
-    for (const m of global) parts.push(`- ${m.content}`);
+  if (room.length > 0) {
+    parts.push("### This room/thread");
+    for (const m of room) parts.push(`- ${m.content}`);
+  }
+
+  if (channel.length > 0) {
+    parts.push("### This channel");
+    for (const m of channel) parts.push(`- ${m.content}`);
   }
 
   if (project.length > 0) {
     parts.push("### Project context");
     for (const m of project) parts.push(`- ${m.content}`);
+  }
+
+  if (global.length > 0) {
+    parts.push("### Recalled context (machine-wide)");
+    for (const m of global) parts.push(`- ${m.content}`);
   }
 
   if (facts.length > 0) {

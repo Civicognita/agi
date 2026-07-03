@@ -70,6 +70,8 @@ export const memoryEvents = pgTable(
     hash: text("hash").unique().notNull(),
     coaFingerprint: text("coa_fingerprint").notNull().default("legacy"),
     modelVersion: text("model_version"),
+    /** Locality scope (s234) — prime|gestalt|project:<path>|provider:<id>|room:<channelId>:<roomId>. */
+    scope: text("scope").notNull().default("gestalt"),
     createdAt: bigint("created_at", { mode: "number" }).notNull(),
     consolidatedAt: bigint("consolidated_at", { mode: "number" }),
     embedding: vector("embedding", { dimensions: 768 }),
@@ -79,6 +81,7 @@ export const memoryEvents = pgTable(
     index("idx_memory_events_project").on(t.entityId, t.projectPath),
     index("idx_memory_events_created").on(t.createdAt),
     index("idx_memory_events_unconsolidated").on(t.entityId, t.consolidatedAt),
+    index("idx_memory_events_scope").on(t.scope, t.createdAt),
   ],
 );
 
@@ -95,6 +98,8 @@ export const memoryRelationships = pgTable(
     objectEntityId: text("object_entity_id"),
     objectLiteral: text("object_literal"),
     projectPath: text("project_path"),
+    /** Locality scope (s234) — same grammar as memory_events.scope. */
+    scope: text("scope").notNull().default("gestalt"),
     validFrom: bigint("valid_from", { mode: "number" }).notNull(),
     validUntil: bigint("valid_until", { mode: "number" }),
     confidence: real("confidence").notNull().default(1.0),
@@ -109,6 +114,7 @@ export const memoryRelationships = pgTable(
       t.projectPath,
       t.validUntil,
     ),
+    index("idx_memory_rel_scope").on(t.subjectEntityId, t.scope, t.validUntil),
   ],
 );
 

@@ -75,9 +75,11 @@ export class ConsolidationEngine {
   async maybeConsolidate(opts: {
     entityId: string;
     projectPath?: string | null;
+    /** s234 — locality scope new relationships inherit (confines consolidated facts). */
+    scope?: string | null;
     trigger: "session_close" | "job_complete" | "idle";
   }): Promise<{ eventsProcessed: number; relationshipsAdded: number }> {
-    const { entityId, projectPath, trigger } = opts;
+    const { entityId, projectPath, scope, trigger } = opts;
     const startedAt = Date.now();
     const logId = ulid();
 
@@ -125,6 +127,7 @@ export class ConsolidationEngine {
           objectEntityId: null,
           objectLiteral: triple.objectLiteral,
           projectPath: projectPath ?? null,
+          scope: scope ?? null,
           validFrom: now,
           validUntil: triple.validUntil ?? null,
           confidence: triple.confidence,

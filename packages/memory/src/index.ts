@@ -22,7 +22,7 @@ export type {
 export { DEFAULT_MEMORY_CONFIG } from "./types.js";
 
 // Graph adapter — SQLite temporal event store (replaces Cognee + file-adapter).
-export { GraphMemoryAdapter } from "./graph-adapter.js";
+export { GraphMemoryAdapter, epochMsToIso } from "./graph-adapter.js";
 export type {
   GraphMemoryConfig,
   GraphEventRecord,

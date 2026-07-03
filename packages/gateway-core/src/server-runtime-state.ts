@@ -31,6 +31,7 @@ import { GatewayWebSocketServer } from "./ws-server.js";
 import { handlePlanRequest } from "./plan-api.js";
 import { readProjectMcpServers, setDotMcpServer, removeDotMcpServer } from "./mcp-config-store.js";
 import type { EntityStore, CommsLog, NotificationStore } from "@agi/entity-model";
+import { epochMsToIso } from "@agi/memory";
 import { injectTokenIntoCloneUrl } from "./dev-mode-auth.js";
 import { eq, and } from "drizzle-orm";
 import { connections } from "@agi/db-schema";
@@ -1983,7 +1984,7 @@ export async function createGatewayRuntimeState(
     const targetPath = agiRepoGuard(request, reply);
     if (!targetPath) return reply;
     const body = (request.body ?? {}) as { mode?: string; url?: string };
-    const { setAgiRemote, agiRemoteName } = await import("./agi-repo-manager.js");
+    const { setAgiRemote, createPrivateAgiRemote } = await import("./agi-repo-manager.js");
 
     let remoteUrl: string | null = null;
 
@@ -2010,40 +2011,9 @@ export async function createGatewayRuntimeState(
       if (!token) {
         return reply.code(400).send({ error: "no connected GitHub account — connect one in Settings → Gateway → Contributing, or use mode=url" });
       }
-      const repoName = agiRemoteName(targetPath);
-      try {
-        const gh = await fetch("https://api.github.com/user/repos", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/vnd.github+json",
-            "Content-Type": "application/json",
-            "User-Agent": "aionima-gateway",
-          },
-          body: JSON.stringify({ name: repoName, private: true, description: "Aionima .agi project envelope (config + knowledge state)" }),
-          signal: AbortSignal.timeout(15_000),
-        });
-        if (gh.status === 422) {
-          // Already exists — reuse it rather than failing.
-          const me = await fetch("https://api.github.com/user", {
-            headers: { Authorization: `Bearer ${token}`, "User-Agent": "aionima-gateway" },
-            signal: AbortSignal.timeout(10_000),
-          });
-          const login = ((await me.json().catch(() => ({}))) as { login?: string }).login;
-          remoteUrl = login ? `https://github.com/${login}/${repoName}.git` : null;
-        } else if (!gh.ok) {
-          const errBody = (await gh.json().catch(() => ({}))) as { message?: string };
-          return reply.code(502).send({ error: `GitHub repo create failed (${String(gh.status)}): ${errBody.message ?? "unknown"}` });
-        } else {
-          const created = (await gh.json()) as { clone_url?: string };
-          remoteUrl = created.clone_url ?? null;
-        }
-      } catch (err) {
-        return reply.code(502).send({ error: `GitHub API error: ${err instanceof Error ? err.message : String(err)}` });
-      }
-      if (!remoteUrl) return reply.code(502).send({ error: "could not resolve the created repo URL" });
-      const res = setAgiRemote(targetPath, remoteUrl);
-      if (!res.ok) return reply.code(400).send({ error: res.error });
+      const created = await createPrivateAgiRemote(targetPath, token);
+      if (!created.ok) return reply.code(502).send({ error: created.error });
+      remoteUrl = created.remoteUrl ?? null;
     } else {
       return reply.code(400).send({ error: "mode must be 'auto' or 'url'" });
     }
@@ -5201,6 +5171,36 @@ export async function createGatewayRuntimeState(
                 provisionFailures.push({ slug: repo.slug, reason });
               }
             }
+
+            // After provisioning the core forks, formalize the collection as a
+            // private {slug}.agi envelope (owner directive 2026-06-29): git init
+            // + register the forks as submodules + create the PRIVATE {slug}.agi
+            // GitHub repo (created, NOT forked — .agi envelopes are private).
+            // Contributing Mode creates the .agi monorepo for the user, not just
+            // the forks. Best-effort + idempotent — failures are logged, never
+            // block the toggle.
+            try {
+              const { importAgiRepo, createPrivateAgiRemote, agiRemoteName } = await import("./agi-repo-manager.js");
+              const imp = importAgiRepo(coreCollectionDir);
+              if (imp.ok) {
+                log.info(`dev: envelope ${agiRemoteName(coreCollectionDir)} initialized (${String((imp.registered ?? []).length)} submodule(s))`);
+                if (cloneAccessToken) {
+                  const remote = await createPrivateAgiRemote(coreCollectionDir, cloneAccessToken);
+                  if (remote.ok) {
+                    log.info(`dev: private envelope remote → ${remote.remoteUrl ?? "?"}`);
+                    if (deps.projectConfigManager) {
+                      try { await deps.projectConfigManager.update(coreCollectionDir, { agiRepo: { initialized: true, remoteUrl: remote.remoteUrl ?? null } }); } catch { /* best-effort */ }
+                    }
+                  } else {
+                    log.warn(`dev: envelope remote create skipped: ${remote.error ?? "unknown"}`);
+                  }
+                }
+              } else {
+                log.warn(`dev: envelope init failed: ${imp.error ?? "unknown"}`);
+              }
+            } catch (envErr) {
+              log.warn(`dev: envelope provisioning error: ${envErr instanceof Error ? envErr.message : String(envErr)}`);
+            }
           }
 
           // Provision test.ai.on for Playwright UI testing (best-effort).
@@ -8243,6 +8243,13 @@ export async function createGatewayRuntimeState(
   // safe to serve without the full editor plugin.
 
   const docsRoot = join(deps.selfRepoPath ?? deps.workspaceRoot ?? process.cwd(), "docs");
+  // The PRIME corpus — what the /knowledge "Browse" page is meant to surface
+  // (domains, inputs, the full Aionima knowledge graph). Read-only: PRIME is
+  // read-only at runtime, and the built-in routes never write, so this exposes
+  // a browse/read view of the corpus without the editor plugin. Editing PRIME
+  // stays out-of-band (the editor plugin / git), per the read-only-at-runtime
+  // architecture.
+  const knowledgeRoot = deps.primeDir ?? join(deps.selfRepoPath ?? deps.workspaceRoot ?? process.cwd(), ".aionima");
 
   type FileNode = { name: string; path: string; type: "file" | "dir"; children?: FileNode[]; ext?: string };
 
@@ -8274,9 +8281,15 @@ export async function createGatewayRuntimeState(
 
   fastify.get("/api/files/tree", async (request, reply) => {
     const { root } = request.query as { root?: string };
+    // Knowledge root — read-only browse of the PRIME corpus (the knowledge graph
+    // the /knowledge page surfaces). Returns an empty tree (not 403) when the
+    // corpus isn't present, so the page renders an honest empty state.
+    if (root === "knowledge") {
+      return reply.send({ tree: buildFileTree(knowledgeRoot, "knowledge", true) });
+    }
     // Only allow the docs subtree
     if (root !== "docs") {
-      return reply.code(403).send({ error: "Built-in file tree only serves docs/" });
+      return reply.code(403).send({ error: "Built-in file tree only serves docs/ or knowledge/" });
     }
     const tree = buildFileTree(docsRoot, "docs");
 
@@ -8372,6 +8385,21 @@ export async function createGatewayRuntimeState(
       const content = readFileSync(resolved, "utf-8");
       const size = statSync(resolved).size;
       return reply.send({ content, size });
+    }
+
+    if (filePath.startsWith("knowledge/")) {
+      // Read-only PRIME corpus file. Tree paths are prefixed "knowledge/"; strip
+      // it and resolve within the corpus root, with path-traversal protection.
+      const rel = filePath.slice("knowledge/".length);
+      const resolved = resolvePath(knowledgeRoot, rel);
+      const rootAbsolute = resolvePath(knowledgeRoot);
+      if (!resolved.startsWith(rootAbsolute + "/") && resolved !== rootAbsolute) {
+        return reply.code(403).send({ error: "Path is outside the knowledge corpus" });
+      }
+      if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+        return reply.code(404).send({ error: "File not found" });
+      }
+      return reply.send({ content: readFileSync(resolved, "utf-8"), size: statSync(resolved).size });
     }
 
     // Resolve and validate the path stays within docs/
@@ -8518,13 +8546,14 @@ export async function createGatewayRuntimeState(
   // GET /api/memory/events — episodic events for the memory browser
   fastify.get("/api/memory/events", async (request, reply) => {
     if (!deps.graphAdapter) return reply.code(503).send({ error: "Memory adapter unavailable" });
-    const q = request.query as { q?: string; projectPath?: string; entityId?: string; limit?: string };
+    const q = request.query as { q?: string; projectPath?: string; entityId?: string; scope?: string; limit?: string };
     const limit = Math.min(parseInt(q.limit ?? "50", 10) || 50, 200);
     const projectPath = q.projectPath === "null" ? null : q.projectPath;
     try {
       const events = await deps.graphAdapter.queryGraphEvents({
         entityId: q.entityId,
         projectPath,
+        scopes: q.scope ? [q.scope] : undefined, // s234 — optional locality filter
         semantic: q.q,
         limit,
       });
@@ -8534,8 +8563,9 @@ export async function createGatewayRuntimeState(
           summary: e.summary,
           tags: e.tags,
           confidence: e.confidence,
-          createdAt: String(e.createdAt),
+          createdAt: epochMsToIso(e.createdAt), // Unix-ms epoch → ISO-8601 (dashboard new Date() can't parse a numeric string)
           projectPath: e.projectPath ?? null,
+          scope: e.scope ?? null, // s234 locality scope
           coaFingerprint: e.coaFingerprint,
         })),
       });
