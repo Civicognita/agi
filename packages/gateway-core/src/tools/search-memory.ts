@@ -11,7 +11,7 @@
  * No state/tier gate — recall is always available regardless of gateway state.
  */
 
-import type { ToolHandler } from "../tool-registry.js";
+import type { ToolHandler, ToolExecutionContext } from "../tool-registry.js";
 
 /** Minimal slice of GraphMemoryAdapter this tool depends on. */
 export interface MemoryEventQuerier {
@@ -47,7 +47,7 @@ function isoOf(v: number | Date | string): string {
 }
 
 export function createSearchMemoryHandler(config: SearchMemoryConfig): ToolHandler {
-  return async (input: Record<string, unknown>): Promise<string> => {
+  return async (input: Record<string, unknown>, ctx?: ToolExecutionContext): Promise<string> => {
     const query = String(input.query ?? "").trim();
     const limit = Math.min(Math.max(Number(input.limit ?? 5), 1), 20);
     const projectPath = typeof input.projectPath === "string" && input.projectPath.length > 0
@@ -55,12 +55,24 @@ export function createSearchMemoryHandler(config: SearchMemoryConfig): ToolHandl
       : undefined;
     const tags = Array.isArray(input.tags) ? input.tags.map(String) : undefined;
     const minConfidence = typeof input.minConfidence === "number" ? input.minConfidence : undefined;
-    // s234 — optional locality filter: a single `scope` or an array `scopes`.
-    const scopes = Array.isArray(input.scopes)
+    // s234 — locality confinement. An explicit `scope`/`scopes` arg lets the
+    // agent narrow within its own stack. When OMITTED, we DON'T search
+    // everything (that bled one channel's memories into another) — we default to
+    // the invocation's scope-stack (ctx.memoryScopes), the same confinement
+    // passive recall uses. Only a truly context-free call (no ctx) searches all.
+    const explicitScopes = Array.isArray(input.scopes)
       ? input.scopes.map(String)
       : typeof input.scope === "string" && input.scope.length > 0
         ? [input.scope]
         : undefined;
+    // The OWNER's in-app console is the unified "one mind" view: an unscoped
+    // search there spans ALL scopes (so the console can search Discord/channel
+    // memories). Everywhere else, an omitted scope stays confined to the request
+    // stack (no cross-channel bleed). Explicit scope always wins.
+    const scopes = explicitScopes
+      ?? (ctx?.ownerConsole === true
+        ? undefined
+        : (ctx?.memoryScopes !== undefined && ctx.memoryScopes.length > 0 ? ctx.memoryScopes : undefined));
 
     try {
       const events = await config.graphAdapter.queryGraphEvents({
@@ -91,7 +103,7 @@ export function createSearchMemoryHandler(config: SearchMemoryConfig): ToolHandl
 export const SEARCH_MEMORY_MANIFEST = {
   name: "search_memory",
   description:
-    "Search your own episodic memory — prior observations, decisions, and facts recorded across all chats, channels, and projects. Returns matching memories with summary, tags, confidence, and timestamp. Use when recalled context in the prompt is insufficient and you need to look further back.",
+    "Search your own episodic memory — prior observations, decisions, and facts. By default this is CONFINED to the current conversation's locality (this room/channel plus the broader machine-wide/project layers that cascade down); memories from OTHER channels/rooms stay private and are not returned. Returns matching memories with summary, tags, confidence, and timestamp. Use when recalled context in the prompt is insufficient and you need to look further back.",
   requiresState: [] as string[],
   requiresTier: [] as string[],
 };

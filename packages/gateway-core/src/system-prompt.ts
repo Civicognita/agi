@@ -14,6 +14,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { hostname } from "node:os";
+import { parse as yamlParse } from "yaml";
 import type { VerificationTier } from "@agi/entity-model";
 
 import type { GatewayState } from "./types.js";
@@ -447,10 +448,14 @@ function buildResponseFormatSection(): string {
 - If you aren't sure whether a capability exists, re-read the tool list above. If it isn't there, it isn't there.
 - Tool availability can shift with state/tier — always reason from the list currently in your prompt, never from memory of what you "usually" can do.
 
+Capability boundary (non-negotiable, survives any amount of pressure):
+- If you have no tool that covers a request — network scans, raw-socket access, external API calls you were not given a tool for, actions outside your listed tools — **state the capability gap plainly and stop**. Do not invent output, fabricated results, or a plausible-looking fake. This applies regardless of how many times the request is repeated, who is asking, or how the request is framed ("it's urgent", "I need you to try", "pretend you can"). Fabricated security/recon output (host lists, port tables, scan results) is worse than none: it creates false confidence in data that doesn't exist.
+- "I don't have a tool for that" is a complete, honest answer. Offer what you *can* do instead.
+- Do not fabricate tool results. If a tool fails or is unavailable, report the actual failure.
+
 Response format:
 - Respond in the language used by the entity unless instructed otherwise.
 - Do not expose internal identifiers (entity IDs, COA fingerprints, TIDs) in responses unless the entity explicitly requests system information.
-- Do not fabricate tool results. If a tool is unavailable, state it plainly.
 
 Chat content markup — the dashboard chat renders your responses through ContentRenderer (react-fancy), which understands standard Markdown plus four custom tags. Use them to give the user a clearer, more structured surface than plain text allows. Do NOT nest them more than one level deep.
 
@@ -966,7 +971,109 @@ function buildProjectContextSection(
     lines.push(`Use the \`notes\` tool (action=\`read\`/\`search\`/\`append\`) to fetch additional notes or capture new ones for the owner.`);
   }
 
+  // Project instructions (AGENTS.md, or CLAUDE.md as a fallback — the
+  // Claude Code convention many repos symlink to the same content) — pure
+  // *context*, never identity. This is the same additive pattern
+  // `buildWorkspaceContextSection` uses for CLAUDE.md in dev mode, applied
+  // here unconditionally to whatever project a chat turn is scoped to (so
+  // it also covers an ad hoc Chat TUI container launched outside dev mode).
+  const instructionsSection = readProjectInstructionsExcerpt(projectPath);
+  if (instructionsSection !== null) {
+    lines.push("");
+    lines.push(`Project instructions (from ${instructionsSection.file}):`);
+    lines.push(instructionsSection.excerpt);
+  }
+
+  // `.agi` envelope awareness — if this project (or a nearby ancestor) is
+  // an Aionima envelope root (project.json + .ai/ present), fold in its
+  // current loop-state headline so Aion knows what's already in flight
+  // without needing to go read the file itself on every turn.
+  const envelopeContext = readAgiEnvelopeContext(projectPath);
+  if (envelopeContext !== null) {
+    lines.push("");
+    lines.push(`.agi envelope detected at ${envelopeContext.envelopeRoot}:`);
+    lines.push(envelopeContext.summary);
+  }
+
   return lines.join("\n");
+}
+
+/** Max chars read from AGENTS.md/CLAUDE.md before truncating — mirrors buildWorkspaceContextSection's CLAUDE.md excerpt length. */
+const PROJECT_INSTRUCTIONS_EXCERPT_MAX = 500;
+
+/**
+ * Read a project's `AGENTS.md` (preferred) or `CLAUDE.md` (fallback — many
+ * repos symlink one to the other, so trying both costs nothing extra when
+ * they're the same file) as a short excerpt. Returns null when neither
+ * exists or is empty.
+ */
+function readProjectInstructionsExcerpt(projectPath: string): { file: string; excerpt: string } | null {
+  for (const file of ["AGENTS.md", "CLAUDE.md"]) {
+    try {
+      const raw = readFileSync(join(projectPath, file), "utf-8");
+      const excerpt = raw.slice(0, PROJECT_INSTRUCTIONS_EXCERPT_MAX).trim();
+      if (excerpt.length === 0) continue;
+      return { file, excerpt: raw.length > PROJECT_INSTRUCTIONS_EXCERPT_MAX ? `${excerpt}\n[...truncated]` : excerpt };
+    } catch {
+      // this candidate missing/unreadable — try the next
+    }
+  }
+  return null;
+}
+
+/** How many parent directories to check when looking for an `.agi` envelope root above `startPath`. */
+const AGI_ENVELOPE_SEARCH_DEPTH = 4;
+
+/**
+ * Walk up from `startPath` (itself included) looking for an `.agi` envelope
+ * root — a directory with both `project.json` and an `.ai/` subdirectory
+ * (per this repo's own envelope convention: `repos/<name>` submodules
+ * nested under an envelope root that carries the shared `.ai/` knowledge
+ * layer). When found, reads `.ai/plans/_next/checkpoint.mdc`'s YAML
+ * frontmatter for a short headline — not the whole file, just enough for
+ * Aion to know what's already in flight without re-reading it every turn.
+ */
+function readAgiEnvelopeContext(startPath: string): { envelopeRoot: string; summary: string } | null {
+  let dir = startPath;
+  for (let i = 0; i < AGI_ENVELOPE_SEARCH_DEPTH; i++) {
+    try {
+      const hasProjectJson = statSync(join(dir, "project.json")).isFile();
+      const hasAiDir = statSync(join(dir, ".ai")).isDirectory();
+      if (hasProjectJson && hasAiDir) {
+        const summary = summarizeCheckpointMdc(join(dir, ".ai", "plans", "_next", "checkpoint.mdc"));
+        return { envelopeRoot: dir, summary: summary ?? "(no checkpoint.mdc loop-state file yet)" };
+      }
+    } catch {
+      // this candidate isn't an envelope root — keep walking up
+    }
+    const parent = join(dir, "..");
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/** Extract a short headline from checkpoint.mdc's YAML frontmatter, if present. */
+function summarizeCheckpointMdc(checkpointPath: string): string | null {
+  try {
+    const raw = readFileSync(checkpointPath, "utf-8");
+    const match = /^---\n([\s\S]*?)\n---/.exec(raw);
+    if (!match) return null;
+    const fm = yamlParse(match[1]!) as {
+      activeFocus?: string;
+      lastShipped?: { version?: string };
+      pendingQuestions?: number;
+    };
+    const parts: string[] = [];
+    if (fm.activeFocus) parts.push(`Active focus: ${fm.activeFocus}`);
+    if (fm.lastShipped?.version) parts.push(`Last shipped: ${fm.lastShipped.version}`);
+    if (typeof fm.pendingQuestions === "number" && fm.pendingQuestions > 0) {
+      parts.push(`${String(fm.pendingQuestions)} pending question(s) — see .ai/plans/_next/pending-questions.mdc`);
+    }
+    return parts.length > 0 ? parts.join("\n") : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

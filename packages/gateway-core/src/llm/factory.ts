@@ -68,6 +68,7 @@ export function timeoutMsForProviderType(type: string): number {
 export function createSingleProvider(
   type: string,
   config: Partial<LLMProviderConfig>,
+  logger?: Logger,
 ): LLMProvider {
   // Per-Provider deadline — relaxed for non-cloud tiers per t411/t413.
   // Caller can override by passing `timeoutMs` explicitly in config.
@@ -82,6 +83,7 @@ export function createSingleProvider(
         maxRetries: config.maxRetries ?? 3,
         baseUrl: config.baseUrl,
         timeoutMs,
+        logger,
       });
 
     case "openai":
@@ -356,7 +358,7 @@ export function createAgentRouter(config: AionimaConfig, logger?: Logger): LLMPr
 
   return new AgentRouter(
     () => routerConfig,
-    (type, provConfig) => createSingleProvider(type, provConfig),
+    (type, provConfig) => createSingleProvider(type, provConfig, logger),
     logger,
   );
 }

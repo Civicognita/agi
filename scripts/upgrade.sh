@@ -9,9 +9,14 @@ PRIME_DIR="${AIONIMA_PRIME_DIR:-/opt/agi-prime}"
 SERVICE_USER="${AIONIMA_USER:-$(stat -c '%U' "$DEPLOY_DIR" 2>/dev/null || echo wishborn)}"
 
 # Dev Mode resolution. When `dev.enabled` is true in ~/.agi/gateway.json,
-# upgrade pulls from the owner's forks instead of Civicognita. Same
+# upgrade pulls AGI from the owner's fork instead of Civicognita. Same
 # priority order as the gateway's marketplace manager (tynn #249):
-# env override → dev.*Repo fork → canonical Civicognita.
+# env override → dev.agiRepo fork → canonical Civicognita.
+#
+# PRIME is deliberately NOT part of this resolution (owner directive
+# 2026-07-19) — the corpus isn't something individual owners fork and PR
+# into like a code repo, so PRIME_REPO always resolves to the canonical
+# Civicognita/aionima.git below, dev-mode-enabled or not.
 _DEV_CFG="$(node -e "
   try {
     const c = JSON.parse(require('fs').readFileSync(
@@ -20,14 +25,12 @@ _DEV_CFG="$(node -e "
     console.log(JSON.stringify({
       enabled: dev.enabled === true,
       agi: dev.agiRepo ?? '',
-      prime: dev.primeRepo ?? '',
     }));
-  } catch { console.log('{\"enabled\":false,\"agi\":\"\",\"prime\":\"\"}'); }
-" 2>/dev/null || echo '{"enabled":false,"agi":"","prime":""}')"
+  } catch { console.log('{\"enabled\":false,\"agi\":\"\"}'); }
+" 2>/dev/null || echo '{"enabled":false,"agi":""}')"
 
 _dev_enabled="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).enabled))")"
 _dev_agi="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).agi))")"
-_dev_prime="$(echo "$_DEV_CFG" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).prime))")"
 
 # AGI self-repo: Dev Mode needs this too. Without it, /opt/agi's origin
 # stays pinned to Civicognita, so owner commits pushed to wishborn/agi
@@ -38,11 +41,7 @@ if [ "$_dev_enabled" = "true" ] && [ -n "$_dev_agi" ]; then
 else
   AGI_REPO="${AIONIMA_AGI_REPO:-https://github.com/Civicognita/agi.git}"
 fi
-if [ "$_dev_enabled" = "true" ] && [ -n "$_dev_prime" ]; then
-  PRIME_REPO="${AIONIMA_PRIME_REPO:-$_dev_prime}"
-else
-  PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
-fi
+PRIME_REPO="${AIONIMA_PRIME_REPO:-https://github.com/Civicognita/aionima.git}"
 # Marketplace repos are NOT pulled locally by this script — plugins are
 # fetched from GitHub on demand by the gateway's plugin marketplace
 # manager, which has its own Dev Mode fork handling.

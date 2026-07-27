@@ -1,5 +1,5 @@
 /**
- * DevSettings — Contributing mode toggle + repo status + PRIME source controls.
+ * DevSettings — Contributing mode toggle + repo status.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -65,9 +65,9 @@ export function DevSettings(_props: {
   const [connectError, setConnectError] = useState<string | null>(null);
   const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // PRIME switcher state removed — PRIME is part of the Aionima core
-  // collection managed by Dev Mode's unified provisioning. See
-  // `dev-mode-forks.ts` + `_aionima/` clone target.
+  // PRIME has no fork/status controls here — it's not a dev-mode fork
+  // (owner directive 2026-07-19). Its general connection health still
+  // shows via /api/prime/status and /api/system/connections elsewhere.
 
   useEffect(() => {
     setLoading(true);
@@ -181,7 +181,7 @@ export function DevSettings(_props: {
           <div>
             <p className="text-sm text-card-foreground">Fork Switching</p>
             <p className="text-[13px] text-muted-foreground">
-              Clone your forks of the core repos (AGI, PRIME, the Marketplaces, PAx) into your workspace
+              Clone your forks of the core repos (AGI, the Marketplaces, PAx) into your workspace
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -294,10 +294,13 @@ export function DevSettings(_props: {
 
       {/* Repo Status Cards — only shown when contributing mode is on.
           Grouped by upstream org per s136 t512:
-            - Civicognita (the AGI core five — agi, prime, id, marketplace,
-              mapp-marketplace)
+            - Civicognita (agi, id, marketplace, mapp-marketplace)
             - Particle-Academy (PAx ADF UI primitives — react-fancy,
-              fancy-code, fancy-sheets, fancy-echarts) */}
+              fancy-code, fancy-sheets, fancy-echarts)
+          PRIME is deliberately absent — it's not a dev-mode fork (owner
+          directive 2026-07-19, mirrors dev-mode-forks.ts's CORE_REPOS
+          comment): the corpus always tracks Civicognita/aionima directly,
+          never a personal fork. */}
       {devStatus?.enabled && (
         <Card className="p-6 gap-0 mb-4">
           <SectionHeading>Repository Status</SectionHeading>
@@ -314,13 +317,6 @@ export function DevSettings(_props: {
                     name="AGI"
                     remote={devStatus.agi.remote}
                     isOwnerFork={isOwnerFork(devStatus.agi.remote)}
-                  />
-                  <RepoCard
-                    name="PRIME"
-                    remote={devStatus.prime.remote}
-                    branch={devStatus.prime.branch}
-                    entries={devStatus.prime.entries}
-                    isOwnerFork={isOwnerFork(devStatus.prime.remote)}
                   />
                   {devStatus.marketplace && (
                     <RepoCard

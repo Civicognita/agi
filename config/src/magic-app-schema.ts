@@ -26,7 +26,7 @@ export const MagicAppWorkflowStepSchema = z.object({
   id: z.string(),
   type: z.enum(["shell", "api", "agent", "file-transform"]),
   label: z.string(),
-  config: z.record(z.unknown()),
+  config: z.record(z.string(), z.unknown()),
   dependsOn: z.array(z.string()).optional(),
 }).strict();
 
@@ -42,12 +42,12 @@ export const MagicAppThemeSchema = z.object({
   primaryColor: z.string().optional(),
   accentColor: z.string().optional(),
   fontFamily: z.string().optional(),
-  cssProperties: z.record(z.string()).optional(),
+  cssProperties: z.record(z.string(), z.string()).optional(),
 }).strict();
 
 export const MagicAppPanelSchema = z.object({
   label: z.string(),
-  widgets: z.array(z.record(z.unknown())), // PanelWidget validated at runtime
+  widgets: z.array(z.record(z.string(), z.unknown())), // PanelWidget validated at runtime
   position: z.number().optional(),
 }).strict();
 

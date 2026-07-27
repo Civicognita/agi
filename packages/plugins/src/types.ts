@@ -852,6 +852,8 @@ export interface AmbientEntry {
   displayName: string;
   text: string;
   roomId: string;
+  /** True when this message was sent by the owner entity (resolved at log time). */
+  isOwner?: boolean;
 }
 
 /** s194: Registration step in the Discord DM onboarding flow. */
@@ -969,7 +971,13 @@ export interface AionimaPluginAPI {
    * Used by channel plugins to inject wake-up context when Aion is mentioned.
    * Optional — only wired alongside logAmbientMessage (s189).
    */
-  getAmbientContext?: (channelId: string, limit: number) => AmbientEntry[];
+  getAmbientContext?: (channelId: string, limit: number, roomId?: string) => AmbientEntry[];
+  /**
+   * Return the owner entity's channelUserId for the given channelId, if known.
+   * Used by channel plugins to mark ambient log entries with isOwner so the
+   * model can distinguish owner directives from participant messages.
+   */
+  getOwnerChannelUserId?: (channelId: string) => string | undefined;
   /** s194: Check whether a channel user is verified in the entity store. */
   isEntityVerified?: (channelId: string, userId: string) => Promise<boolean>;
   /** s194: Retrieve an active registration session by sessionId. */

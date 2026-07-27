@@ -24,7 +24,7 @@ const ChannelConfigSchema = z
   .object({
     id: z.string(),
     enabled: z.boolean().default(true),
-    config: z.record(z.unknown()).optional(),
+    config: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 
@@ -187,7 +187,7 @@ const McpServerConfigSchema = z
     name: z.string().optional(),
     transport: z.enum(["stdio", "http", "websocket"]),
     command: z.array(z.string()).optional(),
-    env: z.record(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
     url: z.string().optional(),
     autoConnect: z.boolean().default(true),
     authToken: z.string().optional(),
@@ -214,7 +214,7 @@ const AgentPmConfigSchema = z
     /** Provider-specific config passed to the factory at instantiation.
      *  E.g. tynn-lite: { projectRoot, projectName }; plugin-registered:
      *  whatever the plugin's factory expects. */
-    config: z.record(z.unknown()).optional(),
+    config: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
 
@@ -244,11 +244,15 @@ const AgentConfigSchema = z
     replyMode: z.enum(["autonomous", "human-in-loop"]).default("autonomous"),
     /** Enable developer identity and workspace context injection. */
     devMode: z.boolean().optional().default(false),
-    /** Intelligent routing configuration — always active. */
-    router: RouterConfigSchema.default({}),
+    /** Intelligent routing configuration — always active.
+     *  `.prefault({})` (not `.default({})`) — zod v4's `.default()` requires
+     *  the default value to already match the schema's OUTPUT shape; `{}` is
+     *  an INPUT-shaped default that must be re-parsed to fill in the nested
+     *  field defaults, which is exactly what `.prefault()` does. */
+    router: RouterConfigSchema.prefault({}),
     /** PM provider selection — backs the canonical tynn workflow with
      *  pluggable storage (built-in tynn or tynn-lite, or plugin-registered). */
-    pm: AgentPmConfigSchema.default({}),
+    pm: AgentPmConfigSchema.prefault({}),
   })
   .strict();
 
@@ -444,7 +448,13 @@ const OwnerConfigSchema = z
   .object({
     /** Owner display name. */
     displayName: z.string().default("Owner"),
-    /** Channel-specific user IDs that identify the owner. */
+    /**
+     * @deprecated (s234 P3) Owner identity is now a DURABLE marker set via the
+     * dashboard "claim owner" flow, NOT this config. These channel IDs are read
+     * ONCE on first boot after the upgrade to seed the durable owner marker
+     * (non-disruptive migration for existing installs), then ignored. Fresh
+     * installs leave this empty and claim ownership in the dashboard.
+     */
     channels: OwnerChannelsSchema.default({}),
     /**
      * DM policy for non-owner users.

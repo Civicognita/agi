@@ -21,6 +21,7 @@ import type {
 } from "@anthropic-ai/sdk/resources/messages.js";
 
 import type { LLMProvider, LLMProviderConfig } from "./provider.js";
+import { createComponentLogger, type ComponentLogger } from "../logger.js";
 import type {
   LLMMessage,
   LLMContentBlock,
@@ -36,7 +37,7 @@ import type {
 // Defaults
 // ---------------------------------------------------------------------------
 
-const DEFAULT_CONFIG: Required<LLMProviderConfig> = {
+const DEFAULT_CONFIG: Required<Omit<LLMProviderConfig, "logger">> = {
   apiKey: "",
   defaultModel: "claude-sonnet-4-6",
   maxTokens: 8192,
@@ -247,13 +248,15 @@ export function toLLMResponse(response: Anthropic.Message): LLMResponse {
 
 export class AnthropicProvider implements LLMProvider {
   private readonly client: Anthropic;
-  private readonly config: Required<LLMProviderConfig>;
+  private readonly config: Required<Omit<LLMProviderConfig, "logger">>;
+  private readonly log: ComponentLogger;
 
   constructor(config?: Partial<LLMProviderConfig>) {
     this.config = {
       ...DEFAULT_CONFIG,
       ...config,
     };
+    this.log = createComponentLogger(config?.logger, "llm:anthropic");
     this.client = new Anthropic({
       apiKey: this.config.apiKey || undefined,
       ...(this.config.baseUrl ? { baseURL: this.config.baseUrl } : {}),
@@ -293,14 +296,28 @@ export class AnthropicProvider implements LLMProvider {
     let lastError: unknown;
     const retryBaseMs = this.config.retryBaseMs;
 
+    this.log.info(`invoke start: model=${model} maxRetries=${String(this.config.maxRetries)} timeoutMs=${String(this.config.timeoutMs)}`);
+    const startedAt = Date.now();
+
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
+      const attemptStartedAt = Date.now();
       try {
-        const response = await this.client.messages.create(requestBody);
+        // maxRetries: 0 disables the SDK's own internal retry layer (default
+        // 2) — without this, a single call here could silently retry inside
+        // the SDK on top of our own attempt loop below, compounding worst-
+        // case latency well past `timeoutMs * (maxRetries+1)` with nothing
+        // in between logged. One retry policy, fully visible, beats two
+        // nested ones neither of which logs anything.
+        const response = await this.client.messages.create(requestBody, { maxRetries: 0 });
+        this.log.info(`invoke ok: model=${model} attempt=${String(attempt)} elapsedMs=${String(Date.now() - startedAt)}`);
         return toLLMResponse(response);
       } catch (err) {
         lastError = err;
+        const attemptElapsedMs = Date.now() - attemptStartedAt;
+        const errMessage = err instanceof Error ? err.message : String(err);
 
         if (!isRetryable(err) || attempt === this.config.maxRetries) {
+          this.log.error(`invoke failed: model=${model} attempt=${String(attempt)} attemptElapsedMs=${String(attemptElapsedMs)} totalElapsedMs=${String(Date.now() - startedAt)} error=${errMessage}`);
           throw err;
         }
 
@@ -308,6 +325,7 @@ export class AnthropicProvider implements LLMProvider {
         const delay =
           retryBaseMs * Math.pow(2, attempt) +
           Math.floor(Math.random() * 500);
+        this.log.warn(`invoke retry: model=${model} attempt=${String(attempt)} attemptElapsedMs=${String(attemptElapsedMs)} nextDelayMs=${String(delay)} error=${errMessage}`);
         await sleep(delay);
       }
     }

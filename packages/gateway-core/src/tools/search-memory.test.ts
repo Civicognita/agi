@@ -65,3 +65,56 @@ describe("search_memory tool", () => {
     expect(SEARCH_MEMORY_INPUT_SCHEMA.required).toEqual([]);
   });
 });
+
+/**
+ * Confinement: the tool must NOT bleed one channel's memories into another. When
+ * the agent omits `scope`, it defaults to the invocation's scope-stack
+ * (ctx.memoryScopes) rather than searching everything.
+ */
+const ctxRoomB = {
+  state: "ACTIVE", tier: "verified", entityId: "~E1", entityAlias: "#E1",
+  coaChainBase: "base", resourceId: "$A0", nodeId: "@A0",
+  memoryScopes: ["room:discord:B", "provider:discord", "gestalt", "prime"],
+} as unknown as import("../tool-registry.js").ToolExecutionContext;
+
+describe("search_memory confinement (s234)", () => {
+  it("defaults to the invocation scope-stack when scope is omitted (no cross-channel bleed)", async () => {
+    const { adapter, calls } = fakeAdapter([EV()]);
+    const handler = createSearchMemoryHandler({ graphAdapter: adapter });
+    await handler({ query: "the secret" }, ctxRoomB);
+    expect(calls[0]!.scopes).toEqual(["room:discord:B", "provider:discord", "gestalt", "prime"]);
+    expect(calls[0]!.scopes as string[]).not.toContain("room:discord:A");
+  });
+
+  it("honors an explicit scope arg (narrowing within the agent's own stack)", async () => {
+    const { adapter, calls } = fakeAdapter([EV()]);
+    const handler = createSearchMemoryHandler({ graphAdapter: adapter });
+    await handler({ query: "x", scope: "gestalt" }, ctxRoomB);
+    expect(calls[0]!.scopes).toEqual(["gestalt"]);
+  });
+
+  it("only searches ALL scopes when there is no request context (headless/background)", async () => {
+    const { adapter, calls } = fakeAdapter([EV()]);
+    const handler = createSearchMemoryHandler({ graphAdapter: adapter });
+    await handler({ query: "x" }); // no ctx
+    expect(calls[0]!.scopes).toBeUndefined();
+  });
+
+  it("owner in-app console (ownerConsole) searches ALL scopes — the unified 'one mind' view", async () => {
+    const { adapter, calls } = fakeAdapter([EV()]);
+    const handler = createSearchMemoryHandler({ graphAdapter: adapter });
+    // Owner console scope-stack is narrow (gestalt/prime, no channel), but the
+    // console must be able to search Discord/channel memories.
+    const ctxConsole = { ...ctxRoomB, ownerConsole: true, memoryScopes: ["gestalt", "prime"] } as typeof ctxRoomB;
+    await handler({ query: "WEDC" }, ctxConsole);
+    expect(calls[0]!.scopes).toBeUndefined(); // unconfined — all scopes
+  });
+
+  it("owner INSIDE a channel (ownerConsole false) stays channel-confined", async () => {
+    const { adapter, calls } = fakeAdapter([EV()]);
+    const handler = createSearchMemoryHandler({ graphAdapter: adapter });
+    // ctxRoomB has no ownerConsole flag → confined to its stack even for owner.
+    await handler({ query: "x" }, ctxRoomB);
+    expect(calls[0]!.scopes).toEqual(["room:discord:B", "provider:discord", "gestalt", "prime"]);
+  });
+});

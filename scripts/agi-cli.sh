@@ -653,39 +653,41 @@ cmd_doctor() {
     warn "not responding"; issues=$((issues + 1))
   fi
 
-  # Dev Mode origin alignment (Phase H.1) — only shown when Dev Mode is on.
-  # Checks each /opt/*/.git origin against the corresponding dev.*Repo
-  # from gateway.json so owners can see whether v0.4.66's
-  # ensure_origin_remote has completed the one-time flip.
-  local dev_enabled dev_agi_repo dev_prime_repo dev_id_repo
+  # Dev Mode origin alignment (Phase H.1) — checks each /opt/*/.git origin
+  # against its expected URL so owners can see whether v0.4.66's
+  # ensure_origin_remote has completed the one-time flip. AGI/ID are
+  # dev.*Repo-driven and only checked when Dev Mode is on; PRIME's expected
+  # origin is always the canonical Civicognita/aionima.git (owner directive
+  # 2026-07-19 — the corpus isn't a dev-mode fork, see upgrade.sh's
+  # PRIME_REPO), so it's checked unconditionally.
+  local dev_enabled dev_agi_repo dev_id_repo
   dev_enabled="$(node -e "try{const c=JSON.parse(require('fs').readFileSync('${CONFIG_FILE}','utf-8'));console.log(c.dev?.enabled===true?'true':'false')}catch{console.log('false')}" 2>/dev/null)"
+  _check_origin() {
+    local name="$1" dir="$2" expected="$3"
+    label "$name:"
+    if [ ! -d "$dir/.git" ]; then
+      warn "$dir not a git repo"; return
+    fi
+    local current
+    current="$(git -C "$dir" remote get-url origin 2>/dev/null)" || {
+      warn "could not read origin"; return
+    }
+    if [ -z "$expected" ]; then
+      warn "no dev.*Repo configured — toggle Dev Mode off then on in dashboard"
+      return
+    fi
+    if [ "$current" = "$expected" ]; then
+      ok "origin → $current"
+    else
+      warn "origin → $current (expected $expected) — run 'agi upgrade'"
+      issues=$((issues + 1))
+    fi
+  }
+  _check_origin "PRIME origin" "/opt/agi-prime" "https://github.com/Civicognita/aionima.git"
   if [ "$dev_enabled" = "true" ]; then
     dev_agi_repo="$(node -e "try{const c=JSON.parse(require('fs').readFileSync('${CONFIG_FILE}','utf-8'));process.stdout.write(c.dev?.agiRepo??'')}catch{}" 2>/dev/null)"
-    dev_prime_repo="$(node -e "try{const c=JSON.parse(require('fs').readFileSync('${CONFIG_FILE}','utf-8'));process.stdout.write(c.dev?.primeRepo??'')}catch{}" 2>/dev/null)"
     dev_id_repo="$(node -e "try{const c=JSON.parse(require('fs').readFileSync('${CONFIG_FILE}','utf-8'));process.stdout.write(c.dev?.idRepo??'')}catch{}" 2>/dev/null)"
-    _check_origin() {
-      local name="$1" dir="$2" expected="$3"
-      label "$name:"
-      if [ ! -d "$dir/.git" ]; then
-        warn "$dir not a git repo"; return
-      fi
-      local current
-      current="$(git -C "$dir" remote get-url origin 2>/dev/null)" || {
-        warn "could not read origin"; return
-      }
-      if [ -z "$expected" ]; then
-        warn "no dev.*Repo configured — toggle Dev Mode off then on in dashboard"
-        return
-      fi
-      if [ "$current" = "$expected" ]; then
-        ok "origin → $current"
-      else
-        warn "origin → $current (expected $expected) — run 'agi upgrade'"
-        issues=$((issues + 1))
-      fi
-    }
     _check_origin "AGI origin" "/opt/agi" "$dev_agi_repo"
-    _check_origin "PRIME origin" "/opt/agi-prime" "$dev_prime_repo"
     _check_origin "ID origin" "/opt/agi-local-id" "$dev_id_repo"
   fi
 
@@ -2388,6 +2390,9 @@ cmd_help() {
   echo "                    logs [--lines N]             Tail recent logs + surface known crash patterns"
   echo "                    config get <key>             Read a gateway.json dotted key with validation"
   echo "                    config set <key> <value>     Write a gateway.json key (atomic + Zod pre-validation)"
+  echo "  taskmaster [CMD] Taskmaster job status (one-shot listing; Genie-execution):"
+  echo "                    (no arg) [--project <path>] [--json]   One-shot job listing"
+  echo "  chat [--cwd P]  Interactive chat with Aion — full owner-tier access, current folder as container"
   echo "  safemode        Show safemode status (or: safemode exit)"
   echo "  incidents       List incident reports (or: incidents view <id>)"
   echo "  config [key]    Read config (full or dot-path key)"
@@ -2508,6 +2513,26 @@ case "${1:-help}" in
   scan) shift; cmd_scan "$@" ;;
   config)   cmd_config "${2:-}" ;;
   projects) shift; cmd_projects "$@" ;;
+  taskmaster)
+    # Taskmaster one-shot job status listing (Genie-execution ship) — the
+    # TS commander surface, same routing pattern as `doctor`'s dump|logs|
+    # config|menu subcommands above. Interactive control happens via `agi
+    # chat`, not a dedicated Taskmaster screen.
+    shift
+    cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts taskmaster "$@"
+    ;;
+  chat)
+    # Interactive Aion Chat TUI — the launch folder (cwd) is the "Chat
+    # Container", exactly like Claude Code. Unlike doctor/taskmaster above,
+    # this command's whole point IS the caller's cwd, so it must be
+    # captured BEFORE the `cd "$DEPLOY_DIR"` below (needed to run the dev
+    # TS source) — otherwise the container would always resolve to
+    # DEPLOY_DIR instead of wherever the user actually ran `agi chat`.
+    # `export` + `exec` in the same shell preserves it across the `cd`.
+    shift
+    export AGI_CHAT_CALLER_CWD="$PWD"
+    cd "$DEPLOY_DIR" && exec npx tsx cli/src/index.ts chat "$@"
+    ;;
   iw)       shift; cmd_iw "$@" ;;
   issue)    shift; cmd_issue "$@" ;;
   models)    shift; cmd_models "$@" ;;

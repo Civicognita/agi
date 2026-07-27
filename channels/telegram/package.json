@@ -16,6 +16,6 @@
   "dependencies": {
     "@agi/plugins": "workspace:*",
     "@agi/sdk": "workspace:*",
-    "grammy": "^1.35.0"
+    "grammy": "^1.44.0"
   }
 }

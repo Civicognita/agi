@@ -137,7 +137,7 @@ const configRouter = router({
   }),
 
   save: publicProcedure
-    .input(z.record(z.unknown()))
+    .input(z.record(z.string(), z.unknown()))
     .mutation(({ ctx, input }) => {
       if (!ctx.configPath) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Config not available" });

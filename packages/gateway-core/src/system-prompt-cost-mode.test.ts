@@ -127,4 +127,19 @@ describe("assembleSystemPrompt — toolsAvailable=false rendering (#326 option D
     expect(withoutTools).toContain("no tools available");
     expect(withoutTools).not.toContain("When activated, your tools include:");
   });
+
+  it("anti-fabrication capability boundary block is always present in prompt (s234 Fix-D)", () => {
+    // The guardrail must survive any amount of pressure — it must appear in EVERY
+    // assembled prompt regardless of state, tier, or tool availability.
+    const full = assembleSystemPrompt(baseCtx);
+    expect(full).toContain("Capability boundary");
+    expect(full).toContain("state the capability gap plainly and stop");
+    expect(full).toContain("Do not fabricate tool results");
+
+    const noTools = assembleSystemPrompt({ ...baseCtx, toolsAvailable: false });
+    expect(noTools).toContain("Capability boundary");
+
+    const limbo = assembleSystemPrompt({ ...baseCtx, state: "LIMBO" });
+    expect(limbo).toContain("Capability boundary");
+  });
 });

@@ -1,10 +1,14 @@
 # Taskmaster: System Reference
 
-**Taskmaster** is the built-in job orchestration engine in Aionima. It receives background task requests via the `taskmaster_dispatch` tool, routes them to worker agents scoped to the dispatching project, and manages the full job lifecycle from dispatch to completion. Workers run with Aion's full tool registry.
+**Taskmaster** is the built-in job orchestration engine in Aionima. It receives background task requests via the `taskmaster_dispatch` tool, routes them to worker agents scoped to the dispatching project, and manages the full job lifecycle from dispatch to completion. `agi` is the harness that runs Aion; Taskmaster is one of `agi`'s harness-level capabilities.
 
-> **Note:** Workers are defined in plugins via `api.registerWorker()`. The engine that runs them lives entirely in `packages/gateway-core/`. Prompts for the built-in workers are loaded from `prompts/workers/` by `WorkerPromptLoader`. There is no external BOTS repo.
+Workers execute as **real coding agents** (Claude Code / Codex) driven through a paired [Genie](./mcp-integration.md) workspace's `runAgent` MCP tool — not an in-process LLM tool-loop. This gives workers genuine file/terminal access (real edits, real test runs, a real dev environment) instead of Taskmaster's own `ToolRegistry`-mediated tool calls. See [Genie Pairing](#genie-pairing-one-time-setup) below for the one-time setup a project needs before it can dispatch Taskmaster jobs.
 
-> **Not yet implemented (2026-04-15):** multi-phase plan decomposition (described in `prompts/taskmaster.md`) and enforced-chain auto-dispatch (`hacker→tester` etc.). Both are aspirational. Today each `taskmaster_dispatch` call runs a single worker; chain the tail yourself in a follow-up call.
+> **Note:** Workers are defined in plugins via `api.registerWorker()`. The engine that runs them lives entirely in `packages/gateway-core/`. Prompts for the built-in workers are loaded from `prompts/workers/` by `WorkerPromptLoader` — these prompts become the initial `runAgent` prompt handed to the spawned coding agent. There is no external BOTS repo.
+
+> **Tradeoff:** a Genie-executed worker is a full coding-agent CLI with its own model selection and full native tool access. `WorkerDefinition.modelTier` / `allowedTools` no longer constrain a Genie-executed worker the way they did the old in-process ToolRegistry path — that's the necessary cost of a real dev environment instead of a simulated one.
+
+> **Not yet implemented:** multi-worker "teams" per phase (parallel workers within one phase, described aspirationally in `prompts/taskmaster.md`). Today `taskmaster-orchestrator.ts`'s `WorkPhase` is one worker per phase; sequential multi-phase decomposition and checkpoint-gate pausing between phases ARE implemented (see Gate Types below).
 
 ---
 
@@ -18,25 +22,27 @@ Agent (LLM tool call)
                     └── ~/.agi/state/taskmaster.json   (structured state index — global)
                           └── WorkerRuntime.executeJob()
                                 └── WorkerPromptLoader.getSystemPrompt()
-                                      └── LLM tool loop — worker calls the shared
-                                          ToolRegistry (same surface as Aion at its
-                                          tier: file tools, grep, git, plan tools,
-                                          etc.), not a hardcoded sandbox
+                                      └── McpClient.callTool("<projectSlug>:genie", "runAgent", ...)
+                                          ├── start   — launch a Claude Code / Codex agent
+                                          ├── send    — deliver the resolved worker prompt
+                                          ├── read    — poll for the `<<<TASKMASTER_DONE>>>` marker
+                                          └── stop    — clean up the agent terminal
                                       └── runtime:event emissions
-                                            ├── tm:job_update
-                                            ├── tm:phase_done
-                                            ├── tm:checkpoint
-                                            ├── tm:report_ready
-                                            ├── tm:job_failed
-                                            └── worker:done
+                                            ├── job_started
+                                            ├── phase_started / phase_completed / phase_failed
+                                            ├── checkpoint_pending / checkpoint_reached
+                                            ├── worker_started / worker_progress / worker_done
+                                            ├── report_ready
+                                            └── job_failed
 ```
 
 ### Component Responsibilities
 
 | Component | File | Responsibility |
 |-----------|------|----------------|
-| `JobBridge` | `job-bridge.ts` | Translates flat dispatch files into taskmaster state entries |
-| `WorkerRuntime` | `worker-runtime.ts` | Manages concurrent job execution and the LLM tool loop |
+| `JobBridge` | `job-bridge.ts` | Translates flat dispatch files into taskmaster state entries; persists `projectPath` and each phase's `output` so a checkpoint can resume without needing the caller to re-supply context |
+| `WorkerRuntime` | `worker-runtime.ts` | Manages concurrent job execution and drives each phase's worker via a paired Genie workspace's `runAgent` MCP tool |
+| `McpClient` | `packages/mcp-client/src/index.ts` | Generic MCP client — `WorkerRuntime` calls `callTool("<projectSlug>:genie", "runAgent", …)` on it, the same client Tynn PM integration uses |
 | `WorkerPromptLoader` | `worker-prompt-loader.ts` | Discovers and loads worker system prompts from `prompts/workers/` |
 | `registerWorkerApi` | `worker-api.ts` | Registers HTTP endpoints for job control and the worker catalog |
 | Orchestrator prompt | `prompts/taskmaster.md` | System prompt for the Taskmaster orchestrator agent |
@@ -158,21 +164,26 @@ The strip / preserve decision lives in `ToolRegistry.stripTaskmasterEmissions(te
 
 ### 3. Execute
 
-`WorkerRuntime.executeJob()` loads the dispatch, starts the LLM tool loop via `runWorker()`, and tracks the job in the active jobs map. Concurrent jobs are bounded by `maxConcurrentJobs` (default: 3).
+`WorkerRuntime.executeJob()` loads the dispatch, then `executePhases()` runs each phase's worker in sequence via `runWorker()`, passing the previous phase's output as context to the next. Concurrent **jobs** are bounded by `maxConcurrentJobs` (default: 3); each phase within a job still runs one worker at a time (multi-worker "teams" per phase are not yet implemented).
 
-### 4. Tool Loop
+### 4. Genie Bridge
 
-The worker receives its system prompt (loaded by `WorkerPromptLoader`) and the task in the first user message. It can call tools in a loop of up to 30 iterations. On each iteration, tool results are appended to the conversation and the LLM is called again.
+`runWorker()` resolves the dispatching project's paired Genie workspace as MCP server `<projectSlug>:genie` (the same generic per-project `.mcp.json` reading that already powers Tynn PM integration — no new discovery mechanism). If that server isn't registered, the job fails immediately and cleanly rather than falling back to any in-process execution:
+
+1. `runAgent` **start** — launches a Claude Code (or Codex) agent in the project's directory.
+2. `runAgent` **send** — delivers the worker's resolved prompt (system prompt + dispatch + previous-phase context + jobId), instructing it to emit `<<<TASKMASTER_DONE>>>` followed by a summary once genuinely finished.
+3. `runAgent` **read** — polled on an interval (`genieDonePollMs`, default 4s) until the marker appears or `workerTimeoutMs` elapses.
+4. `runAgent` **stop** — the agent's terminal is cleaned up either way (success, failure, or timeout).
+
+A worker that never emits the marker within `workerTimeoutMs` fails the phase rather than polling forever.
 
 ### Worker Tool Surface
 
-Workers use Aion's shared `ToolRegistry`, filtered by the worker's tier (typically `verified`). This means workers have the same file/git/plan/project/grep tools as Aion — not a hardcoded sandbox. All tool paths resolve relative to the project set at dispatch time (via `projectPath`).
-
-The previous 5-tool mini-sandbox (`read_file` / `write_file` / `list_files` / `search_files` / `run_command`) has been retired. If a worker needs to, e.g., commit changes, it now calls `git_commit` — the same tool Aion uses.
+Workers get the spawned coding agent's own native tool access (file edits, running tests, git, everything Claude Code / Codex itself can do) scoped to the project directory — not Taskmaster's `ToolRegistry`. There is no tier-based tool filtering for Genie-executed workers; see the tradeoff note at the top of this doc.
 
 ### 5. Completion
 
-When the tool loop finishes (either naturally or after 30 iterations), `WorkerRuntime` emits a `report_ready` or `job_failed` event and updates the job status in `taskmaster.json` via `JobBridge.updateJobStatus()`.
+When a phase's worker emits the done marker, `WorkerRuntime` advances to the next phase (persisting the phase's output via `JobBridge.advancePhase()`). When all phases complete, or any phase fails, `WorkerRuntime` emits `report_ready` / `job_failed` and updates the job status via `JobBridge.updateJobStatus()`.
 
 ---
 
@@ -197,10 +208,16 @@ Each job phase ends with a gate that controls progression:
 | Gate | Behavior |
 |------|----------|
 | `auto` | Proceeds immediately to the next phase — no human review |
-| `checkpoint` | Pauses the job and notifies the operator; resumed via `POST /api/taskmaster/approve/:jobId` |
-| `terminal` | Final phase — job is complete when all workers in this phase finish |
+| `checkpoint` | Pauses the job (status `checkpoint`) right after this phase's worker completes; resumed via `POST /api/taskmaster/approve/:jobId` or failed via `POST /api/taskmaster/reject/:jobId` |
+| `terminal` | Final phase — job is complete when this phase's worker finishes. `JobBridge.ensureJobWithPhases()` always forces the LAST phase to `terminal` regardless of what the orchestrator proposed, so a job can never pause forever waiting on a checkpoint after its own final phase. |
 
-Jobs dispatched via `taskmaster_dispatch` receive a single phase with `gate: "terminal"`. Multi-phase plans would use `auto` or `checkpoint` gates for earlier phases — not currently implemented.
+Jobs dispatched via `taskmaster_dispatch` with no orchestrator decomposition receive a single phase with `gate: "terminal"`. Multi-phase plans (via `taskmaster-orchestrator.ts`'s `decompose()`) use `auto` or `checkpoint` for earlier phases.
+
+**Taskmaster's own gate is the sole approval authority** — Genie's own approval-gating on `runAgent.start`/`send` must be turned off for a project's paired Genie workspace (see below), or every phase would double-pause behind an OS modal that Taskmaster's gate already supersedes.
+
+### Checkpoint resume
+
+`approveCheckpoint(jobId)` rebuilds everything `executePhases()` needs from `JobBridge`-persisted state — `job.projectPath`, `job.phases` (converted back to `WorkPhase[]`), `job.currentPhase` (the phase to resume AT), and the just-completed phase's persisted `output` as context — plus `coaReqId`/`priority`/`planRef` re-read from the original dispatch file. This means a checkpoint can be approved well after (and in a different request than) the original dispatch call; nothing needs to be kept in memory across the pause. `rejectCheckpoint(jobId, reason)` marks the job `failed` and emits `job_failed`.
 
 ---
 
@@ -210,12 +227,15 @@ Jobs dispatched via `taskmaster_dispatch` receive a single phase with `gate: "te
 
 | Event type | When emitted |
 |------------|-------------|
-| `job_started` | `executeJob()` begins processing a dispatch |
-| `worker_started` | LLM invocation begins for a specific worker |
-| `worker_progress` | After each tool loop iteration (includes loop count and partial text) |
-| `worker_done` | Worker LLM loop finishes (status: `completed` or `failed`) |
+| `job_started` | `executeJob()` (or `approveCheckpoint()`) begins processing a dispatch |
+| `phase_started` / `phase_completed` / `phase_failed` | Around each phase's `runWorker()` call |
+| `worker_started` | A phase's Genie agent is about to be started |
+| `worker_progress` | Each poll of the running agent's output (tail of accumulated text) |
+| `worker_done` | The phase's Genie agent finished (status: `completed` or `failed`) |
+| `checkpoint_pending` | A `checkpoint`-gated phase just completed; the job is now paused |
+| `checkpoint_reached` | The job's `executePhases()` promise resolved with `status: "paused"` |
 | `report_ready` | Job completed successfully; includes a 500-char gist of the final response |
-| `job_failed` | Job could not be executed (missing dispatch, concurrent limit, error) |
+| `job_failed` | Job could not be executed (missing dispatch, concurrent limit, no paired Genie workspace, timeout, rejected checkpoint, error) |
 
 ---
 
@@ -284,7 +304,7 @@ Returns the summary for a single job. Returns `{ id, status: "not_found" }` if t
 POST /api/taskmaster/approve/:jobId
 ```
 
-Approves a paused checkpoint gate and resumes the job. If the job is not currently active, re-invokes `executeJob()`.
+Approves a paused checkpoint gate and resumes the job at its next phase, using the project path and phases persisted in `taskmaster.json`.
 
 **Response:** `{ "ok": true }`
 
@@ -351,23 +371,29 @@ The `workers` block in `gateway.json` controls the runtime:
   "workers": {
     "autoApprove": false,
     "maxConcurrentJobs": 3,
-    "workerTimeoutMs": 300000,
-    "modelOverrides": {
-      "code.hacker": "claude-opus-4-5",
-      "k.analyst": "claude-opus-4-5"
-    }
+    "workerTimeoutMs": 300000
   }
 }
 ```
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `autoApprove` | `false` | Skip human review at checkpoint gates — jobs proceed automatically |
+| `autoApprove` | `false` | Skip checkpoint pauses — a `checkpoint`-gated phase's completion is treated like `auto` and the job proceeds straight to the next phase |
 | `maxConcurrentJobs` | `3` | Maximum number of worker jobs running in parallel |
-| `workerTimeoutMs` | `300000` | Per-worker LLM timeout in milliseconds (5 minutes) |
-| `modelOverrides` | `{}` | Override the LLM model for specific workers by `"domain.role"` key |
+| `workerTimeoutMs` | `300000` | Per-phase timeout: how long a Genie-hosted worker has to emit `<<<TASKMASTER_DONE>>>` before the phase fails (5 minutes) |
 
-Configuration is read from disk each time `WorkerRuntime.reloadConfig()` is called — no restart required.
+`modelOverrides` / `modelMap` no longer apply — a Genie-executed worker uses whatever model its coding-agent CLI (Claude Code / Codex) is configured with, not a Taskmaster-selected model. Configuration is read from disk each time `WorkerRuntime.reloadConfig()` is called — no restart required.
+
+---
+
+## Genie Pairing (one-time setup)
+
+Before a project can dispatch Taskmaster jobs, its owner must, once:
+
+1. **Open the project as a Genie workspace.** Genie writes a `genie` entry into that project's `.mcp.json` automatically (a fixed local URL, e.g. `http://127.0.0.1:<port>/mcp/<session>`). `agi`'s existing per-project MCP registration (`server.ts`, reading via `readProjectMcpServers()`) picks this up generically — the same mechanism the Tynn PM integration already uses — and registers it as MCP server `<projectSlug>:genie`, where `projectSlug()` is the same slug function `PlanStore` uses (`/home/user/myproject` → `home-user-myproject`).
+2. **Turn off Genie's own approval-gating for that workspace**, in Genie's own settings. By default `runAgent.start`/`send` block on an OS-level approval modal; Taskmaster's own gate system (`auto`/`checkpoint`/`terminal`, see above) is already the approval authority for Taskmaster-dispatched work, so leaving Genie's gate on would double-pause every phase behind a modal that never gets auto-dismissed by anything in this flow. `agi` cannot flip this setting itself — it's Genie-side config.
+
+If a project has no registered `<projectSlug>:genie` MCP server when a job dispatches, `WorkerRuntime` fails that phase immediately with a clear error (`No paired Genie workspace for this project (expected MCP server "<projectSlug>:genie") — open this project in Genie to enable Taskmaster.`) — there is no in-process fallback.
 
 ---
 
@@ -375,11 +401,12 @@ Configuration is read from disk each time `WorkerRuntime.reloadConfig()` is call
 
 | File | Change |
 |------|--------|
-| `packages/gateway-core/src/worker-runtime.ts` | Core execution engine; sandbox tool set |
+| `packages/gateway-core/src/worker-runtime.ts` | Core execution engine — Genie `runAgent` bridge, checkpoint-gate pause/resume |
 | `packages/gateway-core/src/worker-prompt-loader.ts` | Prompt discovery and frontmatter parsing |
-| `packages/gateway-core/src/job-bridge.ts` | Dispatch-to-state translation |
+| `packages/gateway-core/src/job-bridge.ts` | Dispatch-to-state translation; persists `projectPath` and each phase's `output` |
+| `packages/mcp-client/src/index.ts` | `McpClient.callTool()` — how `WorkerRuntime` reaches a project's paired Genie workspace |
 | `packages/gateway-core/src/worker-api.ts` | HTTP API endpoints |
-| `prompts/workers/{domain}/{role}.md` | Individual worker system prompts |
+| `prompts/workers/{domain}/{role}.md` | Individual worker system prompts (become the initial `runAgent` prompt) |
 | `prompts/taskmaster.md` | Orchestrator prompt (worker table, gate rules, planning rules) |
 | `config/src/schema.ts` | `WorkersConfigSchema` for new config fields |
 

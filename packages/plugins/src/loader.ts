@@ -62,7 +62,7 @@ export interface PluginLoaderDeps {
   /** Log a raw channel message to the ambient daily session file (s189). */
   logAmbientMessage?: (channelId: string, entry: import("./types.js").AmbientEntry) => void;
   /** Return recent messages from today's ambient log (s189). */
-  getAmbientContext?: (channelId: string, limit: number) => import("./types.js").AmbientEntry[];
+  getAmbientContext?: (channelId: string, limit: number, roomId?: string) => import("./types.js").AmbientEntry[];
   /** s194: Check whether a channel user is verified in the entity store. */
   isEntityVerified?: (channelId: string, userId: string) => Promise<boolean>;
   /** s194: Retrieve an in-progress DM registration session. */
@@ -73,6 +73,8 @@ export interface PluginLoaderDeps {
   deleteRegistrationSession?: (sessionId: string) => void;
   /** s194: Capture a pending approval from the registration flow. */
   capturePendingApproval?: (input: import("./types.js").PendingApprovalCaptureInput) => void;
+  /** s234 Fix-A: Return the owner entity's channelUserId for tagging ambient log entries. */
+  getOwnerChannelUserId?: (channelId: string) => string | undefined;
 }
 
 export interface LoadResult {
@@ -400,5 +402,6 @@ function createPluginAPI(
     setRegistrationSession: deps.setRegistrationSession,
     deleteRegistrationSession: deps.deleteRegistrationSession,
     capturePendingApproval: deps.capturePendingApproval,
+    getOwnerChannelUserId: deps.getOwnerChannelUserId,
   };
 }

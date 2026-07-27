@@ -1,167 +1,236 @@
 /**
- * WorkerRuntime — access-model regression guard.
+ * WorkerRuntime — Genie-agent execution mode.
  *
- * The change in this ship: workers used to run against a hardcoded 5-tool
- * mini-sandbox (read_file / write_file / list_files / search_files /
- * run_command). Now they use Aion's shared ToolRegistry filtered by the
- * worker's tier. This test locks that in: a worker given a registry with a
- * custom "git_status_stub" tool must see that tool in its tool set, not a
- * frozen 5-tool list.
- *
- * We don't drive a full LLM here — we stub the invoker and inspect what
- * tools got handed to it.
+ * The change in this ship: workers no longer run against Taskmaster's own
+ * in-process LLM tool-loop. They execute as a real coding agent (Claude
+ * Code / Codex) via a paired Genie workspace's `runAgent` MCP tool, driven
+ * through the shared `McpClient`. These tests stub `McpClient` and drive
+ * `WorkerRuntime.runWorker()` directly (the private per-phase execution
+ * step) to assert the state machine: no-mcpClient / no-paired-Genie fail
+ * cleanly, a normal start→send→read→marker→stop round-trip completes, and
+ * a worker that never emits the completion marker times out rather than
+ * polling forever.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it, expect } from "vitest";
 import { WorkerRuntime } from "./worker-runtime.js";
-import { ToolRegistry } from "./tool-registry.js";
-import type { ToolManifestEntry } from "./system-prompt.js";
-import type { LLMProvider } from "./llm/provider.js";
+import type { McpClient, McpToolCallResult } from "@agi/mcp-client";
 
-// Minimal mock LLM provider — records invocations and returns a no-tool-calls
-// response to terminate the loop cleanly.
-function makeMockLLMProvider(): {
-  provider: LLMProvider;
-  invocations: Array<{ tools: Array<{ name: string; description: string }> }>;
-} {
-  const invocations: Array<{ tools: Array<{ name: string; description: string }> }> = [];
-  const provider: LLMProvider = {
-    async invoke(params) {
-      invocations.push({
-        tools: (params.tools ?? []).map((t) => ({ name: t.name, description: t.description })),
-      });
-      return {
-        text: "done",
-        toolCalls: [],
-        contentBlocks: [{ type: "text", text: "done" }],
-        thinkingBlocks: [],
-        usage: { inputTokens: 1, outputTokens: 1 },
-        model: params.model ?? "claude-sonnet-4-6",
-        stopReason: "end_turn",
-      };
-    },
-    async continueWithToolResults() {
-      throw new Error("unexpected continueWithToolResults call — test invoker returns no tool calls");
-    },
-    async summarize() {
-      throw new Error("unexpected summarize call in worker-runtime test");
-    },
-  };
-  return { provider, invocations };
+const PROJECT_ROOT = "/home/test/proj";
+const GENIE_SERVER_ID = "home-test-proj:genie";
+
+type CallToolArgs = Record<string, unknown>;
+
+function jsonResult(payload: Record<string, unknown>): McpToolCallResult {
+  return { isError: false, content: [{ type: "text", text: JSON.stringify(payload) }] };
 }
 
-function makeManifest(name: string, overrides?: Partial<ToolManifestEntry>): ToolManifestEntry {
-  return {
-    name,
-    description: `Tool ${name}`,
-    requiresState: [],
-    requiresTier: [],
-    ...overrides,
+/** Minimal stub matching only what WorkerRuntime actually calls on McpClient:
+ *  listServers() (to resolve/verify the paired Genie server) and callTool()
+ *  (to drive runAgent). Cast to McpClient — the real class wraps the MCP SDK
+ *  transport, which is out of scope for this unit test. */
+function makeMockMcpClient(opts: {
+  registered: boolean;
+  onCallTool: (serverId: string, toolName: string, args: CallToolArgs) => McpToolCallResult;
+}): { client: McpClient; calls: Array<{ toolName: string; args: CallToolArgs }> } {
+  const calls: Array<{ toolName: string; args: CallToolArgs }> = [];
+  const client = {
+    listServers: () => (opts.registered ? [{ id: GENIE_SERVER_ID, name: "genie", state: "connected", transport: "http" }] : []),
+    callTool: async (serverId: string, toolName: string, args: CallToolArgs) => {
+      calls.push({ toolName, args });
+      return opts.onCallTool(serverId, toolName, args);
+    },
   };
+  return { client: client as unknown as McpClient, calls };
 }
 
-describe("WorkerRuntime — Aion tool-registry inheritance", () => {
-  let registry: ToolRegistry;
-  let mock: ReturnType<typeof makeMockLLMProvider>;
+function makeRuntime(
+  mcpClient: McpClient | undefined,
+  extraConfig: Partial<{ workerTimeoutMs: number; genieDonePollMs: number; autoApprove: boolean; stateDir: string }> = {},
+) {
+  return new WorkerRuntime(
+    {
+      autoApprove: false,
+      maxConcurrentJobs: 3,
+      workerTimeoutMs: 60_000,
+      reportsDir: "/tmp/ignored",
+      modelMap: { default: "claude-sonnet-4-6" },
+      ...extraConfig,
+    },
+    { mcpClient },
+  );
+}
 
-  beforeEach(() => {
-    registry = new ToolRegistry();
-    mock = makeMockLLMProvider();
+async function runWorker(runtime: WorkerRuntime) {
+  // @ts-expect-error — accessing private method for the test
+  return runtime.runWorker(
+    "job-test",
+    { description: "noop", domain: "code", worker: "engineer", priority: "normal" },
+    "coa-test",
+    PROJECT_ROOT,
+  ) as Promise<{ status: string; text: string; errors: string[] }>;
+}
+
+describe("WorkerRuntime — Genie execution: failure paths", () => {
+  it("fails cleanly when no McpClient is bound (no in-process fallback)", async () => {
+    const runtime = makeRuntime(undefined);
+    const result = await runWorker(runtime);
+    expect(result.status).toBe("failed");
+    expect(result.errors.join(" ")).toMatch(/McpClient/);
   });
 
-  it("surfaces registry-provided tools to the worker, not a hardcoded 5-tool list", async () => {
-    // Register tools that the old sandbox never had.
-    registry.register(makeManifest("git_status_stub"), () => "clean", { type: "object", properties: {} });
-    registry.register(makeManifest("create_plan_stub"), () => "{}", { type: "object", properties: {} });
-
-    const runtime = new WorkerRuntime(
-      {
-        autoApprove: false,
-        maxConcurrentJobs: 3,
-        workerTimeoutMs: 60_000,
-        reportsDir: "/tmp/ignored",
-        modelMap: { default: "claude-sonnet-4-6" },
-        resourceId: "res-test",
-        nodeId: "node-test",
-        workerTier: "verified",
-      },
-      { llmProvider: mock.provider, toolRegistry: registry, getState: () => "ONLINE" },
-    );
-
-    // Drive runWorker directly via the internal method — we don't need the
-    // dispatch file round-trip for this assertion.
-    // @ts-expect-error — accessing private method for the test
-    await runtime.runWorker(
-      "job-test",
-      { description: "noop", domain: "code", worker: "engineer", priority: "normal" },
-      "coa-test",
-      "/home/test/proj",
-    );
-
-    expect(mock.invocations).toHaveLength(1);
-    const toolNames = mock.invocations[0]!.tools.map((t) => t.name).sort();
-    expect(toolNames).toContain("git_status_stub");
-    expect(toolNames).toContain("create_plan_stub");
-    // The retired 5-tool mini-sandbox must not sneak back in.
-    expect(toolNames).not.toContain("read_file");
-    expect(toolNames).not.toContain("run_command");
+  it("fails cleanly when the project has no paired Genie workspace registered", async () => {
+    const { client, calls } = makeMockMcpClient({ registered: false, onCallTool: () => jsonResult({}) });
+    const runtime = makeRuntime(client);
+    const result = await runWorker(runtime);
+    expect(result.status).toBe("failed");
+    expect(result.errors.join(" ")).toMatch(/No paired Genie workspace/);
+    expect(result.errors.join(" ")).toContain(GENIE_SERVER_ID);
+    // Never even attempts runAgent when the server isn't registered.
+    expect(calls).toHaveLength(0);
   });
+});
 
-  it("hides agentOnly tools from workers (project/settings config is Aion's job)", async () => {
-    registry.register(makeManifest("manage_project_stub", { agentOnly: true }), () => "ok", { type: "object" });
-    registry.register(makeManifest("grep_search_stub"), () => "ok", { type: "object" });
-
-    const runtime = new WorkerRuntime(
-      {
-        autoApprove: false,
-        maxConcurrentJobs: 3,
-        workerTimeoutMs: 60_000,
-        reportsDir: "/tmp/ignored",
-        modelMap: { default: "claude-sonnet-4-6" },
-        resourceId: "res-test",
-        nodeId: "node-test",
-        workerTier: "verified",
+describe("WorkerRuntime — Genie execution: happy path", () => {
+  it("starts an agent, sends the task, polls until the done marker, then stops it", async () => {
+    let reads = 0;
+    const { client, calls } = makeMockMcpClient({
+      registered: true,
+      onCallTool: (_serverId, toolName, args) => {
+        if (toolName !== "runAgent") throw new Error(`unexpected tool ${toolName}`);
+        switch (args.action) {
+          case "start":
+            return jsonResult({ id: "agent-1", command: "claude" });
+          case "send":
+            return jsonResult({});
+          case "read":
+            reads++;
+            // First poll: nothing yet. Second poll: the marker + summary.
+            return reads === 1
+              ? jsonResult({ output: "still working...\n", cursor: 10 })
+              : jsonResult({ output: "<<<TASKMASTER_DONE>>>\nImplemented the thing.", cursor: 40 });
+          case "stop":
+            return jsonResult({});
+          default:
+            throw new Error(`unexpected action ${String(args.action)}`);
+        }
       },
-      { llmProvider: mock.provider, toolRegistry: registry, getState: () => "ONLINE" },
-    );
+    });
 
-    // @ts-expect-error — accessing private method for the test
-    await runtime.runWorker(
-      "job-agentonly",
-      { description: "noop", domain: "code", worker: "engineer", priority: "normal" },
-      "coa-agentonly",
-      "/home/test/proj",
-    );
+    const runtime = makeRuntime(client, { genieDonePollMs: 1 });
+    const result = await runWorker(runtime);
 
-    const names = mock.invocations[0]!.tools.map((t) => t.name);
-    expect(names).toContain("grep_search_stub");
-    expect(names).not.toContain("manage_project_stub");
+    expect(result.status).toBe("completed");
+    expect(result.text).toContain("Implemented the thing.");
+
+    const actions = calls.map((c) => c.args.action);
+    expect(actions[0]).toBe("start");
+    expect(actions[1]).toBe("send");
+    expect(actions.filter((a) => a === "read").length).toBe(2);
+    expect(actions.at(-1)).toBe("stop");
+    // send delivers the resolved task prompt to the started agent id.
+    expect(calls[1]!.args.id).toBe("agent-1");
+    expect(String(calls[1]!.args.prompt)).toContain("noop");
   });
+});
 
-  it("fails cleanly when no tool registry is bound (no silent sandbox fallback)", async () => {
-    const runtime = new WorkerRuntime(
-      {
-        autoApprove: false,
-        maxConcurrentJobs: 3,
-        workerTimeoutMs: 60_000,
-        reportsDir: "/tmp/ignored",
-        modelMap: { default: "claude-sonnet-4-6" },
+describe("WorkerRuntime — Genie execution: stalled worker", () => {
+  it("times out rather than polling forever when the done marker never appears", async () => {
+    const { client, calls } = makeMockMcpClient({
+      registered: true,
+      onCallTool: (_serverId, toolName, args) => {
+        if (toolName !== "runAgent") throw new Error(`unexpected tool ${toolName}`);
+        switch (args.action) {
+          case "start":
+            return jsonResult({ id: "agent-stalled" });
+          case "send":
+            return jsonResult({});
+          case "read":
+            return jsonResult({ output: "thinking forever...\n", cursor: 5 });
+          case "stop":
+            return jsonResult({});
+          default:
+            throw new Error(`unexpected action ${String(args.action)}`);
+        }
       },
-      { llmProvider: mock.provider, getState: () => "ONLINE" },
-    );
+    });
 
-    // @ts-expect-error — accessing private method for the test
-    const result = await runtime.runWorker(
-      "job-noreg",
-      { description: "noop", domain: "code", worker: "engineer", priority: "normal" },
-      "coa-noreg",
-      "/home/test/proj",
-    );
+    // Small timeout + small poll interval so the test exercises a handful of
+    // real poll iterations without waiting on the production 4s interval.
+    const runtime = makeRuntime(client, { workerTimeoutMs: 20, genieDonePollMs: 5 });
+    const result = await runWorker(runtime);
 
     expect(result.status).toBe("failed");
-    expect(result.errors.join(" ")).toMatch(/ToolRegistry/);
-    // Never called the LLM — if the registry is missing we don't even open a
-    // request.
-    expect(mock.invocations).toHaveLength(0);
+    expect(result.errors.join(" ")).toMatch(/did not emit/);
+    // Cleans up the stalled agent's terminal even on timeout.
+    expect(calls.at(-1)!.args.action).toBe("stop");
+    expect(calls.at(-1)!.args.id).toBe("agent-stalled");
+  });
+});
+
+describe("WorkerRuntime — checkpoint gate", () => {
+  function makeInstantDoneMcpClient() {
+    return makeMockMcpClient({
+      registered: true,
+      onCallTool: (_serverId, toolName, args) => {
+        if (toolName !== "runAgent") throw new Error(`unexpected tool ${toolName}`);
+        switch (args.action) {
+          case "start":
+            return jsonResult({ id: `agent-${String(args.cwd)}-${Math.random()}` });
+          case "send":
+          case "stop":
+            return jsonResult({});
+          case "read":
+            return jsonResult({ output: "<<<TASKMASTER_DONE>>>\ndone.", cursor: 1 });
+          default:
+            throw new Error(`unexpected action ${String(args.action)}`);
+        }
+      },
+    });
+  }
+
+  const PHASES = [
+    { domain: "code", role: "engineer", phaseDescription: "design it", gate: "checkpoint" as const },
+    { domain: "code", role: "hacker", phaseDescription: "build it", gate: "auto" as const },
+  ];
+
+  it("pauses after a checkpoint-gated phase instead of starting the next phase", async () => {
+    const { client, calls } = makeInstantDoneMcpClient();
+    const stateDir = mkdtempSync(join(tmpdir(), "agi-worker-runtime-test-"));
+    const runtime = makeRuntime(client, { genieDonePollMs: 1, stateDir });
+
+    // @ts-expect-error — accessing private method for the test
+    const result = await runtime.executePhases(
+      "job-checkpoint",
+      { description: "noop", priority: "normal" },
+      PHASES,
+      "coa-test",
+      PROJECT_ROOT,
+    );
+
+    expect(result.status).toBe("paused");
+    // Only phase 0's agent ran — phase 1 never started.
+    expect(calls.filter((c) => c.args.action === "start")).toHaveLength(1);
+  });
+
+  it("autoApprove skips the checkpoint pause and runs every phase in one call", async () => {
+    const { client, calls } = makeInstantDoneMcpClient();
+    const stateDir = mkdtempSync(join(tmpdir(), "agi-worker-runtime-test-"));
+    const runtime = makeRuntime(client, { genieDonePollMs: 1, autoApprove: true, stateDir });
+
+    // @ts-expect-error — accessing private method for the test
+    const result = await runtime.executePhases(
+      "job-autoapprove",
+      { description: "noop", priority: "normal" },
+      PHASES,
+      "coa-test",
+      PROJECT_ROOT,
+    );
+
+    expect(result.status).toBe("completed");
+    expect(calls.filter((c) => c.args.action === "start")).toHaveLength(2);
   });
 });

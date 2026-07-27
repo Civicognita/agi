@@ -19,6 +19,7 @@
     "exactOptionalPropertyTypes": false,
     "noUncheckedIndexedAccess": true,
     "types": ["node"],
+    "jsx": "react-jsx",
     "paths": {
       "@agi/channel-sdk": ["./packages/channel-sdk/src/index.ts"],
       "@agi/entity-model": ["./packages/entity-model/src/index.ts"],
@@ -41,6 +42,7 @@
     "ui/web/src/**/*.ts",
     "config/src/**/*.ts",
     "cli/src/**/*.ts",
+    "cli/src/**/*.tsx",
     "test/**/*.ts"
   ],
   "exclude": ["node_modules", "dist", "ui/dashboard"]

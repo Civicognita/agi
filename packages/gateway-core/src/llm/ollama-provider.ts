@@ -29,7 +29,7 @@ import type {
 
 const DEFAULT_BASE_URL = "http://localhost:11434";
 
-const DEFAULT_CONFIG: Required<Omit<LLMProviderConfig, "apiKey">> & { apiKey: string } = {
+const DEFAULT_CONFIG: Required<Omit<LLMProviderConfig, "apiKey" | "logger">> & { apiKey: string } = {
   apiKey: "",
   defaultModel: "llama3.2",
   maxTokens: 4096,
@@ -344,7 +344,7 @@ export function fromOllamaResponse(
 // ---------------------------------------------------------------------------
 
 export class OllamaProvider implements LLMProvider {
-  private readonly config: Required<LLMProviderConfig>;
+  private readonly config: Required<Omit<LLMProviderConfig, "logger">>;
   /** Whether to use prompt-based tool calling fallback. */
   private readonly usePromptFallback: boolean;
 

@@ -1,0 +1,6 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Discord ambient log authority tagging (s234 Fix-A) > formatAmbientPreamble labels entries with [owner] vs [participant] 1`] = `
+"05:30 AM [owner] Glenn: let's talk about WEDC
+05:31 AM [participant] Alice: what's WEDC?"
+`;

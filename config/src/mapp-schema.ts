@@ -19,14 +19,14 @@ export const MAppContainerConfigSchema = z.object({
   image: z.string(),
   internalPort: z.number().int().positive(),
   volumeMounts: z.array(z.string()),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   command: z.array(z.string()).optional(),
   healthCheck: z.string().optional(),
 }).strict();
 
 export const MAppPanelSchema = z.object({
   label: z.string(),
-  widgets: z.array(z.record(z.unknown())),
+  widgets: z.array(z.record(z.string(), z.unknown())),
   position: z.number().optional(),
 }).strict();
 
@@ -34,7 +34,7 @@ export const MAppThemeSchema = z.object({
   primaryColor: z.string().optional(),
   accentColor: z.string().optional(),
   fontFamily: z.string().optional(),
-  cssProperties: z.record(z.string()).optional(),
+  cssProperties: z.record(z.string(), z.string()).optional(),
 }).strict();
 
 export const MAppAgentPromptSchema = z.object({
@@ -56,7 +56,7 @@ export const MAppModelInferenceConfigSchema = z.object({
    * JSON body template. Values may contain {{variableName}} placeholders
    * which are resolved against the current workflow context before sending.
    */
-  inputTemplate: z.record(z.unknown()).optional(),
+  inputTemplate: z.record(z.string(), z.unknown()).optional(),
   /** Key in the workflow context where the response is stored. */
   outputKey: z.string(),
 }).strict();
@@ -65,7 +65,7 @@ export const MAppWorkflowStepSchema = z.object({
   id: z.string(),
   type: z.enum(["shell", "api", "agent", "file-transform", "model-inference"]),
   label: z.string(),
-  config: z.record(z.unknown()),
+  config: z.record(z.string(), z.unknown()),
   dependsOn: z.array(z.string()).optional(),
 }).strict();
 
@@ -147,7 +147,7 @@ export const MAppPageSchema = z.object({
   conditions: MAppConditionSchema.optional(),
   processPage: z.string().optional(),
   url: z.string().optional(),
-  widgets: z.array(z.record(z.unknown())).optional(),
+  widgets: z.array(z.record(z.string(), z.unknown())).optional(),
 }).strict();
 
 export const MAppOutputSchema = z.object({
@@ -205,7 +205,7 @@ export const MAppScreenElementSchema = z.object({
   /** Component-specific props as JSON. The runtime forwards these to the
    *  PAx component; the editor type-checks against the component's known
    *  prop schema (Phase D+). */
-  props: z.record(z.unknown()).optional(),
+  props: z.record(z.string(), z.unknown()).optional(),
   /** Optional nested children for container components (Card, Tabs, etc.). */
   children: z.array(z.unknown()).optional(), // recursive — typed as unknown to avoid Zod cycle
 }).strict();

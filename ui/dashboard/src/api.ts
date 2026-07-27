@@ -4256,12 +4256,33 @@ export async function fetchPendingApprovals(opts: { project?: string } = {}): Pr
   return data.pending;
 }
 
-export async function approvePendingApproval(id: string, opts?: { projectPaths?: string[] }): Promise<PendingApproval> {
+/**
+ * How the Owner resolves a pending channel person on approval (P2):
+ * - "register": mint a NEW local identity for this channel account (default;
+ *   optionally carries profile fields prefilled from registrationData).
+ * - "associate": link this channel account onto an EXISTING local identity
+ *   (targetEntityId) — the same human reached us on another channel/account.
+ */
+export interface ApproveDecision {
+  mode?: "register" | "associate";
+  /** Required when mode === "associate": the existing entity to link onto. */
+  targetEntityId?: string;
+  /** Optional profile for mode === "register". */
+  profile?: { name?: string; email?: string; pronouns?: string };
+  projectPaths?: string[];
+}
+
+export async function approvePendingApproval(id: string, opts?: ApproveDecision): Promise<PendingApproval> {
   const url = `/api/identity/pending/${encodeURIComponent(id)}/approve`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ projectPaths: opts?.projectPaths ?? [] }),
+    body: JSON.stringify({
+      mode: opts?.mode ?? "register",
+      ...(opts?.targetEntityId !== undefined ? { targetEntityId: opts.targetEntityId } : {}),
+      ...(opts?.profile !== undefined ? { profile: opts.profile } : {}),
+      projectPaths: opts?.projectPaths ?? [],
+    }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
@@ -4280,6 +4301,44 @@ export async function rejectPendingApproval(id: string): Promise<PendingApproval
   }
   const data = await res.json() as { ok: true; approval: PendingApproval };
   return data.approval;
+}
+
+// s234 P3 — owner claim (fresh-install bootstrap; replaces owner.channels config).
+
+export interface OwnerStatus {
+  hasOwner: boolean;
+  ownerEntityId: string | null;
+  /** True when no owner is set AND a one-time claim token is active. */
+  claimable: boolean;
+}
+
+export async function fetchOwnerStatus(): Promise<OwnerStatus> {
+  const res = await fetch("/api/owner/status");
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return await res.json() as OwnerStatus;
+}
+
+export async function claimOwner(input: {
+  token: string;
+  entityId?: string;
+  channelId?: string;
+  channelUserId?: string;
+  displayName?: string;
+}): Promise<{ ownerEntityId: string; displayName: string }> {
+  const res = await fetch("/api/owner/claim", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  const data = await res.json() as { ok: true; ownerEntityId: string; displayName: string };
+  return { ownerEntityId: data.ownerEntityId, displayName: data.displayName };
 }
 
 // CHN-F (s167) slice 1 — channel workflow binding client.
@@ -4385,11 +4444,15 @@ export async function deleteWorkflow(id: string): Promise<void> {
 export interface DecidedPerson {
   status: "approved" | "rejected";
   decidedAt: string;
+  /** The local identity (entity) this person maps to — the associate target (P2). */
+  entityId?: string;
   channelId?: string;
   channelUserId?: string;
   displayName?: string;
   projectPath?: string;
   assignedProjectPaths?: string[];
+  /** Channel accounts already linked to this identity (for the associate picker). */
+  channelAccounts?: { channelId: string; channelUserId: string }[];
   registrationData?: { name?: string; email?: string; birthdate?: string; pronouns?: string; discordHandle?: string };
 }
 

@@ -10,6 +10,6 @@
     "@agi/db-schema": "workspace:*",
     "@agi/sdk": "workspace:*",
     "drizzle-orm": "^0.45.2",
-    "ulid": "^2.3.0"
+    "ulid": "^3.0.2"
   }
 }

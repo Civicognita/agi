@@ -27,12 +27,8 @@ export type {
 export { InboundRouter } from "./inbound-router.js";
 export type { InboundRouterDeps, InboundResult, OutboundSender } from "./inbound-router.js";
 
-export { PairingStore } from "./pairing-store.js";
-export type {
-  PairingRequest as DmPairingRequest,
-  PairedUser,
-  PairingStoreConfig,
-} from "./pairing-store.js";
+// s234 P4 — PairingStore (legacy DM approval-code path) removed. Device/account
+// pairing is separate (CompanionPairingService) and unaffected.
 
 export { ChannelRegistry } from "./channel-registry.js";
 export type { ChannelStatus, ChannelEntry } from "./channel-registry.js";
@@ -372,6 +368,15 @@ export type {
   StabilityReport,
   VersioningStrategy,
 } from "./protocol-stability.js";
+
+// Chat WebSocket protocol (shared types for Node/non-browser clients)
+export type {
+  ChatClientMessage,
+  ChatServerMessage,
+  ChatHistoryMessage,
+  ChatImageAttachment,
+  ChatDocumentAttachment,
+} from "./chat-ws-types.js";
 
 // Heartbeat Scheduler
 export { HeartbeatScheduler } from "./heartbeat.js";

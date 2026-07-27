@@ -1068,7 +1068,7 @@ export interface AionimaConfig {
   };
   providers?: Record<string, ProviderCredential>;
   workers?: WorkerConfig;
-  dev?: { enabled?: boolean; agiRepo?: string; primeRepo?: string };
+  dev?: { enabled?: boolean; agiRepo?: string };
   [key: string]: unknown;
 }
 
@@ -1444,7 +1444,6 @@ export interface DevStatus {
   /** Space-delimited scopes granted to the stored token. */
   githubTokenScopes?: string | null;
   agi: { remote: string };
-  prime: { remote: string; branch: string; entries: number };
   marketplace?: { remote: string; branch: string };
   mappMarketplace?: { remote: string; branch: string };
   /** PAx (Particle-Academy) ADF UI primitive forks — s136 t512. Always

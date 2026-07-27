@@ -184,7 +184,7 @@ const ActionJobSchema = ScheduledJobBaseSchema.extend({
   /** ID of the registered plugin action (from the plugin action registry). */
   actionId: z.string(),
   /** Optional key-value params forwarded to the action handler. */
-  params: z.record(z.unknown()).optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
 });
 
 /** Original PM-loop behavior: fires the iterative-work discipline prompt. */
@@ -236,7 +236,7 @@ export const ProjectMcpServerSchema = z
     command: z.array(z.string()).optional(),
     /** Stdio: env vars to inject. Values may be `$VAR` to resolve from
      *  the project's .env at registration time. */
-    env: z.record(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
     /** http/websocket: server URL. May include `$VAR` for env-resolved bits. */
     url: z.string().optional(),
     /** Whether to register on gateway boot (auto) or lazily on first call. */

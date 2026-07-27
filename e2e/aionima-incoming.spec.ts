@@ -88,6 +88,7 @@ test.describe("Incoming-PR review queue — UI", () => {
     }
     await page.getByTestId("project-tab-incoming").click();
     await expect(page.getByTestId("aionima-incoming-panel")).toBeVisible({ timeout: 8_000 });
+    await expect(page.getByText("Loading incoming PRs…")).not.toBeVisible({ timeout: 10_000 });
 
     // Exactly one of: empty-state, error card, or at least one PR group.
     const empty = page.getByTestId("aionima-incoming-empty");
@@ -110,5 +111,79 @@ test.describe("Incoming-PR review queue — UI", () => {
     const count = await viewLinks.count();
     if (count === 0) return; // empty / error state — nothing to assert
     await expect(viewLinks.first()).toHaveAttribute("href", /github\.com/);
+  });
+
+  // Wave 2c (s229): PR comment thread — load existing comments + post a new one.
+  test("Comments toggle loads the thread and posts a new comment", async ({ page }) => {
+    await page.route("**/api/dev/incoming/status", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ownerLogin: "wishborn",
+          repos: [
+            {
+              slug: "agi",
+              displayName: "agi",
+              upstream: "agi",
+              upstreamOrg: "Civicognita",
+              prs: [
+                {
+                  slug: "agi",
+                  number: 42,
+                  title: "Test PR",
+                  authorLogin: "wishborn",
+                  headRepoFullName: "wishborn/agi",
+                  headRef: "dev",
+                  headSha: "abc1234",
+                  baseRef: "dev",
+                  htmlUrl: "https://github.com/Civicognita/agi/pull/42",
+                  createdAt: new Date(0).toISOString(),
+                  updatedAt: new Date(0).toISOString(),
+                  isDraft: false,
+                  isCrossRepo: false,
+                },
+              ],
+            },
+          ],
+        }),
+      }),
+    );
+    await page.route("**/api/dev/incoming/agi/pr/42/comments", async (route) => {
+      if (route.request().method() === "POST") {
+        const posted = JSON.parse(route.request().postData() ?? "{}") as { body: string };
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            comment: { id: 2, authorLogin: "wishborn", authorAvatar: null, body: posted.body, createdAt: new Date(0).toISOString(), htmlUrl: "https://github.com/Civicognita/agi/pull/42#comment-2" },
+          }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          comments: [{ id: 1, authorLogin: "alice", authorAvatar: null, body: "Looks good so far.", createdAt: new Date(0).toISOString(), htmlUrl: "https://github.com/Civicognita/agi/pull/42#comment-1" }],
+        }),
+      });
+    });
+
+    const reachable = await openAionimaProject(page);
+    if (!reachable) {
+      test.skip();
+      return;
+    }
+    await page.getByTestId("project-tab-incoming").click();
+    await page.getByTestId("aionima-incoming-comments-toggle-agi-42").click();
+
+    const thread = page.getByTestId("pr-comments-agi-42");
+    await expect(thread).toBeVisible({ timeout: 8_000 });
+    await expect(thread.getByTestId("pr-comment")).toContainText("Looks good so far.");
+
+    await thread.getByTestId("pr-comment-input-agi-42").fill("Thanks, merging shortly.");
+    await thread.getByTestId("pr-comment-post-agi-42").click();
+    await expect(thread.getByTestId("pr-comment").nth(1)).toContainText("Thanks, merging shortly.");
   });
 });

@@ -38,7 +38,9 @@ import { bold, dim, green, red, yellow } from "../output.js";
  * a direct zod dep — @agi/config owns that.
  */
 interface ZodIssueLike {
-  path: (string | number)[];
+  // zod v4 widened issue.path to PropertyKey[] (adds symbol, never actually
+  // produced by our schemas) — match it so this duck-type stays a supertype.
+  path: PropertyKey[];
   message: string;
   code: string;
 }
@@ -74,7 +76,10 @@ interface ValidationResult {
 function formatZodIssue(file: string, issue: ZodIssueLike): ValidationError {
   return {
     file,
-    path: issue.path.join("."),
+    // Array#join calls ToString on each element, which throws for a raw
+    // symbol (unlike String()) — map explicitly so a symbol path segment
+    // (theoretical per zod v4's widened PropertyKey type) can't crash this.
+    path: issue.path.map(String).join("."),
     message: issue.message,
     code: issue.code,
   };

@@ -107,6 +107,27 @@ const DEFAULT_CONFIG: SessionManagerConfig = {
 const COMPACTION_PROMPT =
   "Summarize the following conversation in 300 words or fewer. Capture key decisions, open questions, and any commitments made. Do not include pleasantries. Output plain text only.";
 
+/**
+ * Build the conversation-session key for an inbound CHANNEL message.
+ *
+ * Channels must NOT collapse into one per-entity session: a Discord user posts
+ * in many channels/threads/DMs, and each is its own conversation. Keying by
+ * `entityId` alone bled every channel's turns into a single shared history
+ * (and made two concurrent channels race on the same `turns` array +
+ * `activeSessions` entry). This mirrors the web-chat composite key
+ * (`<entity>:web:<sessionId>`): the room/thread id isolates rooms, and when a
+ * channel has no room id we still separate by platform rather than falling back
+ * to the bare entity.
+ */
+export function channelSessionKey(
+  entityId: string,
+  channel: string,
+  roomId?: string | null,
+): string {
+  const base = `${entityId}:${channel}`;
+  return roomId != null && roomId !== "" ? `${base}:${roomId}` : base;
+}
+
 // ---------------------------------------------------------------------------
 // AgentSessionManager
 // ---------------------------------------------------------------------------

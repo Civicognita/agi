@@ -110,4 +110,48 @@ test.describe("Settings → Channels — Discord settings panel (v0.4.865)", () 
     await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Restart", exact: true })).toBeVisible();
   });
+
+  // Wave 1d (s228): Owner designation (#E0) reachable from the Channels page,
+  // not just Settings → Owner Channel IDs. DiscordOwnerCard only renders once
+  // the bot reports a connected guild, so /api/channels/discord/state is mocked.
+  test("Server tab shows the Discord Owner card and it saves owner.channels.discord", async ({ page }) => {
+    await page.route("**/api/channels/discord/state", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          connected: true,
+          user: { tag: "AionBot#0001" },
+          guilds: [{ id: "g1", name: "Test Guild", memberCount: 5, channels: [], roles: [] }],
+          snapshotAt: new Date(0).toISOString(),
+        }),
+      }),
+    );
+
+    await openDiscordSettingsTab(page);
+    await page.getByRole("tab", { name: /^server$/i }).click();
+
+    const ownerCard = page.getByTestId("discord-owner-card");
+    await expect(ownerCard).toBeVisible({ timeout: 10_000 });
+
+    const input = page.getByTestId("discord-owner-input");
+    const saveButton = page.getByTestId("discord-owner-save");
+    await expect(saveButton).toBeDisabled();
+
+    await input.fill("123456789012345678");
+    await expect(saveButton).toBeEnabled();
+
+    let savedOwnerId: string | undefined;
+    await page.route("**/api/config", async (route) => {
+      if (route.request().method() !== "PUT") return route.continue();
+      const body = JSON.parse(route.request().postData() ?? "{}") as {
+        owner?: { channels?: { discord?: string } };
+      };
+      savedOwnerId = body.owner?.channels?.discord;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, message: "saved" }) });
+    });
+    await saveButton.click();
+    await expect(saveButton).toHaveText("Saved");
+    expect(savedOwnerId).toBe("123456789012345678");
+  });
 });

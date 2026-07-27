@@ -18,6 +18,8 @@ export interface AmbientEntry {
   displayName: string;
   text: string;
   roomId: string;
+  /** True when this message was sent by the owner entity (resolved at log time). */
+  isOwner?: boolean;
 }
 
 export class ChannelAmbientLog {
@@ -41,11 +43,19 @@ export class ChannelAmbientLog {
     }
   }
 
-  getTodayContext(channelId: string, limit = 50): AmbientEntry[] {
-    return this.getDateContext(channelId, this.todayDate(), limit);
+  /**
+   * @param roomId  When set, return only entries from that room. The log is
+   *   provider-keyed (one daily file per channel provider, e.g. all Discord
+   *   channels share one file), so callers that inject "today's conversation"
+   *   into a specific room MUST pass roomId — otherwise one channel's messages
+   *   bleed into another channel's prompt. Filtering happens BEFORE the limit
+   *   slice, so a busy provider can't crowd out the target room's history.
+   */
+  getTodayContext(channelId: string, limit = 50, roomId?: string): AmbientEntry[] {
+    return this.getDateContext(channelId, this.todayDate(), limit, roomId);
   }
 
-  getDateContext(channelId: string, date: string, limit = 50): AmbientEntry[] {
+  getDateContext(channelId: string, date: string, limit = 50, roomId?: string): AmbientEntry[] {
     try {
       const raw = readFileSync(this.filePath(channelId, date), "utf8");
       const lines = raw.split("\n").filter((l) => l.trim().length > 0);
@@ -57,7 +67,8 @@ export class ChannelAmbientLog {
           // Skip malformed lines.
         }
       }
-      return entries.slice(-limit);
+      const scoped = roomId !== undefined ? entries.filter((e) => e.roomId === roomId) : entries;
+      return scoped.slice(-limit);
     } catch {
       return [];
     }

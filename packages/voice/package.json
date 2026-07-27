@@ -7,6 +7,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "openai": "^4.80.0"
+    "openai": "^6.45.0"
   }
 }

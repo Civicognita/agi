@@ -177,12 +177,15 @@ export class ProjectConfigManager extends EventEmitter {
 
   /** Create a new project config with sensible defaults. */
   create(projectPath: string, name: string, opts: ProjectConfigCreateOpts = {}): ProjectConfig {
+    // zod v4 infers tynnToken/type as required-but-possibly-undefined keys
+    // (was optional pre-v4, from the .nullish().transform() null-normalizing
+    // chain in ProjectConfigSchema) — the base literal must include them.
     const config: ProjectConfig = {
       name,
       createdAt: new Date().toISOString(),
-      ...(opts.tynnToken ? { tynnToken: opts.tynnToken } : {}),
+      tynnToken: opts.tynnToken ? opts.tynnToken : undefined,
+      type: opts.type ? opts.type : undefined,
       ...(opts.category ? { category: opts.category as ProjectConfig["category"] } : {}),
-      ...(opts.type ? { type: opts.type } : {}),
       ...(opts.description ? { description: opts.description } : {}),
     };
 

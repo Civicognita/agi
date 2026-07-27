@@ -249,6 +249,53 @@ export class EntityStore {
     }));
   }
 
+  /**
+   * Associate an existing channel account onto a DIFFERENT existing entity —
+   * "this channel account is the same human as identity `targetEntityId`". Used
+   * by the Owner's "associate to existing person" approval (s234 P2). Reassigns
+   * the `(channel, channelUserId)` channelAccounts row from its current entity
+   * (the throwaway auto-created by resolveOrCreate on first inbound) to the
+   * target. Idempotent: a no-op if the account is already on the target.
+   *
+   * The now-account-less source entity is intentionally left in place (entities
+   * carry FK references — coa chains, memory — so deletion is unsafe); if it has
+   * no remaining channel accounts it is downgraded to `disabled` so it never
+   * resolves or shows as a person.
+   */
+  async associateChannelAccount(params: {
+    channel: string;
+    channelUserId: string;
+    targetEntityId: string;
+  }): Promise<Entity> {
+    const target = await this.getEntity(params.targetEntityId);
+    if (target === null) {
+      throw new Error(`associateChannelAccount: target entity not found: ${params.targetEntityId}`);
+    }
+    const current = await this.getEntityByChannel(params.channel, params.channelUserId);
+    if (current !== null && current.id === target.id) return target; // already associated
+
+    if (current === null) {
+      // No existing account row — link it fresh onto the target.
+      await this.linkChannelAccount({ entityId: target.id, channel: params.channel, channelUserId: params.channelUserId });
+      return target;
+    }
+
+    // Reassign the single unique (channel, channelUserId) row to the target.
+    await this.db
+      .update(channelAccounts)
+      .set({ entityId: target.id })
+      .where(and(eq(channelAccounts.channel, params.channel), eq(channelAccounts.channelUserId, params.channelUserId)));
+
+    // Retire the orphaned source entity if it now has no channel accounts — it
+    // is unreachable by channel regardless; downgrade to unverified so it never
+    // shows as an approved person.
+    const remaining = await this.getChannelAccounts(current.id);
+    if (remaining.length === 0 && current.verificationTier !== "unverified") {
+      await this.updateEntity(current.id, { verificationTier: "unverified" });
+    }
+    return target;
+  }
+
   /** Upsert channel account — safe to call on every inbound message. */
   async upsertChannelAccount(params: {
     entityId: string;
@@ -288,6 +335,60 @@ export class EntityStore {
     const key = `phone_hash:${channel}:${hash}`;
     const [row] = await this.db.select().from(meta).where(eq(meta.key, key));
     return row ? String(row.value) : undefined;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Owner designation (s234 P3) — a DURABLE owner marker in `meta`, replacing the
+  // hand-edited `owner.channels` config as the source of owner identity. Written
+  // by the dashboard claim flow (fresh installs) or the one-time config migration.
+  // ---------------------------------------------------------------------------
+
+  private static readonly OWNER_ENTITY_KEY = "owner_entity_id";
+  private static readonly OWNER_CLAIM_TOKEN_KEY = "owner_claim_token";
+
+  /** The entity currently designated as Owner, or undefined if unclaimed. */
+  async getOwnerEntityId(): Promise<string | undefined> {
+    const [row] = await this.db.select().from(meta).where(eq(meta.key, EntityStore.OWNER_ENTITY_KEY));
+    const v = row ? String(row.value) : "";
+    return v.length > 0 ? v : undefined;
+  }
+
+  /** Durably designate the owner entity (claim flow / one-time config migration). */
+  async setOwnerEntityId(entityId: string): Promise<void> {
+    const now = new Date();
+    await this.db.insert(meta).values({
+      key: EntityStore.OWNER_ENTITY_KEY,
+      value: entityId as unknown as Record<string, unknown>,
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: meta.key,
+      set: { value: entityId as unknown as Record<string, unknown>, updatedAt: now },
+    });
+  }
+
+  /** The one-time owner-claim token (printed to the server console on first boot
+   *  when no owner exists), or undefined once claimed/never-set. */
+  async getOwnerClaimToken(): Promise<string | undefined> {
+    const [row] = await this.db.select().from(meta).where(eq(meta.key, EntityStore.OWNER_CLAIM_TOKEN_KEY));
+    const v = row ? String(row.value) : "";
+    return v.length > 0 ? v : undefined;
+  }
+
+  async setOwnerClaimToken(token: string): Promise<void> {
+    const now = new Date();
+    await this.db.insert(meta).values({
+      key: EntityStore.OWNER_CLAIM_TOKEN_KEY,
+      value: token as unknown as Record<string, unknown>,
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: meta.key,
+      set: { value: token as unknown as Record<string, unknown>, updatedAt: now },
+    });
+  }
+
+  /** Consume the claim token once the owner is claimed. */
+  async clearOwnerClaimToken(): Promise<void> {
+    await this.db.delete(meta).where(eq(meta.key, EntityStore.OWNER_CLAIM_TOKEN_KEY));
   }
 
   // ---------------------------------------------------------------------------

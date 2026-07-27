@@ -94,6 +94,13 @@ const tools = await client.listTools("tynn");
 const result = await client.callTool("tynn", "next", {});
 ```
 
+**Per-project registration** happens in two places, both via
+`server.ts`'s `ensureProjectMcpRegistered(fullPath, label)`: a boot-time
+sweep over every registered project's directories, and — since the Aion
+Chat TUI ship — on demand from `chat:open`, for a folder that's never been
+registered as an Aionima project at all (Claude Code's own convention: a
+`.mcp.json` alone is enough). See [`chat-tui.md`](./chat-tui.md#on-demand-mcpjson-loading).
+
 ## Schema evolution commitment
 
 When `@modelcontextprotocol/sdk` ships a new version:

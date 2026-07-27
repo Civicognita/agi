@@ -312,10 +312,10 @@ function buildWasiStubs(
 
     fd_write: (fd: number, iovs: number, iovsLen: number, nwrittenPtr: number): number => {
       // Phase A: writes are no-ops; Phase D will capture stdout (fd=1).
+      void fd; void iovs; void iovsLen;
       const view = new DataView(memory.buffer);
       view.setUint32(nwrittenPtr, 0, true);
       return 0;
-      void fd; void iovs; void iovsLen;
     },
 
     fd_read: (): number => 8, // EBADF

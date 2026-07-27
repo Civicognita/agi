@@ -55,4 +55,27 @@ test.describe("Appearance settings", () => {
     expect(spaceScale).toBe("1.15");
     expect(spacingPx).toBeGreaterThan(4);
   });
+
+  // Wave 5 AC: "survive reload" — a value already persisted in gateway.json
+  // must apply on mount, not just on interactive change.
+  test("a previously-persisted appearance applies on load (survives reload)", async ({ page }) => {
+    await page.route("**/api/config", (route) => {
+      if (route.request().method() === "GET") {
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ui: { appearance: { radiusScale: 0.15, motion: "relaxed", reduceMotion: false, density: "compact" } } }),
+        });
+      }
+      return route.continue();
+    });
+
+    await page.goto("/settings/appearance");
+    await expect(page.getByTestId("settings-appearance-page")).toBeVisible({ timeout: 10_000 });
+    await expect.poll(() =>
+      page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--radius-scale").trim()),
+    ).toBe("0.15");
+    const spaceScale = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--space-scale").trim());
+    expect(spaceScale).toBe("0.85");
+  });
 });

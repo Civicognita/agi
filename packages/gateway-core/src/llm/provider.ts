@@ -6,6 +6,7 @@
  */
 
 import type { LLMInvokeParams, LLMResponse, LLMToolContinuationParams } from "./types.js";
+import type { Logger } from "../logger.js";
 
 // ---------------------------------------------------------------------------
 // Provider interface
@@ -56,4 +57,6 @@ export interface LLMProviderConfig {
    *  get 60s and every non-cloud tier gets 360s (s111 t411/t413 — relaxed
    *  local timeouts per owner directive 2026-04-26). */
   timeoutMs?: number;
+  /** Optional structured logger for request-lifecycle visibility (attempt start/success/retry/failure). Providers that don't consume it degrade silently — see `AnthropicProvider` for the reference implementation. */
+  logger?: Logger;
 }

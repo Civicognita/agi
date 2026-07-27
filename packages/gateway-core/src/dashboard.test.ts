@@ -1228,7 +1228,7 @@ describe("DashboardApi — /api/dashboard/timeline", async () => {
   });
 
   it("passes entityId, since, until to queries", async () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
+    const e = await store.createEntity({ type: "E", displayName: "User" });
     const req = makeMockReq("GET", `/api/dashboard/timeline?bucket=day&entityId=${e.id}&since=2024-01-01T00:00:00Z&until=2025-01-01T00:00:00Z`);
     const { res, captured } = makeMockRes();
     await api.handle(req, res);
@@ -1301,7 +1301,7 @@ describe("DashboardApi — /api/dashboard/breakdown", async () => {
   });
 
   it("passes entityId filter to queries", async () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
+    const e = await store.createEntity({ type: "E", displayName: "User" });
     const req = makeMockReq("GET", `/api/dashboard/breakdown?by=channel&entityId=${e.id}`);
     const { res, captured } = makeMockRes();
     await api.handle(req, res);
@@ -1392,7 +1392,7 @@ describe("DashboardApi — /api/dashboard/coa", async () => {
   });
 
   it("passes entityId, fingerprint, workType, since, until, limit, offset params", async () => {
-    const e = store.createEntity({ type: "E", displayName: "User" });
+    const e = await store.createEntity({ type: "E", displayName: "User" });
     const req = makeMockReq(
       "GET",
       `/api/dashboard/coa?entityId=${e.id}&fingerprint=$A0&workType=message_in&limit=10&offset=0`

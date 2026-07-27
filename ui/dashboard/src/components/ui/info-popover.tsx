@@ -26,22 +26,24 @@ export function InfoPopover({
 }) {
   return (
     <Popover>
+      {/* react-fancy's PopoverTriggerProps only accepts {children, className} —
+          aria-label/data-testid passed directly to it are silently dropped, so
+          they go on this inner span instead (children render through fine). */}
       <PopoverTrigger
         className={cn(
           "inline-flex items-center justify-center align-middle text-muted-foreground/50 hover:text-foreground transition-colors cursor-help",
           className,
         )}
-        aria-label={label}
-        data-testid="info-popover-trigger"
       >
-        <Info className="w-3.5 h-3.5" />
+        <span aria-label={label} data-testid="info-popover-trigger" className="inline-flex">
+          <Info className="w-3.5 h-3.5" />
+        </span>
       </PopoverTrigger>
-      <PopoverContent
-        className="w-64 p-3 bg-popover border border-border rounded-lg shadow-lg z-[300] text-[11px] text-muted-foreground leading-relaxed"
-        data-testid="info-popover-content"
-      >
-        {title !== undefined && <p className="text-[11px] font-semibold text-foreground mb-1">{title}</p>}
-        {children}
+      <PopoverContent className="w-64 p-3 bg-popover border border-border rounded-lg shadow-lg z-[300] text-[11px] text-muted-foreground leading-relaxed">
+        <div data-testid="info-popover-content">
+          {title !== undefined && <p className="text-[11px] font-semibold text-foreground mb-1">{title}</p>}
+          {children}
+        </div>
       </PopoverContent>
     </Popover>
   );

@@ -2,7 +2,6 @@ import type { AionimaMessage, OutboundContent } from "@agi/plugins";
 import type { EntityStore, MessageQueue, CommsLog } from "@agi/entity-model";
 import type { COAChainLogger } from "@agi/coa-chain";
 import type { VoicePipeline, VoiceGatewayState, AudioFormat } from "@agi/voice";
-import type { PairingStore } from "./pairing-store.js";
 import type { OwnerConfig } from "@agi/config";
 import type { ChannelEventDispatcher } from "./channel-event-dispatcher.js";
 import type { PendingApprovalStore } from "./pending-approval-store.js";
@@ -31,10 +30,6 @@ export interface InboundRouterDeps {
   getGatewayState?: () => VoiceGatewayState;
   /** Owner config — if provided, enables owner recognition and pairing gate. */
   ownerConfig?: OwnerConfig;
-  /** Pairing store — manages pairing codes for DM access grants. */
-  pairingStore?: PairingStore;
-  /** Outbound sender — used to send pairing messages and owner notifications. */
-  outboundSender?: OutboundSender;
   /** Owner entity ID — resolved at boot and used for owner notification routing. */
   ownerEntityId?: string;
   /** Optional CommsLog instance for logging inbound messages. */
@@ -98,8 +93,6 @@ export class InboundRouter {
   private readonly voicePipeline: VoicePipeline | undefined;
   private readonly getGatewayState: (() => VoiceGatewayState) | undefined;
   private readonly ownerConfig: OwnerConfig | undefined;
-  private readonly pairingStore: PairingStore | undefined;
-  private readonly outboundSender: OutboundSender | undefined;
   private readonly commsLog: CommsLog | undefined;
   private readonly channelEventDispatcher: ChannelEventDispatcher | undefined;
   private readonly pendingApprovalStore: PendingApprovalStore | undefined;
@@ -112,8 +105,6 @@ export class InboundRouter {
     this.voicePipeline = deps.voicePipeline;
     this.getGatewayState = deps.getGatewayState;
     this.ownerConfig = deps.ownerConfig;
-    this.pairingStore = deps.pairingStore;
-    this.outboundSender = deps.outboundSender;
     this.commsLog = deps.commsLog;
     this.channelEventDispatcher = deps.channelEventDispatcher;
     this.pendingApprovalStore = deps.pendingApprovalStore;
@@ -134,128 +125,11 @@ export class InboundRouter {
     return ownerUserId !== undefined && ownerUserId === channelUserId;
   }
 
-  /**
-   * Handle owner commands (/approve, /reject, /paired, /revoke).
-   * Returns true if the message was an owner command and was handled.
-   */
-  private async handleOwnerCommand(message: AionimaMessage): Promise<boolean> {
-    if (this.pairingStore === undefined || this.outboundSender === undefined) return false;
-
-    const text = message.content.type === "text" ? message.content.text.trim() : "";
-    if (!text.startsWith("/")) return false;
-
-    const parts = text.split(/\s+/);
-    const cmd = parts[0]?.toLowerCase();
-    const arg = parts[1];
-    const channelId = message.channelId as string;
-    const userId = message.channelUserId;
-
-    switch (cmd) {
-      case "/approve": {
-        if (arg === undefined) {
-          await this.outboundSender(channelId, userId, { type: "text", text: "Usage: /approve <CODE>" });
-          return true;
-        }
-        const paired = this.pairingStore.approve(arg);
-        if (paired === null) {
-          await this.outboundSender(channelId, userId, { type: "text", text: `Pairing code not found or expired: ${arg}` });
-        } else {
-          // Ensure the paired user has a verified entity
-          const pairedEntity = await this.entityStore.resolveOrCreate(
-            paired.channel,
-            paired.channelUserId,
-            paired.displayName,
-          );
-          await this.entityStore.updateEntity(pairedEntity.id, { verificationTier: "verified" });
-
-          await this.outboundSender(channelId, userId, {
-            type: "text",
-            text: `Approved: ${paired.displayName} (${paired.channel}) is now paired with verified access.`,
-          });
-
-          // Notify the approved user
-          try {
-            await this.outboundSender(paired.channel, paired.channelUserId, {
-              type: "text",
-              text: "You have been approved to talk to me. Go ahead and send a message.",
-            });
-          } catch {
-            // User may not be reachable — ignore
-          }
-        }
-        return true;
-      }
-
-      case "/reject": {
-        if (arg === undefined) {
-          await this.outboundSender(channelId, userId, { type: "text", text: "Usage: /reject <CODE>" });
-          return true;
-        }
-        const rejected = this.pairingStore.reject(arg);
-        await this.outboundSender(channelId, userId, {
-          type: "text",
-          text: rejected ? `Rejected pairing code: ${arg}` : `Pairing code not found: ${arg}`,
-        });
-        return true;
-      }
-
-      case "/paired": {
-        const users = this.pairingStore.getApprovedUsers();
-        const pending = this.pairingStore.getPendingRequests();
-        const lines: string[] = [];
-
-        if (users.length > 0) {
-          lines.push("Paired users:");
-          for (const u of users) {
-            lines.push(`  ${u.displayName} (${u.channel}:${u.channelUserId}) — paired ${u.pairedAt}`);
-          }
-        } else {
-          lines.push("No paired users.");
-        }
-
-        if (pending.length > 0) {
-          lines.push("");
-          lines.push("Pending requests:");
-          for (const p of pending) {
-            lines.push(`  ${p.displayName} (${p.channel}) — code: ${p.code} (expires ${p.expiresAt})`);
-          }
-        }
-
-        await this.outboundSender(channelId, userId, { type: "text", text: lines.join("\n") });
-        return true;
-      }
-
-      case "/revoke": {
-        if (arg === undefined) {
-          await this.outboundSender(channelId, userId, { type: "text", text: "Usage: /revoke <channel:channelUserId>" });
-          return true;
-        }
-        const [revokeChannel, revokeUserId] = arg.split(":");
-        if (revokeChannel === undefined || revokeUserId === undefined) {
-          await this.outboundSender(channelId, userId, { type: "text", text: "Usage: /revoke <channel:channelUserId> (e.g. /revoke telegram:123456)" });
-          return true;
-        }
-        const revoked = this.pairingStore.revoke(revokeChannel, revokeUserId);
-
-        // Downgrade entity back to unverified
-        if (revoked) {
-          const revokedEntity = await this.entityStore.getEntityByChannel(revokeChannel, revokeUserId);
-          if (revokedEntity !== null) {
-            await this.entityStore.updateEntity(revokedEntity.id, { verificationTier: "unverified" });
-          }
-        }
-
-        await this.outboundSender(channelId, userId, {
-          type: "text",
-          text: revoked ? `Revoked: ${arg}` : `User not found: ${arg}`,
-        });
-        return true;
-      }
-
-      default:
-        return false; // Not an owner command — pass through to agent
-    }
-  }
+  // s234 P4 — handleOwnerCommand (/approve //reject //paired //revoke) + the
+  // PairingStore it drove were REMOVED. The legacy DM approval-code path they
+  // served was retired 2026-06-08; channel identity is dashboard-only now
+  // (/identity/pending register/associate + the owner claim flow). This is
+  // unrelated to device/account pairing (CompanionPairingService), which stays.
 
   // -------------------------------------------------------------------------
   // Owner notification
@@ -289,33 +163,12 @@ export class InboundRouter {
 
     const channelId = message.channelId as string;
 
-    // Step 0a — Owner command interception
-    // If the sender is the owner and the message is an owner command,
-    // handle it inline and return null (not routed to agent).
-    if (this.isOwner(channelId, message.channelUserId)) {
-      const handled = await this.handleOwnerCommand(message);
-      if (handled) return null;
-      // Fall through — owner's non-command messages go to agent
-    }
-
-    // Step 0b — Legacy pairing-code gate RETIRED 2026-06-08 (owner directive).
-    //
-    // This branch used to DM every unknown non-owner a 6-digit pairing code
-    // ("To talk to me, you need my owner's approval. Your pairing code: XXX")
-    // and DROP the message (return null) whenever dmPolicy was "pairing" (the
-    // default). Because it ran BEFORE the modern pending-approval capture
-    // (Step 2c), that flow could never see channel messages — the dashboard
-    // /identity/pending page sat empty while users got cryptic codes with no
-    // dashboard surface to approve them.
-    //
-    // Channel identity is now DASHBOARD-ONLY: unknown users are captured as
-    // pending approvals (Step 2c) and surfaced on /identity/pending for the
-    // owner to approve/reject — no code is ever sent. The s194 path (Step 2d)
-    // lets the agent reply without project scope until the owner approves.
-    //
-    // PairingStore + the owner-commands /approve //reject //list (handled in
-    // handleOwnerCommand) remain wired but are now vestigial — no new pairing
-    // requests are created. Removing them entirely is a follow-up.
+    // Step 0 — Legacy pairing RETIRED. The pairing-code DM gate was retired
+    // 2026-06-08, and the vestigial owner-commands (/approve //reject //paired
+    // //revoke) + PairingStore were removed in s234 P4. Channel identity is now
+    // DASHBOARD-ONLY: unknown users are captured as pending approvals (Step 2c)
+    // and surfaced on /identity/pending, where the owner registers or associates
+    // them (and designates the owner via the claim flow). No code is ever sent.
 
     // Step 0c — STT transcription (optional, graceful degradation)
     let routedMessage = message;

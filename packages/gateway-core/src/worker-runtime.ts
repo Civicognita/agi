@@ -1,9 +1,11 @@
 /**
- * Worker Runtime — executes Taskmaster worker jobs within the gateway process.
- *
- * Manages concurrent job execution, tool loops, and bridges runtime events
- * to the DashboardEventBroadcaster. Worker prompts are loaded from
- * prompts/workers/ via WorkerPromptLoader.
+ * Worker Runtime — executes Taskmaster worker jobs by driving a paired
+ * Genie workspace's `runAgent` MCP tool (a real coding agent — Claude Code
+ * or Codex — with genuine file/terminal access), not an in-process LLM
+ * tool-loop. Manages concurrent job execution and bridges runtime events to
+ * the DashboardEventBroadcaster. Worker prompts are loaded from
+ * prompts/workers/ via WorkerPromptLoader; they become the initial prompt
+ * handed to the spawned agent.
  */
 
 import { EventEmitter } from "node:events";
@@ -14,47 +16,41 @@ import { homedir } from "node:os";
 import { JobBridge } from "./job-bridge.js";
 import { WorkerPromptLoader } from "./worker-prompt-loader.js";
 import { dispatchJobsDir, finalizeDispatchFile, loadLiveJobOverlay, mergeJobStatus } from "./dispatch-paths.js";
-import type { ToolRegistry, ToolExecutionContext } from "./tool-registry.js";
-import type { LLMProvider } from "./llm/provider.js";
-import type { LLMInvokeParams, LLMToolContinuationParams, LLMContentBlock } from "./llm/types.js";
-import type { VerificationTier } from "@agi/entity-model";
-import type { GatewayState } from "./types.js";
+import { projectSlug } from "./project-config-path.js";
+import type { McpClient } from "@agi/mcp-client";
 
 // ---------------------------------------------------------------------------
-// Runtime types
+// Genie runAgent bridge
 // ---------------------------------------------------------------------------
 
-interface RuntimeInvoker {
-  invoke(params: RuntimeInvokeParams): Promise<RuntimeResponse>;
-  continueWithToolResults(params: RuntimeContinuation): Promise<RuntimeResponse>;
+/** Sentinel a Genie-hosted worker is instructed to emit when its phase is
+ *  genuinely done — runAgent has no "agent finished" signal of its own
+ *  (Claude Code/Codex stay interactive), so completion is detected by
+ *  pattern-matching this marker in the polled output. */
+const TASKMASTER_DONE_MARKER = "<<<TASKMASTER_DONE>>>";
+
+/** How often to poll runAgent's `read` action while a worker is running. */
+const GENIE_POLL_INTERVAL_MS = 4000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-interface RuntimeInvokeParams {
-  system: string;
-  messages: RuntimeMessage[];
-  tools?: RuntimeToolDef[];
-  model?: string;
-  maxTokens?: number;
-  entityId?: string;
-}
-
-interface RuntimeContinuation {
-  original: RuntimeInvokeParams;
-  assistantContent: RuntimeContentBlock[];
-  toolResults: RuntimeToolResult[];
-}
-
-interface RuntimeToolDef { name: string; description: string; input_schema: Record<string, unknown> }
-interface RuntimeToolResult { tool_use_id: string; content: string }
-interface RuntimeMessage { role: "user" | "assistant" | "system"; content: string | RuntimeContentBlock[] }
-interface RuntimeContentBlock { type: string; [key: string]: unknown }
-interface RuntimeResponse {
-  text: string;
-  toolCalls: { id: string; name: string; input: Record<string, unknown> }[];
-  contentBlocks: RuntimeContentBlock[];
-  usage: { inputTokens: number; outputTokens: number };
-  model: string;
-  stopReason: string | null;
+/** MCP tool results wrap JSON in `content[0].text` (same convention
+ *  TynnPmProvider already relies on for the `tynn` server). */
+function parseMcpJson(result: { isError: boolean; content: Array<{ type: string; [key: string]: unknown }> }): Record<string, unknown> {
+  if (result.isError) {
+    const text = result.content.find((c) => c.type === "text")?.text;
+    throw new Error(typeof text === "string" ? text : "MCP tool call returned an error");
+  }
+  const block = result.content.find((c) => c.type === "text");
+  const text = block?.text;
+  if (typeof text !== "string") return {};
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }
 
 // Runtime events are plain objects passed to emit("runtime:event", {...}).
@@ -108,12 +104,10 @@ export interface WorkerRuntimeConfig {
   stateDir?: string;
   /** Workspace root for resolving dispatch files. */
   workspaceRoot?: string;
-  /** Resource entity ID used when constructing the worker's ToolExecutionContext. */
-  resourceId?: string;
-  /** Node ID used when constructing the worker's ToolExecutionContext. */
-  nodeId?: string;
-  /** Tier the worker runs at when invoking the shared ToolRegistry. Defaults to "verified". */
-  workerTier?: VerificationTier;
+  /** How often (ms) to poll a Genie-hosted worker for its completion
+   *  marker. Defaults to GENIE_POLL_INTERVAL_MS; overridable so tests can
+   *  exercise the poll/timeout loop without waiting on the real interval. */
+  genieDonePollMs?: number;
 }
 
 /** Minimal plugin registry interface for worker prompt resolution. */
@@ -122,111 +116,16 @@ interface WorkerPluginLookup {
 }
 
 export interface WorkerRuntimeDeps {
-  llmProvider: LLMProvider;
   /**
-   * Shared tool registry. When provided, workers call the same tools as Aion
-   * (filtered by workerTier). Without it, the runtime emits a job_failed
-   * event explaining the misconfiguration — workers no longer silently fall
-   * back to the retired 5-tool mini-sandbox.
+   * MCP client used to reach a project's paired Genie workspace. A worker's
+   * project must have a `genie` entry registered (namespaced as
+   * `${projectSlug}:genie` — written automatically to that project's
+   * `.mcp.json` by Genie itself) or dispatch fails with a clear error.
    */
-  toolRegistry?: ToolRegistry;
-  /** Optional getter so the runtime reads the current gateway state when building ToolExecutionContext. Defaults to "ONLINE". */
-  getState?: () => GatewayState;
+  mcpClient?: McpClient;
   /** Plugin registry — primary source for worker system prompts. Workers are
    *  plugins that register via api.registerWorker() with their prompt inline. */
   pluginWorkers?: WorkerPluginLookup;
-}
-
-// ---------------------------------------------------------------------------
-// LLMProvider → RuntimeInvoker adapter
-// ---------------------------------------------------------------------------
-
-export function createRuntimeInvoker(
-  llmProvider: LLMProvider,
-  modelMap: Record<string, string>,
-): RuntimeInvoker {
-  return {
-    async invoke(params: RuntimeInvokeParams): Promise<RuntimeResponse> {
-      const llmParams: LLMInvokeParams = {
-        system: params.system,
-        messages: params.messages.map((m) => ({
-          role: m.role,
-          content: m.content as string | LLMContentBlock[],
-        })),
-        tools: params.tools?.map((t) => ({
-          name: t.name,
-          description: t.description,
-          input_schema: t.input_schema,
-        })),
-        entityId: params.entityId ?? "worker",
-        model: resolveModel(params.model, modelMap),
-        maxTokens: params.maxTokens,
-      };
-
-      const resp = await llmProvider.invoke(llmParams);
-
-      return {
-        text: resp.text,
-        toolCalls: resp.toolCalls.map((tc) => ({
-          id: tc.id,
-          name: tc.name,
-          input: tc.input,
-        })),
-        contentBlocks: resp.contentBlocks as unknown as RuntimeContentBlock[],
-        usage: resp.usage,
-        model: resp.model,
-        stopReason: resp.stopReason,
-      };
-    },
-
-    async continueWithToolResults(params: RuntimeContinuation): Promise<RuntimeResponse> {
-      const llmContinuation: LLMToolContinuationParams = {
-        original: {
-          system: params.original.system,
-          messages: params.original.messages.map((m) => ({
-            role: m.role,
-            content: m.content as string | LLMContentBlock[],
-          })),
-          tools: params.original.tools?.map((t) => ({
-            name: t.name,
-            description: t.description,
-            input_schema: t.input_schema,
-          })),
-          entityId: params.original.entityId ?? "worker",
-          model: resolveModel(params.original.model, modelMap),
-          maxTokens: params.original.maxTokens,
-        },
-        assistantContent: params.assistantContent as unknown as LLMContentBlock[],
-        toolResults: params.toolResults.map((tr) => ({
-          tool_use_id: tr.tool_use_id,
-          content: tr.content,
-        })),
-      };
-
-      const resp = await llmProvider.continueWithToolResults(llmContinuation);
-
-      return {
-        text: resp.text,
-        toolCalls: resp.toolCalls.map((tc) => ({
-          id: tc.id,
-          name: tc.name,
-          input: tc.input,
-        })),
-        contentBlocks: resp.contentBlocks as unknown as RuntimeContentBlock[],
-        usage: resp.usage,
-        model: resp.model,
-        stopReason: resp.stopReason,
-      };
-    },
-  };
-}
-
-function resolveModel(
-  model: string | undefined,
-  modelMap: Record<string, string>,
-): string | undefined {
-  if (!model) return undefined;
-  return modelMap[model] ?? model;
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +141,9 @@ interface ActiveJob {
 
 interface WorkerRunResult {
   jobId: string;
-  status: "completed" | "failed";
+  /** "paused" = a checkpoint gate stopped the job between phases; not a
+   *  terminal outcome — resumed via approveCheckpoint()/rejectCheckpoint(). */
+  status: "completed" | "failed" | "paused";
   text: string;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -265,27 +166,23 @@ export interface ActiveJobStatus {
 export class WorkerRuntime extends EventEmitter {
   private activeJobs = new Map<string, ActiveJob>();
   private config: WorkerRuntimeConfig;
-  private invoker: RuntimeInvoker;
   private promptLoader: WorkerPromptLoader | null = null;
-  private toolRegistry: ToolRegistry | null = null;
+  private mcpClient: McpClient | null = null;
   private pluginWorkers: WorkerPluginLookup | null = null;
-  private getState: () => GatewayState;
 
   constructor(config: WorkerRuntimeConfig, deps: WorkerRuntimeDeps) {
     super();
     this.config = config;
-    this.invoker = createRuntimeInvoker(deps.llmProvider, config.modelMap);
     if (config.promptDir) {
       this.promptLoader = new WorkerPromptLoader(config.promptDir);
     }
-    this.toolRegistry = deps.toolRegistry ?? null;
+    this.mcpClient = deps.mcpClient ?? null;
     this.pluginWorkers = deps.pluginWorkers ?? null;
-    this.getState = deps.getState ?? (() => "ONLINE" as GatewayState);
   }
 
-  /** Late-bind the tool registry (used when the registry is constructed after the runtime). */
-  setToolRegistry(registry: ToolRegistry): void {
-    this.toolRegistry = registry;
+  /** Late-bind the MCP client (constructed after WorkerRuntime during server boot). */
+  setMcpClient(client: McpClient): void {
+    this.mcpClient = client;
   }
 
   /** Late-bind the plugin worker registry (plugins load after the runtime). */
@@ -294,9 +191,8 @@ export class WorkerRuntime extends EventEmitter {
   }
 
   /** Hot-reload config without interrupting running jobs. */
-  reloadConfig(config: WorkerRuntimeConfig, llmProvider: LLMProvider): void {
+  reloadConfig(config: WorkerRuntimeConfig): void {
     this.config = config;
-    this.invoker = createRuntimeInvoker(llmProvider, config.modelMap);
     if (config.promptDir) {
       this.promptLoader = new WorkerPromptLoader(config.promptDir);
     }
@@ -336,9 +232,9 @@ export class WorkerRuntime extends EventEmitter {
     const bridge = new JobBridge(this.config.stateDir);
     try {
       if (dispatch && existsSync(dispatchFile) && phases) {
-        bridge.ensureJobWithPhases(jobId, dispatchFile, phases);
+        bridge.ensureJobWithPhases(jobId, dispatchFile, phases, projectContext?.path);
       } else if (dispatch && existsSync(dispatchFile)) {
-        bridge.ensureJob(jobId, dispatchFile);
+        bridge.ensureJob(jobId, dispatchFile, projectContext?.path);
       }
     } catch { /* non-fatal */ }
 
@@ -379,16 +275,46 @@ export class WorkerRuntime extends EventEmitter {
     } catch { /* non-fatal */ }
 
     const promise = this.executePhases(jobId, dispatch, effectivePhases, coaReqId, projectContext?.path ?? ".");
+    this.trackPhasesRun(jobId, coaReqId, projectContext?.path, bridge, promise);
+  }
+
+  /**
+   * Wire an in-flight `executePhases()` promise into `activeJobs` and
+   * translate its eventual outcome (paused / completed / failed) into
+   * JobBridge state + `report_ready`/`job_failed`/`checkpoint_reached`
+   * runtime events. Shared by a fresh dispatch (`executeJob`) and a
+   * checkpoint resume (`approveCheckpoint`) — both eventually run the same
+   * `executePhases()` and need the same finalization.
+   */
+  private trackPhasesRun(
+    jobId: string,
+    coaReqId: string,
+    projectPath: string | undefined,
+    bridge: JobBridge,
+    promise: Promise<WorkerRunResult>,
+  ): void {
     this.activeJobs.set(jobId, { jobId, coaReqId, startedAt: Date.now(), promise });
 
     promise
       .then((result) => {
         this.activeJobs.delete(jobId);
+        if (result.status === "paused") {
+          // Bridge status is already "checkpoint" (set inside executePhases
+          // right before it returned) — nothing to finalize until the owner
+          // approves/rejects via /api/taskmaster/approve|reject/:jobId.
+          this.emit("runtime:event", {
+            type: "checkpoint_reached",
+            jobId,
+            summary: result.text.slice(0, 500),
+            coaReqId,
+          });
+          return;
+        }
         const finalStatus = result.status === "completed" ? "complete" : "failed";
         const errorMsg = result.errors.length > 0 ? result.errors.join("; ") : undefined;
         try { bridge.updateJobStatus(jobId, finalStatus, errorMsg); } catch { /* non-fatal */ }
-        if (projectContext?.path) {
-          finalizeDispatchFile(projectContext.path, jobId, {
+        if (projectPath) {
+          finalizeDispatchFile(projectPath, jobId, {
             status: finalStatus,
             summary: result.text,
             completedAt: new Date().toISOString(),
@@ -413,15 +339,21 @@ export class WorkerRuntime extends EventEmitter {
       .catch((err: unknown) => {
         this.activeJobs.delete(jobId);
         const errorMsg = err instanceof Error ? err.message : String(err);
-        if (projectContext?.path) {
-          finalizeDispatchFile(projectContext.path, jobId, { status: "failed", completedAt: new Date().toISOString(), error: errorMsg });
+        if (projectPath) {
+          finalizeDispatchFile(projectPath, jobId, { status: "failed", completedAt: new Date().toISOString(), error: errorMsg });
         }
         this.emit("runtime:event", { type: "job_failed", jobId, error: errorMsg });
       });
   }
 
   /**
-   * Execute phases sequentially, passing context from each worker to the next.
+   * Execute phases sequentially, passing context from each worker to the
+   * next. `startIndex`/`initialPreviousOutput` let a checkpoint-resume
+   * (see `approveCheckpoint`) re-enter mid-job without re-running earlier
+   * phases' Genie agents. A phase whose `gate` is `"checkpoint"` pauses the
+   * job (status "checkpoint") right after it completes rather than starting
+   * the next phase — Taskmaster's own gate stays the sole approval
+   * authority; the owner resumes via `/api/taskmaster/approve/:jobId`.
    */
   private async executePhases(
     jobId: string,
@@ -429,6 +361,8 @@ export class WorkerRuntime extends EventEmitter {
     phases: import("./taskmaster-orchestrator.js").WorkPhase[],
     coaReqId: string,
     projectRoot: string,
+    startIndex = 0,
+    initialPreviousOutput = "",
   ): Promise<WorkerRunResult> {
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
@@ -436,11 +370,11 @@ export class WorkerRuntime extends EventEmitter {
     const allToolCalls: Array<{ name: string; ts: string }> = [];
     const allErrors: string[] = [];
     let lastModel = "unknown";
-    let previousOutput = "";
+    let previousOutput = initialPreviousOutput;
 
     const bridge = new JobBridge(this.config.stateDir);
 
-    for (let i = 0; i < phases.length; i++) {
+    for (let i = startIndex; i < phases.length; i++) {
       const phase = phases[i]!;
       const isLast = i === phases.length - 1;
 
@@ -499,14 +433,38 @@ export class WorkerRuntime extends EventEmitter {
         summary: result.text.slice(0, 300),
       });
 
-      // Advance to next phase in state
+      // Advance to next phase in state, persisting this phase's output so a
+      // checkpoint-resume (which may happen in a later process) can rebuild
+      // "previous phase output" context without it being passed back in.
       if (!isLast) {
-        try { bridge.advancePhase(jobId); } catch { /* non-fatal */ }
+        try { bridge.advancePhase(jobId, result.text); } catch { /* non-fatal */ }
+      }
+
+      if (phase.gate === "checkpoint" && !isLast && !this.config.autoApprove) {
+        try { bridge.updateJobStatus(jobId, "checkpoint"); } catch { /* non-fatal */ }
+        this.emit("runtime:event", {
+          type: "checkpoint_pending",
+          jobId,
+          phaseIndex: i,
+          nextPhaseIndex: i + 1,
+          worker: `$W.${phase.domain}.${phase.role}`,
+        });
+        return {
+          jobId,
+          status: "paused",
+          text: previousOutput,
+          totalInputTokens,
+          totalOutputTokens,
+          toolLoops: totalToolLoops,
+          errors: allErrors,
+          toolCalls: allToolCalls,
+          model: lastModel,
+        };
       }
     }
 
     // All phases complete
-    try { bridge.advancePhase(jobId); } catch { /* non-fatal */ }
+    try { bridge.advancePhase(jobId, previousOutput); } catch { /* non-fatal */ }
 
     const summaryParts = phases.map((p, i) => `Phase ${String(i + 1)} (${p.domain}.${p.role}): ${p.phaseDescription}`);
     const finalSummary = previousOutput || summaryParts.join("\n");
@@ -525,18 +483,21 @@ export class WorkerRuntime extends EventEmitter {
   }
 
   // -------------------------------------------------------------------------
-  // Inline worker execution
+  // Genie-backed worker execution
   // -------------------------------------------------------------------------
 
   private async runWorker(
     jobId: string,
     dispatch: { description: string; domain: string; worker: string; priority: string; planRef?: { planId: string; stepId: string } },
-    coaReqId: string,
+    _coaReqId: string,
     projectRoot: string,
     previousPhaseOutput?: string,
   ): Promise<WorkerRunResult> {
     const workerSpec = `$W.${dispatch.domain}.${dispatch.worker}`;
-    const model = this.config.modelMap[dispatch.worker] ?? this.config.modelMap["sonnet"] ?? this.config.modelMap["default"] ?? "claude-sonnet-4-6";
+    // Genie-executed workers pick their own model (Claude Code / Codex's own
+    // config) — Taskmaster's modelMap no longer applies. Kept in the result
+    // shape for event-schema compatibility with the dashboard/reports store.
+    const model = "genie";
 
     // Load worker system prompt. Workers are plugins — their prompts live in
     // WorkerDefinition.prompt, registered via api.registerWorker(). The
@@ -564,30 +525,23 @@ export class WorkerRuntime extends EventEmitter {
     }
     this.emit("runtime:event", { type: "worker_started", jobId, worker: workerSpec, model, promptSource });
 
-    // Workers use Aion's shared ToolRegistry filtered by the worker's tier.
-    // This replaces the retired 5-tool mini-sandbox — a worker dispatched to
-    // "fix the failing git test" can now call git_status/git_diff/etc., the
-    // same tools Aion has at the same tier.
-    if (this.toolRegistry === null) {
-      const msg = "WorkerRuntime has no ToolRegistry bound — cannot execute workers. (Call setToolRegistry() during boot.)";
+    const fail = (msg: string): WorkerRunResult => {
       this.emit("runtime:event", { type: "worker_done", jobId, worker: workerSpec, status: "failed" });
       return { jobId, status: "failed", text: "", totalInputTokens: 0, totalOutputTokens: 0, toolLoops: 0, errors: [msg], toolCalls: [], model: "none" };
-    }
-    const toolRegistry = this.toolRegistry;
-    const workerTier: VerificationTier = this.config.workerTier ?? "verified";
-    const workerState = this.getState();
+    };
 
-    // Workers inherit Aion's tool registry EXCEPT for tools marked agentOnly
-    // (project/entity/settings configuration). If a worker needs one of those,
-    // it must call taskmaster_handoff and ask Aion to make the change.
-    const agentOnlyNames = new Set(
-      toolRegistry.getAvailable(workerState, workerTier)
-        .filter((m) => m.agentOnly === true)
-        .map((m) => m.name),
-    );
-    const tools: RuntimeToolDef[] = toolRegistry
-      .toProviderTools(workerState, workerTier)
-      .filter((t) => !agentOnlyNames.has(t.name));
+    if (!this.mcpClient) {
+      return fail("WorkerRuntime has no McpClient bound — cannot reach a paired Genie workspace. (Call setMcpClient() during boot.)");
+    }
+
+    // Every worker executes via the project's paired Genie workspace — no
+    // in-process fallback. The `genie` entry is written into a project's
+    // `.mcp.json` automatically once that project is opened in Genie (a
+    // one-time, owner-driven setup step; see docs/agents/taskmaster-genie.md).
+    const genieServerId = `${projectSlug(projectRoot)}:genie`;
+    if (!this.mcpClient.listServers().some((s) => s.id === genieServerId)) {
+      return fail(`No paired Genie workspace for this project (expected MCP server "${genieServerId}") — open this project in Genie to enable Taskmaster.`);
+    }
 
     const planLine = dispatch.planRef
       ? `\n**Plan step:** \`${dispatch.planRef.planId}\` / \`${dispatch.planRef.stepId}\` — the server auto-marks this step \`complete\` when you finish successfully, \`failed\` otherwise, so you do NOT need to call \`update_plan\` yourself for this step.`
@@ -595,119 +549,63 @@ export class WorkerRuntime extends EventEmitter {
     const contextLine = previousPhaseOutput
       ? `\n\n## Previous Phase Output\n\nThe worker before you produced this output. Use it as context for your work:\n\n${previousPhaseOutput.slice(0, 4000)}`
       : "";
-    const messages: RuntimeMessage[] = [
-      { role: "user", content: `## Dispatch\n\n**Task:** ${dispatch.description}\n**Priority:** ${dispatch.priority}\n**Project:** ${projectRoot}\n**Your jobId:** ${jobId}${planLine}${contextLine}\n\nExecute this task. You have access to the same tool registry as the dispatching agent, scoped to this project. Tools that accept a \`projectPath\` argument should receive \`${projectRoot}\`.\n\nIf you need a decision you can't make yourself (design choice, config change you can't perform, ambiguous scope), call \`taskmaster_handoff\` with your \`jobId\` and a specific question — then finish your turn with a summary. You will not be auto-resumed; Aion will re-dispatch with clarification if needed.\n\nWhen done, summarize what you accomplished.` },
-    ];
+    const taskPrompt = `${systemPrompt}\n\n## Dispatch\n\n**Task:** ${dispatch.description}\n**Priority:** ${dispatch.priority}\n**Project:** ${projectRoot}\n**Your jobId:** ${jobId}${planLine}${contextLine}\n\nExecute this task directly in this project using your normal file/terminal tools — you have full access.\n\nWhen you have GENUINELY finished this phase's work (not before), output this exact marker on its own line, followed by a one-paragraph summary of what you did and why:\n\n${TASKMASTER_DONE_MARKER}`;
 
-    const executionCtx: ToolExecutionContext = {
-      state: workerState,
-      tier: workerTier,
-      entityId: coaReqId,
-      entityAlias: workerSpec,
-      coaChainBase: coaReqId,
-      resourceId: this.config.resourceId ?? "aionima",
-      nodeId: this.config.nodeId ?? "local",
-    };
-
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
-    let toolLoops = 0;
-    const maxToolLoops = 30;
-    const errors: string[] = [];
-    const toolCalls: Array<{ name: string; ts: string }> = [];
-
+    let agentId: string | undefined;
     try {
-      let response = await this.invoker.invoke({
-        system: systemPrompt,
-        messages,
-        tools,
-        model,
-        maxTokens: 8192,
-        entityId: coaReqId,
-      });
-      totalInputTokens += response.usage.inputTokens;
-      totalOutputTokens += response.usage.outputTokens;
-
-      // Tool loop
-      const accMessages: RuntimeMessage[] = [...messages];
-
-      while (response.toolCalls.length > 0 && toolLoops < maxToolLoops) {
-        toolLoops++;
-
-        // Execute each tool call via the shared registry. Emit a per-call
-        // progress event so the dashboard + chat transcript see live activity.
-        const toolResults: RuntimeToolResult[] = [];
-        for (const tc of response.toolCalls) {
-          // Auto-fill projectPath when the tool accepts it and the worker didn't
-          // pass one — saves every prompt from having to remember.
-          const tcInput: Record<string, unknown> = { ...tc.input };
-          if (!("projectPath" in tcInput) || !tcInput.projectPath) {
-            tcInput.projectPath = projectRoot;
-          }
-          let resultContent: string;
-          if (agentOnlyNames.has(tc.name)) {
-            // Defense in depth: block agent-only tools at execute time even if
-            // the model somehow called one that wasn't in the list.
-            resultContent = JSON.stringify({
-              error: `${tc.name} is Aion-only. Use taskmaster_handoff to request this change from Aion.`,
-            });
-          } else {
-            try {
-              const execResult = await toolRegistry.execute(tc.name, tcInput, executionCtx);
-              resultContent = execResult.content;
-            } catch (err) {
-              resultContent = JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
-            }
-          }
-          toolResults.push({ tool_use_id: tc.id, content: resultContent });
-          toolCalls.push({ name: tc.name, ts: new Date().toISOString() });
-          this.emit("runtime:event", { type: "worker_tool_call", jobId, worker: workerSpec, tool: tc.name });
-        }
-
-        const prevBlocks = response.contentBlocks;
-
-        // Build tool result blocks
-        const toolResultBlocks: RuntimeContentBlock[] = toolResults.map((r) => ({
-          type: "tool_result" as const,
-          tool_use_id: r.tool_use_id,
-          content: r.content,
-        }));
-
-        response = await this.invoker.continueWithToolResults({
-          original: { system: systemPrompt, messages: accMessages, tools, model, maxTokens: 8192, entityId: coaReqId },
-          assistantContent: prevBlocks,
-          toolResults,
-        });
-        totalInputTokens += response.usage.inputTokens;
-        totalOutputTokens += response.usage.outputTokens;
-
-        // Append turns for next iteration
-        accMessages.push(
-          { role: "assistant", content: prevBlocks },
-          { role: "user", content: toolResultBlocks },
-        );
-
-        this.emit("runtime:event", { type: "worker_progress", jobId, worker: workerSpec, toolLoops, text: response.text.slice(0, 200) });
+      const startResult = parseMcpJson(
+        await this.mcpClient.callTool(genieServerId, "runAgent", { action: "start", agent: "claude", cwd: projectRoot }),
+      );
+      agentId = typeof startResult.id === "string" ? startResult.id : undefined;
+      if (!agentId) {
+        return fail("runAgent start did not return an agent id");
       }
 
-      this.emit("runtime:event", { type: "worker_done", jobId, worker: workerSpec, status: "completed" });
+      await this.mcpClient.callTool(genieServerId, "runAgent", { action: "send", id: agentId, prompt: taskPrompt });
 
+      const deadline = Date.now() + this.config.workerTimeoutMs;
+      const pollIntervalMs = this.config.genieDonePollMs ?? GENIE_POLL_INTERVAL_MS;
+      let cursor: number | undefined;
+      let output = "";
+      let markerAt = -1;
+
+      while (Date.now() < deadline) {
+        await sleep(pollIntervalMs);
+        const readResult = parseMcpJson(
+          await this.mcpClient.callTool(genieServerId, "runAgent", { action: "read", id: agentId, cursor, strip: true }),
+        );
+        if (typeof readResult.output === "string") output += readResult.output;
+        if (typeof readResult.cursor === "number") cursor = readResult.cursor;
+        markerAt = output.indexOf(TASKMASTER_DONE_MARKER);
+        if (markerAt !== -1) break;
+        this.emit("runtime:event", { type: "worker_progress", jobId, worker: workerSpec, toolLoops: 0, text: output.slice(-200) });
+      }
+
+      try { await this.mcpClient.callTool(genieServerId, "runAgent", { action: "stop", id: agentId }); } catch { /* best-effort cleanup */ }
+
+      if (markerAt === -1) {
+        return fail(`Worker did not emit ${TASKMASTER_DONE_MARKER} within ${String(this.config.workerTimeoutMs)}ms`);
+      }
+
+      const summary = output.slice(markerAt + TASKMASTER_DONE_MARKER.length).trim() || output.slice(0, markerAt).trim();
+
+      this.emit("runtime:event", { type: "worker_done", jobId, worker: workerSpec, status: "completed" });
       return {
         jobId,
         status: "completed",
-        text: response.text,
-        totalInputTokens,
-        totalOutputTokens,
-        toolLoops,
-        errors,
-        toolCalls,
+        text: summary,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        toolLoops: 0,
+        errors: [],
+        toolCalls: [],
         model,
       };
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      errors.push(errorMsg);
-      this.emit("runtime:event", { type: "worker_done", jobId, worker: workerSpec, status: "failed" });
-      return { jobId, status: "failed", text: "", totalInputTokens, totalOutputTokens, toolLoops, errors, toolCalls, model };
+      if (agentId) {
+        try { await this.mcpClient.callTool(genieServerId, "runAgent", { action: "stop", id: agentId }); } catch { /* best-effort cleanup */ }
+      }
+      return fail(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -715,19 +613,73 @@ export class WorkerRuntime extends EventEmitter {
   // Checkpoint management (via JobBridge state)
   // -------------------------------------------------------------------------
 
+  /**
+   * Resume a job paused at a checkpoint gate. Rebuilds everything
+   * `executePhases()` needs — project path, remaining phases, the
+   * completed phase's output as context, the original coaReqId/priority —
+   * from JobBridge-persisted state, since this call can happen well after
+   * (and in a different request than) the original dispatch.
+   */
   async approveCheckpoint(jobId: string): Promise<void> {
     const bridge = new JobBridge(this.config.stateDir);
-    bridge.updateJobStatus(jobId, "running");
-    const active = this.activeJobs.get(jobId);
-    if (!active) {
-      await this.executeJob(jobId, jobId);
+    const job = bridge.getJob(jobId);
+    if (!job) {
+      this.emit("runtime:event", { type: "job_failed", jobId, error: `approveCheckpoint: job ${jobId} not found` });
+      return;
     }
+    if (!job.projectPath) {
+      this.emit("runtime:event", { type: "job_failed", jobId, error: `approveCheckpoint: job ${jobId} has no persisted project path — cannot resume` });
+      return;
+    }
+    if (this.activeJobs.has(jobId)) return;
+
+    let coaReqId = jobId;
+    let priority = "normal";
+    let planRef: { planId: string; stepId: string } | undefined;
+    try {
+      const dispatchFile = join(dispatchJobsDir(job.projectPath), `${jobId}.json`);
+      if (existsSync(dispatchFile)) {
+        const raw = JSON.parse(readFileSync(dispatchFile, "utf-8")) as { coaReqId?: string; priority?: string; planRef?: { planId: string; stepId: string } };
+        coaReqId = raw.coaReqId ?? coaReqId;
+        priority = raw.priority ?? priority;
+        planRef = raw.planRef;
+      }
+    } catch { /* fall back to defaults above */ }
+
+    const phases: import("./taskmaster-orchestrator.js").WorkPhase[] = job.phases.map((p) => ({
+      domain: p.domain,
+      role: p.role,
+      phaseDescription: p.description,
+      gate: p.gate === "checkpoint" ? "checkpoint" as const : "auto" as const,
+    }));
+    const previousOutput = job.phases[job.currentPhase - 1]?.output ?? "";
+
+    bridge.updateJobStatus(jobId, "running");
+    this.emit("runtime:event", {
+      type: "job_started",
+      jobId,
+      description: job.queueText,
+      workers: phases.map((p) => `$W.${p.domain}.${p.role}`),
+      totalPhases: phases.length,
+    });
+
+    const promise = this.executePhases(
+      jobId,
+      { description: job.queueText, priority, planRef },
+      phases,
+      coaReqId,
+      job.projectPath,
+      job.currentPhase,
+      previousOutput,
+    );
+    this.trackPhasesRun(jobId, coaReqId, job.projectPath, bridge, promise);
   }
 
-  async rejectCheckpoint(jobId: string, _reason: string): Promise<void> {
+  async rejectCheckpoint(jobId: string, reason: string): Promise<void> {
     const bridge = new JobBridge(this.config.stateDir);
-    bridge.updateJobStatus(jobId, "failed", _reason);
+    bridge.updateJobStatus(jobId, "failed", reason);
     this.activeJobs.delete(jobId);
+    this.emit("runtime:event", { type: "job_failed", jobId, error: reason });
   }
 
   /**

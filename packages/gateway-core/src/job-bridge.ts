@@ -37,6 +37,10 @@ export interface TaskmasterJob {
   startedAt?: string;
   completedAt?: string;
   error?: string;
+  /** Project this job runs in — persisted so a checkpoint-paused job can be
+   *  resumed (approveCheckpoint) without the caller having to re-supply
+   *  context that only existed on the original dispatch call. */
+  projectPath?: string;
 }
 
 export interface TaskmasterPhase {
@@ -48,6 +52,11 @@ export interface TaskmasterPhase {
   workers: string[];
   gate: "auto" | "checkpoint" | "terminal";
   status: "pending" | "running" | "complete" | "failed";
+  /** This phase's final worker output. Persisted (not just held in memory)
+   *  so a checkpoint-paused job can hand the right context to the next
+   *  phase's fresh Genie agent after an owner approves, even across a
+   *  process restart. */
+  output?: string;
 }
 
 interface DispatchJob {
@@ -81,6 +90,7 @@ export class JobBridge {
     jobId: string,
     dispatchFilePath: string,
     phases: WorkPhase[],
+    projectPath?: string,
   ): string {
     let dispatch: DispatchJob;
     try {
@@ -118,6 +128,7 @@ export class JobBridge {
       currentPhase: 0,
       status: "pending",
       createdAt: dispatch.createdAt,
+      projectPath,
     };
 
     state.wip.jobs[jobId] = job;
@@ -131,7 +142,7 @@ export class JobBridge {
    * Legacy: create a single-phase job from old-style dispatch files
    * that still have domain/worker fields.
    */
-  ensureJob(jobId: string, dispatchFilePath: string): string {
+  ensureJob(jobId: string, dispatchFilePath: string, projectPath?: string): string {
     let dispatch: DispatchJob;
     try {
       dispatch = JSON.parse(readFileSync(dispatchFilePath, "utf-8")) as DispatchJob;
@@ -168,6 +179,7 @@ export class JobBridge {
       currentPhase: 0,
       status: "pending",
       createdAt: dispatch.createdAt,
+      projectPath,
     };
 
     state.wip.jobs[jobId] = job;
@@ -177,11 +189,14 @@ export class JobBridge {
   }
 
   /**
-   * Update job-level status.
+   * Update job-level status. "checkpoint" is a genuine pause (worker
+   * finished its phase; awaiting owner approve/reject before the next
+   * phase starts) — distinct from "running" so listers can tell the two
+   * apart.
    */
   updateJobStatus(
     jobId: string,
-    status: "running" | "complete" | "failed",
+    status: "running" | "checkpoint" | "complete" | "failed",
     error?: string,
   ): void {
     const state = this.loadState();
@@ -199,14 +214,20 @@ export class JobBridge {
 
   /**
    * Advance to the next phase. Returns the new phase index, or -1 if done.
+   * `output` is the completing phase's final worker text — persisted onto
+   * that phase so a later checkpoint-resume can rebuild the "previous phase
+   * output" context without needing it passed back in by the caller.
    */
-  advancePhase(jobId: string): number {
+  advancePhase(jobId: string, output?: string): number {
     const state = this.loadState();
     const job = state.wip.jobs[jobId];
     if (!job) return -1;
 
     const current = job.phases[job.currentPhase];
-    if (current) current.status = "complete";
+    if (current) {
+      current.status = "complete";
+      if (output !== undefined) current.output = output;
+    }
 
     const next = job.currentPhase + 1;
     if (next >= job.phases.length) {

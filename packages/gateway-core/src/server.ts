@@ -18,6 +18,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
+import { randomBytes } from "node:crypto";
 import { ulid } from "ulid";
 import { dispatchJobsDir } from "./dispatch-paths.js";
 import { resolveMarketplaceSource } from "./dev-mode-sources.js";
@@ -59,7 +60,6 @@ import { registerWorkflowsRoutes } from "./workflows-api.js";
 import { registerAdminRoutes } from "./admin-api.js";
 import { ScanProviderRegistry, ScanStore, ScanRunner, sastScanner, scaScanner, secretsScanner, configScanner } from "@agi/security";
 import { COAChainLogger } from "@agi/coa-chain";
-import { PairingStore } from "./pairing-store.js";
 import type { AionimaMessage } from "@agi/plugins";
 import { createLogger, createComponentLogger } from "./logger.js";
 import type { Logger, ComponentLogger, LogEntry } from "./logger.js";
@@ -96,7 +96,7 @@ import type { WSMessage } from "./ws-server.js";
 import { InboundRouter } from "./inbound-router.js";
 import { OutboundDispatcher } from "./outbound-dispatcher.js";
 import { QueueConsumer } from "./queue-consumer.js";
-import { AgentSessionManager } from "./agent-session.js";
+import { AgentSessionManager, channelSessionKey } from "./agent-session.js";
 import { SessionStore } from "./session-store.js";
 import { createAgentRouter, AgentRouter, setPluginProviderRegistry, setModelAgentBridge } from "./llm/index.js";
 import type { LLMProvider } from "./llm/index.js";
@@ -289,52 +289,51 @@ async function resolveOwnerEntity(
   entityStore: EntityStore,
   log: ComponentLogger,
 ): Promise<string | undefined> {
-  if (ownerConfig === undefined) return undefined;
+  // s234 P3 — owner identity now comes from a DURABLE marker (set by the
+  // dashboard claim flow), NOT the hand-edited owner.channels config.
 
-  const ownerChannels = ownerConfig.channels;
-  const hasChannels = Object.values(ownerChannels).some((v) => v !== undefined);
-
-  if (!hasChannels) {
-    log.warn("owner.channels is empty — owner recognition disabled");
-    return undefined;
-  }
-
-  const channelEntries = Object.entries(ownerChannels).filter(
-    (entry): entry is [string, string] => entry[1] !== undefined,
-  );
-
-  let ownerEntity: Entity | undefined;
-
-  for (const [channel, channelUserId] of channelEntries) {
-    const existing = await entityStore.getEntityByChannel(channel, channelUserId);
-    if (existing !== null) {
-      ownerEntity = existing;
-      break;
+  // 1) Durable marker wins.
+  const marked = await entityStore.getOwnerEntityId();
+  if (marked !== undefined) {
+    const e = await entityStore.getEntity(marked);
+    if (e !== null) {
+      if (e.verificationTier !== "sealed") await entityStore.updateEntity(e.id, { verificationTier: "sealed" });
+      log.info(`owner entity (durable marker): ${e.coaAlias} (${e.displayName}) — sealed`);
+      return e.id;
     }
+    log.warn(`owner marker points at missing entity ${marked} — falling through`);
   }
 
-  if (ownerEntity === undefined) {
-    const [firstChannel, firstUserId] = channelEntries[0]!;
-    ownerEntity = await entityStore.resolveOrCreate(firstChannel, firstUserId, ownerConfig.displayName);
+  // 2) One-time migration: no marker yet, but legacy owner.channels is still
+  //    configured → resolve the owner from config ONCE, persist the durable
+  //    marker, then the config is dead. Keeps THIS install's owner intact.
+  const channelEntries = ownerConfig !== undefined
+    ? Object.entries(ownerConfig.channels).filter((entry): entry is [string, string] => entry[1] !== undefined)
+    : [];
+  if (channelEntries.length > 0 && ownerConfig !== undefined) {
+    let ownerEntity: Entity | undefined;
+    for (const [channel, channelUserId] of channelEntries) {
+      const existing = await entityStore.getEntityByChannel(channel, channelUserId);
+      if (existing !== null) { ownerEntity = existing; break; }
+    }
+    if (ownerEntity === undefined) {
+      const [firstChannel, firstUserId] = channelEntries[0]!;
+      ownerEntity = await entityStore.resolveOrCreate(firstChannel, firstUserId, ownerConfig.displayName);
+    }
+    for (const [channel, channelUserId] of channelEntries) {
+      await entityStore.upsertChannelAccount({ entityId: ownerEntity.id, channel, channelUserId });
+    }
+    if (ownerEntity.verificationTier !== "sealed") await entityStore.updateEntity(ownerEntity.id, { verificationTier: "sealed" });
+    if (ownerEntity.displayName === "Unknown") await entityStore.updateEntity(ownerEntity.id, { displayName: ownerConfig.displayName });
+    await entityStore.setOwnerEntityId(ownerEntity.id);
+    log.info(`owner migrated from owner.channels → durable marker: ${ownerEntity.coaAlias} (${ownerEntity.displayName})`);
+    return ownerEntity.id;
   }
 
-  for (const [channel, channelUserId] of channelEntries) {
-    await entityStore.upsertChannelAccount({
-      entityId: ownerEntity.id,
-      channel,
-      channelUserId,
-    });
-  }
-
-  if (ownerEntity.verificationTier !== "sealed") {
-    await entityStore.updateEntity(ownerEntity.id, { verificationTier: "sealed" });
-  }
-  if (ownerEntity.displayName === "Unknown") {
-    await entityStore.updateEntity(ownerEntity.id, { displayName: ownerConfig.displayName });
-  }
-
-  log.info(`owner entity resolved: ${ownerEntity.coaAlias} (${ownerEntity.displayName}) — sealed`);
-  return ownerEntity.id;
+  // 3) Fresh install, no owner: leave UNCLAIMED. The dashboard claim flow (gated
+  //    by the one-time console claim token) will designate the owner.
+  log.warn("no owner designated — claim owner from the dashboard using the one-time claim token printed at boot");
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -657,11 +656,35 @@ export async function startGatewayServer(
   const ownerConfig = config.owner;
   let ownerEntityId: string | undefined = await resolveOwnerEntity(ownerConfig, entityStore, log);
 
-  // Pairing store — manages DM access grants for non-owner users
-  const pairingStore = new PairingStore({
-    persistPath: "./data/paired.json",
-    logger,
-  });
+  // s234 P3 — fresh install with no owner designated: mint a ONE-TIME claim
+  // token and print it prominently. The first LAN dashboard admin claims
+  // ownership by entering it (POST /api/owner/claim). Persisted so it survives
+  // restarts until claimed; cleared on claim.
+  if (ownerEntityId === undefined) {
+    let claimToken = await entityStore.getOwnerClaimToken();
+    if (claimToken === undefined) {
+      claimToken = randomBytes(24).toString("base64url");
+      await entityStore.setOwnerClaimToken(claimToken);
+    }
+    log.warn(
+      `\n╔══════════════════ OWNER CLAIM REQUIRED ══════════════════╗\n` +
+      `  No owner is set for this install. Open the dashboard on the\n` +
+      `  local network and claim ownership with this one-time token:\n\n` +
+      `      ${claimToken}\n\n` +
+      `╚══════════════════════════════════════════════════════════╝`,
+    );
+  }
+
+  // Pre-fetch the owner's per-channel user IDs so channel plugins can tag
+  // ambient log entries with isOwner at write time (s234 Fix-A authority model).
+  // Stored as Map<channelId, channelUserId>; updated when onOwnerClaimed fires.
+  const ownerChannelUserIds = new Map<string, string>();
+  if (ownerEntityId !== undefined) {
+    const accounts = await entityStore.getChannelAccounts(ownerEntityId).catch(() => []);
+    for (const acc of accounts) {
+      ownerChannelUserIds.set(acc.channel, acc.channelUserId);
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Step 5a: Core routing services
@@ -778,20 +801,11 @@ export async function startGatewayServer(
     voicePipeline,
     getGatewayState: () => stateMachine.getState(),
     ownerConfig,
-    pairingStore,
     ownerEntityId,
     commsLog,
     channelEventDispatcher: inboundChannelEventDispatcher,
     pendingApprovalStore: inboundPendingApprovalStore,
     logger,
-    outboundSender: async (channelId, channelUserId, content) => {
-      await outboundDispatcher.dispatch({
-        channelId,
-        channelUserId,
-        entityId: ownerEntityId ?? "system",
-        content,
-      });
-    },
   });
 
   // -------------------------------------------------------------------------
@@ -1362,15 +1376,8 @@ export async function startGatewayServer(
       promptDir: resolvePath(workspaceRoot, "prompts", "workers"),
       stateDir: join(homedir(), ".agi", "state"),
       workspaceRoot,
-      resourceId,
-      nodeId,
-      workerTier: "verified",
     },
-    {
-      llmProvider: getLLMProvider(),
-      toolRegistry,
-      getState: () => stateMachine.getState(),
-    },
+    {},
   );
 
   // Wire the late-bound ref so onJobCreated callbacks reach the runtime.
@@ -1531,6 +1538,10 @@ export async function startGatewayServer(
             queueMessageId: message.id,
             devMode,
             isOwner: ownerEntityId !== undefined && entityId === ownerEntityId,
+            // Per-channel/room session so channels don't bleed into one shared
+            // conversation (each Discord channel/thread/DM is its own chat, and
+            // can process in parallel). roomId = the discord channel/thread id.
+            sessionKey: channelSessionKey(entity.id, message.channel, channelContextForInvoker?.roomId),
             ...(payload.projectPath !== undefined ? { projectContext: payload.projectPath } : {}),
             ...(channelContextForInvoker !== undefined ? { channelContext: channelContextForInvoker } : {}),
           });
@@ -1982,7 +1993,8 @@ export async function startGatewayServer(
         circuitBreaker: circuitBreakerTracker,
         createChannelUser,
         logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
-        getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+        getAmbientContext: (channelId, limit, roomId) => channelAmbientLog.getTodayContext(channelId, limit, roomId),
+        getOwnerChannelUserId: (channelId) => ownerChannelUserIds.get(channelId),
         isEntityVerified: async (channelId, userId) => {
           const entity = await entityStore.getEntityByChannel(channelId, userId);
           return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
@@ -2052,7 +2064,7 @@ export async function startGatewayServer(
                       circuitBreaker: circuitBreakerTracker,
                       createChannelUser,
                       logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
-                      getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+                      getAmbientContext: (channelId, limit, roomId) => channelAmbientLog.getTodayContext(channelId, limit, roomId),
                       isEntityVerified: async (channelId, userId) => {
                         const entity = await entityStore.getEntityByChannel(channelId, userId);
                         return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
@@ -2756,6 +2768,10 @@ export async function startGatewayServer(
   // command/env (stdio), url (http/ws), authToken (env-resolvable via
   // $VAR), autoConnect: bool }.
   const mcpClient = new McpClient();
+  // Taskmaster workers execute via a project's paired Genie workspace's
+  // `runAgent` MCP tool — WorkerRuntime is constructed earlier in boot (step
+  // 5b-workers, above) than mcpClient, so it's wired in here, late-bound.
+  workerRuntime.setMcpClient(mcpClient);
   // Merge baked-in default MCP servers (e.g. Fancy UI) with gateway.json's —
   // always-on for Aion across all projects + chats; an owner can override or
   // disable a default by re-declaring its id in gateway.json (story #215).
@@ -2817,81 +2833,113 @@ export async function startGatewayServer(
   // Per-project MCP servers (Wish #7 / s125 t478) — register each project's
   // mcp.servers block under namespaced ids `<slug>:<id>`. Auth tokens + env
   // values resolve from the project's .env file via $VAR notation.
-  try {
-    const { readProjectEnv, resolveDollarVars, resolveDollarVarsObject } = await import("./project-env-store.js");
-    const { projectConfigPath: pcp, projectSlug: pslug } = await import("./project-config-path.js");
-    // s131 t682 — read MCP servers via the dual-read API. Prefers
-    // `<projectPath>/.mcp.json` (Claude Code convention) over the legacy
-    // `project.json mcp.servers[]` block. Boot-time migration (t681)
-    // already brings unmigrated projects forward, so by this point most
-    // projects read from .mcp.json directly.
-    const { readProjectMcpServers: readMcpDual } = await import("./mcp-config-store.js");
-    for (const projectDir of projectPaths) {
-      try {
-        const { readdirSync, statSync } = await import("node:fs");
-        for (const entry of readdirSync(projectDir)) {
-          const fullPath = `${projectDir}/${entry}`;
-          if (!statSync(fullPath).isDirectory()) continue;
-          const cfgPath = pcp(fullPath);
-          if (!existsSync(cfgPath)) continue;
-          const raw = JSON.parse(readFileSync(cfgPath, "utf-8")) as { mcp?: { servers?: Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> } };
-          const dualResult = readMcpDual(fullPath, raw.mcp?.servers as Parameters<typeof readMcpDual>[1]);
-          const projectServers = dualResult.servers as Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }>;
-          if (projectServers.length === 0) continue;
-          if (dualResult.source === "legacy") {
-            log.info(`mcp: project ${entry} still using legacy project.json mcp.servers — migration will run on next restart`);
-          }
-          const projectEnv = readProjectEnv(fullPath);
-          // s128 cycle 86 — per-project secret resolver. $VAR reads from the
-          // project's .env (legacy); vault://<id> resolves through VaultResolver
-          // with the project's path as the scope context (so project-scoped
-          // entries stay scoped, gateway-scoped entries pass).
-          const resolveProjectSecretRef = async (raw: string | undefined): Promise<string | undefined> => {
-            if (raw === undefined) return undefined;
-            if (raw.startsWith("$")) return resolveDollarVars(raw, projectEnv);
-            if (raw.startsWith("vault://")) {
-              try {
-                const resolved = await vaultResolver.resolve(raw, { projectPath: fullPath });
-                return typeof resolved === "string" ? resolved : raw;
-              } catch (err) {
-                log.warn(`mcp: vault reference "${raw}" for project ${fullPath} failed to resolve: ${err instanceof Error ? err.message : String(err)}`);
-                return undefined;
-              }
-            }
-            return raw;
-          };
-          for (const s of projectServers) {
-            if (s.autoConnect === false) continue;
-            try {
-              const projectEnvResolved = s.env !== undefined
-                ? Object.fromEntries(
-                    await Promise.all(
-                      Object.entries(s.env).map(async ([k, v]) => [k, (await resolveProjectSecretRef(v)) ?? ""] as [string, string]),
-                    ),
-                  )
-                : undefined;
-              await mcpClient.registerServer({
-                id: `${pslug(fullPath)}:${s.id}`,
-                name: s.name,
-                transport: s.transport,
-                command: s.command,
-                env: projectEnvResolved ?? resolveDollarVarsObject(s.env, projectEnv),
-                url: s.url ? (await resolveProjectSecretRef(s.url)) : undefined,
-                autoConnect: true,
-                authToken: s.authToken ? (await resolveProjectSecretRef(s.authToken)) : undefined,
-              });
-              log.info(`mcp: registered project-server "${pslug(fullPath)}:${s.id}" (project=${entry})`);
-            } catch (err) {
-              log.warn(`mcp: failed to register project-server "${pslug(fullPath)}:${s.id}": ${err instanceof Error ? err.message : String(err)}`);
-            }
+  /**
+   * Read one folder's MCP config (`.mcp.json`, or legacy `project.json`
+   * `mcp.servers[]`) and register any entries not already registered.
+   * Reusable across two call sites: the boot-time sweep below (which
+   * enumerates every subdirectory of each configured workspace) and, on
+   * demand, `chat:open` for a folder that was never enumerated there —
+   * an ad hoc Chat TUI container, most often. Registering `.mcp.json`
+   * alone (no `project.json` requirement) mirrors how Claude Code itself
+   * only cares about `.mcp.json`.
+   *
+   * Idempotent by construction: `McpClient.registerServer` id-keys by
+   * `<projectSlug>:<serverId>`, so calling this twice for the same
+   * folder just re-registers (harmless) rather than double-adding.
+   */
+  const ensureProjectMcpRegistered = async (
+    fullPath: string,
+    label: string,
+    registerOpts: { requireProjectJson?: boolean } = {},
+  ): Promise<void> => {
+    try {
+      const { readProjectEnv, resolveDollarVars, resolveDollarVarsObject } = await import("./project-env-store.js");
+      const { projectConfigPath: pcp, projectSlug: pslug } = await import("./project-config-path.js");
+      const { readProjectMcpServers: readMcpDual } = await import("./mcp-config-store.js");
+
+      const cfgPath = pcp(fullPath);
+      const cfgExists = existsSync(cfgPath);
+      // Boot-sweep call site preserves its original behavior — only
+      // subdirectories recognized as Aionima projects (project.json
+      // present) get swept. The on-demand call site (chat:open, for an
+      // ad hoc Chat TUI container) does not require this — `.mcp.json`
+      // alone is enough, same as Claude Code itself only caring about
+      // `.mcp.json`.
+      if (registerOpts.requireProjectJson === true && !cfgExists) return;
+      let legacyServers: Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }> | undefined;
+      if (cfgExists) {
+        try {
+          const raw = JSON.parse(readFileSync(cfgPath, "utf-8")) as { mcp?: { servers?: typeof legacyServers } };
+          legacyServers = raw.mcp?.servers;
+        } catch { /* malformed project.json — .mcp.json (if any) still applies */ }
+      }
+
+      const dualResult = readMcpDual(fullPath, legacyServers as Parameters<typeof readMcpDual>[1]);
+      const projectServers = dualResult.servers as Array<{ id: string; name?: string; transport: "stdio" | "http" | "websocket"; command?: string[]; env?: Record<string, string>; url?: string; autoConnect?: boolean; authToken?: string }>;
+      if (projectServers.length === 0) return;
+      if (dualResult.source === "legacy") {
+        log.info(`mcp: project ${label} still using legacy project.json mcp.servers — migration will run on next restart`);
+      }
+      const projectEnv = readProjectEnv(fullPath);
+      // s128 cycle 86 — per-project secret resolver. $VAR reads from the
+      // project's .env (legacy); vault://<id> resolves through VaultResolver
+      // with the project's path as the scope context (so project-scoped
+      // entries stay scoped, gateway-scoped entries pass).
+      const resolveProjectSecretRef = async (raw: string | undefined): Promise<string | undefined> => {
+        if (raw === undefined) return undefined;
+        if (raw.startsWith("$")) return resolveDollarVars(raw, projectEnv);
+        if (raw.startsWith("vault://")) {
+          try {
+            const resolved = await vaultResolver.resolve(raw, { projectPath: fullPath });
+            return typeof resolved === "string" ? resolved : raw;
+          } catch (err) {
+            log.warn(`mcp: vault reference "${raw}" for project ${fullPath} failed to resolve: ${err instanceof Error ? err.message : String(err)}`);
+            return undefined;
           }
         }
-      } catch (err) {
-        log.warn(`mcp: project enumeration failed for ${projectDir}: ${err instanceof Error ? err.message : String(err)}`);
+        return raw;
+      };
+      for (const s of projectServers) {
+        if (s.autoConnect === false) continue;
+        try {
+          const projectEnvResolved = s.env !== undefined
+            ? Object.fromEntries(
+                await Promise.all(
+                  Object.entries(s.env).map(async ([k, v]) => [k, (await resolveProjectSecretRef(v)) ?? ""] as [string, string]),
+                ),
+              )
+            : undefined;
+          await mcpClient.registerServer({
+            id: `${pslug(fullPath)}:${s.id}`,
+            name: s.name,
+            transport: s.transport,
+            command: s.command,
+            env: projectEnvResolved ?? resolveDollarVarsObject(s.env, projectEnv),
+            url: s.url ? (await resolveProjectSecretRef(s.url)) : undefined,
+            autoConnect: true,
+            authToken: s.authToken ? (await resolveProjectSecretRef(s.authToken)) : undefined,
+          });
+          log.info(`mcp: registered project-server "${pslug(fullPath)}:${s.id}" (project=${label})`);
+        } catch (err) {
+          log.warn(`mcp: failed to register project-server "${pslug(fullPath)}:${s.id}": ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
+    } catch (err) {
+      log.warn(`mcp: per-folder wiring failed for ${label}: ${err instanceof Error ? err.message : String(err)}`);
     }
-  } catch (err) {
-    log.warn(`mcp: per-project wiring init failed: ${err instanceof Error ? err.message : String(err)}`);
+  };
+
+  for (const projectDir of projectPaths) {
+    try {
+      const { readdirSync, statSync } = await import("node:fs");
+      for (const entry of readdirSync(projectDir)) {
+        const fullPath = `${projectDir}/${entry}`;
+        if (!statSync(fullPath).isDirectory()) continue;
+        await ensureProjectMcpRegistered(fullPath, entry, { requireProjectJson: true });
+      }
+    } catch (err) {
+      log.warn(`mcp: project enumeration failed for ${projectDir}: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // s118 t432 cycle 36 — PM provider resolution + `pm` agent tool.
@@ -3434,6 +3482,16 @@ export async function startGatewayServer(
       resourceId,
       nodeId,
       ownerEntityId,
+      // s234 P3 — the claim-owner endpoint updates the running owner id live
+      // (the critical isOwner check reads this `let`), no restart needed.
+      onOwnerClaimed: (id: string) => {
+        ownerEntityId = id;
+        entityStore.getChannelAccounts(id).then((accounts) => {
+          for (const acc of accounts) {
+            ownerChannelUserIds.set(acc.channel, acc.channelUserId);
+          }
+        }).catch(() => { /* non-critical */ });
+      },
       wsRef,
       db,
       configPath: opts?.configPath,
@@ -3514,7 +3572,7 @@ export async function startGatewayServer(
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
             logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
-            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            getAmbientContext: (channelId, limit, roomId) => channelAmbientLog.getTodayContext(channelId, limit, roomId),
             isEntityVerified: async (channelId, userId) => {
               const entity = await entityStore.getEntityByChannel(channelId, userId);
               return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
@@ -3569,7 +3627,7 @@ export async function startGatewayServer(
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
             logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
-            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            getAmbientContext: (channelId, limit, roomId) => channelAmbientLog.getTodayContext(channelId, limit, roomId),
             isEntityVerified: async (channelId, userId) => {
               const entity = await entityStore.getEntityByChannel(channelId, userId);
               return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
@@ -3661,7 +3719,7 @@ export async function startGatewayServer(
             circuitBreaker: circuitBreakerTracker,
             createChannelUser,
             logAmbientMessage: (channelId, entry) => channelAmbientLog.log(channelId, entry),
-            getAmbientContext: (channelId, limit) => channelAmbientLog.getTodayContext(channelId, limit),
+            getAmbientContext: (channelId, limit, roomId) => channelAmbientLog.getTodayContext(channelId, limit, roomId),
             isEntityVerified: async (channelId, userId) => {
               const entity = await entityStore.getEntityByChannel(channelId, userId);
               return entity?.verificationTier === "verified" || entity?.verificationTier === "sealed";
@@ -4038,6 +4096,20 @@ export async function startGatewayServer(
 
         // Track session context for plan approval lookups
         chatSessionContexts.set(chatSessionId, chatContext);
+
+        // On-demand MCP registration — a project context that was never
+        // enumerated in the boot-time sweep (an ad hoc Chat TUI container,
+        // most commonly) still gets its `.mcp.json` servers registered
+        // here, so this session's turns can reach them via the `mcp` tool.
+        // Non-fatal: the chat session still opens if this fails.
+        const chatContextLooksLikeProjectPath = chatContext !== "general"
+          && !chatContext.startsWith("builder:")
+          && !chatContext.startsWith("mapp:")
+          && !chatContext.startsWith("help:")
+          && existsSync(chatContext);
+        if (chatContextLooksLikeProjectPath) {
+          await ensureProjectMcpRegistered(chatContext, chatContext.split("/").pop() ?? chatContext);
+        }
 
         // Check for persisted session on disk first
         const persisted = chatPersistence.load(chatSessionId);
@@ -5723,7 +5795,7 @@ export async function startGatewayServer(
               opus: "claude-opus-4-6",
               default: fc.agent?.model ?? "claude-sonnet-4-6",
             },
-          }, llmProvider);
+          });
           log.info("worker runtime config hot-swapped");
         } catch (err) {
           log.error(`failed to hot-swap worker runtime: ${err instanceof Error ? err.message : String(err)}`);

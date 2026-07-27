@@ -74,7 +74,7 @@ describe("ProjectConfigManager", () => {
     // the parent dir to exist. Use a tmpDir-based path with a real parent.
     const deepPath = join(tmpDir, "deep", "nested", "project");
     mkdirSync(deepPath, { recursive: true });
-    mgr.write(deepPath, { name: "Deep", createdAt: new Date().toISOString() });
+    mgr.write(deepPath, { name: "Deep", createdAt: new Date().toISOString(), tynnToken: undefined, type: undefined });
     expect(mgr.read(deepPath)?.name).toBe("Deep");
   });
 

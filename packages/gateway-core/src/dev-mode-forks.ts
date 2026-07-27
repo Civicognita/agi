@@ -39,7 +39,6 @@ export interface CoreRepoSpec {
   /** Stable slug used in config + UI. */
   slug:
     | "agi"
-    | "prime"
     | "hive-id"
     | "marketplace"
     | "mapp-marketplace"
@@ -54,8 +53,8 @@ export interface CoreRepoSpec {
     | "fancy-artboard"
     | "fancy-slides"
     | "fancy-flow";
-  /** Repo name on GitHub (NOT the slug — sometimes diverges, e.g. prime
-   *  → aionima, id → agi-local-id). */
+  /** Repo name on GitHub (NOT the slug — sometimes diverges, e.g.
+   *  id → agi-local-id). */
   upstream: string;
   /** GitHub org that owns the canonical upstream. Defaults to
    *  "Civicognita" when omitted (the legacy core-five behavior). */
@@ -65,7 +64,6 @@ export interface CoreRepoSpec {
   /** Config key in `dev.*` that holds the fork URL. */
   configKey:
     | "agiRepo"
-    | "primeRepo"
     | "hiveIdRepo"
     | "marketplaceRepo"
     | "mappMarketplaceRepo"
@@ -83,10 +81,17 @@ export interface CoreRepoSpec {
 }
 
 export const CORE_REPOS: readonly CoreRepoSpec[] = Object.freeze([
-  // Civicognita-owned core five (legacy default — `upstreamOrg` omitted
-  // so they continue to use CANONICAL_OWNER = "Civicognita").
+  // Civicognita-owned core (legacy default — `upstreamOrg` omitted so they
+  // continue to use CANONICAL_OWNER = "Civicognita").
   { slug: "agi",              upstream: "agi",                  displayName: "AGI",              configKey: "agiRepo" },
-  { slug: "prime",            upstream: "aionima",              displayName: "PRIME",            configKey: "primeRepo" },
+  // PRIME (upstream "aionima") was REMOVED from CORE_REPOS (owner directive
+  // 2026-07-19) — the corpus is not something individual owners fork and PR
+  // into like a code repo. It always tracks Civicognita/aionima directly,
+  // dev-mode-enabled or not (see scripts/upgrade.sh's PRIME_REPO — no
+  // dev-mode branch for it — and agi-cli.sh's origin-alignment check).
+  // `/api/prime/status` + `/api/system/connections`'s `prime` field still
+  // report the corpus's general connection health; that's an unrelated,
+  // orthogonal concern to fork/PR contribution.
   // (Local-ID removed — absorbed into AGI gateway-core via s180)
   // s149 t625 — Hive-ID (cloud federation hub, privately deployed). Added
   // to CORE_REPOS so Contributing Mode provisions + clones the fork locally.

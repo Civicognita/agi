@@ -8,10 +8,11 @@
  * body.
  *
  * Owner directive: PRs ALWAYS target the upstream `dev` branch (never `main`).
- * Stable releases are promoted dev → main separately. Per the entity model,
- * the PRIME corpus (slug `prime`) is the "Learnings" repo; every other core
- * repo is "Mechanics". Handlers stay thin: each exported function does one
- * thing so server-runtime-state.ts can compose them.
+ * Stable releases are promoted dev → main separately. Every core fork is
+ * "Mechanics" — the "Learnings" category (PRIME) is dormant since PRIME was
+ * removed from CORE_REPOS (owner directive 2026-07-19; see kindForSlug's own
+ * comment). Handlers stay thin: each exported function does one thing so
+ * server-runtime-state.ts can compose them.
  */
 
 import { execFileSync } from "node:child_process";
@@ -98,7 +99,13 @@ function gitSilent(
 }
 
 function kindForSlug(slug: string): ContributeKind {
-  // PRIME (slug "prime", upstream "aionima") is the knowledge corpus → Learnings.
+  // PRIME (slug "prime") was the knowledge-corpus "Learnings" category, but
+  // PRIME was removed from CORE_REPOS (owner directive 2026-07-19) — the
+  // corpus isn't individually forked/contributed like a code repo, so this
+  // never actually sees slug "prime" anymore and the "learnings" branch is
+  // permanently dormant. Left in place (not deleted) since ContributeKind's
+  // two-bucket shape is a broader API/UI contract this change doesn't
+  // otherwise touch.
   return slug === "prime" ? "learnings" : "mechanics";
 }
 

@@ -36,21 +36,40 @@ function localityBadge(scope: string | null): { label: string; cls: string } {
 function EventsTab() {
   const [q, setQ] = useState("");
   const [project, setProject] = useState("");
+  // s234 — filter to a single locality (channel/room/project/…) to confirm
+  // memories stay confined per channel. "" = all scopes ("one shared mind").
+  const [scope, setScope] = useState("");
+  const [knownScopes, setKnownScopes] = useState<string[]>([]);
   const [events, setEvents] = useState<MemoryEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (scopeOverride?: string) => {
     setLoading(true);
     setError(null);
+    const activeScope = scopeOverride ?? scope;
     try {
-      setEvents(await fetchMemoryEvents({ q: q.trim() || undefined, projectPath: project.trim() || undefined, limit: 100 }));
+      const rows = await fetchMemoryEvents({
+        q: q.trim() || undefined,
+        projectPath: project.trim() || undefined,
+        scope: activeScope || undefined,
+        limit: 100,
+      });
+      setEvents(rows);
+      // Accumulate every scope we've seen so the dropdown keeps all options even
+      // while a filter is active.
+      setKnownScopes((prev) => {
+        const set = new Set(prev);
+        for (const r of rows) if (r.scope) set.add(r.scope);
+        if (activeScope) set.add(activeScope);
+        return [...set].sort();
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed to load memories");
     } finally {
       setLoading(false);
     }
-  }, [q, project]);
+  }, [q, project, scope]);
 
   useEffect(() => { void load(); /* initial */ }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -64,11 +83,28 @@ function EventsTab() {
           onChange={(e) => setQ(e.target.value)}
           data-testid="memory-search"
         />
+        <select
+          className="h-9 rounded-md border border-input bg-background px-2 text-[12px] text-foreground"
+          value={scope}
+          onChange={(e) => { setScope(e.target.value); void load(e.target.value); }}
+          data-testid="memory-scope-filter"
+          aria-label="Filter by channel / locality"
+        >
+          <option value="">All scopes (one mind)</option>
+          {knownScopes.map((s) => (
+            <option key={s} value={s}>{localityBadge(s).label}</option>
+          ))}
+        </select>
         <Input className="w-48" placeholder="Filter by project path" value={project} onChange={(e) => setProject(e.target.value)} />
         <Button size="sm" onClick={() => void load()} disabled={loading} data-testid="memory-search-btn">
           {loading ? "Searching…" : "Search"}
         </Button>
       </div>
+      {scope !== "" && (
+        <p className="text-[11px] text-muted-foreground" data-testid="memory-scope-active">
+          Showing only <span className="font-medium text-foreground">{localityBadge(scope).label}</span> — memories are confined to their channel/room; broader scopes cascade down.
+        </p>
+      )}
       {error !== null && <p className="text-[12px] text-red">{error}</p>}
       {!loading && events.length === 0 ? (
         <Card className="p-4" data-testid="memory-empty">

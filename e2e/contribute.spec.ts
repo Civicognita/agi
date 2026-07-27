@@ -20,4 +20,32 @@ test.describe("Contribute page", () => {
     await expect(link).toBeVisible();
     await expect(link).toHaveAttribute("href", "/contribute");
   });
+
+  // Wave 2b (s229): contribution metrics strip — merged/open/repos/total.
+  test("metrics strip renders merged/open/repos/total counts", async ({ page }) => {
+    await page.route("**/api/dev/contribute/metrics", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ownerLogin: "wishborn",
+          repos: [
+            { slug: "agi", displayName: "agi", merged: 3, open: 1, total: 4 },
+            { slug: "prime", displayName: "prime", merged: 0, open: 0, total: 0 },
+          ],
+          totals: { merged: 3, open: 1, total: 4 },
+        }),
+      }),
+    );
+
+    await page.goto("/contribute");
+    await expect(page.getByTestId("contribute-page")).toBeVisible({ timeout: 10_000 });
+
+    const strip = page.getByTestId("contribute-metrics");
+    await expect(strip).toBeVisible({ timeout: 8_000 });
+    await expect(strip).toContainText("3"); // Accepted (merged)
+    await expect(strip).toContainText("1"); // Open PRs
+    await expect(strip).toContainText("4"); // Total PRs
+    await expect(strip).toContainText("Repos contributed");
+  });
 });

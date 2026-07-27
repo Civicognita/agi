@@ -202,6 +202,98 @@ Reads from `~/.agi/logs/` (top 5 most-recent .log/.jsonl files) and
 
 ---
 
+### agi taskmaster
+
+One-shot Taskmaster job status listing. Every Taskmaster worker executes via
+a project's paired [Genie](../agents/mcp-integration.md) workspace's
+`runAgent` MCP tool (see `docs/agents/taskmaster.md`'s "Genie Pairing" section
+for the one-time per-project setup this requires). Interactive control —
+dispatching work, approving/rejecting a checkpoint gate — happens through
+conversation with Aion in [`agi chat`](#agi-chat), not a dedicated screen.
+
+```bash
+agi taskmaster                        # one-shot job listing, all projects
+agi taskmaster --project /path/to/proj  # scope to one project
+agi taskmaster --json                 # machine-readable for scripting / CI
+```
+
+---
+
+### agi chat
+
+Interactive terminal chat with Aion — a full-window layout modeled closely on
+Claude Code itself: scrollable message history, a persistent bordered
+multi-line input box, live tool-activity while a turn is running. The folder
+`agi chat` is launched in is the **Chat Container** (not a picker over
+registered projects); access is the same owner/sealed tier as the
+dashboard's chat, with the same full tool registry (including Taskmaster
+dispatch through normal conversation — there's no separate approve/reject
+screen). See `docs/agents/chat-tui.md` for the container model, `.agi`
+envelope context, the on-demand `.mcp.json` loading this depends on, and how
+the layout itself is built on `@particle-academy/fancy-tui`.
+
+```bash
+cd ~/projects/my-app
+agi chat                     # container = ~/projects/my-app
+agi chat --cwd /some/path    # override the container explicitly
+agi chat --quiet             # hide the live thinking/tool-activity region — just committed messages
+agi chat --timeout 60        # give up locally after 60s instead of the 120s default
+agi chat --debug ~/chat.jsonl # stream every WS send/receive + connection event to a JSONL log
+agi chat --session <id>      # resume a specific saved session instead of auto-resuming the latest
+agi chat --new-session       # start fresh even if a prior session exists for this container
+```
+
+Type a message and press **Enter** to send; **Alt+Enter** (or **Shift+Enter**,
+when your terminal reports support for it — check the status bar's key hint)
+inserts a newline for multi-line composition. Arrow keys move the cursor;
+**PgUp/PgDn** scroll the conversation history and **Esc** jumps back to the
+latest. Typing `/` shows matching commands — `/quit`/`/exit` (or Ctrl-C) end
+the session, `/clear` empties the visible scrollback (local only — the
+server's saved history is untouched), `/help` lists commands and the
+0REALTALK shorthand reference. **Ctrl+T** collapses/expands Aion's reasoning
+("thinking") blocks. Ctrl-C also cancels a turn that's still in flight. Tool
+activity and Aion's current status show live above the input box while a turn
+runs (`--quiet` hides that region entirely) — there is no token-by-token
+streaming yet (the gateway delivers the final answer in one `chat:response`
+frame, same as the dashboard).
+
+**0REALTALK shorthands.** The input accepts a "stream of consciousness" — pour
+layered context and multiple requests into one message. `n>` splits it into an
+ordered request queue (sent one at a time). `:( … ):` is a terminal whose
+inner expression is unpacked and its output sent to Aion, shown as an
+attachment on your message. `:word:` (and chained `:action:scope:target:`) are
+triggers passed through to Aion. A live `0REALTALK` panel decodes what you're
+typing; `/help` has the full reference.
+
+**Sessions resume automatically.** Launching `agi chat` again from the same
+container folder picks up the most recently updated saved session for that
+exact path (auto-detected via `GET /api/chat/sessions`) and hydrates its
+prior messages into the transcript — no flag needed. `--session <id>` picks
+a specific saved session explicitly; `--new-session` skips auto-resume and
+starts clean. The status bar shows the active session's short id
+(`sess:xxxxxxxx`) for cross-referencing against a `--debug` log or a support
+report.
+
+A turn never hangs forever, but long ones are fine: `--timeout` (default 120s)
+is an *inactivity* window, not a total cap — as long as Aion keeps reporting
+progress (thinking, tool calls), the turn stays alive however long it takes.
+Only genuine silence for that long makes the client give up, cancel, and show
+a timeout message. Ctrl-C cancels the current turn immediately (without
+waiting for the server to confirm).
+
+Piped or non-interactive input (scripting, CI, `agi chat < /dev/null`) falls
+back automatically to a plain-text REPL — Ink can't render the full-window
+layout without a real terminal.
+
+`--debug <path>` streams every outbound WS send, inbound frame, and
+connection-lifecycle event (open/close/timeout/cancel) as JSONL to the given
+file — useful for diagnosing a turn that hangs or errors with no obvious
+cause client-side. Note this only covers the client's own view of the wire;
+a turn that hangs *server-side* (no response ever sent) needs `agi logs` on
+the gateway itself, not this flag.
+
+---
+
 ### agi iw — iterative-work operator commands
 
 Operator kill switch for runaway iterative-work loops (s159 t692).

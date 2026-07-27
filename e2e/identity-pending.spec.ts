@@ -81,3 +81,70 @@ test.describe("/identity/pending — CHN-E approval queue (s166)", () => {
     await expect(firstEntry.getByRole("button", { name: /Reject/i })).toBeVisible();
   });
 });
+
+/**
+ * s234 P2/P3 — the register/associate approve flow + the owner-claim card.
+ * Route-mocked for deterministic assertions (no live channel adapter needed).
+ */
+test.describe("/identity/pending — s234 register / associate / claim", () => {
+  const PENDING = {
+    pending: [{ id: "p1", channelId: "discord", roomId: "room-1", channelUserId: "u-new", displayName: "NewPerson", projectPath: "", firstMessagePreview: "hello there", createdAt: "2026-07-01T10:00:00.000Z" }],
+    count: 1,
+  };
+  const PEOPLE = { people: [{ status: "approved", decidedAt: "2026-06-01T00:00:00.000Z", entityId: "E-existing", channelId: "discord", channelUserId: "u-old", displayName: "ExistingPerson" }] };
+
+  async function mockAll(page: import("@playwright/test").Page, opts: { claimable?: boolean } = {}): Promise<void> {
+    const claimable = opts.claimable ?? false;
+    await page.route("**/api/identity/people**", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PEOPLE) }));
+    await page.route("**/api/owner/status**", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ hasOwner: !claimable, ownerEntityId: claimable ? null : "E-owner", claimable }) }));
+    await page.route("**/api/projects**", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) }));
+    await page.route("**/api/identity/pending", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PENDING) }));
+  }
+
+  test("Approve opens the panel; register mode approves with mode=register", async ({ page }) => {
+    await mockAll(page);
+    let approveBody: Record<string, unknown> | null = null;
+    await page.route("**/api/identity/pending/*/approve", async (r) => {
+      approveBody = JSON.parse(r.request().postData() ?? "{}") as Record<string, unknown>;
+      await r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, approval: {} }) });
+    });
+    await page.goto("/identity/pending", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("identity-pending-entry-discord__u_new")).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId(/^identity-pending-approve-/).first().click();
+    await expect(page.getByTestId("identity-approve-panel")).toBeVisible();
+    await expect(page.getByTestId("identity-register-form")).toBeVisible();
+    await page.getByTestId("identity-approve-confirm").click();
+    await expect.poll(() => approveBody?.mode).toBe("register");
+  });
+
+  test("Associate mode links to an existing person (mode=associate + targetEntityId)", async ({ page }) => {
+    await mockAll(page);
+    let approveBody: Record<string, unknown> | null = null;
+    await page.route("**/api/identity/pending/*/approve", async (r) => {
+      approveBody = JSON.parse(r.request().postData() ?? "{}") as Record<string, unknown>;
+      await r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, approval: {} }) });
+    });
+    await page.goto("/identity/pending", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("identity-pending-entry-discord__u_new")).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId(/^identity-pending-approve-/).first().click();
+    await page.getByTestId("identity-approve-mode-associate").click();
+    await page.getByTestId(/^identity-associate-candidate-/).first().click();
+    await page.getByTestId("identity-approve-confirm").click();
+    await expect.poll(() => approveBody?.mode).toBe("associate");
+    expect(approveBody?.targetEntityId).toBe("E-existing");
+  });
+
+  test("owner-claim card shows when no owner is set", async ({ page }) => {
+    await mockAll(page, { claimable: true });
+    await page.goto("/identity/pending", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("owner-claim-card")).toBeVisible();
+    await expect(page.getByTestId("owner-claim-token")).toBeVisible();
+  });
+
+  test("owner-claim card hidden when an owner exists", async ({ page }) => {
+    await mockAll(page, { claimable: false });
+    await page.goto("/identity/pending", { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("identity-pending-entry-discord__u_new")).toBeVisible();
+    await expect(page.getByTestId("owner-claim-card")).toHaveCount(0);
+  });
+});

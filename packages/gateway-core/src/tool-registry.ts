@@ -58,6 +58,16 @@ export interface ToolExecutionContext {
   /** Chat session id that spawned this tool call (if any). Used alongside
    *  sessionKey for UI-side event routing. */
   chatSessionId?: string;
+  /** The invocation's memory scope-stack (most-specific → broadest). Scope-aware
+   *  recall tools (search_memory) default their confinement to this so active
+   *  recall can't bleed one channel's memories into another. Absent for
+   *  headless/background tool calls. */
+  memoryScopes?: string[];
+  /** True when this is the OWNER's in-app console (owner + no channel context).
+   *  search_memory then searches ALL scopes by default (the owner's unified "one
+   *  mind" view) — but inside a channel the owner stays channel-confined, and
+   *  non-owners are always confined. */
+  ownerConsole?: boolean;
 }
 
 /** Worker emission extracted from response text. */

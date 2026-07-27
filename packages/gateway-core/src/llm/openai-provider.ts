@@ -85,7 +85,7 @@ interface OpenAICompletion {
 // Defaults
 // ---------------------------------------------------------------------------
 
-const DEFAULT_CONFIG: Required<LLMProviderConfig> = {
+const DEFAULT_CONFIG: Required<Omit<LLMProviderConfig, "logger">> = {
   apiKey: "",
   defaultModel: "gpt-4o",
   maxTokens: 4096,
@@ -408,7 +408,7 @@ export function fromOpenAICompletion(
 // ---------------------------------------------------------------------------
 
 export class OpenAIProvider implements LLMProvider {
-  private readonly config: Required<LLMProviderConfig>;
+  private readonly config: Required<Omit<LLMProviderConfig, "logger">>;
 
   constructor(config?: Partial<LLMProviderConfig>) {
     this.config = {
